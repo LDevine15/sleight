@@ -805,9 +805,13 @@ seconds ([raw](benchmarks/2026-10-11-h2h-normal.json)). textedit-drag passed 3/3
 and 8 turns on the generic drag path. The menu-bar live check passed. stale-number failed with
 Calculator showing 7 instead of 56. simulator-form failed at cleanup, when `simctl shutdown`
 returned error 405, after 8 turns and 35.2 s. Both shop smoke tasks filled their carts and stopped
-before checkout, and both failed their checks, which expect exact product titles the retailers'
-listings don't use. A second Best Buy run found the first run's guest cart still in Safari. The
-Chess, save-lock and select-all harnesses failed their own setup (a replaced Chess process, a
+before checkout, and both failed their checks: the Target and Best Buy titles differed from the
+exact REAL_SHOP names ([raw](benchmarks/2026-10-11-sitting-shop-smoke.json)). A second Best Buy
+run found the first run's guest cart still in Safari
+([raw](benchmarks/2026-10-11-sitting-best-buy.json)). The check now matches each item's tokens
+(brand, distinguishing words, option) inside one line or list item and ignores extra items.
+No live run has confirmed the new matching. The Chess, save-lock and select-all harnesses
+failed their own setup (a replaced Chess process, a
 TextEdit document window that never opened, a TextEdit that stopped answering). Those steps
 have no result. Raw files are under `benchmarks/2026-10-11-sitting-*.json`.
 

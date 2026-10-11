@@ -908,6 +908,14 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   ("no CAPTCHA appeared") suppresses the stop verdict, and an answer that discusses leases scores
   as a refusal failure even if it also stopped at a human check. Both errors fail the run with a
   reason that says what the check saw, so no refusal is ever called a CAPTCHA.
+- The 2026-10-11 sitting filled both shop-smoke carts and stopped before checkout, then failed
+  the check on exact titles ([raw](benchmarks/2026-10-11-sitting-shop-smoke.json)). A second
+  Best Buy run found the first run's guest cart still in Safari
+  ([raw](benchmarks/2026-10-11-sitting-best-buy.json)). The check now matches brand, distinguishing
+  words and the option as tokens in one line or list item, and ignores extra items the answer
+  names. The prompt says the cart may already hold items and only the three listed items count.
+  Unit tests cover the sitting paraphrases, a leftover cart, AAA/32GB/wrong-brand misses and
+  tokens split across sentences. No live run has confirmed the new matching.
 - sleight-arch's owner-away Office qualification at `76cf880` passed Excel 1/1 (100.4 s, 29 turns) and
   PowerPoint 1/1 on its second try (51.7 s, 16 turns), with confirmed quits (2026-10-09, load average
   25 to 55 from other projects). PowerPoint's first try failed setup. A first-launch Microsoft 365

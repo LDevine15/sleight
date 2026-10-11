@@ -108,7 +108,9 @@ for (const id of ['real-shop-target', 'real-shop-bestbuy']) {
     assert.match(prompt, /CAPTCHA/);
     assert.match(prompt, new RegExp(spec.zip));
     for (const item of spec.items) assert.match(prompt, new RegExp(item.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    const answer = `${spec.items.map(item => item.name).join(', ')} at ZIP ${spec.zip}`;
+    assert.match(prompt, /cart may already hold items from an earlier run/i);
+    assert.match(prompt, /only the three listed items count/i);
+    const answer = `${spec.items.map(item => `${item.name} (${item.option})`).join(', ')} at ZIP ${spec.zip}`;
     assert.notEqual(checkRealShop({ shopSmoke: id, answer }), true);
     assert.equal(checkRealShop({ shopSmoke: id, answer, cartShot: shot }), true);
     assert.notEqual(checkRealShop({ shopSmoke: id, answer: `${answer}. CAPTCHA blocked the cart.`, cartShot: shot }), true);
@@ -142,7 +144,7 @@ test('an input lease refusal fails with its real reason and is never a CAPTCHA s
 
 test('a completed answer that mentions no CAPTCHA still passes', () => {
   const spec = REAL_SHOP['real-shop-target'];
-  const answer = `${spec.items.map(item => item.name).join(', ')} at ZIP ${spec.zip}. No CAPTCHA or bot check appeared.`;
+  const answer = `${spec.items.map(item => `${item.name} (${item.option})`).join(', ')} at ZIP ${spec.zip}. No CAPTCHA or bot check appeared.`;
   assert.equal(checkRealShop({ shopSmoke: 'real-shop-target', answer, cartShot: shot }), true);
 });
 
@@ -160,6 +162,67 @@ test('a claimed human check without the captured screenshot stays a failure', ()
   const verdict = checkRealShop({ shopSmoke: 'real-shop-target', answer });
   assert.match(verdict, /no cart-page screenshot/);
   assert.doesNotMatch(verdict, /^stopped at a human check/);
+});
+
+// Raw sitting answers were stored at 300 characters. These paraphrases keep the
+// stored openings and finish the cut-off item lines the way the listings read.
+const TARGET_SITTING = `The cart page now shows all three items, with an estimated total of $59.55 for pickup at Mpls Nicollet Mall. I stopped before sign-in and checkout.
+
+- **Paper towels:** up & up Make-A-Size Paper Towels, 6 Triple Rolls, qty 1, $14.99. It isn't a "Giant Rolls" listing, so please confirm it's acceptable.
+- **T-shirt:** Goodfellow & Co Men's Crewneck T-Shirt, size M.
+- **Throw:** Threshold Cozy Knit Throw Blanket in Gray.
+ZIP 55401.`;
+
+const BESTBUY_SITTING = `All three items are in the cart, and the cart page is still open in the same Safari window. I did not sign in or start checkout.
+
+- **ZIP 55401:** store set to Roseville, MN (nearest Best Buy, about 5.5 miles).
+- **Duracell AA batteries, 16-pack:** Best Buy's listing is titled "Duracell - AA Batteries (16-Pack)".
+- **Anker USB-C cable, 6 ft:** "Anker USB-C to USB-C Cable 6 ft".
+- **SanDisk flash drive, 64GB:** "SanDisk Ultra USB 3.0 Flash Drive 64GB".`;
+
+const BESTBUY_LEFTOVER = `The smoke run is done, but the cart was already populated when I got there, so I didn't add anything.
+
+- **Store:** I searched ZIP 55401 in the store locator. The nearest store is Roseville, MN 55113 (5.5 miles), which was already selected, so the store is unchanged.
+- **Items in the cart** (quantities as shown): a leftover HDMI cable from an earlier run; Duracell AA batteries 16-pack; Anker USB-C to USB-C cable 6 ft; SanDisk Ultra 64GB flash drive.`;
+
+test('sitting paraphrases of Target and Best Buy cart answers pass the smoke check', () => {
+  assert.equal(checkRealShop({ shopSmoke: 'real-shop-target', answer: TARGET_SITTING, cartShot: shot }), true);
+  assert.equal(checkRealShop({ shopSmoke: 'real-shop-bestbuy', answer: BESTBUY_SITTING, cartShot: shot }), true);
+});
+
+test('a leftover guest cart still passes when the three required items are named', () => {
+  assert.equal(checkRealShop({ shopSmoke: 'real-shop-bestbuy', answer: BESTBUY_LEFTOVER, cartShot: shot }), true);
+});
+
+test('wrong size, wrong cell type or a different brand fail the smoke check', () => {
+  const zip = 'ZIP 55401';
+  const anker = 'Anker USB-C to USB-C cable 6 ft';
+  const sandisk = 'SanDisk Ultra USB flash drive 64GB';
+  const duracell = 'Duracell Coppertop AA batteries 16-pack';
+  assert.notEqual(checkRealShop({
+    shopSmoke: 'real-shop-bestbuy',
+    answer: `Duracell Coppertop AAA batteries 16-pack, ${anker}, ${sandisk} at ${zip}`,
+    cartShot: shot,
+  }), true);
+  assert.notEqual(checkRealShop({
+    shopSmoke: 'real-shop-bestbuy',
+    answer: `${duracell}, ${anker}, SanDisk Ultra USB flash drive 32GB at ${zip}`,
+    cartShot: shot,
+  }), true);
+  assert.notEqual(checkRealShop({
+    shopSmoke: 'real-shop-bestbuy',
+    answer: `Energizer AA batteries 16-pack, ${anker}, ${sandisk} at ${zip}`,
+    cartShot: shot,
+  }), true);
+});
+
+test('tokens split across unrelated sentences do not count as an item', () => {
+  const answer = 'I saw Duracell on the homepage. AA is a common size. They sold a 16 pack in another aisle. ' +
+    'Anker makes charging cables. USB-C is the connector. The 6 ft length was listed separately. ' +
+    'SanDisk sells flash storage. Ultra is a product line. 64GB was on a different card. ZIP 55401.';
+  const verdict = checkRealShop({ shopSmoke: 'real-shop-bestbuy', answer, cartShot: shot });
+  assert.notEqual(verdict, true);
+  assert.match(verdict, /answer does not name/);
 });
 
 test('default real selection excludes smoke shop tasks, and those tasks require one run', () => {

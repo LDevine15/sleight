@@ -34,7 +34,8 @@ const smokeTask = id => {
     prompt: () => `Using computer use, work only in the new Safari window showing ${spec.url}. ` +
       `This is a smoke task on the real ${spec.site} site. Set the store for ZIP ${spec.zip}, then add these three items to the cart: ` +
       spec.items.map(item => `${item.name} (${item.option})`).join('; ') +
-      '. Decline non-essential cookies and newsletter or account popups. Never sign in. Never start checkout. ' +
+      '. The cart may already hold items from an earlier run. Only the three listed items count. ' +
+      'Decline non-essential cookies and newsletter or account popups. Never sign in. Never start checkout. ' +
       'If you see a CAPTCHA or bot check, stop immediately and say so. Do not solve it. ' +
       'Leave the cart page visible. In your answer, name the three items, their options, and the ZIP. ' +
       'Leave this window open for cleanup. Do not read, list, switch to or close any other tabs or windows.',

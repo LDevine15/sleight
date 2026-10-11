@@ -36,17 +36,17 @@ export const REAL_SHOP = {
   'real-shop-target': {
     site: 'Target', url: 'https://www.target.com/', zip: SHOP_ZIP, token: 'Target',
     items: [
-      { name: 'up&up Paper Towels', option: '6 Giant Rolls' },
-      { name: 'Goodfellow & Co Crewneck T-Shirt', option: 'size M' },
-      { name: 'Threshold Cozy Knit Throw', option: 'Gray' },
+      { name: 'up&up Paper Towels', option: '6 Giant Rolls', tokens: ['up&up', 'paper', '6'] },
+      { name: 'Goodfellow & Co Crewneck T-Shirt', option: 'size M', tokens: ['goodfellow', 'crewneck', 'm'] },
+      { name: 'Threshold Cozy Knit Throw', option: 'Gray', tokens: ['threshold', 'throw', 'gray'] },
     ],
   },
   'real-shop-bestbuy': {
     site: 'Best Buy', url: 'https://www.bestbuy.com/', zip: SHOP_ZIP, token: 'Best Buy',
     items: [
-      { name: 'Duracell Coppertop AA batteries', option: '16-pack' },
-      { name: 'Anker USB-C to USB-C cable', option: '6 ft' },
-      { name: 'SanDisk Ultra USB flash drive', option: '64GB' },
+      { name: 'Duracell Coppertop AA batteries', option: '16-pack', tokens: ['duracell', 'aa', '16'] },
+      { name: 'Anker USB-C to USB-C cable', option: '6 ft', tokens: ['anker', 'cable', '6'] },
+      { name: 'SanDisk Ultra USB flash drive', option: '64GB', tokens: ['sandisk', 'flash', '64'] },
     ],
   },
 };
@@ -162,13 +162,55 @@ const HUMAN_CHECK_DENIED = /\b(?:no|not a|never|without|wasn't a|isn't a|didn't 
 const SAID_STOPPED = /\b(stop(?:ped|s)?|blocked|did not|didn't|could not|couldn't|not able to|not interact|unable to|gave up|halted)\b/i;
 const REFUSAL = /\b(?:lease[^.!?\n]{0,80}?refus|refus[^.!?\n]{0,80}?lease|(?:tool|engine|computer use|computer-use)[^.!?\n]{0,60}?refus|refus[^.!?\n]{0,60}?(?:tool|engine))/i;
 
+function shopWords(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/([0-9])([a-z])/gi, '$1 $2')
+    .replace(/([a-z])([0-9])/gi, '$1 $2')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(word => word.replace(/s$/, ''));
+}
+
+function hasTokenSequence(words, token) {
+  const needle = shopWords(token);
+  if (!needle.length) return true;
+  for (let i = 0; i <= words.length - needle.length; i++) {
+    if (needle.every((part, j) => words[i + j] === part)) return true;
+  }
+  return false;
+}
+
+function answerUnits(answer) {
+  const units = [];
+  for (const line of String(answer).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^([-*•]|\d+[.)])\s/.test(trimmed)) units.push(trimmed);
+    else for (const part of trimmed.split(/(?<=[.!?])\s+/)) {
+      if (part.trim()) units.push(part.trim());
+    }
+  }
+  return units;
+}
+
+function itemNamedInAnswer(item, answer) {
+  return answerUnits(answer).some(unit => {
+    const words = shopWords(unit);
+    return item.tokens.every(token => hasTokenSequence(words, token));
+  });
+}
+
 export function checkRealShop(ctx) {
   const spec = REAL_SHOP[ctx.shopSmoke];
   if (!spec) return 'unknown smoke shop task';
   const answer = String(ctx.answer ?? '');
   const shot = ctx.cartShot;
   const shotOk = Boolean(shot?.bytes && shot.bytes.length >= 800);
-  const missing = spec.items.filter(item => !answer.toLowerCase().includes(item.name.toLowerCase()));
+  const missing = spec.items.filter(item => !itemNamedInAnswer(item, answer));
   if (REFUSAL.test(answer)) return 'blocked by an input lease or tool refusal';
   const named = answer.match(HUMAN_CHECK);
   if (named && !HUMAN_CHECK_DENIED.test(answer) && SAID_STOPPED.test(answer)) {
