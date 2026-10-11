@@ -2,6 +2,14 @@
 
 You don't need any of these. They change approvals, guards, receipts, review or experimental behavior.
 
+## Front app after launch
+
+Front restoration is on by default. Set `SLEIGHT_FRONT_RESTORE=0` to turn it off for an A/B.
+When a literal `cua.getApp(...)` acquisition launches an app and it takes the front, sleight gives
+the front back to the user's earlier app once, if that process is still running. It leaves the
+pointer alone. A focus change before dispatch, real input during the call, a different front app
+afterward or a failed call cancels restoration. The result and trace say when restoration happened.
+
 ## Receipts and unsaved review
 
 Set `SLEIGHT_RECEIPTS=1` to write a private JSON receipt after each used turn to

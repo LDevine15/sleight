@@ -368,6 +368,8 @@ export function createRelay({
   takeNotices,
   // Probes an app's windows outside the engine ({ status, windows, minimized, hidden, onScreen }).
   spaceProbe,
+  // Long-lived helper transaction: record, recheck before launch, restore the user's app once.
+  frontRestore: restoreFront,
   trace: writeTrace = () => {},
   traceCode = false,
   now = Date.now,
@@ -375,6 +377,7 @@ export function createRelay({
   chromeSettleIntervalMs = 100,
   chromeSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
 }) {
+  const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
   const receiptEnds = new Map();
@@ -582,6 +585,30 @@ export function createRelay({
   // What the probe found before each read went to the engine. An app that was already running with
   // a window wasn't launched by that read, which lets a split acquisition's read stand in below.
   const preHealth = new Map();
+  const frontCalls = new Map();
+  function cancelFrontCalls() {
+    for (const token of frontCalls.values()) Promise.resolve().then(() =>
+      frontRestore({ action: 'finish', token, success: false })).catch(() => {});
+    frontCalls.clear();
+  }
+  async function forwardAcquisition(msg, selector) {
+    const generation = stopGeneration;
+    let token;
+    try {
+      ({ token } = await frontRestore({ action: 'begin', selector }) ?? {});
+      if (token) {
+        if (generation !== stopGeneration || closing || disposed) {
+          await frontRestore({ action: 'finish', token, success: false }); return;
+        }
+        const ready = await frontRestore({ action: 'arm', token });
+        if (generation !== stopGeneration || closing || disposed) {
+          await frontRestore({ action: 'finish', token, success: false }); return;
+        }
+        if (ready?.armed === true) frontCalls.set(msg.id, token);
+      }
+    } catch { /* Missing helper evidence leaves focus alone. */ }
+    if (generation === stopGeneration && !closing && !disposed) toServer(msg);
+  }
   const savePanelsNoted = new Set();
   function panelAdvice(health) {
     if (health?.savePanelOnly !== true) return;
@@ -648,7 +675,7 @@ export function createRelay({
     const acquisition = code.match(new RegExp(String.raw`^(?:(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*)?await\s+cua\.getApp\(\s*${literal}\s*\)\s*;?$`));
     if (read && acquisition) {
       const selector = acquisition[2], key = helperSelector(selector);
-      return { read, key, selector, handle: acquisition[1] ?? 'app', probe: `var __sleightHelperRecovery = await cua.getApp(${selector})` };
+      return { read, acquisition: true, key, selector, handle: acquisition[1] ?? 'app', probe: `var __sleightHelperRecovery = await cua.getApp(${selector})` };
     }
     const handles = [...code.matchAll(/\b([A-Za-z_$][\w$]*)\s*\./g)].map(m => m[1]);
     if (read) {
@@ -1806,7 +1833,9 @@ export function createRelay({
       });
     } else {
       if (msg.method === 'tools/call' && msg.id !== undefined && !restartRetries.has(msg.id)) restartRetries.set(msg.id, JSON.stringify(msg));
-      toServer(msg);
+      if (frontRestore && healthPlan?.acquisition && !healthPlan.selector.startsWith('{') && msg.id !== undefined) {
+        forwardAcquisition(msg, healthPlan.key);
+      } else toServer(msg);
     }
   }
 
@@ -1874,6 +1903,19 @@ export function createRelay({
   }
   function observeServerMessage(msg) {
     if (stopCollected || (msg.method === undefined && stoppedClients.has(msg.id))) return;
+    if (msg.method === undefined && frontCalls.has(msg.id)) {
+      const token = frontCalls.get(msg.id); frontCalls.delete(msg.id);
+      const generation = stopGeneration;
+      const success = generation === callGenerations.get(msg.id) && !closing && !disposed &&
+        !msg.error && !msg.result?.isError && Array.isArray(msg.result?.content);
+      Promise.resolve().then(() => frontRestore({ action: 'finish', token, success })).then(restored => {
+        if (generation !== stopGeneration || closing || disposed || restored?.restored !== true) return;
+        msg.result.content = [...(msg.result.content ?? []), { type: 'text',
+          text: `sleight gave the front back to ${restored.app || restored.bundleId} after the launch` }];
+        trace('front-restored', { id: msg.id, app: restored.app, bundleId: restored.bundleId, pid: restored.pid });
+      }).catch(() => {}).finally(() => observeServerMessage(msg));
+      return;
+    }
     if (msg.method === undefined && lateHelperReplies.has(msg.id)) {
       lateHelperReplies.delete(msg.id);
       const control = lateDiagnosticControls.get(msg.id); lateDiagnosticControls.delete(msg.id);
@@ -2411,6 +2453,7 @@ export function createRelay({
     closing = true;
     stopFinished = false;
     stopGeneration++;
+    cancelFrontCalls();
     invalidateDiagnostics();
     resumeRequested = false;
     clearTimeout(idleTimer);
@@ -2484,6 +2527,7 @@ export function createRelay({
     if (disposed) return;
     finishReceipt();
     disposed = true;
+    cancelFrontCalls();
     detachServer();
     cancelInternalRequests('Session ended.');
     clearTimeout(idleTimer);

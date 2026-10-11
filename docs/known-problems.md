@@ -1,5 +1,8 @@
 # Known problems
 
+Front restoration after an app launch has no live run yet (2026-10-11). Native activation, input
+detection, Spaces and the interval between the last focus check and activation remain unverified.
+
 ## Lean prompt
 
 `SLEIGHT_PROMPT=lean` has 0 live runs as of 2026-10-11. Its static instruction inventory is

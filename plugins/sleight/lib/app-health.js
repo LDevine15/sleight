@@ -1,5 +1,6 @@
 // Read one process's AXWindows with a native 500 ms messaging deadline, and count its windows on
-// the current Space. No System Events, activation, approval changes or permission prompts.
+// the current Space. Front restoration may reactivate only the user's earlier app after a launch.
+// No System Events, approval changes or permission prompts.
 ObjC.import('AppKit');
 ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
@@ -91,14 +92,12 @@ function minimizedCount(windows) {
 // so a session spawns osascript once instead of on every app read (about 150 ms of CPU each).
 function run(argv) {
   if (argv.length && argv[0] !== '--session') return JSON.stringify(probe(JSON.parse(argv[0])));
-  // Load the existing read-only queries once, in this helper's JavaScript context.
+  // Load each operation once, in this helper's JavaScript context.
   const query = name => {
     const source = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${argv[1]}/${name}.js`, $.NSUTF8StringEncoding, null));
     return eval(`(function () { ${source}; return run; })()`);
   };
-  const taps = argv[0] === '--session' ? query('keyboard-taps') : undefined;
-  const target = argv[0] === '--session' ? query('lease-target') : undefined;
-  let windowIdentity;
+  let taps, target, windowIdentity, frontRestore;
   const stdin = $.NSFileHandle.fileHandleWithStandardInput, stdout = $.NSFileHandle.fileHandleWithStandardOutput;
   let buffer = '';
   for (;;) {
@@ -116,9 +115,10 @@ function run(argv) {
       let request;
       try {
         request = JSON.parse(line);
-        const result = request.op === 'window-identity' ? JSON.parse((windowIdentity ||= query('window-identity'))([JSON.stringify(request.window)]))
-          : request.op === 'keyboard-taps' ? JSON.parse(taps())
-          : request.op === 'lease-target' ? JSON.parse(target([JSON.stringify({ app: request.app })])) : probe(request.app);
+        const result = request.op === 'front-restore' ? (frontRestore ||= query('front-restore'))(request)
+          : request.op === 'window-identity' ? JSON.parse((windowIdentity ||= query('window-identity'))([JSON.stringify(request.window)]))
+          : request.op === 'keyboard-taps' ? JSON.parse((taps ||= query('keyboard-taps'))())
+          : request.op === 'lease-target' ? JSON.parse((target ||= query('lease-target'))([JSON.stringify({ app: request.app })])) : probe(request.app);
         reply = { id: request.id, ...result };
       } catch { reply = { id: request?.id, status: 'unknown', ok: false, error: 'session query failed' }; }
       stdout.writeData($(JSON.stringify(reply) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));

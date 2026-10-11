@@ -69,7 +69,7 @@ function helperLane(kind, timeoutMs, spawnHelper) {
 
 export function spawnAppHealthHelper(kind) {
   return spawn('/usr/bin/osascript', ['-l', 'JavaScript', HEALTH_SCRIPT,
-    ...(kind === 'probe' ? [] : ['--session', dirname(HEALTH_SCRIPT)])], { stdio: ['pipe', 'pipe', 'ignore'] });
+    '--session', dirname(HEALTH_SCRIPT)], { stdio: ['pipe', 'pipe', 'ignore'] });
 }
 
 // Three lazy lanes: 2 s probes, 30 s targets, 30 s taps. A stuck scan cannot delay a target.
@@ -80,6 +80,7 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
   const taps = helperLane('taps', operationTimeoutMs, spawnHelper);
   return {
     probe: app => probe.request({ app }, { status: 'unknown' }),
+    frontRestore: request => probe.request({ ...request, op: 'front-restore' }, { status: 'unknown' }),
     windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }),
     target: args => target.request({ op: 'lease-target', app: args.app }, { ok: false,
       error: `Lease-target resolution failed: its helper was unavailable or did not answer within ${operationTimeoutMs / 1000} s. Stop this local action; reading the app again won't help.` }),
