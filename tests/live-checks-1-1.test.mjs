@@ -214,20 +214,25 @@ test('SIGINT and SIGTERM run the same driving cleanup once and record the signal
   const events = new EventEmitter();
   const calls = [];
   const report = {};
+  const exits = [];
+  const exit = code => exits.push(code);
   const finish = liveChecks.runOnce(async () => { calls.push('cleanup'); });
-  liveChecks.bindHarnessSignals(report, finish, events);
+  liveChecks.bindHarnessSignals(report, finish, events, exit);
   events.emit('SIGINT');
-  await finish();
+  await finish(); await new Promise(r => setImmediate(r));
   events.emit('SIGTERM');
-  await finish();
+  await finish(); await new Promise(r => setImmediate(r));
   assert.deepEqual(calls, ['cleanup']);
   assert.equal(report.signal, 'SIGINT');
+  assert.deepEqual(exits, [130, 143], 'each signal exits after the one cleanup');
   const term = {};
   const once = liveChecks.runOnce(async () => { calls.push('term'); });
-  liveChecks.bindHarnessSignals(term, once, events);
-  events.emit('SIGTERM');
-  await once();
+  const events2 = new EventEmitter();
+  liveChecks.bindHarnessSignals(term, once, events2, exit);
+  events2.emit('SIGTERM');
+  await once(); await new Promise(r => setImmediate(r));
   assert.equal(term.signal, 'SIGTERM');
+  assert.equal(exits.at(-1), 143);
 });
 
 test('menu-bar reports an accessibility denial as an owner action instead of a failure', async () => {

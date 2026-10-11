@@ -359,10 +359,11 @@ export function runOnce(work) {
   return () => (pending ??= Promise.resolve().then(work));
 }
 
-export function bindHarnessSignals(report, cleanup, events = process) {
+// A signal listener stops Node's default exit, so the handler exits itself once cleanup is done.
+export function bindHarnessSignals(report, cleanup, events = process, exit = code => process.exit(code)) {
   const onSignal = name => {
     report.signal ??= name;
-    void cleanup();
+    Promise.resolve().then(cleanup).catch(() => {}).finally(() => exit(name === 'SIGINT' ? 130 : 143));
   };
   for (const name of ['SIGINT', 'SIGTERM']) events.once(name, () => onSignal(name));
 }
