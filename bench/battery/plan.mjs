@@ -6,6 +6,10 @@ export function markerFor(task) {
     : `BATTERY-${randomBytes(12).toString('hex')}`;
 }
 export function promptFor(task, ctx) {
+  if (task.fixtureKind === 'app-flow') return `Use ${task.app} (${task.bundle}) only. ${task.goal}\nSteps:\n${task.steps.replaceAll('$marker', ctx.marker)}` +
+    '\nUse computer-use tools only, no shell, file APIs, scripts, network requests or other apps. Send only the message the steps give. ' +
+    'Do not open, change, archive, delete or send to any other task or project: other tasks belong to running agents. ' +
+    'Do not close or quit the app. Stop at any permission or sign-in prompt. Return only JSON with marker.';
   const target = ctx.target ?? (task.fixtureKind === 'doc-file' ? `<fixture>/${task.id}.${task.format}`
     : task.fixtureKind === 'web-page' ? 'http://127.0.0.1:<port>/fixture' : undefined);
   return `Use ${task.app} (${task.bundle}) only. ${ctx.scripted ? 'Read the fixture seeded through local app scripting. Leave its marker visible for a single engine read.' : task.goal}\nMode: ${ctx.scripted ? 'read' : task.mode}.` +
@@ -35,7 +39,10 @@ export function plan({ ownerPresent = false, wanted, runs = 1, markers = {}, loc
   }
   return { suite: 'battery', dryRun: true, counts: counts(selected), catalogCounts: counts(tasks),
     excluded: tasks.filter(t => !wanted && !selected.includes(t)).map(t => ({ task: t.id, reason: 'requires --owner-present' })),
-    seedMarkers: seeds, ownerSetup: selected.filter(t => t.fixtureKind === 'self-message' || (t.fixtureKind === 'app-state' && t.mode === 'read'))
+    seedMarkers: seeds,
+    ownerSetupOnce: selected.some(t => t.fixtureKind === 'app-flow')
+      ? ['Add the folder ~/sleight-scrap as a ZCode project once before the pass, so neither arm pays for adding it.'] : [],
+    ownerSetup: selected.filter(t => t.fixtureKind === 'self-message' || (t.fixtureKind === 'app-state' && t.mode === 'read'))
       .map(t => ({ task: t.id, marker: seeds[t.id], action: t.fixtureKind === 'self-message'
         ? 'Owner posts this to themself once before the pass. The runner never posts.'
         : 'Owner makes this marker visible in an isolated item before the pass. The runner reads only.' })),

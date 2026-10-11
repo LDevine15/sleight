@@ -39,6 +39,14 @@ The iWork tasks use docx, xlsx and pptx. Web tasks read a marker from a server b
 Self-message answers must contain the exact marker, a sender and a displayed time. App-state checks
 make one scripted engine acquisition and read, with no model, then match the visible marker.
 
+ZCode flows (owner, 2026-10-11) time the agent-nudging work that felt slow. Each starts a new task in
+the `sleight-scrap` project and sends one message. `zcode-rename` then renames it, `zcode-pin` pins
+and unpins it, and `zcode-sidebar` first goes around the sidebar. `zcode-send` stops after the send. The check is one engine read that
+must show the run's text, such as `scrap <marker>` after a rename. The pin check sees only the final
+unpinned row, so it can't tell whether the pin happened. The owner adds `~/sleight-scrap` as a ZCode
+project once before a pass. Neither arm may touch other tasks, which belong to running agents. None
+of these has run live.
+
 Notes, Reminders and Calendar have declarative scripting descriptors. `--local-fixtures` accepts a
 private JSON file such as `{"notes":{"id":"fixture-container-id","local":true}}`. The owner must
 identify a local fixture container, with no account data in it. One generic script creates the marker

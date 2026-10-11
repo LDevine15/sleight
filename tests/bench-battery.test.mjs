@@ -14,11 +14,12 @@ function bank(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
-test('catalog covers 31 apps with four shared fixture/check kinds', async () => {
+test('catalog covers 31 apps and 4 ZCode flows with five shared fixture/check kinds', async () => {
   const { tasks, counts } = await load('tasks');
-  assert.equal(tasks.length, 31);
-  assert.deepEqual(counts(tasks), { 'doc-file': 12, 'self-message': 5, 'web-page': 5, 'app-state': 9 });
-  assert.equal(new Set(tasks.map(t => t.bundle)).size, 31);
+  assert.equal(tasks.length, 35);
+  assert.deepEqual(counts(tasks), { 'doc-file': 12, 'self-message': 5, 'web-page': 5, 'app-state': 9, 'app-flow': 4 });
+  assert.equal(new Set(tasks.map(t => t.bundle)).size, 32);
+  assert.equal(new Set(tasks.map(t => t.id)).size, 35);
   for (const task of tasks) {
     assert.equal(task.fixtureKind, task.checkKind);
     assert.equal(typeof task.goal, 'string');
@@ -29,7 +30,7 @@ test('catalog covers 31 apps with four shared fixture/check kinds', async () => 
 test('dry plan alternates arm order and shares a marker and prompt for each pair', async () => {
   const { plan } = await load('plan');
   const all = plan({ ownerPresent: true, runs: 2 });
-  assert.equal(all.runs.length, 124);
+  assert.equal(all.runs.length, 140);
   for (let n = 0; n < all.runs.length; n += 2) {
     const a = all.runs[n], b = all.runs[n + 1];
     assert.equal(a.task, b.task);
@@ -54,8 +55,8 @@ test('battery dry-run never starts an executable, writes outside stdout, or take
     { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   const out = JSON.parse(result.stdout);
-  assert.equal(out.runs.length, 62);
-  assert.deepEqual(out.counts, { 'doc-file': 12, 'self-message': 5, 'web-page': 5, 'app-state': 9 });
+  assert.equal(out.runs.length, 70);
+  assert.deepEqual(out.counts, { 'doc-file': 12, 'self-message': 5, 'web-page': 5, 'app-state': 9, 'app-flow': 4 });
 });
 test('generic document formats roundtrip markers and require a changed saved file for edits', async t => {
   const { writeDocument, readDocument, checkDocument } = await load('documents');
@@ -81,6 +82,28 @@ test('generic checks reject guesses and require structured private answers or fr
   assert.notEqual(checkAnswer('app-state', { ...ctx, state: '' }, JSON.stringify({ marker: ctx.marker })), true);
   assert.equal(checkAnswer('app-state', { ...ctx, state: ctx.marker }, ''), true);
   assert.doesNotMatch(stateReadCode('example.bundle'), /click|pressKey|typeText|setValue|activate/);
+  const flow = { ...ctx, expect: ['scrap $marker'] };
+  assert.equal(checkAnswer('app-flow', { ...flow, state: 'row scrap BATTERY-abc123 now' }, ''), true);
+  assert.notEqual(checkAnswer('app-flow', { ...flow, state: 'row BATTERY-abc123 now' }, ''), true, 'the marker alone is not the rename');
+  assert.notEqual(checkAnswer('app-flow', { ...ctx, expect: [], state: ctx.marker }, ''), true, 'a flow needs expectations');
+});
+test('ZCode flow prompts allow only their own message and keep other tasks off limits', async () => {
+  const { tasks } = await load('tasks'), { promptFor, plan } = await load('plan');
+  const flows = tasks.filter(t => t.fixtureKind === 'app-flow');
+  assert.deepEqual(flows.map(t => t.id), ['zcode-send', 'zcode-rename', 'zcode-pin', 'zcode-sidebar']);
+  for (const task of flows) {
+    assert.equal(task.bundle, 'dev.zcode.app');
+    assert.equal(task.ownerPresent, false);
+    const prompt = promptFor(task, { marker: 'BATTERY-abc123' });
+    assert.match(prompt, /sleight-scrap/);
+    assert.match(prompt, /send exactly: Reply with the single word ok\. BATTERY-abc123/);
+    assert.match(prompt, /Send only the message the steps give/);
+    assert.match(prompt, /other tasks belong to running agents/);
+    assert.doesNotMatch(prompt, /Never send/);
+    assert.doesNotMatch(prompt, /\$marker/);
+  }
+  assert.deepEqual(plan({ wanted: ['zcode-send'] }).ownerSetupOnce.length, 1);
+  assert.deepEqual(plan({ wanted: ['calculator'] }).ownerSetupOnce, []);
 });
 test('battery approval is suite scoped and account apps require the owner', async () => {
   const { tasks } = await load('tasks');

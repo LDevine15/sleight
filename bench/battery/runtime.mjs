@@ -202,7 +202,7 @@ export async function liveRuntime({ pass, option, localFixtures, ownerPresent, c
             ? runDriver(process.env.CLAUDE_BIN || 'claude', ['-p', prompt, ...claudeArgs], {
               cwd: cwd.sleight, env, signal, timeoutMs: 300000, format: 'stream-json', onSpawn, onStdout: stream.receive,
               onPermissionRefusal: () => { blocked = true; controller.abort(); } })
-            : runOwned('codex', ['exec', '--json', '-s', 'read-only', '--disable', 'shell_tool', '-m', option('codex-model', 'gpt-6.1-sol'),
+            : runOwned('codex', ['exec', '--json', '-s', 'read-only', '--disable', 'shell_tool', '-m', option('codex-model', 'gpt-6-luna'),
               '-c', `model_reasoning_effort="${option('codex-effort', option('effort', 'high'))}"`, '--skip-git-repo-check', '-C', cwd.codex, prompt], {
               cwd: cwd.codex, env: { ...env, CODEX_HOME }, signal, timeoutMs: 300000, onSpawn, onStdout: stream.receive }));
         } finally { footprint = await stopCPU?.(); }
