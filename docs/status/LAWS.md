@@ -28,7 +28,9 @@ belong in [STATE.md](STATE.md).
 - Haiku 5.5 at high effort is the default driver for the benchmark and the docs (owner, 2026-10-10,
   once runs moved to the API key). It supersedes Sonnet 5.5 at medium (owner, 2026-10-08, after the
   four-model comparison in `docs/benchmark.md`). Passes before 2026-10-10 ran on Sonnet.
-- Codex runs on gpt-6.1-sol (owner, 2026-10-04), except deep performance tuning in the code, which
+- The benchmark's Codex arm runs gpt-6-luna at the same effort as the Claude arm's Haiku 5.5, medium or
+  high, so both arms use a model of the same class (owner, 2026-10-11). Earlier passes ran gpt-6.1-sol.
+- Codex lanes run on gpt-6.1-sol (owner, 2026-10-04), except deep performance tuning in the code, which
   may run on gpt-6-astra (owner, 2026-10-07).
 - Shopping scenarios run two ways (owner, 2026-10-10): a local shop page that copies a retailer's
   flow for the head-to-head, and real retailer sites as one-run smoke tasks that stop before

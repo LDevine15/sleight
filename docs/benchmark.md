@@ -14,7 +14,8 @@ The battery catalog has 31 tasks (2026-10-11).
 Each task is data: app, bundle ID, goal, fixture kind, check kind and owner-present flag. Four shared
 fixtures and checks handle the catalog. The runner alternates sleight-first and Codex-first pairs.
 Each pair gets the same marker, fixture path or URL and prompt. Document fixtures reset before each
-arm. The drivers use Haiku 5.5 at high effort and gpt-6.1-sol at high effort, as in the existing runner.
+arm. The drivers use Haiku 5.5 and gpt-6-luna at the same effort (owner, 2026-10-11): gpt-6.1-sol is a
+larger class than Haiku, so earlier runs compared Haiku against a bigger model.
 
 ```bash
 node bench/run.mjs --suite battery --dry-run --owner-present

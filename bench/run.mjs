@@ -183,7 +183,8 @@ const realSurfaces = option('surfaces', 'computer');
 if (!['computer', 'browser,computer'].includes(realSurfaces)) throw new Error('--surfaces must be computer or browser,computer');
 const model = option('model', 'claude-haiku-5-5');
 const effort = option('effort', 'high');
-const codexModel = option('codex-model', 'gpt-6.1-sol');
+// The Codex arm matches Haiku's class: gpt-6-luna at Claude's effort (owner, 2026-10-11).
+const codexModel = option('codex-model', 'gpt-6-luna');
 const codexEffort = option('codex-effort', effort);
 const wanted = option('tasks', undefined)?.split(',');
 const claudeBin = process.env.CLAUDE_BIN || 'claude';
