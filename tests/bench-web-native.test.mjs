@@ -71,6 +71,6 @@ test('every web task requests the generic web fixture kind without browser-speci
     openFixture: (_ctx, request) => { assert.equal(request.fixtureKind, 'web-page'); requests.push(request); },
   });
   for (const task of tasks) await task.setup({ nonce: 'abc123' });
-  assert.equal(requests.length, 126);
+  assert.equal(requests.length, 134);
   assert.equal(new Set(requests.map(request => request.bundle)).size, 5);
 });

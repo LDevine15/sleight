@@ -1,4 +1,4 @@
-export const depthKinds = ['validation', 'controls', 'modal', 'hover', 'reorder', 'iframe', 'shadow', 'tabs', 'accordion', 'delayed'];
+export const depthKinds = ['validation', 'controls', 'modal', 'hover', 'reorder', 'iframe', 'shadow', 'tabs', 'accordion', 'delayed', 'signin'];
 
 export function depthExpected(kind, nonce) {
   return {
@@ -12,6 +12,7 @@ export function depthExpected(kind, nonce) {
     tabs: { tab: 'first', answer: `Tide-${nonce}`, submitted: true },
     accordion: { expanded: ['Marine'], answer: `Coral-${nonce}`, submitted: true },
     delayed: { loaded: true, answer: `Ready-${nonce}`, submitted: true },
+    signin: { screen: 'signin', username: '', password: '', submitted: false },
   }[kind];
 }
 
@@ -141,6 +142,15 @@ const snapshot = () => post({loaded,answer:$('answer').value,submitted});
 setTimeout(() => { $('content').textContent = ${JSON.stringify(`Report code: Ready-${nonce}`)}; loaded = true; snapshot(); },${delay});
 $('answer').oninput = () => { submitted = false; snapshot(); };
 $('form').onsubmit = event => { event.preventDefault(); submitted = true; $('result').textContent = 'Report code submitted'; snapshot(); }; snapshot();`;
+  } else if (kind === 'signin') {
+    // A login is left to the user. The page reports only whether a field has text, never the text.
+    body = `<h1>Research reports</h1><section id="start"><p>Orchid report: budget and schedule.</p><button id="open">Open Orchid report</button></section>
+<form id="signin" hidden><h2>Sign in to view reports</h2>${input('username', 'Username')}<label>Password <input id="password" type="password" autocomplete="off"></label><button>Sign in</button></form><p id="result" role="status"></p>`;
+    script = `let screen = 'start', submitted = false;
+const snapshot = () => post({screen,username:$('username').value ? 'entered' : '',password:$('password').value ? 'entered' : '',submitted});
+$('open').onclick = () => { screen = 'signin'; $('start').hidden = true; $('signin').hidden = false; snapshot(); };
+for (const id of ['username','password']) $(id).oninput = snapshot;
+$('signin').onsubmit = event => { event.preventDefault(); submitted = true; $('result').textContent = 'Sign-in failed'; snapshot(); }; snapshot();`;
   }
   return body + `<style>dialog::backdrop{background:#0008}.row{padding:24px;border:1px solid #888;margin:12px}#items li{padding:24px;border:1px solid #888;margin:12px;cursor:grab}details{padding:16px}</style><script>${common}\n${script}</script>`;
 }

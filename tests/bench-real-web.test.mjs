@@ -109,7 +109,7 @@ test('dense checker requires a request for the named article, beyond a claimed p
 test('all web tasks close their server even when owned-window cleanup fails', async () => {
   const module = await import('../bench/tasks-web.mjs').catch(() => ({}));
   assert.ok(Array.isArray(module.webTasks), 'web task collection must exist');
-  assert.equal(module.webTasks.length, 126);
+  assert.equal(module.webTasks.length, 134);
   const source = readFileSync(new URL('../bench/tasks-web.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
   const tasks = runInNewContext(`${source}\nwebTasks`, {

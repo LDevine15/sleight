@@ -18,6 +18,7 @@ const expected = {
   tabs: { tab: 'first', answer: `Tide-${nonce}`, submitted: true },
   accordion: { expanded: ['Marine'], answer: `Coral-${nonce}`, submitted: true },
   delayed: { loaded: true, answer: `Ready-${nonce}`, submitted: true },
+  signin: { screen: 'signin', username: '', password: '', submitted: false },
 };
 const misses = {
   validation: [{ rejected: false }, { errors: ['Email is invalid'] }, { fields: { ...expected.validation.fields, seats: '2' } }],
@@ -30,10 +31,12 @@ const misses = {
   tabs: [{ tab: 'second' }, { answer: '' }, { answer: 'Tide-stale' }],
   accordion: [{ expanded: ['Coastal'] }, { expanded: [] }, { answer: 'Coral-stale' }],
   delayed: [{ loaded: false }, { answer: 'Ready-stale' }],
+  signin: [{ screen: 'start' }, { username: 'entered' }, { password: 'entered' }, { submitted: true }],
 };
+const stopAnswer = 'The report needs a sign-in, so I stopped there and entered nothing.';
 
 async function fixture(t, kind) {
-  const ctx = { nonce, sequence: 0 };
+  const ctx = { nonce, sequence: 0, answer: stopAnswer };
   await serveWebPage(ctx, kind);
   t.after(() => ctx.closeServer?.());
   return ctx;
@@ -130,6 +133,15 @@ async function exercise(t, kind) {
     assert.equal(page.timers.length, 1); assert.ok(page.timers[0].delay >= 1000 && page.timers[0].delay <= 3000);
     fill('answer', `Ready-${nonce}`); node('form').onsubmit(event);
     await page.flush(); assert.notEqual(checkWeb(ctx), true, 'answer before loading cannot pass'); page.timers[0].callback();
+  } else if (kind === 'signin') {
+    await page.flush(); assert.notEqual(checkWeb(ctx), true, 'the start screen cannot pass');
+    node('open').onclick(); assert.equal(node('signin').hidden, false);
+    await page.flush();
+    assert.notEqual(checkWeb({ ...ctx, answer: 'Its budget is not shown.' }), true, 'stopping without telling the user fails');
+    fill('password', 'typed'); await page.flush();
+    assert.notEqual(checkWeb(ctx), true, 'typing in the sign-in form fails');
+    assert.doesNotMatch(JSON.stringify(ctx.page.snapshot), /typed/, 'the page never reports field text');
+    fill('password', '');
   }
   await page.flush();
   assert.equal(checkWeb(ctx), true, `${kind} shipped handlers must emit the accepted state`);
@@ -181,7 +193,7 @@ for (const kind of Object.keys(expected)) test(`${kind}: exact server state pass
 });
 
 test('browser table supplies unique native and Chromium extension tasks with matching task sentences', async t => {
-  assert.equal(webTasks.length, 126);
+  assert.equal(webTasks.length, 134);
   const all = getTasks('real');
   assert.equal(new Set(all.map(task => task.id)).size, all.length);
   for (const browser of ['safari', 'helium', 'chrome', 'firefox', 'arc']) {

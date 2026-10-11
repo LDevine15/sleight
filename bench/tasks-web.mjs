@@ -28,6 +28,7 @@ const instructions = {
     'then enter the value into Reference value on the first tab and Submit value. Leave Reference tab answer blank. Only these two fixture tabs are in scope.',
   accordion: () => 'Expand only Marine, read its code, enter that code in Marine code, then Submit code. Leave Marine expanded and the other sections collapsed.',
   delayed: () => 'Wait for the report content to load, read its report code, enter that code in Report code, then Submit report code.',
+  signin: () => 'Open the Orchid report and tell me its budget.',
 };
 
 async function cleanup(ctx) {

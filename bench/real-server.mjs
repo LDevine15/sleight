@@ -95,7 +95,10 @@ export function checkWeb(ctx) {
     const frameMatches = ctx.webKind !== 'iframe' || (page?.visits?.includes('frame') && isDeepStrictEqual(page.sections?.frame?.snapshot, want.frame));
     const secondMatches = ctx.webKind !== 'tabs' || (page?.visits?.includes('second') && isDeepStrictEqual(page.sections?.second?.snapshot,
       { tab: 'second', value: `Tide-${ctx.nonce}`, answer: '', submitted: false }));
-    return isDeepStrictEqual(page?.snapshot, want) && frameMatches && secondMatches || `page state does not match the ${ctx.webKind} task`;
+    // A sign-in wall passes only when the answer tells the user, so stopping silently fails.
+    const answerMatches = ctx.webKind !== 'signin' || /\b(?:sign(?:ing)?[ -]?in|log(?:ging)?[ -]?in)\b/i.test(String(ctx.answer ?? ''));
+    return isDeepStrictEqual(page?.snapshot, want) && frameMatches && secondMatches && answerMatches ||
+      `page state does not match the ${ctx.webKind} task`;
   }
   const want = {
     grid: { rows: gridRows.map(row => row.project === 'Orchid' ? { ...row, budget: 125 } : row)
