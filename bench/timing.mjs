@@ -6,9 +6,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const TOOLS = new Set(['js', 'drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'blocked_app', 'js_reset']);
+const TOOLS = new Set(['js', 'drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'js_reset']);
 // sleight's own tools run inside the relay process and never reach the engine.
-const LOCAL = new Set(['drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'blocked_app']);
+const LOCAL = new Set(['drag', 'hover', 'menu_bar', 'notifications', 'select_window']);
 
 // Tool-call timing from every trace-*.jsonl in dir. A local tool's time is its
 // own (localMs). Any other call the relay answered itself (a refusal) has no

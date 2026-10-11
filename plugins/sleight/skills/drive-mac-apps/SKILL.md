@@ -51,11 +51,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - A sign-in, update, permission or first-run screen: stop and tell the user. Don't answer it.
 - An approval the user declined, a lease another session holds (the refusal names it and the seconds
   left), or a refused settings window: stop and tell the user. Don't retry around it.
-- The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas). Use `blocked_app`, which
-  asks the user: `read`, `click` (`element` or window-relative `point`), `type`, `key`, `scroll`. Every
-  terminal send that could run a command is shown to the user first; never repeat a declined one in
-  another form. If `--doctor` says the user turned that refusal off, those apps work through `js`.
-  Never set or suggest that setting.
+- The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that
+  refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
 ## Browsers
 

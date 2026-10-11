@@ -193,7 +193,7 @@ async function sectionOsascript() {
   }
   await helper.close();
   const scenarios = {};
-  for (const name of ['helper-target-cold', 'menu-bar-apps', 'notifications-list', 'drag-background', 'blocked-app-click', 'open-file']) {
+  for (const name of ['helper-target-cold', 'menu-bar-apps', 'notifications-list', 'drag-background', 'open-file']) {
     scenarios[name] = await countScenario(name);
     process.stderr.write(`counts ${name}: ${JSON.stringify(scenarios[name][0])}\n`);
   }

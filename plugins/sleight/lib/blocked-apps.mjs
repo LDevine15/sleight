@@ -1,10 +1,7 @@
-// Driving the apps the engine refuses (terminals, OpenAI's own apps) through
-// sleight's own Accessibility path — the one menu_bar and drag use (owner
-// decision, docs/status/LAWS.md, 2026-10-04). OpenAI's helper and engine are
-// never modified, patched or wrapped here; their refusal list is only
-// recognized, and sleight's own code does the driving. There is no other
-// opt-in: when Claude reaches a refused app, the user gets sleight's prompt,
-// and Allow puts the app on the session allowlist like any other app.
+// The apps the engine refuses (terminals, OpenAI's own apps). OpenAI's helper
+// and engine are never modified, patched or wrapped here; their refusal list is
+// only recognized. A user who turns the refusal off themselves gets the engine's
+// per-app approval with sleight's warning, and settings windows stay refused.
 
 // The apps the engine's helper refuses before any approval prompt (README,
 // "Known problems"): terminals, and OpenAI's own apps with their beta builds.
@@ -40,22 +37,18 @@ export function refusedApp(text) {
 }
 
 // Settings and preferences windows of the refused apps are never driven, so
-// Claude cannot change the apps' own approval or safety settings. Terminal
-// titles its settings window after the open pane ("General", "Profiles"), so
-// the driver also inspects AX identifiers, dialog/modal metadata and nested
-// toolbars (blocked-app.js). These title checks are its first filter; engine
-// window headers do not supply that native metadata.
+// Claude cannot change the apps' own approval or safety settings. Engine
+// window headers carry only the title, so the title decides.
 export const SETTINGS_TITLE = /^(?:settings|preferences|réglages|einstellungen|impostazioni|configuración|ajustes|preferencias|設定|设置|偏好设置)(?:…|\.{3})?$/i;
 export const isSettingsTitle = title => typeof title === 'string' && SETTINGS_TITLE.test(title.trim());
-// The exact RegExp construction the driver performs with the relay's request.
 // Terminal names its settings window after the open pane.
 const TERMINAL_SETTINGS_PANES = /^(?:general|profiles|window groups|encodings|advanced)$/i;
 
 // The user can turn off the helper's refusal themselves with
 // `defaults write -g ComputerUseAllowForbiddenTargets -bool YES` (OpenAI's
 // helper reads it; sleight never writes it). Then these apps go through the
-// engine with its per-app approval, and sleight adds what blocked_app had:
-// the prompt says what a yes covers, and settings windows are refused.
+// engine with the same approval card as any app (Always allow included), with
+// one warning line added, and their settings windows are refused.
 export function forbiddenTargetsAllowed(read) {
   try { return /^(?:1|true|yes)$/i.test(String(read()).trim()); } catch { return false; }
 }
@@ -65,8 +58,8 @@ export function forbiddenTargetWarning(app) {
   const match = (bundleLike && matchBlockedApp(app, app)) || matchBlockedApp(app);
   if (!match) return undefined;
   return match.terminal
-    ? `${match.name} is a terminal. A yes lets Claude type and run commands in it for the rest of this session without asking again. Its settings windows stay refused.`
-    : `${match.name} is OpenAI's app. A yes covers every click in it for the rest of this session, its approval buttons included. Its settings windows stay refused.`;
+    ? `This app could be dangerous: ${match.name} is a terminal, and Claude could type and run commands in it.`
+    : `This app could be dangerous: ${match.name} is another AI app, and Claude could approve its actions.`;
 }
 export function isForbiddenSettingsWindow(window) {
   const match = window && matchBlockedApp(window.app, window.appId);
@@ -74,116 +67,12 @@ export function isForbiddenSettingsWindow(window) {
   return isSettingsTitle(window.title) || (match.terminal && TERMINAL_SETTINGS_PANES.test(String(window.title ?? '').trim()));
 }
 
-export const driverSettingsRegExp = () => new RegExp(SETTINGS_TITLE.source, SETTINGS_TITLE.flags);
-
-// A click on a button named like these is named in the result, so the
-// transcript shows that Claude clicked, say, an approval button in Codex.
-export const APPROVAL_BUTTON = /^(approve|allow|run|accept)\b/i;
-export function approvalButton(label) {
-  return APPROVAL_BUTTON.exec(String(label ?? '').trim())?.[1].toLowerCase();
-}
-
-// In a terminal, every key or text that can run a command asks first, so the
-// rule is an allowlist of inert keys: everything outside it is a send, shown
-// exactly as it will be sent, every time, never remembered or pre-approved.
-// ctrl+m, ctrl+j and ctrl+o are Return/C-j/C-o in a shell, and shifted or
-// optioned Returns execute too, which is why the allowlist is this short.
-const INERT_KEYS = new Set(['up', 'down', 'left', 'right', 'tab', 'escape', 'ctrl+c', 'control+c']);
-export function terminalSend(args = {}) {
-  if (args.op === 'type') return typeof args.text === 'string' ? args.text : undefined;
-  if (args.op === 'key') {
-    const key = String(args.key ?? '').trim().toLowerCase().replace(/\s+/g, '');
-    return INERT_KEYS.has(key) ? undefined : `key ${args.key}`;
-  }
-  return undefined;
-}
-
-export const BLOCKED_APP_TOOL = {
-  name: 'blocked_app',
-  description: 'Drive an app the engine refuses (Terminal, iTerm2, ChatGPT, Codex, Atlas) through macOS ' +
-    'Accessibility, which the js tool cannot reach. op "read" returns the window as numbered elements plus a ' +
-    'screenshot file; "click" presses `element` (or a window-relative `point`, which brings the app to the front); ' +
-    '"type" sends `text`; "key" presses `key` ("Return", "super+v"); "scroll" moves `amount` lines, positive up. ' +
-    'The user approves the app once per session. In a terminal, every key or text that can run a command ' +
-    '(any typing, Return, paste, most chords) is shown to the user first and never remembered. Settings ' +
-    'windows are refused.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      op: { type: 'string', enum: ['read', 'click', 'type', 'key', 'scroll'] },
-      app: { type: 'string', description: 'App name, bundle ID or path' },
-      element: { type: 'integer', description: 'click: the element number from read' },
-      point: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'click: window-relative [x, y]' },
-      text: { type: 'string', description: 'type: the exact text to send' },
-      key: { type: 'string', description: 'key: Return, Tab, Escape, super+v, …' },
-      amount: { type: 'integer', description: 'scroll: lines, positive up' },
-    },
-    required: ['op', 'app'],
-    additionalProperties: false,
-  },
-};
-
-const text = (value, isError) => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }], ...(isError ? { isError: true } : {}) });
-
-// Runs one blocked_app op. `target` is the resolved lease target (app name,
-// bundle ID and pid), `approve` is the relay's once-per-session approval with
-// options (the app consent is remembered; terminal sends pass once: true,
-// which is never remembered), `run` executes the driver script, and `shot` is
-// the file a window screenshot is saved to. Everything the user must decide
-// happens before `run`, and every executed action is logged with app, element
-// and text. The resolved pid and bundle ID pin the driver to exactly the app
-// the consent named, so a name alias can never land on a sibling app.
-export async function callBlockedApp(args, { approve, run, target, shot, trace = () => {}, stderr = process.stderr }) {
-  const entry = matchBlockedApp(args.app, target?.appId);
-  if (!entry) {
-    return text('blocked_app only drives the apps the engine refuses (Terminal, iTerm2, ChatGPT, Codex, Atlas and beta builds). ' +
-      'For other apps use the js tool. Nothing was driven.', true);
-  }
-  const name = target?.app ?? entry.name;
-  const consent = entry.terminal
-    ? `Claude will be able to read, click and type in ${name}, including running commands, for the rest of this session. ` +
-      'Every command send is shown to you first.'
-    : `Claude will be able to click in ${name}, including approval buttons, for the rest of this session.`;
-  if (!await approve(['blocked_app', target?.appId ?? entry.name],
-    `Allow Claude to drive ${name} through Accessibility?`, { kind: 'blocked', detail: consent })) {
-    return text(`The user didn't allow Claude to drive ${name}. Stop and tell them; don't work around it.`, true);
-  }
-  if (entry.terminal) {
-    const send = terminalSend(args);
-    if (send !== undefined) {
-      const allowed = await approve(['blocked_app_send', target?.appId ?? entry.name],
-        `Allow Claude to send this to ${name} once?`, { once: true, kind: 'flow',
-          detail: `Exact text sent to ${name}:\n${JSON.stringify(send)}` });
-      if (!allowed) {
-        return text(`The user didn't allow this send to ${name}. Stop and tell them; don't work around it.`, true);
-      }
-    }
-  }
-  const logged = {
-    app: target?.appId ?? args.app, op: args.op,
-    ...(args.element !== undefined ? { element: args.element } : {}),
-    ...(typeof args.text === 'string' ? { text: args.text } : {}),
-    ...(args.key !== undefined ? { key: args.key } : {}),
-    ...(Array.isArray(args.point) ? { point: args.point } : {}),
-  };
-  stderr.write(`sleight: blocked_app ${args.op} ${name}` +
-    (args.element !== undefined ? ` element ${args.element}` : '') +
-    (typeof args.text === 'string' ? ` text ${JSON.stringify(args.text)}` : '') +
-    (args.key !== undefined ? ` key ${args.key}` : '') + '\n');
-  trace('blocked-app-action', logged);
-  const result = await run({
-    ...args, settings: SETTINGS_TITLE.source, settingsFlags: SETTINGS_TITLE.flags,
-    pid: target?.pid, bundle: target?.appId, shot,
-  });
-  if (!result.ok) return text(result.settings ? `${result.error} sleight never drives these apps' settings windows.` : result.error, true);
-  const { ok, ...rest } = result;
-  const notes = [];
-  // In Codex/ChatGPT a click on an approval-like button is named in the result,
-  // so the transcript shows it even when the pane doesn't.
-  const approval = approvalButton(rest.clickedLabel);
-  if (approval) notes.push(`Clicked a button named "${approval}" (element ${rest.clicked}).`);
-  if (rest.note) notes.push(rest.note);
-  if (rest.fronted) notes.push(`${name} came to the front for this action${rest.putBack ? ` and ${rest.putBack} went back` : ''}.`);
-  if (rest.shot) notes.push(`Window screenshot saved at ${rest.shot}; view it with your Read tool.`);
-  return text(notes.length ? `${notes.join(' ')}\n${JSON.stringify(rest, null, 1)}` : rest);
+// What Claude tells the user when the engine refuses one of these apps: the
+// one setting that turns the refusal off, which only the user may run.
+export const ALLOW_FORBIDDEN_COMMAND = 'defaults write -g ComputerUseAllowForbiddenTargets -bool YES';
+export function refusalNotice(app) {
+  return `The engine refuses ${app} before any approval (OpenAI's rule for terminals and its own apps), ` +
+    "so sleight can't drive it. Don't work around this. Tell the user they can lift that refusal themselves " +
+    `by running \`${ALLOW_FORBIDDEN_COMMAND}\` in Terminal. It applies to every app that uses the engine, Codex ` +
+    "included. After that, sleight asks once per session before driving the app, and its settings windows stay refused.";
 }

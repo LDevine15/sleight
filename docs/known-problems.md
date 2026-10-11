@@ -256,27 +256,12 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
 - The engine refuses some apps outright ("not allowed … for safety reasons"): terminals (Terminal,
   iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with their beta builds). The list is built
   into the engine's helper, so no approval changes it. It also respects any app blocks your
-  organization sets. To stop Codex asking for approvals, change Codex's own approval setting. With
-  your opt-in, sleight can drive these apps through its own Accessibility path (see
-  [Driving apps the engine refuses](settings.md#driving-apps-the-engine-refuses)); the engine's refusal itself
-  stays. On that path, settings refusal keeps the title and toolbar filters and now inspects
-  `AXIdentifier` on window containers, `AXModal`, dialog subroles and nested toolbars, independent
-  of the displayed language. The scan goes breadth first. An unreadable window or top level refuses,
-  and the first 300 nodes (12 levels at most) decide. Until 2026-10-11 a longer scan refused, which
-  refused every Codex window ("ChatGPT"). A marker past the first 300 nodes isn't checked now.
-  Unit tests pass 8/8 on constructed trees (2026-10-11), with no live read of Codex since that change.
-  The recording lacks settings attributes, so localized settings still need live
-  qualification. An app that exposes neither a recognized identifier nor dialog or toolbar metadata
-  can still pass with an unknown title. The engine path used when the user disables its refusal
-  still has only title checks. Changing its guard needs a separate relay change.
-  Background scroll reaches the app's focused view. System Events' keystroke
-  doesn't act on
-  an embedded newline in Terminal, so blocked_app sends one Return key press per newline instead.
-  The window screenshot needs Screen Recording for the app that runs Claude Code, on top of the
-  Accessibility permission `menu_bar` and `drag` already need, and it captures only a window that is
-  on screen. In the live check the Codex app's window exposed only its window-control buttons to the
-  driver's walk (its UI is web content), so a harmless click there had no target; Claude refused the
-  window controls and reported, which is the intended behavior.
+  organization sets. To stop Codex asking for approvals, change Codex's own approval setting. You can
+  lift the refusal with one setting (see
+  [Driving apps the engine refuses](settings.md#driving-apps-the-engine-refuses)); without it sleight
+  can't drive these apps. sleight's own Accessibility path for them (`blocked_app`) was removed on
+  2026-10-11. With the setting on, settings windows are refused by title only, so a localized title
+  sleight doesn't know, or Codex settings shown inside its main window, aren't caught.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps)
   before starting. Unlisted apps and requests above their listed risk still need a person.
 - `sleight-mcp setup` (unreleased) runs OpenAI's helper installer when its status isn't OK, opens

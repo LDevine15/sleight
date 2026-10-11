@@ -36,17 +36,17 @@ test('the setting is read only from the user default', () => {
   assert.equal(forbiddenTargetsAllowed(() => { throw new Error('missing key'); }), false);
 });
 
-test('with the setting on, a terminal approval says it covers running commands', async t => {
+test('with the setting on, a terminal approval warns that it can run commands', async t => {
   const asked = [];
   const h = harness(t, { engineForbiddenTargets: true, ask: async message => { asked.push(message); return 'accept'; } });
   h.fromServer(approval('com.apple.Terminal'));
   await settle();
-  assert.match(asked[0], /^Allow Computer Use to use "com\.apple\.Terminal"\? Terminal is a terminal\. A yes lets Claude type and run commands/);
+  assert.match(asked[0], /^Allow Computer Use to use "com\.apple\.Terminal"\? This app could be dangerous: Terminal is a terminal, and Claude could type and run commands/);
   assert.equal(h.toServer.find(m => m.id === 'e1').result.action, 'accept');
 });
 
-test('with the setting on, an OpenAI app approval names its approval buttons', () => {
-  assert.match(forbiddenTargetWarning('com.openai.codex'), /approval buttons included/);
+test('with the setting on, an OpenAI app approval warns that it is another AI app', () => {
+  assert.match(forbiddenTargetWarning('com.openai.codex'), /could be dangerous: .* is another AI app/);
   assert.equal(forbiddenTargetWarning('com.apple.TextEdit'), undefined);
 });
 

@@ -1,14 +1,14 @@
 {
-  "skill": "a0d845be594fa0eabb85953e5c1f1786a3a55afa25269d3251366262466b4659",
-  "tools": "5e7c614bbb131254d88a836796b8d80127347a25fc65ed9fd7c0a1a63573c772",
+  "skill": "6eb31c9412bd4e36da7e4c051b0617fd8fb09917a40a4b749fa37ee0be5a292d",
+  "tools": "5c20895ce631d415d6ee11ea9a1357b1f32d64f5634b6045175c090422b6721a",
   "batch": "aab9c612b29e726dcacf915b1c565dfc65ae3c455bc7561a3f1ea2d3733d4406",
   "merge": "5bd0464e07e16924b32d03a806ec8a6f47c2ed254026b394cbaa26b5c3e8a32d",
-  "notices": "b3cf0bc0f1be4064e70252ba7f4cdd4131b02241aa4300fcd0b0d767fdce73ce",
+  "notices": "13ce95888c95769efcfa525ae917109c2a2f5cdd3ed2c3af2200223df0978a02",
   "skillSafety": [
     "Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes\nit. If an app isn't approved, ask the user, or stop when a headless run refuses it.",
     "- A sign-in, update, permission or first-run screen: stop and tell the user. Don't answer it.",
     "- An approval the user declined, a lease another session holds (the refusal names it and the seconds\n  left), or a refused settings window: stop and tell the user. Don't retry around it.",
-    "- The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas). Use `blocked_app`, which\n  asks the user: `read`, `click` (`element` or window-relative `point`), `type`, `key`, `scroll`. Every\n  terminal send that could run a command is shown to the user first; never repeat a declined one in\n  another form. If `--doctor` says the user turned that refusal off, those apps work through `js`.\n  Never set or suggest that setting.",
+    "- The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that\n  refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.",
     "- Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.",
     "- Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut\n  per call). Never clear or replace the user's clipboard to get around a refusal.\n- `SLEIGHT_CHANGE_REVIEW=1`: acquire before editing, save before `review_changes`, and never decide for\n  the user. `SLEIGHT_APPROVAL_SCOPE=document`: call `document_scope` after acquiring, and ask when it\n  stops a call. A flow rule that stops a transfer: tell the user which, and after a `flow_exception`\n  yes, retry the identical call once."
   ],
@@ -32,12 +32,6 @@
       "Refuses points covered by another app or a different window of the same app; do not retry unchanged.",
       "Brings the app forward, waits for hover UI, captures a screenshot while hovered, then restores the pointer and front app.",
       "The user approves each app once per session."
-    ],
-    "blocked_app": [
-      "Drive an app the engine refuses (Terminal, iTerm2, ChatGPT, Codex, Atlas) through macOS Accessibility, which the js tool cannot reach.",
-      "The user approves the app once per session.",
-      "In a terminal, every key or text that can run a command (any typing, Return, paste, most chords) is shown to the user first and never remembered.",
-      "Settings windows are refused."
     ],
     "drag": [
       "Pass `windowId` when several windows fit; an ambiguous target refuses.",

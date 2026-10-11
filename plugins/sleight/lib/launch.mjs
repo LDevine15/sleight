@@ -12,7 +12,7 @@
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +25,7 @@ import { InputLease } from './input-lease.mjs';
 import { collectOwnedEngine } from './checked-stop.mjs';
 import { addPreapproved, listPreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
 import { createGrantAudit } from './preapproved-audit.mjs';
-import { BLOCKED_APP_TOOL, callBlockedApp, forbiddenTargetsAllowed, matchBlockedApp } from './blocked-apps.mjs';
+import { ALLOW_FORBIDDEN_COMMAND, forbiddenTargetsAllowed, matchBlockedApp } from './blocked-apps.mjs';
 import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
 import { probeHelper, staleHelperJobs } from './helper-health.mjs';
 import { replayBridge } from './replay.mjs';
@@ -145,7 +145,7 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   log(`Codex computer-use ${s.version}`);
   log(`config    ${s.configPath}`);
   log(`surfaces  ${s.env.CUA_REPL_ENABLED_SURFACES}`);
-  log(`refused apps  ${forbiddenTargetsAllowed(forbiddenTargets) ? 'allowed through the engine (ComputerUseAllowForbiddenTargets is on)' : 'refused by the engine; blocked_app drives them'}`);
+  log(`refused apps  ${forbiddenTargetsAllowed(forbiddenTargets) ? 'allowed through the engine (ComputerUseAllowForbiddenTargets is on)' : `refused by the engine (the user can run ${ALLOW_FORBIDDEN_COMMAND})`}`);
   let ok = true;
   for (const [label, path] of checks) {
     const found = Boolean(path) && existsSync(path);
@@ -255,8 +255,7 @@ export function askWithDialog(message, sessionScoped, options = {}, launch = exe
   if (!claudeCode) question = question.replace(/^Allow Claude to /, 'Allow this agent to ');
   const review = options?.kind === 'review';
   const flow = options?.kind === 'flow';
-  // Blocked-app consent and terminal sends bring their own plain-words detail.
-  const detail = flow || options?.kind === 'blocked' ? options.detail : review ? `${options.detail}\n\nUndo restores the saved copy shown above. Reopen it in the app afterward. Later leaves the decision pending.` : (app ? `${claudeCode ? 'Claude' : 'The agent'} can then click and type in ${app} in the background. ` : '') +
+  const detail = flow ? options.detail : review ? `${options.detail}\n\nUndo restores the saved copy shown above. Reopen it in the app afterward. Later leaves the decision pending.` : (app ? `${claudeCode ? 'Claude' : 'The agent'} can then click and type in ${app} in the background. ` : '') +
     (sessionScoped ? `Allow lasts until ${claudeCode ? 'this Claude session' : 'this sleight server session'} ends.${options?.always ? ' Always Allow adds it to your pre-approved list.' : ''}` : 'It asks again next time.');
   const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), flow ? 'flow' : review ? 'review' : 'approval', claudeCode ? 'claude-code' : 'generic', ...(options?.always ? ['always'] : [])];
   return new Promise((resolve, reject) => {
@@ -347,7 +346,6 @@ export function localToolDefinitions(env = process.env) {
     ...(env.SLEIGHT_SELECT_WINDOW === '0' ? [] : [SELECT_WINDOW_TOOL]),
     ...(env.SLEIGHT_MENU_BAR === '0' ? [] : MENU_BAR_TOOLS),
     ...(env.SLEIGHT_HOVER === '0' ? [] : [HOVER_TOOL]),
-    BLOCKED_APP_TOOL,
     ...(env.SLEIGHT_DRAG === '0' ? [] : [DRAG_TOOL]),
     ...(env.SLEIGHT_OPEN_FILE === '0' ? [] : [OPEN_FILE_TOOL]),
   ];
@@ -518,10 +516,6 @@ export function runScript(script, request, options = {}) {
   });
 }
 
-// Set in run(); the trace writer is on whenever tracing is asked for or the
-// blocked-apps feature is enabled, so every blocked_app action reaches it.
-let relayTrace = () => {};
-
 const text = (value, isError) => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }], ...(isError ? { isError: true } : {}) });
 
 async function performDrag(args, runLocal) {
@@ -555,20 +549,7 @@ async function performDrag(args, runLocal) {
   return text(rest, !ok);
 }
 
-// target is the resolved lease target the relay passes (bundle ID and pid),
-// which pins blocked_app to exactly the app the consent named.
-export async function callLocalTool(name, args, approve, runLocal = runScript, target) {
-  if (name === 'blocked_app') {
-    // Consent, terminal per-send prompts, logging and settings refusal live in
-    // callBlockedApp; this only supplies the driver and a screenshot path.
-    return callBlockedApp(args, {
-      approve,
-      run: request => runLocal('blocked-app.js', request),
-      target,
-      shot: join(tmpdir(), `sleight-blocked-${process.pid}-${Date.now()}.png`),
-      trace: relayTrace,
-    });
-  }
+export async function callLocalTool(name, args, approve, runLocal = runScript) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
       return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
@@ -636,7 +617,6 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   const { trace, grantAudit } = approvalLogging(preapproved);
-  relayTrace = trace;
   const s = resolveServer();
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
@@ -708,8 +688,6 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     // SLEIGHT_MENU_BAR=0 leaves out the menu bar and notification tools,
     // SLEIGHT_DRAG=0 the drag tool, SLEIGHT_HOVER=0 the hover tool,
     // SLEIGHT_SELECT_WINDOW=0 window selection.
-    // blocked_app is always listed; the user's approval of its prompt is the
-    // whole opt-in.
     localTools: {
       tools: localToolDefinitions(),
       call: callLocalTool,
@@ -719,7 +697,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
         return result.target;
       },
     },
-    trace: relayTrace,
+    trace,
     guardTiming: !!process.env.SLEIGHT_TRACE,
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',
     // SLEIGHT_SKILL=none leaves the skill out, for A/Bs. The app-agnostic skill replaced the old one after

@@ -61,9 +61,6 @@ The roadmap's native exclusions all need replacement or omission in an initial p
 - `menu_bar` and `notifications` share [menubar.js](../../plugins/sleight/lib/menubar.js), which reads
   System Events menu bars and macOS notification banners. Windows tray and notification controls
   would be separate work.
-- `blocked_app` uses [blocked-app.js](../../plugins/sleight/lib/blocked-app.js) and
-  [blocked-apps.mjs](../../plugins/sleight/lib/blocked-apps.mjs), with macOS Accessibility and bundle
-  identities. Omit it in a spike and retain engine refusals.
 - [keyboard-taps.js](../../plugins/sleight/lib/keyboard-taps.js) and
   [bench/keyboard-taps.swift](../../bench/keyboard-taps.swift) query `CGGetEventTapList`.
 - [watch.sh](../../scripts/watch.sh) and [watch-install.sh](../../scripts/watch-install.sh) use

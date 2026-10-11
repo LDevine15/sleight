@@ -297,7 +297,7 @@ build what nobody has. Sources are `.dev/research/2026-10-04-competitors.md` and
   user's demonstration merged with routines (`da78144`). Its live check is open.
 - Parked (owner, 2026-10-11). Windows (owner's idea, 2026-10-09). Codex computer use reached Windows on 2026-05-29, foreground
   only. The relay, guards, mod and benchmark could carry over. `drag.js`, `menu_bar`,
-  `notifications`, `blocked_app`, the keyboard-tap check and the launchd watch are macOS-only
+  `notifications`, the keyboard-tap check and the launchd watch are macOS-only
   (`docs/design/windows.md`). Research on 2026-10-10 didn't find a public report of it working on ARM64,
   and one of it failing at startup there (Codex #52133). In a VMware VM screenshots timed out
   (#51589). An outside stdio client did start `cua-repl.mjs` and list apps, but only with the

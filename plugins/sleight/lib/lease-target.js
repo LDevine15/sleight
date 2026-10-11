@@ -1,4 +1,4 @@
-// Resolve a local pointer tool's app (drag, hover, blocked_app) without
+// Resolve a local pointer tool's app (drag, hover) without
 // activating it or choosing a window.
 ObjC.import('AppKit');
 function run(argv) {

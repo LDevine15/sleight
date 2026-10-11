@@ -14,8 +14,7 @@ a menu-bar-only timeout points to `menu_bar`), 272/272 on the touched test files
 for a free Mac. Triage of known-problems (2026-10-12), of about 120 items: 19 are fixable and 30
 are outside our control. The other 73 leave the doc (65 aren't user problems, and 8 are stale). Next, the doc cut
 and the small fixes here, then the M fixes in lanes. The engine plugin is now 26.1007.30912 (folder dated 2026-10-11 12:45);
-the watch's baseline is still 26.1007.21159, so the 9:00 watch diffs it. One Claude session from
-2026-10-10 still runs sleight 1.1.0 (pid 2268). Everything since 1.2.5 passed only the test
+the watch's baseline is still 26.1007.21159, so the 9:00 watch diffs it. `remove-blocked-app` is cherry-picked onto `pane/auto-mode`. Everything since 1.2.5 passed only the test
 files it touched, plus `lint:prose`. The first full check on `pane/auto-mode` is owed. Live lock and
 hold are free. No background job is running and none needs relaunching.
 
@@ -31,12 +30,8 @@ then `gh release create` from the CHANGELOG section. Public CI is Linux, without
 Claude Code 2.1.288: check new tests for macOS binaries, `/private/tmp` and dev-dependency imports first.
 
 **In flight.**
-- Branch `remove-blocked-app` (`e536f38`, private only, owner's order 2026-10-11): `blocked_app`
-  removed, engine refusals point the user to `ComputerUseAllowForbiddenTargets`, and Always allow is
-  offered for terminals and OpenAI's apps with a "could be dangerous" line. 245/245 on its 9 affected
-  test files. It branched from `e640e28` and `pane/auto-mode` has moved on: cherry-pick it onto
-  `pane/auto-mode`, never rebase (conflicts likely in LAWS, ROADMAP, STATE, known-problems and
-  settings docs), run the full check, push. It supersedes `e640e28` (blocked_app's settings-scan fix).
+- `remove-blocked-app` (`e536f38`) is cherry-picked onto `pane/auto-mode` (2026-10-12) and supersedes
+  `e640e28`. Its full check and live check are owed with the rest.
 - Lane owned-abort (Codex, `~/Projects/sleight-wt/owned-abort`, branch `codex/owned-abort` at
   `245a186`): uncommitted `bench/preapproved-process.mjs` and `tests/preapproved-process-abort.test.mjs`,
   recording an EPERM while cancelling instead of throwing from the abort listener. No report yet.

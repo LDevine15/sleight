@@ -62,10 +62,6 @@ const scenarios = {
     await health.target({ app: 'Calculator' });
     await callLocalTool('drag', { app: 'Calculator', from: [0, 0], to: [10, 10] }, approve, runLocal);
   }),
-  'blocked-app-click': () => count(async () => {
-    const target = (await health.target({ app: 'iTerm2' })).target;
-    await callLocalTool('blocked_app', { app: 'iTerm2', op: 'click', element: 1 }, approve, runLocal, target);
-  }),
   'open-file': () => count(async () => {
     await health.target({ app: 'Calculator' });
     await callLocalTool('open_file', { app: 'Calculator', path: join(lib, '..', 'assets', 'icon.png') }, approve, runLocal);

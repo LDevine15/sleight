@@ -17,7 +17,6 @@ const stubStdout = (script, args) => {
     'drag-focus.js': { ok: true, app: 'Calculator', bundleId: 'com.apple.calculator', frontApp: 'Calculator', frontBundleId: 'com.apple.calculator' },
     'drag.js': { ok: true, path: 'background', ms: 1 },
     'menubar.js': { ok: true },
-    'blocked-app.js': { ok: true },
     'input-state.js': { ok: true, buttons: [] },
   };
   if (script === 'ask.js') return 'accept\\n';

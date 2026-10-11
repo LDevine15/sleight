@@ -185,7 +185,7 @@ backed files after edits. It cannot supply a universal preview or undo a sent me
 
 Acceptance must be a user event from the host. Keep model output and page contents outside the
 approval channel. A trusted version must prevent agent tools from operating its confirmation UI.
-Today's `blocked_app` opt-in can permit clicks on ChatGPT approval buttons, so app consent alone
+An approval for ChatGPT or Codex can permit clicks on their approval buttons, so app consent alone
 does not establish who pressed a confirmation. The pilot cannot guarantee this isolation across
 other tools.[^settings][^document]
 

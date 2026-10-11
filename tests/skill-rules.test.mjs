@@ -22,5 +22,5 @@ test('a missing or empty skill gives no rules', t => {
 test('the skill names no app and keeps the safety rules', () => {
   const rules = skillRules();
   assert.doesNotMatch(rules, /TextEdit|Calculator|Chess|Safari|Helium|iPhone|Simulator|Slack/);
-  for (const rule of [/preapproved\.json/, /blocked_app/, /Never set or suggest that setting/, /flow_exception/, /lease/]) assert.match(rules, rule);
+  for (const rule of [/preapproved\.json/, /Never run that command yourself/, /flow_exception/, /lease/]) assert.match(rules, rule);
 });

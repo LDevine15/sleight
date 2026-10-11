@@ -178,7 +178,7 @@ export class TurnJournal {
       const { call } = event;
       if (!event.response) {
         const code = call.code ?? '';
-        const actions = call.name === 'js' ? actionsOf(code, secrets) : [{ action: ['drag', 'hover', 'menu_bar', 'blocked_app', 'select_window', 'notifications'].includes(call.name) ? call.name : 'opaque tool call', target: { expression: 'redacted' }, result: 'unknown' }];
+        const actions = call.name === 'js' ? actionsOf(code, secrets) : [{ action: ['drag', 'hover', 'menu_bar', 'select_window', 'notifications'].includes(call.name) ? call.name : 'opaque tool call', target: { expression: 'redacted' }, result: 'unknown' }];
         const args = call.args ?? {};
         const read = call.name === 'js' ? isLeaseRead(code) : ['read', 'list', 'apps'].includes(args.op);
         call.summary = { tool: call.name === 'js' ? 'js' : actions[0].action, app: current?.window.app ?? null, window: current?.window.title ?? null, document: documentName(current?.window),

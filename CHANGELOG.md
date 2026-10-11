@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- `blocked_app` no longer refuses a window just because its tree passes 300 nodes or 12 levels.
-  That rule refused every Codex window (titled "ChatGPT"). The settings scan now goes breadth first
-  and decides on the first 300 nodes.
+- `blocked_app` is gone. When the engine refuses a terminal or OpenAI's app, the result gives the one
+  setting that lifts the refusal (`ComputerUseAllowForbiddenTargets`), which only the user turns on.
+- With that setting on, terminals and OpenAI's apps get the same approval card as any app, Always
+  allow included, with one line saying the app could be dangerous.
 - When the engine's helper crashes during a read ("native pipe closed before response"), sleight
   sends the read again once, 2 s later, so Claude doesn't spend a turn on it. A call with actions is
   never resent, and Claude hears that its actions may or may not have run.

@@ -108,9 +108,8 @@ Also runs as a plain MCP server: see [other hosts](docs/other-hosts.md).
 - It's light on context. After each action Claude gets only what changed. On the CNN front page,
   scrolling down five times sent 39,655 characters instead of 203,160 (0.10.0).
 - It asks once per app per session, unless you chose "Always allow" in its prompt or in Codex or
-  ChatGPT. Terminals and
-  OpenAI's apps stay off until you opt in, and sleight shows you each terminal command first unless
-  you turn that off too.
+  ChatGPT. Terminals and OpenAI's apps work once you lift the engine's refusal with one setting,
+  and their prompt says the app could be dangerous.
 - It's faster than Codex on the same engine. Against native Codex computer use (1.2.0, the owner
   away), both passed 9/9 and sleight took 22.0 s a run against 44.6 s, at 4.68 against 4.84 CPU
   seconds. On 12 browser tasks in Safari and Helium both passed 24/24, at 28.5 s against 41.8 s.

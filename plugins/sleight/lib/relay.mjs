@@ -45,11 +45,9 @@
 // `options.once` asks and is never remembered (a terminal command send);
 // `options.kind` and `options.detail` shape the prompt.
 //
-// When the local blocked_app tool is registered, the relay annotates the
-// engine's refusals of Terminal, iTerm2 and OpenAI's own apps with an offer of
-// it: that tool drives those apps through sleight's own Accessibility path
-// (see blocked-apps.mjs), and the user's approval of the prompt is the whole
-// opt-in. The refusal itself is OpenAI's and is never changed.
+// The relay annotates the engine's refusals of Terminal, iTerm2 and OpenAI's
+// own apps with the one setting that lifts them, which only the user runs (see
+// blocked-apps.mjs). The refusal itself is OpenAI's and is never changed.
 //
 // `idleTurnEndMs`, when given, ends a used turn once no engine call has been
 // running for that long. Hosts without the mod (the desktop app's Claude Code)
@@ -69,7 +67,7 @@ import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree } from './compact-reads.mjs';
-import { forbiddenTargetWarning, isForbiddenSettingsWindow, matchBlockedApp, refusedApp } from './blocked-apps.mjs';
+import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
@@ -141,7 +139,6 @@ export function promptNotice(text, prompt) {
     .replace('Change review: an action is still pending, so this read cannot take a later copy. ', 'Change review: pending action. ')
     .replace(/Numbers in this window changed since your last full read, and .*? isn't one you've seen since\. /, '')
     .replace(/this call computes an element number \(.*?\), and numbers in this window changed since your last full read\. /, 'Computed stale number. ')
-    .replace("sleight's blocked_app tool drives the app through macOS Accessibility instead: ", 'blocked_app: ')
     .replace(/The SkyComputerUseService read path appears stuck: .*?answer Accessibility, but the control app's engine read also timed out\. /, 'Helper read path appears stuck. ')
     .replace(/Reads of .*? timed out twice\. The app and helper cause was not determined; sleight could not distinguish them with its independent checks\. /, 'Read timeout; cause unknown. ')
     .replace(/, while a fresh engine read of .*? responds\. /, '. ')
@@ -434,13 +431,14 @@ export function createRelay({
   }
   const approvalRequests = new Map(); // server request id -> approval key and stop generation
   const alwaysOffered = new Map(); // server request id -> { app, riskLevel } offered "Always allow"
-  // "Always allow" is offered only for a session-scoped engine app approval, never for terminals or
-  // OpenAI's apps, and only the user's answer to sleight's prompt or Claude Code's form can pick it.
+  // "Always allow" is offered only for a session-scoped engine app approval, terminals and OpenAI's
+  // apps included (owner, 2026-10-11), and only the user's answer to sleight's prompt or Claude Code's
+  // form can pick it.
   function alwaysChoice(msg) {
     const meta = msg.params?._meta;
     const app = meta?.tool_params?.app, riskLevel = meta?.riskLevel ?? 'high';
     // The engine names an app by bundle ID or by name, so check both ways.
-    if (!alwaysAllow || approvalScope !== 'session' || approvalKey(msg) === undefined || matchBlockedApp(app) || matchBlockedApp(app, app)) return undefined;
+    if (!alwaysAllow || approvalScope !== 'session' || approvalKey(msg) === undefined) return undefined;
     if (!['low', 'medium', 'high'].includes(riskLevel)) return undefined;
     return { app, riskLevel };
   }
@@ -967,8 +965,7 @@ export function createRelay({
       return true;
     }
     const read = name === 'js' ? typeof code === 'string' && isLeaseRead(code)
-      : (name === 'menu_bar' && args.op === 'apps') || (name === 'notifications' && args.op === 'list') ||
-        (name === 'blocked_app' && args.op === 'read');
+      : (name === 'menu_bar' && args.op === 'apps') || (name === 'notifications' && args.op === 'list');
     const acquisition = read && withoutEcho(code ?? '').match(/^(?:(?:(let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*)?await\s+cua\.getApp\(\s*(.*?)\s*\)\s*;?$/s);
     const handle = acquisition ? acquisition[2] ?? (constApp ? undefined : 'app')
       : read && code?.match(/([A-Za-z_$][\w$]*)\.(?:getAXState|getAXStateAndScreenshot|getScreenshot)\(/)?.[1];
@@ -1290,9 +1287,8 @@ export function createRelay({
 
   // Approval for a local tool: once per key and session, like app approvals.
   // options.once asks and is never remembered, for sends that must reach the
-  // user every time (a terminal command send). The user's pre-approved list
-  // covers drag, menu_bar and blocked_app's per-app consent at the same risk
-  // level as the other local tools, but never a once ask.
+  // user every time. The user's pre-approved list covers drag, menu_bar and
+  // open_file per app, but never a once ask.
   function approve(keyParts, message, callId, options = {}) {
     const generation = stopGeneration;
     const key = JSON.stringify(['sleight', ...keyParts]);
@@ -1300,7 +1296,7 @@ export function createRelay({
     // pre-approved list and never from session memory.
     const scoped = approvalScope === 'session' && !options.once;
     const preapprovable = !options.once && keyParts.length === 2 &&
-      ['drag', 'menu_bar', 'blocked_app', 'open_file'].includes(keyParts[0]);
+      ['drag', 'menu_bar', 'open_file'].includes(keyParts[0]);
     const decided = asking.then(async () => {
       if (generation !== stopGeneration || closing || disposed) return false;
       let auditFailed = false;
@@ -1340,9 +1336,8 @@ export function createRelay({
     if (name === 'select_window') clearSelection();
     try {
       current();
-      // blocked_app reserves the whole app for its actions, like drag and
-      // hover, and its consent names the resolved app even on reads.
-      const appTool = ['drag', 'hover', 'blocked_app', 'select_window', 'open_file'].includes(name);
+      // These tools reserve the whole app for their actions.
+      const appTool = ['drag', 'hover', 'select_window', 'open_file'].includes(name);
       if (appTool) {
         current();
         try {
@@ -1378,7 +1373,7 @@ export function createRelay({
         }
         return allowed;
       // The fourth argument stays runLocal for callLocalTool; the resolved
-      // lease target rides fifth, where blocked_app reads it.
+      // lease target rides fifth.
       }, undefined, resolved);
       current();
       if (msg.params.name === 'select_window' && !result.isError) {
@@ -1565,7 +1560,7 @@ export function createRelay({
       if (disposed) { changeStop(msg, 'session has ended'); return; }
       if (flowAsking) { flowStop(msg, 'wait for the user decision'); return; }
       if (flowRules && msg.params?.name === FLOW_TOOL.name) { flowException(msg); return; }
-      if (flowRules && !['js', 'drag', 'menu_bar', 'blocked_app'].includes(msg.params?.name)) { flowPermit = undefined; flowPending = undefined; }
+      if (flowRules && !['js', 'drag', 'menu_bar'].includes(msg.params?.name)) { flowPermit = undefined; flowPending = undefined; }
       if (changeReview && msg.params?.name === REVIEW_TOOL.name) { reviewChanges(msg); return; }
       if (reviewing) { changeStop(msg, 'the user is reviewing changes, wait for their decision'); return; }
     }
@@ -1632,7 +1627,7 @@ export function createRelay({
         promptNotice(`sleight stopped this call before it ran: \u0060${unawaited}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await and send it again.`, prompt) }] } });
       return;
     }
-    if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar', 'blocked_app'].includes(msg.params?.name)) {
+    if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
       if (running.size || localRunning.size || documentAsking || reviewing) { flowStop(msg, 'wait for the pending call or prompt'); return; }
       if (msg.id === undefined || (msg.params.name === 'js' && typeof originalCode !== 'string')) { flowStop(msg, 'a request id and JavaScript code are required'); return; }
       flowPlan = flowRules.analyze(msg.params.name, msg.params.arguments, lastWindow);
@@ -2287,7 +2282,7 @@ export function createRelay({
     }
     // The engine refuses Terminal, iTerm2 and OpenAI's own apps before any
     // approval, so a user consent can never enable the engine on them. Say so,
-    // and offer sleight's own Accessibility path: the prompt is the opt-in.
+    // with the setting only the user may change.
     // The helper quits after about 20 s idle and relaunches on the next call;
     // a call during that restart can fail before reaching any app (2026-10-05).
     if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
@@ -2297,16 +2292,13 @@ export function createRelay({
       msg.result.content.some(c => c.type === 'text' && HELPER_CRASHED.test(c.text ?? ''))) {
       msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. Any action in this call may or may not have run, so read the app before you repeat one. A read alone is safe to repeat.", prompt) });
     }
-    if (localNames.has('blocked_app') && msg.method === undefined && msg.result) {
+    if (msg.method === undefined && msg.result) {
       const text = (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       const refused = refusedApp(text);
       if (refused) {
         trace('blocked-app-refusal', { app: refused });
         msg.result = { ...msg.result, content: [...(msg.result.content ?? []), { type: 'text', text:
-          promptNotice(`The engine's helper refuses ${refused} before any approval, so the js tool cannot drive it. ` +
-          "sleight's blocked_app tool drives the app through macOS Accessibility instead: the user approves " +
-          'the app once per session, and each command send to a terminal is shown to them first. ' +
-          'Ask the user, then use blocked_app; its settings windows are refused.', prompt) }] };
+          promptNotice(refusalNotice(refused), prompt) }] };
       }
     }
     if (msg.method === undefined) { reportPreapprovals(msg); finishedCall(msg.id); }
