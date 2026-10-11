@@ -29,6 +29,12 @@ export function ownedTrialPath(path) {
   return path;
 }
 
+// A skipped attach used to print "undefined" (2026-10-11 sitting): opened stayed true and
+// neither cleanupError nor error was set.
+export function unconfirmedCloseDetail(run) {
+  return run.cleanupError ?? run.error ?? run.skipped ?? 'no close result';
+}
+
 export function probeClientOptions(spaceProbe) {
   return { relay: true, relayOptions: { changeReview: false, spaceProbe } };
 }
@@ -379,7 +385,7 @@ async function main() {
             if (run.cleanup.ownedFront || !run.cleanup.foregroundSame) fatal ??= 'Foreground changed during the run';
           } catch (error) { run.cleanupError = error.message; }
         }
-        if (opened || attached) { unconfirmed = run; fatal ??= `Owned document not confirmed closed: ${run.cleanupError ?? run.error}`; }
+        if (opened || attached) { unconfirmed = run; fatal ??= `Owned document not confirmed closed: ${unconfirmedCloseDetail(run)}`; }
       }
       console.log(JSON.stringify({ index: run.index, phase: run.phase, variant: run.variant, hang: run.hang, msToSave: run.msToSave,
         skipped: run.skipped, error: run.error, cleanup: run.cleanup?.method ?? run.cleanupError }));

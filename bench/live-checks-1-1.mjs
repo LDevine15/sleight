@@ -92,6 +92,12 @@ export function planStaleBatch(tree) {
   return { numbers, expected: '56', code: numbers.map(n => `await app.click(${n})`).join('; ') };
 }
 
+// The 2026-10-11 sitting read "7" from the batch text after a named remap. A compacted
+// batch can still carry the edit field from the click that typed 7.
+export function pickStaleNumberDisplay(batchText, freshText) {
+  return calculatorValue(freshText);
+}
+
 export function judgeStaleNumber({ text = '', display, expected, error = false }) {
   const named = /renumbered the window|was found by its line|stale-remapped/.test(text);
   const displayOk = display === expected;
@@ -268,9 +274,8 @@ async function runStaleNumber(client, report, traces) {
   report.numbers = plan.numbers;
   const batch = await client.call('js', { code: plan.code, timeout_ms: 90000 });
   const shown = toolText(batch);
-  let display;
-  try { display = calculatorValue(shown); }
-  catch { display = calculatorValue(await readCalculator(client)); }
+  report.batchText = shown;
+  const display = pickStaleNumberDisplay(shown, await readCalculator(client));
   const judgment = judgeStaleNumber({
     text: shown + '\n' + traces.join('\n'), display, expected: plan.expected, error: !!batch?.isError,
   });

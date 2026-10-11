@@ -9,12 +9,25 @@ ObjC.import('CoreGraphics');
 
 const OWNED_PATH = /^\/private\/tmp\/sleight-save-lock-[A-Za-z0-9]+\/trial\.txt$/;
 
+function ownedDocumentPath(url) {
+  if (typeof url !== 'string' || !url.startsWith('file:')) return '';
+  try {
+    let path = decodeURI(url.replace(/^file:\/\/localhost\//, 'file:///').replace(/^file:\/\//, ''));
+    if (path.startsWith('/tmp/')) path = '/private' + path;
+    return path.replace(/\/$/, '');
+  } catch { return ''; }
+}
+function sameOwnedURL(actual, expected) {
+  const a = ownedDocumentPath(actual), b = ownedDocumentPath(expected);
+  return Boolean(a) && a === b;
+}
+
 // The owned URL must be exactly one window. Extra owner documents and empty
 // untitled windows are tolerated because this probe uses the already-running
 // TextEdit (Open panel, not an isolated launch). Any dialog or sheet refuses.
 function acceptOwnedWindows(rows, expectedURL) {
   if (!Array.isArray(rows) || rows.length === 0) return { accept: false, retry: true, reason: 'No window yet' };
-  const owned = rows.filter(r => r.document === expectedURL);
+  const owned = rows.filter(r => sameOwnedURL(r.document, expectedURL));
   if (owned.length === 0) return { accept: false, retry: true, reason: 'Owned document window not open yet' };
   if (owned.length > 1) return { accept: false, reason: 'Ambiguous owned windows' };
   if (owned[0].modal || owned[0].sheet) return { accept: false, reason: 'Owned window has a dialog or sheet' };
@@ -82,7 +95,7 @@ function run() {
     attachedCount = rows.length;
     win = rows[choice.owned].el; area = rows[choice.owned].area;
     if (!area) throw new Error('Text area unavailable');
-    for (const name of ['AXMainWindow', 'AXFocusedWindow']) if (value(attr(ax, name), 'AXDocument') !== expectedURL) throw new Error('Input window differs from owned document');
+    for (const name of ['AXMainWindow', 'AXFocusedWindow']) if (!sameOwnedURL(value(attr(ax, name), 'AXDocument'), expectedURL)) throw new Error('Input window differs from owned document');
   }
   function verify() {
     if (frontPid() !== front || frontPid() === pid) throw new Error('Foreground changed; no input sent');
@@ -182,7 +195,7 @@ function run() {
         let rows;
         try { rows = windowRows(); } catch (e) { throw new Error('Owned window unreadable after close: ' + e.message); }
         if (rows.some(w => w.modal || w.sheet)) throw new Error('A dialog or sheet appeared on close; no prompt answered');
-        if (!rows.some(w => w.document === expectedURL)) {
+        if (!rows.some(w => sameOwnedURL(w.document, expectedURL))) {
           win = area = attachedCount = undefined;
           return { ...result, gone: true, method: 'ax-close', cleanup: 'pid-lookup' };
         }

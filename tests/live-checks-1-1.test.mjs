@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  parseLiveChecksArgs, dryRunReport, planStaleBatch, judgeStaleNumber, judgeKeyboardTap,
+  parseLiveChecksArgs, dryRunReport, planStaleBatch, pickStaleNumberDisplay, judgeStaleNumber, judgeKeyboardTap,
   judgeHelperResend, judgeMenuBar, classifyTapSources, runMenuBar, accessibilityGrant,
   appAncestorFromRows,
 } from '../bench/live-checks-1-1.mjs';
@@ -122,6 +122,14 @@ test('the plan takes the first of byte-identical duplicates and fails on lines t
   assert.match(plan.error, /"button Description: 7"/);
 });
 
+test('stale-number reads the display from a fresh tree, not an intermediate batch field', () => {
+  const field = value => [
+    'Window: "Calculator", App: Calculator.',
+    '0 standard window Calculator',
+    `\t7 text Description: Edit field, Value: ${value}`,
+  ].join('\n');
+  assert.equal(pickStaleNumberDisplay(field('7'), field('56')), '56');
+});
 test('stale-number passes only when the result names the remap and the display is 56', () => {
   const pass = judgeStaleNumber({
     text: 'sleight: click(3) went to element 2, the same "button Description: 7, ID: Seven": an earlier action in this call renumbered the window.',

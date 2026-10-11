@@ -41,7 +41,7 @@ function startFixture(ownedPath) {
   });
   return {
     request: (payload, timeout = 10000) => new Promise((resolve, reject) => {
-      const key = id++, timer = setTimeout(() => reject(new Error('Fixture helper timeout')), timeout);
+      const key = id++, timer = setTimeout(() => { pending.delete(key); reject(new Error('Fixture helper timeout')); }, timeout);
       pending.set(key, { id: key, resolve: r => { clearTimeout(timer); resolve(r); }, reject: e => { clearTimeout(timer); reject(e); } });
       child.stdin.write(JSON.stringify({ id: key, ...payload }) + '\n');
     }),

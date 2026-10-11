@@ -29,6 +29,11 @@ test('a replacement Chess PID refuses before native mutations', () => {
     assert.throws(() => probe([game(2, 'White')], { op, title: game(2, 'White'), expectedPid: 456 }), /process replaced; no input posted/);
   }
 });
+test('a process check re-identifies a fresh Chess launch instead of refusing', () => {
+  const result = probe([game(2, 'White')], { op: 'process', expectedPid: 456 });
+  assert.equal(result.running, true);
+  assert.equal(result.pid, 123);
+});
 test('a surviving game cannot confirm closure merely because its turn changed', () => {
   const result = probe([game(2, 'Black')], { op: 'close', title: game(2, 'White'), allowTurnChange: true, expectedPid: 123 });
   assert.equal(result.closed, false);

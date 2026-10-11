@@ -350,6 +350,11 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   A Cmd+S posted to a background TextEdit's PID doesn't start a save. The 2026-10-08 hangs came
   through the engine's `pressKey("super+s")`, so the experiment can't measure them until it sends
   Cmd+S that way, and whether the Shift event helps is still unknown.
+  The 2026-10-11 sitting never recognized the owned window (existing TextEdit,
+  `isolatedInstance: false`) and then stopped with "not confirmed closed: undefined"
+  ([raw](benchmarks/2026-10-11-sitting-save-delivery.json)). Attach now treats
+  `/tmp` and `file://localhost` as the same owned file, and the stop prints the
+  skipped attach. No live run has confirmed that the Open panel document matches.
   The [2026-10-10 follow-up](benchmarks/2026-10-10-save-lock.md) stopped before
   editing: the existing background TextEdit process returned `AXWindows -25204`. A new instance
   restored extra windows, then exact-fixture cleanup returned `AXRole -25204`. A later read-only
@@ -679,6 +684,10 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   It excludes the iOS simulator, where paste can insert the Mac's clipboard.
   sleight-arch runs the affected `textedit-save` and `textedit-edit` tasks before release.
   [The probe report](benchmarks/2026-10-09-exact-text.md) includes the stopped attempt.
+  The 2026-10-11 sitting got 7 exact trials, then fixture `read` never answered
+  ([raw](benchmarks/2026-10-11-sitting-select-all.json)). `read` no longer waits on
+  AppleScript `path()`, error replies keep the request id, and a timeout drops that
+  pending key. No live run has confirmed a full default or careful pass.
 - TextEdit hung 3 times on 2026-10-05, each time after Claude set a document's text with `setValue`
   and then pressed a save shortcut (Cmd+Shift+S, which is Duplicate, twice and Cmd+S once). Its main
   thread waits forever on the document's save lock. Every read then times out, and the relay's
@@ -832,6 +841,9 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   The benchmark's force-quit fallback
   could return before process exit. Launch now waits for absence and retries only -600, at most
   three times. Unit boundaries pass. The historical -600 cause remains unproved.
+  On 2026-10-11, `chess-after` posted 17 drags, then cleanup's `{"op":"process","expectedPid":18540}`
+  refused a relaunch ([raw](benchmarks/2026-10-11-sitting-chess.json)). `process` now reports the
+  current pid, and a new pid after quit is the owned process gone. No live run has confirmed that.
 - On 2026-10-09 the owner's keyboard stopped working, while the trackpad still did, after a
   head-to-head pass ran the simulator task on both arms. Device Hub, left open after those runs,
   held a keyboard event filter tap whose last key had taken 40 s, and a filter tap holds up every
@@ -857,6 +869,12 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   the same app. Cancellation and collection of the real harnesses' children are unverified.
   The stale-number and menu-bar harnesses have no SIGINT handler. Signal termination marks their
   app and detached engine cleanup unconfirmed, even when the process group is gone.
+  The 2026-10-11 sitting planned clicks 29, 38, 41, 39, 71 (Clear, 7, multiply, 8, equals),
+  named the remap, and read display 7 from the batch text
+  ([raw](benchmarks/2026-10-11-sitting-stale-number.json)). That text can still show the
+  field from the 7. The check now reads the display after the batch. The sitting did not
+  record the tree or batch, so a wrong remap is unproven and the relay is unchanged. No
+  live run has confirmed 56.
   Existing harnesses still handle their own benchmark approvals and permission refusals. The runner
   cannot prevent an inherited harness from reaching a macOS prompt. The owner handles prompts.
   A retained live lock stops the sequence for inspection. Timing estimates include old setup

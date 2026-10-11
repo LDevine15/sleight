@@ -279,8 +279,8 @@ function run(argv) {
       ax = win = doc = textArea = ownedApp = ownedPid = undefined;
       return { ...result, gone: true };
     }
-    verify();
     if (request.op === 'read') return { text: ObjC.unwrap(attribute(textArea, 'AXValue')), selected: ObjC.unwrap(attribute(textArea, 'AXSelectedText')), foregroundSame: true };
+    verify();
     if (request.op === 'save') { doc.save(); verify(); return { saved: true }; }
     throw new Error('Unknown fixture operation');
   }
@@ -292,10 +292,10 @@ function run(argv) {
     let at;
     while ((at = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
-      let reply;
-      try { const request = JSON.parse(line); reply = { id: request.id, ok: true, ...act(request) }; }
+      let reply, request;
+      try { request = JSON.parse(line); reply = { id: request.id, ok: true, ...act(request) }; }
       catch (error) {
-        reply = { id: null, ok: false, error: String(error.message || error) };
+        reply = { id: request?.id ?? null, ok: false, error: String(error.message || error) };
         try { const diagnostic = windowsDiagnostic(); if (diagnostic) reply.windows = diagnostic; } catch {}
       }
       stdout.writeData($(JSON.stringify(reply) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));

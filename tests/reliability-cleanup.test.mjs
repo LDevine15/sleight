@@ -40,6 +40,13 @@ test('quit rejection is recorded and process absence is required', async () => {
   const stuck = setup({ process: async () => ({ running: true, pid: 123 }) });
   await assert.rejects(cleanupChessTrial(stuck.api), /did not exit/);
 });
+test('a new Chess PID after quit is a fresh launch, not a mid-run replacement', async () => {
+  let reads = 0;
+  const h = setup({ process: async () => ({ running: true, pid: ++reads === 1 ? 123 : 456 }) });
+  const result = await cleanupChessTrial(h.api);
+  assert.equal(result.running, false);
+  assert.ok(h.calls.includes('quit'));
+});
 test('delayed exit is collected before cleanup returns', async () => {
   let reads = 0;
   const h = setup({ process: async () => ({ running: ++reads < 4, pid: 123 }) });

@@ -8,7 +8,7 @@ import {
   VARIANTS, GATE_RUNS, GATE_MIN_HANGS, DELIVERY_WAIT_MS,
   buildPlan, buildDeliveryCheckPlan, countByVariant, gateDecision, runExperiment,
   ownedTrialPath, probeClientOptions, trialSteps, dryRunPlan,
-  mayCapture, scrubEvidence, parseArgs,
+  mayCapture, scrubEvidence, parseArgs, unconfirmedCloseDetail,
 } from '../bench/textedit-save-lock.mjs';
 
 const runner = fileURLToPath(new URL('../bench/textedit-save-lock.mjs', import.meta.url));
@@ -119,6 +119,21 @@ test('an already-open owner document is tolerated; a second owned URL or a dialo
 test('no window, or no owned window yet, asks for a retry', () => {
   assert.equal(acceptOwnedWindows([]).retry, true);
   assert.equal(acceptOwnedWindows([{ document: null, modal: false, sheet: false, text: '' }]).retry, true);
+});
+test('an owned window whose AXDocument uses /tmp or localhost still matches', () => {
+  const expected = 'file:///private/tmp/sleight-save-lock-abc123/trial.txt';
+  for (const document of [
+    'file:///tmp/sleight-save-lock-abc123/trial.txt',
+    'file://localhost/private/tmp/sleight-save-lock-abc123/trial.txt',
+    'file://localhost/tmp/sleight-save-lock-abc123/trial.txt',
+  ]) {
+    assert.equal(acceptOwnedWindows([{ document, modal: false, sheet: false, text: 'seed\n' }], expected).accept, true);
+  }
+});
+test('a skipped attach names that skip instead of undefined', () => {
+  assert.equal(unconfirmedCloseDetail({ skipped: 'Attach refused: Retry: Owned document window not open yet' }),
+    'Attach refused: Retry: Owned document window not open yet');
+  assert.equal(unconfirmedCloseDetail({}), 'no close result');
 });
 
 test('hang trials open through the engine Open panel, write through Accessibility, and save with pressKey super+s', () => {

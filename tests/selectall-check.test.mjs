@@ -134,6 +134,25 @@ test('fixture refuses a dialog only when a second scan confirms it', () => {
   assert.equal(scansMade, 1);
 });
 
+test('a failed fixture reply keeps the request id', () => {
+  const source = readFileSync(fixturePath, 'utf8');
+  const catchBlock = source.slice(source.lastIndexOf('catch (error)'));
+  assert.match(catchBlock, /id:\s*request/);
+  assert.doesNotMatch(catchBlock, /id:\s*null/);
+});
+test('read answers from the retained text area without an AppleScript path check', () => {
+  const source = readFileSync(fixturePath, 'utf8');
+  const act = source.slice(source.indexOf('function act(request)'), source.indexOf('for (;;) {'));
+  const tail = act.slice(act.lastIndexOf("request.op === 'end-owned'"));
+  assert.match(tail, /if \(request\.op === 'read'\) return \{ text:/);
+  assert.equal(/verify\(\)[\s\S]*if \(request\.op === 'read'\)/.test(tail), false,
+    'read must run before verify so AppleScript path() cannot hang it');
+});
+test('a fixture timeout drops that request so a later reply cannot steal the next one', () => {
+  const source = readFileSync(new URL('../bench/small-fixes-textedit.mjs', import.meta.url), 'utf8');
+  const requestFn = source.slice(source.indexOf('request: (payload'), source.indexOf('close: async'));
+  assert.match(requestFn, /pending\.delete\(key\)/);
+});
 test('fixture records title, subrole and identifier of every window on a refusal', () => {
   const { collectWindowRecords } = loadFixture();
   const windows = list([{ id: 1 }, { id: 2 }]);

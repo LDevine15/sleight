@@ -4,8 +4,17 @@ function run(argv) {
   const request = JSON.parse(argv[0]);
   const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.Chess');
   if (!Number(apps.count)) return JSON.stringify({ running: false, windows: [] });
-  const target = apps.objectAtIndex(0), pid = Number(target.processIdentifier);
-  if (request.expectedPid !== undefined && request.expectedPid !== pid) throw new Error('Chess process replaced; no input posted');
+  let target = apps.objectAtIndex(0), pid = Number(target.processIdentifier);
+  if (request.expectedPid !== undefined && request.expectedPid !== pid) {
+    for (let i = 0; i < Number(apps.count); i++) {
+      const app = apps.objectAtIndex(i);
+      if (Number(app.processIdentifier) === request.expectedPid) { target = app; pid = request.expectedPid; break; }
+    }
+    if (request.expectedPid !== pid) {
+      if (request.op === 'process') return JSON.stringify({ running: true, pid });
+      throw new Error('Chess process replaced; no input posted');
+    }
+  }
   if (request.op === 'process') return JSON.stringify({ running: true, pid });
   if (request.op === 'quit') {
     if (!Number(target.terminate)) throw new Error('Chess declined quit');
