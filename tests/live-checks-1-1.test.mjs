@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
@@ -7,6 +8,7 @@ import {
   judgeHelperResend, judgeMenuBar, classifyTapSources, runMenuBar, accessibilityGrant,
   appAncestorFromRows,
 } from '../bench/live-checks-1-1.mjs';
+import * as liveChecks from '../bench/live-checks-1-1.mjs';
 
 const script = fileURLToPath(new URL('../bench/live-checks-1-1.mjs', import.meta.url));
 const historyTree = [
@@ -204,6 +206,28 @@ test('an assistive-access denial names the found process; other errors and no pr
     { processPath: iterm, reason: `needs the owner to grant Accessibility to ${iterm}` });
   assert.equal(await accessibilityGrant(denial, async () => undefined), undefined);
   assert.equal(await accessibilityGrant('Neither Clock nor Control Center has a status item', async () => iterm), undefined);
+});
+
+test('SIGINT and SIGTERM run the same driving cleanup once and record the signal', async () => {
+  assert.equal(typeof liveChecks.runOnce, 'function');
+  assert.equal(typeof liveChecks.bindHarnessSignals, 'function');
+  const events = new EventEmitter();
+  const calls = [];
+  const report = {};
+  const finish = liveChecks.runOnce(async () => { calls.push('cleanup'); });
+  liveChecks.bindHarnessSignals(report, finish, events);
+  events.emit('SIGINT');
+  await finish();
+  events.emit('SIGTERM');
+  await finish();
+  assert.deepEqual(calls, ['cleanup']);
+  assert.equal(report.signal, 'SIGINT');
+  const term = {};
+  const once = liveChecks.runOnce(async () => { calls.push('term'); });
+  liveChecks.bindHarnessSignals(term, once, events);
+  events.emit('SIGTERM');
+  await once();
+  assert.equal(term.signal, 'SIGTERM');
 });
 
 test('menu-bar reports an accessibility denial as an owner action instead of a failure', async () => {

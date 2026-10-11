@@ -354,6 +354,19 @@ export async function runMenuBar(client, report, state, grant = accessibilityGra
   }
 }
 
+export function runOnce(work) {
+  let pending;
+  return () => (pending ??= Promise.resolve().then(work));
+}
+
+export function bindHarnessSignals(report, cleanup, events = process) {
+  const onSignal = name => {
+    report.signal ??= name;
+    void cleanup();
+  };
+  for (const name of ['SIGINT', 'SIGTERM']) events.once(name, () => onSignal(name));
+}
+
 async function runDriving(check) {
   if (existsSync('/tmp/sleight-hold')) throw new Error('sleight-hold exists; live work stopped');
   const { acquireLiveLock } = await import('./live-lock.mjs');
@@ -361,17 +374,7 @@ async function runDriving(check) {
   const state = { cleanup: true, statusApp: undefined };
   const traces = [];
   let unlock, client;
-  try {
-    unlock = await acquireLiveLock();
-    if (existsSync('/tmp/sleight-hold')) throw new Error('sleight-hold exists; live work stopped');
-    client = await connect(traces, { launcher: check === 'menu-bar' });
-    if (check === 'stale-number') await runStaleNumber(client, report, traces);
-    else await runMenuBar(client, report, state);
-  } catch (error) {
-    report.error = error.message;
-    report.passed = false;
-    process.exitCode = 1;
-  } finally {
+  const finish = runOnce(async () => {
     if (state.statusApp && client) {
       try {
         const closed = toolJson(await client.call('menu_bar', { op: 'close', app: state.statusApp }));
@@ -397,6 +400,20 @@ async function runDriving(check) {
     }
     report.finished = new Date().toISOString();
     publish(check, report);
+  });
+  bindHarnessSignals(report, finish);
+  try {
+    unlock = await acquireLiveLock();
+    if (existsSync('/tmp/sleight-hold')) throw new Error('sleight-hold exists; live work stopped');
+    client = await connect(traces, { launcher: check === 'menu-bar' });
+    if (check === 'stale-number') await runStaleNumber(client, report, traces);
+    else await runMenuBar(client, report, state);
+  } catch (error) {
+    report.error = error.message;
+    report.passed = false;
+    process.exitCode = 1;
+  } finally {
+    await finish();
   }
 }
 

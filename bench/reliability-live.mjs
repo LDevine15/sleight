@@ -8,7 +8,7 @@ import { diagnoseReadFailure } from '../plugins/sleight/lib/read-failure.mjs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { restartChess } from './chess-launch.mjs';
-import { cleanupChessTrial } from './reliability-cleanup.mjs';
+import { cleanupChessTrial, leftoverLines } from './reliability-cleanup.mjs';
 import { chessMovePoints } from './chess-move-points.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
@@ -78,9 +78,10 @@ try {
       receipt.initialCleanup = [];
       const owned = op => chess({ ...op, expectedPid: existing.pid });
       try {
-        await cleanupChessTrial({ pid: existing.pid, titles: existing.windows.filter(w => w.title && w.bounds.Width > 400).map(w => w.title), initialTitles: [], journal: receipt.initialCleanup,
+        const cleaned = await cleanupChessTrial({ pid: existing.pid, titles: existing.windows.filter(w => w.title && w.bounds.Width > 400).map(w => w.title), initialTitles: [], journal: receipt.initialCleanup,
           cancelDialog: () => owned({ op: 'cancel-new-game' }), close: title => owned({ op: 'close', title, allowTurnChange: true }), snapshot: () => owned({ op: 'snapshot' }),
           quit: () => owned({ op: 'quit' }), process: () => owned({ op: 'process' }), wait });
+        if (cleaned.leftover) receipt.leftover = cleaned.leftover;
       } catch (error) { cleanupUnconfirmed = true; throw error; }
     }
     const bank = trackTemp(await mkdtemp('/private/tmp/sleight-reliability-')); receipt.bank = bank;
@@ -214,12 +215,13 @@ try {
         trial.cleanup = [];
         try {
           const owned = op => chess({ ...op, expectedPid: trial.initialAX?.pid });
-          await cleanupChessTrial({ title, pid: trial.initialAX?.pid, initialTitles: (trial.initialAX?.windows ?? []).filter(w => w.title && w.bounds.Width > 400).map(w => w.title), journal: trial.cleanup,
+          const cleaned = await cleanupChessTrial({ title, pid: trial.initialAX?.pid, initialTitles: (trial.initialAX?.windows ?? []).filter(w => w.title && w.bounds.Width > 400).map(w => w.title), journal: trial.cleanup,
             cancelDialog: () => owned({ op: 'cancel-new-game' }), close: title => owned({ op: 'close', title, allowTurnChange: true }), snapshot: () => owned({ op: 'snapshot' }),
             quit: () => owned({ op: 'quit' }), process: () => owned({ op: 'process' }), wait });
+          if (cleaned.leftover) trial.leftover = cleaned.leftover;
           if (client) { await client.close(); client = undefined; }
         } catch (error) { cleanupUnconfirmed = true; trial.cleanupError = error.message; throw error; }
-        await save(); console.log(publish({ n: trial.n, path: trial.path, passed: trial.passed, error: trial.error, windowId: trial.windowId }));
+        await save(); console.log(publish({ n: trial.n, path: trial.path, passed: trial.passed, error: trial.error, windowId: trial.windowId, leftover: trial.leftover }));
         if (trial.error && !trial.dragPosted) throw new Error('Setup failed before drag; series stopped');
       }
     }
@@ -272,5 +274,5 @@ try {
     if (client) { try { await client.close(); } catch (error) { cleanupUnconfirmed = true; throw error; } }
     await save();
   } finally { if (held && !cleanupUnconfirmed) await rmdir('/tmp/sleight-live.lock'); }
-  console.log(publish({ mode: receipt.mode, image: receipt.image, attempts: receipt.attempts.map(({ n, elapsedMs, passed, error, reply }) => ({ n, elapsedMs, passed, error, reply: reply && text(reply) })), error: receipt.error, fixtureCollected: receipt.fixtureCollected, directAXAfter: receipt.directAXAfter }));
+  console.log(publish({ mode: receipt.mode, image: receipt.image, attempts: receipt.attempts.map(({ n, elapsedMs, passed, error, reply, leftover }) => ({ n, elapsedMs, passed, error, leftover, reply: reply && text(reply) })), leftovers: leftoverLines([receipt, ...(receipt.attempts ?? [])]), error: receipt.error, fixtureCollected: receipt.fixtureCollected, directAXAfter: receipt.directAXAfter }));
 }

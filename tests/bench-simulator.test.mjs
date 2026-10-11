@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { serveForm, tasks } from '../bench/tasks.mjs';
+import * as benchTasks from '../bench/tasks.mjs';
 import { webBrowsers } from '../bench/tasks-web.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,15 +79,74 @@ for (const bootedByTask of [true, false]) test(`default simulator cleanup preser
   assert.deepEqual(calls, bootedByTask ? ['terminate', 'close', 'shutdown', 'quit'] : ['close', 'quit']);
 });
 
+const sittingShutdown = Object.assign(new Error(
+  'Command failed: xcrun simctl shutdown E9DC4DDF-59C5-4D34-9A91-BFC0DBD47A6F\nAn error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):\nUnable to shutdown device in current state: Shutdown\n'), {
+  status: 1,
+  stderr: 'An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):\nUnable to shutdown device in current state: Shutdown\n',
+});
+
+function mockShutdown(listState, extra) {
+  const calls = [];
+  const run = (action, ...rest) => {
+    calls.push([action, ...rest]);
+    if (action === 'shutdown') throw extra?.shutdownError ?? sittingShutdown;
+    if (action === 'list') {
+      return JSON.stringify({ devices: { runtime: [
+        { name: 'iPhone fixture', state: listState, udid: rest[0] === 'devices' ? 'E9DC4DDF-59C5-4D34-9A91-BFC0DBD47A6F' : rest[0] },
+      ] } });
+    }
+    return '';
+  };
+  return { calls, run };
+}
+
+test('shutdown 405 is done only when list devices -j shows the device Shutdown', () => {
+  assert.equal(typeof benchTasks.shutdownOwnedDevice, 'function');
+  const udid = 'E9DC4DDF-59C5-4D34-9A91-BFC0DBD47A6F';
+  const ok = mockShutdown('Shutdown');
+  benchTasks.shutdownOwnedDevice(udid, ok.run);
+  assert.deepEqual(ok.calls, [['shutdown', udid], ['list', 'devices', '-j']]);
+  const booted = mockShutdown('Booted');
+  assert.throws(() => benchTasks.shutdownOwnedDevice(udid, booted.run), /code=405/);
+  const other = mockShutdown('Shutdown', {
+    shutdownError: Object.assign(new Error('Command failed: xcrun simctl shutdown fixture\ncode=400'), {
+      status: 1, stderr: 'code=400: Unable to shutdown device\n',
+    }),
+  });
+  assert.throws(() => benchTasks.shutdownOwnedDevice(udid, other.run), /code=400/);
+  assert.deepEqual(other.calls, [['shutdown', udid]]);
+});
+
+test('default simulator cleanup treats 405 plus Shutdown as done', async () => {
+  const calls = [], lease = { quit: async () => calls.push('quit') };
+  const task = defaultSimulatorTask({
+    existsSync: () => true,
+    closeFixtures: async () => { calls.push('close'); },
+    execFileSync(command, args) {
+      assert.equal(command, 'xcrun');
+      calls.push(args.slice(1).join(' '));
+      if (args[1] === 'shutdown') throw sittingShutdown;
+      if (args[1] === 'list') {
+        return JSON.stringify({ devices: { runtime: [{ name: 'iPhone fixture', state: 'Shutdown', udid: 'fixture-device' }] } });
+      }
+      return '';
+    },
+  });
+  await task.cleanup({ nonce: 'fixture', sim: { udid: 'fixture-device', bootedByTask: true },
+    simPageOpened: true, windowLeases: [{ app: 'DeviceHub', ...lease }] });
+  assert.deepEqual(calls, ['terminate fixture-device com.apple.mobilesafari', 'close', 'shutdown fixture-device', 'list devices -j', 'quit']);
+});
+
 test('real Simulator cleanup shuts down an owned boot after window failure and preserves an existing boot', async () => {
   const source = readFileSync(new URL('../bench/tasks-real.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
   for (const bootedByTask of [true, false]) {
     const calls = [];
+    const simctl = (action, udid) => { assert.equal(udid, 'owned-device'); calls.push(action); };
     const cleanup = runInNewContext(`${source}\nrealTasks.find(task => task.id === 'simulator-flow').cleanup`, {
       webTasks: [], officeTasks: [], mailTasks: [], mimestreamTasks: [], shopTasks: [], electronTasks: [], iphoneTasks: [],
       closeFixtures: async () => { calls.push('close'); throw new Error('close failed'); },
-      simctl: (action, udid) => { assert.equal(udid, 'owned-device'); calls.push(action); },
+      simctl, shutdownOwnedDevice: udid => simctl('shutdown', udid),
       quitSimApp: async () => calls.push('quit'), checkForm() {}, checkFlow() {}, checkPDF() {},
     });
     await assert.rejects(cleanup({ sim: { udid: 'owned-device', bootedByTask }, simPageOpened: true,

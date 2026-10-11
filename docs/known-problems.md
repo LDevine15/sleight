@@ -748,6 +748,12 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   00:54:43 and DeviceHub start at 00:54:47 as one process that never changed, setup waited 34 s and
   gave up, and it recorded the PID as -1, so cleanup again refused to quit the DeviceHub it had
   launched.
+  The 2026-10-11 sitting then ran the task (8 turns, 35.2 s) and failed only at cleanup:
+  `simctl shutdown` returned error 405 while the device was already Shutdown
+  ([raw](benchmarks/2026-10-11-sitting-simulator-form.json)). Cleanup now treats 405 as done
+  only when a follow-up `simctl list devices -j` shows the device Shutdown. Any other error
+  still fails cleanup. A run whose task passed and whose device ended Shutdown is not scored
+  as a failure. No live run has confirmed that.
 - DeviceHub replaced its launch process during `simulator-flow` setup on 2026-10-10. Setup now
   accepts one same-bundle handoff after the recorded PID exits, and cleanup quits only a viewer
   the run launched. The owner-away rerun is pending
@@ -843,7 +849,9 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   three times. Unit boundaries pass. The historical -600 cause remains unproved.
   On 2026-10-11, `chess-after` posted 17 drags, then cleanup's `{"op":"process","expectedPid":18540}`
   refused a relaunch ([raw](benchmarks/2026-10-11-sitting-chess.json)). `process` now reports the
-  current pid, and a new pid after quit is the owned process gone. No live run has confirmed that.
+  current pid. A new pid after quit is recorded as leftover `{ app: 'Chess', pid }` and left
+  running, because it cannot be proven ours. The pass summary prints leftovers. No live run has
+  confirmed that.
 - On 2026-10-09 the owner's keyboard stopped working, while the trackpad still did, after a
   head-to-head pass ran the simulator task on both arms. Device Hub, left open after those runs,
   held a keyboard event filter tap whose last key had taken 40 s, and a filter tap holds up every
@@ -867,8 +875,8 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   sitting, including unrelated activity. Polling every half second allows input before the
   next report. The foreground watcher compares app names and misses changes between windows of
   the same app. Cancellation and collection of the real harnesses' children are unverified.
-  The stale-number and menu-bar harnesses have no SIGINT handler. Signal termination marks their
-  app and detached engine cleanup unconfirmed, even when the process group is gone.
+  The stale-number and menu-bar harnesses run the same cleanup on SIGINT and SIGTERM as on a
+  normal exit, once, and record the signal in the result. No live run has confirmed that.
   The 2026-10-11 sitting planned clicks 29, 38, 41, 39, 71 (Clear, 7, multiply, 8, equals),
   named the remap, and read display 7 from the batch text
   ([raw](benchmarks/2026-10-11-sitting-stale-number.json)). That text can still show the

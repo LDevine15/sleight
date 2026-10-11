@@ -88,6 +88,38 @@ test('an app dialog during the model stops before an app-data checker or AX clea
   assert.equal(existsSync(ctx.lockPath), false);
 });
 
+test('a passed task stays passed when simctl shutdown 405 lists the device Shutdown', async t => {
+  const execute = await runner(), ctx = fixture(t);
+  const { shutdownOwnedDevice } = await import('../bench/tasks.mjs');
+  const udid = 'E9DC4DDF-59C5-4D34-9A91-BFC0DBD47A6F';
+  const shutdown405 = Object.assign(new Error('Command failed: xcrun simctl shutdown\ncode=405'), {
+    status: 1, stderr: 'domain=com.apple.CoreSimulator.SimError, code=405):\nUnable to shutdown device in current state: Shutdown\n',
+  });
+  const devices = state => JSON.stringify({ devices: { runtime: [{ udid, state }] } });
+  const passed = await execute({
+    setup() {}, prompt: () => 'form', check: () => true,
+    cleanup() {
+      shutdownOwnedDevice(udid, (action) => {
+        if (action === 'shutdown') throw shutdown405;
+        if (action === 'list') return devices('Shutdown');
+      });
+    },
+  }, ctx, { drive: async () => ({ code: 0, groupClean: true, out: { result: 'Sent' } }) });
+  assert.equal(passed.passed, true);
+  assert.equal(passed.cleanupError, undefined);
+  const failed = await execute({
+    setup() {}, prompt: () => 'form', check: () => true,
+    cleanup() {
+      shutdownOwnedDevice(udid, (action) => {
+        if (action === 'shutdown') throw shutdown405;
+        if (action === 'list') return devices('Booted');
+      });
+    },
+  }, ctx, { drive: async () => ({ code: 0, groupClean: true, out: { result: 'Sent' } }) });
+  assert.equal(failed.passed, false);
+  assert.match(failed.cleanupError, /code=405/);
+});
+
 test('a failed setup action is recorded without forcing a stop after confirmed cleanup', async t => {
   const execute = await runner(), ctx = fixture(t);
   const result = await execute({ setup(context) {

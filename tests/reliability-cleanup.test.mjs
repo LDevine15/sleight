@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanupChessTrial } from '../bench/reliability-cleanup.mjs';
+import * as chessCleanup from '../bench/reliability-cleanup.mjs';
 
 function setup(overrides = {}) {
   const calls = [], journal = [];
@@ -40,12 +41,14 @@ test('quit rejection is recorded and process absence is required', async () => {
   const stuck = setup({ process: async () => ({ running: true, pid: 123 }) });
   await assert.rejects(cleanupChessTrial(stuck.api), /did not exit/);
 });
-test('a new Chess PID after quit is a fresh launch, not a mid-run replacement', async () => {
+test('a new Chess PID after quit is leftover, not ours to quit', async () => {
   let reads = 0;
   const h = setup({ process: async () => ({ running: true, pid: ++reads === 1 ? 123 : 456 }) });
   const result = await cleanupChessTrial(h.api);
   assert.equal(result.running, false);
-  assert.ok(h.calls.includes('quit'));
+  assert.deepEqual(result.leftover, { app: 'Chess', pid: 456 });
+  assert.equal(h.calls.filter(call => call === 'quit').length, 1);
+  assert.deepEqual(chessCleanup.leftoverLines([result]), [{ app: 'Chess', pid: 456 }]);
 });
 test('delayed exit is collected before cleanup returns', async () => {
   let reads = 0;

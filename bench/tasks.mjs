@@ -180,6 +180,18 @@ export function simctl(...args) {
   }
 }
 
+// simctl shutdown 405 is "Unable to shutdown device in current state". Treat it as
+// done only when a follow-up list shows Shutdown; any other error still fails.
+export function shutdownOwnedDevice(udid, run = simctl) {
+  try {
+    run('shutdown', udid);
+  } catch (error) {
+    if (!String(error.stderr ?? error.message).includes('code=405')) throw error;
+    const devices = Object.values(JSON.parse(run('list', 'devices', '-j')).devices ?? {}).flat();
+    if (devices.find(d => d.udid === udid)?.state !== 'Shutdown') throw error;
+  }
+}
+
 // Quits the app showing the simulator, leaving the simulator booted. Left open after a
 // head-to-head's simulator runs, Device Hub held a keyboard event tap that stalled every key on
 // the Mac until it quit (2026-10-09).
@@ -397,7 +409,7 @@ export const tasks = [
         if (ctx.simPageOpened && ctx.sim?.bootedByTask) simctl('terminate', ctx.sim.udid, 'com.apple.mobilesafari');
         await closeFixtures(ctx);
       } finally {
-        try { if (ctx.sim?.bootedByTask) simctl('shutdown', ctx.sim.udid); }
+        try { if (ctx.sim?.bootedByTask) shutdownOwnedDevice(ctx.sim.udid); }
         finally {
           try { await quitSimApp({ ownedOnly: true,
             lease: ctx.windowLeases?.find(lease => ['DeviceHub', 'Simulator'].includes(lease.app)) }); }

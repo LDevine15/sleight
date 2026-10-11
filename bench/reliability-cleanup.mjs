@@ -25,8 +25,13 @@ export async function cleanupChessTrial(api) {
   if (remaining.running) await step('quit', api.quit);
   for (let n = 0; n < 40; n++) {
     const state = await step('process-exit', api.process);
-    if (!state.running || state.pid !== api.pid) return { running: false, pid: state.pid };
+    if (!state.running) return { running: false, pid: state.pid };
+    if (state.pid !== api.pid) return { running: false, leftover: { app: 'Chess', pid: state.pid } };
     await api.wait(250);
   }
   throw new Error('Chess did not exit; cleanup unconfirmed');
+}
+
+export function leftoverLines(records) {
+  return records.flatMap(record => record.leftover ? [record.leftover] : []);
 }

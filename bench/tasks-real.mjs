@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { bootedIPhone, simctl, quitSimApp } from './tasks.mjs';
+import { bootedIPhone, simctl, quitSimApp, shutdownOwnedDevice } from './tasks.mjs';
 import { serveRealPage, checkForm, checkFlow } from './real-server.mjs';
 import { writeTestPDF, checkPDF } from './real-pdf.mjs';
 import { acquireFixture } from './real-run.mjs';
@@ -132,7 +132,7 @@ export const realTasks = [
         await closeFixtures(ctx);
       }
       finally {
-        try { if (ctx.sim?.bootedByTask) simctl('shutdown', ctx.sim.udid); }
+        try { if (ctx.sim?.bootedByTask) shutdownOwnedDevice(ctx.sim.udid); }
         finally {
           try { await quitSimApp({ ownedOnly: true,
             lease: ctx.windowLeases?.find(lease => ['DeviceHub', 'Simulator'].includes(lease.app)) }); }
