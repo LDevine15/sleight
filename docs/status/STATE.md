@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-11 23:40 UTC)
+## Banner (2026-10-12 00:30 UTC)
 
 The owner's Mac is under another project's load: no live runs and no full `npm run check` until they
 say it's free. Since the 17:10 flush:
@@ -11,6 +11,13 @@ say it's free. Since the 17:10 flush:
   point to the `ComputerUseAllowForbiddenTargets` switch, and Always allow is offered for terminals and
   OpenAI's apps with a "could be dangerous" line. 245/245 on the 9 affected test files. Run the full
   check, then merge to `pane/auto-mode`. It supersedes `e640e28` (blocked_app's settings-scan fix).
+- Merged after review, none run live: harness-hygiene (simctl 405, harness signals, Chess leftovers,
+  with signals made to exit after cleanup), shop-match (brand and option tokens), front-restore (Codex;
+  default on, `SLEIGHT_FRONT_RESTORE=0`, with only clicks cancelling it). Front-restore changes what
+  every user runs, so it needs its live check before any release.
+- The benchmark's Codex arm now defaults to gpt-6-luna at Claude's effort (owner). Published
+  head-to-heads ran gpt-6.1-sol and get rerun.
+- In progress: ZCode tasks for the nudge-speed head-to-head (owner: use a scrap chat or folder).
 - `8b47a54` adds `signin` to the browser tasks, a login wall left to the user. It hasn't run live.
 - Lane broken-harnesses (Grok) merged after review: the Chess, save-lock, select-all and stale-number
   setup failures, 67/67 on their tests, 7 of which fail on the old code. None has run live. Chess
