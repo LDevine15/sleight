@@ -17,7 +17,9 @@ say it's free. Since the 17:10 flush:
   every user runs, so it needs its live check before any release.
 - The benchmark's Codex arm now defaults to gpt-6-luna at Claude's effort (owner). Published
   head-to-heads ran gpt-6.1-sol and get rerun.
-- In progress: ZCode tasks for the nudge-speed head-to-head (owner: use a scrap chat or folder).
+- `98d2113`: four ZCode flows in the battery for the nudge-speed head-to-head
+  (`--tasks zcode-send,zcode-rename,zcode-pin,zcode-sidebar`), in a `sleight-scrap` project. Before
+  their first pass the owner adds `~/sleight-scrap` as a ZCode project once.
 - `8b47a54` adds `signin` to the browser tasks, a login wall left to the user. It hasn't run live.
 - Lane broken-harnesses (Grok) merged after review: the Chess, save-lock, select-all and stale-number
   setup failures, 67/67 on their tests, 7 of which fail on the old code. None has run live. Chess
