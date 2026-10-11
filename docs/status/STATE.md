@@ -3,11 +3,21 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-11 22:30 UTC)
+## Banner (2026-10-11 23:40 UTC)
 
-`blocked_app`'s settings scan no longer refuses big windows (it refused every Codex window, seen by
-puddle arch). Unit tests 8/8; no full `npm run check` and no live read, because the owner's Mac is
-under another project's load. Both are owed before the next release. Everything below is as flushed at 17:10.
+The owner's Mac is under another project's load: no live runs and no full `npm run check` until they
+say it's free. Since the 17:10 flush:
+- Branch `remove-blocked-app` (`e536f38`, private, owner's order): `blocked_app` removed, refusals
+  point to the `ComputerUseAllowForbiddenTargets` switch, and Always allow is offered for terminals and
+  OpenAI's apps with a "could be dangerous" line. 245/245 on the 9 affected test files. Run the full
+  check, then merge to `pane/auto-mode`. It supersedes `e640e28` (blocked_app's settings-scan fix).
+- `8b47a54` adds `signin` to the browser tasks, a login wall left to the user. It hasn't run live.
+- Lane broken-harnesses handed to the owner for Grok (branch `lane/broken-harnesses`, no live runs):
+  the Chess, save-lock, select-all and stale-number setup failures. Review its report, then merge.
+- Launch post draft for the next release: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING]
+  lines for the release pass and the approval change.
+- puddle arch was told to drive Codex through `js` (`cua.getApp("com.openai.codex")`).
+Everything below is as flushed at 17:10.
 
 Released today, each with a GitHub release and green CI: `v1.2.0` (`6755a28`) through `v1.2.5`
 (`b2eb9d8`, public `main`). The owner's install is 1.2.5 (its marketplace reads this repo locally).
