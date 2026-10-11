@@ -99,6 +99,16 @@ lightning quick and stay quick under any load, and the Mac shouldn't feel it run
 the same engine, so Codex's own numbers are the target. Anything sleight adds in time or CPU stays
 only with a measured reason. In order:
 
+0. Real use felt slow (owner, 2026-10-11): puddle arch nudging agent seats in ZCode, an Electron app,
+   through sleight. A head-to-head against Codex on that kind of work, then tuning until sleight is
+   clearly faster. From puddle arch's transcript (Opus 5.5 at high, a long context, the owner's Mac
+   under load): one nudge took 5 calls (new task, workspace picker, workspace, paste, send) and 30 to
+   45 s, of which sleight's calls were about 7 s (0.7 to 1.9 s each). The rest was model time between
+   calls. A click by label took 7.9 s and a click on element 705 with a paste took 8.1 s, both in a
+   tree of over 700 elements. So the targets are turns (one call for steps whose targets are
+   known) and slow reads in large Electron trees. The task must be generic: an Electron chat-style
+   fixture, never the owner's real seats.
+
 1. Measure what sleight adds. A head-to-head on the same tasks with sleight and Codex, at the
    owner's normal load and with added load, recording time, turns and the CPU seconds of each arm's
    own processes (sleight's relay, mod, helper spawns and pane snapshots against Codex's).
