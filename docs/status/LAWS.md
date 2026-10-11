@@ -57,6 +57,11 @@ belong in [STATE.md](STATE.md).
   one app. App knowledge belongs to the engine or to the model. A workaround for one app
   needs the owner's OK and says so. Benchmark tasks name apps, but their checks are generic: they judge
   the answer and the app's state, with no per-app harness.
+- Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
+  numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
+- Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,
+  installing sleight is enough; without it, `sleight-mcp setup` with no ChatGPT sign-in. Errors about a
+  missing engine point at setup.
 - Owner-away live runs happen in one sitting, asked for only once every open lane is merged, never in
   partial windows: each sitting means pausing the owner's other projects (owner, 2026-10-11).
 - Build work goes to Codex, Grok and GLM lanes, not Claude subagents, which the owner saves for
@@ -128,6 +133,9 @@ belong in [STATE.md](STATE.md).
 - An engine read right after input waits for the UI to settle, and that wait is also what lets the
   next key reach a panel or sheet the previous action opened. A guard that skips reads keeps them
   after clicks, shortcuts, Return, Escape, Tab and Space.
+- The engine refuses a key press made only of modifiers (`pressKey("shift")` returns
+  `-10005 keyPressIncludedNoNonModifierKeys`). A settle that needs a bare modifier is posted by sleight's
+  own helper, never sent through the engine.
 - The engine doesn't remember a session's approvals. In Codex the host does, so here the relay does. It
   does honor the "Always allow" list ChatGPT keeps (`ComputerUseAppApprovals.json`), with no prompt to
   sleight. That file is the user's ChatGPT setting: sleight reads it at most, and the owner decides any change.
@@ -180,6 +188,9 @@ belong in [STATE.md](STATE.md).
   Claude Code, and billing refused the arms (2026-10-11).
 - Benchmark arms run from folders outside any git repo. Claude Code loads CLAUDE.md from parent
   folders and keys project memory by the git root, so a folder inside this repo leaks both.
+- A release goes out only once public CI passes on it. CI runs on Linux without `npm install`, on the
+  oldest supported Claude Code: a test that needs macOS binaries or `/private/tmp` skips by name
+  elsewhere, and one that needs a dev dependency skips when it isn't installed.
 - The marketplace installs from the default branch, so `main` is what new users get. Keep it releasable:
   a default that fails the benchmark goes back to opt-in at once.
 - Window titles can include the owner's name (Chess games do). Scrub evidence and screenshots of them.

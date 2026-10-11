@@ -3,134 +3,50 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-11 17:00 UTC, 1.2.5 released)
+## Banner (2026-10-11 17:10 UTC, flushed before the owner's clear)
 
-**Released `v1.2.0` to `v1.2.3` today, all on public `main` with GitHub releases and green CI.** 1.2.0 on the
-owner's call to release on today's head-to-heads without a full release pass. 1.2.1 skips macOS-only
-tests on Linux CI (36 failed there), 1.2.2 shows the receipt path as text (Claude Code 2.1.288 refused a
-`file://` link and the pane drew nothing), 1.2.3 makes `sleight-mcp setup` the install path for users
-without Computer Use (owner), 1.2.4 puts updating and the auto-update switch right after install and adds
-`SLEIGHT_PROMPT=lean` (merged from prune-budget, off until its A/B), 1.2.5 fixes 1.2.4's CI. The owner's
-install is 1.2.5. Its marketplace reads this repo locally.
-Work since then goes to private again. Next: merge lanes web-cleanup,
-owned-abort (authorized to update its one obsolete test) and prune-budget, then run their live checks,
-the lean-prompt A/B, the battery and the browser tasks overnight, then the launch post (ROADMAP 0b).
+Released today, each with a GitHub release and green CI: `v1.2.0` (`6755a28`) through `v1.2.5`
+(`b2eb9d8`, public `main`). The owner's install is 1.2.5 (its marketplace reads this repo locally).
+`pane/auto-mode` and private are at this commit. `npm run check` 2,004 tests plus 31 mod tests, and
+`lint:prose` is clean. Live lock and hold are free, and no background job is running.
 
+This session works in `.claude/worktrees/boot-sleight-arch-*`, because a hook refuses edits in the main
+checkout: fast-forward the worktree branch to `pane/auto-mode`, commit there, `git push private
+HEAD:pane/auto-mode`, then `git -C ~/Projects/sleight merge --ff-only <branch>`. A release also pushes
+`HEAD:refs/heads/main` and the tag to `origin` with `SLEIGHT_RELEASE_PUSH=1` (owner's release call),
+then `gh release create` from the CHANGELOG section. Public CI is Linux, without `npm install`, on
+Claude Code 2.1.288: check new tests for macOS binaries, `/private/tmp` and dev-dependency imports first.
 
-Measured today, owner away (docs/benchmark.md): clean-arms head-to-head 9/9 each, sleight 22.0 s a
-run against Codex 44.6 s at 4.68 against 4.84 CPU seconds; normal setup 9/9 each, 27.1 s against
-36.2 s at 5.94 against 4.30 CPU seconds; browser head-to-head 24/24 each, 28.5 s against 41.8 s;
-textedit-drag 3/3 and menu-bar passed. The app-agnostic skill replaced the old one after two A/Bs.
-Failed or blocked: stale-number (display 7, not 56), simulator-form (simctl shutdown error 405 at
-cleanup), both shop smoke checks (titles differ from the retailers' listings; carts filled), and the
-Chess, save-lock and select-all harnesses at their own setup. The battery and the 40 native browser
-tasks stopped on harness cleanup. Lanes web-cleanup, owned-abort and prune-budget
-(`.dev/prompts/`) are with the owner for Codex. Guest carts with test items are left in Safari on
-Target and Best Buy, and one benchmark Helium window on 127.0.0.1 is open, for the owner to close.
-Allowing 127.0.0.1 in the extension (owner's OK) didn't happen: the engine's read of Helium timed
-out twice, and the lease needs it first (known-problems). The owner sets it in the extension at the Mac.
-Lead for a lane: stale-number sent clear, 7, times, 8, equals by number in one call with Calculator's
-history open (the first click renumbers the rest). sleight named the remap, but the display read 7,
-so the later clicks after the remap didn't land (docs/benchmarks/2026-10-11-sitting-stale-number.json).
+**In flight.** Lane owned-abort (Codex gpt-6.1-sol, `~/Projects/sleight-wt/owned-abort`, branch
+`codex/owned-abort` at `245a186`) has uncommitted `bench/preapproved-process.mjs` and
+`tests/preapproved-process-abort.test.mjs`. It records an EPERM while cancelling instead of throwing
+from the abort listener (a battery run died there with Word and the lock left behind). The owner
+authorized it to update the one obsolete test in `tests/preapproved-process.test.mjs`; its report
+should follow. Review, merge, then run its live check.
 
-**Owner's OK, 13:54 UTC:** sleight-arch allows `127.0.0.1` in the Codex extension's site settings in Helium
-and Chrome, through the browsers' own UI, once no live run holds the lock. The extension's own
-site prompt dismissed the first extension task (it isn't an MCP elicitation). Lane browser-tasks-2
-(Safari setup fix, an `--extension-sites-allowed` gate) is running in Codex.
+**Measured 2026-10-11, owner away** (docs/benchmark.md, raw in `docs/benchmarks/2026-10-11-*`):
+clean-arms head-to-head 9/9 each, sleight 22.0 s and 7.11 turns a run against Codex 44.6 s and 8.67,
+4.68 against 4.84 CPU s. Normal setup 9/9 each, 27.1 s against 36.2 s, 5.94 against 4.30 CPU s.
+Browser head-to-head (12 tasks, Safari and Helium) 24/24 each, 28.5 s against 41.8 s, faster on 11 of
+12. textedit-drag 3/3 and the menu-bar check passed. The app-agnostic skill (86 lines) replaced the old
+one after two A/Bs; `SLEIGHT_FIRST_CALL_BATCH=sheet` lost and is gone. Failed: stale-number (display 7,
+not 56, after a named remap: a lane lead), simulator-form (simctl shutdown error 405 at cleanup), both
+shop smoke checks (carts filled, titles differ from the listings). The Chess, save-lock and select-all
+harnesses failed their own setup and need a lane. API spend for October: $7.84 of $200.
 
+**Next, in order** (owner, 2026-10-11: short away windows of about an hour, asked for once):
+1. Merge owned-abort.
+2. In one away window, the lean-prompt A/B (`SLEIGHT_PROMPT=lean` against default on calculator-click,
+   textedit-edit and textedit-save, 6 runs a task per arm); web-cleanup's live check (safari-validation
+   and helium-validation on both arms, then the 40 native browser ids, `bench/tasks-web.mjs`); the
+   no-seed battery (`node bench/run.mjs --suite battery --owner-away`, 17 tasks). Merged lanes
+   battery-cleanup, battery-host-2, browser-tasks(-2) and web-cleanup have no full live pass yet.
+3. A lane for the broken harnesses (Chess `reliability-live`, `textedit-save-lock`,
+   `small-fixes-textedit`) and the stale-number remap.
+4. The launch post (ROADMAP 0b), built only on measured results, leading with the browser numbers.
 
-**Running now, owner's OK at 12:33 UTC (sitting plus the battery's no-seed half):** the skill A/B
-rerun (`.dev/passes/ab-skill-r2.log`). After it, `.dev/passes/away-2026-10-11.sh` from this worktree
-runs two Save A/Bs (sheet and skill), `bench/away-sitting.mjs` (12 steps) and
-`bench/run.mjs --suite battery --owner-away` (17 tasks, 34 runs). Progress is in
-`.dev/passes/away-2026-10-11.log`. Don't change plugin files in the main checkout until it ends.
-Nothing ran from 07:15 to 12:30 UTC: sleight-arch ended its turn without asking for the sitting.
-Results so far: the skill A/B rerun (slim matches current, 14.5 s against 15.6 s), the Save-sheet
-A/B (sheet lost, 29.7 s against 21.5 s, to be removed after the sitting) and the skill A/B on
-textedit-save (slim 38.9 s, current 44.7 s), all in docs/benchmark.md. Slim replaces SKILL.md after
-the sitting. The sitting's first start failed without `--owner-away` (sleight-arch's error). The
-battery stopped after 1 run at 13:14 UTC: the TextEdit task passed on disk, but cleanup left the
-fixture window open (CLEANUP_UNCONFIRMED). sleight-arch closed that one document and released the
-lock. Its fix is lane battery-cleanup (`.dev/prompts/lane-battery-cleanup.md`). Now running: sleight against Codex on the
-12 web tasks (2 runs each), then the 12-step sitting
-(`.dev/passes/away-2026-10-11-sitting.sh`). Lane browser-tasks (Codex gpt-6.1-sol, `.dev/prompts/lane-browser-tasks.md`) started
-about 12:50 UTC from the owner's phone, so this sitting's CPU and timing numbers overlap its checks.
-
-
-`pane/auto-mode` at `ff03fbc` is pushed to private (`Land-o-Clusters/sleight-dev`), and the main
-checkout is fast-forwarded to it. `npm run check` 1,938 tests plus 31 mod tests, `lint:prose` clean.
-Live lock and hold are free. Lanes generic-drag, generic-mechanisms, battery-harness and battery-report are merged, and
-`~/Projects/sleight-wt/` is empty. This session
-works in its worktree (`claude/boot-sleight-arch-6d0629`), because a hook refuses edits in the main
-checkout. It pushes with `git push private HEAD:pane/auto-mode`, then fast-forwards the main checkout.
-
-**Direction (owner, 2026-10-11, in LAWS and ROADMAP track 0):** sleight is app-agnostic, like Codex.
-What users run adds generic mechanisms, never rules or code paths for one app. Benchmark checks are
-generic too. A side-by-side battery against Codex follows the cleanup. The owner starts it. Don't
-start the battery before they say so.
-
-**Merged 2026-10-11:** generic-drag (`702cf3b`), generic-mechanisms (`97dd734`), battery-harness
-(`d0175cd`) and battery-report (`ff03fbc`). The generic-mechanisms lane's Shift press after `setValue`
-was dropped (`6ac66d5`): the engine refuses a modifier-only key (`-10005`, 2/2 live), so it would have
-failed every `setValue` on a text area. Its unit tests mocked `pressKey`.
-
-Live with the owner present, 2026-10-11, background TextEdit opened with `open -g`: `drag` moved a
-bold red word 3/3 through Accessibility (the window was covered), with the text, spacing, front app
-and pointer right, about 6.6 s a drag, and the formatting lost 3/3. `setValue` then the engine's Cmd+S
-saved 3/3 (about 1.0 s and 0.6 s). sleight answered that save "saved: not confirmed (degraded read)"
-3/3 although the file had changed, because the file wasn't opened through `open_file`.
-
-Live checks still open: an uncovered TextEdit move and a move in a second native text app (owner away,
-since the posted path can take the pointer), Chess, a large non-simulator screenshot's scale note, an
-orphan panel in a second AppKit app, a recording in a third app, a flow rule in a browser outside the
-old list, and `setValue` in a document opened through the Open panel (the save-lock run).
-
-**Battery, ready for the owner** (`node bench/run.mjs --suite battery --dry-run`): 17 tasks and 34
-runs without the owner, 31 tasks and 62 runs with `--owner-present`. That needs the owner to seed 10
-items first (self-messages in Slack, Discord, WhatsApp, Messages and Mail, and items in Music, Maps,
-Photos, Spotify and Zoom), passed with `--markers`, and a `--local-fixtures` file naming local
-Notes, Reminders and Calendar containers. `bench/battery-report.mjs` turns the results into the
-parity tables.
-
-**Skill A/B, done** (docs/benchmark.md, `docs/benchmarks/2026-10-11-skill-ab.json`): current 11/11 at
-14.5 s a run, slim 12/12 at 16.0 s, and the arm with no sleight rules 11/11 at 19.5 s. With no rules
-calculator-click took 5 to 9 turns against 3. Slim lost a turn in 2 of 6 calculator-click runs,
-likely from dropping the `{ id }` and `{ label }` examples. `SKILL-slim.md` now shows an ID and a label click with
-placeholders, no app names (owner: no Calculator example either). Next: rerun (`.dev/passes/ab-skill.sh`, owner present is fine),
-then textedit-save in the away sitting. Slim replaces SKILL.md only when it matches or beats current.
-Compare A/Bs with `node .dev/tools/ab-compare.mjs <log name>`.
-
-Measured on 2026-10-11 (docs/benchmark.md): the `cua.getApp` first-call wording is the default
-(27.0 s against 30.6 s a run). `open_file` naming its `getApp` call and saves observed from the file on
-disk are the default (textedit-edit 6/6, 18.5 s against 20.0 s). The Save-panel list trim lost and is
-gone. The acquisition-tree drop tied and stays off. `SLEIGHT_FIRST_CALL_BATCH=sheet` (no Cmd+S stop,
-menu clicks in one call) waits for the save A/B in the away sitting.
-
-With the owner present, Mail, Mimestream and the chat tasks failed in setup in their per-app helpers
-(known problems). The engine itself read Slack (161 elements) and Discord (223). Slack takes the front
-on launch with no click, and Electron trees build seconds after launch. Go to Folder in a Save panel
-puts TextEdit's windows over the owner's for about 0.4 s, so textedit-save runs need the owner away.
-Lanes chat-tasks-2, mail-fixtures, unsaved-review-2 and launch-focus were withdrawn by the owner.
-Giving the user's front app back after a launch takes it is still wanted, as a generic mechanism
-(ROADMAP track 0). The chat helper no longer sets the Accessibility switch (`5827c2d`).
-
-Worktrees: on 2026-10-11 the withdrawn lanes panel-rows (`4642150`), codex-diff (`227ca30`),
-mirroring-turns (`00546c1`) and launch-flake (`1147230`) were removed with their branches. The merged
-lanes' worktrees went too. plugin-arm round 3 (`f7486d0`) is on private and its files match the
-working branch.
-
-**Away sitting** (owner asks once): first the sheet and skill A/Bs on textedit-save. Then
-`node bench/away-sitting.mjs` runs its 12 steps, about 38 min by its dry run.
-
-Results that matter for the release gate (ROADMAP 3.5, 5b.1): speed-research found the clean-arms CPU
-gap to Codex (51.8 s against 42.8 s) was 8.6 s from two failed textedit-save runs, and the seven runs
-both arms passed differ by 0.4 s. Those failures were iCloud leftovers, fixed (`b09b792`), and
-textedit-save then passed 3/3 twice. The away sitting's head-to-head decides.
-
-Live on 2026-10-11 with the owner present: iPhone Mirroring 3/3 (`bench/results/2026-10-11T03-35-55-975Z.json`),
-`/sleight stop` on installed 1.1.0 ended the turn at once, calculator-click 3/3 and textedit-save and
-textedit-edit 3/3 each. The opt-in rich move stays off: macOS disables Paste in a TextEdit that has
-never been frontmost (`323183d`).
+The away-sitting tool reads its steps from the list below, pinned by hash in `bench/away-sitting.mjs`.
+Its first step (live checks with the owner present) is older than the Next list above.
 
 Next, in order:
 1. Live checks with the owner present: lease-broker with Codex, unsaved-review, and track 0's
@@ -146,32 +62,24 @@ Next, in order:
 4. If the gate is met, the full release pass and the release (ROADMAP 5b), including README's
    release-pass numbers, then update the owner's installed copy and confirm its `gitCommitSha`.
 
-**Waiting on the owner:** whether to release if the gate isn't met. Parked by the owner: the
-directory listing and the Windows spike. Once the release is installed on their Mac: "Always allow"
-once, `/sleight stop` and turn end on the new build, recording from a demonstration, and optionally
-`sleight-mcp setup` in a fresh macOS user. `menu_bar`'s Accessibility stays ungranted.
+**Waiting on the owner.** Allow `127.0.0.1` in the Codex extension's site settings in Helium and
+Chrome (their OK; sleight-arch couldn't: the engine's read of Helium timed out twice), then the 20
+extension ids run with `--surfaces browser,computer --extension-sites-allowed`. For the full battery
+they seed 5 self-messages (Slack, Discord, WhatsApp, Messages, Mail) and 5 app items (Music, Maps,
+Photos, Spotify, Zoom) and name local Notes, Reminders and Calendar containers. Leftovers for them:
+guest carts with test items in Safari on Target and Best Buy, one benchmark Helium tab on 127.0.0.1.
+Optional: `sleight-mcp setup` in a fresh macOS user (README says it's untested there).
 
 **Where work goes.** Work in progress is private between releases (LAWS): `remote.pushDefault
 private` sends pushes to `Land-o-Clusters/sleight-dev`, and a pre-push hook refuses the public repo
-without `SLEIGHT_RELEASE_PUSH=1`. Public `origin/pane/auto-mode` stays at `332e3ca`. The `codex/*`
-branches already public stay there (owner).
+without `SLEIGHT_RELEASE_PUSH=1`. Public `origin/pane/auto-mode` stays at `332e3ca`.
 
 **Benchmark.** Claude arms run on the owner's API key, Haiku 5.5 at high, capped at $200 a month
-(LAWS), priced from token counts. The ledger read $4.53 for October at 03:24 UTC on 2026-10-11 (Console
-showed $0.27 actually charged). Old runs move to
-`~/Library/Caches/sleight-bench/runs-archive` before each pass. `--surfaces browser,computer` runs
-the real suite with the extension browser API. Chains of live runs live in `.dev/passes/`
-(`away-2026-10-10*.sh`, `evidence-2026-10-11.sh`).
+(LAWS). `--surfaces browser,computer` runs the real suite with the extension browser API. Chains of
+live runs live in `.dev/passes/`. Compare A/Bs with `node .dev/tools/ab-compare.mjs <log>.log`.
 
-Released: `v1.1.0` (`0b6a1c0`) on `main`. Everything since is on `pane/auto-mode`, in `CHANGELOG.md`.
-
-Read first: `docs/known-problems.md`, `docs/benchmark.md`, `docs/design/guard-reads.md`.
-
-Branches and worktrees (`~/Projects/sleight-wt/<name>`):
-- `pane/auto-mode` in `~/Projects/sleight`: the working branch. A release fast-forwards `main` to it
-  and pushes `origin`.
-- `~/Projects/sleight-wt/` is empty (2026-10-11).
-- `perf/screenshot-scale` (`1aa574b`, `shots`): parked.
+Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working branch.
+`~/Projects/sleight-wt/` contains only owned-abort. `perf/screenshot-scale` (`1aa574b`) is parked.
 
 ## Machine state outside the repo
 
@@ -227,12 +135,6 @@ Branches and worktrees (`~/Projects/sleight-wt/<name>`):
   `select` drops in the title bar.
 
 ## Waiting on the owner
-
-- OpenUsage (owner's usage meter) was rate-limited from 2026-10-10 22:18 UTC through at least
-  2026-10-11 03:42, with no bench run for long stretches of it. Bench arms had been inheriting the
-  host desktop session's env, including its auth-refresh socket (fixed `72410f1`) and now use their
-  own `CLAUDE_CONFIG_DIR` on the key. Check `grep "plugin:claude" ~/Library/Logs/OpenUsage/OpenUsage.log`
-  during and after the first-call A/B: fresh reads throughout would clear the bench.
 
 - Safari fixture windows, Preview `Pages-*.pdf`, Word and Excel fixture documents were left on
   their screen on 2026-10-09. Check the iCloud TextEdit files only by exact content, never by browsing.
