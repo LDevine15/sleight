@@ -256,9 +256,10 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   [Driving apps the engine refuses](settings.md#driving-apps-the-engine-refuses)); the engine's refusal itself
   stays. On that path, settings refusal keeps the title and toolbar filters and now inspects
   `AXIdentifier` on window containers, `AXModal`, dialog subroles and nested toolbars, independent
-  of the displayed language. Unreadable trees and scans over 300 nodes or 12 levels refuse.
-  Unit tests passed 7/7 on recorded ChatGPT content-window roles and constructed attribute cases
-  (2026-10-10), including the old title, toolbar collection and direct-child toolbar rules.
+  of the displayed language. The scan goes breadth first. An unreadable window or top level refuses,
+  and the first 300 nodes (12 levels at most) decide. Until 2026-10-11 a longer scan refused, which
+  refused every Codex window ("ChatGPT"). A marker past the first 300 nodes isn't checked now.
+  Unit tests pass 8/8 on constructed trees (2026-10-11), with no live read of Codex since that change.
   The recording lacks settings attributes, so localized settings still need live
   qualification. An app that exposes neither a recognized identifier nor dialog or toolbar metadata
   can still pass with an unknown title. The engine path used when the user disables its refusal

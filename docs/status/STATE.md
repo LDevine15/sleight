@@ -3,7 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-11 17:10 UTC, flushed before the owner's clear)
+## Banner (2026-10-11 22:30 UTC)
+
+`blocked_app`'s settings scan no longer refuses big windows (it refused every Codex window, seen by
+puddle arch). Unit tests 8/8; no full `npm run check` and no live read, because the owner's Mac is
+under another project's load. Both are owed before the next release. Everything below is as flushed at 17:10.
 
 Released today, each with a GitHub release and green CI: `v1.2.0` (`6755a28`) through `v1.2.5`
 (`b2eb9d8`, public `main`). The owner's install is 1.2.5 (its marketplace reads this repo locally).

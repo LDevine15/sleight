@@ -62,12 +62,19 @@ test('modal and dialog windows refuse before exposing their contents', () => {
   }
 });
 
-test('settings inspection refuses unreadable and over-budget trees instead of assuming ordinary content', () => {
+test('settings inspection refuses an unreadable window or top level', () => {
   assert.equal(classify({ ...main, unreadable: true }), true);
-  assert.equal(classify({ ...main, children: Array.from({ length: 301 }, () => ({ role: 'AXGroup' })) }), true);
-  let nested = { role: 'AXGroup' };
+  assert.equal(classify({ ...main, children: [{ role: '' }] }), true);
+});
+
+test('a chat-sized window past the scan budget stays available, and markers near the top still refuse', () => {
+  const wide = Array.from({ length: 301 }, () => ({ role: 'AXGroup' }));
+  assert.equal(classify({ ...main, children: wide }), false);
+  let nested = { role: 'AXGroup', children: [{ role: '' }, { role: 'AXGroup', unreadable: true }] };
   for (let i = 0; i < 14; i++) nested = { role: 'AXGroup', children: [nested] };
-  assert.equal(classify({ ...main, children: [nested] }), true);
+  assert.equal(classify({ ...main, children: [nested] }), false);
+  assert.equal(classify({ ...main, children: [{ role: 'AXGroup', identifier: 'settings-pane' }, ...wide] }), true);
+  assert.equal(classify({ ...main, children: [...wide, { role: 'AXToolbar' }] }), false, 'past the budget, unseen');
 });
 
 test('ordinary terminal text and controls mentioning settings do not classify the document as settings', () => {

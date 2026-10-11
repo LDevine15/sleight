@@ -116,28 +116,33 @@ function frontWindow(proc, appName) {
 // otherwise, so Claude cannot reach the apps' own approval or safety settings.
 // Keep title and toolbar checks, then inspect nonlocalized AX metadata before
 // exposing content or sending input. A settings launcher button in an ordinary
-// window is not a settings container. Missing optional identifiers are normal;
-// unreadable or over-budget child trees cannot establish a safe window.
+// window is not a settings container. Missing optional identifiers are normal.
+// The scan goes breadth first, because these markers sit near the top of a
+// window. A window or top level that can't be read refuses. Once the budget is
+// spent the window counts as ordinary: a chat window passes 300 nodes and 12
+// levels, and refusing there refused every Codex window (2026-10-11).
 function isSettingsWindow(win, patternSource, patternFlags) {
   const title = (attempt(() => win.title(), '') ?? '').trim();
   if (patternSource && new RegExp(patternSource, patternFlags ?? '').test(title)) return true;
   if (attempt(() => win.toolbars().length, 0) > 0) return true;
   const containers = ['AXWindow', 'AXGroup', 'AXSplitGroup', 'AXTabGroup', 'AXScrollArea', 'AXWebArea'];
   const settingsId = /(?:^|[._:\s-])(?:settings|preferences)(?:$|[._:\s-])|^(?:NS)?(?:Preferences|Settings)Window$/i;
-  let count = 0;
-  function inspect(el, depth) {
-    if (depth > 12 || ++count > 300) return true;
+  const queue = [[win, 0]];
+  for (let count = 0; queue.length && count < 300; count++) {
+    const [el, depth] = queue.shift();
     const role = attempt(() => el.role(), '');
-    if (!role || role === 'AXToolbar') return true;
+    if (!role) { if (depth <= 1) return true; continue; }
+    if (role === 'AXToolbar') return true;
     const subrole = attempt(() => el.subrole(), '');
     if (['AXDialog', 'AXSystemDialog'].includes(subrole)) return true;
     if (attempt(() => el.attributes.byName('AXModal').value(), false) === true) return true;
     if (containers.includes(role) && settingsId.test(String(attempt(() => el.attributes.byName('AXIdentifier').value(), '')))) return true;
+    if (depth >= 12) continue;
     let children;
-    try { children = el.uiElements(); } catch { return true; }
-    return children.some(child => inspect(child, depth + 1));
+    try { children = el.uiElements(); } catch { if (depth === 0) return true; continue; }
+    for (const child of children) queue.push([child, depth + 1]);
   }
-  return inspect(win, 0);
+  return false;
 }
 
 function settingsTitleOrRefuse(win, patternSource, patternFlags) {

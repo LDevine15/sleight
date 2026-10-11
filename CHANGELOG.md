@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `blocked_app` no longer refuses a window just because its tree passes 300 nodes or 12 levels.
+  That rule refused every Codex window (titled "ChatGPT"). The settings scan now goes breadth first
+  and decides on the first 300 nodes.
+
 ## 1.2.5 (2026-10-11)
 
 - The prompt-budget tests are skipped by name where the typescript dev dependency isn't installed.

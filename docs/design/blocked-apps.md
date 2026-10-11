@@ -80,8 +80,9 @@ Settings and preferences windows of these apps are refused for every operation,
 including reads. Claude cannot change the apps' own approval or safety settings.
 The title is the first filter, with the relay's pattern and flags (blocked-apps.mjs).
 The driver also checks nonlocalized `AXIdentifier` values on window containers,
-dialog subroles, `AXModal` and nested toolbars. It refuses unreadable child trees
-and scans exceeding 300 nodes or 12 levels. A settings launcher button in ordinary
+dialog subroles, `AXModal` and nested toolbars, breadth first over the first 300
+nodes and 12 levels. It refuses a window or top level it can't read, and passes a
+window once the scan budget runs out. A settings launcher button in ordinary
 content does not count as a settings container.
 
 ## Limits
