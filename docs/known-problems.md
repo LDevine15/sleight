@@ -544,6 +544,12 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   kept it with the failure reported (3/3, Chess, 2026-10-09). A promise chained off an action
   (`app.click(1).then(f)` assigned and not awaited) still rejects unhandled. The relay also refuses
   a call whose action is a statement without `await` with more code after it.
+- The engine's service crashes now and then. `SkyComputerUseService` (26.1005.1001425) segfaulted 4
+  times from 2026-10-05 to 2026-10-11, each time at address 0 inside its handler for WindowServer
+  notifications, on the main thread: during benchmark runs on TextEdit and Calculator (3) and during
+  a Codex `getApp` call with no sleight call in flight (1). The call in flight
+  fails with "native pipe closed before response", and the service is back within seconds. We don't
+  know what triggers it, and it is the engine's bug for every client.
 - The engine's helper can stop answering. On 2026-10-04 every `cua.getApp` timed out
   (`-10005 timeoutReached`) for about 25 minutes, with the Mac unlocked and in use, until ChatGPT was
   restarted. We don't know the cause. It started right after a test that kills engine processes.
@@ -615,8 +621,10 @@ and missing timestamps remain null. The sample resolved 13 of 13 spill files and
   changing. Run `--doctor` first when something stops working.
 - The engine has no access to an app's icon in the menu bar or to notification banners: its inventory has
   no Control Center or Notification Center, and `getApp("com.apple.controlcenter")` times out (engine
-  26.930.31730, 2026-10-03). sleight's `menu_bar` and `notifications` tools cover those instead (see
-  [How it works](how-it-works.md)). They work in the foreground: an open menu shows on screen and takes
+  26.930.31730, 2026-10-03). Nor can it acquire an app that lives only in the menu bar (`LSUIElement`):
+  Codex's own computer use got `-10005 timeoutReached` after 5 to 6 s on 2 of 2 `getApp` calls on
+  OpenUsage (2026-10-11), with sleight not involved. sleight's `menu_bar` and `notifications` tools
+  cover those instead (see [How it works](how-it-works.md)). They work in the foreground: an open menu shows on screen and takes
   the keyboard until sleight closes it. Icons that open a SwiftUI window (`MenuBarExtra` in window
   style) ignore the accessibility press, so sleight clicks them for real and puts the pointer back.
   Controls without a label, tooltip or identifier get names such as `Button at (10, 20)`, measured

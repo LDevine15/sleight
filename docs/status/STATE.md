@@ -3,10 +3,15 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 02:10 UTC, flushed before the owner's clear)
+## Banner (2026-10-12 00:05 UTC, after the owner's clear)
 
-**The owner's Mac is under another project's load** (load average about 45 at 02:08 UTC): no live
-runs and no full `npm run check` until they say it's free. Everything since 1.2.5 passed only the test
+**The owner's Mac is still under load** (owner, 2026-10-12 00:00 UTC; load average 14 to 17): no live
+runs and no full `npm run check` until they say it's free. Codex's "-1005" timeouts were the engine's,
+not sleight's: `-10005 timeoutReached` on 2 of 2 `getApp` calls on OpenUsage, a menu-bar-only app the
+engine can't acquire, after the engine service segfaulted (its 4th crash since 2026-10-05, same stack).
+Both are in known-problems. The engine plugin is now 26.1007.30912 (folder dated 2026-10-11 12:45);
+the watch's baseline is still 26.1007.21159, so the 9:00 watch diffs it. One Claude session from
+2026-10-10 still runs sleight 1.1.0 (pid 2268). Everything since 1.2.5 passed only the test
 files it touched, plus `lint:prose`. The first full check on `pane/auto-mode` is owed. Live lock and
 hold are free. No background job is running and none needs relaunching.
 
