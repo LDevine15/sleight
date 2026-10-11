@@ -12,8 +12,9 @@ say it's free. Since the 17:10 flush:
   OpenAI's apps with a "could be dangerous" line. 245/245 on the 9 affected test files. Run the full
   check, then merge to `pane/auto-mode`. It supersedes `e640e28` (blocked_app's settings-scan fix).
 - `8b47a54` adds `signin` to the browser tasks, a login wall left to the user. It hasn't run live.
-- Lane broken-harnesses handed to the owner for Grok (branch `lane/broken-harnesses`, no live runs):
-  the Chess, save-lock, select-all and stale-number setup failures. Review its report, then merge.
+- Lane broken-harnesses (Grok) merged after review: the Chess, save-lock, select-all and stale-number
+  setup failures, 67/67 on their tests, 7 of which fail on the old code. None has run live. Chess
+  cleanup now treats a relaunched Chess as the owned one gone, which can leave that window open.
 - Launch post draft for the next release: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING]
   lines for the release pass and the approval change.
 - puddle arch was told to drive Codex through `js` (`cua.getApp("com.openai.codex")`).
