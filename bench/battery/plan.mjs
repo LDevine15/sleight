@@ -40,8 +40,8 @@ export function plan({ ownerPresent = false, wanted, runs = 1, markers = {}, loc
   return { suite: 'battery', dryRun: true, counts: counts(selected), catalogCounts: counts(tasks),
     excluded: tasks.filter(t => !wanted && !selected.includes(t)).map(t => ({ task: t.id, reason: 'requires --owner-present' })),
     seedMarkers: seeds,
-    ownerSetupOnce: selected.some(t => t.fixtureKind === 'app-flow')
-      ? ['Add the folder ~/sleight-scrap as a ZCode project once before the pass, so neither arm pays for adding it.'] : [],
+    setupOnce: selected.some(t => t.fixtureKind === 'app-flow')
+      ? ['sleight-arch adds the folder ~/sleight-scrap as a ZCode project once before the pass (owner, 2026-10-11), so neither arm pays for adding it.'] : [],
     ownerSetup: selected.filter(t => t.fixtureKind === 'self-message' || (t.fixtureKind === 'app-state' && t.mode === 'read'))
       .map(t => ({ task: t.id, marker: seeds[t.id], action: t.fixtureKind === 'self-message'
         ? 'Owner posts this to themself once before the pass. The runner never posts.'

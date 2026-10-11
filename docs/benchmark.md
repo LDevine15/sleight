@@ -43,8 +43,8 @@ ZCode flows (owner, 2026-10-11) time the agent-nudging work that felt slow. Each
 the `sleight-scrap` project and sends one message. `zcode-rename` then renames it, `zcode-pin` pins
 and unpins it, and `zcode-sidebar` first goes around the sidebar. `zcode-send` stops after the send. The check is one engine read that
 must show the run's text, such as `scrap <marker>` after a rename. The pin check sees only the final
-unpinned row, so it can't tell whether the pin happened. The owner adds `~/sleight-scrap` as a ZCode
-project once before a pass. Neither arm may touch other tasks, which belong to running agents. None
+unpinned row, so it can't tell whether the pin happened. Before the first pass sleight-arch adds
+`~/sleight-scrap` as a ZCode project once, through sleight (owner, 2026-10-11). Neither arm may touch other tasks, which belong to running agents. None
 of these has run live.
 
 Notes, Reminders and Calendar have declarative scripting descriptors. `--local-fixtures` accepts a

@@ -90,7 +90,9 @@ belong in [STATE.md](STATE.md).
   sends `persist: "always"` and never remembers a decline. `SLEIGHT_APPROVAL_SCOPE=once` turns it off.
   The prompt also offers "Always allow", which adds that app to the user's pre-approved list with the
   date (owner, 2026-10-10). Only the user's own click writes it, never Claude, and terminals and
-  OpenAI's apps never get the choice.
+  OpenAI's apps never get the choice. SUPERSEDED (owner, 2026-10-11): terminals and OpenAI's apps get
+  the same card with Always allow and a "could be dangerous" line, landing with branch
+  `remove-blocked-app`.
 - Apps get approved without a person at the moment of use only two ways: the benchmark's allowlist
   (Calculator, TextEdit, Chess, and Simulator or DeviceHub since 2026-10-07, by name or bundle ID) in benchmark runs,
   plus Safari, Preview, Finder and Helium for the real-use tasks (owner, 2026-10-08) and Word,
@@ -112,6 +114,8 @@ belong in [STATE.md](STATE.md).
   runs (owner, 2026-10-04). Users who turn off the helper's refusal themselves
   (`ComputerUseAllowForbiddenTargets`) get the engine's per-app session approval instead, with the
   prompt saying so and settings windows refused. sleight never sets that default (owner, 2026-10-05).
+  SUPERSEDED in part (owner, 2026-10-11): `blocked_app` is removed and a refusal tells the user about
+  that default, landing with branch `remove-blocked-app`.
 - sleight's `menu_bar`, `notifications` and `drag` tools act outside the engine, through macOS
   Accessibility and posted mouse events (owner's scope calls, 2026-10-03 and 2026-10-04). Each app's icon needs the user's approval, as do notifications,
   with the same session memory as engine approvals. Every action on an app waits for that approval.

@@ -102,8 +102,8 @@ test('ZCode flow prompts allow only their own message and keep other tasks off l
     assert.doesNotMatch(prompt, /Never send/);
     assert.doesNotMatch(prompt, /\$marker/);
   }
-  assert.deepEqual(plan({ wanted: ['zcode-send'] }).ownerSetupOnce.length, 1);
-  assert.deepEqual(plan({ wanted: ['calculator'] }).ownerSetupOnce, []);
+  assert.deepEqual(plan({ wanted: ['zcode-send'] }).setupOnce.length, 1);
+  assert.deepEqual(plan({ wanted: ['calculator'] }).setupOnce, []);
 });
 test('battery approval is suite scoped and account apps require the owner', async () => {
   const { tasks } = await load('tasks');

@@ -3,36 +3,16 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 00:30 UTC)
+## Banner (2026-10-12 02:10 UTC, flushed before the owner's clear)
 
-The owner's Mac is under another project's load: no live runs and no full `npm run check` until they
-say it's free. Since the 17:10 flush:
-- Branch `remove-blocked-app` (`e536f38`, private, owner's order): `blocked_app` removed, refusals
-  point to the `ComputerUseAllowForbiddenTargets` switch, and Always allow is offered for terminals and
-  OpenAI's apps with a "could be dangerous" line. 245/245 on the 9 affected test files. Run the full
-  check, then merge to `pane/auto-mode`. It supersedes `e640e28` (blocked_app's settings-scan fix).
-- Merged after review, none run live: harness-hygiene (simctl 405, harness signals, Chess leftovers,
-  with signals made to exit after cleanup), shop-match (brand and option tokens), front-restore (Codex;
-  default on, `SLEIGHT_FRONT_RESTORE=0`, with only clicks cancelling it). Front-restore changes what
-  every user runs, so it needs its live check before any release.
-- The benchmark's Codex arm now defaults to gpt-6-luna at Claude's effort (owner). Published
-  head-to-heads ran gpt-6.1-sol and get rerun.
-- `98d2113`: four ZCode flows in the battery for the nudge-speed head-to-head
-  (`--tasks zcode-send,zcode-rename,zcode-pin,zcode-sidebar`), in a `sleight-scrap` project. Before
-  their first pass the owner adds `~/sleight-scrap` as a ZCode project once.
-- `8b47a54` adds `signin` to the browser tasks, a login wall left to the user. It hasn't run live.
-- Lane broken-harnesses (Grok) merged after review: the Chess, save-lock, select-all and stale-number
-  setup failures, 67/67 on their tests, 7 of which fail on the old code. None has run live. Chess
-  cleanup now treats a relaunched Chess as the owned one gone, which can leave that window open.
-- Launch post draft for the next release: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING]
-  lines for the release pass and the approval change.
-- puddle arch was told to drive Codex through `js` (`cua.getApp("com.openai.codex")`).
-Everything below is as flushed at 17:10.
+**The owner's Mac is under another project's load** (load average about 45 at 02:08 UTC): no live
+runs and no full `npm run check` until they say it's free. Everything since 1.2.5 passed only the test
+files it touched, plus `lint:prose`. The first full check on `pane/auto-mode` is owed. Live lock and
+hold are free. No background job is running and none needs relaunching.
 
-Released today, each with a GitHub release and green CI: `v1.2.0` (`6755a28`) through `v1.2.5`
-(`b2eb9d8`, public `main`). The owner's install is 1.2.5 (its marketplace reads this repo locally).
-`pane/auto-mode` and private are at this commit. `npm run check` 2,004 tests plus 31 mod tests, and
-`lint:prose` is clean. Live lock and hold are free, and no background job is running.
+Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
+public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
+banner, and `~/Projects/sleight` is fast-forwarded to it.
 
 This session works in `.claude/worktrees/boot-sleight-arch-*`, because a hook refuses edits in the main
 checkout: fast-forward the worktree branch to `pane/auto-mode`, commit there, `git push private
@@ -41,33 +21,47 @@ HEAD:pane/auto-mode`, then `git -C ~/Projects/sleight merge --ff-only <branch>`.
 then `gh release create` from the CHANGELOG section. Public CI is Linux, without `npm install`, on
 Claude Code 2.1.288: check new tests for macOS binaries, `/private/tmp` and dev-dependency imports first.
 
-**In flight.** Lane owned-abort (Codex gpt-6.1-sol, `~/Projects/sleight-wt/owned-abort`, branch
-`codex/owned-abort` at `245a186`) has uncommitted `bench/preapproved-process.mjs` and
-`tests/preapproved-process-abort.test.mjs`. It records an EPERM while cancelling instead of throwing
-from the abort listener (a battery run died there with Word and the lock left behind). The owner
-authorized it to update the one obsolete test in `tests/preapproved-process.test.mjs`; its report
-should follow. Review, merge, then run its live check.
+**In flight.**
+- Branch `remove-blocked-app` (`e536f38`, private only, owner's order 2026-10-11): `blocked_app`
+  removed, engine refusals point the user to `ComputerUseAllowForbiddenTargets`, and Always allow is
+  offered for terminals and OpenAI's apps with a "could be dangerous" line. 245/245 on its 9 affected
+  test files. It branched from `e640e28` and `pane/auto-mode` has moved on: cherry-pick it onto
+  `pane/auto-mode`, never rebase (conflicts likely in LAWS, ROADMAP, STATE, known-problems and
+  settings docs), run the full check, push. It supersedes `e640e28` (blocked_app's settings-scan fix).
+- Lane owned-abort (Codex, `~/Projects/sleight-wt/owned-abort`, branch `codex/owned-abort` at
+  `245a186`): uncommitted `bench/preapproved-process.mjs` and `tests/preapproved-process-abort.test.mjs`,
+  recording an EPERM while cancelling instead of throwing from the abort listener. No report yet.
+- Merged 2026-10-11 to 2026-10-12 after review, none run live: broken-harnesses (Chess pid, save-lock
+  URL match, select-all fixture timeout, stale-number reads the display fresh), harness-hygiene
+  (simctl 405, harness signals exit after cleanup, Chess leftovers named), shop-match (brand and
+  option tokens), front-restore (Codex, `c576f59`: default on, `SLEIGHT_FRONT_RESTORE=0`, only clicks
+  cancel it). Front-restore changes what every user runs: live check before any release. `signin`
+  browser kind (`8b47a54`). The ZCode battery flows (`98d2113`) run with `--suite battery --tasks
+  zcode-send,zcode-rename,zcode-pin,zcode-sidebar`. sleight-arch adds `~/sleight-scrap` as a ZCode
+  project through sleight before their first pass (owner, 2026-10-11).
+- The benchmark's Codex arm defaults to gpt-6-luna at Claude's effort (owner, 2026-10-11, LAWS). The
+  published head-to-heads ran gpt-6.1-sol and get rerun on luna.
+- Launch post draft: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING] lines for the luna
+  rerun, the approval change and the release pass.
+- ROADMAP 3.0 (owner, 2026-10-11): ZCode nudges by puddle arch felt slow. 5 calls and 30 to 45 s a
+  nudge, about 7 s of it sleight's calls; the rest is model time, plus 7.9 to 8.1 s calls in a 700-element
+  tree. Targets: fewer turns and faster reads of large Electron trees.
 
-**Measured 2026-10-11, owner away** (docs/benchmark.md, raw in `docs/benchmarks/2026-10-11-*`):
-clean-arms head-to-head 9/9 each, sleight 22.0 s and 7.11 turns a run against Codex 44.6 s and 8.67,
-4.68 against 4.84 CPU s. Normal setup 9/9 each, 27.1 s against 36.2 s, 5.94 against 4.30 CPU s.
-Browser head-to-head (12 tasks, Safari and Helium) 24/24 each, 28.5 s against 41.8 s, faster on 11 of
-12. textedit-drag 3/3 and the menu-bar check passed. The app-agnostic skill (86 lines) replaced the old
-one after two A/Bs; `SLEIGHT_FIRST_CALL_BATCH=sheet` lost and is gone. Failed: stale-number (display 7,
-not 56, after a named remap: a lane lead), simulator-form (simctl shutdown error 405 at cleanup), both
-shop smoke checks (carts filled, titles differ from the listings). The Chess, save-lock and select-all
-harnesses failed their own setup and need a lane. API spend for October: $7.84 of $200.
+**Measured 2026-10-11, owner away** (docs/benchmark.md, raw in `docs/benchmarks/2026-10-11-*`), against
+gpt-6.1-sol: clean-arms head-to-head 9/9 each, sleight 22.0 s and 7.11 turns a run against Codex 44.6 s
+and 8.67, 4.68 against 4.84 CPU s. Normal setup 9/9 each, 27.1 s against 36.2 s, 5.94 against 4.30 CPU
+s. Browser head-to-head (12 tasks, Safari and Helium) 24/24 each, 28.5 s against 41.8 s, faster on 11
+of 12. API spend for October: $7.84 of $200.
 
-**Next, in order** (owner, 2026-10-11: short away windows of about an hour, asked for once):
-1. Merge owned-abort.
-2. In one away window, the lean-prompt A/B (`SLEIGHT_PROMPT=lean` against default on calculator-click,
-   textedit-edit and textedit-save, 6 runs a task per arm); web-cleanup's live check (safari-validation
-   and helium-validation on both arms, then the 40 native browser ids, `bench/tasks-web.mjs`); the
-   no-seed battery (`node bench/run.mjs --suite battery --owner-away`, 17 tasks). Merged lanes
-   battery-cleanup, battery-host-2, browser-tasks(-2) and web-cleanup have no full live pass yet.
-3. A lane for the broken harnesses (Chess `reliability-live`, `textedit-save-lock`,
-   `small-fixes-textedit`) and the stale-number remap.
-4. The launch post (ROADMAP 0b), built only on measured results, leading with the browser numbers.
+**Next steps:**
+1. When the owner says the Mac is free: cherry-pick `remove-blocked-app`, run the full check, push.
+2. One away sitting, asked for once: the luna head-to-heads (clean and normal, then the 12 browser
+   tasks), the lean-prompt A/B (`SLEIGHT_PROMPT=lean`, calculator-click, textedit-edit and
+   textedit-save, 6 runs a task per arm), front-restore's live check, the ZCode flows on both arms,
+   the merged harnesses (Chess, save-lock, select-all, stale-number, simulator-form, shop smoke),
+   `signin` and the 40 native browser ids, and the no-seed battery. Merged lanes battery-cleanup,
+   battery-host-2, browser-tasks(-2) and web-cleanup have no full live pass yet.
+3. Fill the launch draft's [PENDING] lines from those results, then the release gate (ROADMAP 5b).
 
 The away-sitting tool reads its steps from the list below, pinned by hash in `bench/away-sitting.mjs`.
 Its first step (live checks with the owner present) is older than the Next list above.
