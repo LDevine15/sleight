@@ -3,13 +3,15 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-11 16:50 UTC, 1.2.3 released)
+## Banner (2026-10-11 17:00 UTC, 1.2.5 released)
 
 **Released `v1.2.0` to `v1.2.3` today, all on public `main` with GitHub releases and green CI.** 1.2.0 on the
 owner's call to release on today's head-to-heads without a full release pass. 1.2.1 skips macOS-only
 tests on Linux CI (36 failed there), 1.2.2 shows the receipt path as text (Claude Code 2.1.288 refused a
 `file://` link and the pane drew nothing), 1.2.3 makes `sleight-mcp setup` the install path for users
-without Computer Use (owner). The owner's install is 1.2.3. Its marketplace reads this repo locally.
+without Computer Use (owner), 1.2.4 puts updating and the auto-update switch right after install and adds
+`SLEIGHT_PROMPT=lean` (merged from prune-budget, off until its A/B), 1.2.5 fixes 1.2.4's CI. The owner's
+install is 1.2.5. Its marketplace reads this repo locally.
 Work since then goes to private again. Next: merge lanes web-cleanup,
 owned-abort (authorized to update its one obsolete test) and prune-budget, then run their live checks,
 the lean-prompt A/B, the battery and the browser tasks overnight, then the launch post (ROADMAP 0b).
