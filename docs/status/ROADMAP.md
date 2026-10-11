@@ -4,16 +4,18 @@ Everything we intend to do, in order. [STATE.md](STATE.md) says where we are now
 [LAWS.md](LAWS.md) says what's always true. When the owner adds or corrects anything about the plan,
 sleight-arch writes it here in the same turn. When asked for the plan, answer from this file whole.
 
-This release is due 2026-10-10 (owner). Codex is out of quota, so Grok and GLM lanes take the code
-work in `.dev/prompts/lane-*.md`. sleight-arch merges it and runs the live checks before the release. The tracks run in parallel. Live runs that can take the owner's pointer or keyboard wait until
-they're away. Sol works track 4, and sleight-arch works tracks 2 and 3 while the owner is at the Mac.
+1.2.5 is out (2026-10-11). The next release batches several changes, with one full pass. Code work
+goes to Codex, Grok and GLM lanes, each handed to the owner as one paste-ready prompt. sleight-arch
+reviews and merges it and runs the live checks. Live runs that can take the owner's pointer or
+keyboard wait until they're away, in one away sitting.
 
 ## 0. App-agnostic, and parity with Codex (owner, 2026-10-11), before the release
 
 1. Clean up what exists: lanes generic-drag and generic-mechanisms, from an audit that found about 15
    places where code depends on one app. Merged 2026-10-11. Live checks are listed in STATE.
-2. Slim the skill: `SKILL-slim.md` against the current skill and no skill, A/B running; textedit-save
-   in the away sitting. Then a pruning session (owner, 2026-10-11: the skill is fat, and the point is
+2. Slim the skill. Done 2026-10-11: the app-agnostic skill (86 lines) replaced the old one after two
+   A/Bs, and `SLEIGHT_PROMPT=lean` (1.2.4) cuts what Claude reads by 30%, waiting on its A/B. Then a
+   pruning session (owner, 2026-10-11: the skill is fat, and the point is
    super lightweight): the current skill is 137 lines and about 1,500 words, with app names in about
    17 places, among them a TextEdit `setValue` rule and an iPhone Mirroring section. The slim one is
    86 lines with none. Cut every line the A/Bs don't show saving turns or time, and treat the tool
@@ -23,6 +25,9 @@ they're away. Sol works track 4, and sleight-arch works tracks 2 and 3 while the
    proven on the other half. Lanes battery-harness and battery-report, merged 2026-10-11. The owner
    starts it.
 4. Give the user's front app back when a launch takes it, as a generic mechanism.
+5. Approvals as in Codex (owner, 2026-10-11): one card for every app (Always allow, Allow, Decline),
+   with a "could be dangerous" line for terminals and AI apps. The user decides in one click, with no
+   second step. `blocked_app` is removed. Built on branch `remove-blocked-app`, waiting on the full check.
 
 ## 0b. Market it, and win in the browser (owner, 2026-10-11)
 
