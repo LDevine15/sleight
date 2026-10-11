@@ -1,7 +1,9 @@
 # Known problems
 
 Front restoration after an app launch has no live run yet (2026-10-11). Native activation, input
-detection, Spaces and the interval between the last focus check and activation remain unverified.
+detection, Spaces and the interval between the last focus check and activation remain unverified. A
+Cmd+Tab to the launched app during its launch looks like the launch itself, so sleight would give
+the front back anyway. Only clicks cancel the restore.
 
 ## Lean prompt
 

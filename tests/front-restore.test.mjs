@@ -89,7 +89,7 @@ test('the helper restores only a new launch and consumes each call before activa
       NSRunningApplication: { runningApplicationWithProcessIdentifier: pid => apps.find(a => a.pid === pid) },
       NSProcessInfo: { processInfo: { get systemUptime() { return uptime++; } } },
       NSRunLoop: { currentRunLoop: { runUntilDate() {} } }, NSDate: { dateWithTimeIntervalSinceNow() {} },
-      CGEventSourceSecondsSinceLastEventType: (state, type) => { assert.equal(state, 1); assert.equal(type, 0xFFFFFFFF); return 20; } },
+      CGEventSourceSecondsSinceLastEventType: (state, type) => { assert.equal(state, 1); assert.ok([1, 3, 25].includes(type), 'clicks only, never keys'); return 20; } },
   });
   const begin = run({ action: 'begin', selector: 'Canvas' });
   assert.equal(run({ action: 'arm', token: begin.token }).armed, true);

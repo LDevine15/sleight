@@ -55,15 +55,21 @@ function run(request) {
         targets: matchingApps($.NSWorkspace.sharedWorkspace.runningApplications, selector).map(info),
         previous: previous && info($.NSRunningApplication.runningApplicationWithProcessIdentifier(previous.pid)),
         // HID system state observes real input without an event tap or a new permission request.
-        idleSeconds: Number($.CGEventSourceSecondsSinceLastEventType(1, 0xFFFFFFFF)),
+        // Only clicks count: a click can choose the launched app, while typing during a launch is
+        // what this restore protects (left, right and other mouse down).
+        idleSeconds: Math.min(...[1, 3, 25].map(type => Number($.CGEventSourceSecondsSinceLastEventType(1, type)))),
       };
     },
     activate: previous => {
       const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(previous.pid), current = info(app);
       if (current?.bundleId !== previous.bundleId || current.pid !== previous.pid || !app.activateWithOptions(0)) return false;
-      $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.005));
-      const front = info($.NSWorkspace.sharedWorkspace.frontmostApplication);
-      return front?.bundleId === previous.bundleId && front.pid === previous.pid;
+      // Activation can land a few run-loop turns later; confirm it for up to 100 ms.
+      for (let waited = 0; waited < 100; waited += 10) {
+        $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
+        const front = info($.NSWorkspace.sharedWorkspace.frontmostApplication);
+        if (front?.bundleId === previous.bundleId && front.pid === previous.pid) return true;
+      }
+      return false;
     },
   });
   return frontRestoreNative(request);
