@@ -657,6 +657,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
   relay = createRelay({
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
+    staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
     spaceProbe: app => appHealth.probe(app),
     frontRestore: process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : request => appHealth.frontRestore(request),
     guardMode: process.env.SLEIGHT_GUARD,

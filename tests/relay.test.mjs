@@ -2094,6 +2094,38 @@ test('a call that met the helper mid-restart is sent again once, and only a seco
   assert.equal(h.toServer.filter(m => m.id === 1).length, 2, 'never a third time');
 });
 
+test('runtime helper startup failure names stale launchd jobs, checked once per session', async () => {
+  let checks = 0, complete;
+  const pending = new Promise(resolve => { complete = resolve; });
+  const h = harness({ changeReview: false, staleHelperCheck: () => { checks++; return pending; } });
+  const failure = { content: [{ type: 'text', text: 'Sky Computer Use service startup request failed' }], isError: true };
+  for (const id of [1, 2]) {
+    helperRead(h, id); helperReply(h, id, failure.content[0].text); await tick();
+  }
+  assert.equal(h.toClient.length, 0, 'the reply waits for the diagnostic');
+  complete(['application.com.openai.sky.CUAService.1.2']); await tick();
+  for (const id of [1, 2]) {
+    const reply = h.toClient.find(m => m.id === id);
+    assert.equal(reply.result.isError, true);
+    assert.match(JSON.stringify(reply), /launchctl remove application\.com\.openai\.sky\.CUAService\.1\.2/);
+    assert.match(JSON.stringify(reply), /Only the user/);
+  }
+  helperRead(h, 3); helperReply(h, 3, failure.content[0].text); await tick();
+  assert.match(JSON.stringify(h.toClient.find(m => m.id === 3)), /launchctl remove/);
+  assert.equal(checks, 1, 'concurrent and later failures share the session check');
+});
+
+test('runtime helper startup advice stays unchanged with no stale jobs or a failed check', async () => {
+  const fail = h => { helperRead(h, 1); helperReply(h, 1, 'Sky Computer Use service startup request failed'); };
+  const baseline = harness({ changeReview: false });
+  fail(baseline); await tick();
+  for (const staleHelperCheck of [async () => [], async () => { throw new Error('unavailable'); }]) {
+    const h = harness({ changeReview: false, staleHelperCheck });
+    fail(h); await tick();
+    assert.deepEqual(h.toClient.find(m => m.id === 1), baseline.toClient.find(m => m.id === 1));
+  }
+});
+
 test('a read that met a helper crash is sent again once; a call with actions never is', async () => {
   const h = harness({ changeReview: false });
   const crash = { content: [{ type: 'text', text: 'Sky Computer Use native pipe closed before response' }], isError: true };

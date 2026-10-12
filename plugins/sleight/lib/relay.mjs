@@ -368,6 +368,7 @@ export function createRelay({
   firstCallRules,
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
+  staleHelperCheck,
   // Notices from work that finished between calls (rich-text clipboard recovery), added to the next
   // tool result Claude gets, so they don't stay on stderr where Claude never looks.
   takeNotices,
@@ -1850,6 +1851,8 @@ export function createRelay({
   // have run. Values are the call as sent and whether it only reads; true means it was resent.
   const restartRetries = new Map();
   const HELPER_RESTARTING = /Sky Computer Use native pipe startup failed/;
+  const HELPER_START_FAILED = /Sky Computer Use (?:native pipe|service) startup (?:request )?failed/;
+  let staleHelperDiagnosis;
   const HELPER_CRASHED = /Sky Computer Use native pipe closed before response/;
   function retriedHelperStart(msg) {
     if (msg.method !== undefined || !restartRetries.has(msg.id)) return false;
@@ -1893,6 +1896,15 @@ export function createRelay({
       const pending = clipboardReplies.get(msg.id); clipboardReplies.delete(msg.id); pending.receive(msg); return;
     }
     if (retriedHelperStart(msg)) return;
+    if (staleHelperCheck && msg.method === undefined && msg.result?.isError &&
+      msg.result.content?.some(c => c.type === 'text' && HELPER_START_FAILED.test(c.text ?? ''))) {
+      staleHelperDiagnosis ??= Promise.resolve().then(staleHelperCheck).catch(() => []);
+      staleHelperDiagnosis.then(jobs => {
+        if (jobs?.length) msg.result.content.push({ type: 'text', text:
+          `sleight: launchd keeps an old helper job without a running process. Only the user should clear it, then retry:\n${jobs.map(job => `launchctl remove ${job}`).join('\n')}` });
+      }).finally(() => observeServerMessage(msg));
+      return;
+    }
     if (msg.method === undefined && turnEnds.delete(msg.id)) {
       // Device Hub, left open after simulator runs, held a keyboard tap that stalled every key on the
       // Mac (2026-10-09). Name such an app once per session so the user knows what to quit.
@@ -2293,7 +2305,7 @@ export function createRelay({
     // The helper quits after about 20 s idle and relaunches on the next call;
     // a call during that restart can fail before reaching any app (2026-10-05).
     if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
-      msg.result.content.some(c => c.type === 'text' && /Sky Computer Use (?:native pipe|service) startup (?:request )?failed/.test(c.text ?? ''))) {
+      msg.result.content.some(c => c.type === 'text' && HELPER_START_FAILED.test(c.text ?? ''))) {
       msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. Call js_reset and retry. If that fails too, tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", prompt) });
     } else if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
       msg.result.content.some(c => c.type === 'text' && HELPER_CRASHED.test(c.text ?? ''))) {
