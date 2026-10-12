@@ -3,11 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 21:00 UTC)
+## Banner (2026-10-12 21:40 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser on its own 13 browser tasks in tasks done, time and cost. A release
 and a launch video follow. Longer term (owner): the world's fastest computer use plugin, every lever down to milliseconds.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2276 pass, 1 skipped, mod 33/33,
+Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2303 pass, 1 skipped, mod 33/33,
 exit 0. `~/Projects/sleight` is fast-forwarded to it.
 
 Under the owner's testing rule (LAWS), incremental runs use Haiku 5.5 high on the API key; Opus once, at the end of the fix batch, as the
@@ -15,25 +15,23 @@ head-to-head against FowlBrowser. ROADMAP 0b: test across models, both arms on t
 
 Where we stand (all published in `docs/benchmarks/2026-10-12-*`):
 - Opus, 15:23 EDT, `118b1b3`: sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls.
-- Haiku baseline, 16:06 EDT, `fd48fa1` (`2026-10-12-haiku-baseline.md`): FowlBrowser 22/26, 1,744 s, $3.29, 22 tool errors;
-  sleight 19/26, 2,961 s, $4.11, 145 tool errors. FowlBrowser forwarded the injected mail in both orders; sleight missed the
-  four form tasks and `mobile` once. Batch H targets the errors.
-- Lean skill A/B (Opus): within noise, the default stays.
-- Anatomy and char audit: the first call (engine opens tabs one at a time), the engine docs (40.9K of a web session's first
-  two results) and errors are the gaps. Later calls are 3x faster than FowlBrowser's.
+- Haiku baseline, 16:06 EDT (`haiku-baseline.md`): FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145.
+  FowlBrowser forwarded the injected mail in both orders.
+- D5 `min` A/B (`d5-min-ab.md`): 42/52 against the default's 37/52 over two passes, within Haiku's spread. Stays opt-in.
+- First-call queueing (same doc): a tab open takes 0.9 s alone and 3.2 s mean with 13 sessions started together (the
+  extension's queue). Startup grows from 0.4 s to 1.8 s (ours, S1 and S2). The direct browser path waits on these numbers (owner).
+- Kernel resets: all 7 in the baseline were Haiku's own `js_reset` calls, 5 after a call that didn't print anything (H7). H14 is the fix.
 
-Merged 21:00 UTC after Sonnet-high reviews: D2, D5R, A9R3, A3R5, A10R (with A10). Failed review, fix items in the ledger:
-D4R (D4 strips blank lines around code fences), T1R, T2R2, F4R3. A Sonnet subagent is reading FowlBrowser's code for what keeps
-Haiku's errors low (owner's suggestion, 2026-10-12). Its findings feed batch H.
+Merged since 21:00 UTC: F4R3 (with F4 to F4R2), E1 (`bench/fowl/error-tally.mjs`), A7R's live fix (`settle-text-write.js`). Every
+error-hint branch failed review on misdiagnosis (H1, H2, H5, H12, N1). The ledger now has one rule for hints.
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
-- Open: batch H (H1 to H4, take first), D4R, T1R, T2R2, F4R3, A5R, A6R, then A2R (after both); S1, S2, T3.
-- Superseded by their R items (never merge): A2, A3, A3R, A3R2, A5, A6, A7, A9R, A10 (landed with A10R), F4, F4R, F4R2, T1, T2,
-  T2R, D4, F1R, F5, F5R, F6, F6R, F6R2, F7R. Parked: F3, K10.
+- Open: fix items H1R, H2R2, H5R, H6R, H12R, N1R, D4R2, T3R, T1R, T2R2; new H11, H13, H14, T4, S1, S2, H3, H4, H8; A5R, A6R, A2R.
+  Stale: H9, H10, T5 (`tabs.content` is off for local browsers). Report-only done: H7. Never merge the branches that
+  failed review. Their R items replace them. Parked: F3, K10.
 
 A7R's save split, live (21:15 UTC): 0/3 saved at first, because `settle-text-write.js` called `isNil()` on a CGEvent (a CF
-pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 ms (`bench/save-split-probe.mjs`). D5 `min`
-needs a Haiku A/B. No background jobs of sleight-arch's are running. The lanes run on their own.
+pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 ms (`bench/save-split-probe.mjs`). No background jobs of sleight-arch's are running. The lanes run on their own.
 
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
 (203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
