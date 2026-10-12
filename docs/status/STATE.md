@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 20:15 UTC)
+## Banner (2026-10-12 20:40 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
 then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `118b1b3` (private), full
@@ -24,8 +24,12 @@ Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders,
   and 14:27 rounds): sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls (its handoff
   check failed twice). First tie on tasks. Still slower by 10% and 51% dearer: wikipedia and mdn take twice as long,
   and cost is the docs.
-- The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over 13 runs).
-
+- Anatomy (`bench/fowl/anatomy.mjs`, 15:23 round, 26 runs each): model and tool time equal (497 s, 206 s); sleight 230 turns
+  against 266. Time gap is the first call: median 4.8 s against FowlBrowser's 53 ms (126 s against 2 s); later calls 244 ms
+  against 721 ms. Unloaded, the first call is 1.3 s (`coldstart-probe.mjs`) to 3.8 s on Wikipedia (relay trace: engine site
+  check 1.2 s, tab open, page). Cost gap is the docs: 950K of 1,366K result characters. Cache writes: 734K tokens against 431K.
+  Duplicated trees (`nodeRepl.write(await tab.getAXState())`) are 4-5% of result characters. Batch D (D1, D2, T1) is in the
+  ledger, and A3R2 gets the evaluate-scope hint.
 Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service.mjs:8585-8640`: no `Event`,
 `DragEvent` or `DataTransfer`, read-only element wrappers, global assignment throws). So A8's in-page drag events (STALE),
 A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = ...`) can't work through it.
