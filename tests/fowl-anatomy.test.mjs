@@ -44,3 +44,12 @@ test('anatomy counts turns once per message and flags a read after a read and a 
   assert.equal(r.toolMs, 700);
   assert.equal(r.usage.cacheWrite, 10);
 });
+
+test('char audit separates sleight skill and notices from the engine docs and the tree', async () => {
+  const { auditKinds } = await import('../bench/char-audit.mjs');
+  const k = auditKinds('## Computer Use\nengine text\n# Driving Mac apps with sleight\nskill line\nBrowser tab: 1, Title: "a"\n1 button Go\n\nsleight: a notice\nRESULT ok');
+  assert.ok(k.docs > 0);
+  assert.equal(k.skill, '# Driving Mac apps with sleight\nskill line'.length);
+  assert.ok(k.tree > 0);
+  assert.equal(k.notice, 'sleight: a notice\n'.length);
+});
