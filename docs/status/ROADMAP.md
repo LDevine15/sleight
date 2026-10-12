@@ -72,6 +72,10 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
    The claim (owner, 2026-10-12): the fastest computer use plugin in the world. That means a head-to-head against Claude in
    Chrome, Claude's own computer use, FowlBrowser, Codex and the other reputable plugins a survey finds, on one published task
    suite (browser and native Mac), same model where possible, reporting tasks done, time, turns and cost.
+   The survey (2026-10-12, `~/Projects/sleight-wt/ledger/competitor-survey.md`) didn't find any published Mac speed comparison. The arms
+   are Cua Driver, Peekaboo, Claude's computer use, Claude in Chrome, Playwright MCP, Chrome DevTools MCP, Browser Use, one hosted
+   agent, with Codex and FowlBrowser as reference rows. Suite: about 20 browser and 20 native Mac tasks with programmatic checks,
+   a few cross-app tasks and a macOSWorld subset. Results give the median and p90 over 5 or more runs, and the raw logs of all of them.
 2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
    app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
    and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.

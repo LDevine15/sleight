@@ -28,6 +28,9 @@ belong in [STATE.md](STATE.md).
 - sleight benchmarks against Claude in Chrome, Claude's own computer use and other reputable computer-use plugins, toward a
   public claim to be the fastest computer use plugin in the world (owner, 2026-10-12). This supersedes the 2026-10-04 rule that
   ruled out benchmarking Claude's own computer use.
+  The claim is "the fastest computer use plugin for Mac". Every Claude-drivable arm runs Haiku 5.5 high on the full suite and
+  one Opus pass for the headline. The owner approved installing the open-source competitors, Claude in Chrome, Claude's computer
+  use and hosted agents behind API keys as benchmark arms, never in the owner's own Claude Code config (all 2026-10-12).
 - A release means a git tag plus a GitHub release with notes from the changelog (owner, 2026-10-04).
 - Haiku 5.5 at high effort is the default driver for the benchmark and the docs (owner, 2026-10-10,
   once runs moved to the API key). It supersedes Sonnet 5.5 at medium (owner, 2026-10-08, after the
