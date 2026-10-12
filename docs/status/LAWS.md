@@ -154,6 +154,12 @@ belong in [STATE.md](STATE.md).
   is clear of system dialogs. Any other pass is published with that caveat.
 - The owner's installed sleight is a copy keyed by version, refreshed only by `claude plugin update`.
   Before asking the owner to check anything in a session, update it and confirm its `gitCommitSha`.
+- Every lane branch (Codex, Grok or GLM) gets a code review by a Sonnet subagent at high effort before
+  sleight-arch merges it, and a finding goes back as a fix item rather than being merged around
+  (owner, 2026-10-12). Exploration and docs subagents run Sonnet at medium effort.
+- The guard follows a stale element number to a new one only when the line Claude saw was unique in
+  that tree, is on exactly one element now, isn't a bare role, and the call has one literal number.
+  A number the code computed from its own read in the call is checked against that read.
 - Codex agents build on `codex/*` branches in their own worktrees and never push to `main`. sleight-arch
   reviews each branch (design note, safety paths, evidence for personal data), squash-merges it onto
   `main` so scrubbed history stays off it, and releases. Conflicts in the relay's core go back to
