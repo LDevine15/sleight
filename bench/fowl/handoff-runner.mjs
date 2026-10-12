@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -77,10 +77,22 @@ function runRound({ out, args }) {
   });
 }
 
+// The apps the hand-off tasks drive. A round that leaves one running that wasn't running before quits it (LAWS: a run
+// quits every app it launched). A TextEdit left by one round wedged the engine's reads for every later round (2026-10-12).
+const TASK_APPS = ['TextEdit', 'Preview'];
+function appsRunning() {
+  return new Set(TASK_APPS.filter((name) => spawnSync('/usr/bin/pgrep', ['-x', name]).status === 0));
+}
+function quitApp(name) {
+  spawnSync('/usr/bin/osascript', ['-e', `tell application "${name}" to quit saving no`], { timeout: 10000 });
+  for (let i = 0; i < 10 && spawnSync('/usr/bin/pgrep', ['-x', name]).status === 0; i++) spawnSync('/bin/sleep', ['0.5']);
+  if (spawnSync('/usr/bin/pgrep', ['-x', name]).status === 0) spawnSync('/usr/bin/pkill', ['-TERM', '-x', name]);
+}
+
 export async function runHandoffs({
   outRoot = '/tmp/fb-rounds', downloads = join(homedir(), 'Downloads'),
   icloud = join(homedir(), 'Library/Mobile Documents/com~apple~TextEdit/Documents'), cleanup = cleanupNative,
-  stamp = new Date().toISOString().replace(/[:.]/g, '-'), run = runRound,
+  stamp = new Date().toISOString().replace(/[:.]/g, '-'), run = runRound, running = appsRunning, quit = quitApp,
 } = {}) {
   const tasks = JSON.parse(readFileSync(join(DIR, 'handoff.json'), 'utf8'));
   const results = [];
@@ -106,7 +118,10 @@ export async function runHandoffs({
       for (const task of tasks) {
         const args = ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--only', task.name, '--serve', serve,
           '--codex-browsers', IDS, '--out', join(out, 'r-' + task.name)];
-        const one = await run({ arm, out: join(out, 'r-' + task.name), downloadName, args });
+        const was = running();
+        let one;
+        try { one = await run({ arm, out: join(out, 'r-' + task.name), downloadName, args }); }
+        finally { for (const name of running()) if (!was.has(name)) quit(name); }
         if (one !== 0) code = one;
         if (one === 130) break;
       }

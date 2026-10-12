@@ -19,14 +19,36 @@ function dropOtherPlatforms(text) {
   return cut < 0 ? kept : kept + text.slice(cut);
 }
 
+// Engine docs are 81% of what sleight's results send Claude (571,870 of 705,611 characters over 13 runs, 2026-10-12),
+// and every later call reads them again. Across 3,483 calls Claude wrote that day it never used these reference types,
+// so they're left out; their members stay, so a fetch through the engine's own docs still finds them.
+const UNUSED_TYPES = /^(?:BrowserHistory\w*|TabDev\w*|TabClipboardAPI|TabClipboardItem|ContentAPI|BrowserUser\w*|PlaywrightFileChooser)$/;
+// Standard Playwright methods keep their signatures and lose the comment, which repeats Playwright's own docs. Every
+// other comment stays, since some carry the engine's own limits (read-only evaluate, timeouts).
+const STANDARD = new Set(['all', 'allTextContents', 'and', 'blur', 'boundingBox', 'check', 'clear', 'click', 'count', 'dblclick',
+  'fill', 'filter', 'first', 'focus', 'getAttribute', 'getByAltText', 'getByLabel', 'getByPlaceholder', 'getByRole', 'getByTestId',
+  'getByText', 'getByTitle', 'hover', 'innerHTML', 'innerText', 'inputValue', 'isChecked', 'isDisabled', 'isEditable', 'isEnabled',
+  'isHidden', 'isVisible', 'last', 'locator', 'nth', 'or', 'press', 'pressSequentially', 'scrollIntoViewIfNeeded', 'selectOption',
+  'setChecked', 'textContent', 'type', 'uncheck', 'waitFor']);
+
+function trimReference(text) {
+  return text.replace(/\n(?:interface|type) (\w+)[^\n]*\{[\s\S]*?\n\};?\n?/g, (block, name) => {
+    if (UNUSED_TYPES.test(name)) return '\n';
+    if (!name.startsWith('Playwright')) return block;
+    return block.replace(/^( {2}(\w+)(?:<[^>]*>)?\([^\n]*?;) \/\/ [^\n]*$/gm, (line, kept, method) => (STANDARD.has(method) ? kept : line));
+  });
+}
+
 const size = (content) => content.reduce((n, c) => n + (c.type === 'text' ? c.text.length : 0), 0);
 
-export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT } = {}) {
+export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT, fullDocs = process.env.SLEIGHT_ENGINE_DOCS === 'full' } = {}) {
   let pending = null;
   return {
     apply(content) {
       let out = content.map((c) => (platform === 'darwin' && c.type === 'text' && GENERAL_DOCS.test(c.text)
         ? { ...c, text: dropOtherPlatforms(c.text) } : c));
+      if (!fullDocs) out = out.map((c) => (c.type === 'text' && BROWSER_DOCS.test(c.text) && c.text.includes(REFERENCE)
+        ? { ...c, text: trimReference(c.text) } : c));
       if (pending) { out = [{ type: 'text', text: pending }, ...out]; pending = null; }
       if (size(out) <= limit) return out;
       return out.map((c) => {

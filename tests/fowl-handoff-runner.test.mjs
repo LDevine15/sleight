@@ -128,3 +128,15 @@ test('a real unlink failure still cleans the other tasks and the owned download 
   }
   assert.deepEqual(readdirSync(downloads), []);
 });
+
+test('an app a round launched is quit after that round, and one already running is left alone', async (t) => {
+  const { runHandoffs } = await import('../bench/fowl/handoff-runner.mjs');
+  const dir = temp(t);
+  let open = new Set(['Preview']);
+  const quit = [];
+  await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'apps',
+    running: () => new Set(open), quit: (name) => { quit.push(name); open.delete(name); },
+    run: async () => { open.add('TextEdit'); return 0; } });
+  assert.equal(quit.filter((n) => n === 'TextEdit').length, 9, 'TextEdit quit after each of 9 rounds');
+  assert.ok(!quit.includes('Preview'), 'Preview was open before and stays');
+});
