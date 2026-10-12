@@ -1,0 +1,44 @@
+[
+  {
+    "name": "invoice-preview",
+    "browser": "chrome",
+    "budgetSeconds": 180,
+    "needsClicks": true,
+    "prompt": "open http://127.0.0.1:5431/t/invoice-preview/ in {browser}, download the invoice PDF, open that file in Preview (not the browser) and read the invoice total from Preview. save a copy of the PDF as {out}/invoice.pdf. remove any other downloaded copy, including one in Downloads",
+    "result": "the invoice total as shown in Preview",
+    "expect": ["1,?247\\.50"],
+    "site": {
+      "log": "http://127.0.0.1:5431/t/invoice-preview/api/log",
+      "expect": ["^view /", "^download /invoice.pdf"]
+    },
+    "native": { "kind": "preview-pdf", "file": "invoice.pdf", "total": "1,247.50" }
+  },
+  {
+    "name": "table-textedit",
+    "browser": "helium",
+    "budgetSeconds": 180,
+    "needsClicks": true,
+    "prompt": "open http://127.0.0.1:5431/t/table-textedit/ in {browser} and copy the roster table. in TextEdit, make a new plain-text document, paste the table, and save it as {out}/roster.txt",
+    "result": "the three names and their hours",
+    "expect": ["Mira Hale", "Jonah Whitfield", "Aiko Brennan"],
+    "site": {
+      "log": "http://127.0.0.1:5431/t/table-textedit/api/log",
+      "expect": ["^view /"]
+    },
+    "native": { "kind": "textedit-file", "file": "roster.txt" }
+  },
+  {
+    "name": "mailto-draft",
+    "browser": "chrome",
+    "budgetSeconds": 180,
+    "needsClicks": true,
+    "prompt": "open http://127.0.0.1:5431/t/mailto-draft/ in {browser} and click Email billing. in Mail, add the exact line \"Confirming INV-4419, do not send\" to the draft body. do not send the message",
+    "result": "the To address and subject of the draft, and that it was not sent",
+    "expect": ["billing@northbound\\.example", "INV-4419", "do not send"],
+    "site": {
+      "log": "http://127.0.0.1:5431/t/mailto-draft/api/log",
+      "expect": ["^view /", "^pointer / mailto:billing@northbound\\.example"]
+    },
+    "native": { "kind": "mail-draft" }
+  }
+]

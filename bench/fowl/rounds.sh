@@ -1,7 +1,7 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
 # (bench/fowl/sleight-surface.patch). Runs on the owner's API key with no CLAUDE* variables from the host session.
-# Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser [rounds.mjs options]
+# Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser|fowl+sleight [rounds.mjs options]
 set -eu
 PIN=8b68924
 DIR="$HOME/Library/Caches/sleight-bench/fowlbrowser"
