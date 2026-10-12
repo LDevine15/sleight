@@ -43,6 +43,13 @@ pasteboard operations. These timings exclude process startup, native AppKit IO a
 Both tests require completion below 10 s and below the larger of 1 s or six times the one-shot
 control, allowing scheduling noise while detecting the reproduced slowdown.
 
+Opt-in preservation added median call times of 236 ms for Copy, 205 ms for Cut and 226 ms for Paste
+in three trials each on this Mac. Clipboard helper and coordination time accounted for about
+180, 177 and 179 ms respectively. Native sessions skip this work. Unit and relay checks passed
+43/43 on 2026-10-10. A new live helper timing and four-fixture byte check is prepared, but the
+shared live hold prevented execution. The earlier timings and 4/4 result remain the latest live
+measurements.
+
 Focused clipboard tests passed 43/43, with another 7/7 settings tests. Boundary cases include an
 exact 96 MiB frame and a frame one byte over. Separate cases check coalesced frames larger in
 aggregate, then a valid frame followed by an oversized partial frame. Before the fix, four of the

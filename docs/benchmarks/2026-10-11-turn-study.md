@@ -68,8 +68,15 @@ The first `npm run check` exited 1 under the sandbox, which denied sockets, proc
 and worktree writes. With host access it exited 0: 1,775 Node tests and 30 mod tests passed,
 and both plugin manifests validated. The first `npm run lint:prose` exited 1 with 9 flags in
 the new prose. After correction it exited 0 with 0 flags across 120 files.
-No apps or engine were started for this study. Measurement limits are in
-[Known problems](../known-problems.md#turn-study).
+No apps or engine were started for this study. Call timestamps cover the host round trip. The
+preceding gap includes model time and host scheduling. It does not isolate model API time. A class
+charges the whole call, including useful actions in that call, so 397.021 attributed seconds do not
+establish savings. Parallel call wall times can overlap too. The analyzer charges a shared gap once.
+Read-only, menu, save-wait and filtering classes use literal method patterns and observed menu
+lines. Dynamic calls and other syntax can be missed. Consecutive reads can be necessary to check
+changing UI. A refusal can be a required guard. Missing spill files leave only preview byte counts,
+and missing timestamps remain null. The sample resolved 13 of 13 spill files and measured 386 of
+386 calls. There has been no live comparison of a change based on these classifications.
 
 Sleight-arch must compare both versions on the same tasks and show fewer classified calls and
 attributed seconds. Every task check must pass. TextEdit must save the exact contents and close

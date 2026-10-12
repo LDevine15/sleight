@@ -163,6 +163,8 @@ Clear, and the replay stopped at that click without pressing anything.
   replay. A script repeats one run. It doesn't adapt the way Claude does.
 - An element's line includes its value, so a line-matched element whose value changed stops the step.
 - Only `js` and `drag` calls replay. Recording lists the other tools it skipped.
+- The observer's Swift source typechecks, but recording in an app other than Calculator or TextEdit
+  has no live proof.
 
 ## Verification, 2026-10-09
 

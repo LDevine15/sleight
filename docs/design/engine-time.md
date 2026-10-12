@@ -77,3 +77,13 @@ The first Calculator runs matched text anywhere. The final floor probe checked t
 field after a verified zero reset, with a distinct expected value per trial, and passed 10/10.
 Native phase timings and large trees remain unmeasured. We tested three apps, without recording
 owner activity or concurrent drivers. Workflow savings await sleight-arch's full benchmark pass.
+
+On 2026-10-08 two calculator-click runs took 16 and 10 turns instead of 5. Right after Calculator
+launched, its first read took 7.1 s, the IDs `AllClear` and `Seven` were missing and then came
+back, and one button's line changed from `Description: 7, ID: Seven` to `Seven` between reads.
+Each change stopped an action and cost Claude a turn. The Mac was under heavy load from other
+processes that day. In the next full pass that evening, all 6 Calculator runs took 3 or 4 turns.
+In the 0.16.0 pass, the first run after Calculator launched took 10 turns and 99.5 s, 31 s of it
+in guard reads. Its trace shows the acquisition launched Calculator and its first read took 15.3 s,
+then the guard's read before the next call's first action took 16.7 s more. Later guard reads took
+about 0.4 s.

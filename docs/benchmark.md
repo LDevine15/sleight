@@ -72,8 +72,12 @@ Offline evidence: 13 battery tests pass, including eight document-format roundtr
 side-effect guard. All 13 fail against the starting tree. No battery app has run in this lane. App
 opening, script dictionaries, the 200 ms observer and cleanup still need sleight-arch's live check.
 Codex does not expose isolated model API time in its CLI stream, so its `modelMs` is null. The separate
-model-gap measurement includes host scheduling. [Battery limits](known-problems.md#parity-battery)
-list what these checks cannot establish.
+model-gap measurement includes host scheduling. The 31-app battery passed 41/41 offline tests
+(2026-10-11). Office and iWork saves and Notion's local-file support remain unchecked. The Notes,
+Reminders and Calendar scripting descriptors have not run against their dictionaries. Local fixture
+IDs and the `local: true` declaration come from the owner; the runner cannot independently prove
+that a supplied container is outside an account. CPU parity with Codex is unverified after the
+guard setup and native app-probe changes.
 
 ## Browser head-to-head
 
@@ -859,8 +863,10 @@ with 3 runs, delivery-check before the full save-lock experiment, select-all wit
 live checks, both shop smoke tasks and a separate Best Buy run, excluding owner-present tasks.
 Codex steps are refused because their existing harness rewrites ChatGPT's approval list.
 There is no dedicated quiet-box command on this branch. All three produce exit 126 and remain
-visible in the plan. These [limits](known-problems.md#the-real-use-benchmark-harness)
-need resolution before the whole sitting can finish.
+visible in the plan. These limits need resolution before the whole sitting can finish. The
+away-sitting runner has 8 passing tests and no live run (2026-10-11). `.dev/passes/front-watch.sh`
+is untracked and absent from a new worktree. The foreground watcher compares app names and misses
+changes between windows of the same app. Harness fix is ledger G8.
 
 On 2026-10-11, all 8 runner tests failed before the runner existed and passed after it was added.
 The dry-run subprocess also passed with Node denying writes, network access and child processes.
@@ -951,3 +957,49 @@ else drives apps during a pass. `--dry-run` doesn't take it.
 > `bench/settings.json`). Only run it when you're fine with Claude driving those four apps unattended. `--dry-run` checks the setup without
 > launching Claude. The real suite also drives Safari, Preview, Finder and Helium, and the same
 > hook accepts those apps by name and bundle ID (owner, 2026-10-08).
+
+## Limits moved from known-problems (2026-10-12)
+
+Self-message checks match a marker and require nonempty sender and time fields. They do not verify
+those two fields against an independent account read. A marker already appears in the search prompt,
+so matching it alone does not prove the message was read. App-state checks prove that one engine read
+contained the marker, without proving which UI field held it. Model-created fixtures have no scripted
+reset, so an earlier arm's item can remain visible. Created items remain for the owner to review.
+
+The focus observer requests 200 ms samples, but native calls can delay them. The saved timestamps
+show actual gaps. No live cadence has been measured. Windows on other Spaces and windows excluded
+by macOS's on-screen list are absent. A changed frontmost bundle or overlapping target window is
+recorded evidence, without establishing whether the owner or the benchmark caused the change.
+Raw streams are not published.
+
+Generic benchmark arms accept only the existing benchmark approval messages and empty forms or a
+`choice` field offering `session` or `once`. Other competitors' approval schemas stop with an
+unsupported-approval result. The initial plain-MCP Calculator proof finished 0/1. Calculator was
+off-screen in all 15 samples. Acquisition returned `cgWindowNotFound`.
+
+Shop smoke tasks `real-shop-target` and `real-shop-bestbuy` are Safari-only, `--runs 1`, and
+excluded from default real passes and the head-to-head. They stop at a CAPTCHA or bot check and
+never sign in or start checkout. Ran once each on 2026-10-10, owner away
+([raw](benchmarks/2026-10-10-real-shop-smoke.json)). The smoke checks' human-check outcome
+(2026-10-11) comes from unit tests against the two recorded answers. No live run has produced it
+yet. The human-check verdict reader is ledger G9.
+
+sleight-arch's owner-away Office qualification at `76cf880` passed Excel 1/1 (100.4 s, 29 turns) and
+PowerPoint 1/1 on its second try (51.7 s, 16 turns), with confirmed quits (2026-10-09, load average
+25 to 55 from other projects).
+
+The offline battery reporter has no live qualification yet. Codex model API time can be unavailable;
+its model and host scheduling gap is not a substitute. Sampled focus and window overlap count
+observed episodes and can miss events between samples. The reporter requires matching run
+coordinates, completion times, flag values and setup metadata for a later flag A/B and leaves
+candidates unproven when evidence is missing. It compares the held-out sample without a statistical
+significance test. Bootstrap intervals are ledger G10.
+
+In the idle verified-results run, unchanged and one-value cases added at most 0.196 ms a call, and
+changing every label added 1.169 to 3.571 ms
+([memory and CPU report](benchmarks/2026-10-10-verified-results-lifetime.md)).
+
+The identity check's cost with one window, where it is skipped, was the same as no check: median
+482 to 484 ms an action with it against 492 to 515 without, loaded, warm CPU 231 to 240 against
+250 to 285 ms ([fourth follow-up](benchmarks/2026-10-10-waits-targeting-4.md)). The idle CPU run,
+which needs load under 3, and the equal-title live check haven't run.

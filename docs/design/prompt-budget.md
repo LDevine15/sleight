@@ -35,7 +35,8 @@ Each authored notice template counts once, including inactive refusal paths. Int
 use `<value>`. Shared templates cover read failures, orphan panels, off-Space guidance, screenshot
 scale, blocked-target consent warnings, stop reports, clipboard notices and compact-read guidance.
 These counts describe the instruction inventory. Actual session input also contains engine docs,
-UI state, repeated notices and variable data. See [the limits](../known-problems.md#lean-prompt).
+UI state, repeated notices and variable data. `SLEIGHT_PROMPT=lean` has 0 live runs as of
+2026-10-11. Task success, turns, model time and actual session context use are unmeasured.
 
 ## Safety and offline evidence
 
