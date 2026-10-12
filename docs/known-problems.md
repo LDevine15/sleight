@@ -59,15 +59,27 @@ our own runs. Dates and engine versions are given where they matter.
 ## Browsers
 
 On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s against FowlBrowser's 26/26
-in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Each of these is being fixed:
+in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from that list:
 
-- The input lease refuses a tab call that has any extra JavaScript in it (52 refusals in one round), and
-  it's held per app, so parallel sessions in one browser wait on each other.
-- `SLEIGHT_SURFACES=browser` fails every call ("Cannot read properties of undefined (reading 'bind')").
 - Chrome and Helium both report as "Chrome" in `listBrowsers`.
 - A session never closes the tabs it opened.
-- A web page's tree can fill a result past what Claude Code keeps (242,375 characters for one article).
+- A web page's tree is capped in a result, but the first browser result of a session, with the engine's docs,
+  still came to 55,450 characters on one article, over the 45,000 sleight aims for.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
+
+Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
+is capped with a note on how to read the rest.
+
+Engine behavior that sleight works around or can't change:
+
+- `tab.drag` doesn't drop on an HTML5 drag-and-drop target when aimed at the target's center (0 drops in 14
+  trials in Chrome and Helium). It moves in 8 equal steps, and the page sees `dragover`, which a drop needs,
+  only when two moves in a row are inside the target. Aimed 3 px inside the target's edge nearest the source,
+  it dropped 6/6 (`bench/fowl/drag-probe.mjs`).
+- After `tab.click` on a download link, no download prompt appears, and every later download in that tab times
+  out, `downloadMedia` and `waitForEvent("download")` alike (2/2 each, raw engine and sleight). Without that
+  click both returned in under 0.4 s. A new tab downloads normally (`bench/fowl/download-probe.mjs`).
+- The page's `evaluate` is read-only: it can't dispatch events, assign globals or watch the page's network.
 
 ## Clipboard
 
