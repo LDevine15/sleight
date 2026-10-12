@@ -36,13 +36,15 @@ export function rewriteTabError(text, { read = false } = {}) {
 
 export function isTabBinding(code = '') {
   // Error wording only: binding and arbitrary reads send no input unless a known action is named.
-  let templateAction = false;
+  let templateAction = false, regex = false;
   const source = code.replace(/\[\s*["'](\w+)["']\s*\]/g, '.$1')
-    .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, value => {
+    .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\/(?![/*])(?:\\.|[^\n/\\])+\/[a-z]*/g, value => {
     if (value.startsWith('`')) templateAction ||= [...value.matchAll(/\$\{([\s\S]*?)\}/g)].some(m => !isTabBinding(m[1]));
+    // A regex quote can hide later input from string stripping. Keep its advice uncertain.
+    if (value.startsWith('/') && !/^\/[/*]/.test(value)) regex = true;
     return ' ';
   });
-  return !templateAction && !/\b(?:click|dblclick|fill|clear|type|typeText|press|pressKey|pressSequentially|drag|dragTo|htmlDrag|setValue|selectOption|check|uncheck|setChecked|goto|back|forward|reload|paste|performSecondaryAction|scroll|scrollIntoViewIfNeeded|selectText|fillForm|pickFromList|accept|dismiss|close|downloadMedia)\s*(?:\?\.)?\s*\(/.test(source);
+  return !regex && !templateAction && !/\b(?:click|dblclick|fill|clear|type|typeText|press|pressKey|pressSequentially|drag|dragTo|htmlDrag|setValue|selectOption|check|uncheck|setChecked|goto|back|forward|reload|paste|performSecondaryAction|scroll|scrollIntoViewIfNeeded|selectText|fillForm|pickFromList|accept|dismiss|close|downloadMedia)\s*(?:\?\.)?\s*\(/.test(source);
 }
 
 function rewriteLine(text, read) {
@@ -58,7 +60,7 @@ function rewriteLine(text, read) {
   if (cdp) {
     const command = cdp[2].replace(/\.$/, '');
     if (/^Input\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. Next: ${DIALOG} if a page dialog is open, otherwise ${READ}.`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. Next: ${DIALOG} Read the page before retrying input: ${READ}.`;
     }
     const input = /^Emulation\./.test(command) ? 'this command sent no input' : 'whether this command sent input is unknown';
     if (/^Emulation\./.test(command)) {

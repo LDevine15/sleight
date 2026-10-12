@@ -301,6 +301,20 @@ test('input timeouts use guarded short dialog advice and retain input uncertaint
   assert.match(out, /dialog\.dismiss\(\)/);
   assert.doesNotMatch(out, /\/\*|alert\/beforeunload|read dialog\.type and message/);
   assert.match(out, /getAXState/);
+  assert.doesNotMatch(out, /\} if a page dialog is open/);
+  assert.match(out, /\} Read the page before retrying input:/);
+});
+
+test('regex literal quotes cannot hide actions from debugger error advice', t => {
+  for (const code of ["const r=/'/; await tab.click(1); const s='x'",
+    '/[\"]/; await tab.click(2); const t = "x"',
+    'const r = /\\\//; await tab.click(3)',
+    'const r = /[/]/; await tab.click(4)',
+    'const r = /hello/; await tab.getAXState()']) {
+    const out = reply(t, 'Debugger unattached', true, code).content[0].text;
+    assert.match(out, /input may already have been sent/, code);
+    assert.doesNotMatch(out, /no input was sent/);
+  }
 });
 
 test('Emulation read failures allow reading again after handling a dialog', t => {
