@@ -128,10 +128,24 @@ test('dialog wording follows clientInfo before the Claude environment fallback',
   }
 });
 
+test('hostWording names cursor from clientInfo.name and keeps Claude Code as Claude', async t => {
+  assert.deepEqual(launcher.hostWording({ name: 'cursor' }), { claudeCode: false, host: 'Cursor', panel: 'Cursor' });
+  assert.deepEqual(launcher.hostWording({ name: 'claude-code' }), { claudeCode: true, host: 'Claude', panel: 'claude-code' });
+  const hover = 'Allow Claude to hover in TextEdit? It moves your pointer briefly.';
+  assert.equal(launcher.wordForHost(hover, launcher.hostWording({ name: 'cursor' })),
+    'Allow Cursor to hover in TextEdit? It moves your pointer briefly.');
+  assert.equal(launcher.wordForHost(hover, launcher.hostWording({ name: 'claude-code' })), hover);
+  const options = approvalOptions({}, async () => 'decline');
+  const h = harness(t, options);
+  h.client({ id: 0, method: 'initialize', params: { capabilities: {}, clientInfo: { name: 'cursor' } } });
+  await tick();
+  assert.equal(launcher.wordForHost(hover, options.wording()), 'Allow Cursor to hover in TextEdit? It moves your pointer briefly.');
+});
+
 // Replace only osascript: formatting and failure handling stay in the real launcher.
-async function panel(message, claudeCode, failure = false) {
+async function panel(message, claudeCode, failure = false, extra = {}) {
   let args;
-  const result = await launcher.askWithDialog(message, true, { claudeCode }, (_command, argv, callback) => {
+  const result = await launcher.askWithDialog(message, true, { claudeCode, ...extra }, (_command, argv, callback) => {
     args = argv;
     const child = new EventEmitter();
     queueMicrotask(() => { callback(failure ? new Error('no GUI session') : null, failure ? '' : 'decline', ''); child.emit('close'); });
@@ -149,6 +163,27 @@ test('native panel keeps Claude branding and rewrites other hosts at the prompt 
   assert.equal(other.args[3], 'Allow this agent to read and use your notifications?');
   assert.match(other.args[4], /this sleight server session ends/);
   assert.equal(other.args.at(-1), 'generic');
+});
+
+test('native panel names Cursor from clientInfo and leaves Claude Code text unchanged', async t => {
+  const claudeText = await panel('Allow Computer Use to use "Calculator"?', true);
+  assert.equal(claudeText.args[3], 'Allow Claude to use Calculator?');
+  assert.equal(claudeText.args[4], 'Claude can then click and type in Calculator in the background. Allow lasts until this Claude session ends.');
+  assert.equal(claudeText.args.at(-1), 'claude-code');
+
+  let args;
+  const dialog = (message, scoped, options) => launcher.askWithDialog(message, scoped, options, (_command, argv, callback) => {
+    args = argv;
+    const child = new EventEmitter();
+    queueMicrotask(() => { callback(null, 'decline', ''); child.emit('close'); });
+    return child;
+  });
+  const h = harness(t, approvalOptions({}, dialog));
+  h.client({ id: 0, method: 'initialize', params: { capabilities: {}, clientInfo: { name: 'cursor' } } });
+  h.engine(approval('named')); await tick();
+  assert.equal(args[3], 'Allow Cursor to use Calculator?');
+  assert.equal(args[4], 'Cursor can then click and type in Calculator in the background. Allow lasts until this Cursor session ends.');
+  assert.equal(args.at(-1), 'Cursor');
 });
 
 test('a failed native panel returns an elicitation error without replacing unrelated successful calls', async t => {

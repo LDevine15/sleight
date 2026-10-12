@@ -53,7 +53,7 @@ function run(argv) {
     return { field, height: Math.ceil(size.height) };
   };
   // Says who is asking, for people who never saw sleight's icon.
-  const eyebrow = label(host === 'generic' ? 'sleight \u00b7 computer use' : 'sleight \u00b7 Claude Code computer use', $.NSFont.systemFontOfSizeWeight(10, $.NSFontWeightMedium), $.NSColor.tertiaryLabelColor);
+  const eyebrow = label(host === 'generic' ? 'sleight \u00b7 computer use' : host === 'claude-code' ? 'sleight \u00b7 Claude Code computer use' : `sleight \u00b7 ${host} computer use`, $.NSFont.systemFontOfSizeWeight(10, $.NSFontWeightMedium), $.NSColor.tertiaryLabelColor);
   const title = label(question, $.NSFont.systemFontOfSizeWeight(13, $.NSFontWeightSemibold), $.NSColor.labelColor);
   const body = wide ? { height: 360 } : label(detail, $.NSFont.systemFontOfSize(11), $.NSColor.secondaryLabelColor);
   const textH = eyebrow.height + 2 + title.height + 4 + body.height;

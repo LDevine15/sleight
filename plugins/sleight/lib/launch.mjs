@@ -246,18 +246,37 @@ export function resumeHelpers() {
   helpersClosing = false;
 }
 
+// Claude Code keeps "Claude" in the panel. Other hosts use clientInfo.title, or a titled
+// form of clientInfo.name ("cursor" becomes "Cursor"). Missing identity stays "this agent".
+export function hostWording(info, env = process.env) {
+  const claudeCode = info ? /^claude/i.test(info.name ?? '') : !!env.CLAUDE_CODE_ENTRYPOINT;
+  if (claudeCode) return { claudeCode: true, host: 'Claude', panel: 'claude-code' };
+  const raw = [info?.title, info?.name].map(value => typeof value === 'string' ? value.trim() : '').find(Boolean);
+  if (!raw) return { claudeCode: false, host: undefined, panel: 'generic' };
+  const host = /[A-Z\s]/.test(raw) ? raw : raw.split(/[-_]+/).filter(Boolean).map(part => part[0].toUpperCase() + part.slice(1)).join(' ');
+  return { claudeCode: false, host, panel: host };
+}
+
+export function wordForHost(message, wording) {
+  if (typeof message !== 'string' || wording?.claudeCode !== false) return message;
+  return message.replace(/^Allow Claude to /, `Allow ${wording.host || 'this agent'} to `);
+}
+
 export function askWithDialog(message, sessionScoped, options = {}, launch = execFile) {
   if (helpersClosing) return Promise.resolve('cancel');
   // The engine asks 'Allow Computer Use to use "App"?'; sleight's own tools ask in plain words.
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(message)?.[1];
   const claudeCode = options.claudeCode !== false;
-  let question = app ? `Allow Claude to use ${app}?` : message;
-  if (!claudeCode) question = question.replace(/^Allow Claude to /, 'Allow this agent to ');
+  const who = claudeCode ? 'Claude' : (options.host || 'this agent');
+  const actor = claudeCode ? 'Claude' : (options.host || 'The agent');
+  const session = claudeCode ? 'this Claude session' : (options.host ? `this ${options.host} session` : 'this sleight server session');
+  const panel = options.panel ?? (claudeCode ? 'claude-code' : 'generic');
+  const question = app ? `Allow ${who} to use ${app}?` : wordForHost(message, { claudeCode, host: options.host });
   const review = options?.kind === 'review';
   const flow = options?.kind === 'flow';
-  const detail = flow ? options.detail : review ? `${options.detail}\n\nUndo restores the saved copy shown above. Reopen it in the app afterward. Later leaves the decision pending.` : (app ? `${claudeCode ? 'Claude' : 'The agent'} can then click and type in ${app} in the background. ` : '') +
-    (sessionScoped ? `Allow lasts until ${claudeCode ? 'this Claude session' : 'this sleight server session'} ends.${options?.always ? ' Always Allow adds it to your pre-approved list.' : ''}` : 'It asks again next time.');
-  const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), flow ? 'flow' : review ? 'review' : 'approval', claudeCode ? 'claude-code' : 'generic', ...(options?.always ? ['always'] : [])];
+  const detail = flow ? options.detail : review ? `${options.detail}\n\nUndo restores the saved copy shown above. Reopen it in the app afterward. Later leaves the decision pending.` : (app ? `${actor} can then click and type in ${app} in the background. ` : '') +
+    (sessionScoped ? `Allow lasts until ${session} ends.${options?.always ? ' Always Allow adds it to your pre-approved list.' : ''}` : 'It asks again next time.');
+  const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), flow ? 'flow' : review ? 'review' : 'approval', panel, ...(options?.always ? ['always'] : [])];
   return new Promise((resolve, reject) => {
     ownHelper(launch('osascript', args, (err, stdout, stderr) => {
       const answer = stdout.trim();
@@ -605,12 +624,13 @@ export async function callLocalTool(name, args, approve, runLocal = runScript) {
 // Otherwise the relay selects the dialog when initialize advertises no form support.
 export function approvalOptions(env = process.env, dialog = askWithDialog) {
   const setting = env.SLEIGHT_APPROVAL_PROMPT;
-  let claudeCode = !!env.CLAUDE_CODE_ENTRYPOINT;
+  let wording = hostWording(undefined, env);
   // Claude Code's CLI names itself claude-code; the desktop app's Code tab may name itself otherwise.
-  const onInitialize = info => { claudeCode = info ? /^claude/i.test(info.name ?? '') : !!env.CLAUDE_CODE_ENTRYPOINT; };
-  const prompt = (message, scoped, options) => dialog(message, scoped, { ...options, claudeCode });
-  if (setting === 'dialog' || (!setting && env.CLAUDE_CODE_ENTRYPOINT === 'claude-desktop')) return { ask: prompt, onInitialize };
-  return { fallbackAsk: setting === 'client' ? undefined : prompt, onInitialize };
+  const onInitialize = info => { wording = hostWording(info, env); };
+  const prompt = (message, scoped, options) => dialog(message, scoped, { ...options, ...wording });
+  const extras = { onInitialize, wording: () => wording };
+  if (setting === 'dialog' || (!setting && env.CLAUDE_CODE_ENTRYPOINT === 'claude-desktop')) return { ask: prompt, ...extras };
+  return { fallbackAsk: setting === 'client' ? undefined : prompt, ...extras };
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper } = {}) {
@@ -655,6 +675,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let appHealth = healthHelperFactory();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
+  const approval = approvalOptions();
+  const { wording, ...promptOptions } = approval;
   relay = createRelay({
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
     staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
@@ -673,7 +695,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     clipboardMode: process.env.SLEIGHT_CLIPBOARD,
     // SLEIGHT_APPROVAL_SCOPE=once asks again on every action instead.
     approvalScope: ['once', 'document'].includes(process.env.SLEIGHT_APPROVAL_SCOPE) ? process.env.SLEIGHT_APPROVAL_SCOPE : 'session',
-    ...approvalOptions(),
+    ...promptOptions,
     preapproved,
     alwaysAllow: (app, riskLevel) => { addPreapproved(app, riskLevel); preapproved.add(app, riskLevel); },
     grantAudit,
@@ -691,7 +713,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     // SLEIGHT_SELECT_WINDOW=0 window selection.
     localTools: {
       tools: localToolDefinitions(),
-      call: callLocalTool,
+      call: (name, args, approve, runLocal, resolved) => callLocalTool(name, args, (parts, message, options) =>
+        approve(parts, wordForHost(message, wording()), options), runLocal, resolved),
       target: async args => {
         const result = await appHealth.target(args);
         if (!result.ok) throw new Error(`Input lease: ${result.error}`);
