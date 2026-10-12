@@ -75,7 +75,7 @@ const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y 
 
 function requireOneDisplay(bounds) {
   const screens = $.NSScreen.screens;
-  for (let i = 0; i < screens.count; i++) {
+  for (let i = 0; i < Number(screens.count); i++) {
     const id = Number(ObjC.unwrap(screens.objectAtIndex(i).deviceDescription.objectForKey('NSScreenNumber')));
     const display = $.CGDisplayBounds(id);
     if (bounds.X >= display.origin.x && bounds.Y >= display.origin.y &&

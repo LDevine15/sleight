@@ -23,6 +23,8 @@
   `launchctl remove` command for the user to run. sleight never runs it.
 - In Cursor and other MCP clients, approval prompts use the client's name (`cursor` shows as
   Cursor) instead of Claude. The Claude Code text is unchanged.
+- `hover` refuses a window that crosses two displays, asking the user to move it onto one, since its
+  capture of that rectangle could include another app's pixels.
 
 ## 1.2.5 (2026-10-11)
 
