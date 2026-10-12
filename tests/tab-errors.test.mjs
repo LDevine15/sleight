@@ -19,6 +19,23 @@ function reply(t, text, isError = true, code = 'await tab.click(29)', meta) {
   return output.at(-1).result;
 }
 
+// A read that met Debugger unattached is resent once after about a second (F12), so it answers twice before Claude sees it.
+async function replyAfterResend(t, text, code) {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const output = [];
+  clientOut.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => output.push(JSON.parse(line))));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false });
+  t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+  await tick();
+  const answer = () => serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text }] } }) + '\n');
+  answer(); await tick();
+  t.mock.timers.tick(1100); await tick();
+  if (!output.some(m => m.id === 1)) { answer(); await tick(); }
+  return output.find(m => m.id === 1).result;
+}
+
 test('a covered element names the cover, says input was not sent, and points at a read', () => {
   const out = rewriteTabError('Accessibility element 29 is covered by DIV or otherwise not hittable');
   assert.equal(out.split('\n').length, 1);
@@ -151,10 +168,11 @@ test('recorded docs and const warnings following Debugger unattached stay intact
   }
 });
 
-test('read and binding failures say no input was sent, while mixed calls stay uncertain', t => {
+test('read and binding failures say no input was sent, while mixed calls stay uncertain', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   for (const code of ['await tab.getAXState()', 'let tab = await cua.getTab("1", { browser: "2" })',
     'tab = await cua.getTab(id, { browser: browser.browserId })', 'await cua.getTab(id, { browser })']) {
-    const out = reply(t, 'Debugger unattached', true, code).content[0].text;
+    const out = (await replyAfterResend(t, 'Debugger unattached', code)).content[0].text;
     assert.match(out, /no input was sent/);
     assert.doesNotMatch(out, /may already have been sent/);
     assert.match(out, /cua\.getTab/);

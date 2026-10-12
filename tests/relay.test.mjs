@@ -2295,6 +2295,59 @@ test('a read that met a helper crash is sent again once; a call with actions nev
   assert.equal(h.toServer.filter(m => m.id === 2).length, 1, 'an action is never resent');
 });
 
+test('a tab read that met Debugger unattached is resent once with identical turn metadata', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ changeReview: false });
+  for (const [id, code] of [[1, 'const s = await tab.getAXState({disableDiffing:true}); s'],
+    [2, 'tab = await cua.getTab("12", {browser: b.browserId}); await tab.getAXState({disableDiffing:true})'],
+    [3, 'const b = await cua.getBrowser({extensionInstanceId:"instance"}); let tab = await cua.getTab("12", {browser:b.browserId});'],
+    [4, 'const tab = await cua.getTab("12", {browser:b.browserId}); globalThis.tab = tab; nodeRepl.write(await tab.playwright.evaluate(() => document.body.innerText));']]) {
+    helperRead(h, id, code); await tick();
+    const original = h.toServer.at(-1);
+    helperReply(h, id, 'Error: Debugger unattached\nWarning: b was declared with const; use let for reassignable variables.');
+    await tick();
+    assert.equal(h.toClient.some(m => m.id === id), false, 'first failure remains private');
+    t.mock.timers.tick(1100); await tick();
+    assert.deepEqual(h.toServer.filter(m => m.id === id), [original, original]);
+    helperReply(h, id, 'Debugger unattached'); await tick();
+    assert.equal(h.toClient.filter(m => m.id === id).length, 1);
+    t.mock.timers.tick(5000); await tick();
+    assert.equal(h.toServer.filter(m => m.id === id).length, 2);
+  }
+});
+
+test('Debugger unattached never replays actions, mixed calls or successful caller text', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ changeReview: false });
+  for (const [id, code, text, error] of [[1, 'await tab.click(3)', 'Debugger unattached', true],
+    [2, 'await tab.click(3); await tab.getAXState()', 'Debugger unattached', true],
+    [3, 'await cua.createBrowserTab("b", "https://example.com")', 'Debugger unattached', true],
+    [4, 'await tab.getAXState()', 'Caller mentioned Debugger unattached', true],
+    [5, 'await tab.getAXState()', 'Debugger unattached', false],
+    [6, 'await tab.getAXState({ emit: (await tab.click(3), false) })', 'Debugger unattached', true],
+    [7, 'await cua.getTab((await tab.click(3), "12"))', 'Debugger unattached', true]]) {
+    helperRead(h, id, code); await tick();
+    helperReply(h, id, text, error); await tick();
+    t.mock.timers.tick(5000); await tick();
+    assert.equal(h.toServer.filter(m => m.id === id).length, 1, code);
+    assert.equal(h.toClient.filter(m => m.id === id).length, 1, code);
+  }
+});
+
+test('a retried debugger read retains the first reply browser safety documentation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ changeReview: false });
+  helperRead(h, 1, 'await tab.getAXState()'); await tick();
+  const docs = '## Computer Use\nKeep confirmation policy.\n# Other Browser APIs\n# Browser Safety\nKeep user tabs.';
+  helperReply(h, 1, 'Error: Debugger unattached\n' + docs); await tick();
+  t.mock.timers.tick(1100); await tick();
+  helperReply(h, 1, 'Browser tab: "Ready", ID: 1\n0 web area Ready', false); await tick();
+  const reply = h.toClient.find(m => m.id === 1);
+  assert.equal(reply.result.isError, false);
+  assert.ok(reply.result.content.some(c => c.type === 'text' && c.text === docs));
+  assert.doesNotMatch(JSON.stringify(reply), /Debugger unattached/);
+});
+
 test('a menu-bar-only app that times out gets the menu_bar route, without stuck-app recovery', async () => {
   const diagnosed = [];
   const health = menuBarOnly => async () => ({ status: 'responding', windows: 0, allWindows: 0, onScreen: 0, hidden: false, menuBarOnly, ...(menuBarOnly ? { app: 'OpenUsage' } : {}) });

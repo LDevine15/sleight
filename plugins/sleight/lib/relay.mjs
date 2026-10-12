@@ -74,6 +74,7 @@ import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refus
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
+import { isBrowserRead } from './browser-read.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
@@ -1982,7 +1983,8 @@ export function createRelay({
         observeServerMessage(result);
       });
     } else {
-      if (msg.method === 'tools/call' && msg.id !== undefined && !restartRetries.has(msg.id)) restartRetries.set(msg.id, { sent: JSON.stringify(msg), read: !!healthPlan?.read });
+      if (msg.method === 'tools/call' && msg.id !== undefined && !restartRetries.has(msg.id)) restartRetries.set(msg.id,
+        { sent: JSON.stringify(msg), read: !!healthPlan?.read, browserRead: !!browser && isBrowserRead(originalCode) });
       if (frontRestore && healthPlan?.acquisition && !healthPlan.selector.startsWith('{') && msg.id !== undefined) {
         forwardAcquisition(msg, healthPlan.key);
       } else toServer(msg);
@@ -1996,18 +1998,29 @@ export function createRelay({
   // seconds: a read that met the crash is sent again too, but never a call with actions, which may
   // have run. Values are the call as sent and whether it only reads; true means it was resent.
   const restartRetries = new Map();
+  const debuggerDocs = new Map();
   const HELPER_RESTARTING = /Sky Computer Use native pipe startup failed/;
   const HELPER_START_FAILED = /Sky Computer Use (?:native pipe|service) startup (?:request )?failed/;
   let staleHelperDiagnosis;
   const HELPER_CRASHED = /Sky Computer Use native pipe closed before response/;
+  const DEBUGGER_UNATTACHED = /^(?:Error: )?Debugger unattached\s*$/m;
   function retriedHelperStart(msg) {
     if (msg.method !== undefined || !restartRetries.has(msg.id)) return false;
     const entry = restartRetries.get(msg.id);
     const failedWith = pattern => msg.result?.isError && (msg.result.content ?? []).some(c => c.type === 'text' && pattern.test(c.text ?? ''));
     const crashed = entry !== true && entry.read && failedWith(HELPER_CRASHED);
-    if (!(crashed || failedWith(HELPER_RESTARTING)) || entry === true || closing) { restartRetries.delete(msg.id); return false; }
+    const unattached = entry !== true && entry.browserRead && failedWith(DEBUGGER_UNATTACHED);
+    if (!(crashed || unattached || failedWith(HELPER_RESTARTING)) || entry === true || closing) { restartRetries.delete(msg.id); return false; }
     restartRetries.set(msg.id, true);
-    trace(crashed ? 'helper-crash-retry' : 'helper-restart-retry', { id: msg.id });
+    if (unattached) {
+      const docs = (msg.result.content ?? []).flatMap(item => {
+        if (item.type !== 'text') return [];
+        const start = /(^|\n)(?:## Computer Use|# Other Browser APIs)\n/.exec(item.text ?? '');
+        return start ? [{ ...item, text: item.text.slice(start.index + start[1].length) }] : [];
+      });
+      if (docs.length) debuggerDocs.set(msg.id, docs);
+    }
+    trace(unattached ? 'browser-debugger-retry' : crashed ? 'helper-crash-retry' : 'helper-restart-retry', { id: msg.id });
     const generation = stopGeneration, epoch = engineEpoch;
     setTimeout(() => {
       if (generation === stopGeneration && epoch === engineEpoch && !closing && !disposed && restartRetries.has(msg.id)) toServer(JSON.parse(entry.sent));
@@ -2042,6 +2055,10 @@ export function createRelay({
       const pending = clipboardReplies.get(msg.id); clipboardReplies.delete(msg.id); pending.receive(msg); return;
     }
     if (retriedHelperStart(msg)) return;
+    if (msg.method === undefined && debuggerDocs.has(msg.id)) {
+      if (msg.result) msg.result.content = [...debuggerDocs.get(msg.id), ...(msg.result.content ?? [])];
+      debuggerDocs.delete(msg.id);
+    }
     if (staleHelperCheck && msg.method === undefined && msg.result?.isError &&
       msg.result.content?.some(c => c.type === 'text' && HELPER_START_FAILED.test(c.text ?? ''))) {
       staleHelperDiagnosis ??= Promise.resolve().then(staleHelperCheck).catch(() => []);
@@ -2709,7 +2726,7 @@ export function createRelay({
         for (const state of helperStates.values()) clearTimeout(state.timer);
         helperStates.clear(); helperHandles.clear(); helperAliases.clear();
         leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); browserCalls.clear();
-        spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); restartRetries.clear();
+        spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
         // The stopped turn's receipt keeps its unanswered calls as unknown; nothing carries into the next engine.
         resultCalls.clear(); guardCalls.clear(); finishReceipt();
         // A collected engine can't take an old turn's cleanup; the next engine starts its own turns.

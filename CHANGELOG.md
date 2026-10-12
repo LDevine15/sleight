@@ -68,6 +68,7 @@
 - A browser tab's common engine errors get one more line: the cause, whether input was sent, and the next call to make:
   a covered or stale element, a page dialog (with the right `accept` or `dismiss` for its kind), CDP timeouts, a lost
   debugger, a stalled download, and a `TypeError` from code in the read-only page scope. The original text stays.
+- A tab read that meets "Debugger unattached" is sent once more after 1 s. Actions, tab creation and mixed calls never are.
 
 ## 1.2.5 (2026-10-11)
 
