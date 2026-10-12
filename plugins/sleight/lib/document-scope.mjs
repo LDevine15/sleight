@@ -179,6 +179,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.typed = [];
     // What Claude was last shown for the numbers this call acts on (number -> line).
     state.seenLines = update?.seenLines;
+    // Numbers written as literals in this call's code. Any other number was computed, usually from a
+    // read the code made itself, and refers to that read (codeReads: handle -> its latest element lines).
+    // Without the list (a caller other than the relay), every number counts as a literal, as before.
+    state.literals = update?.literals ? new Set(update.literals) : undefined;
+    state.codeReads = new WeakMap();
+    // Literal numbers whose line was unique in the tree Claude saw (the relay's view of it).
+    state.uniqueSeen = new Set(update?.uniqueSeen ?? []);
     const clock = () => globalThis.performance?.now() ?? Date.now();
     const timedRead = async (raw, phase) => {
       const start = clock();
@@ -276,6 +283,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (emitted) nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
           // Input replaces the map; a newer observation replaces this entry.
           if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted });
+          if (typeof text === 'string' && parse(text)) state.codeReads.set(proxy, elements(text));
           state.activeApp = proxy;
           return text;
         };
@@ -289,6 +297,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (state.reads === reads && reads.get(proxy) === reading && typeof result?.state === 'string' && parse(result.state)) {
             reads.set(proxy, { text: result.state, emitted: options?.emit !== false });
           }
+          if (typeof result?.state === 'string' && parse(result.state)) state.codeReads.set(proxy, elements(result.state));
           state.activeApp = proxy;
           return result;
         };
@@ -399,13 +408,42 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           }
           // An earlier action in this call can renumber the window (Calculator closes
           // its history and every button shifts), so a batch of numbers goes stale.
-          if (!state.callElements.has(proxy)) {
+          // The one element whose whole line is exactly this, unless the line is a bare role
+          // ("container"), which says nothing about which element it was.
+          const sameLine = line => typeof line === 'string' && !/^[a-z][a-z ]*(?: \\([^)]*\\))*$/.test(line)
+            ? [...elements(text ?? '')].filter(([, other]) => other === line) : [];
+          const goTo = (to, line, why) => {
+            nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + to + ', the same ' + JSON.stringify(line) + ': ' + why + '.\\n');
+            args = [to, ...args.slice(1)];
+          };
+          // A number the code computed from its own read in this call (a match over getAXState) means
+          // that read's element. Checked against the tree from before the call, correct clicks stopped,
+          // and Claude fell back to one action per call in ZCode (2026-10-12).
+          const codeRead = typeof args[0] === 'number' && !byId && state.literals && !state.literals.has(args[0]) ? state.codeReads.get(proxy) : undefined;
+          if (codeRead) {
+            if (!state.callElements.has(proxy)) state.callElements.set(proxy, elements(text ?? ''));
+            const was = codeRead.get(args[0]), now = elements(text ?? '').get(args[0]);
+            if (!sameElement(was, now)) {
+              const moved = [...codeRead.values()].filter(line => line === was).length === 1 ? sameLine(was) : [];
+              if (moved.length === 1) goTo(moved[0][0], was, 'the window renumbered after this call read it');
+              else throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ' changed since this call read the window (was ' + JSON.stringify(was ?? 'missing') + ', now ' + JSON.stringify(now ?? 'missing') + '). Use the current numbers in the window below.');
+            }
+          }
+          else if (!state.callElements.has(proxy)) {
             state.callElements.set(proxy, elements(text ?? ''));
             // The window can renumber between Claude's read and this call: TextEdit gave a saved
-            // document a URL and 14 became File (textedit-save, 2026-10-09).
+            // document a URL and 14 became File (textedit-save, 2026-10-09). When the line Claude saw
+            // is now on exactly one element, act there, as the relay's remap does between calls: a
+            // one-line shift in ZCode's sidebar cost a turn (2026-10-12).
             const seen = typeof args[0] === 'number' && !byId ? state.seenLines?.[args[0]] : undefined;
             const now = seen !== undefined && text !== undefined ? elements(text).get(args[0]) : undefined;
-            if (seen !== undefined && text !== undefined && !sameElement(seen, now)) throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ' changed since you read the window (was ' + JSON.stringify(seen) + ', now ' + JSON.stringify(now ?? 'missing') + '). Use the current numbers in the window below.');
+            if (seen !== undefined && text !== undefined && !sameElement(seen, now)) {
+              // Only for a call with one literal number: the call's other numbers shifted too, and
+              // nothing after this action would catch them.
+              const moved = state.literals?.size === 1 && state.uniqueSeen.has(args[0]) ? sameLine(seen) : [];
+              if (moved.length === 1) goTo(moved[0][0], seen, 'the window renumbered since you read it');
+              else throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ' changed since you read the window (was ' + JSON.stringify(seen) + ', now ' + JSON.stringify(now ?? 'missing') + '). Use the current numbers in the window below.');
+            }
           }
           else if (typeof args[0] === 'number' && !byId) {
             const was = state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);

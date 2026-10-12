@@ -128,6 +128,10 @@ export function treeFreeFirstAction(code) {
 export function firstCallBatchSetting(value) {
   return ['merge', 'nosavestop'].includes(value) ? value : value !== '0';
 }
+// Element numbers written as literals in a call's code. Others were computed in the call.
+export function literalNumbers(code) {
+  return [...new Set([...String(code ?? '').matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))];
+}
 export function batchingDescription(description, variant = true, prompt) {
   const text = prompt === 'lean' ? (variant === 'merge' ?
     'start with `let app = await cua.getApp("<app>")`; batch known actions: sleight acquires the app and checks its window before they run. Do not end a call only to read the window before an action you already know: sleight waits for the app after each click, shortcut or Return, follows a Save or Open panel, a new window or a document saved under a name the call typed, and stops the rest of the call if any other window appears.' :
@@ -1853,7 +1857,8 @@ export function createRelay({
                 adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
-                seenLines: compactor.seenLines(target, [...new Set([...originalCode.matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))]) });
+                seenLines: compactor.seenLines(target, literalNumbers(originalCode)), literals: literalNumbers(originalCode),
+                uniqueSeen: compactor.uniqueSeen(target, literalNumbers(originalCode)) });
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);

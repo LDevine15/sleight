@@ -520,6 +520,17 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       for (const n of numbers) if (believed.has(n)) out[n] = believed.get(n).replace(/^\t*/, '');
       return Object.keys(out).length ? out : undefined;
     },
+    // The numbers whose line was on no other element in the tree Claude saw, so the same line
+    // elsewhere later can only be that element.
+    uniqueSeen(window, numbers) {
+      const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
+      if (!entry) return [];
+      const lines = [...new Map(entry.believed ?? numbered(entry.lines)).entries()].map(([n, line]) => [n, line.replace(/^\t*/, '')]);
+      return numbers.filter(n => {
+        const line = lines.find(([m]) => m === n)?.[1];
+        return line !== undefined && lines.filter(([, other]) => other === line).length === 1;
+      });
+    },
     // The first element number in `code` that Claude can't know is current
     // for this window: { number } for a literal, { computed } for an expression.
     staleIndex(window, code) {

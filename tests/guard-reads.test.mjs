@@ -168,15 +168,69 @@ test('a prior read with no inventory is used as it is, and a degraded read still
   await assert.rejects(attributed.run('await app.click({ id: "Two" });'), /no element/);
 });
 
-test('the first action stops when its number changed since Claude read the window', async () => {
+test('the first action goes where the line Claude saw moved, and stops when that line is gone or ambiguous', async () => {
   // TextEdit gave a saved document a URL and 14 became File (textedit-save, 2026-10-09).
   const f = fixture({ current: () => tree(expected, '\t14 menu bar item File\n\t15 menu bar item Format') });
-  await assert.rejects(f.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' } }),
-    /click\(14\): element 14 changed since you read the window \(was "menu bar item Format", now "menu bar item File"\)[\s\S]*15 menu bar item Format/);
-  assert.deepEqual(f.calls.filter(c => c[0] === 'click'), []);
+  await f.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' }, literals: [14], uniqueSeen: [14] });
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click'), [['click', 15]]);
+  assert.ok(f.output.some(o => /click\(14\) went to element 15, the same "menu bar item Format": the window renumbered since you read it/.test(o)));
+  const gone = fixture({ current: () => tree(expected, '\t14 menu bar item File\n\t15 menu bar item Edit') });
+  await assert.rejects(gone.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' }, literals: [14] }),
+    /click\(14\): element 14 changed since you read the window \(was "menu bar item Format", now "menu bar item File"\)[\s\S]*15 menu bar item Edit/);
+  const twice = fixture({ current: () => tree(expected, '\t14 menu bar item File\n\t15 menu bar item Format\n\t16 menu bar item Format') });
+  await assert.rejects(twice.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' }, literals: [14] }), /changed since you read the window/);
+  // A bare role says nothing about which element it was.
+  const bare = fixture({ current: () => tree(expected, '\t14 group\n\t15 container (selected)') });
+  await assert.rejects(bare.run('await app.click(14);', { seenLines: { 14: 'container (selected)' }, literals: [14], uniqueSeen: [14] }), /changed since you read the window/);
+  // Claude saw two such rows: the one left may be the other row's.
+  const dup = fixture({ current: () => tree(expected, '\t14 text Inbox\n\t15 button Delete') });
+  await assert.rejects(dup.run('await app.click(14);', { seenLines: { 14: 'button Delete' }, literals: [14], uniqueSeen: [] }), /changed since you read the window/);
+  // With a second literal, that number shifted too and nothing after the first action would catch it.
+  const two = fixture({ current: () => tree(expected, '\t14 menu bar item File\n\t15 menu bar item Format\n\t20 button Go') });
+  await assert.rejects(two.run('await app.click(14); await app.click(19);', { seenLines: { 14: 'menu bar item Format', 19: 'button Go' }, literals: [14, 19], uniqueSeen: [14, 19] }),
+    /changed since you read the window/);
+  assert.deepEqual([gone, twice, bare, dup, two].flatMap(x => x.calls.filter(c => c[0] === 'click')), []);
   const same = fixture({ current: () => tree(expected, '\t14 menu bar item Format') });
-  await same.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' } });
+  await same.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' }, literals: [14] });
   assert.deepEqual(same.calls.filter(c => c[0] === 'click'), [['click', 14]]);
+});
+
+test('a number the code read itself in this call is checked against that read, not the tree before the call', async () => {
+  // ZCode, 2026-10-12: a click closed a dialog, the code read again and matched the button's new
+  // number, and sleight stopped that correct click against the older tree.
+  let closed = false;
+  const before = '\t5 container Resettable quota\n\t21 button Close';
+  const after = '\t4 container\n\t5 button Back to workspace';
+  const f = fixture({ current: () => tree(expected, closed ? after : before), action: (name, args) => { if (args[0] === 21) closed = true; } });
+  await f.run(`await app.click(21);
+    const s = await app.getAXState({ emit: false });
+    const m = s.match(/(\\d+) button Back to workspace/);
+    await app.click(Number(m[1]));`, { seenLines: { 21: 'button Close' }, literals: [21] });
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click'), [['click', 21], ['click', 5]]);
+  // The same computed number with no read in the call keeps the older tree as its reference.
+  closed = false;
+  const g = fixture({ current: () => tree(expected, closed ? after : before), action: (name, args) => { if (args[0] === 21) closed = true; } });
+  await assert.rejects(g.run('await app.click(21); const n = 5; await app.click(n);', { seenLines: { 21: 'button Close' }, literals: [21] }),
+    /an earlier action in this call changed what element 5 is/);
+  // A computed number whose element moved after the code read goes to that line when it's unique,
+  // and stops when it isn't; a combined read counts as the code's read too.
+  let moved = false;
+  const k = fixture({ current: () => tree(expected, moved ? '\t5 button Back to workspace\n\t6 text entry area (settable) Placeholder: Ask' : '\t5 text entry area (settable) Placeholder: Ask'),
+    action: (name) => { if (name === 'pressKey') moved = true; } });
+  await k.run(`const r = await app.getAXStateAndScreenshot({ emit: false }); const n = Number(/(\\d+) text entry area/.exec(r.state)[1]);
+    await app.pressKey('escape'); await app.click(n);`, { literals: [] });
+  assert.deepEqual(k.calls.filter(c => c[0] === 'click'), [['click', 6]]);
+  assert.ok(k.output.some(o => /click\(5\) went to element 6.*renumbered after this call read it/.test(o)));
+  moved = false;
+  const l = fixture({ current: () => tree(expected, moved ? '\t5 button Back to workspace' : '\t5 text entry area (settable) Placeholder: Ask'),
+    action: (name) => { if (name === 'pressKey') moved = true; } });
+  await assert.rejects(l.run(`const s = await app.getAXState({ emit: false }); const n = Number(/(\\d+) text entry/.exec(s)[1]);
+    await app.pressKey('escape'); await app.click(n);`, { literals: [] }), /element 5 changed since this call read the window/);
+  // A literal number after a read in the call still means what Claude saw.
+  let shifted = false;
+  const h = fixture({ current: () => tree(expected, shifted ? '\t7 button Send\n\t8 button Stop' : '\t7 button Stop'), action: () => { shifted = true; } });
+  await assert.rejects(h.run('await app.click(7); await app.getAXState({ emit: false }); await app.click(7);', { seenLines: { 7: 'button Stop' }, literals: [7] }),
+    /an earlier action in this call changed what element 7 is/);
 });
 
 test('new calls expire a combined snapshot; screenshots replace it with a fresh combined capture', async () => {

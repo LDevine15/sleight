@@ -46,6 +46,12 @@
 - The mod refuses Claude's file edits and common shell writes (redirections, `cp`, `mv`, `rm`, `sed -i`,
   `plutil`, inline scripts that write) to the preapproved-apps file, which only the user changes.
   Reads stay allowed. A path built at run time still gets past it.
+- A number the code reads itself in a call (a match over `getAXState` after a click) is checked
+  against that read, not the tree from before the call. sleight stopped those correct clicks in ZCode,
+  and Claude fell back to one action per call.
+- When the window renumbers between Claude's read and a call with one element number, and the line
+  Claude saw (unique when it saw it) is now on exactly one element, the action goes there with a note
+  instead of stopping. A one-line shift in ZCode's sidebar cost a turn.
 
 ## 1.2.5 (2026-10-11)
 
