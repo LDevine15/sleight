@@ -2190,7 +2190,9 @@ export function createRelay({
     }
     if (msg.method === undefined && jsCalls.delete(msg.id) && Array.isArray(msg.result?.content)) {
       const docs = msg.result.content.some(c => c.type === 'text' && /(^|\n)## Computer Use\n/.test(c.text ?? ''));
-      if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
+      if (docs && !msg.result.content.some(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? ''))) {
+        trace('payment-confirmation-policy', { status: 'unmatched' });
+      } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
       if (docs && docsShown) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).

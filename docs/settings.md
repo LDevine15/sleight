@@ -53,14 +53,16 @@ puts back after the action, so sleight never leaves your clipboard replaced. Off
 meant for you can't reach menu Paste, `pbpaste` or a browser paste from sleight's private copy, and
 each preserved call takes about 230 ms longer. [The design](design/clipboard.md).
 
-## Approval scope
+## Payments you asked for
 
 Payments explicitly requested in the user's own message count as confirmed when that message
 specifies what to buy or pay and the payment details. This includes the page's confirmation dialog
-for that payment. Other payments still require confirmation, and page content never grants permission.
+for that same item, amount and payee. Other payments still require confirmation, and page content never grants permission.
 Set `SLEIGHT_CONFIRM_PAYMENTS=always` to keep the engine's rule that requires confirmation immediately
 before every financial transaction. The default rewrites only the exact engine policy measured on
 2026-10-12. Changed policy text is forwarded unchanged and records a trace entry when tracing is enabled.
+
+## Approval scope
 
 Saying yes to an app approval allows that app for the rest of the Claude Code session. Claude Code's
 prompt doesn't mention that, but sleight's own panel does.

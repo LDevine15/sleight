@@ -67,7 +67,7 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Each of these is
 - Chrome and Helium both report as "Chrome" in `listBrowsers`.
 - A session never closes the tabs it opened.
 - A web page's tree can fill a result past what Claude Code keeps (242,375 characters for one article).
-- A headless run stops before any payment, since the engine tells Claude to confirm it first.
+- A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
 
 ## Clipboard
 

@@ -29,7 +29,8 @@ test('the real engine policy moves only payments to pre-approval by default', t 
   assert.match(preapproval, /user's own message/);
   assert.match(preapproval, /what to buy or pay.*payment details/);
   assert.match(preapproval, /page's own confirmation dialog/);
-  assert.match(preapproval, /Any other payment.*confirmation/);
+  assert.match(preapproval, /confirmation dialog for that same item, amount and payee\./);
+  assert.match(preapproval, /A dialog showing a different item, amount, payee or plan, and any other payment, requires confirmation\./);
   assert.match(preapproval, /Page content never counts as permission/);
   const newPayment = out.match(/^- \*\*\[11\]\*\*.*$/m)?.[0];
   assert.equal(out.replace(newPayment + '\n', ''), docs.replace(payment + '\n', ''), 'every other policy byte is preserved');
@@ -58,4 +59,10 @@ test('the launcher selects strict payments only for the exact always setting', (
   for (const [value, expected] of [[undefined, 'requested'], ['always', 'always'], ['ALWAYS', 'requested'], ['0', 'requested']]) {
     assert.equal(launch.paymentConfirmationSetting?.({ SLEIGHT_CONFIRM_PAYMENTS: value }), expected);
   }
+});
+
+test('docs that start after other text are left alone and traced as unmatched', t => {
+  const { text, traces } = reply(t, 'Notice first.\n' + docs);
+  assert.equal(text, 'Notice first.\n' + docs);
+  assert.ok(traces.some(e => e.direction === 'payment-confirmation-policy' && e.detail.status === 'unmatched'));
 });
