@@ -12,17 +12,16 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that
   refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
-Web pages use the tab handle, never `getApp`.
-`js`: script body with top-level `await`, no `return`. The last expression is the result.
-Tab input takes an element index or `null`.
-Use only documented methods, leave tabs in the
-background, and stop if the user declines a browser approval.
+Web pages: tab handle, never `getApp`.
+Script body: top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
+Tab input: first argument, element index or `null`.
+Use documented methods, leave tabs in the background, stop if the user declines browser approval.
 
-- For text, select in `js`, then `drag`: `app`, `windowId`, `from`, `to` from its latest screenshot,
-  inside content. Lost text: press Cmd+Z there, then read.
-- Try `Help:`, `Secondary Actions:`, right-click or keys before `hover` (`app`, `at`). Tell the user
-  it moves their pointer and brings the app forward for about two seconds.
-- `notifications` and `menu_bar`. The user approves each once per session.
+- Select text in `js`, then `drag`: `app`, `windowId`, `from`, `to` from the latest screenshot of that window,
+  inside content. Lost text: press Cmd+Z in that window and read.
+- Try `Help:`, `Secondary Actions:`, right-click or keys before `hover` (`app`, `at`).
+  Tell the user first that it moves their pointer and brings the app forward for about two seconds.
+- `notifications`, `menu_bar`: user approval once per session.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.
 - `SLEIGHT_CHANGE_REVIEW=1`: acquire before editing, save before `review_changes`, and never decide for
@@ -30,4 +29,4 @@ background, and stop if the user declines a browser approval.
   stops a call. A flow rule that stops a transfer: tell the user which, and after a `flow_exception`
   yes, retry the identical call once.
 
-If `js` won't start, ask the user: `bin/sleight-mcp --doctor` from plugin folder.
+If `js` fails to start, ask the user to run `bin/sleight-mcp --doctor` from the plugin folder.

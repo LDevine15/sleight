@@ -23,11 +23,25 @@ const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 test('both skill variants explain browser routing and script input within their word budgets', () => {
   for (const [env, limit] of [[{}, 866], [{ SLEIGHT_PROMPT: 'lean' }, 337]]) {
     const skill = skillRules(skillPath, env);
-    assert.match(skill, /Web pages use the tab handle, never `getApp`/);
-    assert.match(skill, /script body with top-level `await`, no `return`\. The last expression is the result/);
-    assert.match(skill, /Tab input takes an element index or `null`/);
+    assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
+    assert.match(skill, /top-level `await`, no `return`/);
+    assert.match(skill, /[Ww]rite text with `nodeRepl\.write\(\.\.\.\)`/);
+    assert.doesNotMatch(skill, /last expression is the result/);
+    assert.match(skill, /Tab input.*first argument.*element index or `null`/);
     assert.ok(skill.trim().split(/\s+/).length <= limit, 'skill word budget');
   }
+});
+
+test('the default skill retains extension selection and lean retains precise safety instructions', () => {
+  const normal = skillRules(skillPath, {}), lean = leanSkill();
+  assert.match(normal, /With a connected ChatGPT extension/);
+  assert.match(normal, /Several Chromium browsers report as Chrome/);
+  assert.match(normal, /metadata\.extensionInstanceId.*await cua\.listBrowsers\(\)/s);
+  assert.match(normal, /cua\.getBrowser\(\{ extensionInstanceId \}\).*in a call of its own/s);
+  assert.match(lean, /Tell the user first that it moves their pointer/);
+  assert.match(lean, /ask the user to run `bin\/sleight-mcp --doctor` from the plugin folder/);
+  assert.match(lean, /the latest screenshot of that window/);
+  assert.match(lean, /press Cmd\+Z in that window/);
 });
 
 test('nosavestop changes only the final stop clause and keeps the default prompt hashes', () => {
