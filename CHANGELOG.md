@@ -21,6 +21,8 @@
   title or file name. A constructed 198-file folder went from 72,616 characters to under 25,000.
 - When the helper won't start and launchd still holds an old job for it, the result gives the
   `launchctl remove` command for the user to run. sleight never runs it.
+- In Cursor and other MCP clients, approval prompts use the client's name (`cursor` shows as
+  Cursor) instead of Claude. The Claude Code text is unchanged.
 
 ## 1.2.5 (2026-10-11)
 
