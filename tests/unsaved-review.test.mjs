@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { TurnJournal } from '../plugins/sleight/lib/turn-receipts.mjs';
-import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
+import { GUARD_MARK, GUARD_OMIT_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 const recorded = JSON.parse(readFileSync(new URL('./fixtures/verified-results-review.json', import.meta.url)));
 const tree = rows => `Window: "Untitled", App: TextEdit.\n0 standard window\n${rows}`;
@@ -96,6 +96,27 @@ test('full guard output wins over a diff and keeps its redacted field pair', () 
   const { receipt } = review(before, tree('+ 8 text field Value: private') + '\n' + GUARD_MARK + after + GUARD_END);
   assert.deepEqual(receipt.windows[0].fields.changes[0].after, hidden(5));
   assert.equal(receipt.windows[0].fields.status, 'compared');
+});
+
+test('receipts and field review use the last visible or hidden guard tree', () => {
+  const before = tree('\t1 text field Value: old, ID: entry');
+  const after = tree('\t1 text field Value: newer, ID: entry');
+  for (const [first, last] of [[GUARD_MARK, GUARD_OMIT_MARK], [GUARD_OMIT_MARK, GUARD_MARK]]) {
+    const { receipt, journal } = review(before, first + before + GUARD_END + last + after + GUARD_END,
+      { code: 'await app.getAXState(); await app.typeText("newer"); await app.getAXState({emit:false});' });
+    assert.equal(receipt.calls[1].change, 'changed');
+    assert.equal(receipt.windows[0].change, 'changed');
+    assert.deepEqual(receipt.windows[0].fields.changes[0].after, hidden(5));
+    assert.match(receipt.review, /3 chars.*5 chars/);
+    assert.doesNotMatch(JSON.stringify({ receipt, last: journal.last }), /newer|Value: old/);
+  }
+});
+
+test('an incomplete final hidden tree cannot reuse an earlier visible tree in a receipt', () => {
+  const before = tree('\t1 text field Value: old');
+  const { receipt } = review(before, GUARD_MARK + before + GUARD_END + GUARD_OMIT_MARK + before);
+  assert.equal(receipt.windows[0].change, 'unknown');
+  assert.equal(receipt.windows[0].fields.status, 'unavailable');
 });
 
 test('field review is opt-in and a previous turn supplies only a redacted baseline', () => {

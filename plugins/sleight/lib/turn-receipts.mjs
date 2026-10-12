@@ -5,7 +5,7 @@ import { mkdirSync, lstatSync, writeFileSync, openSync, closeSync, fstatSync, re
 import { homedir, userInfo } from 'node:os';
 import { join, resolve, parse, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { windowFromText, GUARD_MARK, GUARD_END } from './document-scope.mjs';
+import { windowFromText, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END } from './document-scope.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { withoutSecureFields, fieldObservation, compareFields, renderFields } from './unsaved-review.mjs';
 
@@ -109,11 +109,12 @@ function actionsOf(code, secrets) {
 function observation(content, review) {
   let text = typeof content === 'string' ? content : (content ?? []).filter(c => c?.type === 'text' && typeof c.text === 'string').map(c => c.text).join('\n');
   // Prefer the existing guard's final full tree to intermediate output or the engine's diff.
-  const mark = text.lastIndexOf(GUARD_MARK);
+  const marker = text.lastIndexOf(GUARD_OMIT_MARK) > text.lastIndexOf(GUARD_MARK) ? GUARD_OMIT_MARK : GUARD_MARK;
+  const mark = text.lastIndexOf(marker);
   if (mark >= 0) {
-    const end = text.indexOf(GUARD_END, mark + GUARD_MARK.length);
+    const end = text.indexOf(GUARD_END, mark + marker.length);
     if (end < 0) return undefined;
-    text = text.slice(mark + GUARD_MARK.length, end);
+    text = text.slice(mark + marker.length, end);
   }
   const window = windowFromText(text);
   if (!window) return undefined;
