@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { discoverExtensions } from './browser-discovery.mjs';
 import { createSurfaceCache, refreshAfterFirstCall } from './surface-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
+import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
 import { InputLease } from './input-lease.mjs';
@@ -684,6 +685,12 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   relay = createRelay({
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
     staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
+    settleTextWrite: (target, current, grant) => settleTextWrite(target, current, grant,
+      { identity: window => appHealth.windowIdentity(window), run: runScript }),
+    prepareTextWrite: (target, current) => {
+      if (!existsSync(join(LIB, 'settle-text-write.js'))) throw new Error('Text-write settle helper is unavailable.');
+      return prepareTextWrite(target, current, { identity: window => appHealth.windowIdentity(window), run: runScript });
+    },
     spaceProbe: app => appHealth.probe(app),
     frontRestore: process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : request => appHealth.frontRestore(request),
     guardMode: process.env.SLEIGHT_GUARD,

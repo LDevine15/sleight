@@ -76,6 +76,7 @@ import { dragToCode } from './drag-to.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
+import { splitTextSave } from './text-save.mjs';
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
@@ -402,6 +403,8 @@ export function createRelay({
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
   staleHelperCheck,
+  settleTextWrite,
+  prepareTextWrite,
   // Notices from work that finished between calls (rich-text clipboard recovery), added to the next
   // tool result Claude gets, so they don't stay on stderr where Claude never looks.
   takeNotices,
@@ -1224,6 +1227,12 @@ export function createRelay({
         content: [...(msg.result.content ?? []), { type: 'text', text: 'sleight-receipt: ' + JSON.stringify({ ...receipt,
           ...(receipt.review?.length > 32000 ? { review: receipt.review.slice(0, 32000) + '\nReview truncated; open the receipt for the full review.' } : {}) }) }] };
     }
+    const saveNote = msg.method === undefined && saveNotes.get(msg.id);
+    if (saveNote) {
+      saveNotes.delete(msg.id);
+      if (msg.error) msg.error.message += '\n' + saveNote;
+      else msg.result = { ...msg.result, content: [...(msg.result?.content ?? []), { type: 'text', text: saveNote }] };
+    }
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(msg.result.content) } };
     }
@@ -1499,14 +1508,83 @@ export function createRelay({
       msg.params.arguments.code.trim().match(/^((?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.getApp\([^;]*\))\s*;\s*([A-Za-z_$][\w$]*)\s*;?$/);
     if (echo && echo[2] === echo[3]) msg.params.arguments.code = echo[1];
     journal?.request(msg);
-    if (!splitAcquisition(msg)) handleClient(msg);
+    if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
   });
 
   // `let app = await cua.getApp("X"); await app.click(…)` in one call. The lease needs the
   // window before it lets an action through, so the relay sends the acquisition alone, takes
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
-  const splitCalls = new Map(), splitHeads = new Map();
+  const splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
+  const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
+  function splitSave(msg) {
+    if (!inputLease || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
+        msg.id === undefined || typeof msg.params.arguments?.code !== 'string' || browserPlan(msg.params.arguments.code)) return false;
+    const plan = splitTextSave(msg.params.arguments.code);
+    if (!plan) return false;
+    if (!settleTextWrite) { skippedSettle(msg.id, 'helper unavailable'); return false; }
+    // Keep refusals that inspect the entire call ahead of any write in its prefix.
+    if (unawaitedAction(msg.params.arguments.code) ||
+        flowRules?.analyze('js', msg.params.arguments, lastWindow).violations.length) return false;
+    if (clipboard) {
+      try { clipboardPlan(msg.params.arguments.code); } catch { return false; }
+    }
+    const expected = handleBundles.get(plan.handle);
+    if (!expected?.appId || expected.appId !== leaseWindow?.appId || !sameWindow(expected, leaseWindow)) return false;
+    const generation = stopGeneration, prefixId = `sleight-text-write-${nextInternalId++}`;
+    const current = () => generation === stopGeneration && !closing && !disposed && !stopCollected &&
+      expected.appId === leaseWindow?.appId && sameWindow(expected, leaseWindow);
+    if (prepareTextWrite && !preparedSaves.delete(msg.id)) {
+      running.add(msg.id); callDetails.set(msg.id, 'text-write preflight');
+      Promise.resolve().then(() => prepareTextWrite(expected, current)).then(() => {
+        finishedCall(msg.id);
+        if (!current()) { if (!disposed && !stopCollected) leaseStop(msg, 'Text save was stopped before the write.'); return; }
+        preparedSaves.add(msg.id);
+        if (!splitSave(msg)) handleClient(msg);
+      }, error => {
+        finishedCall(msg.id);
+        if (!current()) { if (!disposed && !stopCollected) leaseStop(msg, 'Text save was stopped before the write.'); return; }
+        if (error.textSaveStop) { leaseStop(msg, error.message); return; }
+        skippedSettle(msg.id, error.message);
+        handleClient(msg);
+      }).catch(error => { finishedCall(msg.id); if (!disposed && !stopCollected) leaseStop(msg, error.message); });
+      return true;
+    }
+    callGenerations.set(prefixId, generation);
+    splitCalls.set(prefixId, reply => {
+      if (reply.error || reply.result?.isError) { toClient({ ...reply, id: msg.id }); return; }
+      const content = reply.result?.content ?? [];
+      const stop = error => toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...content,
+        { type: 'text', text: `Text save stopped after the write: ${error.message}. The save was not sent. Read the intended window before continuing.` }] } });
+      if (!current()) { stop(new Error('window changed or call stopped')); return; }
+      let key;
+      try { key = inputLease.acquire(expected); }
+      catch (error) { stop(error); return; }
+      running.add(msg.id); callDetails.set(msg.id, 'text-write settle');
+      leaseCalls.set(msg.id, { key }); refreshHeartbeat();
+      Promise.resolve().then(() => {
+        if (!current()) throw new Error('call stopped');
+        inputLease.renew([key]);
+        return Promise.resolve().then(() => settleTextWrite(leaseWindow, current, inputLease.grant(key)))
+          .catch(error => {
+            if (!current() || error.textSaveStop) throw error;
+            inputLease.renew([key]);
+            skippedSettle(msg.id, error.message);
+          });
+      }).then(() => {
+        if (!current()) throw new Error('window changed or call stopped');
+        inputLease.renew([key]);
+        finishedCall(msg.id);
+        splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...content]);
+        const tail = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: plan.tail } } };
+        if (!splitSave(tail)) handleClient(tail);
+      }).catch(error => { finishedCall(msg.id); if (!disposed && !stopCollected) stop(error); });
+    });
+    trace('text-save-split', { id: msg.id, prefix: prefixId, handle: plan.handle });
+    callSeqs.set(prefixId, callSeqs.get(msg.id)); callSeqs.set(msg.id, ++callSeq);
+    handleClient({ ...msg, id: prefixId, params: { ...msg.params, arguments: { ...msg.params.arguments, code: plan.head } } });
+    return true;
+  }
   function splitAcquisition(msg) {
     if (!inputLease || documentMode || selectedWindow || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
         msg.id === undefined || typeof msg.params.arguments?.code !== 'string') return false;
@@ -1540,7 +1618,8 @@ export function createRelay({
         return;
       }
       splitHeads.set(msg.id, reply.result?.content ?? []);
-      handleClient({ ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } });
+      const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };
+      if (!splitSave(next)) handleClient(next);
     });
     trace('acquisition-split', { id: msg.id, acquisition: prefixId });
     // The acquisition takes this call's place in the sequence and the actions the next, so the

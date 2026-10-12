@@ -61,6 +61,10 @@
   engine's `tab.drag` aimed at a target's center never dropped on an HTML5 list (0/14). On FowlBrowser's
   settings form in Helium the task took 39 s instead of 313 s, and every `dragTo` call moved its item (7/7
   in Helium and Chrome).
+- A call that writes text with `setValue` and then saves with Cmd+S in the same app is split at the save, and sleight
+  posts one Shift press to that app between the two, the fix for the save that hung after an Accessibility write. When
+  that press can't be sent, the call goes through unsplit as before, with a note.
+- A click that opens a sheet or dialog lets the rest of the call act on it, when the click itself opened it.
 
 ## 1.2.5 (2026-10-11)
 
