@@ -1,6 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
 import { installClipboardGuard, clipboardCode, clipboardPlan, installClipboardPermit } from '../plugins/sleight/lib/clipboard.mjs';
+
+test('clipboard preservation leaves a browser-only surface usable without adding getApp', async () => {
+  const cua = { getTab: async () => ({ getAXState: async () => 'browser tree' }) };
+  installClipboardGuard(cua, () => { throw new Error('native clipboard IO is unexpected'); });
+  assert.equal(await (await cua.getTab('1')).getAXState(), 'browser tree');
+  assert.equal('getApp' in cua, false);
+});
+
+test('clipboard permit setup allows a browser call without adding getApp', async () => {
+  const cua = { getTab: async () => ({ getAXState: async () => 'browser tree' }) };
+  const code = clipboardCode('const tab = await cua.getTab("1"); return await tab.getAXState();');
+  assert.equal(await runInNewContext(`(async () => { ${code} })()`, { cua }), 'browser tree');
+  assert.equal('getApp' in cua, false);
+});
 
 const old = [
   [{ type: 'public.png', data: 'AAEC' }, { type: 'public.rtf', data: 'e1xydGYxfQ==' }],

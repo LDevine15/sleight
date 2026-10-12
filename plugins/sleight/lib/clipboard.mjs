@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 // Like the window guard, this shares the model's mutable JS realm.
 export function installClipboardGuard(cua, io, notice = () => {}) {
   const key = Symbol.for('sleight.clipboard');
-  if (cua[key]) return;
+  if (cua[key] || typeof cua.getApp !== 'function') return;
   const state = { getApp: cua.getApp.bind(cua), wrapped: new WeakMap(), busy: false, copy: undefined };
   Object.defineProperty(cua, key, { value: state, configurable: true });
   const transaction = async action => {
@@ -263,6 +263,7 @@ export function installClipboardPermit(cua) {
   if (cua[symbol]) return cua[symbol];
   const state = { action: undefined, used: false, wrapped: new WeakMap() };
   Object.defineProperty(cua, symbol, { value: state, configurable: true });
+  if (typeof cua.getApp !== 'function') return state;
   const getApp = cua.getApp.bind(cua);
   const take = action => {
     if (state.used) throw new Error('Clipboard: use one clipboard action per js call. Split the call and retry each action separately.');

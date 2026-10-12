@@ -158,7 +158,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     const parse = ${windowFromText.toString()};
     const isCancel = ${isCancelAction.toString()};
     const state = globalThis.__sleightDocumentGuard ||= {
-      getApp: cua.getApp.bind(cua), proxies: new WeakSet(), wrapped: new WeakMap()
+      getApp: typeof cua.getApp === 'function' ? cua.getApp.bind(cua) : undefined, proxies: new WeakSet(), wrapped: new WeakMap()
     };
     if (update) {
       state.guarded = true; state.expected = update.window; state.reason = update.reason;
@@ -520,7 +520,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
       state.proxies.add(proxy); state.wrapped.set(target, proxy); state.raws.set(proxy, target);
       return proxy;
     };
-    cua.getApp = async (...args) => { checkNative(); return state.activeApp = wrap(await state.getApp(...args)); };
+    if (state.getApp) cua.getApp = async (...args) => { checkNative(); return state.activeApp = wrap(await state.getApp(...args)); };
     state.wrap = wrap;
   };`;
   return install + `

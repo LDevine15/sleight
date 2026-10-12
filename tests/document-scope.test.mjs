@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { GUARD_END, GUARD_MARK, guardedCode, hasIdentifier, hasLabel, readCode, windowFromText, windowMatches } from '../plugins/sleight/lib/document-scope.mjs';
 
+test('document guard setup and reuse allow browser calls when getApp is absent', async () => {
+  const outputs = [];
+  const cua = { getTab: async () => ({ getAXState: async () => 'browser tree' }) };
+  const context = { cua, nodeRepl: { write: text => outputs.push(text) } };
+  const code = 'const tab = await cua.getTab("1"); nodeRepl.write(await tab.getAXState());';
+  for (const wrapped of [readCode(code), readCode(code, { reuseSetup: true }),
+    guardedCode(code, undefined, undefined, undefined, { reuseSetup: true, browserCandidate: true })]) {
+    await runInNewContext(`(async () => { ${wrapped} })()`, context);
+  }
+  assert.deepEqual(outputs, ['browser tree', 'browser tree', 'browser tree']);
+  assert.equal('getApp' in cua, false);
+});
+
 test('setValue on a text area sends no modifier-only key, which the engine refuses', async () => {
   const window = { title: 'Fixture', app: 'Fixture Editor', url: null };
   const events = [];
