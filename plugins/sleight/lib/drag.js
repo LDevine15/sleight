@@ -53,7 +53,8 @@ function windows(onScreenOnly) {
 }
 
 const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y < b.Y + b.Height;
-const attempt = (fn, fallback) => { try { return fn(); } catch (_) { return fallback; } };
+const attempt = (fn, fallback) => { try { return fn(); } catch (e) { if (e?.axCode === -25204) throw e; return fallback; } };
+const axFailure = (name, code) => Object.assign(new Error(`AX ${name} failed (${code})`), { axCode: Number(code) });
 const at = (b, p) => ({ x: b.X + p[0], y: b.Y + p[1] });
 const sameBounds = (a, b) => ['X', 'Y', 'Width', 'Height'].every(k => Math.abs(a[k] - b[k]) < 0.5);
 function frame(el) {
@@ -90,7 +91,7 @@ function resolveWindow(own, request) {
 // Apple event for each attribute. Retain bridged elements for later readback.
 function axAttribute(el, name) {
   const out = Ref(), error = Number($.AXUIElementCopyAttributeValue(el, $(name), out));
-  if (error) throw new Error(`AX ${name} failed (${error})`);
+  if (error) throw axFailure(name, error);
   return ObjC.castRefToObject(out[0]);
 }
 function axElements(value) {
@@ -200,6 +201,7 @@ function repairTextDrop(snapshot) {
     if (snapshot.el.value() !== expected) throw new Error(`${snapshot.app} did not confirm the spacing repair; read the text before continuing`);
     return { spaceInserted: true };
   } catch (e) {
+    if (e?.axCode === -25204) throw e;
     return { spaceInserted: false, spacingError: String(e.message || e) };
   }
 }
@@ -276,8 +278,8 @@ function axTextArea(pid, point) {
   const axValue = (type, nsvalue) => { const buf = $.malloc(32); try { nsvalue.getValue(buf); return $.AXValueCreate(type, buf); } finally { $.free(buf); } };
   const range = (location, length) => axValue(4, $.NSValue.valueWithRange($.NSMakeRange(location, length)));
   const described = ref => ObjC.unwrap(ObjC.castRefToObject(ref).description);
-  const get = (el, name) => { const out = Ref(); const err = $.AXUIElementCopyAttributeValue(el, $(name), out); if (err) throw new Error(`AX ${name} failed (${err})`); return out[0]; };
-  const ask = (el, name, arg) => { const out = Ref(); const err = $.AXUIElementCopyParameterizedAttributeValue(el, $(name), arg, out); if (err) throw new Error(`AX ${name} failed (${err})`); return out[0]; };
+  const get = (el, name) => { const out = Ref(); const err = $.AXUIElementCopyAttributeValue(el, $(name), out); if (err) throw axFailure(name, err); return out[0]; };
+  const ask = (el, name, arg) => { const out = Ref(); const err = $.AXUIElementCopyParameterizedAttributeValue(el, $(name), arg, out); if (err) throw axFailure(name, err); return out[0]; };
   const set = (el, name, v) => { const err = $.AXUIElementSetAttributeValue(el, $(name), v); if (err) throw new Error(`AX write of ${name} failed (${err})`); };
   const app = $.AXUIElementCreateApplication(pid);
   const hit = Ref();
@@ -684,6 +686,8 @@ function run(argv) {
     }
     return JSON.stringify({ ok: !outcome.error, app, windowId: main.id, from, to, ...units, holdMs, steps, path, fallbackReason, ...outcome });
   } catch (e) {
+    if (didPress && e?.axCode === -25204) return JSON.stringify({ ok: false, path, fallbackReason, ...units,
+      deliveryVerified: false, error: 'cannot verify the drop; read the window before continuing' });
     const message = String(e.message || e);
     return JSON.stringify({ ok: false, path, fallbackReason, ...units, error: message + (!didPress && !message.includes('nothing was pressed') ? '; nothing was pressed' : '') });
   } finally {

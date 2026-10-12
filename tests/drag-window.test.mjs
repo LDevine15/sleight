@@ -8,9 +8,9 @@ const test = (name, fn) => nodeTest(`${defaultAppId}: ${name}`, fn);
 
 // Only the native AX/CG boundary is replaced. run() does the real selection,
 // validation, coordinate conversion, mouse sequence and post-drop check.
-function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false } = {}) {
+function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null } = {}) {
   const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [], textWrites = [];
-  let visited = 0, inputChecks = 0;
+  let visited = 0, inputChecks = 0, readbacks = 0;
   let mainId = 22;
   let order = [22, 11];
   const frames = new Map([[11, { X: 100, Y: 100, Width: 600, Height: 400 }], [22, { X: 900, Y: 200, Width: 800, Height: 500 }]]);
@@ -98,6 +98,10 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     AXUIElementCreateApplication: () => proc,
     AXUIElementSetMessagingTimeout: () => 0,
     AXUIElementCopyAttributeValue: (el, name, out) => {
+      if (nativeFailure?.name === name) {
+        const pressed = [...pidEvents, ...events].some(event => event.type === 1);
+        if (nativeFailure.afterPress ? pressed && ++readbacks >= nativeFailure.afterPress : el.role?.() === 'AXToolbar') return nativeFailure.code;
+      }
       const methods = { AXWindows: 'windows', AXChildren: 'uiElements', AXRole: 'role', AXSubrole: 'subrole', AXTitle: 'name', AXValue: 'value' };
       try {
         if (name === 'AXPosition') { const [x, y] = el.position(); out[0] = { x, y }; }
@@ -158,6 +162,26 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
 const pastEnd = { windowId: 11, to: [150, 38.5] };
+test('timed-out toolbar role or geometry refuses before any press', () => {
+  for (const name of ['AXRole', 'AXPosition']) {
+    const h = harness({ background: true, nativeFailure: { name, code: -25204 } });
+    const result = h.run(pastEnd);
+    assert.equal(result.ok, false); assert.match(result.error, /nothing was pressed/);
+    assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0);
+  }
+});
+test('readback timeouts report unverified delivery and never repeat the drag', () => {
+  for (const [background, afterPress, name] of [[true, 1, 'AXValue'], [true, 3, 'AXValue'],
+    [true, 4, 'AXValue'], [true, 5, 'AXValue'], [true, 1, 'AXSelectedText'], [false, 1, 'AXValue']]) {
+    const h = harness({ background, nativeFailure: { name, code: -25204, afterPress } });
+    const result = h.run(pastEnd);
+    assert.equal(result.ok, false); assert.match(result.error, /cannot verify.*read.*window/i);
+    assert.doesNotMatch(result.error, /nothing was pressed|unchanged|disappeared|failed \(-25204\)/);
+    assert.equal(result.deliveryVerified, false);
+    assert.equal(h.pidEvents.length, background ? 28 : 0);
+    assert.equal(h.events.length, background ? 0 : 28);
+  }
+});
 test('default attributes keep AX moves while mixed or uniform bold selections use posting', () => {
   for (const [selectionFonts, expectedPath] of [[['regular', 'regular', 'regular', 'regular'], 'accessibility'],
     [['regular', 'bold', 'regular', 'regular'], 'background'], [['bold', 'bold', 'bold', 'bold'], 'background']]) {

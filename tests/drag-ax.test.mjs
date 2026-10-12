@@ -12,6 +12,7 @@ function harness({ timeoutError = 0 } = {}) {
     AXUIElementSetMessagingTimeout: (el, seconds) => { deadlines.push([el, seconds]); return timeoutError; },
     AXUIElementCopyAttributeValue: (el, name, out) => {
       reads.push(name);
+      if (el[name]?.error) return el[name].error;
       if (!(name in el)) return -25205;
       out[0] = Array.isArray(el[name]) ? list(el[name]) : el[name]; return 0;
     },
@@ -69,4 +70,19 @@ test('native content scan preserves clipping, excluded chrome and the element li
   assert.equal(info.areas.length, 1); assert.equal(info.areas[0].bounds.Y, 100);
   h.win.AXChildren = Array.from({ length: 301 }, () => h.element('AXButton', 110, 140, 10, 10));
   assert.throws(() => h.context.content(h.window(), h.bounds), /300-element limit/);
+});
+
+test('native content timeouts refuse rather than hiding toolbar role or geometry', () => {
+  for (const name of ['AXRole', 'AXPosition']) {
+    const h = harness(); h.toolbar[name] = { error: -25204 };
+    assert.throws(() => h.context.content(h.window(), h.bounds), error => error.axCode === -25204);
+  }
+});
+
+test('unsupported and no-value attributes are still skipped during native scanning', () => {
+  for (const code of [-25205, -25212]) {
+    const h = harness(); h.toolbar.AXSubrole = { error: code };
+    const info = h.context.content(h.window(), h.bounds);
+    assert.equal(info.areas.length, 1); assert.equal(info.toolbars.length, 1);
+  }
 });
