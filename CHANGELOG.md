@@ -16,6 +16,9 @@
   instead of 0.5 s, so a loaded Mac no longer gets an app called hung after one slow answer.
 - An action chained with `.then`, `.catch` or `.finally` and assigned or followed by more code is
   refused like a bare un-awaited action, since its failure would end the engine's session.
+- Under the `SLEIGHT_RESULT_TRIM=1` A/B, a result over 25,000 characters drops runs of 20 or more
+  sibling rows in a list or outline, keeping selected rows, folders and rows that match the window
+  title or file name. A constructed 198-file folder went from 72,616 characters to under 25,000.
 
 ## 1.2.5 (2026-10-11)
 
