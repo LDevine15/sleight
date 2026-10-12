@@ -166,6 +166,16 @@ test('a banner inserted above the same parent is not a parent move', async () =>
   assert.equal(result.moved, false);
 });
 
+test('an id-less parent under an identified app stays unverified after a banner is inserted', async () => {
+  const h = fixture(); h.root.id = 'app'; h.parent.id = '';
+  h.tab.drag = async () => { h.root.children.unshift({ tagName: 'DIV', id: 'banner', parentElement: h.root }); };
+  const result = await dragTo(h.tab, '#source', '#target');
+  assert.equal(result.indexChanged, false);
+  assert.equal(result.parentChanged, null);
+  assert.equal(result.moved, null);
+  assert.match(result.note, /Parent identity is unverified/);
+});
+
 test('root span centering uses window.scrollBy', async () => {
   const h = fixture({ x: 20, y: 1200, width: 100, height: 40 }, { x: 20, y: 1540, width: 100, height: 60 }, { width: 800, height: 500 });
   const scrollBy = h.root.scrollBy; let windows = 0;

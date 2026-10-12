@@ -19,12 +19,11 @@ export async function dragTo(tab, from, to) {
     if (!el?.parentElement) throw new Error('dragTo needs exactly one attached element at each endpoint.');
     if (scroll) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     const r = el.getBoundingClientRect();
-    const parent = [], path = [];
+    const path = [];
     for (let node = el; node.parentElement; node = node.parentElement) path.unshift(Array.from(node.parentElement.children).indexOf(node));
     let parentKey = null;
     for (let node = el.parentElement; node; node = node.parentElement) {
-      if (node.id) { parentKey = JSON.stringify([node.id, parent]); break; }
-      parent.push([node.tagName, node.parentElement ? Array.from(node.parentElement.children).indexOf(node) : 0]);
+      if (node.id) { parentKey = node.id; break; }
     }
     const clip = { left: 0, top: 0, right: document.documentElement.clientWidth, bottom: document.documentElement.clientHeight };
     for (let node = el.parentElement; node && node !== document.scrollingElement && node !== document.documentElement; node = node.parentElement) {
@@ -34,7 +33,7 @@ export async function dragTo(tab, from, to) {
       clip.right = Math.min(clip.right, x + node.clientWidth); clip.bottom = Math.min(clip.bottom, y + node.clientHeight);
     }
     return { x: r.x, y: r.y, width: r.width, height: r.height,
-      index: Array.from(el.parentElement.children).indexOf(el), parent: parentKey, path, clip,
+      index: Array.from(el.parentElement.children).indexOf(el), parent: el.parentElement.id ? parentKey : null, path, clip,
       id: el.id, tag: el.tagName, text: String(el.textContent ?? '').slice(0, 200) };
   };
   const read = async (endpoint, scroll = false) => {
