@@ -74,7 +74,7 @@ our own runs. Dates and engine versions are given where they matter.
   a Codex `getApp` call with no sleight call in flight (1). The call in flight
   fails with "native pipe closed before response", and the service is back within seconds. We don't
   know what triggers it, and it is the engine's bug for every client. sleight sends a read that met
-  the crash again once; a call with actions isn't resent, since its actions may have run.
+  the crash again once (unit-tested only). A call with actions isn't resent.
 - The engine's helper can stop answering. On 2026-10-04 every `cua.getApp` timed out
   (`-10005 timeoutReached`) for about 25 minutes, with the Mac unlocked and in use, until ChatGPT was
   restarted. We don't know the cause. After two consecutive `timeoutReached` failures on standalone
@@ -113,7 +113,7 @@ our own runs. Dates and engine versions are given where they matter.
 - The native guard still needs full AX reads after preceding actions. On 2026-10-08, Calculator reads
   after Escape took median 413 to 437 ms, against 29 to 48 ms idle.
 - Literal numbers only: a call that computes an element number is refused in that state.
-- Same-title replacement of a window cannot be detected (the engine gives no window ids).
+- Same-title replacement of a window cannot be detected (the engine doesn't give window ids).
 - `/sleight stop` collects owned engine and helpers, then leaves the shared computer-use helper running.
 - The engine keeps two keyboard event taps ("ChatGPT Computer Use") from its first key action until
   its process exits. Measured 2026-10-10 on engine 26.1007.21159 with Calculator: a turn end didn't
@@ -122,7 +122,8 @@ our own runs. Dates and engine versions are given where they matter.
 ## Specific apps
 
 - Slack, Firefox and WhatsApp expose thin engine trees (2026-10-10, one read each, no input):
-  Slack 15 elements and 483 characters, Firefox 24 / 898, WhatsApp 19 / 940.
+  Slack 15 elements and 483 characters, Firefox 24 / 898, WhatsApp 19 / 940. None of the three had a
+  text field, and Discord wasn't thin (251 elements). Whether a settings switch expands them is unverified.
 - A Save or Open sheet showing a folder with many items reads as a very large tree: 198 file rows
   made one read of TextEdit's Save sheet 57,000 characters (2026-10-10), past Claude Code's tool
   output limit, so Claude saw only a pointer to a file, and every guard read of it took 1.4 to

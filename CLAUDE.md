@@ -12,7 +12,7 @@ on this Mac (`SLEIGHT_IGNORE_HOLD=1` skips the wait). Live probes stop while it 
 On a heavily loaded Mac, two tests can fail on timing: `tests/preapproved-process.test.mjs` (timeout
 collects a process group) and the stuck-probe restart in app-health. At load averages of 102 to 107
 (2026-10-10), the first failed 1 of 3 runs alone and both failed in a full check. At load 23 the
-full check passed. Those waits are ledger G6.
+full check passed.
 
 ## Writing
 
