@@ -3,11 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 20:35 UTC, flushed before the owner's clear)
+## Banner (2026-10-12 21:00 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser on its own 13 browser tasks in tasks done, time and cost. A release
 and a launch video follow. Longer term (owner): the world's fastest computer use plugin, every lever down to milliseconds.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2271 pass, 1 skipped, mod 33/33,
+Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2276 pass, 1 skipped, mod 33/33,
 exit 0. `~/Projects/sleight` is fast-forwarded to it.
 
 Under the owner's testing rule (LAWS), incremental runs use Haiku 5.5 high on the API key; Opus once, at the end of the fix batch, as the
@@ -15,28 +15,21 @@ head-to-head against FowlBrowser. ROADMAP 0b: test across models, both arms on t
 
 Where we stand (all published in `docs/benchmarks/2026-10-12-*`):
 - Opus, 15:23 EDT, `118b1b3`: sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls.
-- Haiku baseline, 16:06 to 16:29 EDT, `fd48fa1` (`/tmp/fb-rounds/hk-20261012-1606-*`, not yet published): FowlBrowser 22/26
-  (inject-order and inject-mail answers), sleight 19/26 (all four forms in one order, settings twice, mobile once). sleight made
-  145 tool errors against 22. Haiku invents calls (`tab.evaluate`, `cua.getAXState`), leaves actions unawaited (sleight
-  refuses), misuses selectors (deadlines, strict mode), tries `DragEvent` in the read-only scope. Wall 2,962 s against 1,742 s.
-  This is the next lever (batch H below). Publish this round first.
+- Haiku baseline, 16:06 EDT, `fd48fa1` (`2026-10-12-haiku-baseline.md`): FowlBrowser 22/26, 1,744 s, $3.29, 22 tool errors;
+  sleight 19/26, 2,961 s, $4.11, 145 tool errors. FowlBrowser forwarded the injected mail in both orders; sleight missed the
+  four form tasks and `mobile` once. Batch H targets the errors.
 - Lean skill A/B (Opus): within noise, the default stays.
 - Anatomy and char audit: the first call (engine opens tabs one at a time), the engine docs (40.9K of a web session's first
   two results) and errors are the gaps. Later calls are 3x faster than FowlBrowser's.
 
-Merged tonight after Sonnet-high reviews (squash commits on `pane/auto-mode`): A9 `dragTo`, F6R3, F5R2, F5R3, F7R2, A7R, D1,
-D5 (`SLEIGHT_ENGINE_DOCS=min`: the API reference on demand, 11,897 to 672 characters, A/B pending), A3R3 and A3R4 (tab
-error hints), F12 (resend a read after Debugger unattached), A9R2.
+Merged 21:00 UTC after Sonnet-high reviews: D2, D5R, A9R3, A3R5, A10R (with A10). Failed review, fix items in the ledger:
+D4R (D4 strips blank lines around code fences), T1R, T2R2, F4R3. A Sonnet subagent is reading FowlBrowser's code for what keeps
+Haiku's errors low (owner's suggestion, 2026-10-12). Its findings feed batch H.
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
-- Done, awaiting review: D2 (repeated text blocks), D4 (platform sentences), A9R3, T2R (list picker on the real travel list).
-- In progress: A3R5, D5R, T1.
-- Open: A5R, A6R, then A2R (after both); A10R, F4R2, S1, S2, T3.
-- Superseded by their R items (never merge): A2, A3, A3R, A3R2, A5, A6, A7, A9R, A10, F4, F4R, T2, F1R, F5, F5R, F6, F6R,
-  F6R2, F7R. Parked: F3, K10.
-- Batch H (ledger, written 2026-10-12 20:40 UTC, take it first): H1 forgive API guesses (39 of the 145 Haiku errors), H2 page-write
-  hints (21), H3 handles across kernel resets (12), H4 add the missing await and fix the lease routing (12). Error tally in the
-  ledger's batch H header.
+- Open: batch H (H1 to H4, take first), D4R, T1R, T2R2, F4R3, A5R, A6R, then A2R (after both); S1, S2, T3.
+- Superseded by their R items (never merge): A2, A3, A3R, A3R2, A5, A6, A7, A9R, A10 (landed with A10R), F4, F4R, F4R2, T1, T2,
+  T2R, D4, F1R, F5, F5R, F6, F6R, F6R2, F7R. Parked: F3, K10.
 
 Untested live: A7R's save split (`bench/save-split-probe.mjs`, written, never run, and TextEdit must not be running). D5 `min`
 needs a Haiku A/B. No background jobs of sleight-arch's are running. The lanes run on their own.
@@ -61,9 +54,9 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Publish the Haiku baseline (`docs/benchmarks/`, with anatomy and the error tally from the ledger's batch H).
-2. Review the done lane items (D2, D4, A9R3, T2R), merge, keep the ledger moving.
-3. Run `bench/save-split-probe.mjs` (A7R live), then Haiku A/Bs: D5 `min`, then batch H.
+1. Keep the ledger moving: review and merge each done item, fix items for failed reviews.
+2. Run `bench/save-split-probe.mjs` (A7R live), then Haiku A/Bs: D5 `min`, then batch H once merged.
+3. Fold the FowlBrowser code study into batch H.
 4. Once every open item is merged, one Opus head-to-head, published. Video and release follow on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
