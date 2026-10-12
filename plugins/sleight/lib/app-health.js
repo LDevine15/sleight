@@ -91,7 +91,7 @@ function minimizedCount(windows) {
 // With an argument, one probe. Without, a long-lived helper: one JSON line in ({ id, app }), one out,
 // so a session spawns osascript once instead of on every app read (about 150 ms of CPU each).
 function run(argv) {
-  if (argv.length && argv[0] !== '--session') return JSON.stringify(probe(JSON.parse(argv[0])));
+  if (argv.length && argv[0] !== '--session') return JSON.stringify(probe(JSON.parse(argv[0]), argv[1] ? JSON.parse(argv[1]) : 0.5));
   // Load each operation once, in this helper's JavaScript context.
   const query = name => {
     const source = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${argv[1]}/${name}.js`, $.NSUTF8StringEncoding, null));
@@ -118,7 +118,7 @@ function run(argv) {
         const result = request.op === 'front-restore' ? (frontRestore ||= query('front-restore'))(request)
           : request.op === 'window-identity' ? JSON.parse((windowIdentity ||= query('window-identity'))([JSON.stringify(request.window)]))
           : request.op === 'keyboard-taps' ? JSON.parse((taps ||= query('keyboard-taps'))())
-          : request.op === 'lease-target' ? JSON.parse((target ||= query('lease-target'))([JSON.stringify({ app: request.app })])) : probe(request.app);
+          : request.op === 'lease-target' ? JSON.parse((target ||= query('lease-target'))([JSON.stringify({ app: request.app })])) : probe(request.app, request.deadlineSeconds);
         reply = { id: request.id, ...result };
       } catch { reply = { id: request?.id, status: 'unknown', ok: false, error: 'session query failed' }; }
       stdout.writeData($(JSON.stringify(reply) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
@@ -126,7 +126,7 @@ function run(argv) {
   }
 }
 
-function probe(selector) {
+function probe(selector, deadlineSeconds = 0.5) {
   if (!$.AXIsProcessTrusted()) return { status: 'denied' };
   if (typeof selector !== 'string' || !selector) return { status: 'unknown' };
   const apps = matchingApps($.NSWorkspace.sharedWorkspace.runningApplications, selector);
@@ -139,7 +139,7 @@ function probe(selector) {
   // acquire it and times out (OpenUsage, 2 of 2, 2026-10-11).
   const menuBarOnly = Number(target.activationPolicy) === 1;
   const space = { hidden: target.hidden === true, menuBarOnly, ...(menuBarOnly ? { app: ObjC.unwrap(target.localizedName) } : {}), ...counts };
-  if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) return { status: 'unknown', ...space };
+  if (Number($.AXUIElementSetMessagingTimeout(app, deadlineSeconds)) !== 0) return { status: 'unknown', ...space };
   const value = Ref();
   const error = Number($.AXUIElementCopyAttributeValue(app, $('AXWindows'), value));
   if (error !== 0) return { status: error === -25204 ? 'timeout' : error === -25211 ? 'denied' : 'unknown', error, pid, ...space };

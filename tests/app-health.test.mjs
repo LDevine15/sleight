@@ -39,8 +39,13 @@ function probe({ trusted = true, error = 0, count = 1, apps = ['com.apple.TextEd
   });
   const context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, unwrap: value => value, castRefToObject: value => value, deepUnwrap: value => value } });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/app-health.js', import.meta.url), 'utf8'), context);
-  return { run: selector => JSON.parse(context.run([JSON.stringify(selector)])), calls };
+  return { run: (selector, deadlineSeconds) => JSON.parse(context.run([JSON.stringify(selector), JSON.stringify(deadlineSeconds)])), calls };
 }
+test('a longer diagnostic probe applies its requested AX deadline', () => {
+  const p = probe();
+  assert.equal(p.run('TextEdit', 3).status, 'responding');
+  assert.deepEqual(p.calls[1], ['deadline', 3]);
+});
 test('AX health does not prompt when Accessibility is missing or a selector is ambiguous', () => {
   for (const options of [{ trusted: false }, { apps: ['com.apple.TextEdit', 'com.apple.TextEdit'] }, { apps: [] }]) {
     const p = probe(options); const result = p.run('textedit');

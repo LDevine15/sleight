@@ -3,6 +3,30 @@ import assert from 'node:assert/strict';
 
 import * as module from '../plugins/sleight/lib/read-failure.mjs';
 
+test('a target that responds to the longer re-probe is not diagnosed as hung', async () => {
+  const calls = [];
+  const diagnosis = await module.diagnoseReadFailure('Editor', 'Control', {
+    probeApp: async (app, options) => {
+      calls.push([app, options]);
+      return { status: calls.length === 1 ? 'timeout' : 'responding', windows: 1 };
+    }, readControl: async () => ({ status: 'responding' }),
+  });
+  assert.equal(diagnosis.kind, 'app-read');
+  assert.deepEqual(calls, [['Editor', undefined], ['Editor', { deadlineSeconds: 3 }], ['Control', undefined]]);
+});
+test('two target timeouts still diagnose a hang, but a failed re-probe stays unknown', async () => {
+  for (const second of ['timeout', 'unknown']) {
+    let targets = 0;
+    const diagnosis = await module.diagnoseReadFailure('Editor', 'Control', {
+      probeApp: async app => app === 'Editor'
+        ? { status: ++targets === 1 ? 'timeout' : second } : { status: 'responding', windows: 1 },
+      readControl: async () => ({ status: 'responding' }),
+    });
+    assert.equal(diagnosis.kind, second === 'timeout' ? 'app-hung' : 'unknown');
+    assert.equal(targets, 2);
+  }
+});
+
 test('orphan advice uses the probed app and pid rather than the request selector', () => {
   const advice = module.readFailureAdvice('com.example.editor', { kind: 'app-save-panel',
     target: { app: 'Fixture Editor', pid: 84, savePanelOnly: true } });

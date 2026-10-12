@@ -49,14 +49,14 @@ function helperLane(kind, timeoutMs, spawnHelper) {
     try {
       if (!child) start();
       active.id = nextId++;
-      active.timer = setTimeout(() => finish(undefined, true), timeoutMs);
+      active.timer = setTimeout(() => finish(undefined, true), active.timeoutMs ?? timeoutMs);
       child.stdin.write(JSON.stringify({ id: active.id, ...active.payload }) + '\n');
     } catch { finish(undefined, true); }
   }
-  function request(payload, fallback) {
+  function request(payload, fallback, requestTimeoutMs) {
     if (closed) return Promise.resolve(fallback);
     return new Promise(resolve => {
-      queue.push({ payload, fallback, resolve }); pump();
+      queue.push({ payload, fallback, resolve, timeoutMs: requestTimeoutMs }); pump();
     });
   }
   return { request, close() {
@@ -79,7 +79,8 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
   const target = helperLane('target', operationTimeoutMs, spawnHelper);
   const taps = helperLane('taps', operationTimeoutMs, spawnHelper);
   return {
-    probe: app => probe.request({ app }, { status: 'unknown' }),
+    probe: (app, { deadlineSeconds = 0.5 } = {}) => probe.request({ app, deadlineSeconds }, { status: 'unknown' },
+      deadlineSeconds > 0.5 ? Math.max(timeoutMs, deadlineSeconds * 1000 + 1500) : timeoutMs),
     frontRestore: request => probe.request({ ...request, op: 'front-restore' }, { status: 'unknown' }),
     windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }),
     target: args => target.request({ op: 'lease-target', app: args.app }, { ok: false,
@@ -90,10 +91,10 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
   };
 }
 
-export function probeAppHealth(app) {
+export function probeAppHealth(app, { deadlineSeconds = 0.5 } = {}) {
   return new Promise(resolve => {
-    execFile('/usr/bin/osascript', ['-l', 'JavaScript', HEALTH_SCRIPT, JSON.stringify(app)],
-      { timeout: 2000, maxBuffer: 4096 }, (error, stdout) => {
+    execFile('/usr/bin/osascript', ['-l', 'JavaScript', HEALTH_SCRIPT, JSON.stringify(app), JSON.stringify(deadlineSeconds)],
+      { timeout: deadlineSeconds * 1000 + 1500, maxBuffer: 4096 }, (error, stdout) => {
         // A process deadline alone cannot attribute a hang to the target app.
         if (error) { resolve({ status: 'unknown' }); return; }
         try { resolve(JSON.parse(stdout)); } catch { resolve({ status: 'unknown' }); }
@@ -142,7 +143,8 @@ export function classifyReadFailure({ target, control, read }) {
 
 export async function diagnoseReadFailure(app, control, { probeApp = probeAppHealth, readControl } = {}) {
   const safe = async fn => { try { return await fn(); } catch { return { status: 'unknown' }; } };
-  const target = await safe(() => probeApp(app));
+  let target = await safe(() => probeApp(app));
+  if (target?.status === 'timeout') target = await safe(() => probeApp(app, { deadlineSeconds: 3 }));
   if (target?.savePanelOnly === true) return { kind: 'app-save-panel', target };
   if (offSpace(target)) return { kind: 'app-off-space', target };
   if (!control || !readControl) return { kind: 'unknown', target };
