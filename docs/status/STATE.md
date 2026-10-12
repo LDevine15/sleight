@@ -3,32 +3,34 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 21:40 UTC)
+## Banner (2026-10-12 23:15 UTC)
 
-Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser on its own 13 browser tasks in tasks done, time and cost. A release
-and a launch video follow. Longer term (owner): the world's fastest computer use plugin, every lever down to milliseconds.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2303 pass, 1 skipped, mod 33/33,
-exit 0. `~/Projects/sleight` is fast-forwarded to it.
+Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac (LAWS, ROADMAP 0b). Beat
+FowlBrowser on its own tasks on the way. A release and a video follow, the video after the claim work (owner).
+Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2563 pass, 1 skipped, mod 33/33, exit 0.
+`~/Projects/sleight` is fast-forwarded to it.
 
-Under the owner's testing rule (LAWS), incremental runs use Haiku 5.5 high on the API key; Opus once, at the end of the fix batch, as the
-head-to-head against FowlBrowser. ROADMAP 0b: test across models, both arms on the same model.
+Measured today (all in `docs/benchmarks/2026-10-12-*`):
+- Opus, 15:23 EDT: sleight 26/26, 893 s, $8.39; FowlBrowser 26/26, 805 s, $5.55.
+- Haiku baseline, 16:06 EDT: FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145. FowlBrowser forwarded the injected mail twice.
+- D5 `min` A/B: 42/52 against 37/52 over two passes, within Haiku's spread. Stays opt-in.
+- First-call queueing: a tab open takes 0.9 s alone, 3.2 s mean with 13 sessions started together (the Codex extension's queue).
+- REPL warm-up (S1R, merged, default on): an empty first call with 13 sessions at once went from 0.8 to 1.2 s to about 30 ms.
 
-Where we stand (all published in `docs/benchmarks/2026-10-12-*`):
-- Opus, 15:23 EDT, `118b1b3`: sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls.
-- Haiku baseline, 16:06 EDT (`haiku-baseline.md`): FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145.
-  FowlBrowser forwarded the injected mail in both orders.
-- D5 `min` A/B (`d5-min-ab.md`): 42/52 against the default's 37/52 over two passes, within Haiku's spread. Stays opt-in.
-- First-call queueing (same doc): a tab open takes 0.9 s alone and 3.2 s mean with 13 sessions started together (the
-  extension's queue). Startup grows from 0.4 s to 1.8 s (ours, S1 and S2). The direct browser path waits on these numbers (owner).
-- Kernel resets: all 7 in the baseline were Haiku's own `js_reset` calls, 5 after a call that didn't print anything (H7). H14 is the fix.
+Merged since 21:00 UTC, each after a Sonnet-high review: D2, D5R, A9R3, A3R5, A10R, F4R3 (closes the session's agent tabs at
+turn end), E1 (error tally), H1R (forgives API guesses), H11 (catches page writes before the call), H14 (no-output note), A6R to A6R4
+(page read caps), S1R (warm-up), H6R2 (`sleight.reorder`), H4R2 (no false unawaited refusals), T1R3 (tab stale guard), T2R4
+(`sleight.pickFromList`), and A7R's live fix (3/3 saves). Parked: P1 (0.05 ms a call), T3, D4.
 
-Merged since 21:00 UTC: F4R3 (with F4 to F4R2), E1 (`bench/fowl/error-tally.mjs`), A7R's live fix (`settle-text-write.js`). Every
-error-hint branch failed review on misdiagnosis (H1, H2, H5, H12, N1). The ledger now has one rule for hints.
+The claim benchmark (batch W): survey in `~/Projects/sleight-wt/ledger/competitor-survey.md`. The arms built or in review are Playwright
+MCP, Chrome DevTools MCP, Claude in Chrome, Cua Driver, Peekaboo, Browser Use (W1 to W3, with fix items); Claude's own computer use
+needs an interactive harness (W6). The suite (W4R) and the report (W5R) are in fix rounds. Claude in Chrome runs in the account-less
+Chrome profile "sleight benchmark", device id in `~/.config/sleight-bench/world/claude-in-chrome-device`.
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
-- Open: fix items H1R, H2R2, H5R, H6R, H12R, N1R, D4R2, T3R, T1R, T2R2; new H11, H13, H14, T4, S1, S2, H3, H4, H8; A5R, A6R, A2R.
-  Stale: H9, H10, T5 (`tabs.content` is off for local browsers). Report-only done: H7. Never merge the branches that
-  failed review. Their R items replace them. Parked: F3, K10.
+- Open (ledger is the source): W1R2, W2R, W3R2, W4R, W5R, W6; H2R3, H3R, H5R2, H8R3, H12R2, N1R2, S1R2, S2R2, T4R3, A5R4, A2R.
+  Stale: H9, H10, H13 (`tab.ax` is off for our browsers), T5, H4. Report-only: H7. Branches that failed review are
+  replaced by their R items. Parked: F3, K10.
 
 A7R's save split, live (21:15 UTC): 0/3 saved at first, because `settle-text-write.js` called `isNil()` on a CGEvent (a CF
 pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 ms (`bench/save-split-probe.mjs`). No background jobs of sleight-arch's are running. The lanes run on their own.
