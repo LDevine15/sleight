@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { discoverExtensions } from './browser-discovery.mjs';
 import { createSurfaceCache, refreshAfterFirstCall } from './surface-cache.mjs';
-import { createRelay } from './relay.mjs';
+import { createRelay, firstCallBatchSetting } from './relay.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
 import { InputLease } from './input-lease.mjs';
@@ -685,7 +685,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     guardMode: process.env.SLEIGHT_GUARD,
     simFocusNote: process.env.SLEIGHT_SIM_FOCUS_NOTE !== '0', // Screenshot scale advice for any app.
     resultTrim: process.env.SLEIGHT_RESULT_TRIM === '1',
-    firstCallBatch: process.env.SLEIGHT_FIRST_CALL_BATCH === 'merge' ? 'merge' : process.env.SLEIGHT_FIRST_CALL_BATCH !== '0',
+    firstCallBatch: firstCallBatchSetting(process.env.SLEIGHT_FIRST_CALL_BATCH),
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
     serverIn: child.stdin,

@@ -20,6 +20,27 @@ const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json',
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
+test('nosavestop changes only the final stop clause and keeps the default prompt hashes', () => {
+  assert.equal(hash(batchingDescription(firstRule, true)), baseline.batch);
+  assert.equal(hash(batchingDescription(firstRule, 'merge')), baseline.merge);
+  const clause = ', but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.';
+  for (const prompt of [undefined, 'lean']) {
+    const normal = batchingDescription(firstRule, true, prompt);
+    assert.ok(normal.endsWith(clause));
+    const expected = normal.slice(0, -clause.length) + '. sleight waits for the sheet a shortcut opens.';
+    assert.equal(batchingDescription(firstRule, 'nosavestop', prompt), expected);
+    assert.equal(batchingDescription('different engine wording', 'nosavestop', prompt), 'different engine wording');
+  }
+});
+
+test('the launcher selects nosavestop without changing default, disabled or merge settings', async () => {
+  const { firstCallBatchSetting } = await import('../plugins/sleight/lib/relay.mjs');
+  for (const [value, expected] of [['nosavestop', 'nosavestop'], ['merge', 'merge'], ['0', false],
+    [undefined, true], ['1', true], ['NOSAVESTOP', true]]) {
+    assert.equal(firstCallBatchSetting?.(value), expected);
+  }
+});
+
 test('only lean selects shorter text and every default prompt stays byte-identical', { skip }, () => {
   assert.ok(leanSkill().length < skillRules(skillPath, {}).length);
   assert.equal(hash(JSON.stringify(noticeInventory().map(e => e.text))), baseline.notices);

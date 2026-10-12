@@ -125,12 +125,18 @@ export function treeFreeFirstAction(code) {
   const first = ACTION.exec(typeof code === 'string' ? code : '');
   return !!first && (['pressKey', 'typeText', 'paste'].includes(first[1]) || (!!first[2] && ['click', 'doubleClick', 'rightClick', 'scroll', 'drag'].includes(first[1])));
 }
+export function firstCallBatchSetting(value) {
+  return ['merge', 'nosavestop'].includes(value) ? value : value !== '0';
+}
 export function batchingDescription(description, variant = true, prompt) {
   const text = prompt === 'lean' ? (variant === 'merge' ?
     'start with `let app = await cua.getApp("<app>")`; batch known actions: sleight acquires the app and checks its window before they run. Do not end a call only to read the window before an action you already know: sleight waits for the app after each click, shortcut or Return, follows a Save or Open panel, a new window or a document saved under a name the call typed, and stops the rest of the call if any other window appears.' :
     'start with `let app = await cua.getApp("<app>")`; batch known actions: sleight acquires the app and checks its window before they run. Chain known actions, but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.') :
     variant === 'merge' ? FIRST_CALL_MERGE : FIRST_CALL_BATCH;
-  return typeof description === 'string' && description.includes(FIRST_CALL_RULE) ? description.replace(FIRST_CALL_RULE, text) : description;
+  const replacement = variant === 'nosavestop' ? text.replace(
+    ', but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.',
+    '. sleight waits for the sheet a shortcut opens.') : text;
+  return typeof description === 'string' && description.includes(FIRST_CALL_RULE) ? description.replace(FIRST_CALL_RULE, replacement) : description;
 }
 const TURN_END_DESCRIPTION = 'Internal to sleight: its hooks call this when a Claude turn ends. Never call it yourself.';
 
