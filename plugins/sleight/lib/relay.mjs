@@ -75,6 +75,7 @@ import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refus
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
+import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
@@ -87,7 +88,7 @@ import { splitTextSave } from './text-save.mjs';
 // Strings are blanked first, so typed text that mentions an action doesn't count.
 export function unawaitedAction(code) {
   const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
-  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*\.(?:click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\()/g)) {
+  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText)\()/g)) {
     let end = m.index + m[0].length - 1, chained = false;
     for (;;) {
       let depth = 0;
@@ -428,6 +429,7 @@ export function createRelay({
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
   const resultBudget = createResultBudget();
+  const aliasNotices = createBrowserAliasNotices();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
   const receiptEnds = new Map();
   let latestReceipt;
@@ -1273,7 +1275,7 @@ export function createRelay({
       else msg.result = { ...msg.result, content: [...(msg.result?.content ?? []), { type: 'text', text: saveNote }] };
     }
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
-      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(dropRepeatedText(msg.result.content)) } };
+      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content))) } };
     }
     journal?.reply(msg);
     trace('to-client', msg);
@@ -2003,6 +2005,7 @@ export function createRelay({
           const tabCode = tabCleanupCode(msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
           msg.params.arguments.code = tabCode;
+          if (browser) msg.params.arguments.code = browserAliasesCode(msg.params.arguments.code);
         }
       }
       if (browser) browserCalls.set(msg.id, browser);
