@@ -129,6 +129,8 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 - LCU 0.11.2 runtime-only at `~/.local/share/lcu` (installed 2026-10-10 on the owner's OK, with 0.8.8 kept
   in `releases/`). The benchmark's arm is `~/Library/Caches/sleight-bench/lcu-arm`, made by
   `node bench/lcu-arm-setup.mjs`.
+- Chrome profile "sleight benchmark" (account-less, made by the owner 2026-10-12 18:40 EDT) holds Claude in Chrome, signed in
+  with the owner's Claude account, for the benchmark's Claude in Chrome arm. Never drive the owner's main Chrome profile.
 - REA (`rea-agents` 6.4.0, CLI only, `npm install --global`, no `rea setup`, so no agent configs changed) and Homebrew `ghidra`
   12.1.4 with `openjdk@21`, on the owner's OK (2026-10-12). `~/.zprofile` exports `GHIDRA_INSTALL_DIR`. Hopper and IDA aren't
   installed. Clean-room rule in LAWS.
