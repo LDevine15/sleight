@@ -16,7 +16,7 @@ function run(argv) {
     if (record.token !== request.lease.token || record.expires <= Date.now() || record.window?.appId !== request.appId) throw new Error('Input lease ownership lost or expired');
     const events = [true, false].map(down => {
       const event = $.CGEventCreateKeyboardEvent(null, 56, down);
-      if (!event || event.isNil()) throw new Error('Cannot create Shift event');
+      if (!event) throw new Error('Cannot create Shift event'); // a CF pointer in JXA, without ObjC's isNil
       $.CGEventSetFlags(event, down ? $.kCGEventFlagMaskShift : 0);
       $.CGEventSetType(event, $.kCGEventFlagsChanged);
       return event;

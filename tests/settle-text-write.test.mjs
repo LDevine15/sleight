@@ -18,7 +18,7 @@ function settle(options = {}) {
       assert.equal(id, request.appId); return { count: options.count ?? 1, objectAtIndex: () => running };
     } },
     kCGEventFlagMaskShift: 2, kCGEventFlagsChanged: 12,
-    CGEventCreateKeyboardEvent: (_source, key, down) => { const e = { key, down, isNil: () => false }; events.push(e); return e; },
+    CGEventCreateKeyboardEvent: (_source, key, down) => { const e = { key, down }; events.push(e); return e; },
     CGEventSetFlags: (event, flags) => { event.flags = flags; },
     CGEventSetType: (event, type) => { event.type = type; },
     CGEventPostToPid: (pid, event) => { posted.push([pid, event.down]); },

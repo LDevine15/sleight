@@ -55,7 +55,7 @@ try {
     const calls = trace ? readFileSync(join(traceDir, trace), 'utf8').split('\n').filter((l) => l.includes('"direction":"to-server"') && l.includes('tools/call')).length : -1;
     const ok = onDisk === text && !save.error && !read.error;
     if (ok) passed++;
-    console.log(`trial ${i}: element ${n}, save ${saveMs} ms${save.error ? ' ERROR' : ''}, read after ${readMs} ms${read.error ? ' ERROR' : ''}, engine calls ${calls} (a split save is 3 or more), file ${onDisk === text ? 'saved' : `NOT saved (${JSON.stringify(onDisk)})`}${save.error ? `\n  ${save.text.slice(0, 300)}` : ''}`);
+    console.log(`trial ${i}: element ${n}, save ${saveMs} ms${save.error ? ' ERROR' : ''}, read after ${readMs} ms${read.error ? ' ERROR' : ''}, engine calls ${calls} (a split save is 3 or more), file ${onDisk === text ? 'saved' : `NOT saved (${JSON.stringify(onDisk)})`}${save.error ? `\n  ${save.text.slice(-700)}` : ''}`);
     execFileSync('/usr/bin/osascript', ['-e', 'tell application "TextEdit" to quit saving no']);
     await new Promise((r) => setTimeout(r, 1000));
   }

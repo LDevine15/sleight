@@ -62,6 +62,10 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
    beating it, so the rerun after batch F decides what the video says.
    Learn from its design (owner, 2026-10-12): anything in FowlBrowser's architecture or logic that sleight
    can adapt (its MIT code included, with credit) gets adapted, in the relay, the skill or the benchmark.
+   Read before probing (owner, 2026-10-12): read how others built it before discovering it ourselves. FowlBrowser's
+   source first (the 21:05 UTC study feeds batch H). Then the installed code of Claude in Chrome, the Codex browser
+   extension and the ChatGPT engine, with REA (github.com/morluto/rea, MIT) where the code isn't readable as is.
+   Those reads are clean-room: notes on behavior and design, never their code in sleight.
 2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
    app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
    and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.

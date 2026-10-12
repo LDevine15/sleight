@@ -31,7 +31,8 @@ Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
 - Superseded by their R items (never merge): A2, A3, A3R, A3R2, A5, A6, A7, A9R, A10 (landed with A10R), F4, F4R, F4R2, T1, T2,
   T2R, D4, F1R, F5, F5R, F6, F6R, F6R2, F7R. Parked: F3, K10.
 
-Untested live: A7R's save split (`bench/save-split-probe.mjs`, written, never run, and TextEdit must not be running). D5 `min`
+A7R's save split, live (21:15 UTC): 0/3 saved at first, because `settle-text-write.js` called `isNil()` on a CGEvent (a CF
+pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 ms (`bench/save-split-probe.mjs`). D5 `min`
 needs a Haiku A/B. No background jobs of sleight-arch's are running. The lanes run on their own.
 
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
@@ -55,8 +56,9 @@ Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a 
 
 **Next steps:**
 1. Keep the ledger moving: review and merge each done item, fix items for failed reviews.
-2. Run `bench/save-split-probe.mjs` (A7R live), then Haiku A/Bs: D5 `min`, then batch H once merged.
-3. Fold the FowlBrowser code study into batch H.
+2. Haiku A/Bs: D5 `min`, then batch H once merged.
+3. Clean-room reads (LAWS): the FowlBrowser study is in batch H (H5 is new); a Sonnet subagent is reading Claude in Chrome, the
+   Codex extension and the engine's browser code. REA (owner's pick) waits on the owner's install.
 4. Once every open item is merged, one Opus head-to-head, published. Video and release follow on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
