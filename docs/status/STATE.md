@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 14:55 UTC)
+## Banner (2026-10-12 17:00 UTC)
 
 The owner is at the Mac working, and the box is ours: live runs and full checks are fine, but runs
 that take the pointer or keyboard still wait until they're away. Claude's quota is tight, so builds
@@ -30,6 +30,12 @@ a video sleight-arch builds. Done so far:
   hand-off tasks. Review each branch with Sonnet at high, merge, rerun `bench/fowl/h2h.sh`, publish it.
 - Video draft 1 (`media/launch/`, rendered to `~/Desktop/sleight-launch/sleight-launch-draft1.mp4`, sent
   to the owner) runs 38 s with drawn windows and measured numbers. Real footage comes from F9's hand-off runs.
+- Owner, 2026-10-12: beat FowlBrowser in the browser, and a video showing it by end of day. 3 Codex and 2
+  Grok lanes are on the ledger (F1 to F13, F1R, F8R). Merged so far: F2. F1 and F8 went back as fix items.
+  F3 is BLOCKED (no way to tie an extension instance to its browser app). Reviews of F6 and F9 running.
+- sleight with F1 on top (worktree `~/Projects/sleight-wt/live-f1`, one round, normal order): 12/13 in 805 s,
+  $4.40, 139 calls, 20 errors, against 11/13, 1,085 s, $6.99, 271 calls, 80 errors before. Checkout passed.
+  The miss was a list drag aimed from screenshot pixels in Chrome (F13).
 - Not in the ledger: a Go to Folder paste right after the shortcut was lost once (Chrome's Open panel).
 - The user's pre-approved list now also holds Chrome, ZCode, Cursor, iPhone Mirroring and others,
   added through Always allow on 2026-10-11 and 2026-10-12.
