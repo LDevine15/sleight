@@ -107,8 +107,8 @@ test('browser diffs and multiple trees share the result budget', () => {
   for (const item of out) assert.match(item.text, /omitted/);
 });
 
-test('browser diffs cap unindented changed rows and preserve numeric caller output', () => {
-  const diff = tree(1500, 50).replace(/^\t*(\d+ )/gm, '+ $1');
+test('browser diffs cap the engine + \\t form and preserve numeric caller output', () => {
+  const diff = tree(1500, 50).replace(/^(\t*\d+ )/gm, '+ $1');
   const out = process(diff + '\n\n12 items processed');
   assert.ok(out.length <= 30000);
   assert.match(out, /omitted/);
@@ -151,8 +151,8 @@ test('caller output below the result limit leaves a small tree whole', () => {
   assert.equal(process(full), full);
 });
 
-test('an indented numeric caller summary after a blank line is not a row', () => {
-  const ending = '\n\n\t12 items processed\nfinished';
+test('an unindented numeric caller summary after a blank line is not a row', () => {
+  const ending = '\n\n12 items processed\nfinished';
   assert.ok(process(tree(1000) + ending).endsWith(ending));
 });
 
@@ -239,13 +239,53 @@ test('a large dialog keeps the focused row before the rest of its subtree', () =
 });
 
 test('text messages after a blank line is caller output; AXListMarker after a blank stays a row', () => {
-  const ending = '\n\n\t12 text messages sent\nfinished';
+  const ending = '\n\n12 text messages sent\nfinished';
   assert.ok(process(tree(1000) + ending).endsWith(ending));
   const marker = [header, '0 AXWebArea Article', '\t1 text Value: line one', '',
     '\t2 AXListMarker', '\t3 text after'].join('\n');
   const out = process(marker);
   assert.match(out, /\t2 AXListMarker/);
   assert.match(out, /\t3 text after/);
+});
+
+test('caller lines in any wording after the blank line are kept', () => {
+  const omitted = /sleight: (\d+) browser tree lines omitted/.exec(process(tree(1000) + '\n\nfinished'))[1];
+  for (const line of ['12 text files found', '3 button clicks recorded', '7 row updated', 'bananas on toast',
+    '- 3 items remaining', '+ 12 added', '~ 5 changed']) {
+    const ending = `\n\n${line}\nfinished`;
+    const out = process(tree(1000) + ending);
+    assert.ok(out.endsWith(ending), line);
+    assert.equal(/sleight: (\d+) browser tree lines omitted/.exec(out)[1], omitted, line);
+  }
+});
+
+test('role-less option and name-only rows stay inside the cap', () => {
+  const rows = [
+    ...Array.from({ length: 200 }, (_, i) => `\t${i + 1} text ${'x'.repeat(40)}`),
+    '\t201 Value: Pacific/Chatham, ID: zone-0',
+    '\t202 Theme',
+    '\t203 (selected) Korean',
+    ...Array.from({ length: 400 }, (_, i) => `\t${i + 204} Value: zone-${i}, ID: zone-${i}`),
+  ];
+  const full = [header, '0 AXWebArea Settings', ...rows].join('\n');
+  const out = process(full);
+  assert.ok(out.length <= BROWSER_READ_LIMIT, `page read has ${out.length} characters`);
+  assert.match(out, /omitted/);
+});
+
+test('a 400-tree fuzz with role-less tails stays under the limit', () => {
+  for (let n = 0; n < 400; n++) {
+    const rows = Array.from({ length: 300 }, (_, i) => {
+      const id = i + 1;
+      if (i % 4 === 0) return `\t${id} Value: Pacific/Chatham, ID: zone-${n}-${i}`;
+      if (i % 4 === 1) return `\t${id} Theme ${n}-${i}`;
+      if (i % 4 === 2) return `\t${id} (selected) Korean ${i}`;
+      return `\t${id} search text field Query ${i}`;
+    });
+    const full = [header.replace('tab: 1', `tab: ${n + 1}`), '0 AXWebArea Settings', ...rows].join('\n');
+    const out = process(full);
+    assert.ok(out.length <= BROWSER_READ_LIMIT, `tree ${n} is ${out.length}`);
+  }
 });
 
 test('docs that leave no room still keep the root and at least 20 rows', () => {
@@ -268,9 +308,10 @@ test('trimBrowserTree caps a headerless tree and a diff block', () => {
   assert.ok(out.length <= BROWSER_READ_LIMIT);
   assert.match(out, /omitted/);
   const diff = ['0 AXWebArea Article',
-    ...Array.from({ length: 600 }, (_, i) => `+\t${i + 1} text ${'x'.repeat(30)}`)].join('\n');
+    ...Array.from({ length: 600 }, (_, i) => `+ \t${i + 1} text ${'x'.repeat(30)}`)].join('\n');
   const capped = trimBrowserTree(diff);
   assert.doesNotMatch(capped, /Browser tab:/);
-  assert.match(capped, /^\+?\t?0 AXWebArea Article|^0 AXWebArea Article/);
+  assert.match(capped, /^0 AXWebArea Article|^\+ 0 AXWebArea Article/);
+  assert.ok(capped.length <= BROWSER_READ_LIMIT, `diff output ${capped.length}`);
   assert.match(capped, /omitted/);
 });

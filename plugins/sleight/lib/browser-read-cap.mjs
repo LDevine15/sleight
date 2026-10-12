@@ -3,9 +3,12 @@
 export const BROWSER_READ_LIMIT = 12000;
 const HEADER = /^Browser tab: (\d+), Title: "(?:[^"\\\n]|\\.)*", URL: "(?:[^"\\\n]|\\.)*"\.\n(?=(?:[+~-] )?\t*\d+ )/gm;
 const ROW = /^(?:[+~-] )?(\t*)(\d+) (.*)$/;
-const ROLE = /^(?:AX[A-Z][A-Za-z]+|text field|text(?! messages)|button|link|container|heading|dialog|sheet|group|list|content list|row|cell|table|menu|checkbox|radio|slider|switch|image|scroll area|combo box|pop up button)\b/;
 const DOCS = /^(?:## Computer Use|# Other Browser APIs)\n/;
 const OMIT = /^sleight: (\d+) browser tree lines omitted\.[^\n]*/;
+
+function treeRow(line) {
+  return /^(?:[+~-] (?:\t+\d+ |\d+ AX)|\t+\d+ |\d+ AX)/.test(line);
+}
 
 function pageParts(text) {
   const starts = [...text.matchAll(HEADER)], parts = [];
@@ -16,11 +19,10 @@ function pageParts(text) {
     const tail = text.slice(start, nextWindow < 0 ? limit : start + nextWindow);
     const focus = /\n\nThe focused UI element (?:is|was) (\d+) /.exec(tail);
     const body = tail.slice(0, focus?.index ?? tail.length);
-    // A blank line can belong to a multiline value. A caller's numeric summary after
-    // it is not a row unless it has the engine's role shape.
-    const rows = [...body.matchAll(/^(?:[+~-] \t*\d+ |\t+\d+ |\d+ AXWebArea\b)[^\n]*/gm)]
-      .filter(row => !/^[ \t]*\n$/.test(body.slice(body.lastIndexOf('\n', row.index - 2) + 1, row.index)) ||
-        ROLE.test(ROW.exec(row[0])?.[3] ?? ''));
+    // Inside a tree, any indented index line is a row (role or not). Caller text
+    // starts after the closing blank and is not indented as a tree row.
+    const rows = [...body.matchAll(/^(?:[+~-] \t+\d+ |[+~-] \d+ AXWebArea\b|\t+\d+ |\d+ AXWebArea\b)[^\n]*/gm)]
+      .filter(row => treeRow(row[0]));
     if (!rows.length) continue;
     const last = rows.at(-1);
     let end = last.index + last[0].length;
@@ -108,9 +110,9 @@ export function trimBrowserResults(content, code = '', { limit = 45000, countDoc
       kept.add(j); used += 1 + lines[j].length;
     };
     for (const j of [...first, ...lines.keys()]) take(j);
-    const rowCount = [...kept].filter(j => j !== 0 && ROW.test(lines[j] ?? '')).length;
+    const rowCount = [...kept].filter(j => j !== 0 && treeRow(lines[j] ?? '')).length;
     if (rowCount < 20) {
-      for (let j = 1; j < lines.length && [...kept].filter(k => k !== 0 && ROW.test(lines[k] ?? '')).length < 20; j++) {
+      for (let j = 1; j < lines.length && [...kept].filter(k => k !== 0 && treeRow(lines[k] ?? '')).length < 20; j++) {
         for (const parent of parents.get(j) ?? []) take(parent, true);
         take(j, true);
       }
