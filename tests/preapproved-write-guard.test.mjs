@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const guard = async (...args) => {
   const { preapprovedWriteDenied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
@@ -38,7 +39,7 @@ test('named Bash mutation forms deny while reads and quoted operators pass', asy
 });
 
 test('resolved file and parent symlinks protect existing and absent policy files', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'sleight-policy-guard-'));
+  const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-policy-guard-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = join(root, 'Library/Application Support/sleight'); mkdirSync(directory, { recursive: true });
   const target = join(directory, 'preapproved.json'); writeFileSync(target, '{}');
@@ -69,7 +70,7 @@ test('copying or redirecting a policy read to another file remains allowed', asy
 });
 
 test('symlink traversal precedes dot-dot normalization and HOME is only an expansion hint', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'sleight-policy-traversal-'));
+  const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-policy-traversal-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = join(root, 'Library/Application Support/sleight'); mkdirSync(join(directory, 'child'), { recursive: true });
   const alias = join(root, 'alias'); symlinkSync(join(directory, 'child'), alias);
