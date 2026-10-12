@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createContext, runInContext } from 'node:vm';
-import { clickResultCode } from '../plugins/sleight/lib/tab-click-result.mjs';
+import { clickResultCode, isDiffTree, TabClickResults } from '../plugins/sleight/lib/tab-click-result.mjs';
 import { browserAliasesCode } from '../plugins/sleight/lib/browser-aliases.mjs';
 
 function fixture({ change, fail, unread, hang, noId, type, role, inForm = true, popup, tag = 'BUTTON', readMs = 0, clickMs = 0, row = 'Pay' } = {}) {
@@ -229,6 +229,21 @@ test('diff replies preserve cached Pay buttons in the relay and caller-read path
     await caller.run('var tab = await cua.getTab("1"); await tab.getAXState(); await tab.click(12);');
     assert.match(caller.notes.join('\n'), /retry may submit twice/);
   }
+});
+
+test('a recorded demoid full tree with "- main:" after the rows is not a diff', () => {
+  const demoid = `Browser tab: 1, Title: "Account", URL: "http://127.0.0.1:5420/t/demoid/shop/account".
+0 AXWebArea Account
+	1 button Home
+	2 heading Account
+- main:
+	3 link Orders`;
+  assert.equal(isDiffTree(demoid), false);
+  const observer = new TabClickResults();
+  observer.observe({ content: [{ type: 'text', text: 'Browser tab: 1, Title: "Form", URL: "https://example.test/form".\n\t12 button Pay, ID: pay' }] });
+  observer.observe({ content: [{ type: 'text', text: demoid }] });
+  assert.equal([...observer.trees.values()].join('\n').includes('Pay'), false);
+  assert.equal(isDiffTree('The following is a diff from the previous accessibility tree for Browser tab: 1\n+\t80 button X'), true);
 });
 
 test('a full reply with no buttons clears the previous submit classification', async () => {

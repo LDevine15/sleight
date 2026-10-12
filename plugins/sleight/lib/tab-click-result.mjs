@@ -1,8 +1,9 @@
-function isDiffTree(text) {
-  if (/^[+~-][ \t]/m.test(text)) return true;
-  const lines = text.split('\n').filter(line => !/^(?:Browser tab: |The focused UI element )/.test(line));
-  const row = lines.findIndex(line => /^\t*\d+ /.test(line));
-  return /\bdiff\b|\bno changes?\b|\bunchanged\b|\bchanges? since\b/i.test(lines.slice(0, row < 0 ? lines.length : row).join('\n'));
+export function isDiffTree(text) {
+  const cut = text.search(/\n(?:The focused UI element |\t*\d+ )/m);
+  const head = cut < 0 ? text : text.slice(0, cut);
+  return /^The following is a diff\b/m.test(head) ||
+    /^[+~-][ \t]/m.test(head) ||
+    /\bdiff\b|\bno changes?\b|\bunchanged\b|\bchanges? since\b/i.test(head.replace(/^Browser tab: .*\n?/, ''));
 }
 
 function installClickResults(cua, agent, snapshots, isDiffTree) {
