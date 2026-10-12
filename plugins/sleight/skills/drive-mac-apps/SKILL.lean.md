@@ -17,6 +17,9 @@ Fill every visible field in one call. Read once at the end.
 Use locators when validation/autocomplete moves fields, indices on static forms.
 Submit in that call only when the user asked and the engine's confirmation policy doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.
+`tab.drag` takes page coordinates from `getBoundingClientRect()` in `tab.playwright.evaluate`, not from a
+screenshot. Read the result back after it. Click a button that may open a page dialog (pay, delete, leave) with
+`tab.click(index)`, not a locator, then answer it: `(await tab.getJsDialog()).accept()` or `.dismiss()`.
 
 Selected text: select in `js`, then `drag` (`app`, `windowId`, `from`, `to`) in its content, from
 the latest screenshot of that window. Lost text: press Cmd+Z in that window.
