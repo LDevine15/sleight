@@ -90,6 +90,17 @@ test('a custom combobox uses an exact option locator after the fill fallback', a
   assert.deepEqual(h.calls, [['Country', 'fill', 'UK'], ['Country', 'click'], ['UK', 'click']]);
 });
 
+test('a custom host with a boolean checked property toggles via click-and-verify', async () => {
+  const h = fixture({
+    TwoFactor: { tagName: 'FB-SECURE-SWITCH', type: undefined, checkError: 'not a checkbox' },
+  });
+  const out = await fillForm(h.tab, [{ label: 'TwoFactor', value: true }]);
+  assert.match(out, /^Filled 1 of 1 fields\./);
+  assert.ok(h.calls.some(call => call[1] === 'check' && call[2] === true));
+  assert.equal(h.calls.filter(call => call[1] === 'click').length, 1);
+  assert.match(out, /fallback/);
+});
+
 test('the injected helper runs in a fresh realm and is hooked into browser calls', async t => {
   const h = fixture({ Name: {} });
   const context = createContext({ tab: h.tab });

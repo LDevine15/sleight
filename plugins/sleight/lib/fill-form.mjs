@@ -44,7 +44,8 @@ export async function fillForm(tab, fields) {
       }), undefined, options);
       const meta = await state();
       const check = ['checkbox', 'radio'].includes(meta.type) ||
-        ['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(meta.role);
+        ['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(meta.role) ||
+        (typeof meta.checked === 'boolean' && typeof meta.tag === 'string' && meta.tag.includes('-'));
       if (check) {
         const on = typeof field.value === 'boolean' ? field.value :
           /^(?:true|on|yes|checked|1)$/i.test(String(field.value)) ? true :
