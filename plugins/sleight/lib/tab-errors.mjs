@@ -3,7 +3,7 @@
 // events.jsonl: one line saying whether input was sent, and the exact next call.
 
 const READ = 'await tab.getAXState({ disableDiffing: true })';
-const DIALOG = "const dialog = await tab.getJsDialog(); if (dialog) { /* read dialog.type and message; confirm: await dialog.accept() or await dialog.dismiss(); prompt: await dialog.accept(text) or await dialog.dismiss(); alert/beforeunload: await dialog.dismiss() */ }";
+const DIALOG = 'const dialog = await tab.getJsDialog(); if (dialog) { await dialog.dismiss(); }';
 const CONFIRM = /^(?:Error: )?Browser action "([^"]+)" interrupted by JavaScript (confirm|alert|prompt|beforeunload): (.*)$/;
 const LEGACY = /^(?:The action may already have taken effect; do not retry it\.(?: Inspect or dismiss the dialog before continuing\.)?|Inspect or dismiss the dialog before continuing\.)$/;
 
@@ -35,8 +35,14 @@ export function rewriteTabError(text, { read = false } = {}) {
 }
 
 export function isTabBinding(code = '') {
-  const value = String.raw`(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\d+|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)`;
-  return new RegExp(String.raw`^(?:(?:let|const|var)\s+)?(?:[A-Za-z_$][\w$]*\s*=\s*)?await\s+cua\.(?:getTab|getBrowser)\(\s*${value}(?:\s*,\s*\{\s*browser(?:\s*:\s*${value})?\s*\})?\s*\)\s*;?$`).test(code.trim());
+  // Error wording only: binding and arbitrary reads send no input unless a known action is named.
+  let templateAction = false;
+  const source = code.replace(/\[\s*["'](\w+)["']\s*\]/g, '.$1')
+    .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, value => {
+    if (value.startsWith('`')) templateAction ||= [...value.matchAll(/\$\{([\s\S]*?)\}/g)].some(m => !isTabBinding(m[1]));
+    return ' ';
+  });
+  return !templateAction && !/\b(?:click|dblclick|fill|clear|type|typeText|press|pressKey|pressSequentially|drag|dragTo|htmlDrag|setValue|selectOption|check|uncheck|setChecked|goto|back|forward|reload|paste|performSecondaryAction|scroll|scrollIntoViewIfNeeded|selectText|fillForm|pickFromList|accept|dismiss|close|downloadMedia)\s*(?:\?\.)?\s*\(/.test(source);
 }
 
 function rewriteLine(text, read) {
@@ -56,7 +62,7 @@ function rewriteLine(text, read) {
     }
     const input = /^Emulation\./.test(command) ? 'this command sent no input' : 'whether this command sent input is unknown';
     if (/^Emulation\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG}. An open page dialog may be blocking the command; do not retry the timed-out call.`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG} An open page dialog may be blocking the command. ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
     }
     return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${READ} (do not retry the timed-out call).`;
   }
@@ -65,10 +71,11 @@ function rewriteLine(text, read) {
   }
   const download = /^(?:Error: )?Timed out after (\d+)ms (?:downloading media|waiting for download)\.?$/.exec(text.trim());
   if (download) {
-    return `Download timed out after ${download[1]}ms; if a tab.click on the link came earlier, it can stall later downloads in that tab. Next: const fresh = await cua.createBrowserTab(browser.browserId, url); await fresh.playwright.locator('<download link>').downloadMedia({}).`;
+    return `Download timed out after ${download[1]}ms; if a tab.click on the link came earlier, it can stall later downloads in that tab. Next: const fresh = await cua.createBrowserTab(b.browserId, await tab.url()); await fresh.playwright.locator('<download link>').downloadMedia({}).`;
   }
-  if (/^(?:Error: )?Debugger unattached\b/.test(text)) {
-    return `Debugger unattached; ${read ? 'no input was sent' : "this call's input may already have been sent"}. Next: re-bind with await cua.getTab(id, { browser }), or await cua.createBrowserTab(browser, url); read the page before retrying an action.`;
+  const debuggerError = /^(?:Error: )?(Debugger unattached(?: \([^()\n]+\))?)\.?$/.exec(text.trim());
+  if (debuggerError) {
+    return `${debuggerError[1]}; ${read ? 'no input was sent' : "this call's input may already have been sent"}. Next: re-bind with await cua.getTab(id, { browser }), or await cua.createBrowserTab(browser, url); read the page before retrying an action.`;
   }
   return text;
 }

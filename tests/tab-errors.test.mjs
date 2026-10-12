@@ -267,3 +267,53 @@ test('the relay rewrites confirm, CDP, stale, and debugger errors', t => {
   assert.match(detached.content[0].text, /Debugger unattached/);
   assert.equal(detached.content[0].text.split('\n').length, 1);
 });
+
+test('recorded tab setup and Playwright reads send no input on debugger failures', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const code of ['tab = await cua.getTab({ url }, { browser }); await tab.getAXState()',
+    'let tab = await cua.createBrowserTab(browser, url)', 'await tab.playwright.domSnapshot()',
+    'tab = await cua.getTab(id, { browser }); nodeRepl.write(await tab.playwright.evaluate(() => document.body.innerText))',
+    'nodeRepl.write("tab.click(1)"); // tab.pressKey(null, "Enter")\nawait tab.playwright.domSnapshot()']) {
+    // Reads F12 resends answer twice; the others answer at once (replyAfterResend handles both).
+    const out = (await replyAfterResend(t, 'Debugger unattached', code)).content[0].text;
+    assert.match(out, /no input was sent/, code);
+    assert.doesNotMatch(out, /input may already have been sent/);
+  }
+  for (const code of ['await tab.click(1); await tab.playwright.domSnapshot()',
+    'await tab.playwright.getByRole("button").click()', 'await sleight.fillForm(tab, fields)',
+    'await cua.getTab(await tab.click(1), { browser })', 'nodeRepl.write(`${await tab.click(1)}`)',
+    'await tab["click"](1)', 'await tab.click?.(1)']) {
+    assert.match(reply(t, 'Debugger unattached', true, code).content[0].text, /input may already have been sent/, code);
+  }
+});
+
+test('debugger detail is retained and a caller sentence starting with its words stays unchanged', () => {
+  const out = rewriteTabError('Error: Debugger unattached (target closed)', { read: true });
+  assert.match(out, /^Debugger unattached \(target closed\); no input was sent/);
+  for (const text of ['Debugger unattached happened earlier', 'Error: Debugger unattached is a caller message',
+    'Debugger unattached: a caller explanation']) assert.equal(rewriteTabError(text), text);
+});
+
+test('input timeouts use guarded short dialog advice and retain input uncertainty', () => {
+  const out = rewriteTabError('Error: Timed out after 2991ms waiting for CDP command Input.dispatchMouseEvent.');
+  assert.match(out, /input may already have been sent/);
+  assert.match(out, /const dialog = await tab.getJsDialog\(\); if \(dialog\)/);
+  assert.match(out, /dialog\.dismiss\(\)/);
+  assert.doesNotMatch(out, /\/\*|alert\/beforeunload|read dialog\.type and message/);
+  assert.match(out, /getAXState/);
+});
+
+test('Emulation read failures allow reading again after handling a dialog', t => {
+  const src = 'Timed out after 10000ms waiting for CDP command Emulation.setFocusEmulationEnabled.';
+  const out = reply(t, src, true, 'await tab.getAXState()').content[0].text;
+  assert.match(out, /sent no input/);
+  assert.match(out, /getJsDialog/);
+  assert.match(out, /re-read after.*dialog.*handled/i);
+  assert.doesNotMatch(out, /do not retry the timed-out call/);
+});
+
+test('download recovery names the current browser and reads the current tab URL', () => {
+  const out = rewriteTabError('Timed out after 20000ms downloading media');
+  assert.match(out, /cua\.createBrowserTab\(b\.browserId, await tab\.url\(\)\)/);
+  assert.match(out, /downloadMedia\(\{\}\)/);
+});
