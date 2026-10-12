@@ -41,20 +41,28 @@ function trimReference(text) {
 
 const ENGINE_LIMIT = /read[- ]only|timeout|maximum time|must\b|\bonly\b|\bnever\b|\bcannot\b|\bunsupported\b|\bnot supported\b|\bbefore\b|\brequir(?:e|es|ed)\b/i;
 
-function leanReference(text) {
+function leanReference(text, minimal = false) {
   const at = text.indexOf(REFERENCE) + REFERENCE.length;
   const rest = text.slice(at);
   const block = /^```(?:ts|typescript)\n([\s\S]*?)^```[ \t]*$/m.exec(rest);
   if (!block || /\n# /.test(rest.slice(0, block.index))) return text;
   // Keep quoted strings intact, and retain complete comments that carry engine restrictions.
+  const limits = [];
   const index = block[1].replace(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\/\/[^\n]*|\/\*[\s\S]*?\*\/)/g,
-    (part, quoted, comment) => quoted || (ENGINE_LIMIT.test(comment) ? comment : ''))
+    (part, quoted, comment) => {
+      if (quoted) return quoted;
+      if (!ENGINE_LIMIT.test(comment)) return '';
+      limits.push(comment.replace(/^\/\/\s*|^\/\*\*?\s*|\s*\*\/$/g, '').replace(/^\s*\*\s?/gm, '').replace(/\s+/g, ' ').trim());
+      return comment;
+    })
     .replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n');
   const topicCall = /# Additional Documentation\n[\s\S]*?`(await agent\.documentation\.get\("<name>"\))`/.exec(text)?.[1];
   const fullCall = /\bdocumentation\(\): Promise<string>/.test(block[1])
     ? 'Read the full reference with `nodeRepl.write("Full browser reference:\\n" + await browser.documentation())`.'
     : 'Use SLEIGHT_ENGINE_DOCS=full for the full reference.';
   const notice = `${fullCall}${topicCall ? ` Topic documentation: \`${topicCall}\`.` : ''}`;
+  if (minimal) return text.slice(0, at) + `\n${notice}\n\n` + limits.map(line => `- ${line}`).join('\n') + '\n' +
+    rest.slice(block.index + block[0].length);
   return text.slice(0, at) + `\n${notice}\n\n` + rest.slice(0, block.index) +
     block[0].replace(block[1], index) + rest.slice(block.index + block[0].length);
 }
@@ -62,14 +70,14 @@ function leanReference(text) {
 const size = (content) => content.reduce((n, c) => n + (c.type === 'text' ? c.text.length : 0), 0);
 
 export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT, fullDocs = process.env.SLEIGHT_ENGINE_DOCS === 'full',
-  leanDocs = process.env.SLEIGHT_ENGINE_DOCS === 'lean' } = {}) {
+  leanDocs = process.env.SLEIGHT_ENGINE_DOCS === 'lean', minDocs = process.env.SLEIGHT_ENGINE_DOCS === 'min' } = {}) {
   let pending = null;
   return {
     apply(content) {
       let out = content.map((c) => (platform === 'darwin' && c.type === 'text' && GENERAL_DOCS.test(c.text)
         ? { ...c, text: dropOtherPlatforms(c.text) } : c));
       if (!fullDocs) out = out.map((c) => (c.type === 'text' && BROWSER_DOCS.test(c.text) && c.text.includes(REFERENCE)
-        ? { ...c, text: leanDocs ? leanReference(c.text) : trimReference(c.text) } : c));
+        ? { ...c, text: minDocs || leanDocs ? leanReference(c.text, minDocs) : trimReference(c.text) } : c));
       if (pending) { out = [{ type: 'text', text: pending }, ...out]; pending = null; }
       if (size(out) <= limit) return out;
       return out.map((c) => {

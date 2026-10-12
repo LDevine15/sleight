@@ -190,3 +190,59 @@ test('the advertised full-reference command writes an uncut reference in lean mo
   assert.equal(full.length, 1, 'the documented command emits the reference');
   assert.ok(full[0].text.endsWith(leanFixture), 'all reference comments and types can be read');
 });
+
+test('minimal docs replace signatures with the full-reference call and engine limits', () => {
+  const out = createResultBudget({ minDocs: true }).apply([{ type: 'text', text: leanFixture }])[0].text;
+  assert.doesNotMatch(out, /interface |type Options|```|Click an element|Lower bound/);
+  for (const comment of ['Evaluate in a read-only scope; the locator must resolve unambiguously to one element.',
+    'The timeout defaults to 3000 ms.', 'Call before clicking its download control.', 'Maximum time to spend running the script.']) {
+    assert.ok(out.includes('- ' + comment), comment);
+  }
+  const at = leanFixture.indexOf('\n# API Reference\n');
+  assert.equal(out.slice(0, at), leanFixture.slice(0, at));
+  assert.ok(out.endsWith('# Computer Use Confirmations Policy\nAlways ask for permission here.\n'));
+  assert.match(out, /full reference.*await browser.documentation\(\)/i);
+});
+
+test('minimal docs retain complete limit comments and ignore quoted comment markers', () => {
+  const docs = '# Other Browser APIs\n\n# API Reference\n\n```ts\ninterface Browser {\n' +
+    '  documentation(): Promise<string>;\n' +
+    '  /** Read-only operation.\n   * Keep every restriction in this comment.\n   */\n' +
+    '  read(key: "// only a string"): Promise<string>; // An ordinary description.\n}\n```\n';
+  const out = createResultBudget({ minDocs: true }).apply([{ type: 'text', text: docs }])[0].text;
+  assert.match(out, /- Read-only operation\. Keep every restriction in this comment\./);
+  assert.doesNotMatch(out, /only a string|ordinary description|interface /);
+  for (const text of ['# Other Browser APIs\n\n# API Reference\n\nUnknown format.',
+    '# Other Browser APIs\n\n# API Reference\n\n# Browser Safety\n```ts\n// Never drop this.\n```']) {
+    assert.equal(createResultBudget({ minDocs: true }).apply([{ type: 'text', text }])[0].text, text);
+  }
+});
+
+test('the min environment flag is opt-in and full docs take precedence', () => {
+  const saved = process.env.SLEIGHT_ENGINE_DOCS;
+  try {
+    process.env.SLEIGHT_ENGINE_DOCS = 'min';
+    assert.doesNotMatch(createResultBudget().apply([{ type: 'text', text: leanFixture }])[0].text, /interface /);
+    process.env.SLEIGHT_ENGINE_DOCS = 'full';
+    assert.equal(createResultBudget({ minDocs: true }).apply([{ type: 'text', text: leanFixture }])[0].text, leanFixture);
+    process.env.SLEIGHT_ENGINE_DOCS = 'lean';
+    assert.match(createResultBudget().apply([{ type: 'text', text: leanFixture }])[0].text, /interface Browser/);
+    delete process.env.SLEIGHT_ENGINE_DOCS;
+    assert.deepEqual(createResultBudget().apply([{ type: 'text', text: leanFixture }]),
+      createResultBudget({ minDocs: false, leanDocs: false }).apply([{ type: 'text', text: leanFixture }]));
+  } finally {
+    if (saved === undefined) delete process.env.SLEIGHT_ENGINE_DOCS;
+    else process.env.SLEIGHT_ENGINE_DOCS = saved;
+  }
+});
+
+test('the minimal full-reference command emits the complete original reference', async () => {
+  const budget = createResultBudget({ minDocs: true });
+  const index = budget.apply([{ type: 'text', text: leanFixture }])[0].text;
+  const command = /full reference with `([^`]+)`/.exec(index)?.[1];
+  assert.ok(command);
+  const written = [];
+  await new Function('browser', 'nodeRepl', `return (async () => { ${command}; })()`)(
+    { documentation: async () => leanFixture }, { write: text => written.push({ type: 'text', text }) });
+  assert.ok(budget.apply(written)[0].text.endsWith(leanFixture));
+});
