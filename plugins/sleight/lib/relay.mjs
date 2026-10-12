@@ -78,13 +78,20 @@ import { simulatorScreenshotNote } from './simulator-focus.mjs';
 // Strings are blanked first, so typed text that mentions an action doesn't count.
 export function unawaitedAction(code) {
   const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
-  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*([A-Za-z_$][\w$]*\.(?:click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\()/g)) {
-    let depth = 0, end = m.index + m[0].length - 1;
-    for (; end < bare.length; end++) {
-      if (bare[end] === '(') depth++;
-      else if (bare[end] === ')' && --depth === 0) break;
+  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*\.(?:click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\()/g)) {
+    let end = m.index + m[0].length - 1, chained = false;
+    for (;;) {
+      let depth = 0;
+      for (; end < bare.length; end++) {
+        if (bare[end] === '(') depth++;
+        else if (bare[end] === ')' && --depth === 0) break;
+      }
+      const chain = /^\s*\.\s*(?:then|catch|finally)\s*\(/.exec(bare.slice(end + 1));
+      if (!chain) break;
+      chained = true;
+      end += chain[0].length;
     }
-    if (bare.slice(end + 1).replace(/^\s*;?/, '').trim()) return m[1];
+    if (m[1] ? chained : bare.slice(end + 1).replace(/^\s*;?/, '').trim()) return m[2];
   }
 }
 

@@ -1799,6 +1799,35 @@ test('an action written as a statement without await is refused before it reache
   for (const id of [3, 4, 5, 6]) assert.ok(h.toServer.some(m => m.id === id), `call ${id} is forwarded`);
 });
 
+test('un-awaited action chains are refused, while awaited and returned chains reach the engine', async () => {
+  const h = harness({ changeReview: false });
+  const refused = [
+    'const p = app.click(99999).then(f); await app.getAXState()',
+    'let p = app.click(99999).catch(f); moreCode()',
+    'p = app.click(99999).finally(f); moreCode()',
+    'app.click(99999).then(f).finally(g); moreCode()',
+    'const p = app.click(99999)\n  .then(f)',
+  ];
+  for (const [i, code] of refused.entries()) {
+    helperRead(h, i + 1, code); await tick();
+    const reply = h.toClient.find(m => m.id === i + 1);
+    assert.equal(reply?.result?.isError, true, code);
+    assert.match(reply.result.content[0].text, /await/);
+    assert.ok(!h.toServer.some(m => m.id === i + 1), code);
+  }
+  const allowed = [
+    'await app.click(1).then(f); moreCode()',
+    'return app.click(1).then(f)',
+    'const p = await app.click(1).finally(f); moreCode()',
+    'app.click(1).catch(f)',
+    'await app.typeText("const p = app.click(99999).then(f); moreCode()")',
+  ];
+  for (const [i, code] of allowed.entries()) {
+    helperRead(h, i + 100, code); await tick();
+    assert.ok(h.toServer.some(m => m.id === i + 100), code);
+  }
+});
+
 // A PNG and a JPEG header with only the size fields that imageSize reads.
 const pngOf = (w, h) => { const b = Buffer.alloc(33); b.writeUInt32BE(0x89504e47, 0); b.writeUInt32BE(0x0d0a1a0a, 4); b.writeUInt32BE(13, 8); b.write('IHDR', 12); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b.toString('base64'); };
 const jpegOf = (w, h) => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0, 0xff, 0xc0, 0x00, 0x11, 0x08, h >> 8, h & 255, w >> 8, w & 255, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).toString('base64');
