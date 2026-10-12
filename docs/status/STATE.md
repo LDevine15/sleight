@@ -3,51 +3,51 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 03:00 UTC, flushed before the owner's clear)
+## Banner (2026-10-12 14:40 UTC)
 
-**The owner's Mac is still under load** (load average 15 to 19 at 02:58 UTC): no live runs and no
-full `npm run check` until they say it's free. Everything since 1.2.5 passed only the test files it
-touched, plus `lint:prose`. When it's free, the full check comes first, then a live pass over everything
-below. Drag goes first in that pass, since every test mocks its JXA bridging.
-Hold and live lock are free. No background job is running and none needs relaunching.
+The owner is at the Mac working, and the box is ours: live runs and full checks are fine, but runs
+that take the pointer or keyboard still wait until they're away. Claude's quota is tight, so builds
+go to Codex and Grok lanes today (owner). The full `npm run check` passed at `e7da0a0` (2074/2074,
+exit 0), the first since 1.2.5, after a fix to one test's temp folders. The live pass over the
+ledger's items is still owed.
 
-Done 2026-10-12, all on `pane/auto-mode` (`aa85993`), unit-tested only:
-- Codex's "-1005" timeouts were the engine's `-10005 timeoutReached` on OpenUsage (menu-bar-only)
-  after an engine segfault. The relay resends a read that met a crash and routes a menu-bar-only
-  timeout to `menu_bar` (`ff41cd0`). `remove-blocked-app` is cherry-picked (`8ff3317`).
-- The lane ledger at `~/Projects/sleight-wt/ledger` (LEDGER.md, `claims/<ID>/REPORT.md`, a `MERGED`
-  file per merged item) is cleared except K10: 20 items merged after a Sonnet-high review each, 4 of
-  them through review-fix items (K4R, K5R, K6R, K9R). Each REPORT.md lists its live check. K4R runs
-  only under `SLEIGHT_LAUNCH_REREAD=1`, and K7's row trim only under `SLEIGHT_RESULT_TRIM=1`.
-  known-problems is 47 entries in 189 lines (from 1,151 lines), entries fixed tonight say so.
-- Guard fix from puddle arch's ZCode transcript (`430116e`): a number the code computed from its own
-  read in a call is checked against that read, and a one-number call follows a renumbered line that
-  was unique when Claude saw it. The owner's install (1.2.5) doesn't have it yet.
+FowlBrowser launched (ROADMAP 0b, the owner's new plan): benchmark against it, then the release, then
+a video sleight-arch builds. Done so far:
+- FowlBrowser installed from a pinned clone (`~/Library/Caches/sleight-bench/fowlbrowser`, `8b68924`)
+  with `FOWLBROWSER_SKIP_CLAUDE=1 sh install.sh --lite` (owner's OK, 2026-10-12): no Claude config
+  change. Its extension is loaded unpacked in Chrome (Developer mode on) and in Helium through a
+  `--load-extension` launch flag, which lasts until Helium restarts. Remove: `sh uninstall.sh` in the
+  clone, then the extension in Chrome.
+- `bench/fowl/`: `rounds.sh` runs FowlBrowser's own runner with a sleight arm
+  (`sleight-surface.patch`), clean env, API key, live lock. `origin-hook.mjs` accepts the engine's
+  site prompt only for the rounds' sites and the two browsers. `h2h.sh` runs both arms in both
+  browser orders, Opus 5.5 at medium (owner). Running since 14:25 UTC, output in `/tmp/fb-rounds/h2h-*`.
+- Smoke on Wikipedia: FowlBrowser 1/1 in 11 s ($0.20), sleight 1/1 in 27 s ($0.38).
+  Gaps found there and while setting up, for lanes:
+  - `SLEIGHT_SURFACES=browser` breaks every call (`cua.getApp.bind` in `clipboard.mjs` and
+    `document-scope.mjs`). The arm runs browser plus computer, sleight's default with the extension.
+  - Both extension browsers report as "Chrome".
+  - The lease refuses an inventory read that isn't a bare `getState()`.
+  - `emit: false` doesn't stop sleight printing a tree.
+  - A new tab's tree of 242k characters spilled to a file.
+  - Agent tabs are still open and controlled after the turn.
+  - A click that opens a sheet stops the rest of its call.
+  - A Go to Folder paste right after the shortcut was lost.
+- The user's pre-approved list now also holds Chrome, ZCode, Cursor, iPhone Mirroring and others,
+  added through Always allow on 2026-10-11 and 2026-10-12.
 
-In flight:
-- K10 (record into non-empty fields) is BLOCKED on a Swift change to `demonstration.swift`; build it
-  on a free Mac (`claims/K10/REPORT.md` has the four lines to change).
-- Lane owned-abort (Codex, `~/Projects/sleight-wt/owned-abort`, branch `codex/owned-abort` at
-  `245a186`): uncommitted `bench/preapproved-process.mjs` and `tests/preapproved-process-abort.test.mjs`,
-  no report. G6 since rewrote `tests/preapproved-process.test.mjs` to mocks, so expect a conflict.
-- The engine plugin is 26.1007.30912 (folder dated 2026-10-11 12:45); the watch's baseline is
-  26.1007.21159, so the 9:00 watch diffs it.
-- The benchmark's Codex arm defaults to gpt-6-luna at Claude's effort (owner, 2026-10-11, LAWS). The
-  published head-to-heads ran gpt-6.1-sol and get rerun on luna.
-- Launch post draft: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING] lines for the luna
-  rerun, the approval change and the release pass.
+Open from before:
+- K10 (record into non-empty fields) is BLOCKED on a Swift change (`claims/K10/REPORT.md`).
+- Lane owned-abort (`~/Projects/sleight-wt/owned-abort`): uncommitted, no report, expect a conflict.
+- The benchmark's Codex arm defaults to gpt-6-luna (LAWS). The published head-to-heads get rerun on it.
+- Launch post draft: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING] lines.
 
 **Next steps:**
-1. When the owner says the Mac is free: `npm run check` bare, then the live checks the ledger
-   reports name (drag on TextEdit and Chess with timing, the guard renumber fix in ZCode with
-   `~/sleight-scrap`, menu-bar routing on OpenUsage, hover across displays), then K10.
-2. Real-life smoke tests in Electron and other large, shifting apps (ROADMAP 3.0, owner's priority),
-   and mining other sessions' transcripts for stops and slow spots meanwhile (no load).
-3. One away sitting, asked for once: the luna head-to-heads, the lean-prompt and flag A/Bs
-   (`SLEIGHT_PROMPT=lean`, `SLEIGHT_LAUNCH_REREAD=1`, `SLEIGHT_RESULT_TRIM=1`,
-   `SLEIGHT_FIRST_CALL_BATCH=nosavestop`), front-restore's live check, the ZCode flows on both arms,
-   the merged harnesses, and the no-seed battery.
-4. Fill the launch draft's [PENDING] lines, then the release gate (ROADMAP 5b).
+1. Read the four rounds, publish them in `docs/benchmarks/`, and hand the gaps to Codex and Grok as
+   paste-ready lanes.
+2. Hand-off tasks (ROADMAP 0b.2) as a lane, then their live runs on three arms.
+3. The owed live pass, the away sitting, then the release (ROADMAP 5b).
+4. Build the video's motion frame now, and add footage from the live runs.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this

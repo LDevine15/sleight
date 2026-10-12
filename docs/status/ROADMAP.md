@@ -29,21 +29,26 @@ keyboard wait until they're away, in one away sitting.
    with a "could be dangerous" line for terminals and AI apps. The user decides in one click, with no
    second step. `blocked_app` is removed. Built on branch `remove-blocked-app`, waiting on the full check.
 
-## 0b. Market it, and win in the browser (owner, 2026-10-11)
+## 0b. FowlBrowser, then the release and a video (owner, 2026-10-12)
 
-Another developer is building a Codex-derived browser extension for Claude, open source and teased
-for soon. Because he's focused on browser use, the owner set browser use as sleight's strongest
-suit (2026-10-11), with a release out first and numbers that show it.
+FowlBrowser launched on 2026-10-11 (github.com/argofowl/FowlBrowser, MIT). It's an extension for Chrome
+and Helium that drives tabs through `chrome.debugger` and its own MCP server. It reports 26/26 on 13
+tasks against 23/26 for Claude through Codex's extension, and 21/26 for Codex itself. It covers the
+browser only, so sleight covers more, but its author has a far larger audience and a launch video we
+lack. The owner's plan (2026-10-12) is that sleight takes over where browser control ends. In order:
 
-1. Browser depth: the battery's web-page tasks grow past reading one marker to forms, tabs, logins
-   left to the user, dense and collapsible pages and downloads, through the Chrome extension API and in each
-   native browser, against Codex. A gap gets a generic fix, never a per-site rule.
-2. Release once track 0's live checks and the away sitting meet the gate (5b), public push included.
-3. A launch post the owner publishes, built on measured results only. It leads with the browser
-   numbers and the Codex parity table, then native Mac apps, then the install line. sleight-arch
-   drafts it.
-4. A short demo from the battery's own runs, recorded per window (LAWS: no full-screen capture).
-5. When his extension is public, the same browser tasks run on it, published in full as LAWS requires.
+1. Benchmark against it on its own runner and tasks: `bench/fowl/` adds sleight as an arm (`--surface sleight`) to its
+   `tools/rounds.mjs` (pinned at `8b68924`), Opus 5.5 at medium as in its published runs (owner).
+   Both arms run on this Mac, published in full. Gaps it shows get generic fixes in Codex and Grok lanes.
+2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
+   app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
+   and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.
+3. The rest of track 0's live checks and the away sitting, then the release (5b), public push included.
+4. A launch video that sleight-arch builds (owner: "you have the better taste"). Its footage is
+   per-window recordings of real runs (LAWS: no full-screen capture), and its numbers are measured.
+5. A launch post the owner publishes, built on measured results only. sleight-arch drafts it.
+
+Builds go to Codex and Grok lanes while Claude's quota is tight (owner, 2026-10-12).
 
 ## 1. Release 1.0 (done: v1.0.0, 2026-10-09)
 
