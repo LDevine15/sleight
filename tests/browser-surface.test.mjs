@@ -50,11 +50,16 @@ test('browser approvals reach the dialog and are never remembered or preapproved
   assert.equal(prompts.length, 2);
 });
 
-test('ending a browser turn forwards the same session and turn coordinates', t => {
+test('ending a browser turn forwards the same session and turn coordinates', async t => {
   const h = harness(t);
   h.call(1, 'let tab = await cua.createBrowserTab("instance-1", "https://example.com")'); h.reply(1);
   const metadata = JSON.parse(h.sent.at(-1)?.params._meta?.['x-codex-turn-metadata'] ?? '{}');
   h.call(2, undefined, 'turn_ended');
+  assert.equal(h.sent.at(-1).params.name, 'js');
+  assert.deepEqual(JSON.parse(h.sent.at(-1).params._meta['x-codex-turn-metadata']), metadata);
+  h.reply(h.sent.at(-1).id);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.sent.at(-1).params.name, 'turn_ended');
   assert.equal(h.sent.at(-1).params.arguments.session_id, metadata.session_id);
   assert.equal(h.sent.at(-1).params.arguments.turn_id, metadata.turn_id);
 });

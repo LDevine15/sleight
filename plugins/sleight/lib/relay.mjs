@@ -76,6 +76,7 @@ import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession,
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
 import { isBrowserRead } from './browser-read.mjs';
+import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
@@ -472,6 +473,9 @@ export function createRelay({
   const nativeCopies = new Set();
   const listRequests = new Set();
   const internalRequests = new Map();
+  let tabsMayNeedCleanup = false;
+  let tabCleanupPending;
+  const tabCleanupNotes = new Map();
   const turnEndCalls = new Map(); // request id -> original turn arguments, until acknowledgement
   const failedTurnEnds = new Map(); // turn id -> cleanup the engine rejected
   const turnEndAttempts = new Map(); // includes the initial explicit or idle cleanup
@@ -916,6 +920,7 @@ export function createRelay({
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
   function forgetHandles() {
     forgetGuard();
+    tabsMayNeedCleanup = false;
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
     clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
@@ -1121,7 +1126,7 @@ export function createRelay({
     if (!idleTurnEndMs || disposed || closing || running.size || reviewing || (!turnUsed && !failedTurnEnds.size)) return;
     idleTimer = setTimeout(() => {
       trace('idle-turn-end', { turnId });
-      endOpenTurn();
+      endOpenTurn(false);
     }, idleTurnEndMs);
     idleTimer.unref?.();
   }
@@ -1136,7 +1141,8 @@ export function createRelay({
         msg = { ...msg, id: request.id };
       } else if (engineEpoch > 0) return;
     }
-    if (stopCollected || (closing && msg.method === 'tools/call' && msg.params?.name !== TURN_END_TOOL)) return;
+    if (stopCollected || (closing && msg.method === 'tools/call' && msg.params?.name !== TURN_END_TOOL &&
+        !(internalRequests.has(msg.id) && String(msg.id).startsWith('sleight-tab-cleanup-')))) return;
     if (msg.method === 'tools/call' && callGenerations.has(msg.id) && callGenerations.get(msg.id) !== stopGeneration) {
       observeServerMessage({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }); return;
     }
@@ -1148,6 +1154,36 @@ export function createRelay({
     }
     serverIn.write(JSON.stringify(msg) + '\n');
   };
+  function cleanupBrowserTabs() {
+    if (tabCleanupPending) return tabCleanupPending;
+    tabCleanupPending = (async () => {
+      if (!tabsMayNeedCleanup || stopCollected || disposed) return;
+      if (running.size) {
+        const ready = await new Promise(resolve => {
+          const done = () => { clearTimeout(timer); resolve(true); };
+          const timer = setTimeout(() => { drained.delete(done); resolve(false); }, stopGraceMs);
+          drained.add(done);
+        });
+        if (!ready) return 'sleight: kept tabs because a call did not finish before the cleanup deadline.';
+      }
+      if (stopCollected || disposed) return;
+      return await new Promise(resolve => {
+        const id = `sleight-tab-cleanup-${nextInternalId++}`;
+        const timer = setTimeout(() => {
+          internalRequests.delete(id); lateHelperReplies.add(id);
+          resolve(cleanupTimeoutNote);
+        }, SHUTDOWN_GRACE_MS);
+        internalRequests.set(id, reply => {
+          clearTimeout(timer);
+          resolve((reply.result?.content ?? []).filter(c => c.type === 'text')
+            .flatMap(c => (c.text ?? '').split('\n')).filter(line => /^sleight: kept tab .* because /.test(line)).join('\n'));
+        });
+        toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+          arguments: { code: cleanupTabsBefore(Date.now() + 2000) }, _meta: { [META_KEY]: turnMeta() } } });
+      });
+    })().finally(() => { tabCleanupPending = undefined; });
+    return tabCleanupPending;
+  }
   function extraChromeScreenshot(handle) {
     return new Promise(resolve => {
       const id = `sleight-chrome-settle-${nextInternalId++}`;
@@ -1488,6 +1524,11 @@ export function createRelay({
     } catch {
       if (documentMode || flowRules) return;
       serverIn.write(line + '\n');
+      return;
+    }
+    if (tabCleanupPending && msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name)) {
+      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text',
+        text: promptNotice('Wait for turn_ended, tab cleanup is pending.', prompt) }] } });
       return;
     }
     // When each tool call arrived, so a trace can time the relay's own work on it.
@@ -1850,18 +1891,25 @@ export function createRelay({
       const { name } = msg.params;
       if (clipboard && name === 'js_reset') clipboardResets.add(msg.id);
       if (name === TURN_END_TOOL) {
-        // Buffer even an immediate engine reply until the private metadata is ready. Send cleanup
-        // first so parsing and synchronous file I/O cannot delay the engine receiving it.
-        const ending = { pending: true, replies: [] };
-        if (journal) receiptEnds.set(msg.id, ending);
-        msg.params.arguments = endTurnArgs(msg.params.arguments);
-        if (msg.id !== undefined) trackTurnEnd(msg.id, msg.params.arguments);
-        if (keyboardTaps && msg.id !== undefined && drivenApps.size) turnEnds.add(msg.id);
-        toServer(msg);
-        const receipt = finishReceipt();
-        if (journal) receiptEnds.set(msg.id, receipt);
-        for (const reply of ending.replies) toClient(reply);
-        rotateTurn();
+        const generation = stopGeneration;
+        const end = note => {
+          if (generation !== stopGeneration || disposed) return;
+          // Buffer even an immediate engine reply until the private metadata is ready. Send cleanup
+          // first so parsing and synchronous file I/O cannot delay the engine receiving it.
+          const ending = { pending: true, replies: [] };
+          if (journal) receiptEnds.set(msg.id, ending);
+          msg.params.arguments = endTurnArgs(msg.params.arguments);
+          if (msg.id !== undefined) trackTurnEnd(msg.id, msg.params.arguments);
+          if (note && msg.id !== undefined) tabCleanupNotes.set(msg.id, note);
+          if (keyboardTaps && msg.id !== undefined && drivenApps.size) turnEnds.add(msg.id);
+          toServer(msg);
+          const receipt = finishReceipt();
+          if (journal) receiptEnds.set(msg.id, receipt);
+          for (const reply of ending.replies) toClient(reply);
+          rotateTurn();
+        };
+        if (tabsMayNeedCleanup || tabCleanupPending) cleanupBrowserTabs().then(end);
+        else end();
         return;
       }
       if (name === 'js') {
@@ -1952,6 +2000,9 @@ export function createRelay({
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
+          const tabCode = tabCleanupCode(msg.params.arguments.code);
+          if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
+          msg.params.arguments.code = tabCode;
         }
       }
       if (browser) browserCalls.set(msg.id, browser);
@@ -2052,6 +2103,10 @@ export function createRelay({
       msg = { ...msg, id };
     }
     trace('from-server', { id: msg.id, method: msg.method });
+    if (msg.method === undefined && tabCleanupNotes.has(msg.id)) {
+      const text = tabCleanupNotes.get(msg.id); tabCleanupNotes.delete(msg.id);
+      if (msg.result) msg.result.content = [...(msg.result.content ?? []), { type: 'text', text }];
+    }
     if (msg.method === undefined && clipboardReplies.has(msg.id)) {
       const pending = clipboardReplies.get(msg.id); clipboardReplies.delete(msg.id); pending.receive(msg); return;
     }
@@ -2655,8 +2710,9 @@ export function createRelay({
 
   // Ends the open turn, if any call used it. Resolves once the server answers
   // or after a short grace period.
-  async function endOpenTurn() {
+  async function endOpenTurn(cleanupTabs = true) {
     if (inputLease && running.size) await new Promise(resolve => drained.add(resolve));
+    if (cleanupTabs && (tabsMayNeedCleanup || tabCleanupPending)) await cleanupBrowserTabs();
     const owed = [...failedTurnEnds.values(), ...(turnUsed ? [endTurnArgs()] : [])];
     failedTurnEnds.clear();
     const done = owed.map(args => {
@@ -2674,6 +2730,7 @@ export function createRelay({
   }
 
   async function interruptTurn(msg) {
+    let tabNote;
     closing = true;
     stopFinished = false;
     stopGeneration++;
@@ -2695,6 +2752,7 @@ export function createRelay({
           });
           if (!drainedInTime) return false;
         }
+        if (tabsMayNeedCleanup || tabCleanupPending) tabNote = await cleanupBrowserTabs();
         const id = `sleight-stop-${nextInternalId++}`;
         const ended = await new Promise(resolve => {
           const timer = setTimeout(() => { internalRequests.delete(id); resolve(undefined); }, stopGraceMs);
@@ -2741,7 +2799,7 @@ export function createRelay({
     });
     trace('stop-receipt', report);
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: report.resources !== 'clear' || report.leases !== 'released and checked',
-      content: [{ type: 'text', text: stopText(report) }], _meta: { 'sleight/stop': report } } });
+      content: [{ type: 'text', text: stopText(report) }, ...(tabNote ? [{ type: 'text', text: tabNote }] : [])], _meta: { 'sleight/stop': report } } });
     onStopReported(report);
     stopUnconfirmed = report.engine === 'unconfirmed'; stopFinished = true;
     resumeAfterStop();
