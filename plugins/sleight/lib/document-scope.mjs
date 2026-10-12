@@ -207,6 +207,19 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.callHeaders = new WeakMap();
     // Each handle's previous action in this call, which decides whether the next may skip its read.
     state.previous = new WeakMap();
+    const hasModal = text => /^\\s*\\d+ (?:sheet|dialog)\\b/m.test(text ?? '');
+    const clickOpenedModal = (proxy, text) => {
+      const before = state.previous.get(proxy);
+      if (!before) return false;
+      const current = parse(text);
+      if (before.observed) return !!before.opened && !!current && hasModal(text) &&
+        ['title', 'app', 'url'].every(key => current[key] === before.opened[key]);
+      // Only the first tree after the click can establish its sheet. Later reads may retain
+      // that same identity, but cannot attribute a newly appearing sheet to an old click.
+      before.observed = true;
+      if (before.name === 'click' && before.modal === false && hasModal(text)) before.opened = current;
+      return !!before.opened;
+    };
     state.failures = [];
     // Element lines at this call's first action, which Claude's numbers refer to.
     state.callElements = new WeakMap();
@@ -238,22 +251,26 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             }
           };
           return wait({
-          read: () => {
+          read: async () => {
             checkNative();
             const reads = state.reads, reading = {};
             reads.set(proxy, reading); pending = { reads, reading };
-            return timedRead(raw, 'wait');
+            const text = await timedRead(raw, 'wait');
+            checkCurrent();
+            pending.modalOpened = clickOpenedModal(proxy, text);
+            return text;
           },
           parse, elements, hasIdentifier, hasLabel, expected: state.guarded ? state.expected : undefined,
           acceptWindow: (current, text) => {
             checkCurrent();
             const before = state.previous.get(proxy);
-            const opener = before && (before.name === 'click' || (before.name === 'pressKey' && typeof before.key === 'string' &&
-              (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key))));
+            const shortcut = before?.name === 'pressKey' && typeof before.key === 'string' &&
+              (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key));
+            const opener = before?.name === 'click' || shortcut;
             if (!state.adoptUrl || current.app !== state.expected?.app) return false;
             const adoptedUrl = state.expected.url == null && current.url && current.title === state.expected.title;
-            const panel = current.title === '' && !current.url;
-            const modal = !current.url && /^\\d+ (?:sheet|dialog)\\b/m.test(text);
+            const panel = current.title === '' && !current.url && !hasModal(text);
+            const modal = !current.url && hasModal(text) && (shortcut || pending.modalOpened);
             const named = state.typed.some(typed => {
               const base = typed.trim().split('/').pop();
               if (base.length < 3) return false;
@@ -261,7 +278,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               try { file = current.url?.startsWith('file://') ? decodeURIComponent(new URL(current.url).pathname).split('/').pop() : undefined; } catch {}
               return current.title === base || file === base;
             });
-            if (!adoptedUrl && !panel && !(opener && (modal || /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text) ||
+            if (!adoptedUrl && !panel && !(opener && (hasModal(text) ? modal :
+                /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text) ||
                 (!current.url && /^Untitled(?: \\d+)?$/.test(current.title)) || named))) return false;
             state.expected = current;
             return true;
@@ -269,7 +287,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           observe: text => {
             checkCurrent();
             state.activeApp = proxy;
-            state.reads.set(proxy, { text, emitted: true });
+            state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
         }); })();
         const value = Reflect.get(raw, name);
@@ -285,7 +303,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (emitted) nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
           else nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
           // Input replaces the map; a newer observation replaces this entry.
-          if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted, omit: !emitted });
+          if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted, omit: !emitted, modalOpened: clickOpenedModal(proxy, text) });
           if (typeof text === 'string' && parse(text)) state.codeReads.set(proxy, elements(text));
           state.activeApp = proxy;
           return text;
@@ -300,8 +318,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (options?.emit === false && typeof result?.state === 'string') {
             nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + result.state + ${JSON.stringify(GUARD_END)});
           }
-          if (state.reads === reads && reads.get(proxy) === reading && typeof result?.state === 'string' && parse(result.state)) {
-            reads.set(proxy, { text: result.state, emitted: options?.emit !== false, omit: options?.emit === false });
+          if (state.reads === reads && reads.get(proxy) === reading) {
+            const modalOpened = clickOpenedModal(proxy, result?.state);
+            if (typeof result?.state === 'string' && parse(result.state)) reads.set(proxy, { text: result.state, emitted: options?.emit !== false, omit: options?.emit === false, modalOpened });
           }
           if (typeof result?.state === 'string' && parse(result.state)) state.codeReads.set(proxy, elements(result.state));
           state.activeApp = proxy;
@@ -319,8 +338,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             if (!result?.screenshot) throw new Error('Screenshot unavailable for this window.');
             if (options?.emit !== false) await nodeRepl.emitImage(result.screenshot);
             else if (typeof result.state === 'string') nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + result.state + ${JSON.stringify(GUARD_END)});
-            if (state.reads === reads && reads.get(proxy) === reading && typeof result.state === 'string' && parse(result.state)) {
-              reads.set(proxy, { text: result.state, emitted: false, omit: options?.emit === false });
+            if (state.reads === reads && reads.get(proxy) === reading) {
+              const modalOpened = clickOpenedModal(proxy, result.state);
+              if (typeof result.state === 'string' && parse(result.state)) reads.set(proxy, { text: result.state, emitted: false, omit: options?.emit === false, modalOpened });
             }
             state.activeApp = proxy;
             return result.screenshot;
@@ -345,7 +365,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             state.reads = new WeakMap();
             return value.apply(raw, args);
           }
-          let text = state.reads.get(proxy)?.text;
+          const cached = state.reads.get(proxy);
+          let text = cached?.text, modalOpened = cached?.modalOpened ?? false;
           // The acquisition just before this call read the whole tree. A launching app can take 15 s
           // per read under load (2026-10-09), so reuse it when the app's windows, as the inventory
           // lists them, are exactly what they were then.
@@ -387,6 +408,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false }) + '\\n');
           } else {
             text ??= await timedRead(raw, 'before-action');
+            if (cached?.text === undefined) modalOpened = clickOpenedModal(proxy, text);
             observed = parse(text);
           }
           if (observed) state.callHeaders.set(proxy, observed);
@@ -480,15 +502,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // A sheet or panel this call opened in the same app has no title (Go to Folder
           // in a Save panel: 18 stopped calls in two benchmark passes, 2026-10-07). It
           // isn't another document, so the lease alone lets it through.
-          const panel = state.adoptUrl && observed?.app === state.expected?.app && observed.title === '' && !observed.url;
+          const panel = state.adoptUrl && observed?.app === state.expected?.app && observed.title === '' && !observed.url && !hasModal(text);
           // A window this call's own shortcut, Return or click just opened or renamed in the same app
           // becomes the expected one (owner's call, 2026-10-09): the Save or Open panel, a new untitled
           // window, or a document titled or saved with a name this call typed. Stopping there cost
           // TextEdit save and edit about three calls a run. A window the user opens in that app at that
           // moment would pass too. Document scope and change review stay strict.
-          const opener = before && (before.name === 'click' || (before.name === 'pressKey' && typeof before.key === 'string' &&
-            (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key))));
-          const modal = observed && !observed.url && /^\\d+ (?:sheet|dialog)\\b/m.test(text ?? '');
+          const shortcut = before?.name === 'pressKey' && typeof before.key === 'string' &&
+            (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key));
+          const opener = before?.name === 'click' || shortcut;
+          const modal = observed && !observed.url && hasModal(text) && (shortcut || modalOpened);
           const named = observed && state.typed.some(typed => {
             const base = typed.trim().split('/').pop();
             if (base.length < 3) return false;
@@ -497,7 +520,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             return observed.title === base || file === base;
           });
           if (state.adoptUrl && opener && observed && state.expected && observed.app === state.expected.app &&
-            (modal || /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text ?? '') || (!observed.url && /^Untitled(?: \\d+)?$/.test(observed.title)) || named)) {
+            (hasModal(text) ? modal : /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text ?? '') || (!observed.url && /^Untitled(?: \\d+)?$/.test(observed.title)) || named)) {
             state.expected = observed;
           }
           // A relay without a lease, document scope or change review forwards actions
@@ -511,7 +534,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           }
           await checkLease();
           state.activeApp = proxy;
-          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined });
+          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, modal: text === undefined ? undefined : hasModal(text) });
           const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? args[0] : undefined;
           if (typeof typed === 'string') state.typed.push(typed);
           // A second handle may refer to this same app/window. Every input

@@ -425,3 +425,86 @@ test('waitFor follows a titled sheet opened by the preceding click', async () =>
   await f.run('await app.click(19); await app.waitFor({ label: "Delete Group" }); await app.click({ label: "Delete Group" });', { adoptUrl: true });
   assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19, 9]);
 });
+
+test('a non-click action cannot adopt a sheet, including an untitled sheet', async () => {
+  for (const title of ['Confirm removal', '']) {
+    let changed = false;
+    const modal = `Window: ${JSON.stringify(title)}, App: TextEdit.\n0 sheet\n\t9 button Delete Group`;
+    const f = fixture({ current: () => changed ? modal : tree(), action: () => { changed = true; } });
+    await assert.rejects(f.run('await app.typeText("x"); await app.click({ label: "Delete Group" });', { adoptUrl: true }), /changed window/);
+    assert.equal(f.calls.some(c => c[0] === 'click'), false);
+  }
+});
+
+test('a sheet already present before the click cannot be adopted as its result', async () => {
+  for (const role of ['sheet', 'dialog']) {
+    let changed = false;
+    const before = tree(expected, `\t19 button Remove Group\n\t20 ${role} Existing confirmation`);
+    const after = `Window: "Confirm removal", App: TextEdit.\n0 ${role}\n\t9 button Delete Group`;
+    const f = fixture({ current: () => changed ? after : before, action: () => { changed = true; } });
+    await assert.rejects(f.run('await app.click(19); await app.click({ label: "Delete Group" });', { adoptUrl: true }), /changed window/);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
+  }
+});
+
+test('a numeric click into a sheet that was already present stops before input', async () => {
+  let changed = false;
+  const before = tree(expected, '\t19 button Remove Group\n\t20 sheet Existing confirmation\n\t9 button Delete Group');
+  const after = 'Window: "Confirm removal", App: TextEdit.\n0 sheet\n\t9 button Delete Group';
+  const f = fixture({ current: () => changed ? after : before, action: () => { changed = true; } });
+  await assert.rejects(f.run('await app.click(19); await app.click(9);', { adoptUrl: true }), /changed window/);
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
+});
+
+test('an explicit first read after a click cannot authorize a later sheet', async () => {
+  for (const read of ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot']) {
+    let reads = 0;
+    const before = tree(expected, '\t19 button Remove Group');
+    const after = 'Window: "Confirm removal", App: TextEdit.\n0 sheet\n\t9 button Delete Group';
+    const f = fixture({ current: () => ++reads <= 2 ? before : after });
+    await assert.rejects(f.run(`await app.click(19); await app.${read}(); await app.getAXState(); await app.click({ label: "Delete Group" });`, { adoptUrl: true }), /changed window/);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
+  }
+});
+
+test('repeated explicit reads preserve a sheet seen on the first read after the click', async () => {
+  for (const read of ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot']) {
+    let changed = false;
+    const after = 'Window: "Confirm removal", App: TextEdit.\n0 sheet\n\t9 button Delete Group';
+    const f = fixture({ current: () => changed ? after : tree(expected, '\t19 button Remove Group'), action: () => { changed = true; } });
+    await f.run(`await app.click(19); await app.${read}(); await app.getAXState(); await app.click({ label: "Delete Group" });`, { adoptUrl: true });
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19, 9]);
+  }
+});
+
+test('waitFor cannot adopt a sheet without a preceding click', async () => {
+  for (const title of ['Confirm removal', '']) {
+    const after = `Window: ${JSON.stringify(title)}, App: TextEdit.\n0 sheet\n\t9 button Delete Group`;
+    const f = fixture({ current: () => after });
+    await assert.rejects(f.run('await app.waitFor({ label: "Delete Group" }, { timeoutMs: 0 });', { adoptUrl: true }), /waitFor stopped/);
+  }
+});
+
+test('waitFor adopts only a sheet on its first read after the click', async () => {
+  let reads = 0;
+  const before = tree(expected, '\t19 button Remove Group');
+  const after = 'Window: "Confirm removal", App: TextEdit.\n0 sheet\n\t9 button Delete Group';
+  const f = fixture({ current: () => ++reads <= 2 ? before : after });
+  f.context.setTimeout = resolve => resolve();
+  await assert.rejects(f.run('await app.click(19); await app.waitFor({ label: "Delete Group" }, { timeoutMs: 1000 });', { adoptUrl: true }), /waitFor stopped/);
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
+});
+
+test('a typed document name cannot authorize a sheet that appeared after the first read', async () => {
+  for (const wait of [false, true]) {
+    let reads = 0;
+    const before = tree(expected, '\t19 button Remove Group');
+    const after = 'Window: "Confirm removal", App: TextEdit.\n0 sheet\n\t9 button Delete Group';
+    const f = fixture({ current: () => ++reads <= 3 ? before : after });
+    f.context.setTimeout = resolve => resolve();
+    const tail = wait ? 'await app.waitFor({ label: "Delete Group" }, { timeoutMs: 1000 });'
+      : 'await app.getAXState(); await app.getAXState(); await app.click({ label: "Delete Group" });';
+    await assert.rejects(f.run(`await app.typeText("Confirm removal"); await app.click(19); ${tail}`, { adoptUrl: true }), /changed window|waitFor stopped/);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
+  }
+});
