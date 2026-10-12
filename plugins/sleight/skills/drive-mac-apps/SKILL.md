@@ -15,16 +15,14 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 ## Calls
 
-- `let app = await cua.getApp("<name or bundle ID>")` returns the app's UI state. When you already
-  know the first actions, put them in the same call: sleight acquires the app, checks the window,
-  then runs them. Keep the handle between calls, and `await` every action.
-- Act by element number, or by ID or label, which stays right when an earlier action in the call
-  renumbers the window: `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
+- `let app = await cua.getApp("<name or bundle ID>")` returns UI state. Batch known actions with
+  acquisition: sleight checks the window before input. Keep the handle and `await` every action.
+- Use element numbers, or stable IDs and labels when actions renumber the window:
+  `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
   Batch clicks you're sure of in one call.
 - Each result shows what changed since the last full tree you saw. A full read is
   `await app.getAXState({ disableDiffing: true })`.
-- A newly launched app can show an almost empty tree. Read once more before deciding it has
-  nothing.
+- A newly launched app can return an empty tree. Read once more.
 - If a result says the user changed the app, or a header changed or disappeared after an action,
   read again before retrying. The user may be working in it.
 - To choose among several windows, call `select_window` with the app and an exact `url` or `title`,
@@ -33,8 +31,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 ## Text, menus and files
 
-- For exact text, `await app.paste("text")`: typing goes through autocorrect and capitalization. To
-  replace a whole document, select all and paste in one call, then read it back and compare.
+- For exact text, `await app.paste("text")` avoids autocorrect and capitalization. Replace a whole
+  document with select-all and paste in one call, then read back and compare.
 - Use a menu item's shortcut when it has one. Otherwise open the menu and choose the item by label
   in the same call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
   `menu_bar` is only for status icons.
@@ -62,9 +60,11 @@ Open pages with `cua.createBrowserTab(browser.browserId, url)`.
 Script body: top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input's first argument is an element index or `null`.
 Fill every field you already see in one call (`setValue`, `typeText`, clicks by index or Playwright
-locator, chained with await), read once at the end, and submit in that call when nothing is uncertain.
-Use only documented methods, leave tabs in the
-background, and stop if the user declines a browser approval.
+locator, chained with await). Read once at the end.
+Use locators when validation or autocomplete can add or move fields, indices on static forms.
+Submit in that call only when the user asked for that submit and no sign-in, permission or payment
+step needs the user. Otherwise stop before the final click.
+Use only documented methods, leave tabs in the background, and stop if the user declines a browser approval.
 
 ## sleight's other tools
 
