@@ -133,6 +133,9 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 - LCU 0.11.2 runtime-only at `~/.local/share/lcu` (installed 2026-10-10 on the owner's OK, with 0.8.8 kept
   in `releases/`). The benchmark's arm is `~/Library/Caches/sleight-bench/lcu-arm`, made by
   `node bench/lcu-arm-setup.mjs`.
+- REA (`rea-agents` 6.4.0, CLI only, `npm install --global`, no `rea setup`, so no agent configs changed) and Homebrew `ghidra`
+  12.1.4 with `openjdk@21`, on the owner's OK (2026-10-12). `~/.zprofile` exports `GHIDRA_INSTALL_DIR`. Hopper and IDA aren't
+  installed. Clean-room rule in LAWS.
 - Homebrew: `vale`, `ffmpeg`, and the `codex` cask 0.160 (0.153 rejected gpt-6.1-sol).
   `~/.local/bin/claude` 2.1.289. The desktop app's Code tab offers Claude Code 2.1.288 (checked
   2026-10-06).
