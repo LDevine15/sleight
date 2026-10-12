@@ -66,7 +66,7 @@ import { verifyWindowIdentity } from './window-identity.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
-import { createReadCompactor, dropAcquisitionTree } from './compact-reads.mjs';
+import { createReadCompactor, dropAcquisitionTree, hasFullTree } from './compact-reads.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
@@ -407,6 +407,7 @@ export function createRelay({
   chromeSettleIntervalMs = 100,
   chromeSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
   launchSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
+  launchReread = process.env.SLEIGHT_LAUNCH_REREAD === '1',
 }) {
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
@@ -1163,7 +1164,8 @@ export function createRelay({
     });
     if (generation !== stopGeneration || closing || disposed || !reply?.result || reply.result.isError) return;
     const after = text(reply.result.content);
-    if (windowFromText(after)?.app !== window.app || size(after) <= count) return;
+    const later = windowFromText(after);
+    if (!hasFullTree(after) || later?.app !== window.app || later.title !== window.title || size(after) <= count) return;
     msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content), ...reply.result.content];
   }
   const toClient = msg => {
@@ -2057,8 +2059,7 @@ export function createRelay({
           : health;
       }).then(async health => {
         preHealth.set(msg.id, launched ? { ...health, launched: true } : health);
-        if (launched) await fullerLaunchRead(msg, helperReads.get(msg.id));
-        if (closing || disposed) return;
+        if (launched && launchReread) await fullerLaunchRead(msg, helperReads.get(msg.id));
         const failure = msg.error?.message ?? (msg.result?.isError ? (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n') : '');
         if (health?.menuBarOnly === true && health.windows === 0 && /\btimeoutReached\b/.test(failure)) {
           // Not a stuck app or helper: no recovery reads, and the same read is pointless.

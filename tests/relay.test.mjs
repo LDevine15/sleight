@@ -190,7 +190,7 @@ test('only a launched acquisition with a small tree gets one fuller read in the 
   ]) {
     const waits = [];
     let probes = 0;
-    const h = harness({ changeReview: false, launchSettleSleep: async ms => waits.push(ms),
+    const h = harness({ changeReview: false, launchReread: true, launchSettleSleep: async ms => waits.push(ms),
       spaceProbe: async () => probes++ === 0 && launched ? { status: 'absent' } : { status: 'responding', windows: 1, onScreen: 1 } });
     helperRead(h, 1, 'let app = await cua.getApp("TextEdit")'); await settle();
     helperReply(h, 1, tree(count), false); await settle();
@@ -212,7 +212,7 @@ test('only a launched acquisition with a small tree gets one fuller read in the 
 });
 
 test('a small tree from a regular read is never treated as a launched acquisition', async () => {
-  const h = harness({ changeReview: false, launchSettleSleep: async () => assert.fail('unexpected wait'),
+  const h = harness({ changeReview: false, launchReread: true, launchSettleSleep: async () => assert.fail('unexpected wait'),
     spaceProbe: async () => ({ status: 'absent' }) });
   helperRead(h, 1, 'let app = await cua.getApp("TextEdit")');
   helperReply(h, 1, 'Window: "a.txt", App: TextEdit', false); await settle();
@@ -220,6 +220,57 @@ test('a small tree from a regular read is never treated as a launched acquisitio
   helperReply(h, 2, 'Window: "a.txt", App: TextEdit\n0 standard window a.txt\n1 button One', false); await settle();
   assert.ok(h.toClient.some(m => m.id === 2));
   assert.equal(h.toServer.length, 2);
+});
+
+test('launch rereads default off and preserve the original result byte for byte', async () => {
+  for (const options of [{}, { launchReread: false }]) {
+    let probes = 0, waits = 0;
+    const h = harness({ changeReview: false, ...options, launchSettleSleep: async () => { waits++; },
+      spaceProbe: async () => probes++ === 0 ? { status: 'absent' } : { status: 'responding', windows: 1, onScreen: 1 } });
+    helperRead(h, 1); await settle();
+    const result = { content: [{ type: 'text', text: 'Window: "Calculator", App: Calculator\n0 standard window Calculator\n1 button One' }], isError: false };
+    h.fromServer({ jsonrpc: '2.0', id: 1, result }); await settle();
+    assert.equal(waits, 0);
+    assert.equal(h.toServer.length, 1);
+    assert.equal(JSON.stringify(h.toClient.find(m => m.id === 1).result), JSON.stringify(result));
+  }
+});
+
+test('a fuller launch read replaces only a full tree from the same window', async () => {
+  const before = 'Window: "Splash", App: Editor\n0 standard window Splash\n1 button Wait';
+  for (const after of ['Window: "Document", App: Editor\n0 standard window Document\n1 button A\n2 button B',
+    'Window: "Splash", App: Editor\n0 standard window Splash\nsleight: lines changed\n1 button A\n2 button B']) {
+    let probes = 0;
+    const h = harness({ changeReview: false, launchReread: true, launchSettleSleep: async () => {},
+      spaceProbe: async () => probes++ === 0 ? { status: 'absent' } : { status: 'responding', windows: 1, onScreen: 1 } });
+    helperRead(h, 1, 'let app = await cua.getApp("Editor")'); await settle();
+    helperReply(h, 1, before, false); await settle();
+    const extra = h.toServer.find(m => /^sleight-launch-read-/.test(m.id));
+    assert.ok(extra);
+    helperReply(h, extra.id, after, false); await settle();
+    assert.equal(h.toClient.find(m => m.id === 1).result.content[0].text, before);
+  }
+});
+
+test('Stop during the launch settle wait drains the call and ends the turn', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let release, probes = 0, collections = 0;
+  const h = harness({ changeReview: false, launchReread: true,
+    launchSettleSleep: () => new Promise(resolve => { release = resolve; }),
+    spaceProbe: async () => probes++ === 0 ? { status: 'absent' } : { status: 'responding', windows: 1, onScreen: 1 },
+    stopEngine: async () => { collections++; return { collected: true, cutOff: false }; }, inspectInput: async () => ({ ok: true }) });
+  helperRead(h, 1); await settle();
+  helperReply(h, 1, 'Window: "Calculator", App: Calculator\n0 standard window Calculator\n1 button One', false); await settle();
+  assert.equal(typeof release, 'function');
+  h.fromClient({ jsonrpc: '2.0', id: 'stop', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } });
+  release(); await settle();
+  const end = h.toServer.find(m => /^sleight-stop-/.test(m.id));
+  assert.ok(end, 'the pending call drains without waiting for the Stop grace deadline');
+  assert.equal(end.params.name, 'turn_ended');
+  helperReply(h, end.id, 'ended', false); await settle();
+  assert.equal(collections, 1);
+  assert.equal(h.toClient.find(m => m.id === 'stop').result.isError, false);
+  assert.equal(h.toServer.some(m => /^sleight-launch-read-/.test(m.id)), false);
 });
 
 test('an app hang is diagnosed before its second failed reply and uses a fresh guarded control read', async () => {
