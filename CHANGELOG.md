@@ -27,6 +27,9 @@
   capture of that rectangle could include another app's pixels.
 - Recording from the desktop pane goes through a file instead of the mod's 4 MiB output limit, and
   after a replay that acquired an app by window id, Refresh and the next prompt find that app.
+- Receipts scrub the owner's name in any letter case ("SMITH", "smith"), not only as written.
+- Tests that waited in real time (helper retries, process cleanup, the probe deadline) use mocked
+  clocks and stubs, so they no longer fail on a loaded Mac: 176 tests in 0.95 s.
 
 ## 1.2.5 (2026-10-11)
 
