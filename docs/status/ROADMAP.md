@@ -108,6 +108,11 @@ only with a measured reason. In order:
    tree of over 700 elements. So the targets are turns (one call for steps whose targets are
    known) and slow reads in large Electron trees. The task must be generic: an Electron chat-style
    fixture, never the owner's real seats.
+   Real use found what the fixtures missed (2026-10-12): the guard stopped correct clicks whose
+   numbers the code took from its own read in the call, and puddle arch fell back to one action per
+   call (fixed in `430116e`, live check owed). The owner's priority (2026-10-12): real-life smoke tests
+   in Electron and other large, shifting apps (ZCode, Slack, Discord, VS Code, Cursor) alongside the
+   fixtures, with each gap fixed generically.
 
 1. Measure what sleight adds. A head-to-head on the same tasks with sleight and Codex, at the
    owner's normal load and with added load, recording time, turns and the CPU seconds of each arm's
