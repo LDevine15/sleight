@@ -22,8 +22,10 @@ Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders)
   results hold 40.9K of engine docs and 5.9K of skill against a 1 to 2.5K form tree. Native sessions: 17.4K docs plus 6K skill.
 - Turns: 15 of 15:23's error turns had known causes (dragTo below the fold, stale tab numbers, Claude's evaluate code assuming
   globals). form-travel spent 10 calls on a virtualized list (lane T2).
-- Lean-skill A/B (`SLEIGHT_PROMPT=lean`, 430 words against 923) started 15:54 EDT on `ec59d81`, both orders interleaved:
-  `/tmp/fb-rounds/ab-20261012-1554-*`, driver log `/tmp/fb-rounds/ab-20261012-1554.log`.
+- Lean-skill A/B, 15:54 EDT on `ec59d81` (`docs/benchmarks/2026-10-12-lean-skill-ab.md`): lean 24/26, 981 s, $8.92 against
+  default 25/26, 1,006 s, $8.72. Within noise. The default skill stays.
+- Opus rounds are paused on the owner's order (quota, LAWS). Model-free measurement first; Haiku on the API key only on the
+  owner's go.
 
 Engine facts found today (LAWS and known-problems): `evaluate` is a read-only scope (A8, A4 and the confirm pre-accept can't
 work); `tab.drag` moves in 8 steps and drops only when the last two are inside the target (A9's `dragTo`); `tab.click` on a
@@ -54,9 +56,10 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Read the lean A/B. Lean becomes the default if it is faster and cheaper with no task lost.
-2. Review and merge lane branches as they land. Run A7R live (hand-off note task), and the char audit after each docs change.
-3. A full head-to-head once batch D is in, published with its anatomy.
+1. Review and merge lane branches as they land (no model needed). Run the char audit after each docs or result change.
+2. Live checks without a model: A7R's save split (a fixture TextEdit file with `setValue` then Cmd+S through a probe client),
+   S1 and S2 with `coldstart-probe.mjs` and the startup trace.
+3. When the owner allows: a Haiku round on the API key for D5's A/B, then a head-to-head once batch D is in.
 4. Video and release once a head-to-head is a win, or on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,

@@ -77,6 +77,9 @@ belong in [STATE.md](STATE.md).
   stops at $200 of spend in a month, because anything past the credit is billed to the owner's card.
   Opus arms run on the owner's Claude account instead (`claude -p` signed in, no API key), and Haiku and Sonnet
   arms stay on the API key (owner, 2026-10-12). The FowlBrowser head-to-head keeps Opus without spending the credit.
+- Opus rounds on the owner's account are paused (owner, 2026-10-12 evening: they were eating the owner's quota). Measure
+  with the model-free tools first (char audit, probes, anatomy of saved rounds). A run that needs a model uses Haiku on the
+  API key, within the $200 stop, and starts only on the owner's go. Opus resumes only when the owner says so.
 - Routines and replay acquire an app by bundle ID and then confirm the window's exact title (and
   URL when present) from the read, because this engine rejects `getApp({ windowId })`. The owner
   followed sleight-arch's recommendation to keep it (2026-10-10).
