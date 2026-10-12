@@ -3,41 +3,36 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 20:40 UTC)
+## Banner (2026-10-12 20:00 UTC)
 
-Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
-then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `118b1b3` (private), full
-check 2174 pass, 1 skipped, mod 33/33, exit 0. The main checkout is fast-forwarded to it.
+Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser on its own 13 browser tasks in tasks done, time and cost. A release
+and a launch video follow. Longer term (owner): the world's fastest computer use plugin, every lever down to milliseconds.
+Pushed: `pane/auto-mode` at `ec59d81` (private), full check 2213 pass, 1 skipped, mod 33/33, exit 0. The main checkout is
+fast-forwarded to it.
 
-Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders, `/tmp/fb-rounds/h2h-*`):
-- 10:25: sleight 23/26, 2,109 s, $13.33, against 26/26, 972 s, $7.98. Published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`.
-- 13:09: 22/26, 1,258 s, $10.64 against 26/26, 884 s. 13:22: 25/26, 1,101 s, $9.13 against 26/26, 943 s, $7.11. 14:27:
-  22/26, 1,414 s, $9.07 against 26/26, 967 s, $7.19. Not yet published.
-- 14:49 sleight-only round with A1 (`/tmp/fb-rounds/r6-sleight-a1/report.md`, one browser order): 13/13, 814 s, $5.98.
-  FowlBrowser's half of a round is about 470 s and $3.55. 313 s and $2.01 of ours is form-settings in Helium, where about
-  280 s went on the HTML5 priority list. Cause, from `bench/fowl/drag-probe.mjs`: the engine's `tab.drag` moves in 8
-  equal steps, and Chrome fires `dragover` only when two consecutive moves are inside one element, so a drag aimed at the
-  target's center never drops (0/14). Aimed 3 px inside the target's near edge it drops 6/6 (Helium and Chrome). A9's
-  `sleight.dragTo` (merged `118b1b3`) took form-settings in Helium to 39 s and $0.42, 10/10, every drag moved
-  (`/tmp/fb-rounds/a9-live`).
-- 15:23 EDT, both arms on `118b1b3` (published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h-2.md` with the 13:09, 13:22
-  and 14:27 rounds): sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls (its handoff
-  check failed twice). First tie on tasks. Still slower by 10% and 51% dearer: wikipedia and mdn take twice as long,
-  and cost is the docs.
-- Anatomy (`bench/fowl/anatomy.mjs`, 15:23 round, 26 runs each): model and tool time equal (497 s, 206 s); sleight 230 turns
-  against 266. Time gap is the first call: median 4.8 s against FowlBrowser's 53 ms (126 s against 2 s); later calls 244 ms
-  against 721 ms. Unloaded, the first call is 1.3 s (`coldstart-probe.mjs`) to 3.8 s on Wikipedia (relay trace: engine site
-  check 1.2 s, tab open, page). Cost gap is the docs: 950K of 1,366K result characters. Cache writes: 734K tokens against 431K.
-  Duplicated trees (`nodeRepl.write(await tab.getAXState())`) are 4-5% of result characters. Batch D (D1, D2, T1) is in the
-  ledger, and A3R2 gets the evaluate-scope hint.
-Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service.mjs:8585-8640`: no `Event`,
-`DragEvent` or `DataTransfer`, read-only element wrappers, global assignment throws). So A8's in-page drag events (STALE),
-A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = ...`) can't work through it.
+Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders), all published in
+`docs/benchmarks/2026-10-12-fowlbrowser-h2h.md` (10:25) and `-h2h-2.md` (13:09 to 15:23):
+- 15:23, both arms on `118b1b3`: sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls. First tie
+  on tasks. Earlier rounds: sleight 22 to 25/26.
+- Anatomy of 15:23 (`bench/fowl/anatomy.mjs`): model and tool time equal per arm (497 s, 206 s). sleight 230 turns against 266.
+  Time gap is the first call (median 4.8 s against 53 ms): the engine opens tabs one at a time (6 sessions at once: 1.3 to 2.9 s
+  each, alone 0.9 s; `tabs.new` plus `goto` queues the same). Later calls 244 ms against 721 ms. Server start 158 ms against
+  100 ms, 110 ms of it waiting on the engine's `initialize` (lane S2). Cost gap is the docs (950K of 1,366K result characters).
+- Character audit (`bench/char-audit.mjs`, history `docs/benchmarks/char-audit/history.jsonl`): a web session's first two
+  results hold 40.9K of engine docs and 5.9K of skill against a 1 to 2.5K form tree. Native sessions: 17.4K docs plus 6K skill.
+- Turns: 15 of 15:23's error turns had known causes (dragTo below the fold, stale tab numbers, Claude's evaluate code assuming
+  globals). form-travel spent 10 calls on a virtualized list (lane T2).
+- Lean-skill A/B (`SLEIGHT_PROMPT=lean`, 430 words against 923) started 15:54 EDT on `ec59d81`, both orders interleaved:
+  `/tmp/fb-rounds/ab-20261012-1554-*`, driver log `/tmp/fb-rounds/ab-20261012-1554.log`.
 
-Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`): reviews today (Sonnet high) merged F6R3
-and F5R2. A2, A3 and A7 failed review and went back as A2R, A3R and A7R. F5R3 (receipts) is new. A6 also takes F6R3's leftovers
-(a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). A6 failed review too (A6R; A2R waits
-for it). Done, not yet reviewed: F5R3. Open: A2R, A3R, A5, A6R, A7R, A9R, A10, F4, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
+Engine facts found today (LAWS and known-problems): `evaluate` is a read-only scope (A8, A4 and the confirm pre-accept can't
+work); `tab.drag` moves in 8 steps and drops only when the last two are inside the target (A9's `dragTo`); `tab.click` on a
+download link stalls that tab's downloads. Tabs open one at a time.
+
+Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`). Merged today after Sonnet-high reviews: F6R3,
+F5R2, F5R3, A9, F7R2, A7R (plus F1R2, A1 and earlier). Back for fixes: A2R (after A5R and A6R), A3R3, A5R, A6R, A9R2, A10R.
+Batch D comes first: D1, D2 and D4 trim results, S1 and S2 cut startup, T1 to T3 cut turns. Also open: F4, F12. A lane item is done
+only after a bare `npm run check` at exit 0. A7R's live check (TextEdit save split) is sleight-arch's, not yet run.
 
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
 (203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
@@ -59,12 +54,9 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Cost: the engine docs in every first result (34,000 characters) and their re-reads. Find what sleight can trim
-   or defer without dropping the safety text, and measure wikipedia and mdn (19 to 22 s against 9 to 12 s).
-2. The invoice's `downloadMedia` hang is the engine's: after `tab.click` on a download link, that tab's downloads stall
-   (`bench/fowl/download-probe.mjs`, known-problems). A3R adds the hint, A10 the skill sentence.
-3. Review lane branches as they are pushed (F5R3 next), merge, then a full head-to-head (both arms, Opus on the account). Publish
-   every round next to the 10:25 one.
+1. Read the lean A/B. Lean becomes the default if it is faster and cheaper with no task lost.
+2. Review and merge lane branches as they land. Run A7R live (hand-off note task), and the char audit after each docs change.
+3. A full head-to-head once batch D is in, published with its anatomy.
 4. Video and release once a head-to-head is a win, or on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
