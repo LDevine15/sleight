@@ -40,6 +40,12 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
 1. Benchmark against it on its own runner and tasks: `bench/fowl/` adds sleight as an arm (`--surface sleight`) to its
    `tools/rounds.mjs` (pinned at `8b68924`), Opus 5.5 at medium as in its published runs (owner).
    Both arms run on this Mac, published in full. Gaps it shows get generic fixes in Codex and Grok lanes.
+   The owner's goal (2026-10-12): beat FowlBrowser in the browser on its own tasks, on time, cost and
+   tasks done right. The first run lost (23/26 in 2,109 s against 26/26 in 972 s). Model time between
+   calls is the biggest lever (501 calls against 240), so after the batch F fixes come fewer, larger
+   calls: whole forms filled in one call, and results that show only what changed. If the extension's
+   own per-call cost still keeps sleight behind, a browser path that doesn't go through Codex's extension
+   is a scope call for the owner.
 2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
    app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
    and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.

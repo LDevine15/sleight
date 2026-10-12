@@ -82,8 +82,25 @@ $12.78), which is the extension sleight drives too.
 Each of these is a build item in the lane ledger (F1 to F8). The rerun after they merge gets published
 next to this one.
 
+## Speed per call
+
+Without a model, each tool through an MCP client on a local page in Helium, 10 runs, median
+(FowlBrowser's `mcp/test/bench.mjs`, and `bench/fowl/ext-speed.mjs` for the extension, raw through
+ChatGPT's `cua_repl` and through sleight):
+
+| Call | FowlBrowser | Extension, raw | Extension through sleight |
+| --- | --- | --- | --- |
+| Read the page | 8 ms | 44 ms | 46 ms |
+| Click, no read | 131 ms | 46 ms | 48 ms |
+| Click, then read | 342 ms | 265 ms | 248 ms |
+| Type, no read | 137 ms | 50 ms | 55 ms |
+| Run JavaScript in the page | 57 ms | 14 ms | refused by sleight's lease |
+
+The extension isn't what made sleight slower. sleight made 501 calls to FowlBrowser's 240, and 139 of
+them failed, so most of the gap is model time between calls.
+
 ## What we don't know
 
-- How much of the time gap is the extension and how much is sleight. FowlBrowser's runner has a Codex
-  arm through a proxy that isn't in its repo, so we didn't run Claude on the bare extension here.
+- How Claude does on the bare extension with these tasks. FowlBrowser's runner has a Codex arm through a
+  proxy that isn't in its repo, so we didn't run it here.
 - Whether the gap holds on a quiet Mac. The owner was working during the runs, the same for both arms.
