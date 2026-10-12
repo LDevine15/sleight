@@ -5,9 +5,9 @@ our own runs. Dates and engine versions are given where they matter.
 
 ## Approvals and guards
 
-- The preapproval loader proves file ownership, not who wrote it. Any process running as you,
-  Claude included, can write the file. The skill tells Claude never to create or edit it, but this
-  rule depends on Claude following the instruction.
+- The preapproval loader proves file ownership, not who wrote it. The mod refuses Claude's file edits
+  and common shell writes to it (unit-tested, 2026-10-12), but any other process running as you can
+  write it, and a path built at run time gets past the check.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
 - `sleight-mcp setup` (unreleased) hasn't had a full live run: macOS permissions always need the user's click.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with
@@ -19,14 +19,16 @@ our own runs. Dates and engine versions are given where they matter.
 - Anything moving your real pointer in the app interrupts it. The engine watches real mouse and keyboard
   input to notice a person taking over, then makes Claude re-read the app. Another agent driving in the
   foreground counts too. Background sessions share the helper, with leases coordinating sleight's actions.
-- Accessibility moves still write plain text: on 2026-10-11, 3/3 background moves of a bold red word in a covered TextEdit
-  window came out plain black Helvetica, with the text, spacing, front app and pointer right (about
-  6.6 s a drag). Uncovered windows now take the same path. Whether the posted drag they used before
-  kept formatting was never measured.
+- Accessibility moves write plain text: on 2026-10-11, 3/3 background moves of a bold red word in a
+  covered TextEdit window came out plain black Helvetica. Text whose formatting differs from its
+  paragraph's now takes the posted or foreground drag instead (unit-tested, 2026-10-12). A paragraph
+  formatted the same throughout still goes through the plain write, and whether the posted drag keeps
+  formatting is unmeasured.
 - With the Claude app's window over the board (2026-10-09), the engine's `app.drag` moved a pawn
   (1/1) where `drag`'s background posts at the same points didn't (0/2). `drag` now refuses a covered
   drag that has no selected text and points to `app.drag`. On that board `drag` took 11 to 14 s, 9.4 s
-  of it reading the window's elements through System Events before it could press anything.
+  of it reading the window's elements through System Events. That scan now uses the Accessibility API
+  with a 0.5 s deadline (unit-tested, 2026-10-12). Its live timing is unmeasured.
 - After an Accessibility text write, TextEdit's next Cmd+S deadlocked on the document's save lock in 10
   of 13 probe trials with the file opened through the Open panel (0 of 3 opened with `open -g`), the
   same hang as `setValue` on 2026-10-05. One Shift press and release posted to TextEdit's process after
@@ -45,8 +47,8 @@ our own runs. Dates and engine versions are given where they matter.
   during a pass, and a typed space went into TextEdit, so it now waits for 2 s without any input (up
   to 10 s), and stops if keys are typed once it has taken focus.
 - There's no background hover, since engine events go to the app and the real pointer never moves.
-  Hover captures screen pixels in the selected window's rectangle. A window spanning displays can
-  include another app in that rectangle, as a Chess trial showed.
+  Hover captures screen pixels in the selected window's rectangle. A window spanning displays could
+  include another app in that rectangle, as a Chess trial showed, so hover now refuses one.
 - When you work in a full-screen or Split View Space, apps sleight drives in the background are on
   another Space. Clicks and typing still reach them, but the engine's `app.drag` answers
   `noWindowsAvailable`, sleight's `drag` refuses the off-screen window, and TextEdit's reads timed
@@ -65,9 +67,8 @@ our own runs. Dates and engine versions are given where they matter.
   handle with it (`app.click(1); "x"` on a disabled Calculator element, 3/3 on 2026-10-07). The guard
   now attaches a handler to each action's promise and tells Claude which action failed. With
   `const p = app.click(99999)` and more code after it, 1.0.0 reset the session (1/1) and the fix
-  kept it with the failure reported (3/3, Chess, 2026-10-09). A promise chained off an action
-  (`app.click(1).then(f)` assigned and not awaited) still rejects unhandled. The relay also refuses
-  a call whose action is a statement without `await` with more code after it.
+  kept it with the failure reported (3/3, Chess, 2026-10-09). The relay refuses a call whose
+  action, or a `.then` chain off it, is neither awaited nor last (unit-tested for chains, 2026-10-12).
 - The engine's service crashes now and then. `SkyComputerUseService` (26.1005.1001425) segfaulted 4
   times from 2026-10-05 to 2026-10-11, each time at address 0 inside its handler for WindowServer
   notifications, on the main thread: during benchmark runs on TextEdit and Calculator (3) and during
@@ -83,16 +84,16 @@ our own runs. Dates and engine versions are given where they matter.
   actual engine control timeout.
 - The AX check of the target app waits 0.5 s, which a busy Mac can miss. On 2026-10-09, with a load
   average of 101 from other processes, TextEdit, Safari and Calculator missed it in 5 of 5 probes and
-  answered in 0.27 to 0.52 s with a 6 s deadline. A read failure then can be diagnosed as a hung app,
-  with advice to quit and reopen it. Not fixed yet.
+  answered in 0.27 to 0.52 s with a 6 s deadline. sleight now probes once more with a 3 s deadline
+  before calling an app hung (unit-tested, 2026-10-12).
 - The 29.475 s first Calculator acquisition on 2026-10-09 spent 27.683 s inside the engine after
   approval. Browser discovery had already ended, so its removal does not explain or fix that wait.
 - The helper can also fail to start. On 2026-10-05 it quit normally when doctor's session ended, and
   every later launch failed with "Sky Computer Use service startup request failed" for at least five
   minutes: launchd still held the old job and answered "Operation already in progress". Removing that
   job with `launchctl remove` fixed it at once, without restarting ChatGPT, and the next four helper
-  launches worked. We don't know what left the job behind. Doctor now detects this and prints the
-  command.
+  launches worked. We don't know what left the job behind. Doctor and a failed call now print the
+  command for the user to run.
 - ChatGPT updates can break it. The version lookup handles the folder moving around, but not the API
   changing. Run `--doctor` first when something stops working.
 - The engine has no access to an app's icon in the menu bar or to notification banners: its inventory has
@@ -129,13 +130,15 @@ our own runs. Dates and engine versions are given where they matter.
   output limit, so Claude saw only a pointer to a file, and every guard read of it took 1.4 to
   2.3 s. The benchmark now moves runs older than 6 hours out of its folder. Engine 26.1007.21159
   still has no root, depth, filter or element-query on `getAXState`, so a read that leaves out the
-  browser rows is unbuilt. Filtering the text after a full walk would not cut the walk.
+  browser rows is unbuilt. Filtering the text after a full walk would not cut the walk. Under `SLEIGHT_RESULT_TRIM=1` sleight
+  drops long runs of sibling rows from such a result (A/B not yet run).
 - Go to Folder in a background TextEdit's Save panel puts TextEdit's windows over the user's window
   for about 0.4 s (owner's report and a window-order capture, 2026-10-11: 05:23:13.249 to 13.680 UTC).
 - Electron apps build their Accessibility tree some seconds after launch: a raw walk of Discord 12 s
   after `open -g` found 11 nodes, and one after the engine's read found 509, with
   AXManualAccessibility and AXEnhancedUserInterface still off (2026-10-11). A read right after a
-  launch can see an almost empty window.
+  launch can see an almost empty window. `SLEIGHT_LAUNCH_REREAD=1` reads once more after 2.5 s (A/B
+  not yet run).
 - Finishing a File > Open panel brought TextEdit to the front for about a second in 3 of about 21
   textedit-edit runs while the owner worked (2026-10-10, WindowServer log).
 - In a TextEdit typing probe on 2026-10-08, select-all followed by `typeText("engine01")` and save
@@ -159,14 +162,12 @@ our own runs. Dates and engine versions are given where they matter.
   windows) timed out twice with `-10005 timeoutReached`, 30 s and 60 s. The input lease needs that read
   before `cua.getBrowser`. Whether the window count causes it is unmeasured.
 - iPhone Mirroring (2026-10-11, one owner-present run): `app.scroll` at 0.3, 0.6 and 1 page left
-  the Settings list unmoved (3 tries). The skill tells Claude to use Settings' search field when a
-  list does not move. A tap during a page animation opened Personal Hotspot instead of General.
+  the Settings list unmoved (3 tries). sleight now turns `scroll` into a swipe on a window whose tree
+  is only chrome (unit-tested, 2026-10-12). A tap during a page animation opened Personal Hotspot instead of General.
   The tree is the Mac window and menu bar, so the engine's settle wait cannot see the iPhone screen.
   After an action in an app whose tree is window chrome only, the relay waits for two matching
   screenshots, up to 1.5 s, and records the wait in the trace. Unverified: live
   `iphone-mirroring-settings` ×3 with no tap outside Settings > General > About.
-- Rich-text preservation through the removed TextEdit clipboard path never completed a qualified
-  background move. There is no rich-text preservation option in `drag` as of 2026-10-11.
 
 ## Hosts and platform
 
@@ -175,17 +176,14 @@ our own runs. Dates and engine versions are given where they matter.
   the helper that clicks and types comes only with the Mac ChatGPT app, and there's no ChatGPT desktop
   app for Linux (checked 2026-10-04). We haven't checked the Windows app.
 - Cursor and generic MCP clients can use sleight's native approval panel and idle turn cleanup
-  (unreleased). The panel still names Claude under Claude Code, and it is unit-tested only: no live
-  approval in another host has been checked. Unanswered relay forms expire after five minutes.
+  (unreleased). The panel shows the client's name (Cursor) in other
+  hosts and Claude under Claude Code. It is unit-tested only: no live approval in another host has been
+  checked. Unanswered relay forms expire after five minutes.
 - A name lookup can still launch an app that exited between the native check and `getApp`.
 
 ## Desktop replay
 
 - Recording only supports initially empty TextEdit fields, and checks using constructed events do not
   prove app notification delivery.
-- A recorded script over 4 MiB exceeds the mod's process-output limit. Use the CLI with an output
-  filename for that script. Refresh gets its replay target from a literal `getApp` name. A script that
-  acquires only an object or window ID may leave Refresh targeting the earlier app. The same literal
-  `getApp` names decide which apps the next prompt asks Claude to read in full after a replay.
 - A pane replay is untested in Auto mode, where the classifier may refuse the mod's `replay` call
   because the mod doesn't approve it (the classifier refused the pane's snapshot on 2026-10-08).
