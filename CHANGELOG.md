@@ -30,6 +30,8 @@
 - Receipts scrub the owner's name in any letter case ("SMITH", "smith"), not only as written.
 - Tests that waited in real time (helper retries, process cleanup, the probe deadline) use mocked
   clocks and stubs, so they no longer fail on a loaded Mac: 176 tests in 0.95 s.
+- On a window whose tree is only its chrome (a mirrored iPhone screen), `scroll` becomes a swipe
+  across the content, since the engine's scroll did nothing there.
 
 ## 1.2.5 (2026-10-11)
 
