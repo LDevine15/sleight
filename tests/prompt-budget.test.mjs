@@ -24,7 +24,7 @@ test('both skill variants explain browser routing and script input within their 
   for (const [env, limit] of [[{}, 930], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
-    assert.match(skill, /top-level `await`, no `return`/);
+    assert.match(skill, /[Tt]op-level `await`, no `return`/);
     assert.match(skill, /[Ww]rite text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(skill, /last expression is the result/);
     assert.match(skill, /Tab input.*first argument.*element index or `null`/);
@@ -38,6 +38,7 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
     assert.match(skill, /nodeRepl\.write\(await sleight\.dragTo\(tab, from, to\)\)/);
     assert.match(skill, /selectors, locators or page coordinates.*reads back/s);
+    assert.match(skill, /Downloads: `locator\.downloadMedia\(\{\}\)`, never `tab\.click` \(stalls later downloads\)\./);
     assert.match(skill, /`tab\.click\(index\)`, not a locator, then answer it: `\(await tab\.getJsDialog\(\)\)\.accept\(\)`/);
     assert.ok(skill.trim().split(/\s+/).length <= limit, 'skill word budget');
   }
