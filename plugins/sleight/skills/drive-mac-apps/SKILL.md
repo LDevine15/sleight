@@ -66,8 +66,8 @@ Use locators when validation or autocomplete can add or move fields, indices on 
 Submit in that call only when the user asked for that submit and the engine's confirmation policy
 doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, and stop if the user declines a browser approval.
-`tab.drag` takes page coordinates from `getBoundingClientRect()` in `tab.playwright.evaluate`, not from a
-screenshot. Read the result back after it. Click a button that may open a page dialog (pay, delete, leave) with
+Tab drag-and-drop: `nodeRepl.write(await sleight.dragTo(tab, from, to))` takes selectors, locators or page coordinates and reads back sibling indices.
+Click a button that may open a page dialog (pay, delete, leave) with
 `tab.click(index)`, not a locator, then answer it: `(await tab.getJsDialog()).accept()` or `.dismiss()`.
 
 ## sleight's other tools

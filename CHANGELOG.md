@@ -57,6 +57,10 @@
   saved Wikipedia read the tree kept 398 of 4,606 rows.
 - `getAXState({ emit: false })` and its screenshot variants leave that read's tree out of the result,
   and sleight still refuses an element number Claude could only have taken from a tree it never saw.
+- `sleight.dragTo(tab, from, to)` drags between two elements in a browser tab so the page sees the drop. The
+  engine's `tab.drag` aimed at a target's center never dropped on an HTML5 list (0/14). On FowlBrowser's
+  settings form in Helium the task took 39 s instead of 313 s, and every `dragTo` call moved its item (7/7
+  in Helium and Chrome).
 
 ## 1.2.5 (2026-10-11)
 

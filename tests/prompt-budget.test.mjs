@@ -36,7 +36,8 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /Otherwise stop before the final click\./);
     assert.doesNotMatch(skill, /submit in (?:that|the same) call when nothing is uncertain/i);
     assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
-    assert.match(skill, /`tab\.drag` takes page coordinates from `getBoundingClientRect\(\)`/);
+    assert.match(skill, /nodeRepl\.write\(await sleight\.dragTo\(tab, from, to\)\)/);
+    assert.match(skill, /selectors, locators or page coordinates.*reads back/s);
     assert.match(skill, /`tab\.click\(index\)`, not a locator, then answer it: `\(await tab\.getJsDialog\(\)\)\.accept\(\)`/);
     assert.ok(skill.trim().split(/\s+/).length <= limit, 'skill word budget');
   }
