@@ -8,10 +8,10 @@ DIR="$HOME/Library/Caches/sleight-bench/fowlbrowser"
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 [ -d "$DIR/.git" ] || git clone -q https://github.com/argofowl/FowlBrowser "$DIR"
 cd "$DIR"
-if ! git diff --quiet; then
-  git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch" || { echo "rounds.sh: $DIR has changes that aren't the patch" >&2; exit 1; }
-else
-  git checkout -q "$PIN" && git apply "$REPO/bench/fowl/sleight-surface.patch"
+# The clone is this benchmark's own cache: when its tracked files differ from the current patch (an older
+# patch, or nothing applied), put them back to the pin and apply the patch.
+if ! git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
+  git checkout -q -- . && git checkout -q "$PIN" && git apply "$REPO/bench/fowl/sleight-surface.patch"
 fi
 [ "$(git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }

@@ -97,17 +97,25 @@ export async function runHandoffs({
     catch (err) { console.error(`Untitled snapshot skipped: ${err.message}`); }
     const started = Date.now() - 1;
     const serve = 'node ' + quote(join(DIR, 'site/server.mjs')) + ' --download-name ' + downloadName;
-    const args = ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--serve', serve,
-      '--codex-browsers', IDS, '--out', out];
-    let code;
+    // One task at a time: native steps share one Mac, and sleight's input lease lets one session type into an
+    // app at a time, so two TextEdit tasks started together waited on each other (2026-10-12).
+    let code = 0;
     let error;
     let untitled = [];
-    try { code = await run({ arm, out, downloadName, args }); }
+    try {
+      for (const task of tasks) {
+        const args = ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--only', task.name, '--serve', serve,
+          '--codex-browsers', IDS, '--out', join(out, 'r-' + task.name)];
+        const one = await run({ arm, out: join(out, 'r-' + task.name), downloadName, args });
+        if (one !== 0) code = one;
+        if (one === 130) break;
+      }
+    }
     catch (err) { code = 1; error = err.message; }
     finally {
       const ended = Date.now() + 1;
       for (const task of tasks) {
-        const dir = join(out, task.name);
+        const dir = join(out, 'r-' + task.name, task.name);
         try { cleanup(dir); } catch (err) { cleanupErrors.push(`${dir}: ${err.message}`); }
       }
       try { cleanupDownloads({ dir: downloads, before, name: downloadName, started, ended }); }

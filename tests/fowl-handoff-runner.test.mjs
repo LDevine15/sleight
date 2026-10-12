@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
+// The runner starts one round per task (--only), so each fake run handles one task.
+const taskOf = (args) => args[args.indexOf('--only') + 1];
+
 function temp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-handoff-runner-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -45,20 +48,20 @@ test('every arm cleans artifacts and its download when the round fails or throws
   const result = await runHandoffs({ outRoot: dir, downloads, icloud: join(dir, 'icloud'), stamp: 'test', run: async ({ arm, out, downloadName, args }) => {
     seen.push(arm);
     assert.ok(args[args.indexOf('--serve') + 1].includes(downloadName));
-    for (const task of ['invoice-preview', 'table-textedit', 'note-textedit']) {
-      mkdirSync(join(out, task), { recursive: true });
-      for (const file of ['invoice.pdf', 'invoice-total.txt', 'roster.txt', 'note.txt']) writeFileSync(join(out, task, file), 'artifact');
-    }
+    const task = taskOf(args);
+    mkdirSync(join(out, task), { recursive: true });
+    for (const file of ['invoice.pdf', 'invoice-total.txt', 'roster.txt', 'note.txt']) writeFileSync(join(out, task, file), 'artifact');
     writeFileSync(join(downloads, downloadName), 'owned');
     if (arm === 'sleight') throw new Error('fake failure');
     return 1;
   } });
-  assert.deepEqual(seen, ['fowlbrowser', 'sleight', 'fowl+sleight']);
+  assert.deepEqual([...new Set(seen)], ['fowlbrowser', 'sleight', 'fowl+sleight']);
   assert.equal(result.every((r) => r.code === 1), true);
   assert.deepEqual(readdirSync(downloads), []);
   for (const arm of seen) {
     for (const task of ['invoice-preview', 'table-textedit', 'note-textedit']) {
-      assert.deepEqual(readdirSync(join(dir, 'handoff-test-' + arm, task)), []);
+      const path = join(dir, 'handoff-test-' + arm, 'r-' + task, task);
+      if (existsSync(path)) assert.deepEqual(readdirSync(path), []);
     }
   }
 });
@@ -71,7 +74,8 @@ test('cleanup exceptions are reported and every other task and arm still runs', 
   const results = await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'cleanup',
     cleanup: (path) => { cleaned.push(path); if (path.endsWith('invoice-preview')) throw new Error('cleanup refused'); },
     run: async ({ arm }) => { seen.push(arm); return 0; } });
-  assert.equal(seen.length, 3);
+  assert.equal(seen.length, 9);
+  assert.equal(new Set(seen).size, 3);
   assert.equal(cleaned.length, 9);
   for (const result of results) {
     assert.equal(result.code, 1);
@@ -88,7 +92,8 @@ test('each arm reports only new Untitled files with exact task content and leave
   const content = NOTE.title + '\n' + NOTE.body + '\n';
   writeFileSync(join(icloud, 'Untitled.txt'), content);
   const results = await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud, stamp: 'untitled',
-    run: async ({ arm }) => {
+    run: async ({ arm, args }) => {
+      if (taskOf(args) !== 'invoice-preview') return 0;
       const n = ['fowlbrowser', 'sleight', 'fowl+sleight'].indexOf(arm) + 1;
       writeFileSync(join(icloud, `Untitled ${n}.txt`), content);
       writeFileSync(join(icloud, `Untitled ${n + 3}.txt`), content + 'private text');
@@ -108,10 +113,10 @@ test('a real unlink failure still cleans the other tasks and the owned download 
   const downloads = join(dir, 'downloads');
   mkdirSync(downloads);
   const results = await runHandoffs({ outRoot: dir, downloads, icloud: join(dir, 'icloud'), stamp: 'unlink',
-    run: async ({ out, downloadName }) => {
-      mkdirSync(join(out, 'invoice-preview', 'invoice.pdf'), { recursive: true });
-      mkdirSync(join(out, 'table-textedit'));
-      writeFileSync(join(out, 'table-textedit', 'roster.txt'), 'owned');
+    run: async ({ out, downloadName, args }) => {
+      const task = taskOf(args);
+      if (task === 'invoice-preview') mkdirSync(join(out, task, 'invoice.pdf'), { recursive: true });
+      if (task === 'table-textedit') { mkdirSync(join(out, task), { recursive: true }); writeFileSync(join(out, task, 'roster.txt'), 'owned'); }
       writeFileSync(join(downloads, downloadName), 'owned');
       return 0;
     } });
@@ -119,7 +124,7 @@ test('a real unlink failure still cleans the other tasks and the owned download 
   for (const r of results) {
     assert.equal(r.code, 1);
     assert.match(r.cleanupErrors.join('\n'), /invoice-preview.*(?:EISDIR|EPERM)/);
-    assert.deepEqual(readdirSync(join(r.out, 'table-textedit')), []);
+    assert.deepEqual(readdirSync(join(r.out, 'r-table-textedit', 'table-textedit')), []);
   }
   assert.deepEqual(readdirSync(downloads), []);
 });
