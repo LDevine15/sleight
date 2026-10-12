@@ -5,6 +5,7 @@ import type { Frame, LogEntry, ViewStatus } from '../types'
 import { FRAME_MARKER, snapshotCode } from './snapshot'
 import { fileArgument, outcomeOf, resultEntries } from './replay'
 import type { ReplayScript } from './replay'
+import { preapprovedWriteDenied } from './preapproved-write-guard.mjs'
 
 // The server's own name in plugin.json; the session lists it as
 // plugin:sleight:computer, and its tools as mcp__plugin_sleight_computer__*.
@@ -247,6 +248,14 @@ function ownCallVerdict(e: { tool: string; input: unknown }, origin: { plugin: s
 }
 
 export const register: Register = on => {
+  on('classic.PreToolUse', async ($, e, next) => {
+    if (!['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash'].includes(e.tool)) return next(e)
+    const denied = await preapprovedWriteDenied(e, {
+      stat: (path: string) => $.fs.stat(path, { resolve: true }),
+      home: await $.env.get('HOME'),
+    })
+    return denied ? { deny: 'Only the user edits ~/Library/Application Support/sleight/preapproved.json. Ask them to make this change.' } : next(e)
+  })
   on('tool.check', async ($, e, next) => ownCallVerdict(e, next.origin) ?? next(e))
     // Failing open to the normal check only ever tightens. A call from inside this mod's own
     // frame lands here as a re-entry, decided from e and next alone. The host's published

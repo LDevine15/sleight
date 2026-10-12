@@ -7,6 +7,28 @@ const PANE = { plugin: 'sleight', component: 'Pane', requestId: 'sleight' } as c
 const SURFACES = ['terminal', 'desktop'] as const
 
 describe('sleight mod', () => {
+  test('PreToolUse denies each policy-file mutation and named Bash writes, preserving reads', async ($, on) => {
+    const path = '/Users/fixture/Library/Application Support/sleight/preapproved.json'
+    mock.env(on, { HOME: '/Users/fixture' })
+    on('fs.stat', async (_$, e) => ({ value: { kind: 'file', size: 2, mtimeMs: 0, isLink: false,
+      realPath: e.path === '/fixture-alias' ? path : e.path } }) as never)
+    on('tool.call', async () => ({ result: {} }) as never)
+    for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit']) {
+      const result = await $.tool.call({ tool, file_path: path, notebook_path: path, content: '{}', old_string: 'a', new_string: 'b', new_source: '{}', edits: [] } as never)
+      expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
+    }
+    for (const command of [`tee "${path}"`, `cp source "${path}"`, `rm "${path}"`, `echo '{}' > "${path}"`]) {
+      const result = await $.tool.call({ tool: 'Bash', command } as never)
+      expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
+    }
+    for (const alias of [path.toUpperCase(), '~/Library/Application Support/sleight/preapproved.json', '/fixture-alias']) {
+      const result = await $.tool.call({ tool: 'Write', file_path: alias, content: '{}' } as never)
+      expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
+    }
+    const read = await $.tool.call({ tool: 'Bash', command: `cat "${path}"` } as never)
+    expect(read.deny).toBeUndefined()
+  })
+
   const script = { sleightReplay: 1, steps: [
     { tool: 'js', args: { code: 'let app = await cua.getApp("Calculator");', title: 'Acquire Calculator' } },
     { tool: 'js', args: { code: 'await app.click({"id":"Seven"});', title: 'Press Seven' } },
