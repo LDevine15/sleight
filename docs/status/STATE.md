@@ -34,8 +34,9 @@ Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
 - Open: A5R, A6R, then A2R (after both); A10R, F4R2, S1, S2, T3.
 - Superseded by their R items (never merge): A2, A3, A3R, A3R2, A5, A6, A7, A9R, A10, F4, F4R, T2, F1R, F5, F5R, F6, F6R,
   F6R2, F7R. Parked: F3, K10.
-- Not yet written: batch H for Haiku robustness. Tally both Haiku orders' errors first. Candidates are aliases for invented
-  calls such as `tab.evaluate`, adding a missing `await` instead of refusing the call, and selector-error hints.
+- Batch H (ledger, written 2026-10-12 20:40 UTC, take it first): H1 forgive API guesses (39 of the 145 Haiku errors), H2 page-write
+  hints (21), H3 handles across kernel resets (12), H4 add the missing await and fix the lease routing (12). Error tally in the
+  ledger's batch H header.
 
 Untested live: A7R's save split (`bench/save-split-probe.mjs`, written, never run, and TextEdit must not be running). D5 `min`
 needs a Haiku A/B. No background jobs of sleight-arch's are running. The lanes run on their own.
@@ -60,7 +61,7 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Publish the Haiku baseline (`docs/benchmarks/`, with anatomy), tally its 145 errors, write batch H.
+1. Publish the Haiku baseline (`docs/benchmarks/`, with anatomy and the error tally from the ledger's batch H).
 2. Review the done lane items (D2, D4, A9R3, T2R), merge, keep the ledger moving.
 3. Run `bench/save-split-probe.mjs` (A7R live), then Haiku A/Bs: D5 `min`, then batch H.
 4. Once every open item is merged, one Opus head-to-head, published. Video and release follow on the owner's call.
