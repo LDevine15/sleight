@@ -3,11 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 19:45 UTC)
+## Banner (2026-10-12 20:00 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
 then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `faeea9d` (private), full
-check 2169 pass, 1 skipped, mod 33/33, exit 0. The main checkout is fast-forwarded to it.
+check 2169 pass, 1 skipped, mod 33/33, exit 0 (at `c0ccc4b`). The main checkout is fast-forwarded to it.
 
 Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders, `/tmp/fb-rounds/h2h-*`):
 - 10:25: sleight 23/26, 2,109 s, $13.33, against 26/26, 972 s, $7.98. Published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`.
@@ -26,9 +26,9 @@ Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service
 A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = ...`) can't work through it.
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`): reviews today (Sonnet high) merged F6R3
-and F5R2; A3 and A7 failed review and went back as A3R and A7R; F5R3 (receipts) is new; A6 also takes F6R3's leftovers
-(a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). In progress: A2. Open:
-A3R, A5, A6, A7R, A9 (first), F4, F5R3, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
+and F5R2; A2, A3 and A7 failed review and went back as A2R, A3R and A7R; F5R3 (receipts) is new; A6 also takes F6R3's leftovers
+(a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). In progress: A6, A9, F5R3. Open:
+A2R, A3R, A5, A7R, A10, F4, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
 
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
 (203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
@@ -51,8 +51,9 @@ Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a 
 
 **Next steps:**
 1. Review A9 once its branch is pushed and run it live on the settings form (`bench/fowl/rounds.sh --only form-settings-helium`).
-2. `downloadMedia` on a PDF link hung until the kernel reset (32 s in the 18:57 invoice run): find out why.
-3. Review lane branches as they land (A2 first), merge, then a full head-to-head (both arms, Opus on the account). Publish
+2. The invoice's `downloadMedia` hang is the engine's: after `tab.click` on a download link, that tab's downloads stall
+   (`bench/fowl/download-probe.mjs`, known-problems). A3R adds the hint, A10 the skill sentence.
+3. Review lane branches as they are pushed (A2R first), merge, then a full head-to-head (both arms, Opus on the account). Publish
    every round next to the 10:25 one.
 4. Video and release once a head-to-head is a win, or on the owner's call.
 
