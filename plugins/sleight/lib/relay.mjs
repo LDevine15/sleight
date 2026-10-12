@@ -77,6 +77,7 @@ import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refus
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
+import { pickFromListCode } from './pick-from-list.mjs';
 import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
 import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
 import { isBrowserRead } from './browser-read.mjs';
@@ -2056,6 +2057,7 @@ export function createRelay({
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
           msg.params.arguments.code = reorderCode(msg.params.arguments.code);
+          msg.params.arguments.code = pickFromListCode(msg.params.arguments.code);
           if (browser) msg.params.arguments.code = browserStale.code(msg.params.arguments.code);
           const tabCode = tabCleanupCode(msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;

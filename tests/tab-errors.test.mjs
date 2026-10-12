@@ -343,6 +343,7 @@ test('recorded tab setup and Playwright reads send no input on debugger failures
   }
   for (const code of ['await tab.click(1); await tab.playwright.domSnapshot()',
     'await tab.playwright.getByRole("button").click()', 'await sleight.fillForm(tab, fields)',
+    'await sleight.pickFromList(tab, list, "Portland")',
     'await cua.getTab(await tab.click(1), { browser })', 'nodeRepl.write(`${await tab.click(1)}`)',
     'await tab["click"](1)', 'await tab.click?.(1)']) {
     assert.match(reply(t, 'Debugger unattached', true, code).content[0].text, /input may already have been sent/, code);

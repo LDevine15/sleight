@@ -55,12 +55,13 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 With a connected ChatGPT extension, web pages use the tab handle, never `getApp`.
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from
-`await cua.listBrowsers()`. Read its docs. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
+`await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input's first argument is an element index or `null`.
-Fill every field you already see in one call (`setValue`, `typeText`, clicks by index or locator).
+Fill every field you already see in one call.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
+List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.
 Use locators when validation or autocomplete can add or move fields, indices on static forms.
 Submit in that call only when the user asked for that submit and the engine's confirmation policy
