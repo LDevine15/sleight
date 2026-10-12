@@ -167,33 +167,60 @@ describe('sleight mod', () => {
   test('/sleight record reads only the current session, rewrites elements and refuses to overwrite', async ($, on) => {
     const writes: { path: string; text: string }[] = []
     const recorderCalls: unknown[] = []
+    const files = new Map<string, string>()
     on('session.id', async () => ({ value: 'session-test' }) as never)
     on('session.messages', async () => { throw new Error('The compacted conversation must not be used for recording.') })
     on('process.run', async (_$, e) => {
       recorderCalls.push(e.argv)
-      return { value: { exitCode: 0, stdout: JSON.stringify(script), stderr: '' } } as never
+      files.set(e.argv[3], JSON.stringify(script))
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
     })
     on('fs.exists', async () => ({ value: writes.length > 0 }) as never)
+    on('fs.read', async (_$, e) => {
+      const text = [...files].find(([name]) => e.path === name || e.path.endsWith(name) || name.endsWith(e.path))?.[1]
+      if (text === undefined) throw new Error(`unexpected read ${e.path}`)
+      return { value: text } as never
+    })
     on('fs.write', async (_$, e) => { writes.push(e); return { value: undefined } })
     const first = await $.command.run({ command: 'sleight', args: 'record' } as never)
     expect(String((first as { text?: string }).text)).toMatch(/Recorded 2 steps/)
     expect(writes[0]!.path).toMatch(/\/sleight-session-test\.json$/)
     expect(JSON.parse(writes[0]!.text).steps[1].args.code).toBe('await app.click({"id":"Seven"});')
-    expect((recorderCalls[0] as string[]).slice(1)).toEqual(['record', 'session-test'])
+    expect((recorderCalls[0] as string[]).slice(1, 3)).toEqual(['record', 'session-test'])
+    expect((recorderCalls[0] as string[])[3]).toMatch(/\.recording$/)
     const second = await $.command.run({ command: 'sleight', args: 'record' } as never)
     expect(String((second as { text?: string }).text)).toMatch(/already exists/)
     expect(writes.length).toBe(1)
   })
 
-  test('recording refuses a truncated recorder result without writing a partial script', async ($, on) => {
-    const writes: unknown[] = []
+  test('recording a script over 4 MiB reads the recorder output file', async ($, on) => {
+    const huge = { sleightReplay: 1, steps: [
+      { tool: 'js', args: { code: 'let app = await cua.getApp("Calculator");', title: 'Acquire Calculator' } },
+      { tool: 'js', args: { code: `await app.typeText(${JSON.stringify('x'.repeat(4 * 1024 * 1024))});`, title: 'Type' } },
+    ] }
+    const recorded = JSON.stringify(huge)
+    expect(recorded.length).toBeGreaterThan(4 * 1024 * 1024)
+    const writes: { path: string; text: string }[] = []
+    const files = new Map<string, string>()
     on('session.id', async () => ({ value: 'session-test' }) as never)
     on('fs.exists', async () => ({ value: false }) as never)
-    on('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify(script), stderr: '', isStdoutTruncated: true } }) as never)
+    on('process.run', async (_$, e) => {
+      const out = e.argv[3]
+      files.set(out, recorded)
+      return { value: { exitCode: 0, stdout: '', stderr: 'sleight: 2 steps written to ' + out, isStdoutTruncated: true } } as never
+    })
+    on('fs.read', async (_$, e) => {
+      const text = [...files].find(([name]) => e.path === name || e.path.endsWith(name) || name.endsWith(e.path))?.[1]
+      if (text === undefined) throw new Error(`unexpected read ${e.path}`)
+      return { value: text } as never
+    })
     on('fs.write', async (_$, e) => { writes.push(e); return { value: undefined } })
-    const result = await $.command.run({ command: 'sleight', args: 'record task.json' } as never)
-    expect(String((result as { text?: string }).text)).toMatch(/exceeds the host output limit/)
-    expect(writes).toEqual([])
+    const result = await $.command.run({ command: 'sleight', args: 'record huge.json' } as never)
+    expect(String((result as { text?: string }).text)).toMatch(/Recorded 2 steps/)
+    expect(writes.length).toBe(1)
+    expect(writes[0]!.path).toMatch(/\/huge\.json$/)
+    expect(JSON.parse(writes[0]!.text).steps.length).toBe(2)
+    expect(writes[0]!.text.length).toBeGreaterThan(4 * 1024 * 1024)
   })
 
   test('replay tool calls keep the normal check and obey Stop', async ($, on) => {
@@ -481,6 +508,36 @@ describe('sleight mod', () => {
     })
     await $.command.run({ command: 'sleight', args: '' } as never)
     expect(sent).toEqual([])
+  })
+
+  test('Refresh and the next prompt find an app acquired by window id', async ($, on) => {
+    const windowScript = { sleightReplay: 1, steps: [
+      { tool: 'js', args: { code: 'let app = await cua.getApp({ windowId: 11 });', title: 'Acquire by window' } },
+      { tool: 'js', args: { code: 'await app.click({"id":"Seven"});', title: 'Press Seven' } },
+    ] }
+    const contexts: unknown[] = []
+    const calls: unknown[] = []
+    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+    on('fs.read', async () => ({ value: JSON.stringify(windowScript) }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => {
+      calls.push(e)
+      if (e.tool === 'replay') {
+        return { value: { content: [{ type: 'text', text: JSON.stringify({
+          ok: true, steps: 2, waits: [{ step: 1, waitedMs: 0 }, { step: 2, waitedMs: 0 }],
+          window: 'Window: "Calculator", App: Calculator.\n0 standard window Calculator',
+        }) }] } } as never
+      }
+      return { value: { content: [] } } as never
+    })
+    on('prompt.submit', async (_$, e) => { contexts.push(e.context); return { text: e.text } })
+    const result = await $.command.run({ command: 'sleight', args: 'replay task.json' } as never)
+    expect(String((result as { text?: string }).text)).toMatch(/Replay finished/)
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { bodyColumns: 60 } as never })
+    await ui.press({ key: 'refresh' })
+    expect(calls.some((value: any) => value.tool === 'js' && String(value.args?.code ?? '').includes('const APP = "Calculator"'))).toBe(true)
+    await $.prompt.submit({ text: 'Continue the task', asUser: true } as never)
+    expect(JSON.stringify(contexts.at(-1))).toMatch(/Calculator.*disableDiffing/)
   })
 
   test('after a pane replay the next prompt asks Claude for a full read', async ($, on) => {

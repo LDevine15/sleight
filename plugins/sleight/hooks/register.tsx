@@ -67,10 +67,11 @@ async function recordCurrent($: any, file?: string) {
     if (await $.fs.exists(path)) throw new Error(`${path} already exists. Choose another file.`)
     const session = await $.session.id()
     // The live API's messages may have been compacted. The CLI reads the saved transcript.
-    const run = await $.process.run([`${$.plugin.root}/bin/sleight-mcp`, 'record', session])
+    // Write to a sidecar so a script over the host's 4 MiB stdout cap still records.
+    const staging = `${path}.recording`
+    const run = await $.process.run([`${$.plugin.root}/bin/sleight-mcp`, 'record', session, staging])
     if (run.exitCode !== 0) throw new Error(run.stderr || `Recorder exited ${run.exitCode}.`)
-    if (run.isStdoutTruncated) throw new Error('The recorded script exceeds the host output limit. Use sleight-mcp record with an output filename.')
-    const recorded = JSON.parse(run.stdout)
+    const recorded = JSON.parse(await $.fs.read(staging))
     if (!recorded.steps?.length) throw new Error('No successful sleight actions in this session yet.')
     await $.fs.write(path, JSON.stringify(recorded, null, 2) + '\n')
     await update($, replayFile, () => path)
@@ -104,12 +105,14 @@ async function replayCurrent($: any, file: string) {
       return { text: 'Replay stopped before starting.' }
     }
     engineStarted = true
+    const outcome = outcomeOf(await $.mcp.call(conn.server, 'replay', { script }))
     // The replay's reads move the engine's diff baseline, as a pane snapshot does.
+    // Literal getApp("Name") is enough; otherwise the App: line in the outcome window.
+    const windowText = typeof outcome.window === 'string' ? outcome.window : undefined
     for (const step of script.steps) {
-      const app = appFrom(step.args?.code ?? '', undefined)
+      const app = appFrom(step.args?.code ?? '', windowText)
       if (app) snapshottedApps.add(app)
     }
-    const outcome = outcomeOf(await $.mcp.call(conn.server, 'replay', { script }))
     const entries = resultEntries(script, outcome, id, now())
     await update($, log, list => [...list.filter(entry => entry.id !== id), ...entries].slice(-LOG_LIMIT))
     if (await read($, stopped) || replayCancelled) {
@@ -125,7 +128,7 @@ async function replayCurrent($: any, file: string) {
         'Respect refusals and ask the user for any required approval. Replay result:\n' + JSON.stringify(outcome)
       return { text: `Replay stopped at step ${outcome.step}: ${outcome.error}. Sending the stop details to Claude.` }
     }
-    const app = [...script.steps].reverse().map(step => appFrom(step.args.code ?? '', undefined)).find(Boolean)
+    const app = [...script.steps].reverse().map(step => appFrom(step.args.code ?? '', windowText)).find(Boolean)
     if (app) lastApp = app
     actions += outcome.steps ?? 0
     setStatus($)
