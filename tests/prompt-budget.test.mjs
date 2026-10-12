@@ -20,6 +20,16 @@ const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json',
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
+test('both skill variants explain browser routing and script input within their word budgets', () => {
+  for (const [env, limit] of [[{}, 866], [{ SLEIGHT_PROMPT: 'lean' }, 337]]) {
+    const skill = skillRules(skillPath, env);
+    assert.match(skill, /Web pages use the tab handle, never `getApp`/);
+    assert.match(skill, /script body with top-level `await`, no `return`\. The last expression is the result/);
+    assert.match(skill, /Tab input takes an element index or `null`/);
+    assert.ok(skill.trim().split(/\s+/).length <= limit, 'skill word budget');
+  }
+});
+
 test('nosavestop changes only the final stop clause and keeps the default prompt hashes', () => {
   assert.equal(hash(batchingDescription(firstRule, true)), baseline.batch);
   assert.equal(hash(batchingDescription(firstRule, 'merge')), baseline.merge);

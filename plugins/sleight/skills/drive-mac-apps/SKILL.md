@@ -56,10 +56,10 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 ## Browsers
 
-With a connected ChatGPT extension, start with `await cua.listBrowsers()` and read its docs. Several
-Chromium browsers report as Chrome: pick one by `metadata.extensionInstanceId`, get it with
-`cua.getBrowser({ extensionInstanceId })` in a call of its own, and open pages with
-`cua.createBrowserTab(browser.browserId, url)`. Use only documented methods, leave tabs in the
+Web pages use the tab handle, never `getApp`. Read `cua.listBrowsers()` docs. Acquire
+`cua.getBrowser({ extensionInstanceId })` alone. Open `cua.createBrowserTab(browser.browserId, url)`.
+`js`: script body with top-level `await`, no `return`. The last expression is the result.
+Tab input takes an element index or `null`. Use only documented methods, leave tabs in the
 background, and stop if the user declines a browser approval.
 
 ## sleight's other tools

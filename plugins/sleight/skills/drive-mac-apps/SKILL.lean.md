@@ -12,15 +12,16 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that
   refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
+Web pages use the tab handle, never `getApp`.
+`js`: script body with top-level `await`, no `return`. The last expression is the result.
+Tab input takes an element index or `null`.
 Use only documented methods, leave tabs in the
 background, and stop if the user declines a browser approval.
 
-- For selected text, select it in `js`, then call `drag` with `app`, `windowId`, and `from` and `to` from the
-  latest screenshot of that window, both inside its visible content. If it reports lost text, press
-  Cmd+Z in that window and read it.
-- Use `Help:` fields, `Secondary Actions:`, a right-click
-  or a key first. Only then `hover` with `app` and `at`, after telling the user it moves their pointer
-  and brings the app forward for about two seconds.
+- For text, select in `js`, then `drag`: `app`, `windowId`, `from`, `to` from its latest screenshot,
+  inside content. Lost text: press Cmd+Z there, then read.
+- Try `Help:`, `Secondary Actions:`, right-click or keys before `hover` (`app`, `at`). Tell the user
+  it moves their pointer and brings the app forward for about two seconds.
 - `notifications` and `menu_bar`. The user approves each once per session.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.
@@ -29,4 +30,4 @@ background, and stop if the user declines a browser approval.
   stops a call. A flow rule that stops a transfer: tell the user which, and after a `flow_exception`
   yes, retry the identical call once.
 
-If `js` fails to start, ask the user to run `bin/sleight-mcp --doctor` from the plugin folder.
+If `js` won't start, ask the user: `bin/sleight-mcp --doctor` from plugin folder.
