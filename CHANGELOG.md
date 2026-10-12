@@ -39,6 +39,10 @@
 - A drag of text whose formatting differs from its paragraph's (a bold word in plain text) takes the
   posted or foreground path instead of the background Accessibility write, which came out plain in
   3/3 trials. Plain text keeps the background path.
+- `drag` reads the window's elements through the Accessibility API with a 0.5 s deadline instead of
+  System Events, which took 9.4 s of an 11 to 14 s drag. A read that times out stops the drag before
+  anything is pressed, and a timeout after the drop reports the drop as unverified. Unit-tested; the
+  live timing is unmeasured.
 
 ## 1.2.5 (2026-10-11)
 
