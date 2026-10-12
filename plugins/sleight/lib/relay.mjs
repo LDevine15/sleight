@@ -71,6 +71,7 @@ import { createReadCompactor, dropAcquisitionTree, hasFullTree } from './compact
 import { createResultBudget } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
+import { fillFormCode } from './fill-form.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
@@ -1866,6 +1867,7 @@ export function createRelay({
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
+          msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
         }
       }
       if (browser) browserCalls.set(msg.id, browser);

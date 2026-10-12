@@ -14,6 +14,7 @@ Web pages: tab handle, never `getApp`.
 Script body: top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input: first argument, element index or `null`.
 Fill every visible field in one call. Read once at the end.
+Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` accepts label, index or locator fields.
 Use locators when validation/autocomplete moves fields, indices on static forms.
 Submit in that call only when the user asked and the engine's confirmation policy doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.

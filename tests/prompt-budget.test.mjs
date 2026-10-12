@@ -29,6 +29,8 @@ test('both skill variants explain browser routing and script input within their 
     assert.doesNotMatch(skill, /last expression is the result/);
     assert.match(skill, /Tab input.*first argument.*element index or `null`/);
     assert.match(skill, /Fill every (?:field you already see|visible field) in one call/);
+    assert.match(skill, /nodeRepl\.write\(await sleight\.fillForm\(tab,/);
+    assert.match(skill, /accepts label, index or locator fields/);
     assert.match(skill, /[Rr]ead once at the end/);
     assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*confirmation policy\sdoesn't require confirming it\./);
     assert.match(skill, /Otherwise stop before the final click\./);
