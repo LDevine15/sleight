@@ -421,7 +421,7 @@ if (!controller.signal.aborted && !isDryRun) {
   lockIdentity = statSync('/tmp/sleight-live.lock');
   // Codex can't answer app prompts headless, so the engine's "Always allow" list holds exactly the
   // benchmark apps for the pass, then goes back to what it was (exit handler below).
-  if (armNames.some(n => ARMS[n].codex)) {
+  if (armNames.some(n => ARMS[n].codex) && !process.argv.includes('--codex-no-write')) {
     const backup = join(homedir(), 'Library', 'Logs', 'sleight', `ComputerUseAppApprovals.before-${stamp}.json`);
     mkdirSync(dirname(backup), { recursive: true });
     const apps = [...BENCH_APPS, ...(suite === 'real' ? REAL_APPS : [])];

@@ -430,6 +430,12 @@ test('--surfaces browser,computer reaches every real-suite run and the results; 
   assert.match(String(bad.error?.message), /--surfaces must be/);
 });
 
+test('codex-no-write skips rewriting ChatGPT\'s Always allow list', async () => {
+  const result = await runner({ suite: 'default', arm: 'codex', extraArgs: ['--codex-no-write'] });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.some(c => Array.isArray(c) && c[0] === 'approve'), false);
+});
+
 test('Codex default approvals contain only the five core benchmark bundle IDs', async () => {
   const result = await runner({ suite: 'default', arm: 'codex' });
   assert.equal(result.error, undefined);

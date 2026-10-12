@@ -54,6 +54,7 @@ export function parseArgs(args) {
     const arg = args[i];
     if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--owner-away') options.ownerAway = true;
+    else if (arg === '--codex-no-write') options.codexNoWrite = true;
     else if (arg === '--only' || arg === '--from') {
       if (options[arg.slice(2)] || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Invalid ${arg}`);
       options[arg.slice(2)] = args[++i];
@@ -99,16 +100,29 @@ export function buildPlan(options = {}, state = readFileSync(join(root, 'docs/st
   if (new Set(selected).size !== selected.length || selected.some(id => !steps.some(step => step.id === id))) throw new Error('Unknown or duplicate step selector');
   if (options.only) steps = steps.filter(step => selected.includes(step.id));
   if (options.from) steps = steps.slice(steps.findIndex(step => step.id === options.from));
+  if (options.codexNoWrite) {
+    steps = steps.map(step => {
+      const command = step.command;
+      if (!command?.some(arg => String(arg).includes('codex'))) return step;
+      return { ...step, command: [...command, '--codex-no-write'] };
+    });
+  }
   return { dryRun: Boolean(options.dryRun), drives: false, lock: false, stateSource: 'docs/status/STATE.md',
     windowMinutes: [75, 90], estimateNote: 'Past timings exclude some setup and cleanup. Unknown estimates are null. The 75 to 90 minute window is not a measured total.',
-    watchers: ['.dev/passes/front-watch.sh', 'bench/keyboard-taps.swift (precompiled cache binary)'], steps };
+    watchers: ['bench/front-watch.sh', 'bench/keyboard-taps.swift (precompiled cache binary)'], steps,
+    ...(options.codexNoWrite ? { codexNoWrite: true } : {}) };
 }
 
 export function frontReport(line, baseline) {
   const match = /^\d{2}:\d{2}:\d{2}(?:\.\S+)? (.+)$/.exec(line.trim());
   if (!match) return { baseline, stop: 'foreground watcher report missing or malformed' };
-  if (baseline && match[1] !== baseline) return { baseline, stop: 'foreground changed' };
-  return { baseline: match[1] };
+  const current = match[1];
+  if (baseline && current !== baseline) {
+    const app = value => value.split('\t')[0];
+    const windowed = baseline.includes('\t') || current.includes('\t');
+    return { baseline, stop: windowed && app(baseline) === app(current) ? 'foreground window changed' : 'foreground changed' };
+  }
+  return { baseline: current };
 }
 
 // Taps held before the sitting starts (a window manager, Siri) are the owner's and stay; a process
@@ -197,7 +211,7 @@ function artifacts() {
 }
 
 async function watch(controller) {
-  const script = join(root, '.dev/passes/front-watch.sh');
+  const script = join(root, 'bench/front-watch.sh');
   const taps = join(homedir(), 'Library/Caches/sleight-bench/keyboard-taps');
   if (!existsSync(script) || !existsSync(taps)) throw new Error('Existing front watcher and precompiled keyboard-taps binary are required; no step started');
   let baseline, tapsBefore, stopping = false, buffer = '', timer;

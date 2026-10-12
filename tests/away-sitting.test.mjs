@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const url = new URL('../bench/away-sitting.mjs', import.meta.url);
 const load = async () => {
@@ -30,6 +30,8 @@ test('dry run prints the STATE order, commands, sources and estimates without li
   assert.equal(plan.steps.at(-1).command, null);
   assert.match(plan.steps.at(-1).blocked, /h2h-clean/);
   assert.ok(!result.stdout.includes('/Users/'));
+  assert.ok(plan.watchers.includes('bench/front-watch.sh'));
+  assert.ok(!plan.watchers.some(w => w.includes('.dev/passes/front-watch.sh')));
 });
 
 test('selection preserves STATE order and rejects unknown or conflicting selectors', async () => {
@@ -119,6 +121,20 @@ test('unavailable commands are recorded as failures and do not execute', async (
   assert.equal(h.rows[0].exitCode, 126);
 });
 
+test('codex-no-write is parsed and attached only to Codex arm commands', async () => {
+  const { buildPlan, parseArgs } = await load();
+  const withFlag = buildPlan(parseArgs(['--dry-run', '--codex-no-write']));
+  assert.equal(withFlag.codexNoWrite, true);
+  const codex = withFlag.steps.filter(s => s.command?.includes('codex') || s.command?.join(' ').includes('sleight,codex'));
+  assert.ok(codex.length >= 2);
+  for (const step of codex) assert.ok(step.command.includes('--codex-no-write'), step.id);
+  const sleightOnly = withFlag.steps.find(s => s.id === 'textedit-drag');
+  assert.ok(!sleightOnly.command.includes('--codex-no-write'));
+  const without = buildPlan(parseArgs(['--dry-run']));
+  assert.equal(without.codexNoWrite, undefined);
+  assert.ok(!without.steps[0].command.includes('--codex-no-write'));
+});
+
 test('watcher parsers reject malformed reports, retain baseline and stop on a tap added after the start', async () => {
   const { frontReport, tapReport, tapBaseline } = await load();
   assert.deepEqual(frontReport('12:00:00.123 Editor', undefined), { baseline: 'Editor' });
@@ -138,4 +154,34 @@ test('watcher parsers reject malformed reports, retain baseline and stop on a ta
   assert.ok(!ENGINE_HELPER.test('/Applications/Device Hub.app/Contents/MacOS/Device Hub'));
   assert.match(tapReport('[{"pid":42,"app":"Device Hub"}]', before, new Set(), new Map([[42, '/Applications/Device Hub.app']])), /Device Hub at \/Applications/);
   for (const value of ['broken', '{}', '[null]']) assert.match(tapReport(value), /watcher/);
+});
+
+test('a recorded watcher log stops on a window id or title change of the same app', async () => {
+  const { frontReport } = await load();
+  const log = [
+    '12:00:00.100 TextEdit\t240864\tUntitled',
+    '12:00:00.600 TextEdit\t240864\tUntitled',
+    '12:00:01.100 TextEdit\t240865\tUntitled',
+    '12:00:01.600 TextEdit\t240865\tNotes',
+    '12:00:02.100 Chess\t99\tGame',
+  ];
+  let state = frontReport(log[0], undefined);
+  assert.equal(state.stop, undefined);
+  state = frontReport(log[1], state.baseline);
+  assert.equal(state.stop, undefined);
+  state = frontReport(log[2], state.baseline);
+  assert.match(state.stop, /foreground window changed/);
+  state = frontReport(log[3], 'TextEdit\t240865\tUntitled');
+  assert.match(state.stop, /foreground window changed/);
+  state = frontReport(log[4], 'TextEdit\t240864\tUntitled');
+  assert.match(state.stop, /foreground/);
+});
+
+test('the tracked front watcher records window ids and titles without being executed', () => {
+  const path = new URL('../bench/front-watch.sh', import.meta.url);
+  assert.equal(existsSync(path), true, 'bench/front-watch.sh is missing');
+  const source = readFileSync(path, 'utf8');
+  assert.match(source, /kCGWindowNumber/);
+  assert.match(source, /kCGWindowName/);
+  assert.doesNotMatch(source, /osascript -e 'tell /);
 });
