@@ -4,6 +4,11 @@ export function browserReply(reply) {
     reply.result?._meta?.['codex/toolSurface']?.kind === 'browserUse';
 }
 
+export function browserLeaseNote(code, handles = new Set()) {
+  if (typeof code !== 'string' || (!handles.size && !/\bcua\s*\.\s*(?:getBrowser|getTab|createBrowserTab)\s*\(/.test(sourceOf(code)))) return;
+  return 'For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.';
+}
+
 const nativeApi = /\bcua\s*(?:\?\.|\.)\s*(?:getApp|computer|listApps|listWindows|getState)\b/;
 function sourceOf(code) {
   code = code.replace(/\bcua\s*\[\s*["'](getApp|computer|listApps|listWindows|getState)["']\s*\]/g, 'cua.$1');

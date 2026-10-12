@@ -83,6 +83,7 @@ export function noticeInventory(prompt, source = readFileSync(new URL('../plugin
 
 export function sharedNoticeInventory(prompt) {
   const functions = {
+    'browser-call.mjs': ['browserLeaseNote'],
     'read-failure.mjs': ['savePanelNote', 'offSpaceNote', 'readFailureAdvice'],
     'simulator-focus.mjs': ['simulatorScreenshotNote'],
     'blocked-apps.mjs': ['forbiddenTargetWarning'],
@@ -104,7 +105,7 @@ export function sharedNoticeInventory(prompt) {
     const ast = ts.createSourceFile(file, readFileSync(new URL(`../plugins/sleight/lib/${file}`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     const add = node => {
       const raw = render(node);
-      const text = ['read-failure.mjs', 'simulator-focus.mjs'].includes(file) ? promptNotice(raw, prompt) : raw;
+      const text = ['read-failure.mjs', 'simulator-focus.mjs', 'browser-call.mjs'].includes(file) ? promptNotice(raw, prompt) : raw;
       if (text.replaceAll('<value>', '').trim()) entries.push({ path: `${file}:${ast.getLineAndCharacterOfPosition(node.getStart()).line + 1}`, text });
     };
     function visit(node, selected = false) {

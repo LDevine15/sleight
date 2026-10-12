@@ -60,7 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
-import { browserCall, browserReply, nativeBindings } from './browser-call.mjs';
+import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
@@ -86,11 +86,13 @@ import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
 import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
+import { withoutPageCallbacks } from './page-callbacks.mjs';
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
 // Strings are blanked first, so typed text that mentions an action doesn't count.
 export function unawaitedAction(code) {
+  code = withoutPageCallbacks(code);
   const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
   for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText)\()/g)) {
     let end = m.index + m[0].length - 1, chained = false;
@@ -163,6 +165,7 @@ export function promptNotice(text, prompt) {
   if (prompt !== 'lean') return text;
   return text
     .replace('REPL preparation was stopped before this call ran.', 'REPL setup stopped. Call skipped.')
+    .replace('For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.', 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.')
     .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
     .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
     .replace('` does.', '`.')
@@ -985,9 +988,12 @@ export function createRelay({
     onLeaseFault(error);
   }
 
-  function leaseStop(msg, reason) {
+  function leaseStop(msg, reason, browserAdvice = false) {
+    const note = browserAdvice && msg.params?.name === 'js' && browserLeaseNote(msg.params.arguments?.code, browserHandles);
+    const content = [{ type: 'text', text: reason.startsWith('Input lease:') ? reason : `Input lease: ${reason}` }];
+    if (note) content[0].text += '\n' + promptNotice(note, prompt);
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true,
-      content: [{ type: 'text', text: reason.startsWith('Input lease:') ? reason : `Input lease: ${reason}` }] } });
+      content } });
   }
   function refreshHeartbeat() {
     if (disposed) { stopHeartbeat(); return; }
@@ -1076,7 +1082,7 @@ export function createRelay({
         const recovery = target ? `${constApp ? '' : 'let app = '}await ${target}` : 'await cua.getState()';
         const inventory = /\bcua\.(?:listApps|listWindows|getState)\(/.test(code)
           ? ' To look up apps or windows, send one expression, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
-        leaseStop(msg, `a bundle ID and full window header are required. Send exactly \u0060${recovery}\u0060 in js.${inventory} Use the handle returned by cua.getApp directly.`);
+        leaseStop(msg, `a bundle ID and full window header are required. Send exactly \u0060${recovery}\u0060 in js.${inventory} Use the handle returned by cua.getApp directly.`, true);
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }

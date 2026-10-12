@@ -153,6 +153,11 @@ test('lean changes relay additions without changing engine text or safety refusa
 });
 
 // Lean was 30% under the default until both gained the same browser lines (29.7%, 2026-10-12).
+test('shared notices count the browser lease advice and its lean variant', { skip }, () => {
+  assert.ok(sharedNoticeInventory().some(entry => entry.text === 'For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.'));
+  assert.ok(sharedNoticeInventory('lean').some(entry => entry.text === 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.'));
+});
+
 test('the offline budget command measures all sources and stays about 30 percent under', { skip }, () => {
   const result = spawnSync(process.execPath, ['bench/prompt-budget.mjs', '--json'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);

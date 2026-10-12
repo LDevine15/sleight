@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { constants, createContext, runInContext } from 'node:vm';
 import { PassThrough } from 'node:stream';
-import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,6 +18,50 @@ test('literal browser calls are classified as browser', () => {
   assert.ok(browserCall('await tab.getByRole("link", { name: "More" }).click()', new Set(['tab'])));
   assert.ok(browserCall('const rows = [1, 2]; await tab.goto("https://example.com")', new Set(['tab'])));
   assert.ok(browserCall('const tabs = await cua.listTabs(); nodeRepl.write(tabs[0])'));
+});
+
+test('a native lease refusal with a confirmed browser handle names browser acquisition', t => {
+  const h = runtime(t);
+  h.call(1, 'let tab = await cua.getTab("1")');
+  h.reply(1, { content: [], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } });
+  h.call(2, '// inventory\nawait cua.getState()');
+  assert.equal(h.sent.some(msg => msg.id === 2), false);
+  const text = h.received.find(msg => msg.id === 2).result.content[0].text;
+  assert.match(text, /Input lease:/);
+  assert.match(text, /For browser work, use cua\.getBrowser/);
+  assert.match(text, /cua\.listTabs\(\)/);
+});
+
+for (const pending of ['browser', 'native']) test(`a ${pending} call pending after browser acquisition does not suggest switching APIs`, t => {
+  const h = runtime(t);
+  h.call(1, 'let tab = await cua.getTab("1")');
+  h.reply(1, { content: [], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } });
+  h.call(2, pending === 'browser' ? 'await tab.getAXState()' : 'let app = await cua.getApp("Editor")');
+  h.call(3, '// inventory\nawait cua.getState()');
+  const text = h.received.find(msg => msg.id === 3).result.content[0].text;
+  assert.match(text, /pending/);
+  assert.doesNotMatch(text, /For browser work|Browser work:|cua\.listTabs/);
+});
+test('a mixed browser acquisition and native inventory refusal names browser acquisition', t => {
+  const h = runtime(t);
+  h.call(1, 'const b = await cua.getBrowser({}); const state = await cua.getState(); state.browsers.length;');
+  assert.equal(h.sent.length, 0);
+  assert.match(h.received.at(-1).result.content[0].text, /For browser work, use cua\.getBrowser/);
+});
+test('a native refusal without browser context does not suggest switching APIs', t => {
+  const h = runtime(t); h.call(1, '// inventory\nawait cua.getState()');
+  assert.doesNotMatch(h.received.at(-1).result.content[0].text, /For browser work/);
+});
+
+const recordedLeases = JSON.parse(readFileSync(new URL('./fixtures/h4-native-lease.json', import.meta.url), 'utf8'));
+for (const { id, code } of recordedLeases) test(`recorded native lease refusal retains routing and adds browser advice: ${id}`, t => {
+  assert.equal(browserCall(code, new Set(['browserTab'])), undefined);
+  const h = runtime(t);
+  h.call(1, 'let browserTab = await cua.getTab("1")');
+  h.reply(1, { content: [], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } });
+  h.call(2, code);
+  assert.equal(h.sent.some(msg => msg.id === 2), false);
+  assert.match(h.received.find(msg => msg.id === 2).result.content[0].text, /For browser work, use cua\.getBrowser/);
 });
 
 test('optional and parenthesized native roots retain native routing', () => {

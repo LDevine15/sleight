@@ -1,0 +1,30 @@
+[
+  {
+    "id": "toolu_01P84SQ5pzGC5gUSkGMUUkj3",
+    "code": "\n// Use the original cua API to get the app state\nlet b = await cua.getBrowser({ extensionInstanceId: 'fixture-extension' });\nlet state = await cua.getState();\n\n// Check available browsers and tabs\nstate.browsers.length;\n"
+  },
+  {
+    "id": "toolu_012C5gp635PW7Y9K67LyzZxv",
+    "code": "\n// Simple state check\nawait cua.getState();\n"
+  },
+  {
+    "id": "toolu_01R4cSKesxwpAgrqnjQSNxyN",
+    "code": "\nconst apps = await cua.listApps();\nconst chromeApp = apps.find(a => a.displayName && a.displayName.toLowerCase().includes('chrome'));\nconsole.log(\"Found Chrome app:\", chromeApp);\n\nif (chromeApp) {\n  const app = await cua.getApp(chromeApp.displayName);\n  const { state, screenshot } = await app.getAXStateAndScreenshot({ disableDiffing: true });\n  console.log(\"Got state and screenshot\");\n  console.log(\"State length:\", state.length);\n  console.log(\"Screenshot size:\", screenshot ? screenshot.length : 0);\n  \n  // Print first part of state to see what's on screen\n  console.log(\"State preview:\");\n  console.log(state.substring(0, 500));\n  \n  state.substring(0, 1000);\n} else {\n  \"Chrome app not found\";\n}\n"
+  },
+  {
+    "id": "toolu_01NCzxy38CQmSFjKJ6T1Q3oB",
+    "code": "\nconst state = await cua.getState();\nconsole.log(\"Available apps:\");\nstate.apps.forEach(a => {\n  if (a.displayName && a.displayName.includes('Chrome')) {\n    console.log(`  ${a.id} - ${a.displayName}`);\n  }\n});\n\n// Also check browsers\nconsole.log(\"\\nAvailable browsers:\");\nstate.browsers.forEach(b => {\n  console.log(`  ${b.id} - ${b.name} (${b.family})`);\n  b.tabs.forEach((t, i) => {\n    console.log(`    Tab ${i}: ${t.url}`);\n  });\n});\n\n\"State retrieved\";\n"
+  },
+  {
+    "id": "toolu_016r7a9jT1WMHfVn4HLiKi3i",
+    "code": "\n// Get just what we need\nawait cua.getState();\n"
+  },
+  {
+    "id": "toolu_01Xehp2T93xCfZ7GTdkR8UCJ",
+    "code": "\n(await cua.listApps()).map(a => `${a.id || a.displayName}: ${a.displayName || a.id}`);\n"
+  },
+  {
+    "id": "toolu_01JMJZJoGxNPSEyoRmFg3GaM",
+    "code": "\n// Search for \"teapot\" on the MDN status codes page\nawait cua.getState().then(async state => {\n  const tab = await cua.getTab({ url: 'https://developer.mozilla.org/en-US/docs/Web/HTTP/Status' }, { browser: 'fixture-extension' });\n  // Use Cmd+F to open search\n  await tab.pressKey('Meta+f');\n});\n"
+  }
+]
