@@ -80,6 +80,10 @@ test('duplicated full native reads reach the compactor only once', () => {
 
 const helperRead = (h, id, code = 'let app = await cua.getApp("Calculator")') => h.fromClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } });
 const helperReply = (h, id, text = 'Error: -10005 timeoutReached', isError = true) => h.fromServer({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError } });
+const answerOpenedProbe = h => {
+  const probe = [...h.toServer].reverse().find(m => String(m.id).startsWith('sleight-opened-tabs-'));
+  if (probe) h.fromServer({ jsonrpc: '2.0', id: probe.id, result: { content: [{ type: 'text', text: '[]' }] } });
+};
 
 test('each read through a known native handle keeps its app Space probe', async () => {
   const probes = [];
@@ -2352,6 +2356,7 @@ test('Debugger unattached never replays actions, mixed calls or successful calle
     [7, 'await cua.getTab((await tab.click(3), "12"))', 'Debugger unattached', true]]) {
     helperRead(h, id, code); await tick();
     helperReply(h, id, text, error); await tick();
+    answerOpenedProbe(h); await tick();
     t.mock.timers.tick(5000); await tick();
     assert.equal(h.toServer.filter(m => m.id === id).length, 1, code);
     assert.equal(h.toClient.filter(m => m.id === id).length, 1, code);

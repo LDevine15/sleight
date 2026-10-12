@@ -56,6 +56,7 @@ function installTabCleanup(cua) {
     return wrap(tab, matches.length === 1 ? matches[0] : undefined);
   };
   globalThis.__sleightTabs = { async cleanup(deadline = Date.now() + 2000) {
+    if (globalThis.__sleightOpenedThisCall) globalThis.__sleightOpenedThisCall.length = 0;
     const notes = [];
     const bounded = async work => {
       let timer;

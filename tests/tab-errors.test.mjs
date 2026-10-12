@@ -7,15 +7,30 @@ import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 const READ = 'await tab.getAXState({ disableDiffing: true })';
 const DIALOG = 'await tab.getJsDialog()';
 
+function answerOpened(serverIn, serverOut) {
+  const sent = [], done = new Set();
+  serverIn.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => sent.push(JSON.parse(line))));
+  return () => {
+    for (const msg of sent) {
+      if (String(msg.id).startsWith('sleight-opened-tabs-') && !done.has(msg.id)) {
+        done.add(msg.id);
+        serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: '[]' }] } }) + '\n');
+      }
+    }
+  };
+}
+
 function reply(t, text, isError = true, code = 'await tab.click(29)', meta) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const output = [];
   clientOut.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => output.push(JSON.parse(line))));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false });
   t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
+  const flushOpened = answerOpened(serverIn, serverOut);
   clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
     params: { name: 'js', arguments: { code } } }) + '\n');
   serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError, content: [{ type: 'text', text }], _meta: meta } }) + '\n');
+  flushOpened();
   return output.at(-1).result;
 }
 
@@ -27,12 +42,13 @@ async function replyAfterResend(t, text, code) {
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false });
   t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
   const tick = () => new Promise(resolve => setImmediate(resolve));
+  const flushOpened = answerOpened(serverIn, serverOut);
   clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
   await tick();
   const answer = () => serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text }] } }) + '\n');
-  answer(); await tick();
+  answer(); flushOpened(); await tick();
   t.mock.timers.tick(1100); await tick();
-  if (!output.some(m => m.id === 1)) { answer(); await tick(); }
+  if (!output.some(m => m.id === 1)) { answer(); flushOpened(); await tick(); }
   return output.find(m => m.id === 1).result;
 }
 

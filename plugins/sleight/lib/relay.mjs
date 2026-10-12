@@ -84,6 +84,7 @@ import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { ReplWarmup } from './repl-warmup.mjs';
 import { TabClickResults } from './tab-click-result.mjs';
+import { openedTabNote, tabReuseCode, readOpened, createdTabCall, parseOpenedPayload } from './tab-reuse.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
@@ -496,6 +497,7 @@ export function createRelay({
   const listRequests = new Set();
   const internalRequests = new Map();
   let tabsMayNeedCleanup = false;
+  const openedReads = new Set();
   let tabCleanupPending;
   const tabCleanupNotes = new Map();
   const turnEndCalls = new Map(); // request id -> original turn arguments, until acknowledgement
@@ -972,6 +974,7 @@ export function createRelay({
     browserStale.reset();
     forgetGuard();
     tabsMayNeedCleanup = false;
+    openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
     clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
@@ -2077,7 +2080,7 @@ export function createRelay({
           if (browser) msg.params.arguments.code = browserStale.code(msg.params.arguments.code);
           const tabCode = tabCleanupCode(msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
-          msg.params.arguments.code = tabCode;
+          msg.params.arguments.code = tabReuseCode(tabCode, msg.id);
           if (browser) msg.params.arguments.code = browserAliasesCode(msg.params.arguments.code);
           if (browser || /\bagent\.browsers\.get\s*\(/.test(originalCode))
             msg.params.arguments.code = clickResults.code(msg.params.arguments.code);
@@ -2417,8 +2420,37 @@ export function createRelay({
     if (jsCode !== undefined) replWarmup.attach(msg);
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
+      const rewritten = text => rewriteDragAttempt(
+        rewriteTabError(text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }), jsCode);
+      if (jsCode !== undefined && createdTabCall(jsCode) && !openedReads.has(msg.id)) {
+        openedReads.add(msg.id);
+        const probeId = `sleight-opened-tabs-${nextInternalId++}`, generation = stopGeneration;
+        const original = msg, code = jsCode;
+        const finish = reply => {
+          clearTimeout(timer); internalRequests.delete(probeId);
+          if (generation !== stopGeneration) return;
+          const text = (reply.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+          const opened = parseOpenedPayload(text, original.id);
+          const lastText = original.result.content.findLastIndex(c => c.type === 'text');
+          original.result.content = original.result.content.map((c, i) => {
+            if (c.type !== 'text') return c;
+            const text = rewritten(c.text);
+            return { ...c, text: i === lastText ? openedTabNote(text, { code, opened }) : text };
+          });
+          observeServerMessage(original);
+        };
+        const timer = setTimeout(() => {
+          lateHelperReplies.add(probeId);
+          finish({ result: { content: [] } });
+        }, 1500);
+        internalRequests.set(probeId, finish);
+        toServer({ jsonrpc: '2.0', id: probeId, method: 'tools/call', params: { name: 'js',
+          arguments: { code: readOpened(original.id), timeout_ms: 1500 },
+          _meta: { [META_KEY]: turnMeta() } } });
+        return;
+      }
       msg.result.content = msg.result.content.map(c =>
-        c.type === 'text' ? { ...c, text: rewriteDragAttempt(rewriteTabError(c.text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }), jsCode) } : c);
+        c.type === 'text' ? { ...c, text: rewritten(c.text) } : c);
     }
     // A "call failed" line after this message sent Claude to check again (h2h-3, 2026-10-10), so the
     // close it reports gets no verified-results line.
