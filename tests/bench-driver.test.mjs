@@ -4,6 +4,22 @@ import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+test('the opt-in world drag audit uses matched tool results and stays absent from other runs', async () => {
+  const { runDriver } = await import('../bench/driver.mjs');
+  const events = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'drag', name: 'js', input: { code: 'await app.drag({})' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'drag', is_error: false }] } },
+    { type: 'result', result: 'done' },
+  ];
+  const args = ['-e', `for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event))`];
+  const audited = await runDriver(process.execPath, args, { format: 'stream-json', auditDrag: true });
+  assert.deepEqual(audited.methodAudit, { drag: true, replacement: false, complete: true });
+  const ordinary = await runDriver(process.execPath, args, { format: 'stream-json' });
+  assert.equal(ordinary.methodAudit, undefined);
+  const privateRun = await runDriver(process.execPath, args, { format: 'stream-json', auditDrag: true, privateMail: true });
+  assert.equal(privateRun.methodAudit, undefined);
+});
+
 test('private driver suppresses transcripts and inherited trace destinations', async t => {
   const { runDriver } = await import('../bench/driver.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'bench-private-driver-'));

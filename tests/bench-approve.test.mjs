@@ -16,6 +16,15 @@ test('benchmark menu approvals cover the original apps and exclude unapproved ta
   for (const app of ['System Settings', 'ChatGPT', 'TextEdit copy']) assert.equal(approve(`Allow Claude to use ${app}'s menu bar item?`), null);
   assert.equal(approve('Allow Claude to read and use your notifications?'), null);
 });
+
+test('world claims approve only their fixture apps and refuse owner containers and settings', () => {
+  for (const app of ['Finder', 'Preview', 'Microsoft Word', 'Microsoft Excel', 'Helium', 'TextEdit', 'Calculator']) {
+    assert.equal(approve(`Allow Computer Use to use "${app}"?`, 'world'), 'accept');
+  }
+  for (const app of ['Notes', 'Reminders', 'Calendar', 'System Settings', 'Mail', 'Mimestream', 'Microsoft PowerPoint']) {
+    assert.equal(approve(`Allow Computer Use to use "${app}"?`, 'world'), null);
+  }
+});
 test('benchmark drags approve the three apps by bundle ID too, exact case only', () => {
   for (const app of ['com.apple.Chess', 'com.apple.TextEdit', 'com.apple.calculator', 'Chess']) {
     assert.equal(approve(`Allow Claude to drag in ${app}? It moves the pointer.`), 'accept');

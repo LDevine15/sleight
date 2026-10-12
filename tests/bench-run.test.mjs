@@ -11,6 +11,7 @@ import { guardGenericOperation } from '../bench/generic-approval.mjs';
 import { genericSettings } from '../bench/plugin-arm.mjs';
 import { cpuSplit } from '../bench/footprint.mjs';
 import { webBrowsers } from '../bench/tasks-web.mjs';
+import { WORLD_APPS } from '../bench/world/tasks.mjs';
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
@@ -47,7 +48,7 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
       if (command === 'id') return privateMail ? 'Owner Example' : ownerName;
       calls.push('tap check'); return JSON.stringify(taps);
     },
-    getTasks: () => tasks ?? [task], BENCH_APPS, REAL_APPS,
+    getTasks: () => tasks ?? [task], BENCH_APPS, REAL_APPS, WORLD_APPS,
     selectSuiteTasks, assertShopSmokeRuns,
     closeBenchTextEdit: options => { calls.push('TextEdit tail'); tailScopes.push(options); },
     quitChess: options => { calls.push('Chess tail'); tailScopes.push(options); },
@@ -87,6 +88,52 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
   try { await runInNewContext(`(async () => { ${source}\n})()`, sandbox); } catch (caught) { error = caught; }
   return { calls, saved, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, exitCode: sandbox.process.exitCode };
 }
+
+test('world suite uses retained fixtures, world approvals and each task deadline', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight,codex', drive: true, outcome: { passed: true },
+    extraArgs: ['--owner-away'],
+    tasks: [{ id: 'world-fixture', app: 'Preview', prompt: () => 'fixture', timeoutMs: 17000 }] });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(call => call === 'real run').length, 6);
+  const approved = result.calls.find(call => Array.isArray(call) && call[0] === 'approve');
+  assert.ok(approved.includes('com.apple.Preview'));
+  assert.equal(approved.includes('com.apple.mail'), false);
+  assert.equal(approved.includes('com.apple.Notes'), false);
+  assert.ok(result.driverOptions.every(options => options.timeoutMs === 17000));
+  assert.ok(result.codexRuns.every(run => run.options.timeoutMs === 17000));
+});
+
+test('world live fixtures require an explicit owner-away boundary before CLI startup', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight' });
+  assert.match(result.error?.message ?? '', /world.*--owner-away/);
+  assert.equal(result.calls.includes('lock'), false);
+  assert.equal(result.envs.length, 0);
+});
+
+test('world refuses login auth before preparing an empty isolated config', async () => {
+  const result = await runner({ suite: 'world', extraArgs: ['--owner-away', '--auth', 'login'] });
+  assert.match(result.error?.message ?? '', /world.*--auth login.*isolated/i);
+  assert.equal(result.directories.length, 0);
+  assert.equal(result.envs.length, 0);
+});
+
+test('only world runs widen the Claude environment filter', async () => {
+  const base = { CLAUDE_CUSTOM_FEATURE: 'keep-outside-world' };
+  const normal = await runner({ suite: 'default', base });
+  assert.ok(normal.envs.length);
+  assert.ok(normal.envs.every(env => env.CLAUDE_CUSTOM_FEATURE === base.CLAUDE_CUSTOM_FEATURE));
+  const world = await runner({ suite: 'world', base, extraArgs: ['--owner-away'] });
+  assert.ok(world.envs.length);
+  assert.ok(world.envs.every(env => !('CLAUDE_CUSTOM_FEATURE' in env)));
+});
+
+test('world paired-window drag requests the method audit for both drivers', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight,codex', drive: true, extraArgs: ['--owner-away'],
+    tasks: [{ id: 'textedit-window-drag', app: 'TextEdit', prompt: () => 'drag', timeoutMs: 17000 }] });
+  assert.equal(result.error, undefined);
+  assert.ok(result.driverOptions.every(options => options.auditDrag === true));
+  assert.ok(result.codexRuns.every(run => run.options.auditDrag === true));
+});
 
 test('extension tasks require both surfaces before any live lock or fixture', async () => {
   const task = { id: 'chrome-validation-extension', app: 'Google Chrome', surface: 'extension' };

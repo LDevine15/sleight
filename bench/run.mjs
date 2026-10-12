@@ -52,6 +52,7 @@ import { prepareGenericArm, acceptGenericCatalog, genericSettings } from './plug
 import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
+import { WORLD_APPS } from './world/tasks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -73,6 +74,8 @@ if (ownerAway && ownerPresent) throw new Error('--owner-present is the opposite 
 const calculatorGate = process.argv.includes('--calculator-gate');
 const cleanArms = process.argv.includes('--clean-arms');
 const suite = option('suite', 'default');
+if (suite === 'world' && option('auth', 'auto') === 'login') throw new Error('world refuses --auth login: isolated arm configs have no login; use --auth api');
+if (suite === 'world' && !isDryRun && !ownerAway) throw new Error('world live fixtures require --owner-away');
 if (suite === 'battery') {
   try { process.exitCode = await (await import('./battery/run.mjs')).main(); }
   catch (error) { console.error(`Battery stopped: ${/^[A-Z][A-Z0-9_]+\b/.exec(error.message)?.[0] ?? 'BATTERY_STOP'}. Check options, fixture seeds and private prerequisites.`); process.exitCode = 1; }
@@ -122,7 +125,7 @@ const ARMS = {
   })(),
 };
 const armNames = armOption === 'all' ? ['sleight', 'lcu'] : armOption.split(',');
-const guardedPass = armNames.some(name => /^(plugin|mcp):/.test(name));
+const guardedPass = suite === 'world' || armNames.some(name => /^(plugin|mcp):/.test(name));
 const preparationErrors = [];
 let codexCleanConfig;
 for (const name of armNames.filter(name => /^(plugin|mcp):/.test(name))) {
@@ -137,6 +140,12 @@ for (const name of armNames) {
   if (!ARMS[name]) throw new Error(`unknown arm ${name}`);
   if (ARMS[name].rejected) continue;
   const arm = ARMS[name];
+  if (suite === 'world' && !arm.codex) {
+    arm.world = true;
+    arm.env.CLAUDE_CONFIG_DIR = join(arm.cwd, 'claude');
+    mkdirSync(arm.env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
+    arm.args.push('--no-chrome');
+  }
   if (guardedPass && !arm.codex) {
     arm.guarded = true;
     arm.servers ??= [arm.server];
@@ -218,14 +227,15 @@ if (auth.mode === 'api') console.log(`Claude arms run on the API key: $${auth.sp
 // the account's IDs and email, and the desktop app's messaging socket. Arms carried all of it, so
 // the API grant billed them as the desktop app's Claude Code and refused them, while the same key
 // paid for claude -p from a clean environment (2026-10-11). Arms start from the host env without it.
-const HOST_SESSION = /^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAUDE_EFFORT$|CLAUDE_PREVIEW_)/;
+const HOST_SESSION = suite === 'world' ? /^CLAUDE/ : /^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAUDE_EFFORT$|CLAUDE_PREVIEW_)/;
 const hostFree = Object.fromEntries(Object.entries(process.env).filter(([key]) => !HOST_SESSION.test(key)));
 const armEnv = (arm, extra = {}) => {
   const env = { ...hostFree, BENCH_ROOT: ROOT, SLEIGHT_APPROVAL_PROMPT: 'client',
     ...arm.env, ...extra, BENCH_SUITE: suite, ENABLE_CLAUDEAI_MCP_SERVERS: 'false', ...auth.env,
     ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
-    ...(suite === 'real' ? { SLEIGHT_SURFACES: realSurfaces } : {}) };
+    ...(['real', 'world'].includes(suite) ? { SLEIGHT_SURFACES: realSurfaces } : {}) };
   for (const key of auth.unset) delete env[key];
+  if (arm.world) env.CLAUDE_CONFIG_DIR = arm.env.CLAUDE_CONFIG_DIR;
   return env;
 };
 
@@ -324,7 +334,7 @@ function footprint(apps, client) {
     finish: async () => { const used = await stop?.(); return used && { ...used, split: cpuSplit(used, { client }) }; } };
 }
 
-async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermissionRefusal, privateMail = false, onSpawn, fixtureLifecycle = false } = {}) {
+async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermissionRefusal, privateMail = false, onSpawn, fixtureLifecycle = false, auditDrag = false, timeoutMs = TIMEOUT_MS } = {}) {
   if (privateMail) assertPrivateClaudePolicy();
   const args = [
     '-p', prompt,
@@ -338,9 +348,9 @@ async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermiss
     '--model', model,
     '--effort', effort,
   ];
-  const drive = (driverSignal, stop) => runDriver(claudeBin, args, { cwd: arm.cwd, env: armEnv(arm, env), timeoutMs: TIMEOUT_MS, onSpawn,
+  const drive = (driverSignal, stop) => runDriver(claudeBin, args, { cwd: arm.cwd, env: armEnv(arm, env), timeoutMs, onSpawn,
       signal: driverSignal,
-      evidenceDir, privateMail, privatePolicyCheck: privateMail ? assertPrivateClaudePolicy : undefined,
+      evidenceDir, privateMail, auditDrag, privatePolicyCheck: privateMail ? assertPrivateClaudePolicy : undefined,
       onPermissionRefusal: arm.guarded ? () => stop('unsupported approval: permission refused') : onPermissionRefusal,
       format: suite === 'real' || guardedPass || fixtureLifecycle ? 'stream-json' : 'json' });
   const response = arm.guarded ? await guardGenericOperation(drive, { signal: signal ?? controller.signal,
@@ -380,7 +390,7 @@ const save = () => {
       terms: realContexts.flatMap(ctx => ctx.privateTask.privateTerms(ctx)) });
     return;
   }
-  const json = JSON.stringify({ stamp, ...(suite === 'real' ? { suite, surfaces: realSurfaces, ownerAway, ownerPresent } : {}),
+  const json = JSON.stringify({ stamp, ...(['real', 'world'].includes(suite) ? { suite, surfaces: realSurfaces, ownerAway, ownerPresent } : {}),
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
     arms: armNames, armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
@@ -424,7 +434,7 @@ if (!controller.signal.aborted && !isDryRun) {
   if (armNames.some(n => ARMS[n].codex) && !process.argv.includes('--codex-no-write')) {
     const backup = join(homedir(), 'Library', 'Logs', 'sleight', `ComputerUseAppApprovals.before-${stamp}.json`);
     mkdirSync(dirname(backup), { recursive: true });
-    const apps = [...BENCH_APPS, ...(suite === 'real' ? REAL_APPS : [])];
+    const apps = suite === 'world' ? WORLD_APPS : [...BENCH_APPS, ...(suite === 'real' ? REAL_APPS : [])];
     const restore = approveOnly(apps.filter(a => /^(com\.|net\.)/.test(a)), backup);
     process.once('exit', () => { try { restore(); } catch (err) { console.error(`Restore the app approvals from ${backup}: ${err.message}`); } });
     console.error(`App approvals set to the benchmark apps; saved the previous list to ${backup}.`);
@@ -471,7 +481,7 @@ pass: for (let run = 1; run <= runs; run++) {
             const cpu = footprint(task.privateMail ? [] : [ctx.sim?.app ?? task.app], ARMS[armName].codex ? 'codex' : 'claude');
             const stopWatching = guardedPass ? watchAppWindows(ctx.sim?.app ?? task.app) : undefined;
             if (ARMS[armName].codex) {
-              const response = await runCodex(prompt, { cwd: ARMS[armName].cwd, model: codexModel, effort: codexEffort, timeoutMs: TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn });
+              const response = await runCodex(prompt, { cwd: ARMS[armName].cwd, model: codexModel, effort: codexEffort, timeoutMs: task.timeoutMs ?? TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
               response.timing = runTiming(response.out);
               response.footprint = await cpu.finish();
               if (stopWatching) response.appWindows = await stopWatching();
@@ -479,7 +489,7 @@ pass: for (let run = 1; run <= runs; run++) {
             }
             const response = await runClaude(prompt, ARMS[armName], !task.privateMail && !task.noScreenshot && armName === 'sleight' ? { SLEIGHT_TRACE: evidenceDir } : {},
               { signal: controller.signal, evidenceDir, ...callbacks, privateMail: task.privateMail,
-                fixtureLifecycle: true, onSpawn: task.privateMail ? undefined : cpu.onSpawn });
+                fixtureLifecycle: true, onSpawn: task.privateMail ? undefined : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
             if (!task.privateMail) response.footprint = await cpu.finish();
             if (stopWatching) response.appWindows = await stopWatching();
             if (!task.privateMail) response.timing = runTiming(response.out, armName === 'sleight' ? traceTiming(evidenceDir) : undefined);
@@ -498,6 +508,7 @@ pass: for (let run = 1; run <= runs; run++) {
         const { out, code, forbidden: _forbidden, ...rest } = result;
         if (task.noScreenshot) { delete rest.screenshot; delete rest.cartShot; }
         results.push(task.privateMail ? privateMailResult(task, ctx, result, { arm: armName, run }) : { arm: armName, task: task.id, run, ...rest,
+          ...(suite === 'world' && { half: task.half, timeoutMs: task.timeoutMs }),
           ...((task.surface || ctx.webKind) && { surface: task.surface ?? 'native' }),
           ...(isDryRun && ARMS[armName].generic && { command: [claudeBin, ...ARMS[armName].args, '--disallowedTools', OUTSIDE_TOOLS.join(','), '--settings', ARMS[armName].settings] }),
           reason: scrub(result.reason), cleanupError: scrub(result.cleanupError), prompt: scrub(result.prompt),

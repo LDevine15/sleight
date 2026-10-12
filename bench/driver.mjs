@@ -14,7 +14,7 @@ export function privateDriverEnvironment(inherited) {
   return { ...Object.fromEntries(Object.entries(inherited).filter(([key]) => PRIVATE_RUNTIME_KEYS.has(key))), ...PRIVATE_LOGGING_OVERRIDES };
 }
 
-export async function runDriver(command, args, { format = 'json', evidenceDir, privateMail = false, privatePolicyCheck, onPermissionRefusal, onStdout, ...options } = {}) {
+export async function runDriver(command, args, { format = 'json', evidenceDir, privateMail = false, privatePolicyCheck, onPermissionRefusal, onStdout, auditDrag = false, ...options } = {}) {
   if (privateMail) options.env = privateDriverEnvironment(options.env ?? process.env);
   let buffer = '', refused = false;
   const response = await runOwned(command, args, { ...options, onStdout: data => {
@@ -52,5 +52,6 @@ export async function runDriver(command, args, { format = 'json', evidenceDir, p
   } catch { out = undefined; }
   if (evidenceDir && !privateMail) writeFileSync(join(evidenceDir, 'transcript.jsonl'), response.stdout, { mode: 0o600 });
   return { code: response.exit.code, out, stderr: response.stderr.slice(-2000), groupClean: response.groupClean,
+    ...(auditDrag && !privateMail && { methodAudit: (await import('./world/method-check.mjs')).dragMethodAudit(response.stdout) }),
     timedOut: response.timedOut, cancelled: response.cancelled, spawnError: response.spawnError };
 }

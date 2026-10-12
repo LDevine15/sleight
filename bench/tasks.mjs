@@ -13,6 +13,7 @@ import { realTasks } from './tasks-real.mjs';
 import { webBrowsers } from './tasks-web.mjs';
 import { acquireFixture } from './real-run.mjs';
 import { openFixture, closeFixtures } from './real-fixture.mjs';
+import { getWorldTasks } from './world/tasks.mjs';
 export { writeTestPDF } from './real-pdf.mjs';
 
 // Calculator shows digit grouping ("1,024"), and Claude reports what it shows.
@@ -436,5 +437,6 @@ export const tasks = [
 export function getTasks(suite = 'default') {
   if (suite === 'default') return tasks;
   if (suite === 'real') return realTasks;
+  if (suite === 'world') return getWorldTasks({ defaults: tasks, real: realTasks });
   throw new Error(`unknown suite ${suite}`);
 }

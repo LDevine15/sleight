@@ -1,0 +1,63 @@
+{
+  "repository": "https://github.com/showlab/macosworld",
+  "commit": "e2ca8334b3765537e5c1c428ce57990248a1bb5f",
+  "license": "CC BY-NC 4.0, upstream task assets and scripts are not bundled",
+  "liveQualified": false,
+  "nativeHost": "possible with adapted fixture lifecycle, upstream runner requires EC2 or VMware",
+  "excludedCommands": [
+    "constants.py env_init_command (deletes diagnostic logs and ejects disks)",
+    "constants.py eval_init_command (changes fullscreen state)",
+    "task pre_command strings that quit apps, close windows or replace prepared user folders"
+  ],
+  "tasks": [
+    {
+      "path": "sys_apps/0e224b29-14f7-3629-ee27-13a9789a997d.json",
+      "title": "Dictionary version window",
+      "check": "front window AX children contain Dictionary and Version",
+      "requires": "fresh benchmark window; English locale; no personal entries",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    },
+    {
+      "path": "sys_apps/07709761-78b1-8043-ffb2-eebaeed08109.json",
+      "title": "Voice Memos version window",
+      "check": "front window AX children contain Voice Memos and Version",
+      "requires": "isolated macOS account with no recordings; English locale",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    },
+    {
+      "path": "sys_apps/259bcb80-aa2b-8291-1d11-6ff4ae36f8cb.json",
+      "title": "Calculator multiplication",
+      "check": "LastResultValue formatted to two decimals equals 1440.00",
+      "requires": "owned Calculator process; clean baseline; validate preference read freshness",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    },
+    {
+      "path": "sys_apps/dbfb0512-cb02-984b-4d25-610b4f8f995a.json",
+      "title": "Calculator operator precedence",
+      "check": "LastResultValue formatted to six decimals equals -7.000000",
+      "requires": "owned Calculator process; clean baseline; validate preference read freshness",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    },
+    {
+      "path": "sys_apps/595554cf-4f75-611c-4cdc-68cd9c8ba973.json",
+      "title": "Calculator square root",
+      "check": "LastResultValue formatted to six decimals equals 1.414214",
+      "requires": "owned Calculator process; clean baseline; validate preference read freshness",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    },
+    {
+      "path": "file_management/e02839ef-afae-ab1f-0837-61f81d1605a0.json",
+      "title": "About Finder",
+      "check": "front window AX title contains About Finder",
+      "requires": "replace destructive prepared-folder pre-command; retained window; English locale",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    },
+    {
+      "path": "sys_and_interface/1d90419a-1022-93ea-d9bf-a6bab0c94eee.json",
+      "title": "System Report navigation",
+      "check": "front process System Information scores 100; About title 50; System Settings process 10",
+      "requires": "owner-prepared public-information window; omit quit pre-command; redact device identifiers",
+      "status": "adaptation proposed; unqualified; excluded from scored suite"
+    }
+  ]
+}

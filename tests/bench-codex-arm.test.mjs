@@ -32,6 +32,18 @@ test('runCodex reads the answer, counts engine calls and flags a shell', async (
   } finally { process.env.PATH = path; fake.done(); }
 });
 
+test('the Codex world drag audit reads completed MCP tool arguments', async () => {
+  const fake = fakeCodex([{ type: 'item.completed', item: { type: 'mcp_tool_call', tool: 'js',
+    arguments: { code: 'await app.drag({})' }, result: { isError: false } } }]);
+  const path = process.env.PATH;
+  process.env.PATH = `${fake.dir}:${path}`;
+  try {
+    const { runCodex } = await import('../bench/codex-arm.mjs');
+    const run = await runCodex('task', { cwd: fake.dir, model: 'm', effort: 'medium', timeoutMs: 10000, auditDrag: true });
+    assert.deepEqual(run.methodAudit, { drag: true, replacement: false, complete: true });
+  } finally { process.env.PATH = path; fake.done(); }
+});
+
 test('an abort stops Codex and the processes it started, and says the group is gone', async () => {
   const fake = fakeCodex([{ type: 'thread.started', thread_id: 'none' }], { hang: true });
   const path = process.env.PATH;

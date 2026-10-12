@@ -4,6 +4,7 @@
 // them for the benchmark's own apps (BENCH_APPS in tasks.mjs), on either arm's
 // server, and nothing else. Any other request falls through to Claude Code's default.
 import { BENCH_APPS, REAL_APPS } from './tasks.mjs';
+import { WORLD_APPS } from './world/tasks.mjs';
 import { approvedApps } from './battery/tasks.mjs';
 import { writeFileSync } from 'node:fs';
 
@@ -26,7 +27,7 @@ const SERVERS = generic ? JSON.parse(process.env.BENCH_ARM_SERVERS) : ['plugin:s
 // iPhone Mirroring needs the owner's sign-in and focus, so it's approved only in a real-suite run
 // started with --owner-present (owner, 2026-10-11). Headless claude -p can't show a prompt.
 const OWNER_PRESENT_APPS = ['iPhone Mirroring', 'com.apple.ScreenContinuity'];
-const apps = process.env.BENCH_SUITE === 'battery' ? approvedApps(process.env.BENCH_OWNER_PRESENT === '1') :
+const apps = process.env.BENCH_SUITE === 'world' ? WORLD_APPS : process.env.BENCH_SUITE === 'battery' ? approvedApps(process.env.BENCH_OWNER_PRESENT === '1') :
   [...BENCH_APPS, ...(process.env.BENCH_SUITE === 'real' ? REAL_APPS : []),
   ...(process.env.BENCH_SUITE === 'real' && process.env.BENCH_OWNER_PRESENT === '1' ? OWNER_PRESENT_APPS : [])];
 const choices = e.requested_schema?.properties?.choice?.enum ?? [];
