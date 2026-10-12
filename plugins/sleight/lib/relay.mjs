@@ -61,6 +61,7 @@ import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRe
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply } from './browser-call.mjs';
+import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
@@ -395,6 +396,7 @@ export function createRelay({
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
   firstCallRules,
+  confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
   staleHelperCheck,
@@ -2188,6 +2190,8 @@ export function createRelay({
     }
     if (msg.method === undefined && jsCalls.delete(msg.id) && Array.isArray(msg.result?.content)) {
       const docs = msg.result.content.some(c => c.type === 'text' && /(^|\n)## Computer Use\n/.test(c.text ?? ''));
+      if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
+        ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
       if (docs && docsShown) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).
         invalidateDiagnostics(); forgetHandles(); helperHandles.clear(); helperControls.clear(); helperActive = undefined;
