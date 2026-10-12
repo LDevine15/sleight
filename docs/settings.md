@@ -239,11 +239,15 @@ same call, since the guard checks the window before they run. It also names `cua
 Claude can name, which took the first-call `getState` from 8 of 11 runs to 0 of 12 (2026-10-11). Set
 `SLEIGHT_FIRST_CALL_BATCH=0` to keep the engine's wording. `SLEIGHT_FIRST_CALL_BATCH=merge` also
 asks Claude to chain later calls such as save and close into one, which happened in 0 of 24 runs.
+`SLEIGHT_FIRST_CALL_BATCH=nosavestop` (for an A/B, not yet run) drops the instruction to end a call
+after Cmd+S and says sleight waits for the sheet a shortcut opens.
 
 ## Result size
 
 `SLEIGHT_RESULT_TRIM=1` (under A/B) leaves a split acquisition's tree out of a result when the same
-call returned a newer full one. It tied the default (24.8 s against 23.8 s a run, 2026-10-11).
+call returned a newer full one. It tied the default (24.8 s against 23.8 s a run, 2026-10-11). It
+also drops runs of 20 or more sibling rows from a result over 25,000 characters, keeping selected
+rows, folders and rows matching the window title or file name (unit-tested, not yet measured live).
 
 ## Doctor app reads
 
