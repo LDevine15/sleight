@@ -23,9 +23,10 @@ test('the complete probe keeps the original call order and both tab-open variant
 });
 
 test('six concurrent trials are restricted to empty-only and delays are bounded', () => {
-  assert.deepEqual(coldstartMode({}, []), { emptyOnly: false, concurrency: 1, prepareMs: 0 });
+  assert.deepEqual(coldstartMode({}, []), { emptyOnly: false, concurrency: 1, prepareMs: 0, trials: 3 });
   assert.deepEqual(coldstartMode({ concurrency: '6', 'prepare-ms': '2500' }, ['--empty-only']),
-    { emptyOnly: true, concurrency: 6, prepareMs: 2500 });
+    { emptyOnly: true, concurrency: 6, prepareMs: 2500, trials: 6 });
+  assert.equal(coldstartMode({ trials: '4', concurrency: '6' }, ['--empty-only']).trials, 4);
   assert.throws(() => coldstartMode({ concurrency: '6' }, []), /empty-only/);
   assert.throws(() => coldstartMode({ 'prepare-ms': '10001' }, []), /Invalid/);
 });

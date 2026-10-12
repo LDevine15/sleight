@@ -4,9 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, sy
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { PassThrough } from 'node:stream';
 import { selectSurfaces } from '../plugins/sleight/lib/launch.mjs';
-import { refreshAfterFirstCall } from '../plugins/sleight/lib/surface-cache.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('client reply refresh ignores initialize and can be disposed before fallback', async t => {
@@ -24,43 +22,6 @@ test('client reply refresh ignores initialize and can be disposed before fallbac
   cancelled.dispose();
   t.mock.timers.tick(60001);
   cancelled.reply({ id: 4, result: { content: [] } });
-  assert.equal(refreshes, 1);
-});
-
-test('the inventory refresh waits for the engine\'s first call answer, not initialize', () => {
-  const output = new PassThrough();
-  const received = []; let refreshes = 0;
-  output.on('data', data => received.push(data.toString()));
-  refreshAfterFirstCall(output, { refresh() { refreshes++; } });
-  output.write('{"id":0,"result":');
-  output.write('{"protocolVersion":"2025-06-18"}}\n');
-  assert.equal(refreshes, 0);
-  output.write('{"id":1,"result":{"content":[]}}\n');
-  assert.equal(refreshes, 1);
-  output.write('{"id":2,"result":{"content":[]}}\n');
-  assert.equal(received.length, 4);
-  assert.equal(output.isPaused(), false);
-  assert.equal(output.listenerCount('data'), 1);
-});
-
-test('a session that never calls js still refreshes after the fallback delay', async () => {
-  const output = new PassThrough();
-  let refreshes = 0;
-  refreshAfterFirstCall(output, { refresh() { refreshes++; } }, { delayMs: 5 });
-  // No initialize reply and no call answer, as with a client that only lists tools.
-  output.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
-  await new Promise(resolve => setTimeout(resolve, 30));
-  assert.equal(refreshes, 1);
-});
-
-test('a refresh started by the first call answer is not started again by the fallback', async () => {
-  const output = new PassThrough();
-  let refreshes = 0;
-  refreshAfterFirstCall(output, { refresh() { refreshes++; } }, { delayMs: 5 });
-  output.write('{"id":1,"result":{"content":[]}}\n');
-  await new Promise(resolve => setTimeout(resolve, 30));
-  output.end();
-  await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(refreshes, 1);
 });
 

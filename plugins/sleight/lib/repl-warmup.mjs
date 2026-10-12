@@ -3,8 +3,8 @@ import { readCode } from './document-scope.mjs';
 export const replSetupCode = () => readCode('void 0;', { acknowledge: true });
 
 export class ReplWarmup {
-  constructor({ enabled, request, resume, refuse }) {
-    Object.assign(this, { request, resume, refuse });
+  constructor({ enabled, request, resume, refuse, abort }) {
+    Object.assign(this, { request, resume, refuse, abort });
     this.state = enabled ? 'cold' : 'off';
     this.waiting = [];
     this.docs = [];
@@ -58,6 +58,7 @@ export class ReplWarmup {
 
   cancel() {
     this.state = 'cancelled';
+    this.abort?.();
     this.docs = [];
     for (const msg of this.waiting.splice(0)) this.refuse(msg);
   }

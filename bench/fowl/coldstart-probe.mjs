@@ -17,8 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { coldstartSteps, coldstartMode } from './coldstart-steps.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1]]] : acc), []));
-const arm = args.arm || 'sleight'; const trials = Number(args.trials || 3);
-const { emptyOnly, concurrency, prepareMs } = coldstartMode(args, process.argv.slice(2));
+const arm = args.arm || 'sleight';
+const { emptyOnly, concurrency, prepareMs, trials } = coldstartMode(args, process.argv.slice(2));
 const IDS = { chrome: '7a356c11-c3ba-4fd3-88ff-2f891496ba7e', helium: '2f6fb307-288b-46d7-9fc2-5262c30ea852' };
 const browser = args.browser || 'helium';
 const open = args.open || 'create';

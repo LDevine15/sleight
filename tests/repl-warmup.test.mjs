@@ -78,6 +78,18 @@ test('stop refuses waiting clients and a late reply never resumes them', async (
   assert.deepEqual(h.refused, [2]); assert.deepEqual(h.resumed, []);
 });
 
+test('cancel aborts the in-flight warm-up so its deadline cannot fire', () => {
+  let aborted = false;
+  const warmup = new ReplWarmup({
+    enabled: true, abort: () => { aborted = true; },
+    request: () => new Promise(() => {}), resume() {}, refuse() {},
+  });
+  warmup.hold(init); warmup.reply({ id: 1, result: {} }); warmup.sent(initialized);
+  warmup.cancel();
+  assert.equal(aborted, true);
+  assert.equal(warmup.state, 'cancelled');
+});
+
 test('setup code installs the guard without querying an app, browser or tab', async () => {
   const input = [];
   const cua = Object.fromEntries(['getApp', 'getBrowser', 'getTab', 'createBrowserTab', 'getState', 'listApps', 'listWindows']
@@ -97,7 +109,7 @@ function relayFixture(t, options = {}) {
   const send = msg => clientIn.write(JSON.stringify(msg) + '\n');
   const respond = msg => serverOut.write(JSON.stringify(msg) + '\n');
   send(init); respond({ id: 1, result: { capabilities: {} } }); send(initialized);
-  return { relay, sent, received, send, respond, warm: sent.find(msg => String(msg.id).startsWith('sleight-warm-')) };
+  return { relay, sent, received, send, respond, serverIn, warm: sent.find(msg => String(msg.id).startsWith('sleight-warm-')) };
 }
 
 test('relay hides warm-up, reuses confirmed setup and delivers its docs with the first client result', async t => {
@@ -128,6 +140,17 @@ test('closing the relay refuses a queued client and suppresses a late warm-up re
   assert.equal(h.received.find(m => m.id === 2).result.isError, true);
   h.respond({ id: h.warm.id, result: { content: [] } }); await tick();
   assert.equal(h.sent.some(m => m.id === 2), false);
+});
+
+test('a lease fault refuses a held caller without waiting for the warm-up deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = relayFixture(t); h.send(js(2));
+  h.serverIn.destroy(new Error('broken pipe'));
+  await tick();
+  assert.equal(h.received.find(m => m.id === 2)?.result.isError, true);
+  t.mock.timers.tick(6000); await tick();
+  assert.equal(h.sent.some(m => m.id === 2), false);
+  assert.equal(h.received.filter(m => m.id === 2).length, 1);
 });
 
 test('an unused warmed session never sends an idle or shutdown turn end', async t => {
@@ -189,4 +212,33 @@ test('late warm-up docs still reach the first real result without accepting a la
   h.send(js(3));
   assert.ok(h.sent.find(m => m.id === 3).params.arguments.code.length > 25000);
   assert.equal(h.received.some(m => m.id === h.warm.id), false);
+});
+
+test('a Stop that does not collect the engine does not let a stale warm-up deadline drop the guard', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = relayFixture(t, {
+    stopGraceMs: 1,
+    stopEngine: async () => ({ collected: false }),
+    inspectInput: async () => ({ ok: true }),
+  });
+  assert.ok(h.warm, 'warm-up is in flight');
+  h.send({ id: 'stop', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } });
+  await tick();
+  t.mock.timers.tick(1); await tick();
+  const ended = h.sent.find(m => String(m.id).startsWith('sleight-stop-'));
+  if (ended) h.respond({ id: ended.id, result: { content: [{ type: 'text', text: 'ended' }] } });
+  await tick();
+  h.send({ id: 'resume', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_resume: true } } });
+  await tick();
+  h.send(js(3));
+  const first = h.sent.find(m => m.id === 3);
+  assert.ok(first, 'the next call runs after an uncollected Stop');
+  h.respond({ id: 3, result: { content: [{ type: 'text', text: GUARD_READY }] } });
+  await tick();
+  t.mock.timers.tick(6000); await tick();
+  h.send(js(4));
+  const actual = h.sent.find(m => m.id === 4);
+  assert.ok(actual, 'a later call still reaches the engine after the stale warm-up deadline');
+  assert.doesNotMatch(actual.params.arguments.code, /globalThis\.__sleightDocumentGuardSetup = update =>/,
+    'the 6 s warm-up timer must not forget the guard after abort');
 });

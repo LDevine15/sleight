@@ -37,34 +37,6 @@ export function firstClientCallRefresh(cache, { delayMs = 60000 } = {}) {
   return { dispose, reply: message => { if (Array.isArray(message.result?.content)) refresh(); } };
 }
 
-// Observe replies without owning, pausing or consuming the stream. The launcher uses
-// firstClientCallRefresh with the relay's client replies so private warm-up stays out.
-// The inventory refresh starts when the engine's first call has answered (or after delayMs, for
-// a client that never calls js), not when initialize comes back: starting it there put a second
-// engine on the machine during the first call, which cost about 0.12 s of the answer on a quiet
-// Mac and overlapped it on every launch (docs/benchmarks/2026-10-10-startup-costs.md, 2026-10-10).
-export function refreshAfterFirstCall(output, cache, { delayMs = 60000 } = {}) {
-  if (!cache) return () => {};
-  let buffer = '';
-  const refresh = () => { dispose(); void cache.refresh(); };
-  const fallback = setTimeout(refresh, delayMs);
-  fallback.unref?.();
-  const dispose = () => { clearTimeout(fallback); output.off('data', observe); output.off('close', dispose); };
-  const observe = data => {
-    buffer += data;
-    let at;
-    while ((at = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
-      let message; try { message = JSON.parse(line); } catch { continue; }
-      if (!Array.isArray(message.result?.content)) continue;
-      return refresh();
-    }
-    if (buffer.length > 1048576) dispose();
-  };
-  output.on('data', observe); output.once('close', dispose);
-  return dispose;
-}
-
 // Cache only the inventory outcome, never browser profiles, tabs or approvals. Refresh every
 // automatic session, but keep its initial description fixed until the next session.
 export function createSurfaceCache(server, { file = join(homedir(), 'Library/Caches/sleight/extensions.json'),

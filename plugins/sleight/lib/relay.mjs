@@ -632,7 +632,9 @@ export function createRelay({
   const chromeSettled = new Set();
   let guardReady = false, guardGeneration = 0;
   const guardCalls = new Map();
+  let abortWarm = () => {};
   const replWarmup = new ReplWarmup({ enabled: warmRepl,
+    abort: () => abortWarm(),
     request: code => new Promise(resolve => {
       const id = `sleight-warm-${nextInternalId++}`;
       let pending = true;
@@ -640,6 +642,7 @@ export function createRelay({
         if (!pending) return;
         pending = false;
         clearTimeout(timer);
+        abortWarm = () => {};
         if (expired) {
           internalRequests.set(id, reply => replWarmup.retainDocs(reply));
           forgetGuard();
@@ -648,6 +651,7 @@ export function createRelay({
       };
       const timer = setTimeout(() => finish({}, true), 6000);
       timer.unref?.();
+      abortWarm = () => finish({});
       internalRequests.set(id, finish);
       guardCalls.set(id, guardGeneration);
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
@@ -995,6 +999,7 @@ export function createRelay({
     leaseFault = error.message;
     trace('input-lease-error', { error: leaseFault });
     closing = true;
+    replWarmup.cancel();
     stopHeartbeat();
     onLeaseFault(error);
   }

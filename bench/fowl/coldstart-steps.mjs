@@ -12,8 +12,10 @@ export async function coldstartSteps(js, { emptyOnly = false, browserId, open = 
 export function coldstartMode(args, argv) {
   const emptyOnly = argv.includes('--empty-only');
   const concurrency = Number(args.concurrency ?? 1), prepareMs = Number(args['prepare-ms'] ?? 0);
+  const trials = Number(args.trials || (args.concurrency != null ? args.concurrency : 3));
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 13 ||
       !Number.isFinite(prepareMs) || prepareMs < 0 || prepareMs > 10000) throw new Error('Invalid concurrency or preparation delay.');
+  if (!Number.isInteger(trials) || trials < 1) throw new Error('Invalid trials.');
   if (concurrency > 1 && !emptyOnly) throw new Error('Concurrent trials require --empty-only.');
-  return { emptyOnly, concurrency, prepareMs };
+  return { emptyOnly, concurrency, prepareMs, trials };
 }
