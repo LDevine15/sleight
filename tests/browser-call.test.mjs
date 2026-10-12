@@ -26,6 +26,22 @@ test('optional and parenthesized native roots retain native routing', () => {
   }
 });
 
+for (const restart of ['js_reset', 'engine restart']) test(`native routing names survive ${restart} without retaining a lease`, async t => {
+  const h = runtime(t);
+  const docs = '## Computer Use\n';
+  h.call(1, 'let editor = await cua.getApp("Editor")');
+  h.reply(1, { content: [{ type: 'text', text: docs }] });
+  await new Promise(resolve => setImmediate(resolve));
+  h.call(2, restart === 'js_reset' ? '' : 'await cua.listApps()', restart === 'js_reset' ? 'js_reset' : 'js');
+  h.reply(2, { content: [{ type: 'text', text: restart === 'js_reset' ? 'reset' : docs }] });
+  await new Promise(resolve => setImmediate(resolve));
+  h.call(3, 'await editor.click(1)');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.sent.some(msg => msg.id === 3), false, 'a lost native handle cannot enter a tab plan');
+  assert.match(h.received.find(msg => msg.id === 3).result.content[0].text, /bundle ID and full window header/);
+  assert.equal(h.lease.owned.size, 0);
+});
+
 for (const code of [
   'await tab.playwright.evaluate(() => window.store.getState().cart.length)',
   'await tab.playwright.evaluate(() => { const app = document.getElementById("app"); return app.innerText })',
@@ -191,7 +207,7 @@ function runtime(t, options = {}) {
   const lease = options.inputLease ?? new InputLease({ directory });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: lease, changeReview: false, ...options });
   t.after(() => { relay.close(); removeTemp(directory); });
-  const call = (id, code) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+  const call = (id, code, name = 'js') => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { code } } }) + '\n');
   const reply = (id, result) => serverOut.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
   const context = createContext({});
   runInContext(`

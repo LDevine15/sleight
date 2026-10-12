@@ -40,7 +40,9 @@ export function browserCall(code, handles = new Set(), nativeHandles = new Set()
   // trying to prove every other expression browser-only. The runtime guard still denies native input.
   if (nativeApi.test(source)) return undefined;
   const bound = new Set(nativeBindings(code, nativeHandles));
-  const native = new Set([...nativeHandles, ...bound]);
+  // The engine's default app root keeps its native route unless this call or a confirmed reply
+  // binds it locally or to a tab. Only observed bindings propagate native names to aliases.
+  const native = new Set(['app', ...nativeHandles, ...bound]);
   // A callback's local DOM variable may have the same name as a persistent native handle.
   const local = new Set(assignments(source).flatMap(binding => binding.names.filter(name => !bound.has(name))));
   const bindings = new Set();

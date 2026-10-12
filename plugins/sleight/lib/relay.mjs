@@ -908,7 +908,9 @@ export function createRelay({
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
   function forgetHandles() {
     forgetGuard();
-    clearSelection(); browserHandles.clear(); nativeHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
+    // Keep native routing names, not their handles or grants. A stale native name must still take
+    // the native read and clipboard path until a confirmed browser binding replaces it.
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
   }
   const handleBundles = new Map();
   const handleSelectors = new Map();
