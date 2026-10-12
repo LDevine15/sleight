@@ -3,11 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 20:00 UTC)
+## Banner (2026-10-12 19:25 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
-then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `faeea9d` (private), full
-check 2169 pass, 1 skipped, mod 33/33, exit 0 (at `c0ccc4b`). The main checkout is fast-forwarded to it.
+then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `118b1b3` (private), full
+check 2174 pass, 1 skipped, mod 33/33, exit 0. The main checkout is fast-forwarded to it.
 
 Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders, `/tmp/fb-rounds/h2h-*`):
 - 10:25: sleight 23/26, 2,109 s, $13.33, against 26/26, 972 s, $7.98. Published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`.
@@ -17,8 +17,11 @@ Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders,
   FowlBrowser's half of a round is about 470 s and $3.55. 313 s and $2.01 of ours is form-settings in Helium, where about
   280 s went on the HTML5 priority list. Cause, from `bench/fowl/drag-probe.mjs`: the engine's `tab.drag` moves in 8
   equal steps, and Chrome fires `dragover` only when two consecutive moves are inside one element, so a drag aimed at the
-  target's center never drops (0/14). Aimed 3 px inside the target's near edge it drops 6/6 (Helium and Chrome). Lane
-  item A9 builds `sleight.dragTo` on that.
+  target's center never drops (0/14). Aimed 3 px inside the target's near edge it drops 6/6 (Helium and Chrome). A9's
+  `sleight.dragTo` (merged `118b1b3`) took form-settings in Helium to 39 s and $0.42, 10/10, every drag moved
+  (`/tmp/fb-rounds/a9-live`).
+- A sleight round in both browser orders on `118b1b3` started 15:23 EDT: `/tmp/fb-rounds/h2h-20261012-1523-sleight-*`,
+  driver log `/tmp/fb-rounds/r7-20261012-1523.log`.
 - The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over 13 runs).
 
 Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service.mjs:8585-8640`: no `Event`,
@@ -27,8 +30,8 @@ A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = .
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`): reviews today (Sonnet high) merged F6R3
 and F5R2. A2, A3 and A7 failed review and went back as A2R, A3R and A7R. F5R3 (receipts) is new. A6 also takes F6R3's leftovers
-(a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). In progress: A6, A9, F5R3. Open:
-A2R, A3R, A5, A7R, A10, F4, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
+(a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). A6 failed review too (A6R; A2R waits
+for it). Done, not yet reviewed: F5R3. Open: A2R, A3R, A5, A6R, A7R, A9R, A10, F4, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
 
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
 (203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
@@ -50,10 +53,10 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Review A9 once its branch is pushed and run it live on the settings form (`bench/fowl/rounds.sh --only form-settings-helium`).
+1. Read the 15:23 round, publish it next to the 10:25 one, and compare with FowlBrowser's 26/26.
 2. The invoice's `downloadMedia` hang is the engine's: after `tab.click` on a download link, that tab's downloads stall
    (`bench/fowl/download-probe.mjs`, known-problems). A3R adds the hint, A10 the skill sentence.
-3. Review lane branches as they are pushed (A2R first), merge, then a full head-to-head (both arms, Opus on the account). Publish
+3. Review lane branches as they are pushed (F5R3 next), merge, then a full head-to-head (both arms, Opus on the account). Publish
    every round next to the 10:25 one.
 4. Video and release once a head-to-head is a win, or on the owner's call.
 
