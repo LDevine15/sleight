@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { discoverExtensions } from './browser-discovery.mjs';
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
+import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
@@ -683,6 +684,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const approval = approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
+    startupCache: createStartupCache({ identity: startupIdentity(s, join(LIB, '..')) }),
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
     staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
     settleTextWrite: (target, current, grant) => settleTextWrite(target, current, grant,

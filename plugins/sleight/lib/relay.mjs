@@ -382,6 +382,7 @@ export function createRelay({
   // The launcher supplies its native dialog for clients without form elicitation.
   fallbackAsk,
   onInitialize = () => {},
+  startupCache,
   preapproved,
   // Adds an app to the user's pre-approved list when they click "Always allow" (owner, 2026-10-10).
   alwaysAllow,
@@ -443,6 +444,10 @@ export function createRelay({
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
+  const startup = startupCache?.bind({
+    context: { approvalScope, firstCallBatch, prompt, changeReview, flowRules: !!flowRules, tools: localTools?.tools },
+    send: msg => toClient(msg), forward: msg => clientLine(JSON.stringify(msg), true),
+  });
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
   const receiptEnds = new Map();
   let latestReceipt;
@@ -1563,7 +1568,8 @@ export function createRelay({
     spaceNoted.clear();
   }
 
-  lines(clientIn, function clientLine(line) {
+  lines(clientIn, clientLine);
+  function clientLine(line, startupReady = false) {
     let msg;
     try {
       msg = JSON.parse(line);
@@ -1572,6 +1578,8 @@ export function createRelay({
       serverIn.write(line + '\n');
       return;
     }
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_stop === true) startup?.cancel();
+    if (!startupReady && startup?.request(msg)) return;
     if (tabCleanupPending && msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name)) {
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text',
         text: promptNotice('Wait for turn_ended, tab cleanup is pending.', prompt) }] } });
@@ -1605,7 +1613,7 @@ export function createRelay({
       return;
     }
     if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
-  });
+  }
 
   // `let app = await cua.getApp("X"); await app.click(…)` in one call. The lease needs the
   // window before it lets an action through, so the relay sends the acquisition alone, takes
@@ -1743,6 +1751,7 @@ export function createRelay({
         } } };
       }
       initialization = structuredClone(msg);
+      startup?.initialize(msg);
     }
     if (msg.method === 'server/discover' && msg.id !== undefined) {
       toClient({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Method not found' } });
@@ -2769,7 +2778,7 @@ export function createRelay({
         return;
       }
     }
-    toClient(msg);
+    if (!startup?.reply(msg)) toClient(msg);
   }
 
   // Ends the open turn, if any call used it. Resolves once the server answers
@@ -2875,6 +2884,7 @@ export function createRelay({
     finishReceipt();
     disposed = true;
     replWarmup.cancel();
+    startup?.close();
     cancelFrontCalls();
     detachServer();
     cancelInternalRequests('Session ended.');
