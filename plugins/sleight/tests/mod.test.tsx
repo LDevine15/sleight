@@ -199,7 +199,7 @@ describe('sleight mod', () => {
     on('session.messages', async () => { throw new Error('The compacted conversation must not be used for recording.') })
     on('process.run', async (_$, e) => {
       recorderCalls.push(e.argv)
-      files.set(e.argv[3], JSON.stringify(script))
+      if (e.argv[3]) files.set(e.argv[3], JSON.stringify(script))
       return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
     })
     on('fs.exists', async () => ({ value: writes.length > 0 }) as never)
@@ -232,7 +232,7 @@ describe('sleight mod', () => {
     on('session.id', async () => ({ value: 'session-test' }) as never)
     on('fs.exists', async () => ({ value: false }) as never)
     on('process.run', async (_$, e) => {
-      const out = e.argv[3]
+      const out = e.argv[3] ?? ''
       files.set(out, recorded)
       return { value: { exitCode: 0, stdout: '', stderr: 'sleight: 2 steps written to ' + out, isStdoutTruncated: true } } as never
     })

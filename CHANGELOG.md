@@ -43,6 +43,9 @@
   System Events, which took 9.4 s of an 11 to 14 s drag. A read that times out stops the drag before
   anything is pressed, and a timeout after the drop reports the drop as unverified. Unit-tested; the
   live timing is unmeasured.
+- The mod refuses Claude's file edits and common shell writes (redirections, `cp`, `mv`, `rm`, `sed -i`,
+  `plutil`, inline scripts that write) to the preapproved-apps file, which only the user changes.
+  Reads stay allowed. A path built at run time still gets past it.
 
 ## 1.2.5 (2026-10-11)
 
