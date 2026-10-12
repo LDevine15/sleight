@@ -17,7 +17,9 @@ describe('sleight mod', () => {
       const result = await $.tool.call({ tool, file_path: path, notebook_path: path, content: '{}', old_string: 'a', new_string: 'b', new_source: '{}', edits: [] } as never)
       expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
     }
-    for (const command of [`tee "${path}"`, `cp source "${path}"`, `rm "${path}"`, `echo '{}' > "${path}"`]) {
+    for (const command of [`tee "${path}"`, `cp source "${path}"`, `rm "${path}"`, `echo '{}' > "${path}"`,
+      `ln -sf source "${path}"`, `bash -c 'rm "${path}"'`, `env -i truncate -s 0 "${path}"`,
+      `python3 -c "p='${path}'; open(p, 'a').write('{}')"`]) {
       const result = await $.tool.call({ tool: 'Bash', command } as never)
       expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
     }
@@ -25,8 +27,11 @@ describe('sleight mod', () => {
       const result = await $.tool.call({ tool: 'Write', file_path: alias, content: '{}' } as never)
       expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
     }
-    const read = await $.tool.call({ tool: 'Bash', command: `cat "${path}"` } as never)
-    expect(read.deny).toBeUndefined()
+    for (const command of [`cat "${path}"`, `python3 -c "print(open('${path}').read())"`,
+      `node -e "console.log(require('fs').readFileSync('${path}'))"`, `python3 script.py "${path}"`]) {
+      const read = await $.tool.call({ tool: 'Bash', command } as never)
+      expect(read.deny).toBeUndefined()
+    }
   })
 
   const script = { sleightReplay: 1, steps: [

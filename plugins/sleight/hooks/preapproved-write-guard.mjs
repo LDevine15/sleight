@@ -1,6 +1,11 @@
 const suffix = '/library/application support/sleight/preapproved.json';
+const directorySuffix = suffix.slice(0, -'/preapproved.json'.length);
 const mutations = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const folded = path => path.normalize('NFC').toLowerCase();
+const protectedLiteral = path => {
+  const value = folded(normalize(path));
+  return value.endsWith(suffix) || value.endsWith(directorySuffix);
+};
 const normalize = path => {
   const parts = [];
   for (const part of path.split('/')) {
@@ -13,7 +18,7 @@ const normalize = path => {
 // Resolve before normalizing: a symlink followed by .. walks from its target.
 async function protectedPath(path, { stat, home }) {
   if (typeof path !== 'string' || !path || path.length > 4096) return false;
-  if (folded(normalize(path)).endsWith(suffix)) return true;
+  if (protectedLiteral(path)) return true;
   if (home) path = path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, () => home);
   let resolved = (await stat(path.startsWith('/') ? '/' : '.').catch(() => undefined))?.realPath;
   if (!resolved) return false;
@@ -22,7 +27,7 @@ async function protectedPath(path, { stat, home }) {
     const info = await stat(next).catch(() => undefined);
     resolved = info?.realPath ?? normalize(next);
   }
-  return folded(normalize(resolved)).endsWith(suffix);
+  return protectedLiteral(resolved);
 }
 
 // Only literal shell names and operators, never eval or shell expansion. Keep
@@ -41,45 +46,79 @@ function shellWords(command) {
     else if (c === "'" || c === '"') { quote = c; active = true; }
     else if (c === '\n') { flush(); words.push({ text: ';', operator: true }); }
     else if (/\s/.test(c)) flush();
-    else if (';&|<>()'.includes(c)) { flush(); words.push({ text: c, operator: true }); }
+    else if (';&|<>()'.includes(c)) {
+      flush();
+      const pair = c + (command[i + 1] ?? '');
+      const operator = ['>>', '>|', '>&', '<<', '&&', '||', '|&'].includes(pair) ? (i++, pair) : c;
+      words.push({ text: operator, operator: true });
+    }
     else { word += c; active = true; }
   }
   flush();
   return words;
 }
 
-function shellWritePaths(command) {
-  const paths = [], segments = [[]];
+function shellWritePaths(command, initialDirectory, depth = 0) {
+  if (depth > 8) return [];
+  const paths = [], segments = [{ words: [] }];
+  let directory = initialDirectory;
   for (const word of shellWords(command)) {
-    if (word.operator && ';&|()'.includes(word.text)) segments.push([]);
-    else segments.at(-1).push(word);
+    const previous = segments.at(-1);
+    if (word.operator && [';', '&', '|', '|&', '&&', '||', '(', ')'].includes(word.text)) {
+      segments.push({ words: [], piped: word.text === '|' ? previous.words : undefined });
+    } else previous.words.push(word);
   }
-  for (const segment of segments) {
+  const add = (path, literalOnly = false) => {
+    if (typeof path !== 'string') return;
+    paths.push({ path: directory && !/^(?:\/|~|\$HOME|\$\{HOME\})/.test(path) ? `${directory}/${path}` : path, literalOnly });
+  };
+  for (const { words: segment, piped } of segments) {
     const texts = [];
     for (let i = 0; i < segment.length; i++) {
       if (segment[i].operator) {
         const operator = segment[i].text;
-        while (segment[i + 1]?.operator && segment[i + 1].text === operator) i++;
         const target = segment[++i];
-        if (operator === '>' && target && !target.operator) paths.push(target.text);
+        if (['>', '>>', '>|', '>&'].includes(operator) && target && !target.operator) add(target.text);
       } else texts.push(segment[i].text);
     }
-    while (texts.length && (/^[A-Za-z_][A-Za-z_0-9]*=/.test(texts[0]) || ['env', 'command', 'sudo'].includes(texts[0]))) texts.shift();
+    let xargs = false;
+    while (texts.length) {
+      if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(texts[0])) { texts.shift(); continue; }
+      const prefix = texts[0].split('/').at(-1);
+      if (!['env', 'command', 'sudo', 'time', 'nohup', 'xargs'].includes(prefix)) break;
+      xargs ||= prefix === 'xargs'; texts.shift();
+      while (texts[0]?.startsWith('-')) {
+        const flag = texts.shift();
+        if (['-u', '--unset', '-I', '-n', '-P'].includes(flag)) texts.shift();
+      }
+    }
     const executable = texts.shift()?.split('/').at(-1);
     const operands = texts.filter(text => text && !text.startsWith('-'));
-    if (executable === 'cp') {
+    if (xargs && piped) operands.push(...piped.filter(word => !word.operator).map(word => word.text));
+    if (executable === 'cd') {
+      const next = operands[0];
+      if (next) directory = /^(?:\/|~|\$HOME|\$\{HOME\})/.test(next) || !directory ? next : `${directory}/${next}`;
+    } else if (['bash', 'sh', 'zsh'].includes(executable) && texts.includes('-c')) {
+      paths.push(...shellWritePaths(texts[texts.indexOf('-c') + 1] ?? '', directory, depth + 1));
+    } else if (['cp', 'install', 'rsync', 'ln'].includes(executable)) {
       const target = texts.findIndex(text => text === '-t' || text === '--target-directory');
-      paths.push(target >= 0 ? texts[target + 1] : operands.at(-1));
+      add(target >= 0 ? texts[target + 1] : operands.at(-1));
       const attached = texts.find(text => text.startsWith('--target-directory='));
-      if (attached) paths.push(attached.slice('--target-directory='.length));
-    } else if (['tee', 'mv', 'rm'].includes(executable) ||
-      (executable === 'sed' && texts.some(arg => /^-i/.test(arg))) ||
-      (executable === 'defaults' && ['write', 'delete', 'import'].includes(texts[0]))) paths.push(...operands);
-    else if (/^python(?:\d+(?:\.\d+)?)?$/.test(executable ?? '') ||
-      (executable === 'node' && texts.some(arg => /^-e|^--eval(?:=|$)/.test(arg)))) {
-      paths.push(...operands);
-      // Inline source can name a quoted absolute path within a shell word.
-      for (const text of texts) for (const match of text.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?preapproved\.json/gi)) paths.push(match[0]);
+      if (attached) add(attached.slice('--target-directory='.length));
+    } else if (['tee', 'mv', 'rm', 'truncate'].includes(executable) ||
+      (['sed', 'perl'].includes(executable) && texts.some(arg => /^-[^-]*i/.test(arg))) ||
+      (executable === 'defaults' && ['write', 'delete', 'import'].includes(texts[0]))) operands.forEach(path => add(path));
+    else if (executable === 'plutil' && texts.some(arg => ['-replace', '-insert', '-remove', '-convert'].includes(arg))) {
+      add(texts.includes('-o') ? texts[texts.indexOf('-o') + 1] : operands.at(-1));
+    } else if (executable === 'dd') texts.filter(arg => arg.startsWith('of=')).forEach(arg => add(arg.slice(3)));
+    else if (/^python(?:\d+(?:\.\d+)?)?$/.test(executable ?? '') || ['node', 'ruby'].includes(executable)) {
+      const flag = texts.findIndex(arg => /^python/.test(executable) ? /^-c/.test(arg) : /^-e|^--eval(?:=|$)/.test(arg));
+      if (flag < 0) continue;
+      const option = texts[flag], source = ['-c', '-e', '--eval'].includes(option) ? texts[flag + 1] ?? '' : option.replace(/^(?:-[ce]|--eval=)/, '');
+      const writes = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][wax][+bt]*['"]|\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?|rename(?:Sync)?|copyFile(?:Sync)?|rm(?:Sync)?|remove|truncate|File\.write)\s*\(/;
+      if (!writes.test(source)) continue;
+      // Inline code is scanned as text only, never passed to the filesystem resolver.
+      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:preapproved\.json|\/sleight(?=['"`;,)\s]|$))|\bpreapproved\.json\b/gi)) add(match[0], true);
     }
   }
   return paths;
@@ -93,6 +132,14 @@ export async function preapprovedWriteDenied(input, options) {
   } else if (tool === 'Bash' && typeof input.command === 'string') {
     paths = shellWritePaths(input.command);
   } else return false;
-  for (const path of paths) if (await protectedPath(path, options)) return true;
+  for (const candidate of paths) {
+    const { path, literalOnly } = tool === 'Bash' ? candidate : { path: candidate };
+    if (typeof path !== 'string') continue;
+    if (tool === 'Bash') {
+      if (protectedLiteral(path)) return true;
+      if (literalOnly || /\s/.test(path) || path.length >= 512) continue;
+    }
+    if (await protectedPath(path, options)) return true;
+  }
   return false;
 }

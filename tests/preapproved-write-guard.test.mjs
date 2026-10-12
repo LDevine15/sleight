@@ -79,3 +79,43 @@ test('symlink traversal precedes dot-dot normalization and HOME is only an expan
   assert.equal(await guard({ tool: 'Write', file_path: '~/alias/../preapproved.json' }, { stat: resolve, home: root }), true);
   assert.equal(await guard({ tool: 'Write', file_path: policy }, { stat, home: '/unrelated' }), true);
 });
+
+test('inline reads and script arguments remain allowed without statting source strings', async () => {
+  let stats = 0;
+  const counted = async path => { stats++; return stat(path); };
+  for (const command of [
+    `python3 -c "print(open('${policy}').read())"`,
+    `node -e "console.log(require('fs').readFileSync('${policy}'))"`,
+    `python3 script.py ${JSON.stringify(policy)}`,
+    `python3 -c "${'x = 1; '.repeat(500)}print(open('${policy}').read())"`,
+  ]) assert.equal(await guard({ tool: 'Bash', command }, { stat: counted }), false, command.slice(0, 80));
+  assert.equal(stats, 0, 'source strings and read operands need no filesystem probes');
+});
+
+test('additional literal shell writers, nested shells and prefixes deny the policy', async () => {
+  const p = JSON.stringify(policy), directory = JSON.stringify(policy.slice(0, -'/preapproved.json'.length));
+  for (const command of [
+    `ln -sf source ${p}`, `perl -pi -e 's/a/b/' ${p}`, `perl -i.bak -e 's/a/b/' ${p}`,
+    `plutil -replace key -string value ${p}`, `plutil -insert key -string value ${p}`,
+    `plutil -remove key ${p}`, `plutil -convert json ${p}`, `truncate -s 0 ${p}`, `dd if=source of=${p}`,
+    `install source ${p}`, `rsync source ${p}`, `ruby -e "File.write('${policy}', '{}')"`,
+    `printf '{}' >| ${p}`, `printf '{}' >& ${p}`,
+    `bash -c 'tee "${policy}"'`, `sh -c 'rm "${policy}"'`, `xargs rm ${p}`,
+    `printf '%s\\n' ${p} | xargs rm`, `time rm ${p}`, `nohup rm ${p}`, `env -i rm ${p}`,
+    `cd ${directory} && tee preapproved.json`, `cd ${directory}; rm preapproved.json`,
+    `cp source ${directory}`, `mv source ${directory}`, `rm -rf ${directory}`,
+  ]) assert.equal(await guard({ tool: 'Bash', command }, { stat, home: '/Users/fixture' }), true, command);
+});
+
+test('inline write forms deny without probing code or long path-like strings', async () => {
+  let stats = 0;
+  const counted = async path => { stats++; return stat(path); };
+  for (const command of [
+    `python3 -c "p='${policy}'; open(p, mode='a').write('{}')"`,
+    `node -e "const p='${policy}'; require('fs').appendFileSync(p, '{}')"`,
+    `ruby -e "File.open('${policy}', 'w') { |f| f.write('{}') }"`,
+  ]) assert.equal(await guard({ tool: 'Bash', command }, { stat: counted }), true, command);
+  assert.equal(stats, 0);
+  assert.equal(await guard({ tool: 'Bash', command: `rm ${'/x'.repeat(500)}` }, { stat: counted }), false);
+  assert.equal(stats, 0, 'path operands longer than 511 characters are not probed');
+});
