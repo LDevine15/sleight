@@ -28,6 +28,9 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /[Ww]rite text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(skill, /last expression is the result/);
     assert.match(skill, /Tab input.*first argument.*element index or `null`/);
+    assert.match(skill, /Fill every (?:field you already see|visible field) in one call/);
+    assert.match(skill, /[Rr]ead once at the end/);
+    assert.match(skill, /[Ss]ubmit in (?:that|the same) call when nothing is uncertain/);
     assert.ok(skill.trim().split(/\s+/).length <= limit, 'skill word budget');
   }
 });

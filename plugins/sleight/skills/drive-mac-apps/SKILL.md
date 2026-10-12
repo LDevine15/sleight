@@ -7,8 +7,8 @@ description: Use when a task needs a web page or native macOS app operated throu
 # Driving Mac apps with sleight
 
 `mcp__plugin_sleight_computer__js` runs persistent JavaScript with `cua`. `js_reset` restarts it.
-Follow engine docs and app instructions. This adds sleight's changes. Prefer a CLI, API or
-dedicated tool when one covers the task.
+Follow engine docs and app instructions. Prefer a CLI, API or dedicated tool when one covers
+the task.
 
 Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes
 it. If an app isn't approved, ask the user, or stop when a headless run refuses it.
@@ -20,16 +20,16 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   then runs them. Keep the handle between calls, and `await` every action.
 - Act by element number, or by ID or label, which stays right when an earlier action in the call
   renumbers the window: `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
-  Batch every click you're sure of in one call, as in a form or a keypad.
+  Batch clicks you're sure of in one call.
 - Each result shows what changed since the last full tree you saw. A full read is
   `await app.getAXState({ disableDiffing: true })`.
-- An app that just launched can show an almost empty tree for a few seconds. Read it once more
-  before you decide it has nothing.
+- A newly launched app can show an almost empty tree. Read once more before deciding it has
+  nothing.
 - If a result says the user changed the app, or a header changed or disappeared after an action,
   read again before retrying. The user may be working in it.
 - To choose among several windows, call `select_window` with the app and an exact `url` or `title`,
   then acquire the app in a call of its own and check its Window line.
-- If a sleight note gives a screenshot multiplier, multiply each x and y by it before you tap.
+- If a result gives a screenshot multiplier, multiply x and y by it before you tap.
 
 ## Text, menus and files
 
@@ -37,12 +37,12 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   replace a whole document, select all and paste in one call, then read it back and compare.
 - Use a menu item's shortcut when it has one. Otherwise open the menu and choose the item by label
   in the same call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
-  `menu_bar` is only for status icons at the right end of the menu bar.
+  `menu_bar` is only for status icons.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
 - In a Save panel, send Go to Folder, the folder, Return, the name and the final Return in one call,
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
-  save, without checking the file.
+  save.
 - If a list doesn't move when you scroll, use the app's search field or keyboard navigation instead.
 
 ## When to stop
@@ -61,6 +61,8 @@ Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` 
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
 Script body: top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input's first argument is an element index or `null`.
+Fill every field you already see in one call (`setValue`, `typeText`, clicks by index or Playwright
+locator, chained with await), read once at the end, and submit in that call when nothing is uncertain.
 Use only documented methods, leave tabs in the
 background, and stop if the user declines a browser approval.
 

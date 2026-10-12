@@ -1,6 +1,6 @@
 # sleight
 
-Prefer CLI/API. Follow engine docs. Await actions.
+Prefer CLI/API.
 
 Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes
 it. If an app isn't approved, ask the user, or stop when a headless run refuses it.
@@ -15,12 +15,12 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 Web pages: tab handle, never `getApp`.
 Script body: top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input: first argument, element index or `null`.
-Use documented methods, leave tabs in the background, stop if the user declines browser approval.
+Fill every visible field in one call (`setValue`, `typeText`, clicks by index or locator, chained with await). Read once at the end. Submit in that call when nothing is uncertain.
 
 - Select text in `js`, then `drag`: `app`, `windowId`, `from`, `to` from the latest screenshot of that window,
   inside content. Lost text: press Cmd+Z in that window and read.
 - Try `Help:`, `Secondary Actions:`, right-click or keys before `hover` (`app`, `at`).
-  Tell the user first that it moves their pointer and brings the app forward for about two seconds.
+  Tell the user first that it moves their pointer.
 - `notifications`, `menu_bar`: user approval once per session.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.
