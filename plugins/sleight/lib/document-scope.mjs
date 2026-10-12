@@ -252,6 +252,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             if (!state.adoptUrl || current.app !== state.expected?.app) return false;
             const adoptedUrl = state.expected.url == null && current.url && current.title === state.expected.title;
             const panel = current.title === '' && !current.url;
+            const modal = !current.url && /^\\d+ (?:sheet|dialog)\\b/m.test(text);
             const named = state.typed.some(typed => {
               const base = typed.trim().split('/').pop();
               if (base.length < 3) return false;
@@ -259,7 +260,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               try { file = current.url?.startsWith('file://') ? decodeURIComponent(new URL(current.url).pathname).split('/').pop() : undefined; } catch {}
               return current.title === base || file === base;
             });
-            if (!adoptedUrl && !panel && !(opener && (/^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text) ||
+            if (!adoptedUrl && !panel && !(opener && (modal || /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text) ||
                 (!current.url && /^Untitled(?: \\d+)?$/.test(current.title)) || named))) return false;
             state.expected = current;
             return true;
@@ -476,6 +477,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // moment would pass too. Document scope and change review stay strict.
           const opener = before && (before.name === 'click' || (before.name === 'pressKey' && typeof before.key === 'string' &&
             (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key))));
+          const modal = observed && !observed.url && /^\\d+ (?:sheet|dialog)\\b/m.test(text ?? '');
           const named = observed && state.typed.some(typed => {
             const base = typed.trim().split('/').pop();
             if (base.length < 3) return false;
@@ -484,7 +486,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             return observed.title === base || file === base;
           });
           if (state.adoptUrl && opener && observed && state.expected && observed.app === state.expected.app &&
-            (/^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text ?? '') || (!observed.url && /^Untitled(?: \\d+)?$/.test(observed.title)) || named)) {
+            (modal || /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text ?? '') || (!observed.url && /^Untitled(?: \\d+)?$/.test(observed.title)) || named)) {
             state.expected = observed;
           }
           // A relay without a lease, document scope or change review forwards actions

@@ -391,3 +391,37 @@ test('a window the call\'s own shortcut or Return opened or named is accepted, i
     if (stopped) await assert.rejects(done, /changed window/, code); else await done;
   }
 });
+
+for (const role of ['sheet', 'dialog']) {
+  test(`a click continues into its own app's titled ${role}`, async () => {
+    let changed = false;
+    const modal = `Window: "Confirm removal", App: TextEdit.\n0 ${role}\n\t9 button Delete Group`;
+    const f = fixture({ current: () => changed ? modal : tree(expected, '\t19 button Remove Group'),
+      action: name => { if (name === 'click') changed = true; } });
+    await f.run('await app.click(19); await app.click({ label: "Delete Group" });', { adoptUrl: true });
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19, 9]);
+  });
+}
+
+test('a click cannot continue into another app or a different document window', async () => {
+  for (const after of [
+    'Window: "Confirm removal", App: Other.\n0 sheet\n\t9 button Delete Group',
+    'Window: "Other document", App: TextEdit.\n0 standard window\n\t9 button Delete Group',
+    'Window: "Confirm removal", App: TextEdit.\n0 dialog, URL: file:///tmp/other.txt\n\t9 button Delete Group',
+  ]) {
+    let changed = false;
+    const f = fixture({ current: () => changed ? after : tree(expected, '\t19 button Remove Group'),
+      action: name => { if (name === 'click') changed = true; } });
+    await assert.rejects(f.run('await app.click(19); await app.click({ label: "Delete Group" });', { adoptUrl: true }), /changed window/);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
+  }
+});
+
+test('waitFor follows a titled sheet opened by the preceding click', async () => {
+  let changed = false;
+  const modal = 'Window: "Confirm removal", App: TextEdit.\n0 sheet\n\t9 button Delete Group';
+  const f = fixture({ current: () => changed ? modal : tree(expected, '\t19 button Remove Group'),
+    action: name => { if (name === 'click') changed = true; } });
+  await f.run('await app.click(19); await app.waitFor({ label: "Delete Group" }); await app.click({ label: "Delete Group" });', { adoptUrl: true });
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19, 9]);
+});

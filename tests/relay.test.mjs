@@ -8,9 +8,10 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, realpathS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createContext, runInContext } from 'node:vm';
+import { constants, createContext, runInContext } from 'node:vm';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
 import { readCode, guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
+import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const fixtureRoot = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-relay-review-'))));
@@ -1573,6 +1574,36 @@ test('textedit-drag: cached guards allow Open, Go to Folder, reads and Cancel ac
   await run(6, 'await app.click(63);');
   assert.deepEqual(actions, ['super+o', 'super+shift+g', '/tmp/other.txt', 'Return', 63]);
   await run(7, 'await app.pressKey("super+o");'); // Returning to the original file stays usable.
+});
+
+test('a leased click batch follows its own sheet or dialog and stops at other windows', async () => {
+  const before = 'Window: "Groups", App: Editor\n0 standard window Groups\n\t19 button Remove Group';
+  for (const [after, allowed] of [
+    ['Window: "Confirm removal", App: Editor\n0 sheet\n\t9 button Delete Group', true],
+    ['Window: "Confirm removal", App: Editor\n0 dialog\n\t9 button Delete Group', true],
+    ['Window: "Confirm removal", App: Other\n0 sheet\n\t9 button Delete Group', false],
+    ['Window: "Another document", App: Editor\n0 standard window Another document\n\t9 button Delete Group', false],
+  ]) {
+    const inputLease = new InputLease({ directory: leaseDir('sleight-relay-sheet-') });
+    const h = harness({ inputLease, changeReview: false });
+    helperRead(h, 1, 'app = await cua.getApp("Editor")');
+    h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: before }],
+      _meta: { 'codex/toolSurface': { kind: 'computerUse', app: { appId: 'org.test.editor' } } } } });
+    let ui = before;
+    const clicks = [];
+    const raw = { getAXState: async () => ui, click: async id => { clicks.push(id); ui = after; } };
+    const context = createContext({ app: raw, cua: { getApp: async () => raw }, nodeRepl: { write() {} } });
+    flowCall(h, 2, 'await app.click(19); await app.click({ label: "Delete Group" });');
+    const forwarded = h.toServer.find(msg => msg.id === 2);
+    assert.ok(forwarded, 'the leased batch reaches the engine');
+    assert.equal(inputLease.owned.size, 1, 'native lease stays held through the batch');
+    const run = runInContext(`(async () => { ${forwarded.params.arguments.code} })()`, context,
+      { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
+    if (allowed) await run;
+    else await assert.rejects(run, /window or URL changed/);
+    assert.deepEqual(clicks, allowed ? [19, 9] : [19]);
+    flowAnswer(h, 2, ui);
+  }
 });
 
 test('textedit-edit: a standalone read recovers a late document with a later undo copy', async () => {
