@@ -11,7 +11,8 @@ const ORIGINS = ['https://en.wikipedia.org', 'https://developer.mozilla.org'];
 // The benchmark's own pages on 127.0.0.1 (LAWS: extension access to them is approved) also get downloads: the hand-off
 // invoice download was declined on 2026-10-12. Raw CDP stays declined everywhere, as in every earlier round.
 
-const LOCAL_PORTS = ['5413', '5420', '5431'];
+// FowlBrowser's demo serves each site on its port and the next (the DemoID pop-up on 5421, the card frame on 5414).
+const LOCAL_PORTS = ['5411', '5412', '5413', '5414', '5420', '5421', '5431', '5432'];
 
 export function answer(e) {
   const message = e.message ?? '';
