@@ -2077,20 +2077,21 @@ test('the guard reuses a passed read only while the app\'s windows are unchanged
   }
 });
 
-test('a call that met the helper mid-restart is sent again once, and only a second failure reaches Claude', async () => {
+test('a call that met the helper mid-restart is sent again once, and only a second failure reaches Claude', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness({ changeReview: false });
   const failure = { content: [{ type: 'text', text: 'Sky Computer Use native pipe startup failed' }], isError: true };
   h.fromClient({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Calculator")' } } }); await tick();
   assert.equal(h.toServer.filter(m => m.id === 1).length, 1);
   h.fromServer({ jsonrpc: '2.0', id: 1, result: failure }); await tick();
   assert.equal(h.toClient.filter(m => m.id === 1).length, 0, 'the first failure stays inside the relay');
-  await new Promise(resolve => setTimeout(resolve, 1100));
+  t.mock.timers.tick(1100); await tick();
   const sent = h.toServer.filter(m => m.id === 1);
   assert.equal(sent.length, 2); assert.deepEqual(sent[1], sent[0]);
   h.fromServer({ jsonrpc: '2.0', id: 1, result: failure }); await tick();
   const reply = h.toClient.find(m => m.id === 1);
   assert.equal(reply.result.isError, true); assert.match(JSON.stringify(reply), /already sent this call again once/);
-  await new Promise(resolve => setTimeout(resolve, 1100));
+  t.mock.timers.tick(1100); await tick();
   assert.equal(h.toServer.filter(m => m.id === 1).length, 2, 'never a third time');
 });
 
@@ -2126,13 +2127,14 @@ test('runtime helper startup advice stays unchanged with no stale jobs or a fail
   }
 });
 
-test('a read that met a helper crash is sent again once; a call with actions never is', async () => {
+test('a read that met a helper crash is sent again once; a call with actions never is', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness({ changeReview: false });
   const crash = { content: [{ type: 'text', text: 'Sky Computer Use native pipe closed before response' }], isError: true };
   helperRead(h, 1); await tick();
   h.fromServer({ jsonrpc: '2.0', id: 1, result: crash }); await tick();
   assert.equal(h.toClient.filter(m => m.id === 1).length, 0, 'the crash stays inside the relay');
-  await new Promise(resolve => setTimeout(resolve, 2500));
+  t.mock.timers.tick(2500); await tick();
   const sent = h.toServer.filter(m => m.id === 1);
   assert.equal(sent.length, 2); assert.deepEqual(sent[1], sent[0]);
   h.fromServer({ jsonrpc: '2.0', id: 1, result: crash }); await tick();
@@ -2143,7 +2145,7 @@ test('a read that met a helper crash is sent again once; a call with actions nev
   const reply = h.toClient.find(m => m.id === 2);
   assert.equal(reply.result.isError, true);
   assert.match(JSON.stringify(reply), /may or may not have run, so read the app before you repeat one/);
-  await new Promise(resolve => setTimeout(resolve, 2100));
+  t.mock.timers.tick(2100); await tick();
   assert.equal(h.toServer.filter(m => m.id === 2).length, 1, 'an action is never resent');
 });
 

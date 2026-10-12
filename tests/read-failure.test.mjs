@@ -100,20 +100,34 @@ test('an app whose windows are all on another Space is diagnosed without a contr
   assert.match(advice, /none of TextEdit's windows are on it/); assert.match(advice, /full-screen or Split View/);
   assert.doesNotMatch(advice, /quit|restart ChatGPT/i);
 });
-test('one app-health helper answers many probes, and a stuck probe resolves unknown and restarts it', async () => {
-  const { spawn } = await import('node:child_process');
+test('one app-health helper answers many probes, and a stuck probe resolves unknown and restarts it', async t => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough, Writable } = await import('node:stream');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let spawned = 0;
-  // A stand-in helper: answers each line with its app, except "stuck", which it never answers.
-  const script = `require('readline').createInterface({ input: process.stdin }).on('line', l => { const r = JSON.parse(l);
-    if (r.app !== 'stuck') process.stdout.write(JSON.stringify({ id: r.id, status: 'responding', app: r.app }) + '\\n'); });`;
-  const helper = module.createAppHealthHelper({ timeoutMs: 200, spawnHelper: () => { spawned++; return spawn(process.execPath, ['-e', script], { stdio: ['pipe', 'pipe', 'ignore'] }); } });
+  const helper = module.createAppHealthHelper({ timeoutMs: 200, spawnHelper: () => {
+    spawned++;
+    const child = new EventEmitter(); child.stdout = new PassThrough();
+    child.stdin = new Writable({ write(data, _encoding, done) {
+      const r = JSON.parse(data);
+      if (r.app !== 'stuck') queueMicrotask(() => child.stdout.write(JSON.stringify({ id: r.id, status: 'responding', app: r.app }) + '\n'));
+      done();
+    } });
+    child.kill = () => { queueMicrotask(() => child.emit('close')); return true; };
+    return child;
+  } });
   try {
     assert.deepEqual(await helper.probe('TextEdit'), { status: 'responding', app: 'TextEdit' });
     assert.deepEqual(await Promise.all([helper.probe('A'), helper.probe('B')]), [{ status: 'responding', app: 'A' }, { status: 'responding', app: 'B' }]);
     assert.equal(spawned, 1, 'one process for every probe');
-    assert.deepEqual(await helper.probe('stuck'), { status: 'unknown' });
+    let resolved = false;
+    const stuck = helper.probe('stuck').then(result => { resolved = true; return result; });
+    t.mock.timers.tick(199); await Promise.resolve();
+    assert.equal(resolved, false, 'the deadline has not elapsed');
+    t.mock.timers.tick(1);
+    assert.deepEqual(await stuck, { status: 'unknown' });
     assert.deepEqual(await helper.probe('Calculator'), { status: 'responding', app: 'Calculator' });
     assert.equal(spawned, 2, 'the stuck helper was replaced');
-  } finally { helper.close(); }
+  } finally { await helper.close(); }
   assert.deepEqual(await helper.probe('TextEdit'), { status: 'unknown' }, 'closed');
 });
