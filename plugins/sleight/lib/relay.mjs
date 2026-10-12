@@ -71,6 +71,7 @@ import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree } from './compact-reads.mjs';
 import { dropRepeatedText } from './repeated-text.mjs';
+import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
@@ -438,6 +439,7 @@ export function createRelay({
 }) {
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
+  const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
@@ -955,6 +957,7 @@ export function createRelay({
   let constApp = false;
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
   function forgetHandles() {
+    browserStale.reset();
     forgetGuard();
     tabsMayNeedCleanup = false;
     // Keep native routing names, not their handles or grants. A stale native name must still take
@@ -1314,6 +1317,7 @@ export function createRelay({
     }
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content))) } };
+      browserStale.observe(msg.result.content);
     }
     journal?.reply(msg);
     trace('to-client', msg);
@@ -2052,6 +2056,7 @@ export function createRelay({
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
           msg.params.arguments.code = reorderCode(msg.params.arguments.code);
+          if (browser) msg.params.arguments.code = browserStale.code(msg.params.arguments.code);
           const tabCode = tabCleanupCode(msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
           msg.params.arguments.code = tabCode;
