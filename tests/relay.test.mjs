@@ -1906,6 +1906,24 @@ test('getAXState({ disableDiffing: true }) in Claude\'s code returns the whole t
   assert.match(h.toClient.find(m => m.id === 3).result.content[0].text, /Key 39/);
 });
 
+test('a silent read forwards only its own write; normal guard trees in that call remain visible', async () => {
+  const h = harness({ changeReview: false });
+  const rows = Array.from({ length: 40 }, (_, i) => `\t${i + 1} button Key ${i}`).join('\n');
+  const call = (id, code) => h.fromClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } });
+  const tree = `Window: "Calculator", App: Calculator.\n0 standard window Calculator, ID: main\n${rows}`;
+  call(1, 'await app.getAXState()'); await tick();
+  h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: GUARD_MARK + tree }] } }); await tick();
+  call(2, 'const s = await app.getAXState({ disableDiffing: true, emit: false }); nodeRepl.write("total 1247.50")'); await tick();
+  h.fromServer({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'total 1247.50' }] } }); await tick();
+  const text = h.toClient.find(m => m.id === 2).result.content.map(c => c.text).join('\n');
+  assert.match(text, /total 1247\.50/);
+  assert.doesNotMatch(text, /Key 39/);
+  assert.doesNotMatch(text, /no change/);
+  call(3, 'await app.getAXState({emit:false}); await app.getAXState()'); await tick();
+  h.fromServer({ jsonrpc: '2.0', id: 3, result: { content: [{ type: 'text', text: GUARD_MARK + tree + GUARD_END }] } }); await tick();
+  assert.match(h.toClient.find(m => m.id === 3).result.content[0].text, /Window:|no change/);
+});
+
 test('an action written as a statement without await is refused before it reaches the engine', async () => {
   // A failed un-awaited action can end the engine's session and every handle (3/3, 2026-10-07).
   const h = harness({ changeReview: false });

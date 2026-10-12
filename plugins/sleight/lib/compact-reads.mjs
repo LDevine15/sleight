@@ -15,13 +15,13 @@
 // stale, so the relay tracks which numbers Claude has seen since its last full
 // read and refuses actions on any other (staleIndex).
 
-import { GUARD_END, GUARD_MARK, documentKey, windowFromText, hasIdentifier, hasLabel } from './document-scope.mjs';
+import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, documentKey, windowFromText, hasIdentifier, hasLabel } from './document-scope.mjs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
 
-export { GUARD_END, GUARD_MARK };
+export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
 const MAX_SHARE = 0.6; // a diff longer than this share of the tree is sent whole
 const ELEMENT = /^(\t*)(\d+) (.*)$/;
@@ -273,6 +273,61 @@ export function dropAcquisitionTree(head, rest) {
   });
 }
 
+// Cap browser trees and diffs while leaving docs and caller output to the result budget.
+function trimBrowserResults(content, code = '') {
+  const header = /^Browser tab: (\d+), Title: "(?:[^"\\\n]|\\.)*", URL: "(?:[^"\\\n]|\\.)*"\.\n(?=(?:[+~-] )?\t*\d+ )/gm;
+  const parts = content.map(item => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return { item, parts: [] };
+    if (/^(?:## Computer Use|# Other Browser APIs)\n/.test(item.text)) return { item, parts: [] };
+    const starts = [...item.text.matchAll(header)], parts = [];
+    let pos = 0;
+    for (let i = 0; i < starts.length; i++) {
+      const start = starts[i].index, limit = starts[i + 1]?.index ?? item.text.length;
+      const nextWindow = item.text.slice(start, limit).search(/^Window: /m);
+      const tail = item.text.slice(start, nextWindow < 0 ? limit : start + nextWindow);
+      const focus = tail.search(/\n\nThe focused UI element (?:is|was) /);
+      const rows = [...tail.matchAll(/^(?:[+~-] \t*\d+ |\t+\d+ |\d+ AXWebArea\b)[^\n]*/gm)];
+      if (!rows.length) continue;
+      const last = rows.at(-1), afterRow = last.index + last[0].length;
+      const end = start + (focus >= 0 ? focus : afterRow);
+      parts.push({ text: item.text.slice(pos, start) });
+      parts.push({ text: item.text.slice(start, end), tab: starts[i][1] });
+      pos = end;
+    }
+    parts.push({ text: item.text.slice(pos) });
+    return { item, parts };
+  });
+  const trees = parts.flatMap(entry => entry.parts).filter(part => part.tab);
+  if (!trees.length) return content;
+  const fixed = parts.flatMap(entry => entry.parts).filter(part => !part.tab).reduce((n, part) => n + part.text.length, 0);
+  let budget = Math.max(0, 40000 - fixed - parts.filter(entry => entry.parts.length).length);
+  for (let i = 0; i < trees.length; i++) {
+    const part = trees[i], lines = part.text.split('\n');
+    const share = Math.min(30000, Math.floor(budget / (trees.length - i)));
+    if (lines.length <= 400 && part.text.length <= share) { budget -= part.text.length; continue; }
+    const names = [...code.matchAll(/\b([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.(getTab|createBrowserTab)\s*\(\s*(?:(['"])([^'"]*)\3)?/g)];
+    const bound = names.find(match => match[2] === 'getTab' && match[4] === part.tab);
+    const read = [...code.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*getAXState(?:AndScreenshot)?\s*\(/g)].at(-1);
+    const name = bound?.[1] ?? read?.[1] ?? names.find(match => match[2] === 'createBrowserTab')?.[1];
+    const more = name ? `Read more: nodeRepl.write(await ${name}.playwright.locator('main').innerText()).`
+      : "Read more with your tab handle's Playwright locator('main').innerText(), written with nodeRepl.write(...).";
+    const notice = count => `sleight: ${count} browser tree lines omitted. Numbers past the cut need a locator or a filtered read. ${more}`;
+    const room = Math.max(0, share - notice(lines.length).length - 1);
+    const kept = [lines[0]];
+    let chars = lines[0].length;
+    for (let j = 1; j < lines.length && kept.length < 400; j++) {
+      if (chars + 1 + lines[j].length > room) break;
+      kept.push(lines[j]); chars += 1 + lines[j].length;
+    }
+    part.text = kept.join('\n') + '\n' + notice(lines.length - kept.length);
+    budget -= part.text.length;
+  }
+  return parts.map(({ item, parts }) => {
+    const text = parts.map(part => part.text).join('');
+    return parts.length && text !== item.text ? { ...item, text } : item;
+  });
+}
+
 function trimSiblingRows(text) {
   if (text.length < 25000 || !hasFullTree(text) || !windowFromText(text)) return;
   const lines = text.split('\n'), names = [windowFromText(text).title];
@@ -457,24 +512,32 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, action, failed = false } = {}) {
+    process(content, { forceFull = false, action, failed = false, code } = {}) {
       if (!Array.isArray(content)) return content;
       observedInResult = undefined;
-      const out = content.map(item => {
+      const out = content.flatMap(item => {
         if (item?.type === 'text' && /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? '')) failed = true;
-        if (item?.type !== 'text' || typeof item.text !== 'string' || !item.text.includes(GUARD_MARK)) {
+        if (item?.type !== 'text' || typeof item.text !== 'string' || (!item.text.includes(GUARD_MARK) && !item.text.includes(GUARD_OMIT_MARK))) {
           if (item?.type === 'text' && typeof item.text === 'string') remember(item.text);
           return item;
         }
         let out = '', seenText = '', pos = 0;
         const add = text => { if (out && text && !out.endsWith('\n')) out += '\n'; out += text; };
         for (;;) {
-          const at = item.text.indexOf(GUARD_MARK, pos);
+          const visibleAt = item.text.indexOf(GUARD_MARK, pos), omittedAt = item.text.indexOf(GUARD_OMIT_MARK, pos);
+          const omitted = omittedAt >= 0 && (visibleAt < 0 || omittedAt < visibleAt);
+          const at = omitted ? omittedAt : visibleAt;
           const plain = item.text.slice(pos, at < 0 ? undefined : at);
           remember(plain); seenText += plain; add(plain);
           if (at < 0) break;
-          const start = at + GUARD_MARK.length, end = item.text.indexOf(GUARD_END, start);
+          const start = at + (omitted ? GUARD_OMIT_MARK : GUARD_MARK).length, end = item.text.indexOf(GUARD_END, start);
           const tree = item.text.slice(start, end < 0 ? undefined : end);
+          // Hidden headers serve window checks, but never become Claude's visible baseline.
+          if (omitted) {
+            if (end < 0) break;
+            pos = end + GUARD_END.length;
+            continue;
+          }
           let sent = forceFull ? tree : compact(tree, seenText);
           // A call that acted and ended on exactly the tree Claude saw before it gets that tree whole:
           // "no change" read as if the actions hadn't run, and Claude read again in 2 of 9 traced
@@ -486,7 +549,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           if (end < 0) break;
           pos = end + GUARD_END.length;
         }
-        return { ...item, text: out };
+        return !out && item.text.includes(GUARD_OMIT_MARK) ? [] : { ...item, text: out };
       });
       const note = action && resultNote(action, observedInResult, failed);
       if (note) out.push({ type: 'text', text: note });
@@ -503,7 +566,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
         out[i] = { ...item, text: trimmed.text };
       }
-      return out;
+      return trimBrowserResults(out, code);
     },
     beginAction(code) {
       const kind = actionKind(code, latest);

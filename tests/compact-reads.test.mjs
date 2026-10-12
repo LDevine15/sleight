@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GUARD_MARK, GUARD_END, createReadCompactor, lineDiff, dropAcquisitionTree, hasFullTree } from '../plugins/sleight/lib/compact-reads.mjs';
+import { GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, createReadCompactor, lineDiff, dropAcquisitionTree, hasFullTree } from '../plugins/sleight/lib/compact-reads.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 
 const tree = (rows, title = 'a.txt') => [`Window: "${title}", App: TextEdit.`,
@@ -172,6 +172,19 @@ test('a read Claude asked to see whole comes back whole, and later diffs start f
   assert.equal(whole, tree(sidebar));
   const [next] = apply(c, GUARD_MARK + tree([...sidebar, '\t60 button OK']));
   assert.match(next, /\+ \t60 button OK$/);
+});
+
+test('a write without a tree preserves the visible baseline for the next diff', () => {
+  const c = createReadCompactor();
+  apply(c, tree(sidebar));
+  const [out] = c.process(
+    [text('total 1247.50' + GUARD_OMIT_MARK + tree([...sidebar, '\t60 button OK']) + GUARD_END)],
+    { forceFull: true },
+  ).map(i => i.text);
+  assert.equal(out, 'total 1247.50');
+  const [next] = apply(c, GUARD_MARK + tree([...sidebar, '\t60 button OK', '\t61 button Done']));
+  assert.match(next, /\+ \t60 button OK/);
+  assert.match(next, /\+ \t61 button Done$/);
 });
 
 test('a stale number names the element Claude saw by its line, when that line is unique now', () => {

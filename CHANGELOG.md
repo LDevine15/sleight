@@ -52,6 +52,11 @@
 - When the window renumbers between Claude's read and a call with one element number, and the line
   Claude saw (unique when it saw it) is now on exactly one element, the action goes there with a note
   instead of stopping. A one-line shift in ZCode's sidebar cost a turn.
+- A browser tab's tree in a result is capped, with a note naming how many rows were left out and how
+  to read them. The engine's docs and a native window's tree in the same result are never cut. On a
+  saved Wikipedia read the tree kept 398 of 4,606 rows.
+- `getAXState({ emit: false })` and its screenshot variants leave that read's tree out of the result,
+  and sleight still refuses an element number Claude could only have taken from a tree it never saw.
 
 ## 1.2.5 (2026-10-11)
 

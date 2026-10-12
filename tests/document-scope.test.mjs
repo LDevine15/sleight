@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { GUARD_END, GUARD_MARK, guardedCode, hasIdentifier, hasLabel, readCode, windowFromText, windowMatches } from '../plugins/sleight/lib/document-scope.mjs';
+import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, guardedCode, hasIdentifier, hasLabel, readCode, windowFromText, windowMatches } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('document guard setup and reuse allow browser calls when getApp is absent', async () => {
   const outputs = [];
@@ -168,8 +168,8 @@ test("Claude's read doubles as the guard's: one engine read per read, none extra
   assert.equal(outputs.length, 1);
   calls.length = 0; outputs.length = 0;
   await run(guardedCode('const s = await app.getAXState({ emit: false }); nodeRepl.write(String(s.length));', window));
-  assert.equal(calls.length, 1, 'an unemitted read is reused for the header');
-  assert.deepEqual(outputs, ['30', GUARD_MARK + 'Window: "a.txt", App: TextEdit' + GUARD_END]);
+  assert.equal(calls.length, 1, 'an unemitted read needs no extra read');
+  assert.deepEqual(outputs, [GUARD_OMIT_MARK + 'Window: "a.txt", App: TextEdit' + GUARD_END, '30']);
 });
 
 test('a window that only gains a URL mid-call stays the same window, unless document scope or change review is on', async () => {

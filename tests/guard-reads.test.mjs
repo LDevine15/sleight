@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guardedCode, GUARD_MARK, GUARD_END, sameElement } from '../plugins/sleight/lib/document-scope.mjs';
+import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement } from '../plugins/sleight/lib/document-scope.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
@@ -45,7 +45,7 @@ test('a final combined read avoids an extra read and preserves hidden output sem
       if (observed.screenshot[2] !== 3) throw new Error('screenshot changed');`);
     assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'both']);
     assert.equal(f.calls.at(-1)[1].emit, emit);
-    if (!emit) assert.equal(f.output.at(-1), GUARD_MARK + tree() + GUARD_END);
+    if (!emit) assert.equal(f.output.at(-1), GUARD_OMIT_MARK + tree() + GUARD_END);
     else assert.equal(f.output.at(-1), tree());
   }
 });

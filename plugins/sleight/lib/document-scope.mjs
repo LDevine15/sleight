@@ -2,6 +2,7 @@ import { elementWait } from './element-wait.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
+export const GUARD_OMIT_MARK = '[sleight:guard-read-omitted]\n';
 export const GUARD_END = '\n[/sleight:guard-read]\n';
 export const GUARD_READY = '[sleight:guard-ready]';
 
@@ -143,7 +144,7 @@ export function guardedCode(code, window, reason = 'Document scope stopped this 
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
   // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed, and the call went on without it: ' + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
-  if (guard.activeApp && !last?.emitted) {
+  if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
     const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
@@ -282,8 +283,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const text = await raw.getAXState({ ...options, disableDiffing: true, emit: false });
           const emitted = options?.emit !== false;
           if (emitted) nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
+          else nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
           // Input replaces the map; a newer observation replaces this entry.
-          if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted });
+          if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted, omit: !emitted });
           if (typeof text === 'string' && parse(text)) state.codeReads.set(proxy, elements(text));
           state.activeApp = proxy;
           return text;
@@ -295,8 +297,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);
           const result = await value.call(raw, { ...options, disableDiffing: true });
+          if (options?.emit === false && typeof result?.state === 'string') {
+            nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + result.state + ${JSON.stringify(GUARD_END)});
+          }
           if (state.reads === reads && reads.get(proxy) === reading && typeof result?.state === 'string' && parse(result.state)) {
-            reads.set(proxy, { text: result.state, emitted: options?.emit !== false });
+            reads.set(proxy, { text: result.state, emitted: options?.emit !== false, omit: options?.emit === false });
           }
           if (typeof result?.state === 'string' && parse(result.state)) state.codeReads.set(proxy, elements(result.state));
           state.activeApp = proxy;
@@ -313,13 +318,19 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             const result = await raw.getAXStateAndScreenshot({ ...options, disableDiffing: true, emit: false });
             if (!result?.screenshot) throw new Error('Screenshot unavailable for this window.');
             if (options?.emit !== false) await nodeRepl.emitImage(result.screenshot);
+            else if (typeof result.state === 'string') nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + result.state + ${JSON.stringify(GUARD_END)});
             if (state.reads === reads && reads.get(proxy) === reading && typeof result.state === 'string' && parse(result.state)) {
-              reads.set(proxy, { text: result.state, emitted: false });
+              reads.set(proxy, { text: result.state, emitted: false, omit: options?.emit === false });
             }
             state.activeApp = proxy;
             return result.screenshot;
           }
           const result = await value.call(raw, options);
+          if (options?.emit === false) {
+            const text = await state.readAfter(proxy);
+            nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
+            if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted: false, omit: true });
+          }
           state.activeApp = proxy;
           return result;
         };

@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { guardedCode, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
+import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
@@ -40,7 +40,7 @@ test('screenshot supplies the guard header from the same capture and keeps image
       if (bytes[2] !== 3) throw new Error('bytes changed');`);
     assert.deepEqual(f.calls, ['both']);
     assert.deepEqual(f.images, emit ? [f.bytes] : []);
-    assert.deepEqual(f.text, [GUARD_MARK + tree() + GUARD_END]);
+    assert.deepEqual(f.text, [(emit ? GUARD_MARK : GUARD_OMIT_MARK) + tree() + GUARD_END]);
   }
 });
 
@@ -49,7 +49,7 @@ test('screenshot after input supplies the full final header without a second cap
   f.action = () => { f.current = tree({ ...expected, title: 'b.txt' }); };
   await f.run('await app.pressKey("a"); await app.getScreenshot({ emit: false });');
   assert.deepEqual(f.calls, ['read', ['pressKey', 'a'], 'both']);
-  assert.deepEqual(f.text, [GUARD_MARK + f.current + GUARD_END]);
+  assert.deepEqual(f.text, [GUARD_OMIT_MARK + f.current + GUARD_END]);
 });
 
 test('screenshot snapshots check title, app and URL before input and expire after input', async () => {

@@ -2512,9 +2512,9 @@ export function createRelay({
       }
       // sleight's own advice says getAXState({ disableDiffing: true }) gives a full read. Compacting
       // it to "no change" sent Claude to a screenshot instead (2026-10-08). Recovery's visible read
-      // is full too.
+      // is full too. The read wrapper decides whether to emit each observation.
       if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(msg.result.content, prompt),
-        { forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
+        { code: jsCode, forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failed: !closedLast && (resultFailed || !!msg.result?.isError) });
     }
     if (msg.method === undefined && resultCalls.has(msg.id)) {
