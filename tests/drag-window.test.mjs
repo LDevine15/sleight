@@ -9,7 +9,7 @@ const test = (name, fn) => nodeTest(`${defaultAppId}: ${name}`, fn);
 // Only the native AX/CG boundary is replaced. run() does the real selection,
 // validation, coordinate conversion, mouse sequence and post-drop check.
 function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false } = {}) {
-  const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [];
+  const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [], textWrites = [];
   let visited = 0, inputChecks = 0;
   let mainId = 22;
   let order = [22, 11];
@@ -25,6 +25,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
       attributes: { byName: name => ({
         get value() { return () => name === 'AXSelectedText' ? selected.get(id) : null; },
         set value(replacement) {
+          textWrites.push(replacement);
           const old = selected.get(id), at = values.get(id).indexOf(old);
           values.set(id, repairDeletesText ? '\n beta gamma\n' : values.get(id).slice(0, at) + replacement + values.get(id).slice(at + old.length));
           selected.set(id, replacement);
@@ -103,6 +104,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     return {
       value: () => ax.changedBeforeMove ? 'owner edit\n' : text(),
       selection: () => ({ location: text().indexOf(selected.get(11)), length: selected.get(11).length }),
+      hasAttributes: () => { if (ax.unreadableAttributes) throw new Error('attributed string unavailable'); return !!ax.formatted; },
       indexAt: p => { const i = Math.floor((p.x - x0) / 8); return p.y >= y0 && p.y < y0 + 13 && i >= 0 && i < text().length - 1 ? i : 0; },
       rect: i => i < text().length - 1 ? { X: x0 + 8 * i, Y: y0, Width: 8, Height: 13 } : null,
       lineEnd: () => text().length,
@@ -121,10 +123,44 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     ...order.filter(id => second || id === 11).map(id => ({ id, pid: 7, owner: 'TextEdit', title: `${id}.txt`, layer: 0, bounds: { ...frames.get(id) } })),
   ];
   const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], ...changes })]));
-  return { run, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, visits: () => visited };
+  return { run, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, textWrites, visits: () => visited };
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
 const pastEnd = { windowId: 11, to: [150, 38.5] };
+test('formatted selections use posted dragging without plain text writes', () => {
+  const h = harness({ background: true, ax: { formatted: true }, backgroundAfter: 'beta gamma alpha\n' });
+  const result = h.run(pastEnd);
+  assert.equal(result.ok, true, result.error); assert.equal(result.path, 'background');
+  assert.equal(h.axWrites.length, 0); assert.equal(h.pidEvents.length, 28);
+  assert.match(result.fallbackReason, /formatting/);
+});
+test('covered formatted selections retain the foreground coverage refusal', () => {
+  const h = harness({ background: true, coveredEnd: true, coveredPid: 9, ax: { formatted: true } });
+  const result = h.run(pastEnd);
+  assert.equal(result.path, 'foreground'); assert.equal(h.axWrites.length, 0);
+  assert.equal(result.ok, false); assert.match(result.error, /covered/);
+  assert.equal(h.events.length, 0); assert.match(result.fallbackReason, /formatting/);
+});
+test('formatted selections use foreground dragging when posting is unavailable', () => {
+  const h = harness({ ax: { formatted: true } });
+  const result = h.run(pastEnd);
+  assert.equal(result.ok, true, result.error); assert.equal(result.path, 'foreground');
+  assert.equal(h.axWrites.length, 0); assert.equal(h.textWrites.length, 0);
+  assert.equal(h.events.length, 28); assert.match(result.fallbackReason, /formatting/);
+});
+test('unreadable formatting cannot permit a plain text write', () => {
+  const h = harness({ background: true, ax: { unreadableAttributes: true }, backgroundAfter: 'beta gamma alpha\n' });
+  const result = h.run(pastEnd);
+  assert.equal(result.path, 'background'); assert.equal(h.axWrites.length, 0);
+  assert.match(result.fallbackReason, /attributed string unavailable/);
+});
+test('formatted posted drops skip the plain text spacing repair', () => {
+  const h = harness({ background: true, ax: { formatted: true } });
+  const result = h.run(pastEnd);
+  assert.equal(result.path, 'background'); assert.equal(result.ok, true, result.error);
+  assert.equal(h.axWrites.length, 0); assert.equal(h.textWrites.length, 0);
+  assert.equal(h.values.get(11), 'beta gammaalpha\n'); assert.equal(result.spaceInserted, false);
+});
 test('a covered text drop moves the text through Accessibility with no pointer, focus or posting', () => {
   const h = harness({ background: true, coveredEnd: true, coveredPid: 9, ax: {} }); const r = h.run(pastEnd);
   assert.equal(r.ok, true, r.error); assert.equal(r.path, 'accessibility');

@@ -151,7 +151,7 @@ function textDropSpace(before, word, after, selected) {
 
 function repairTextDrop(snapshot) {
   const settle = () => { if (snapshot?.pid) attempt(() => settleAfterTextWrite(snapshot.pid)); };
-  if (!snapshot) return { spaceInserted: false };
+  if (!snapshot || snapshot.preserveFormatting) return { spaceInserted: false };
   try {
     const after = snapshot.el.value();
     const selected = snapshot.el.attributes.byName('AXSelectedText');
@@ -212,6 +212,16 @@ function settleAfterTextWrite(pid) {
   }
 }
 
+function attributedTextHasAttributes(value, length) {
+  if (!value || Number(value.length) !== length) throw new Error('the selected attributed string is unavailable or incomplete');
+  for (let i = 0; i < length; i++) {
+    const attributes = value.attributesAtIndexEffectiveRange(i, null);
+    if (!attributes || !Number.isSafeInteger(Number(attributes.count))) throw new Error('the selected text attributes are unavailable');
+    if (Number(attributes.count) > 0) return true;
+  }
+  return false;
+}
+
 // The text area under a screen point, through the Accessibility C API, which
 // can map a point to a character and write text without the pointer or focus.
 // JXA can't pass struct pointers, so AXValues are built from an NSValue's bytes.
@@ -248,6 +258,8 @@ function axTextArea(pid, point) {
   return {
     value: () => ObjC.unwrap(ObjC.castRefToObject(get(el, 'AXValue'))),
     selection: () => rangeOf(get(el, 'AXSelectedTextRange')),
+    hasAttributes: (location, length) => attributedTextHasAttributes(
+      ObjC.castRefToObject(ask(el, 'AXAttributedStringForRange', range(location, length))), length),
     indexAt: p => rangeOf(ask(el, 'AXRangeForPosition', axValue(1, $.NSValue.valueWithPoint($.NSMakePoint(p.x, p.y))))).location,
     rect,
     lineEnd: index => {
@@ -287,6 +299,11 @@ function accessibilityMove(area, snapshot, end, window) {
   if (before !== snapshot.text || before.slice(sel.location, sel.location + sel.length) !== snapshot.selected) {
     throw new Error('the text or selection changed before the move; nothing was changed, read the window again');
   }
+  // An unreadable attribute range must not fall through to a plain text write,
+  // including the spacing repair after a posted or foreground drop.
+  snapshot.preserveFormatting = true;
+  if (area.hasAttributes(sel.location, sel.length)) throw new Error('the selected text carries formatting; use the guarded posted or foreground drag to preserve it');
+  snapshot.preserveFormatting = false;
   const word = snapshot.selected, src = sel.location, srcEnd = src + sel.length;
   const dest = dropIndex(area, end, before);
   if (dest >= src && dest <= srcEnd) throw new Error('the drop point is inside the selection; nothing was changed');
@@ -490,6 +507,7 @@ function run(argv) {
       // deadlock. The tests turn it off where they test the other paths.
       const byAccessibility = () => {
         if (globalThis.SLEIGHT_ACCESSIBILITY_MOVE === false) return null;
+        points.text.preserveFormatting = true;
         let area;
         try { area = axTextArea(pid, points.end); }
         catch (e) { fallbackReason += `; accessibility move unavailable: ${e.message || e}`; return null; }
