@@ -12,6 +12,10 @@
 - An app that lives only in the menu bar (OpenUsage, for one) and times out in `getApp` now gets the
   `menu_bar` route on the first timeout. Before, Claude retried, and the second timeout started
   stuck-app recovery that could advise quitting and reopening an app that answered Accessibility.
+- Before telling the user an app is hung, sleight probes it again with a 3 s Accessibility deadline
+  instead of 0.5 s, so a loaded Mac no longer gets an app called hung after one slow answer.
+- An action chained with `.then`, `.catch` or `.finally` and assigned or followed by more code is
+  refused like a bare un-awaited action, since its failure would end the engine's session.
 
 ## 1.2.5 (2026-10-11)
 
