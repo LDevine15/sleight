@@ -48,6 +48,33 @@ const countMetric = (rows, key) => {
   return { ...median(a), sum: a.length ? round(a.reduce((s, n) => s + n, 0)) : null };
 };
 const group = (rows, key) => Map.groupBy(rows, key);
+const BOOTSTRAP_RESAMPLES = 2000;
+const checkedSeed = seed => {
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) throw new Error('Invalid bootstrap seed.');
+  return seed;
+};
+export function bootstrapMean(values, seed = 1) {
+  let state = checkedSeed(seed);
+  const a = values.map(number).filter(v => v != null).sort((x, y) => x - y), n = a.length;
+  if (!n) return { mean: null, ci95: null, n };
+  const means = Array.from({ length: BOOTSTRAP_RESAMPLES }, () => {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      sum += a[Math.floor(state / 0x100000000 * n)] / n;
+    }
+    return sum;
+  }).sort((x, y) => x - y);
+  return { mean: round(a.reduce((sum, v) => sum + v / n, 0)),
+    ci95: [round(means[Math.ceil(BOOTSTRAP_RESAMPLES * 0.025) - 1]),
+      round(means[Math.ceil(BOOTSTRAP_RESAMPLES * 0.975) - 1])], n };
+}
+function taskMetrics(rows, seed) {
+  const keys = ['app', 'task', 'arm', 'experiment', 'stamp', 'setup', 'load', 'model'];
+  return [...group(rows, r => JSON.stringify(keys.map(k => r[k] ?? null)))].sort(([a], [b]) => a.localeCompare(b))
+    .map(([, rs]) => ({ ...Object.fromEntries(keys.map(k => [k, rs[0][k] ?? null])),
+      totalSeconds: bootstrapMean(rs.map(r => r.totalSeconds), seed), turns: bootstrapMean(rs.map(r => r.turns), seed) }));
+}
 const context = r => JSON.stringify([r.task, r.app, r.run, r.stamp, r.setup, r.load, r.model]);
 const identity = r => JSON.stringify([r.arm, context(r), r.experiment]);
 const cleanCalls = calls => Array.isArray(calls) ? calls.map(c => ({
@@ -207,8 +234,9 @@ function validateRule(rows, candidates, ab, sleightArm) {
 }
 
 export function buildReport(rawRows, { studyRuns = [], miningRuns = studyRuns, sleightArm = 'sleight', codexArm = 'codex', ab,
-  diagnostics = {}, studyCount = studyRuns.length } = {}) {
+  diagnostics = {}, studyCount = studyRuns.length, bootstrapSeed = 1 } = {}) {
   token(sleightArm, 'arm'); token(codexArm, 'arm');
+  checkedSeed(bootstrapSeed);
   const rows = rawRows.map(normalize), ids = new Set();
   for (const r of rows) { const id = identity(r); if (ids.has(id)) throw new Error('Duplicate run coordinate.'); ids.add(id); }
   const baseline = rows.filter(r => [sleightArm, codexArm].includes(r.arm) && !r.experiment);
@@ -221,7 +249,9 @@ export function buildReport(rawRows, { studyRuns = [], miningRuns = studyRuns, s
   const callData = rankCalls(baseline, studyRuns, sleightArm, codexArm);
   const candidates = mine(rows, miningRuns, sleightArm);
   const apps = [...new Set(rows.map(r => r.app))].sort();
-  return { schemaVersion: 1, inputRows: rows, parity: { apps: appRows,
+  return { schemaVersion: 1, inputRows: rows,
+    bootstrap: { method: 'percentile bootstrap of the mean', confidence: 0.95, resamples: BOOTSTRAP_RESAMPLES, seed: bootstrapSeed },
+    taskMetrics: taskMetrics(rows, bootstrapSeed), parity: { apps: appRows,
     overall: comparison(baseline, sleightArm, codexArm), failures,
     status: failures.length ? 'fails' : !appRows.length || appRows.some(a => a.status === 'incomplete') ? 'incomplete' : 'passes' },
     callRanking: callData.ranking, coverage: { resultRuns: rows.length, studyRuns: studyCount, unpairedTranscripts: callData.unpairedTranscripts,
@@ -253,6 +283,7 @@ export function analyzeCodex(rows) {
 
 const fmt = n => n == null ? 'unknown' : String(round(n));
 const measured = v => `${fmt(v.median)} (${v.n})`;
+const meanInterval = v => `${fmt(v.mean)} [${v.ci95 ? v.ci95.map(fmt).join(', ') : 'unknown'}] (${v.n})`;
 function statsLine(app, arm, s) {
   return `| ${app} | ${arm} | ${s.passes}/${s.runs} | ${s.passRate == null ? 'unknown' : fmt(s.passRate * 100) + '%'} | ${measured(s.totalSeconds)} | ${measured(s.turns)} | ${measured(s.modelSeconds)} | ${measured(s.modelSecondsPerTurn)} | ${measured(s.ownCpuSeconds)} | ${fmt(s.focusSteals.sum)} (${s.focusSteals.n}) | ${fmt(s.windowsOverOwner.sum)} (${s.windowsOverOwner.n}) |`;
 }
@@ -263,6 +294,12 @@ export function renderMarkdown(r) {
   for (const a of [...r.parity.apps, { app: 'overall', ...r.parity.overall }]) {
     out.push(statsLine(a.app, 'sleight', a.sleight), statsLine(a.app, 'Codex', a.codex));
   }
+  out.push('', '## Means by arm and task', '',
+    `95% percentile bootstrap intervals, 2,000 resamples, seed ${r.bootstrap.seed}.`, '',
+    '| Bundle ID | Task | Arm | Experiment | Stamp | Setup | Load | Model | Mean total s [95% CI] (n) | Mean turns [95% CI] (n) |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: |');
+  for (const m of r.taskMetrics) out.push(`| ${m.app} | ${m.task} | ${m.arm} | ${m.experiment ?? 'baseline'} | ${m.stamp ?? 'unknown'} | ${m.setup ?? 'unknown'} | ${m.load ?? 'unknown'} | ${m.model ?? 'unknown'} | ${meanInterval(m.totalSeconds)} | ${meanInterval(m.turns)} |`);
+  out.push('', 'Intervals resample measured runs with replacement and use nearest-rank 2.5th and 97.5th percentiles. Failed runs are included. Missing measurements are omitted separately for time and turns. One measured run gives a point interval; it does not measure run-to-run uncertainty.', '');
   out.push('', `Apps below Codex: ${r.parity.failures.join(', ') || 'none observed'}.`, '',
     '## Calls on the same task', '',
     '| Bundle ID | Task | Paired runs | Sleight calls | Codex calls | Fewer Codex calls | Sleight attributed s (timed calls) | Codex attributed s (timed calls) | Mechanism hypotheses |',

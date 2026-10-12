@@ -45,6 +45,39 @@ test('medians include failed runs and model seconds per turn use measured model 
   assert.equal(r.parity.overall.sleight.ownCpuSeconds.n, 2);
 });
 
+test('seeded bootstrap means cover known data, empty samples and single observations', () => {
+  assert.deepEqual(api.bootstrapMean?.([0, 0, 0, 100], 42), { mean: 25, ci95: [0, 75], n: 4 });
+  assert.deepEqual(api.bootstrapMean([7, 7, 7], 42), { mean: 7, ci95: [7, 7], n: 3 });
+  assert.deepEqual(api.bootstrapMean([7], 42), { mean: 7, ci95: [7, 7], n: 1 });
+  assert.deepEqual(api.bootstrapMean([null, undefined], 42), { mean: null, ci95: null, n: 0 });
+  const values = [2, 5, 9, 20, 31, 48, 72];
+  assert.deepEqual(api.bootstrapMean(values, 42), api.bootstrapMean([...values].reverse(), 42));
+  assert.notDeepEqual(api.bootstrapMean(values, 42).ci95, api.bootstrapMean(values, 43).ci95);
+  assert.throws(() => api.bootstrapMean([-1], 42), /Invalid/);
+  assert.throws(() => api.bootstrapMean(values, -1), /Invalid/);
+});
+
+test('each arm and task shows mean time and turns with its own bootstrap interval', () => {
+  const rows = [0, 0, 0, 100].map((seconds, i) => row('sleight', apps[0], i + 1,
+    { seconds, turns: i === 3 ? 9 : 1, pass: i !== 3 }));
+  rows.push(row('codex', apps[0], 1, { seconds: 10, turns: 2 }),
+    row('sleight', apps[0], 1, { task: 'other-task', seconds: 1000, turns: undefined }));
+  const r = report(rows, { bootstrapSeed: 42 });
+  assert.deepEqual(r.bootstrap, { method: 'percentile bootstrap of the mean', confidence: 0.95, resamples: 2000, seed: 42 });
+  assert.equal(r.taskMetrics?.length, 3);
+  const task = r.taskMetrics.find(m => m.arm === 'sleight' && m.task === 'fixture-read');
+  assert.deepEqual(task.totalSeconds, { mean: 25, ci95: [0, 75], n: 4 });
+  assert.deepEqual(task.turns, { mean: 3, ci95: [1, 7], n: 4 });
+  assert.deepEqual(r.taskMetrics.find(m => m.arm === 'codex').totalSeconds, { mean: 10, ci95: [10, 10], n: 1 });
+  assert.deepEqual(r.taskMetrics.find(m => m.task === 'other-task').turns, { mean: null, ci95: null, n: 0 });
+  assert.deepEqual(report([...rows].reverse(), { bootstrapSeed: 42 }).taskMetrics, r.taskMetrics);
+  const markdown = api.renderMarkdown(r);
+  assert.match(markdown, /Mean total s \[95% CI\] \(n\)/);
+  assert.match(markdown, /Mean turns \[95% CI\] \(n\)/);
+  assert.ok(markdown.includes('| 25 [0, 75] (4) | 3 [1, 7] (4) |'));
+  assert.match(markdown, /2,000 resamples/);
+});
+
 test('unknown measurements remain null with coverage counts and missing arms block parity', () => {
   const r = report([row('sleight', apps[0], 1, { seconds: undefined, timing: {},
     ownCpuSeconds: null, focusSteals: undefined, windowsOverOwner: undefined })]);
