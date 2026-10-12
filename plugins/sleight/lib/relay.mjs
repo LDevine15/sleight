@@ -64,6 +64,7 @@ import { browserCall, browserReply, nativeBindings } from './browser-call.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
+import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
@@ -1554,6 +1555,12 @@ export function createRelay({
       msg.params.arguments.code.trim().match(/^((?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.getApp\([^;]*\))\s*;\s*([A-Za-z_$][\w$]*)\s*;?$/);
     if (echo && echo[2] === echo[3]) msg.params.arguments.code = echo[1];
     journal?.request(msg);
+    const write = jsArgs && evaluateWrite(msg.params.arguments?.code);
+    if (write) {
+      finishedCall(msg.id);
+      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: write }] } });
+      return;
+    }
     if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
   });
 

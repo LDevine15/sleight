@@ -6,6 +6,33 @@ const READ = 'await tab.getAXState({ disableDiffing: true })';
 const DIALOG = 'const dialog = await tab.getJsDialog(); if (dialog) { await dialog.dismiss(); }';
 const CONFIRM = /^(?:Error: )?Browser action "([^"]+)" interrupted by JavaScript (confirm|alert|prompt|beforeunload): (.*)$/;
 const LEGACY = /^(?:The action may already have taken effect; do not retry it\.(?: Inspect or dismiss the dialog before continuing\.)?|Inspect or dismiss the dialog before continuing\.)$/;
+export const EVALUATE_ACTION = Object.freeze({
+  drag: 'sleight.dragTo(tab, from, to)', fill: 'locator.fill(...)', click: 'locator.click()',
+  select: 'selectOption(...)', scroll: 'tab.ax.scroll(...)', check: 'locator.setChecked(...)',
+  read: 'await tab.ax.write()',
+});
+const { drag: DRAG, fill: FILL, click: CLICK, select: SELECT, scroll: SCROLL, check: CHECK } = EVALUATE_ACTION;
+export const EVALUATE_WRITE = [
+  [/\binsertBefore is not a function/, 'insertBefore', DRAG],
+  [/\bappendChild is not a function/, 'appendChild', DRAG],
+  [/\bremoveChild is not a function/, 'removeChild', DRAG],
+  [/\breplaceChild is not a function/, 'replaceChild', DRAG],
+  [/\bcreateEvent is not a function/, 'createEvent', CLICK],
+  [/\bdispatchEvent is not a function/, 'dispatchEvent', CLICK],
+  [/DragEvent is not a constructor/, 'DragEvent', DRAG],
+  [/DataTransfer is not a constructor/, 'DataTransfer', DRAG],
+  [/CustomEvent is not a constructor/, 'CustomEvent', CLICK],
+  [/PointerEvent is not a constructor/, 'PointerEvent', CLICK],
+  [/MouseEvent is not a constructor/, 'MouseEvent', CLICK],
+  [/KeyboardEvent is not a constructor/, 'KeyboardEvent', CLICK],
+  [/\bEvent is not a constructor/, 'Event', CLICK],
+  [/Cannot set property (selectedIndex|selected)\b/, 'setting $1', SELECT],
+  [/Cannot set property (value)\b/, 'setting $1', FILL],
+  [/Cannot set property (checked)\b/, 'setting $1', CHECK],
+  [/Cannot set property (innerHTML|textContent|className)\b/, 'setting $1'],
+  [/Cannot set property (scrollTop|scrollLeft)\b/, 'setting $1', SCROLL],
+  [/Cannot add property (on\w+)\b/, 'assigning $1'],
+];
 
 export function rewriteTabError(text, { read = false } = {}) {
   if (typeof text !== 'string') return text;
@@ -27,11 +54,24 @@ export function rewriteTabError(text, { read = false } = {}) {
       out.push(`Browser action "${confirm[1]}" interrupted by JavaScript ${confirm[2]}: ${message} Input may already have been sent; do not retry the ${confirm[1]}. Next: const dialog = await tab.getJsDialog(); if (dialog) { ${accept}; }`);
     } else out.push(rewriteLine(lines[i], read));
   }
-  if (/^TypeError: Cannot read properties of (?:null|undefined)\b/m.test(text) &&
+  const write = evaluateWriteAdvice(text);
+  if (write) out.push(write);
+  else if (/^TypeError: Cannot read properties of (?:null|undefined)\b/m.test(text) &&
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
     out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties.');
   }
   return out.join('\n');
+}
+
+export function evaluateWriteAdvice(text) {
+  if (!/^\s+at __playwrightEvaluate\b/m.test(text)) return;
+  const head = text.split('\n').find(line => /TypeError:/.test(line))?.trim();
+  if (!head || !/^(?:Error: )?TypeError:/.test(head)) return;
+  for (const [pattern, operation, next] of EVALUATE_WRITE) {
+    const match = pattern.exec(head);
+    if (!match) continue;
+    return `If this call meant to change the page, ${operation.replace(/\$1/g, match[1] ?? '')} cannot run in evaluate.${next ? ` Next: ${next}.` : ''}`;
+  }
 }
 
 export function isTabBinding(code = '') {

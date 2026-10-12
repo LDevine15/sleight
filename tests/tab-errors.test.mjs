@@ -218,6 +218,68 @@ test('recorded evaluate TypeErrors retain their stack and explain the page scope
   assert.equal(rewriteTabError(own), own);
 });
 
+test('recorded evaluate writes name the failed operation and the replacement action', t => {
+  const stack = '\n    at __playwrightEvaluate (<anonymous>:2695:8)\n    at runUserScript (<anonymous>:2698:10)';
+  const cases = [
+    ['TypeError: prio.insertBefore is not a function', /insertBefore/, /sleight\.dragTo/],
+    ['TypeError: prio.removeChild is not a function', /removeChild/, /sleight\.dragTo/],
+    ['TypeError: prioList.appendChild is not a function', /appendChild/, /sleight\.dragTo/],
+    ['TypeError: DragEvent is not a constructor', /DragEvent/, /sleight\.dragTo/],
+    ['TypeError: DataTransfer is not a constructor', /DataTransfer/, /sleight\.dragTo/],
+    ['TypeError: PointerEvent is not a constructor', /PointerEvent/, /locator\.click/],
+    ['TypeError: MouseEvent is not a constructor', /MouseEvent/, /locator\.click/],
+    ['TypeError: Event is not a constructor', /Event cannot run|so Event cannot/, /locator\.click/],
+    ['TypeError: document.createEvent is not a function', /createEvent/, /locator\.click/],
+    ['TypeError: Cannot set property scrollTop of [object Object] which has only a getter', /scrollTop/, /tab\.ax\.scroll/],
+    ['TypeError: Cannot set property checked of [object Object] which has only a getter', /checked/, /locator\.setChecked/],
+    ['TypeError: CustomEvent is not a constructor', /CustomEvent/, /locator\.click/],
+    ['TypeError: Cannot set property selectedIndex of [object Object] which has only a getter', /selectedIndex/, /selectOption/],
+  ];
+  for (const [msg, op, next] of cases) {
+    const src = msg + stack;
+    const out = rewriteTabError(src);
+    assert.ok(out.includes(src), msg);
+    assert.match(out, op, msg);
+    assert.match(out, next, msg);
+    assert.match(out, /If this call meant to change the page/);
+    assert.doesNotMatch(out, /locator\.dragTo/);
+    assert.match(reply(t, src, true, 'await tab.playwright.evaluate(() => {})').content[0].text, next, msg);
+  }
+  assert.match(rewriteTabError('Error: TypeError: DragEvent is not a constructor' + stack), /sleight\.dragTo/);
+  const parse = 'TypeError: parseInt is not a function' + stack;
+  assert.equal(rewriteTabError(parse), parse);
+  const fetch = 'TypeError: Cannot add property fetch, object is not extensible' + stack;
+  assert.equal(rewriteTabError(fetch), fetch);
+  const formData = 'TypeError: FormData is not a constructor' + stack;
+  assert.equal(rewriteTabError(formData), formData);
+  for (const operation of ['innerHTML', 'textContent', 'className']) {
+    const raw = `TypeError: Cannot set property ${operation} of [object Object] which has only a getter` + stack;
+    const out = rewriteTabError(raw);
+    assert.ok(out.startsWith(raw));
+    assert.match(out, /If this call meant to change the page/);
+    assert.doesNotMatch(out, /Next:|locator\.fill/);
+  }
+  const handler = 'TypeError: Cannot add property onsubmit, object is not extensible' + stack;
+  assert.match(rewriteTabError(handler), /If this call meant to change the page/);
+  assert.doesNotMatch(rewriteTabError(handler), /Next:|locator\.click/);
+});
+
+test('evaluate write hints skip array bugs and unnamed setAttribute', () => {
+  const stack = '\n    at __playwrightEvaluate (<anonymous>:2695:8)\n    at runUserScript (<anonymous>:2698:10)';
+  for (const msg of [
+    'TypeError: Cannot set property length of [object Array] which has only a getter',
+    'TypeError: themeEl.setAttribute is not a function',
+    'note: TypeError: prio.insertBefore is not a function',
+  ]) {
+    const src = msg + stack;
+    assert.equal(rewriteTabError(src), src, msg);
+  }
+  const array = 'TypeError: items.appendChild is not a function' + stack;
+  const out = rewriteTabError(array);
+  assert.match(out, /If this call meant to change the page/);
+  assert.doesNotMatch(out, /The page scope is read-only/);
+});
+
 test('covered, stale and page-dialog errors preserve surrounding result lines', () => {
   for (const error of ['Accessibility element 29 is covered by DIV or otherwise not hittable',
     'Accessibility element 16 is stale or missing', ...['confirm', 'alert', 'prompt'].map(kind =>
