@@ -59,11 +59,11 @@ Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` 
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
 Script body: top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input's first argument is an element index or `null`.
-Fill every field you already see in one call (`setValue`, `typeText`, clicks by index or Playwright
-locator, chained with await). Read once at the end.
+Fill every field you already see in one call (`setValue`, `typeText`, clicks by index or locator).
+Read once at the end.
 Use locators when validation or autocomplete can add or move fields, indices on static forms.
-Submit in that call only when the user asked for that submit and no sign-in, permission or payment
-step needs the user. Otherwise stop before the final click.
+Submit in that call only when the user asked for that submit and the engine's confirmation policy
+doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, and stop if the user declines a browser approval.
 
 ## sleight's other tools

@@ -17,5 +17,5 @@ fi
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
-  SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" ANTHROPIC_API_KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")" \
+  SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" ANTHROPIC_API_KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")" \
   node tools/rounds.mjs --model opus --effort medium "$@"

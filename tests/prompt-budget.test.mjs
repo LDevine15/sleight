@@ -21,7 +21,7 @@ const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', i
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
 test('both skill variants explain browser routing and script input within their word budgets', () => {
-  for (const [env, limit] of [[{}, 866], [{ SLEIGHT_PROMPT: 'lean' }, 337]]) {
+  for (const [env, limit] of [[{}, 866], [{ SLEIGHT_PROMPT: 'lean' }, 380]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
     assert.match(skill, /top-level `await`, no `return`/);
@@ -30,7 +30,7 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /Tab input.*first argument.*element index or `null`/);
     assert.match(skill, /Fill every (?:field you already see|visible field) in one call/);
     assert.match(skill, /[Rr]ead once at the end/);
-    assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*sign-in[^.]*permission[^.]*payment[^.]*user\./);
+    assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*confirmation policy\sdoesn't require confirming it\./);
     assert.match(skill, /Otherwise stop before the final click\./);
     assert.doesNotMatch(skill, /submit in (?:that|the same) call when nothing is uncertain/i);
     assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
@@ -52,6 +52,8 @@ test('the default skill retains extension selection and lean retains precise saf
   assert.match(lean, /leave tabs in the background/i);
   assert.match(lean, /stop if the user declines a browser approval/i);
   assert.match(lean, /brings the app forward for about two seconds/);
+  assert.match(lean, /the engine's confirmation policy/);
+  assert.match(lean, /Before `hover`, try `Help:`/);
 });
 
 test('nosavestop changes only the final stop clause and keeps the default prompt hashes', () => {
