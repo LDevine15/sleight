@@ -26,7 +26,7 @@ Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service
 A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = ...`) can't work through it.
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`): reviews today (Sonnet high) merged F6R3
-and F5R2; A2, A3 and A7 failed review and went back as A2R, A3R and A7R; F5R3 (receipts) is new; A6 also takes F6R3's leftovers
+and F5R2. A2, A3 and A7 failed review and went back as A2R, A3R and A7R. F5R3 (receipts) is new. A6 also takes F6R3's leftovers
 (a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). In progress: A6, A9, F5R3. Open:
 A2R, A3R, A5, A7R, A10, F4, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
 
