@@ -83,6 +83,7 @@ import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNo
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
 import { splitTextSave } from './text-save.mjs';
+import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
@@ -1771,6 +1772,9 @@ export function createRelay({
         trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
       }
     }
+    if (msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string') {
+      msg.params.arguments.code = autoPrintCode(msg.params.arguments.code, process.env.SLEIGHT_AUTOPRINT === '1');
+    }
     const originalCode = msg.params?.arguments?.code;
     if (typeof originalCode === 'string') {
       for (const native of nativeBindings(originalCode, nativeHandles)) {
@@ -2342,6 +2346,8 @@ export function createRelay({
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
+    const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
+    if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
       msg.result.content = msg.result.content.map(c =>
