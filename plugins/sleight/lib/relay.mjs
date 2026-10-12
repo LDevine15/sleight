@@ -67,6 +67,7 @@ import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree } from './compact-reads.mjs';
+import { createResultBudget } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
@@ -415,6 +416,7 @@ export function createRelay({
 }) {
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
+  const resultBudget = createResultBudget();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
   const receiptEnds = new Map();
   let latestReceipt;
@@ -1221,6 +1223,9 @@ export function createRelay({
         // in content for the mod, including write failures, without putting review prose on stderr.
         content: [...(msg.result.content ?? []), { type: 'text', text: 'sleight-receipt: ' + JSON.stringify({ ...receipt,
           ...(receipt.review?.length > 32000 ? { review: receipt.review.slice(0, 32000) + '\nReview truncated; open the receipt for the full review.' } : {}) }) }] };
+    }
+    if (msg.method === undefined && Array.isArray(msg.result?.content)) {
+      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(msg.result.content) } };
     }
     journal?.reply(msg);
     trace('to-client', msg);
