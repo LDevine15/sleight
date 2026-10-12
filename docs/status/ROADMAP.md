@@ -31,6 +31,13 @@ keyboard wait until they're away, in one away sitting.
 
 ## 0b. FowlBrowser, then the release and a video (owner, 2026-10-12)
 
+The owner's long-term goal (2026-10-12): the world's fastest computer use plugin, chasing every lever
+down to milliseconds over months. The method: `bench/fowl/anatomy.mjs` splits every round into time
+(start, model, tool), result characters by kind, tokens and turns by class, and work goes to the biggest
+measured lever first. On 2026-10-12 at 15:23 those were the engine's docs in results (cost), session start
+(time), and turns lost to errors and repeated reads. Turns become the lever again once latency is down
+(owner), so every round also reports which turns look avoidable.
+
 FowlBrowser launched on 2026-10-11 (github.com/argofowl/FowlBrowser, MIT). It's an extension for Chrome
 and Helium that drives tabs through `chrome.debugger` and its own MCP server. It reports 26/26 on 13
 tasks against 23/26 for Claude through Codex's extension, and 21/26 for Codex itself. It covers the
