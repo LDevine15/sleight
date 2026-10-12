@@ -44,9 +44,7 @@ The engine updated to 26.1007.30912 on 2026-10-12 (the 09:00 watch). Its API doc
 Waiting on the owner:
 - Bench leftovers in their iCloud TextEdit folder, "Delivery Note.txt" (65 bytes) and "Untitled 6.txt" (empty), from
   2026-10-12 13:44 to 13:45 EDT. Theirs to trash.
-- The video (draft 1 at `~/Desktop/sleight-launch/sleight-launch-draft1.mp4`, source `media/launch/`): the owner asked
-  for it to show sleight beating FowlBrowser. sleight-arch proposed leading with the hand-off tasks plus browser parity. No answer yet.
-- Preview auto-approval in the hand-off hook (LAWS approves Preview for real-use tasks). No answer yet.
+- The video waits until the claim work is done (owner, 2026-10-12).
 
 FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fowlbrowser` (`8b68924`, our patch applied by
 `rounds.sh`), installed with `--lite` and no Claude config changes. Its extension is loaded unpacked in Chrome (Developer mode on) and in

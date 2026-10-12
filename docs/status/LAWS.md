@@ -111,7 +111,7 @@ belong in [STATE.md](STATE.md).
   dangerous (owner, 2026-10-11, as in Codex: the choice is always the user's, in one click).
 - Apps get approved without a person at the moment of use only two ways: the benchmark's allowlist
   (Calculator, TextEdit, Chess, and Simulator or DeviceHub since 2026-10-07, by name or bundle ID) in benchmark runs,
-  plus Safari, Preview, Finder and Helium for the real-use tasks (owner, 2026-10-08) and Word,
+  plus Safari, Preview, Finder and Helium for the real-use tasks (owner, 2026-10-08), Preview also for the hand-off tasks (owner, 2026-10-12) and Word,
   Excel, PowerPoint, Mail and Mimestream for them too (owner, 2026-10-09), VS Code (also by its app name, Code), Cursor, Firefox,
   Slack, Discord and WhatsApp for them too (owner, 2026-10-10, chat apps open and read only), Notes, Reminders, Calendar,
   Messages, Pages, Numbers, Keynote, Music, Maps, Photos, Arc, Chrome, Notion, Spotify and Zoom for the parity
