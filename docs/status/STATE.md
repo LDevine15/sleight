@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 19:20 UTC)
+## Banner (2026-10-12 19:45 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
 then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `faeea9d` (private), full
@@ -15,9 +15,10 @@ Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders,
   22/26, 1,414 s, $9.07 against 26/26, 967 s, $7.19. Not yet published.
 - 14:49 sleight-only round with A1 (`/tmp/fb-rounds/r6-sleight-a1/report.md`, one browser order): 13/13, 814 s, $5.98.
   FowlBrowser's half of a round is about 470 s and $3.55. 313 s and $2.01 of ours is form-settings in Helium, where about
-  280 s went on the HTML5 priority list: `tab.drag` does start HTML5 drags (the list reordered several times) but picks up
-  the item a row away from the aimed `getBoundingClientRect` center. Next: `bench/fowl/drag-probe.mjs` logs where
-  `tab.drag` presses and drops.
+  280 s went on the HTML5 priority list. Cause, from `bench/fowl/drag-probe.mjs`: the engine's `tab.drag` moves in 8
+  equal steps, and Chrome fires `dragover` only when two consecutive moves are inside one element, so a drag aimed at the
+  target's center never drops (0/14). Aimed 3 px inside the target's near edge it drops 6/6 (Helium and Chrome). Lane
+  item A9 builds `sleight.dragTo` on that.
 - The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over 13 runs).
 
 Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service.mjs:8585-8640`: no `Event`,
@@ -27,11 +28,11 @@ A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = .
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`): reviews today (Sonnet high) merged F6R3
 and F5R2; A3 and A7 failed review and went back as A3R and A7R; F5R3 (receipts) is new; A6 also takes F6R3's leftovers
 (a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). In progress: A2. Open:
-A3R, A5, A6, A7R, F4, F5R3, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
+A3R, A5, A6, A7R, A9 (first), F4, F5R3, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
 
-Hand-off tasks (`bench/fowl/handoff.sh`): at 18:37 UTC sleight 2/3 and FowlBrowser + sleight 2/3; the invoice missed on
-the engine's "Allow download from <url>?" prompt, which `bench/fowl/origin-hook.mjs` accepts since `faeea9d` (rounds'
-ports only). Rerun started 18:57 UTC, log `/tmp/fb-rounds/handoff-run6.log`.
+Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
+(203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
+the engine's download prompt, which the hook accepts since `faeea9d`. sleight's arms may use `open_file` since `e815a8e`.
 
 API spend this month: $119.92 of $200 (ledger `~/Library/Logs/sleight/bench-api-spend.json`). Opus rounds don't count.
 
@@ -49,9 +50,8 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Read the hand-off rerun's results and publish them with the 18:37 run.
-2. Run `node bench/fowl/drag-probe.mjs` (Helium and Chrome, holding the live lock) and fix the aim: a skill line or a
-   generic helper that drags between two locators.
+1. Review A9 once its branch is pushed and run it live on the settings form (`bench/fowl/rounds.sh --only form-settings-helium`).
+2. `downloadMedia` on a PDF link hung until the kernel reset (32 s in the 18:57 invoice run): find out why.
 3. Review lane branches as they land (A2 first), merge, then a full head-to-head (both arms, Opus on the account). Publish
    every round next to the 10:25 one.
 4. Video and release once a head-to-head is a win, or on the owner's call.
