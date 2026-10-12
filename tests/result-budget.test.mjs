@@ -107,7 +107,7 @@ test('lean docs keep all signatures and engine limits, dropping ordinary referen
   assert.match(out, /from\?: string;/);
   assert.equal(out.slice(0, out.indexOf('\n# API Reference\n')), leanFixture.slice(0, leanFixture.indexOf('\n# API Reference\n')));
   assert.ok(out.endsWith('# Computer Use Confirmations Policy\nAlways ask for permission here.\n'));
-  assert.match(out, /full reference.*await browser.documentation\(\)/i);
+  assert.match(out, /full reference.*await b.documentation\(\)/i);
   assert.match(out.slice(out.indexOf('# API Reference')), /`await agent.documentation.get\("<name>"\)`/);
 });
 
@@ -184,7 +184,7 @@ test('the advertised full-reference command writes an uncut reference in lean mo
   const command = /full reference with `([^`]+)`/.exec(index)?.[1];
   assert.ok(command);
   const written = [];
-  await new Function('browser', 'nodeRepl', `return (async () => { ${command}; })()`)(
+  await new Function('b', 'nodeRepl', `return (async () => { ${command}; })()`)(
     { documentation: async () => leanFixture }, { write: text => written.push({ type: 'text', text }) });
   const full = budget.apply(written);
   assert.equal(full.length, 1, 'the documented command emits the reference');
@@ -201,7 +201,7 @@ test('minimal docs replace signatures with the full-reference call and engine li
   const at = leanFixture.indexOf('\n# API Reference\n');
   assert.equal(out.slice(0, at), leanFixture.slice(0, at));
   assert.ok(out.endsWith('# Computer Use Confirmations Policy\nAlways ask for permission here.\n'));
-  assert.match(out, /full reference.*await browser.documentation\(\)/i);
+  assert.match(out, /full reference.*await b.documentation\(\)/i);
 });
 
 test('minimal docs retain complete limit comments and ignore quoted comment markers', () => {
@@ -242,7 +242,16 @@ test('the minimal full-reference command emits the complete original reference',
   const command = /full reference with `([^`]+)`/.exec(index)?.[1];
   assert.ok(command);
   const written = [];
-  await new Function('browser', 'nodeRepl', `return (async () => { ${command}; })()`)(
+  await new Function('b', 'nodeRepl', `return (async () => { ${command}; })()`)(
     { documentation: async () => leanFixture }, { write: text => written.push({ type: 'text', text }) });
   assert.ok(budget.apply(written)[0].text.endsWith(leanFixture));
+});
+
+test('lean and min reference hints name a replaceable browser handle', () => {
+  for (const setting of [{ leanDocs: true }, { minDocs: true }]) {
+    const out = createResultBudget(setting).apply([{ type: 'text', text: leanFixture }])[0].text;
+    assert.match(out, /your `cua\.getBrowser\(\.\.\.\)` handle \(here `b`\)/);
+    assert.doesNotMatch(out, /await browser\.documentation\(\)/);
+    assert.match(out, /await b\.documentation\(\)/);
+  }
 });

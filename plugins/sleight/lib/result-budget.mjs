@@ -58,7 +58,7 @@ function leanReference(text, minimal = false) {
     .replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n');
   const topicCall = /# Additional Documentation\n[\s\S]*?`(await agent\.documentation\.get\("<name>"\))`/.exec(text)?.[1];
   const fullCall = /\bdocumentation\(\): Promise<string>/.test(block[1])
-    ? 'Read the full reference with `nodeRepl.write("Full browser reference:\\n" + await browser.documentation())`.'
+    ? 'On your `cua.getBrowser(...)` handle (here `b`), read the full reference with `nodeRepl.write("Full browser reference:\\n" + await b.documentation())`.'
     : 'Use SLEIGHT_ENGINE_DOCS=full for the full reference.';
   const notice = `${fullCall}${topicCall ? ` Topic documentation: \`${topicCall}\`.` : ''}`;
   if (minimal) return text.slice(0, at) + `\n${notice}\n\n` + limits.map(line => `- ${line}`).join('\n') + '\n' +
