@@ -61,8 +61,10 @@ await js(`let b = await cua.getBrowser({ extensionInstanceId: '${IDS[browser]}' 
 const open = await js(`let t = await cua.createBrowserTab(b.browserId, '${url}', { sessionName: 'dialog' })`);
 const pay = Number(/(\d+) button Pay now/.exec(open.text)?.[1]);
 const step = async (label, code) => { try { const r = await js(code); console.log(way, browser, label, Math.round(r.ms) + ' ms', r.text.slice(0, 160).replace(/\n/g, ' ')); } catch (e) { console.log(way, browser, label, 'ERROR', String(e.message).slice(0, 200).replace(/\n/g, ' ')); } };
+if (way === 'preempt') await step('preempt', 'await t.playwright.evaluate(() => { window.confirm = () => true; }); nodeRepl.write("set")');
 await step('click', `await t.click(${pay}); 1`);
 if (way === 'accept') await step('answer', 'const d = await t.getJsDialog(); await d.accept(); nodeRepl.write("accepted")');
+if (way === 'preempt') { /* placeholder */ }
 if (way === 'ax') await step('answer', 'nodeRepl.write(JSON.stringify(await t.ax.get("state")).slice(0, 600))');
 await step('read title', 'nodeRepl.write(String(await t.title()))');
 await step('read tree', 'await t.getAXState({ disableDiffing: true })');
