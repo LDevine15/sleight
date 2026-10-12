@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 19:25 UTC)
+## Banner (2026-10-12 20:15 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
 then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `118b1b3` (private), full
@@ -20,8 +20,10 @@ Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders,
   target's center never drops (0/14). Aimed 3 px inside the target's near edge it drops 6/6 (Helium and Chrome). A9's
   `sleight.dragTo` (merged `118b1b3`) took form-settings in Helium to 39 s and $0.42, 10/10, every drag moved
   (`/tmp/fb-rounds/a9-live`).
-- A sleight round in both browser orders on `118b1b3` started 15:23 EDT: `/tmp/fb-rounds/h2h-20261012-1523-sleight-*`,
-  driver log `/tmp/fb-rounds/r7-20261012-1523.log`.
+- 15:23 EDT, both arms on `118b1b3` (published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h-2.md` with the 13:09, 13:22
+  and 14:27 rounds): sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls (its handoff
+  check failed twice). First tie on tasks. Still slower by 10% and 51% dearer: wikipedia and mdn take twice as long,
+  and cost is the docs.
 - The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over 13 runs).
 
 Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service.mjs:8585-8640`: no `Event`,
@@ -53,7 +55,8 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Read the 15:23 round, publish it next to the 10:25 one, and compare with FowlBrowser's 26/26.
+1. Cost: the engine docs in every first result (34,000 characters) and their re-reads. Find what sleight can trim
+   or defer without dropping the safety text, and measure wikipedia and mdn (19 to 22 s against 9 to 12 s).
 2. The invoice's `downloadMedia` hang is the engine's: after `tab.click` on a download link, that tab's downloads stall
    (`bench/fowl/download-probe.mjs`, known-problems). A3R adds the hint, A10 the skill sentence.
 3. Review lane branches as they are pushed (F5R3 next), merge, then a full head-to-head (both arms, Opus on the account). Publish
