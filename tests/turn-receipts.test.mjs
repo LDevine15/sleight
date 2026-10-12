@@ -324,6 +324,36 @@ test('concurrent first writers validate a directory created between stat and mkd
   assert.equal(readFileSync(path, 'utf8'), '{}\n');
 });
 
+test('owner names are scrubbed across upper, lower and mixed case in retained fields', () => {
+  for (const name of ['SMITH', 'smith', 'sMiTh', 'ÉLODIE NOËL', 'élodie noël', 'éLoDiE nOëL']) {
+    const journal = new TurnJournal({ ownerNames: ['Smith', 'Élodie Noël'], redactTitles: false });
+    const output = `Window: "${name} draft", App: Editor.\nURL: file:///fixture/${encodeURIComponent(name)}.txt\n0 window`;
+    journal.request(request(1, 'let app = await cua.getApp("Editor")')); journal.reply(reply(1, output));
+    journal.request(request(2, 'await app.click(1)')); journal.reply(reply(2, output));
+    const receipt = journal.finish({ session: name, review: true });
+    assert.equal(receipt.session, '[owner]');
+    assert.equal(receipt.calls[1].window, '[owner] draft');
+    assert.equal(receipt.calls[1].document, '[owner].txt');
+    assert.equal(receipt.windows[0].document, '[owner].txt');
+    assert.doesNotMatch(receipt.review, new RegExp(name, 'iu'));
+  }
+});
+
+test('owner scrub preserves literal matching and the existing substring redaction', () => {
+  const journal = new TurnJournal({ ownerNames: ['A.+ (Owner)', 'Smith'], redactTitles: false });
+  const output = 'Window: "a.+ (OWNER) SMITHson Axx Other", App: Editor.\n0 window';
+  journal.request(request(1, 'let app = await cua.getApp("Editor")')); journal.reply(reply(1, output));
+  const receipt = journal.finish();
+  assert.equal(receipt.calls[0].window, '[owner] [owner]son Axx Other');
+});
+
+test('owner scrub uses Unicode case folding beyond ASCII', () => {
+  const journal = new TurnJournal({ ownerNames: ['Σώτη', 'Kelvin'], redactTitles: false });
+  const output = 'Window: "σΏΤΗ KELVIN", App: Editor.\n0 window';
+  journal.request(request(1, 'let app = await cua.getApp("Editor")')); journal.reply(reply(1, output));
+  assert.equal(journal.finish().calls[0].window, '[owner] [owner]');
+});
+
 test('the default owner scrubber reads id -F once and scrubs retained fields', t => {
   let count = 0;
   t.mock.method(childProcess, 'execFileSync', (command, args) => {

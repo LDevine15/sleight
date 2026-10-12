@@ -258,12 +258,14 @@ export class TurnJournal {
       const source = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[\uD800-\uDFFF]/g, unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`);
       return { pattern: new RegExp(`(^|[^\\p{L}\\p{N}])${source}(?=$|[^\\p{L}\\p{N}])`, 'gu'), marker: `[redacted ${secret.length} chars]` };
     });
+    const owners = this.ownerNames.filter(Boolean).sort((a, b) => b.length - a.length)
+      .map(owner => new RegExp(owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'));
     const scrub = (value, field) => {
       if (typeof value === 'string') {
         let clean = value;
         if (['window', 'app', 'document'].includes(field)) for (const { pattern, marker } of nameSecrets) clean = clean.replace(pattern, `$1${marker}`);
         clean = clean.replaceAll(this.home, '~');
-        for (const owner of this.ownerNames.filter(Boolean).sort((a, b) => b.length - a.length)) clean = clean.replaceAll(owner, '[owner]');
+        for (const owner of owners) clean = clean.replace(owner, '[owner]');
         return clean;
       }
       if (Array.isArray(value)) return value.map(item => scrub(item, field));
