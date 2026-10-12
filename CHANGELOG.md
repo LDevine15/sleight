@@ -32,6 +32,8 @@
   clocks and stubs, so they no longer fail on a loaded Mac: 176 tests in 0.95 s.
 - On a window whose tree is only its chrome (a mirrored iPhone screen), `scroll` becomes a swipe
   across the content, since the engine's scroll did nothing there.
+- `SLEIGHT_FIRST_CALL_BATCH=nosavestop`, for an A/B: the default wording without the instruction to
+  end a call after Cmd+S, saying instead that sleight waits for the sheet a shortcut opens.
 
 ## 1.2.5 (2026-10-11)
 
