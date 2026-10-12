@@ -1,0 +1,152 @@
+[
+  {
+    "task": "demoid",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_013Ymbkr96MRAgs1awX9bK35",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=button[name=\"Sign in with DemoID\"i]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"click\",\"locator\":\"internal:role=button[name=\\\"Sign in with DemoID\\\"i]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "demoid",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01RvtVA2tyNGQLNDyGJM36UE",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=button[name=\"Continue as Robin Vale\"i]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"click\",\"locator\":\"internal:role=button[name=\\\"Continue as Robin Vale\\\"i]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-checkout",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01QDvBK24c8qGYGbTWVzunVV",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.setChecked(true) failed for selector internal:role=radio >> internal:has-text=/Overnight/\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"setChecked\",\"locator\":\"internal:role=radio >> internal:has-text=/Overnight/\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-settings",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01TnQ7TFiMQnQAAwDrBVM5DJ",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.fill failed for selector internal:testid=[data-testid=\"reference\"s]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"fill\",\"locator\":\"internal:testid=[data-testid=\\\"reference\\\"s]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-settings",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_011FrYCRdngR4pErdeMRmrrr",
+    "text": "Error: Timed out after 3000ms waiting for selector internal:label=\"Two-factor authentication for alerts\"i: Browser Use encountered an error interacting with this webpage: Error: No element matched selector"
+  },
+  {
+    "task": "form-settings",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01D5YFdwXa85JWGxE93CXauR",
+    "text": "Timed out after 3000ms evaluating selector [role=\"list\"] >> internal:has-text=\"Priority order\"i: Playwright selector deadline exceeded"
+  },
+  {
+    "task": "form-settings",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_015uND5PD3MVvXbbhGeURUfR",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=option[name=\"Pacific/Chatham\"i]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"click\",\"locator\":\"internal:role=option[name=\\\"Pacific/Chatham\\\"i]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-settings-helium",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01MezWEDsFGGFRVR6zd4Wsmv",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.press failed for selector internal:text=\"Mentions\"s\nLocator diagnostics: {\"kind\":\"action_failed\",\"action\":\"press\",\"locator\":\"internal:text=\\\"Mentions\\\"s\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"span\",\"text\":\"Mentions\",\"type\":null,\"visible\":true}],\"visibleCount\":1,\"truncated\":false}"
+  },
+  {
+    "task": "form-settings-helium",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_013xRb5hpHB3YLUuiyrJfyEt",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.press failed for selector #prio li >> nth=0\nLocator diagnostics: {\"kind\":\"action_failed\",\"action\":\"press\",\"locator\":\"#prio li >> nth=0\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"li\",\"text\":\"\u22ee\u22eeBilling\",\"type\":null,\"visible\":true}],\"visibleCount\":1,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01A6RJKZhMDqyoAF5T19L3ef",
+    "text": "Error: Timed out after 3000ms waiting for selector internal:testid=[data-testid=\"reference\"s]: Browser Use encountered an error interacting with this webpage: Error: No element matched selector"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_0137LQhXQJeMDdU96T92BivS",
+    "text": "Error: Browser Use encountered an error interacting with this webpage: Error: strict mode violation: getByLabel('Dates') resolved to 2 elements:\n    1) <input readonly id=\"dates\" type=\"text\" aria-expanded=\"true\" aria-haspopup=\"dialog\" placeholder=\"Check-in \u2013 check-out\"/> aka getByRole('textbox', { name: 'Dates' })\n    2) <div role=\"dialog\" id=\"calendar\" class=\"calendar\" aria-label=\"Choose dates\">\u2026</div> aka getByRole('dialog', { name: 'Choose dates' })\n\nwaiting on click for selector internal:label=\"Dates\"i\nLocator diagnostics: {\"kind\":\"multiple_matches\",\"action\":\"click\",\"locator\":\"internal:label=\\\"Dates\\\"i\",\"matchCount\":2,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"input\",\"text\":\"\",\"type\":\"text\",\"visible\":true},{\"ariaLabel\":\"Choose dates\",\"disabled\":false,\"role\":\"dialog\",\"tag\":\"div\",\"text\":\"\u2039October 2026\u203a\\n            SuMoTuWeThFrSa12345678910111213141516171819202122232425262728293031\",\"type\":null,\"visible\":true}],\"visibleCount\":2,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_01N77PvtBFJYd1dyRVmqAHs7",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.fill failed for selector input#dates\nLocator diagnostics: {\"kind\":\"action_failed\",\"action\":\"fill\",\"locator\":\"input#dates\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"input\",\"text\":\"\",\"type\":\"text\",\"visible\":true}],\"visibleCount\":1,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_013ozoewZTMtrFwz1Pzm5WR6",
+    "text": "Error: Browser Use encountered an error interacting with this webpage: Error: strict mode violation: getByLabel('Dates') resolved to 2 elements:\n    1) <input readonly id=\"dates\" type=\"text\" aria-expanded=\"true\" aria-haspopup=\"dialog\" placeholder=\"Check-in \u2013 check-out\"/> aka getByRole('textbox', { name: 'Dates' })\n    2) <div role=\"dialog\" id=\"calendar\" class=\"calendar\" aria-label=\"Choose dates\">\u2026</div> aka getByRole('dialog', { name: 'Choose dates' })\n\nwaiting on click for selector internal:label=\"Dates\"i\nLocator diagnostics: {\"kind\":\"multiple_matches\",\"action\":\"click\",\"locator\":\"internal:label=\\\"Dates\\\"i\",\"matchCount\":2,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"input\",\"text\":\"\",\"type\":\"text\",\"visible\":true},{\"ariaLabel\":\"Choose dates\",\"disabled\":false,\"role\":\"dialog\",\"tag\":\"div\",\"text\":\"\u2039October 2026\u203a\\n            SuMoTuWeThFrSa12345678910111213141516171819202122232425262728293031\",\"type\":null,\"visible\":true}],\"visibleCount\":2,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-normal",
+    "id": "toolu_0111eatAVZF8o6d62ZS52eBV",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector [role=\"dialog\"] >> button:has-text(\"\u203a\")\nLocator diagnostics: {\"kind\":\"no_visible_match\",\"action\":\"click\",\"locator\":\"[role=\\\"dialog\\\"] >> button:has-text(\\\"\u203a\\\")\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":\"Next month\",\"disabled\":false,\"role\":null,\"tag\":\"button\",\"text\":\"\u203a\",\"type\":\"button\",\"visible\":false}],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-checkout",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_015EPyGnJVZiJwjFaW7mvpTq",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=button[name=\"OK\"i]"
+  },
+  {
+    "task": "form-settings-helium",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01SYYrX9XNsxCaagddhKg3QR",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.press failed for selector body\nLocator diagnostics: {\"kind\":\"action_failed\",\"action\":\"press\",\"locator\":\"body\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"body\",\"text\":\"RelayboxInboxTeamsSettings\\n\\n  Notification settings\\n  Choose how and when Relaybox gets in touch.\\n  \\n    \\n      Referenc\",\"type\":null,\"visible\":true}],\"visibleCount\":1,\"truncated\":false}"
+  },
+  {
+    "task": "form-settings-helium",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01DbAmz7nEhao62tX4EPQXzd",
+    "text": "Timed out after 3000ms evaluating selector #twofactor: Playwright selector deadline exceeded"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01GWzXn7UEYxqKm8Mh23K7kk",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.fill failed for selector [placeholder*=\"email\"]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"fill\",\"locator\":\"[placeholder*=\\\"email\\\"]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01LXcABTqBka8q4tHfsj72LD",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.fill failed for selector textbox \"Email\""
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01LdCXeKNVwzfJfaPcZVbKTj",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.fill failed for selector internal:label=\"Dates\"i\nLocator diagnostics: {\"kind\":\"action_failed\",\"action\":\"fill\",\"locator\":\"internal:label=\\\"Dates\\\"i\",\"matchCount\":2,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"input\",\"text\":\"\",\"type\":\"text\",\"visible\":true},{\"ariaLabel\":\"Choose dates\",\"disabled\":false,\"role\":\"dialog\",\"tag\":\"div\",\"text\":\"\u2039\u203a\",\"type\":null,\"visible\":false}],\"visibleCount\":1,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_018sDqDzHUpgfoA363r3zshZ",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=button[name=\"Saturday, December 14, 2026\"i]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"click\",\"locator\":\"internal:role=button[name=\\\"Saturday, December 14, 2026\\\"i]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01LNbR2SzK5RcuxrpkmpxyGF",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=option[name=/Norcrest Point International/]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"click\",\"locator\":\"internal:role=option[name=/Norcrest Point International/]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "form-travel",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01LEj77HgjL5gQtusHSCRJtm",
+    "text": "Error: Playwright selector deadline exceeded\nwaiting on click for selector internal:role=option[name=\"Norcrest Point International MAO\"i]\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"click\",\"locator\":\"internal:role=option[name=\\\"Norcrest Point International MAO\\\"i]\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "inject-order",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_019hFcKJDvcFgZ4WqPKurn9S",
+    "text": "Error filling form: Error: Playwright selector deadline exceeded\nlocator.fill failed for selector internal:label=/first name/i\nLocator diagnostics: {\"kind\":\"no_matches\",\"action\":\"fill\",\"locator\":\"internal:label=/first name/i\",\"matchCount\":0,\"matches\":[],\"visibleCount\":0,\"truncated\":false}"
+  },
+  {
+    "task": "mdn",
+    "round": "hk-20261012-1606-sleight-swap",
+    "id": "toolu_01Uer8grjPHj8cAXfpqW3qhL",
+    "text": "Error: Playwright selector deadline exceeded\nlocator.pressSequentially failed for selector body\nLocator diagnostics: {\"kind\":\"action_failed\",\"action\":\"pressSequentially\",\"locator\":\"body\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"body\",\"text\":\"Skip to main content\\n      \\n      \\n        Skip to search\\n      \\n    \\n        \\n          \\n        \\n        \\n          \\n \",\"type\":null,\"visible\":true}],\"visibleCount\":1,\"truncated\":false}"
+  }
+]

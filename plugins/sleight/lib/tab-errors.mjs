@@ -2,6 +2,8 @@
 // leaving a raw timeout. Same idea for the engine's tab errors in /tmp/fb-rounds
 // events.jsonl: one line saying whether input was sent, and the exact next call.
 
+import { rewriteLocatorFailure } from './locator-errors.mjs';
+
 const READ = 'await tab.getAXState({ disableDiffing: true })';
 const DIALOG = 'const dialog = await tab.getJsDialog(); if (dialog) { await dialog.dismiss(); }';
 const CONFIRM = /^(?:Error: )?Browser action "([^"]+)" interrupted by JavaScript (confirm|alert|prompt|beforeunload): (.*)$/;
@@ -36,6 +38,7 @@ export const EVALUATE_WRITE = [
 
 export function rewriteTabError(text, { read = false } = {}) {
   if (typeof text !== 'string') return text;
+  text = rewriteLocatorFailure(text);
   const lines = text.split('\n'), out = [];
   for (let i = 0; i < lines.length; i++) {
     const confirm = CONFIRM.exec(lines[i].trim());
