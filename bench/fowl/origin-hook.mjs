@@ -8,9 +8,17 @@
 const APPS = ['Google Chrome', 'Helium', 'Preview', 'TextEdit'];
 const ORIGINS = ['http://127.0.0.1', 'https://en.wikipedia.org', 'https://developer.mozilla.org'];
 
+// The benchmark's own pages on 127.0.0.1 (LAWS: extension access to them is approved) also get downloads: the hand-off
+// invoice download was declined on 2026-10-12. Raw CDP stays declined everywhere, as in every earlier round.
+
 export function answer(e) {
-  const origin = /^Allow Browser use to access (\S+)\?$/.exec(e.message ?? '')?.[1];
+  const message = e.message ?? '';
+  const origin = /^Allow Browser use to access (\S+)\?$/.exec(message)?.[1];
   const site = origin && origin.replace(/:\d+$/, '');
+  const url = /^Allow Browser use to (?:access|download files from) (https?:\/\/[^\s?]+)/.exec(message)?.[1];
+  let local = false;
+  try { local = !!url && new URL(url).hostname === '127.0.0.1'; } catch {}
+  if (e.mcp_server_name === 'plugin:sleight:computer' && local) return 'accept';
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1];
   return e.mcp_server_name === 'plugin:sleight:computer' && (ORIGINS.includes(site) || APPS.includes(app)) ? 'accept' : 'decline';
 }
@@ -19,6 +27,8 @@ if (import.meta.main) {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const e = JSON.parse(input);
+  // Every declined prompt is logged next to the run, so a new prompt shows up in the report.
+  if (answer(e) === 'decline') (await import('node:fs')).appendFileSync('/tmp/fb-rounds/declined-prompts.jsonl', JSON.stringify({ t: new Date().toISOString(), message: e.message, server: e.mcp_server_name }) + '\n');
   if (process.env.FOWL_HOOK_LOG) (await import('node:fs')).appendFileSync(process.env.FOWL_HOOK_LOG, JSON.stringify({ message: e.message, server: e.mcp_server_name, action: answer(e) }) + '\n');
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Elicitation', action: answer(e), content: {} } }));
 }
