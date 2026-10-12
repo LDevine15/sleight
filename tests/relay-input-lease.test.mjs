@@ -142,7 +142,7 @@ test('ambiguous native identity does not block browser-only candidates', async t
   await new Promise(resolve => setImmediate(resolve));
   h.send(rpc('browser', 'js', { code: 'let tab = await cua.createBrowserTab("chrome", "https://example.com");' }));
   assert.equal(h.forwarded.at(-1).id, 'browser');
-  assert.doesNotMatch(h.forwarded.at(-1).params.arguments.code, /Native access stopped/);
+  assert.equal(h.inputLease.owned.size, 0, 'browser input reserves no native lease');
 });
 
 test('explicit stop drains a pending call, ends its turn, collects then checks cleanup', async t => {

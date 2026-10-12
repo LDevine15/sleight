@@ -4,22 +4,16 @@ export function browserReply(reply) {
     reply.result?._meta?.['codex/toolSurface']?.kind === 'browserUse';
 }
 
-export function browserCall(code, handles = new Set()) {
-  // Template expressions and prototype chains would hide native access from the checks below.
-  if (/`(?:[^`\\]|\\.)*\$\{/.test(code) || /\b(?:constructor|__proto__|prototype)\b/.test(code)) return undefined;
+export function browserCall(code, handles = new Set(), nativeHandles = new Set(['app'])) {
+  if (!code.trim()) return undefined;
   // Strings become "" and comments a space, so a comment can't hide what precedes a bracket.
   const source = code.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
     match => (match.startsWith('/') ? ' ' : '""'));
-  if (/cua\.(?:getApp|computer)\b/.test(source)) return undefined;
-  // Fail closed: cua reached other than by a literal browser method (computed access, destructuring,
-  // aliasing), or a global escape hatch, keeps the call on the native path and its guards.
-  if (/\bcua\b(?!\s*\.\s*(?:listBrowsers|listTabs|getBrowser|getTab|createBrowserTab)\s*\()/.test(source)) return undefined;
-  if (/\b(?:globalThis|window|self|eval|Function|Reflect|Proxy|require|import)\b/.test(source)) return undefined;
-  // Computed member access can build any property name at runtime; only numeric indexes stay browser.
-  // A bracket after a name, call, index, string, `.` (optional chaining) or `}` is member access.
-  if (/[\w$)\]"'`.}]\s*\[(?!\s*\d+\s*\])/.test(source)) return undefined;
-  // Computed keys in object literals and destructuring ({ [k]: v }) do the same.
-  if (/[{,]\s*\[/.test(source)) return undefined;
+  // This is a routing hint, not a JavaScript security boundary. Name native access rather than
+  // trying to prove every other expression browser-only. The runtime guard still denies native input.
+  if (/\b(?:getApp|computer|listApps|listWindows|getState)\b/.test(source) ||
+      /\$\{[^`]*\b(?:getApp|computer|listApps|listWindows|getState)\b/.test(code) ||
+      /\bcua\s*\[\s*["'](?:getApp|computer|listApps|listWindows|getState)["']\s*\]/.test(code)) return undefined;
   const bindings = new Set();
   for (const match of source.matchAll(/(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.(?:getBrowser|getTab|createBrowserTab)\(/g)) {
     bindings.add(match[1]);
@@ -28,11 +22,7 @@ export function browserCall(code, handles = new Set()) {
   for (const match of source.matchAll(/(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)(\.[^;]*)/g)) {
     if ((handles.has(match[2]) || bindings.has(match[2])) && factories.test(match[3])) bindings.add(match[1]);
   }
-  const roots = [...source.matchAll(/\b([A-Za-z_$][\w$]*)\s*\./g)].map(m => m[1]);
-  const browser = /cua\.(?:listBrowsers|listTabs|getBrowser|getTab|createBrowserTab)\(/.test(source) || roots.some(h => handles.has(h));
-  if (!browser) return undefined;
-  // A native handle in the same call must still go through the native guard.
-  const allowed = new Set(['cua', 'nodeRepl', 'playwright', 'dom_cua', 'tabs', 'user', 'capabilities', 'clipboard', 'content', 'dev', 'JSON', ...handles, ...bindings]);
-  if (roots.some(h => !allowed.has(h))) return undefined;
+  const roots = [...source.matchAll(/\b([A-Za-z_$][\w$]*)\s*(?:\?\.)?\s*(?:\.|\[)/g)].map(m => m[1]);
+  if (roots.some(h => nativeHandles.has(h) && !handles.has(h) && !bindings.has(h))) return undefined;
   return { handles: [...bindings] };
 }

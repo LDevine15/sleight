@@ -20,6 +20,78 @@ test('literal browser calls are classified as browser', () => {
   assert.ok(browserCall('const tabs = await cua.listTabs(); nodeRepl.write(tabs[0])'));
 });
 
+const refusedTabCalls = [
+  'console.log(await tab.getAXState({disableDiffing:true, emit:false}));',
+  'const s = await tab.getAXState({disableDiffing:true, emit:false}); s.slice(0, 15000)',
+  'await tab.click(10); await tab.typeText ? "hasTypeText" : Object.keys(tab)',
+  'await tab.drag([464, 424], [464, 362]);\nawait tab.getScreenshot()',
+  'const ks = []; for (let o = tab; o; o = Object.getPrototypeOf(o)) ks.push(...Object.getOwnPropertyNames(o)); [...new Set(ks)].join(",");',
+  'const st = await tab.getAXState({disableDiffing:true}); st.split("\\n").filter(l=>/December 1[49]|text (Oct|Nov|Dec)|month|Dates|Value/.test(l)).join("\\n")',
+  'let tab2 = await cua.createBrowserTab(b.browserId, "http://127.0.0.1:5420/t/handoff/shop/", { sessionName: "🧪 handoff" }); "ok"',
+  'let tab = await cua.createBrowserTab(b.browserId, "http://127.0.0.1:5420/t/inject-mail/mail/", { sessionName: "🧪 inject-mail" });\nglobalThis.tab = tab;',
+  'globalThis.tab = await cua.getTab("1466193133", { browser: "1" })',
+  'globalThis.tab = await cua.getTab("1", { browser: "1" })',
+];
+
+for (const code of refusedTabCalls) {
+  test(`tab code with ordinary JavaScript passes the relay lease gate: ${code}`, t => {
+    const h = runtime(t);
+    h.call(1, 'let tab = await cua.getTab("1")');
+    h.reply(1, { content: [], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } });
+    h.call(2, code);
+    assert.ok(h.sent.find(msg => msg.id === 2), JSON.stringify(h.received));
+    assert.equal(h.lease.owned.size, 0);
+  });
+}
+
+test('two browser sessions never reserve the previous native browser app', t => {
+  const a = runtime(t);
+  const b = runtime(t, { inputLease: new InputLease({ directory: a.directory }) });
+  // Both previously read native windows from the same app. The next calls use tabs only.
+  for (const h of [a, b]) {
+    h.call(1, 'app = await cua.getApp("Browser")');
+    h.reply(1, { content: [{ type: 'text', text: 'Window: "Page", App: Browser' }],
+      _meta: { 'codex/toolSurface': { kind: 'computerUse', app: { appId: 'org.test.browser' } } } });
+    h.call(2, 'let tab = await cua.getTab("1")');
+    h.reply(2, { content: [], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } });
+  }
+  a.call(3, 'await tab.reload()');
+  b.call(3, 'await tab.reload()');
+  for (const h of [a, b]) {
+    assert.ok(h.sent.find(msg => msg.id === 3), JSON.stringify(h.received));
+    assert.equal(h.lease.owned.size, 0, 'pending browser input holds no native lease');
+  }
+});
+
+test('a custom native handle still requires a confirmed window', t => {
+  const h = runtime(t);
+  h.call(1, 'let editor = await cua.getApp("Editor")');
+  h.reply(1, { content: [] });
+  h.call(2, 'console.log("action"); await editor.click(1)');
+  assert.equal(h.sent.some(msg => msg.id === 2), false);
+  assert.match(h.received.at(-1).result.content[0].text, /bundle ID and full window header/);
+});
+
+test('browser calls in document mode do not require a native document', t => {
+  const h = runtime(t, { approvalScope: 'document' });
+  h.call(1, 'globalThis.tab = await cua.getTab("1", { browser: "1" })');
+  assert.ok(h.sent.find(msg => msg.id === 1), JSON.stringify(h.received));
+  assert.equal(h.lease.owned.size, 0);
+});
+
+test('browser calls cannot reuse a native grant through an indirect function', async t => {
+  const h = runtime(t);
+  h.call(1, 'app = await cua.getApp("TextEdit")');
+  await h.run(h.sent.at(-1).params.arguments.code);
+  h.reply(1, { content: [{ type: 'text', text: 'Window: "b.txt", App: TextEdit' }],
+    _meta: { 'codex/toolSurface': { kind: 'computerUse', app: { appId: 'com.apple.TextEdit' } } } });
+  runInContext('var nativeAction = () => app.typeText("blocked")', h.context);
+  h.call(2, 'await cua.listTabs(); await nativeAction()');
+  assert.equal(h.lease.owned.size, 0);
+  await assert.rejects(h.run(h.sent.at(-1).params.arguments.code), /Native access stopped/);
+  assert.deepEqual(Array.from(h.context.writes), []);
+});
+
 const bypasses = [
     'await cua.getApp("TextEdit"); await tab.reload()',
     'await cua["getApp"]("TextEdit"); await tab.reload()',
@@ -42,8 +114,13 @@ const bypasses = [
     'await Object.getPrototypeOf(tab).reload.call(tab)',
 ];
 
-test('native access in any form keeps the call on the native path', () => {
-  for (const code of bypasses) assert.equal(browserCall(code, new Set(['tab'])), undefined, code);
+test('named native APIs and app handles keep the call on the native path', () => {
+  for (const code of [
+    ...bypasses.slice(0, 5), bypasses[6], bypasses[7], bypasses[8], bypasses[9], bypasses[11],
+    'await cua.computer.click({ x: 1, y: 2 })',
+    'await cua.listApps(); await tab.reload()',
+    'await cua.getState(); await tab.reload()',
+  ]) assert.equal(browserCall(code, new Set(['tab'])), undefined, code);
 });
 
 function runtime(t, options = {}) {
@@ -53,7 +130,7 @@ function runtime(t, options = {}) {
   for (const [stream, rows] of [[serverIn, sent], [clientOut, received]]) {
     stream.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => rows.push(JSON.parse(line))));
   }
-  const lease = new InputLease({ directory });
+  const lease = options.inputLease ?? new InputLease({ directory });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: lease, changeReview: false, ...options });
   t.after(() => { relay.close(); removeTemp(directory); });
   const call = (id, code) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
@@ -136,8 +213,8 @@ for (const result of [
 ]) {
   test(`unconfirmed engine reply never teaches browser handles: ${JSON.stringify(result)}`, t => {
     const h = runtime(t);
-    h.call(1, 'let tab = await cua.getTab("1")'); h.reply(1, result);
-    h.call(2, 'await tab.reload()');
+    h.call(1, 'let app = await cua.getTab("1")'); h.reply(1, result);
+    h.call(2, 'await app.reload()');
     assert.equal(h.sent.some(msg => msg.id === 2), false);
     assert.equal(h.received.at(-1).result.isError, true);
   });
