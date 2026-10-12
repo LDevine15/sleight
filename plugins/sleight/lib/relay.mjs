@@ -79,6 +79,7 @@ import { dragToCode } from './drag-to.mjs';
 import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
+import { ReplWarmup } from './repl-warmup.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
@@ -160,6 +161,7 @@ const TURN_END_DESCRIPTION = 'Internal to sleight: its hooks call this when a Cl
 export function promptNotice(text, prompt) {
   if (prompt !== 'lean') return text;
   return text
+    .replace('REPL preparation was stopped before this call ran.', 'REPL setup stopped. Call skipped.')
     .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
     .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
     .replace('` does.', '`.')
@@ -427,6 +429,8 @@ export function createRelay({
   chromeSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
   launchSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
   launchReread = process.env.SLEIGHT_LAUNCH_REREAD === '1',
+  warmRepl = false,
+  onClientReply = () => {},
 }) {
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
@@ -614,6 +618,30 @@ export function createRelay({
   const chromeSettled = new Set();
   let guardReady = false, guardGeneration = 0;
   const guardCalls = new Map();
+  const replWarmup = new ReplWarmup({ enabled: warmRepl,
+    request: code => new Promise(resolve => {
+      const id = `sleight-warm-${nextInternalId++}`;
+      let pending = true;
+      const finish = (reply, expired = false) => {
+        if (!pending) return;
+        pending = false;
+        clearTimeout(timer);
+        if (expired) {
+          internalRequests.set(id, reply => replWarmup.retainDocs(reply));
+          forgetGuard();
+        }
+        resolve(reply);
+      };
+      const timer = setTimeout(() => finish({}, true), 6000);
+      timer.unref?.();
+      internalRequests.set(id, finish);
+      guardCalls.set(id, guardGeneration);
+      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code, title: 'Prepare sleight REPL', timeout_ms: 5000 }, _meta: { [META_KEY]: turnMeta() } } });
+    }),
+    resume: msg => closing || disposed ? leaseStop(msg, promptNotice('REPL preparation was stopped before this call ran.', prompt)) : handleClient(msg),
+    refuse: msg => leaseStop(msg, promptNotice('REPL preparation was stopped before this call ran.', prompt)),
+  });
   const forgetGuard = () => { guardReady = false; guardGeneration++; };
   const screenshots = new Map(); // lowercased app name -> { latest, byTitle } pixel sizes of its engine screenshots
   // Every tools/call gets the next number. An acquisition's read can stand in for the guard's
@@ -1157,6 +1185,7 @@ export function createRelay({
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
     }
     serverIn.write(JSON.stringify(msg) + '\n');
+    replWarmup.sent(msg);
   };
   function cleanupBrowserTabs() {
     if (tabCleanupPending) return tabCleanupPending;
@@ -1281,6 +1310,7 @@ export function createRelay({
     }
     journal?.reply(msg);
     trace('to-client', msg);
+    if (msg.method === undefined && msg.id !== undefined) onClientReply(msg);
     clientOut.write(JSON.stringify(msg) + '\n');
   };
   const inputError = err => { trace('stream-error', { stream: 'server-input', error: err.message }); failLease(err); };
@@ -1683,6 +1713,7 @@ export function createRelay({
     return true;
   }
   function handleClient(msg) {
+    if (replWarmup.hold(msg)) return;
     if (msg.method === 'tools/call' && msg.id !== undefined && !callGenerations.has(msg.id)) callGenerations.set(msg.id, stopGeneration);
     if (msg.method === 'initialize') {
       onInitialize(msg.params?.clientInfo);
@@ -2155,6 +2186,7 @@ export function createRelay({
     observeServerMessage(msg);
   }
   function observeServerMessage(msg) {
+    replWarmup.reply(msg);
     if (stopCollected || (msg.method === undefined && stoppedClients.has(msg.id))) return;
     if (msg.method === undefined && frontCalls.has(msg.id)) {
       const token = frontCalls.get(msg.id); frontCalls.delete(msg.id);
@@ -2348,6 +2380,7 @@ export function createRelay({
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
+    if (jsCode !== undefined) replWarmup.attach(msg);
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
       msg.result.content = msg.result.content.map(c =>
@@ -2748,6 +2781,7 @@ export function createRelay({
   async function interruptTurn(msg) {
     let tabNote;
     closing = true;
+    replWarmup.cancel();
     stopFinished = false;
     stopGeneration++;
     cancelFrontCalls();
@@ -2825,6 +2859,7 @@ export function createRelay({
     if (disposed) return;
     finishReceipt();
     disposed = true;
+    replWarmup.cancel();
     cancelFrontCalls();
     detachServer();
     cancelInternalRequests('Session ended.');
@@ -2855,6 +2890,7 @@ export function createRelay({
   }
   async function shutdown() {
     closing = true;
+    replWarmup.cancel();
     await endOpenTurn();
     await close();
   }

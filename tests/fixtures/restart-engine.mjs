@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import { appendFileSync } from 'node:fs';
+import { GUARD_READY } from '../../plugins/sleight/lib/document-scope.mjs';
 const log = event => appendFileSync(process.env.SLEIGHT_TEST_ENGINE_LOG, JSON.stringify({ event, pid: process.pid }) + '\n');
 const send = msg => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
 log('start');
@@ -12,6 +13,9 @@ createInterface({ input: process.stdin }).on('line', line => {
   } else if (msg.method === 'notifications/initialized') log('initialized');
   else if (msg.method === 'tools/call' && msg.params.name === 'js') {
     if (!initialized) { send({ id: msg.id, error: { code: -32000, message: 'initialize required' } }); return; }
+    if (String(msg.id).startsWith('sleight-warm-') && /void 0;$/.test(msg.params.arguments.code)) {
+      log('warm'); send({ id: msg.id, result: { content: [{ type: 'text', text: GUARD_READY + '\n' }] } }); return;
+    }
     pending = msg.id;
     send({ id: 'approval', method: 'elicitation/create', params: { message: 'Allow TextEdit?',
       _meta: { connector_id: 'computer-use', persist: ['session'], tool_params: { app: 'TextEdit' }, riskLevel: 'low' } } });

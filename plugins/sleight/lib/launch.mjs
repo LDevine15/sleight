@@ -17,7 +17,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { discoverExtensions } from './browser-discovery.mjs';
-import { createSurfaceCache, refreshAfterFirstCall } from './surface-cache.mjs';
+import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
@@ -645,7 +645,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const s = resolveServer();
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
-  let surfaceCache, child, childClosed, stopObservingFirstCall, relay;
+  let surfaceCache, child, childClosed, firstCallObserver, relay;
   let stoppingForReceipt = false;
   let terminating = false;
   function startEngine() {
@@ -655,10 +655,10 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     trace?.('engine-started', { pid: current.pid });
     childClosed = new Promise(resolve => current.once('close', (code, signal) => resolve({ code, signal })));
     current.on('error', err => fail(`could not start server: ${err.message}`));
-    stopObservingFirstCall = refreshAfterFirstCall(current.stdout, surfaceCache);
+    firstCallObserver = firstClientCallRefresh(surfaceCache);
     current.on('close', async code => {
       if (current !== child || stoppingForReceipt) return;
-      stopObservingFirstCall(); await surfaceCache?.close();
+      firstCallObserver.dispose(); await surfaceCache?.close();
       await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(code ?? 0);
     });
     terminating = false; stoppingForReceipt = false;
@@ -697,6 +697,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     simFocusNote: process.env.SLEIGHT_SIM_FOCUS_NOTE !== '0', // Screenshot scale advice for any app.
     resultTrim: process.env.SLEIGHT_RESULT_TRIM === '1',
     firstCallBatch: firstCallBatchSetting(process.env.SLEIGHT_FIRST_CALL_BATCH),
+    warmRepl: process.env.SLEIGHT_WARM_REPL !== '0',
+    onClientReply: message => firstCallObserver?.reply(message),
     confirmPayments: paymentConfirmationSetting(),
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
@@ -744,7 +746,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     beginStop: () => { stoppingForReceipt = true; },
     stopEngine: async () => {
       const engine = await collectOwnedEngine({ child, closed: childClosed });
-      stopObservingFirstCall(); await surfaceCache?.close();
+      firstCallObserver.dispose(); await surfaceCache?.close();
       await stopHelpers();
       return engine;
     },

@@ -90,6 +90,7 @@ test('launcher stays connected across stop and lazily initializes a new engine w
   assert.equal(started.length, 2); assert.notEqual(started[0].pid, started[1].pid);
   assert.equal((await events()).filter(e => e.event === 'initialize').length, 2);
   assert.equal((await events()).filter(e => e.event === 'accept').length, 2);
+  assert.equal((await events()).filter(e => e.event === 'warm').length, 1, 'startup setup does not acquire an app');
   assert.ok((await events()).some(e => e.event === 'probe' && e.helper === 2), 'new engine uses the new health helper');
-  assert.equal(replies.has('sleight-initialize-1'), false, 'internal initialization stays internal');
+  assert.equal([...replies.keys()].some(id => /^sleight-(?:initialize|warm)-/.test(String(id))), false, 'internal initialization and setup stay internal');
 });

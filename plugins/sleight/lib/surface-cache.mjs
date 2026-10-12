@@ -24,7 +24,21 @@ function readCache(file) {
   } finally { closeSync(fd); }
 }
 
-// Observe the engine's replies without owning, pausing or consuming the relay's stdout stream.
+export function firstClientCallRefresh(cache, { delayMs = 60000 } = {}) {
+  let active = !!cache;
+  const dispose = () => { active = false; clearTimeout(timer); };
+  const refresh = () => {
+    if (!active) return;
+    dispose();
+    void cache.refresh();
+  };
+  const timer = setTimeout(refresh, delayMs);
+  timer.unref?.();
+  return { dispose, reply: message => { if (Array.isArray(message.result?.content)) refresh(); } };
+}
+
+// Observe replies without owning, pausing or consuming the stream. The launcher uses
+// firstClientCallRefresh with the relay's client replies so private warm-up stays out.
 // The inventory refresh starts when the engine's first call has answered (or after delayMs, for
 // a client that never calls js), not when initialize comes back: starting it there put a second
 // engine on the machine during the first call, which cost about 0.12 s of the answer on a quiet

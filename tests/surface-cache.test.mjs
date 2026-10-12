@@ -9,6 +9,24 @@ import { selectSurfaces } from '../plugins/sleight/lib/launch.mjs';
 import { refreshAfterFirstCall } from '../plugins/sleight/lib/surface-cache.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
+test('client reply refresh ignores initialize and can be disposed before fallback', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { firstClientCallRefresh } = await import('../plugins/sleight/lib/surface-cache.mjs');
+  let refreshes = 0;
+  const observe = firstClientCallRefresh({ refresh() { refreshes++; } });
+  observe.reply({ id: 1, result: { capabilities: {} } });
+  assert.equal(refreshes, 0);
+  observe.reply({ id: 2, result: { content: [] } });
+  observe.reply({ id: 3, result: { content: [] } });
+  t.mock.timers.tick(60001);
+  assert.equal(refreshes, 1);
+  const cancelled = firstClientCallRefresh({ refresh() { refreshes++; } });
+  cancelled.dispose();
+  t.mock.timers.tick(60001);
+  cancelled.reply({ id: 4, result: { content: [] } });
+  assert.equal(refreshes, 1);
+});
+
 test('the inventory refresh waits for the engine\'s first call answer, not initialize', () => {
   const output = new PassThrough();
   const received = []; let refreshes = 0;
