@@ -6,18 +6,25 @@
 // elicitation hook declines every prompt.
 // Browsers the h2h rounds use, plus the hand-off tasks' native apps, all on the benchmark allowlist (LAWS).
 const APPS = ['Google Chrome', 'Helium', 'Preview', 'TextEdit'];
-const ORIGINS = ['http://127.0.0.1', 'https://en.wikipedia.org', 'https://developer.mozilla.org'];
+const ORIGINS = ['https://en.wikipedia.org', 'https://developer.mozilla.org'];
 
 // The benchmark's own pages on 127.0.0.1 (LAWS: extension access to them is approved) also get downloads: the hand-off
 // invoice download was declined on 2026-10-12. Raw CDP stays declined everywhere, as in every earlier round.
+
+const LOCAL_PORTS = ['5413', '5420', '5431'];
 
 export function answer(e) {
   const message = e.message ?? '';
   const origin = /^Allow Browser use to access (\S+)\?$/.exec(message)?.[1];
   const site = origin && origin.replace(/:\d+$/, '');
-  const url = /^Allow Browser use to (?:access|download files from) (https?:\/\/[^\s?]+)/.exec(message)?.[1];
+  // The whole message must be one of the two forms, on one of the rounds' own servers, with no credentials.
+  const url = /^Allow Browser use to (?:access|download files from) (https?:\/\/[^\s?]+)\?$/.exec(message)?.[1];
   let local = false;
-  try { local = !!url && new URL(url).hostname === '127.0.0.1'; } catch {}
+  try {
+    const u = url && new URL(url);
+    local = !!u && u.hostname === '127.0.0.1' && LOCAL_PORTS.includes(u.port) && !u.username && !u.password;
+  } catch {}
+  if (/\bCDP\b|devtools/i.test(message)) return 'decline';
   if (e.mcp_server_name === 'plugin:sleight:computer' && local) return 'accept';
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1];
   return e.mcp_server_name === 'plugin:sleight:computer' && (ORIGINS.includes(site) || APPS.includes(app)) ? 'accept' : 'decline';
