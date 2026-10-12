@@ -18,8 +18,10 @@ export async function fillForm(tab, fields) {
       if (!field || ['label', 'index', 'locator'].filter(key => field[key] !== undefined).length !== 1) {
         throw new Error('give exactly one label, index or locator');
       }
-      if (!['string', 'number', 'boolean'].includes(typeof field.value) ||
-          (typeof field.value === 'number' && !Number.isFinite(field.value))) throw new Error('value must be text, a finite number or a boolean');
+      const many = Array.isArray(field.value);
+      if (many ? ![...field.value].every(value => typeof value === 'string') :
+          !['string', 'number', 'boolean'].includes(typeof field.value) ||
+          (typeof field.value === 'number' && !Number.isFinite(field.value))) throw new Error('value must be text, a finite number, a boolean or an array of text');
       let loc;
       if (field.index !== undefined) {
         if (!Number.isInteger(field.index) || field.index < 0) throw new Error('index must be a nonnegative integer');
@@ -35,7 +37,7 @@ export async function fillForm(tab, fields) {
       else loc = field.locator;
       if (!loc || await loc.count() !== 1) throw new Error('field must match exactly one control');
       const state = () => loc.evaluate(el => ({
-        tag: el.tagName?.toLowerCase(), type: el.type, role: el.getAttribute('role'),
+        tag: el.tagName?.toLowerCase(), type: el.type, role: el.getAttribute('role'), multiple: el.multiple === true,
         checked: typeof el.checked === 'boolean' ? el.checked : el.getAttribute('aria-checked'),
         value: el.value ?? el.getAttribute('aria-valuenow'),
         min: el.getAttribute('min') ?? el.getAttribute('aria-valuemin') ?? '0',
@@ -43,6 +45,7 @@ export async function fillForm(tab, fields) {
         step: el.getAttribute('step') ?? '1',
       }), undefined, options);
       const meta = await state();
+      if (many && (meta.tag !== 'select' || !meta.multiple)) throw new Error('an array value needs a native multi-select');
       const check = ['checkbox', 'radio'].includes(meta.type) ||
         ['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(meta.role) ||
         (typeof meta.checked === 'boolean' && typeof meta.tag === 'string' && meta.tag.includes('-'));
@@ -64,8 +67,17 @@ export async function fillForm(tab, fields) {
           fallback = 'checked state verified after fallback';
         }
       } else if (meta.tag === 'select') {
-        try { await loc.selectOption({ label: String(field.value) }, options); }
-        catch { await loc.selectOption({ value: String(field.value) }, options); fallback = 'selected by value fallback'; }
+        const wanted = [...new Set(many ? field.value : [String(field.value)])];
+        let key = 'label';
+        const input = () => meta.multiple ? wanted.map(value => ({ [key]: value })) : { [key]: wanted[0] };
+        try { await loc.selectOption(input(), options); }
+        catch { key = 'value'; await loc.selectOption(input(), options); fallback = 'selected by value fallback'; }
+        if (meta.multiple) {
+          const selected = await loc.evaluate(el => Array.from(el.selectedOptions, option => ({ label: option.label, value: option.value })), undefined, options);
+          if (selected.length !== wanted.length || wanted.some(value => !selected.some(option => option[key] === value))) {
+            throw new Error('selected options did not match requested ' + key + 's');
+          }
+        }
       } else if (meta.type === 'range' || meta.role === 'slider') {
         const min = Number(meta.min), max = Number(meta.max), step = Number(meta.step), value = Number(field.value);
         const steps = (value - min) / step;

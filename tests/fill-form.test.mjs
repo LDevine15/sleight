@@ -115,3 +115,77 @@ test('the injected helper runs in a fresh realm and is hooked into browser calls
     name: 'js', arguments: { code: 'nodeRepl.write(await sleight.fillForm(tab, [{label:"Name", value:"Ada"}]))' } } }) + '\n');
   assert.match(sent[0].params.arguments.code, /globalThis\.sleight/);
 });
+
+function groupedSelect({ mismatch = false } = {}) {
+  // Languages and groups from FowlBrowser test/forms/site/settings.html:45-48.
+  const groups = { Europe: [['en-GB', 'English (UK)'], ['de', 'German'], ['fr', 'French'], ['pt-PT', 'Portuguese (Portugal)'], ['es', 'Spanish (Spain)']],
+    Americas: [['en-US', 'English (US)'], ['pt-BR', 'Portuguese (Brazil)'], ['es-MX', 'Spanish (Mexico)'], ['fr-CA', 'French (Canada)']],
+    Asia: [['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'], ['hi', 'Hindi']] };
+  const options = Object.entries(groups).flatMap(([group, rows]) => rows.map(([value, label]) => ({ group, value, label, selected: value === 'en-GB' })));
+  const calls = [], element = { tagName: 'SELECT', type: 'select-multiple', multiple: true,
+    getAttribute: () => null, get selectedOptions() { return options.filter(option => option.selected); } };
+  const loc = { count: async () => 1,
+    evaluate: async (fn, arg) => { calls.push(['read']); return fn(new Proxy(element, { set() { throw Error('read-only'); } }), arg); },
+    selectOption: async (input, config) => {
+      assert.deepEqual(config, { timeoutMs: 1000 });
+      calls.push(['select', input]);
+      const wanted = Array.isArray(input) ? input : [input];
+      const matches = wanted.map(descriptor => options.find(option => descriptor.label !== undefined ? option.label === descriptor.label : option.value === descriptor.value));
+      if (matches.some(option => !option)) throw Error('option missing');
+      if (!mismatch) options.forEach(option => { option.selected = matches.includes(option); });
+    } };
+  return { tab: { playwright: { getByLabel: () => loc } }, calls, options };
+}
+
+test('a grouped multi-select accepts labels across groups and verifies selectedOptions', async () => {
+  const h = groupedSelect();
+  const out = await fillForm(h.tab, [{ label: 'Languages', value: ['French (Canada)', 'Korean'] }]);
+  assert.equal(out, 'Filled 1 of 1 fields.');
+  assert.deepEqual(h.calls, [['read'], ['select', [{ label: 'French (Canada)' }, { label: 'Korean' }]], ['read']]);
+  assert.deepEqual(h.options.filter(option => option.selected).map(option => option.value), ['fr-CA', 'ko']);
+});
+
+test('multi-select values fall back together and a scalar replaces the selection with one option', async () => {
+  const h = groupedSelect();
+  assert.match(await fillForm(h.tab, [{ label: 'Languages', value: ['fr-CA', 'ko'] }]), /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.calls.filter(call => call[0] === 'select'), [
+    ['select', [{ label: 'fr-CA' }, { label: 'ko' }]], ['select', [{ value: 'fr-CA' }, { value: 'ko' }]],
+  ]);
+  assert.match(await fillForm(h.tab, [{ label: 'Languages', value: 'French' }]), /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.options.filter(option => option.selected).map(option => option.value), ['fr']);
+});
+
+test('an empty multi-select array clears it and duplicate requested labels count once', async () => {
+  const h = groupedSelect();
+  assert.equal(await fillForm(h.tab, [{ label: 'Languages', value: [] }]), 'Filled 1 of 1 fields.');
+  assert.equal(h.options.filter(option => option.selected).length, 0);
+  assert.equal(await fillForm(h.tab, [{ label: 'Languages', value: ['Korean', 'Korean'] }]), 'Filled 1 of 1 fields.');
+  assert.equal(h.options.filter(option => option.selected).length, 1);
+});
+
+test('multi-select readback mismatch is a field failure and never claims the selection succeeded', async () => {
+  const h = groupedSelect({ mismatch: true });
+  const out = await fillForm(h.tab, [{ label: 'Languages', value: ['French (Canada)', 'Korean'] }]);
+  assert.match(out, /^Filled 0 of 1 fields\./);
+  assert.match(out, /selected options did not match/);
+  assert.match(out, /Input may have been sent/);
+});
+
+test('duplicate selected labels cannot stand in for a different requested label', async () => {
+  const h = groupedSelect({ mismatch: true });
+  h.options.forEach(option => { option.selected = option.value === 'ko'; });
+  h.options.push({ group: 'Other', label: 'Korean', value: 'other-ko', selected: true });
+  const out = await fillForm(h.tab, [{ label: 'Languages', value: ['Korean', 'French'] }]);
+  assert.match(out, /^Filled 0 of 1 fields\./);
+  assert.match(out, /selected options did not match/);
+});
+
+test('arrays are rejected on other controls and non-string array entries send no input', async () => {
+  const h = fixture({ Name: {}, Country: { tagName: 'SELECT' } });
+  const out = await fillForm(h.tab, [{ label: 'Name', value: ['Ada'] }, { label: 'Country', value: ['UK'] }, { label: 'Name', value: 'Ada' }]);
+  assert.match(out, /^Filled 1 of 3 fields\./);
+  assert.deepEqual(h.calls, [['Name', 'fill', 'Ada']]);
+  const multi = groupedSelect();
+  assert.match(await fillForm(multi.tab, [{ label: 'Languages', value: ['French', 2] }]), /^Filled 0 of 1 fields\./);
+  assert.equal(multi.calls.filter(call => call[0] === 'select').length, 0);
+});
