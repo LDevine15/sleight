@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 14:40 UTC)
+## Banner (2026-10-12 14:55 UTC)
 
 The owner is at the Mac working, and the box is ours: live runs and full checks are fine, but runs
 that take the pointer or keyboard still wait until they're away. Claude's quota is tight, so builds
@@ -21,18 +21,16 @@ a video sleight-arch builds. Done so far:
 - `bench/fowl/`: `rounds.sh` runs FowlBrowser's own runner with a sleight arm
   (`sleight-surface.patch`), clean env, API key, live lock. `origin-hook.mjs` accepts the engine's
   site prompt only for the rounds' sites and the two browsers. `h2h.sh` runs both arms in both
-  browser orders, Opus 5.5 at medium (owner). Running since 14:25 UTC, output in `/tmp/fb-rounds/h2h-*`.
-- Smoke on Wikipedia: FowlBrowser 1/1 in 11 s ($0.20), sleight 1/1 in 27 s ($0.38).
-  Gaps found there and while setting up, for lanes:
-  - `SLEIGHT_SURFACES=browser` breaks every call (`cua.getApp.bind` in `clipboard.mjs` and
-    `document-scope.mjs`). The arm runs browser plus computer, sleight's default with the extension.
-  - Both extension browsers report as "Chrome".
-  - The lease refuses an inventory read that isn't a bare `getState()`.
-  - `emit: false` doesn't stop sleight printing a tree.
-  - A new tab's tree of 242k characters spilled to a file.
-  - Agent tabs are still open and controlled after the turn.
-  - A click that opens a sheet stops the rest of its call.
-  - A Go to Folder paste right after the shortcut was lost.
+  browser orders, Opus 5.5 at medium (owner).
+- Result, published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`: FowlBrowser 26/26 in 972 s
+  ($7.98), sleight 23/26 in 2,109 s ($13.33), 139 tool errors against 4. All 3 failures are checkout,
+  where the engine's payment-confirmation rule stopped Claude. known-problems has a Browsers section.
+- Batch F (F1 to F9) is in the ledger for Codex and Grok, and the owner has the two prompts
+  (`~/Projects/sleight-wt/ledger/lane-prompt-F.md`). F1 to F8 are the gaps the rounds showed, F9 is the
+  hand-off tasks. Review each branch with Sonnet at high, merge, rerun `bench/fowl/h2h.sh`, publish it.
+- Video draft 1 (`media/launch/`, rendered to `~/Desktop/sleight-launch/sleight-launch-draft1.mp4`, sent
+  to the owner) runs 38 s with drawn windows and measured numbers. Real footage comes from F9's hand-off runs.
+- Not in the ledger: a Go to Folder paste right after the shortcut was lost once (Chrome's Open panel).
 - The user's pre-approved list now also holds Chrome, ZCode, Cursor, iPhone Mirroring and others,
   added through Always allow on 2026-10-11 and 2026-10-12.
 
@@ -43,8 +41,7 @@ Open from before:
 - Launch post draft: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING] lines.
 
 **Next steps:**
-1. Read the four rounds, publish them in `docs/benchmarks/`, and hand the gaps to Codex and Grok as
-   paste-ready lanes.
+1. Review and merge batch F as branches land, then rerun the rounds.
 2. Hand-off tasks (ROADMAP 0b.2) as a lane, then their live runs on three arms.
 3. The owed live pass, the away sitting, then the release (ROADMAP 5b).
 4. Build the video's motion frame now, and add footage from the live runs.

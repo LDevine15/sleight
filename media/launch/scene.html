@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>sleight launch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=block" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0f1116; --ink2: #171a22; --ivory: #f3efe6; --dim: #8b8f9c;
+    --blue: #4d86ff; --ember: #ff6b3d; --line: rgba(243, 239, 230, .14);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ink); }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden;
+    background: radial-gradient(1200px 800px at 50% 45%, #1b1f2a 0%, var(--ink) 70%); color: var(--ivory);
+    font-family: 'Inter Tight', sans-serif; }
+  #grain { position: absolute; inset: 0; opacity: .07; mix-blend-mode: overlay; pointer-events: none; }
+  canvas#px { position: absolute; inset: 0; }
+  .abs { position: absolute; will-change: transform, opacity; }
+  .cap { left: 0; right: 0; text-align: center; font-family: 'Instrument Serif', serif; font-size: 84px;
+    letter-spacing: -.5px; line-height: 1.05; }
+  .cap em { font-style: italic; color: var(--ember); }
+  .cap .b { color: var(--blue); font-style: italic; }
+  .small { font-size: 34px; color: var(--dim); font-family: 'Inter Tight', sans-serif; letter-spacing: 0; }
+
+  /* the browser card */
+  #browser { left: 560px; top: 250px; width: 800px; height: 500px; border-radius: 18px; background: #f7f6f2;
+    color: #22252d; box-shadow: 0 40px 120px rgba(0,0,0,.55); overflow: hidden; }
+  #browser .bar { height: 58px; background: #e9e7e1; display: flex; align-items: center; gap: 10px; padding: 0 18px; }
+  .dots i { display: inline-block; width: 13px; height: 13px; border-radius: 50%; margin-right: 7px; background: #cfccc4; }
+  #browser .url { flex: 1; height: 34px; border-radius: 17px; background: #fff; font: 500 17px 'Inter Tight';
+    display: flex; align-items: center; padding: 0 16px; color: #5b5f6a; }
+  #browser .body { padding: 40px 48px; }
+  #browser h3 { font: 600 30px 'Inter Tight'; margin-bottom: 26px; }
+  .row { display: flex; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid #e6e3dc;
+    font: 400 21px 'Inter Tight'; color: #50545e; }
+  .btn { display: inline-block; margin-top: 30px; background: #22252d; color: #fff; border-radius: 10px;
+    padding: 14px 24px; font: 600 19px 'Inter Tight'; }
+  #chip { width: 330px; height: 72px; border-radius: 14px; background: #fff; color: #22252d;
+    box-shadow: 0 18px 50px rgba(0,0,0,.45); display: flex; align-items: center; gap: 16px; padding: 0 20px;
+    font: 600 21px 'Inter Tight'; }
+  #chip .pdf { width: 38px; height: 46px; border-radius: 5px; background: var(--ember); color: #fff;
+    font: 700 11px 'Inter Tight'; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; }
+  #chip small { display: block; font: 400 15px 'Inter Tight'; color: #7a7e88; }
+
+  /* the hands */
+  #hands { left: 50%; top: 50%; width: 700px; height: 700px; margin: -350px 0 0 -350px; border-radius: 160px;
+    background: url(../../docs/assets/sleight-icon-512.png) center / cover; box-shadow: 0 0 220px rgba(77,134,255,.25); }
+
+  /* native windows */
+  .win { width: 560px; border-radius: 14px; background: #f5f4f0; color: #23262e; overflow: hidden;
+    box-shadow: 0 30px 90px rgba(0,0,0,.55); }
+  .win .bar { height: 46px; background: #e7e5df; display: flex; align-items: center; padding: 0 16px;
+    font: 600 16px 'Inter Tight'; color: #555963; }
+  .win .bar .dots { margin-right: 18px; }
+  .win .bar .dots i { width: 12px; height: 12px; }
+  .win .content { padding: 22px; height: 360px; position: relative; }
+  .frow { display: grid; grid-template-columns: 30px 1fr 110px; gap: 10px; padding: 11px 12px; border-radius: 8px;
+    font: 400 18px 'Inter Tight'; color: #3b3f48; }
+  .frow .ic { width: 22px; height: 26px; border-radius: 3px; background: #c9c6be; }
+  .frow.hit { background: rgba(77,134,255,.16); }
+  .frow.hit .ic { background: var(--ember); }
+  .page { width: 300px; height: 330px; margin: 0 auto; background: #fff; box-shadow: 0 4px 18px rgba(0,0,0,.12);
+    padding: 26px; font: 400 14px 'Inter Tight'; color: #6a6e78; }
+  .page b { display: block; font: 600 20px 'Inter Tight'; color: #23262e; margin-bottom: 14px; }
+  .page .ln { height: 9px; background: #ecebe6; border-radius: 4px; margin: 10px 0; }
+  .page .tot { margin-top: 26px; display: flex; justify-content: space-between; font: 600 18px 'Inter Tight';
+    color: #23262e; padding: 6px 8px; border-radius: 6px; }
+  .grid { display: grid; grid-template-columns: 1.5fr 1fr 1fr; border-top: 1px solid #dcd9d2; border-left: 1px solid #dcd9d2; }
+  .grid div { border-right: 1px solid #dcd9d2; border-bottom: 1px solid #dcd9d2; padding: 10px 12px;
+    font: 400 17px 'JetBrains Mono'; color: #3b3f48; height: 44px; white-space: nowrap; }
+  .grid .h { font: 600 15px 'Inter Tight'; color: #7a7e88; background: #eeece6; }
+  .grid .act { outline: 3px solid var(--blue); outline-offset: -3px; background: #fff; }
+
+  .cursor { width: 46px; height: 66px; }
+  #you { right: 120px; bottom: 96px; display: flex; align-items: center; gap: 14px; }
+  #you span { font: 500 22px 'Inter Tight'; color: var(--ivory); background: rgba(243,239,230,.1);
+    border: 1px solid var(--line); padding: 8px 14px; border-radius: 999px; }
+
+  /* numbers */
+  .stat { width: 560px; height: 330px; border-radius: 22px; background: var(--ink2); border: 1px solid var(--line);
+    padding: 40px 44px; }
+  .stat .k { font: 500 22px 'Inter Tight'; color: var(--dim); letter-spacing: .3px; }
+  .stat .v { font: 400 92px 'Instrument Serif'; margin: 16px 0 8px; line-height: 1; }
+  .stat .v i { color: var(--dim); font-size: 52px; font-style: normal; }
+  .stat .n { font: 400 20px 'Inter Tight'; color: var(--dim); line-height: 1.4; }
+
+  #end .word { font: 400 150px 'Instrument Serif'; letter-spacing: -2px; }
+  #end .cmd { margin-top: 30px; font: 400 32px 'JetBrains Mono'; color: var(--ivory); background: var(--ink2);
+    border: 1px solid var(--line); border-radius: 14px; padding: 18px 30px; display: inline-block; }
+  #end .cmd b { color: var(--blue); font-weight: 400; }
+  #end .url { margin-top: 22px; font: 400 26px 'Inter Tight'; color: var(--dim); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="px" width="1920" height="1080"></canvas>
+
+  <div id="browser" class="abs">
+    <div class="bar"><span class="dots"><i></i><i></i><i></i></span><div class="url">billing.example.test/invoices</div></div>
+    <div class="body">
+      <h3>Invoices</h3>
+      <div class="row"><span>INV-0412 · October</span><span>$1,284.00</span></div>
+      <div class="row"><span>INV-0388 · September</span><span>$1,120.00</span></div>
+      <div class="row"><span>INV-0351 · August</span><span>$1,096.50</span></div>
+      <div class="btn">Download PDF</div>
+    </div>
+  </div>
+  <div id="chip" class="abs"><div class="pdf">PDF</div><div>invoice-0412.pdf<small>Downloaded · 84 KB</small></div></div>
+  <div id="hands" class="abs"></div>
+
+  <div id="wFinder" class="abs win"><div class="bar"><span class="dots"><i></i><i></i><i></i></span>Downloads</div>
+    <div class="content">
+      <div class="frow hit"><span class="ic"></span><span>invoice-0412.pdf</span><span>84 KB</span></div>
+      <div class="frow"><span class="ic"></span><span>invoice-0388.pdf</span><span>81 KB</span></div>
+      <div class="frow"><span class="ic"></span><span>invoice-0351.pdf</span><span>79 KB</span></div>
+      <div class="frow"><span class="ic"></span><span>notes.txt</span><span>2 KB</span></div>
+    </div></div>
+  <div id="wPreview" class="abs win"><div class="bar"><span class="dots"><i></i><i></i><i></i></span>invoice-0412.pdf</div>
+    <div class="content"><div class="page"><b>Invoice INV-0412</b>
+      <div class="ln" style="width:80%"></div><div class="ln" style="width:65%"></div><div class="ln" style="width:72%"></div>
+      <div class="ln" style="width:50%"></div><div class="ln" style="width:68%"></div>
+      <div class="tot" id="tot"><span>Total</span><span>$1,284.00</span></div></div></div></div>
+  <div id="wSheet" class="abs win"><div class="bar"><span class="dots"><i></i><i></i><i></i></span>Q4 expenses</div>
+    <div class="content"><div class="grid">
+      <div class="h">Invoice</div><div class="h">Month</div><div class="h">Amount</div>
+      <div>INV-0351</div><div>Aug</div><div>1,096.50</div>
+      <div>INV-0388</div><div>Sep</div><div>1,120.00</div>
+      <div id="c1"></div><div id="c2"></div><div id="c3"></div>
+      <div></div><div></div><div></div>
+    </div></div></div>
+
+  <svg id="agent" class="abs cursor" viewBox="0 0 46 66"><path d="M3 3 L3 54 L15 42 L24 62 L32 58 L23 39 L40 39 Z"
+    fill="#4d86ff" stroke="#f3efe6" stroke-width="3" stroke-linejoin="round"/></svg>
+  <div id="you" class="abs"><svg class="cursor" viewBox="0 0 46 66"><path d="M3 3 L3 54 L15 42 L24 62 L32 58 L23 39 L40 39 Z"
+    fill="#f3efe6" stroke="#0f1116" stroke-width="3" stroke-linejoin="round"/></svg><span>your pointer</span></div>
+
+  <div id="cap1" class="abs cap" style="top:720px">Browser agents work inside the tab.</div>
+  <div id="cap2" class="abs cap" style="top:820px">Then the tab <em>ends.</em></div>
+  <div id="cap3" class="abs cap" style="top:880px"><span class="b">sleight</span> takes it from there.</div>
+  <div id="cap4" class="abs cap" style="top:70px"></div>
+
+  <div id="s1" class="abs stat"></div>
+  <div id="s2" class="abs stat"></div>
+  <div id="s3" class="abs stat"></div>
+
+  <div id="end" class="abs" style="left:0;right:0;top:250px;text-align:center">
+    <div class="word">sleight</div>
+    <div class="small">Claude drives your Mac apps, in the background.</div>
+    <div class="cmd"><b>/plugin</b> install sleight</div>
+    <div class="url">github.com/Land-o-Clusters/sleight · open source, MIT</div>
+  </div>
+  <canvas id="grain" width="960" height="540"></canvas>
+</div>
+<script>
+// Everything on screen is a pure function of t (seconds), so render.mjs can capture any frame exactly.
+const DURATION = 38;
+const $ = (id) => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const io = (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const out = (x) => 1 - Math.pow(1 - x, 3);
+const back = (x) => { const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, x) => a + (b - a) * x;
+const fade = (t, a, b, c, d) => Math.min(seg(t, a, b), 1 - seg(t, c, d));
+function rng(seed) { return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }; }
+
+let NUMBERS = window.NUMBERS || [
+  { k: 'NATIVE APPS · vs CODEX', v: '22.0 s <i>vs 44.6 s</i>', n: 'a run, 9/9 each, Calculator and TextEdit,<br>same engine (2026-10-11)' },
+  { k: 'BROWSER · vs CODEX', v: '28.5 s <i>vs 41.8 s</i>', n: 'a run, 24/24 each on 12 web tasks,<br>Safari and Helium (2026-10-11)' },
+  { k: 'EVERY RUN PUBLISHED', v: 'failures <i>too</i>', n: 'raw results and caveats in the repo' },
+];
+
+// Pixels: the cursor assembles from blue pixels, the tab breaks into ember pixels.
+const ARROW = [[0, 0], [0, 1], [.27, .76], [.45, 1.13], [.6, 1.06], [.42, .7], [.75, .7]];
+function inPoly(x, y, p) { let c = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+  if ((p[i][1] > y) !== (p[j][1] > y) && x < (p[j][0] - p[i][0]) * (y - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) c = !c; } return c; }
+const R = rng(7); const cur = [];
+while (cur.length < 700) { const x = R() * .75, y = R() * 1.13; if (inPoly(x, y, ARROW)) cur.push([x, y, R() * 1920, R() * 1080, R()]); }
+const shards = []; const R2 = rng(11);
+for (let gy = 0; gy < 25; gy++) for (let gx = 0; gx < 40; gx++)
+  shards.push([560 + gx * 20 + 10, 250 + gy * 20 + 10, (R2() - .5) * 2, (R2() - .6) * 2, R2()]);
+
+const cv = $('px'); const g = cv.getContext('2d');
+function pixels(t) {
+  g.clearRect(0, 0, 1920, 1080);
+  // S1: the cursor assembles at the center, then holds as a solid shape.
+  const a = io(seg(t, 0, 2.4)); const hide = 1 - seg(t, 3.6, 4.4);
+  if (hide > 0) for (const [x, y, sx, sy, r] of cur) {
+    const s = 240, cx = 960 - .37 * s, cy = 430 - .56 * s;
+    const px = lerp(sx, cx + x * s, a) + Math.sin(t * 3 + r * 9) * (1 - a) * 30;
+    const py = lerp(sy, cy + y * s, a);
+    g.globalAlpha = (.35 + .65 * a) * hide;
+    g.fillStyle = r < .82 ? '#4d86ff' : '#9fbcff';
+    const z = lerp(5, 7.5, a); g.fillRect(px, py, z, z);
+  }
+  // S2: the browser card breaks into ember pixels that drift off.
+  const k = t - 7.6;
+  if (k > 0 && k < 3.2) for (const [x, y, vx, vy, r] of shards) {
+    const d = Math.max(0, k - r * .5); if (d === 0) continue;
+    const e = Math.pow(d, 1.35);
+    g.globalAlpha = clamp(1 - d / 2.2) * .9;
+    g.fillStyle = r < .55 ? '#ff6b3d' : r < .8 ? '#ffb08e' : '#f3efe6';
+    g.fillRect(x + vx * e * 260 + (x - 960) * e * .25, y + vy * e * 220 - e * 40, 9, 9);
+  }
+  g.globalAlpha = 1;
+}
+
+const grain = $('grain').getContext('2d');
+function noise(t) {
+  const f = Math.floor(t * 12); const r = rng(f * 97 + 3); const img = grain.createImageData(960, 540);
+  for (let i = 0; i < img.data.length; i += 4) { const v = r() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
+  grain.putImageData(img, 0, 0);
+}
+
+function set(id, { x = 0, y = 0, s = 1, r = 0, o = 1, show = true } = {}) {
+  const el = $(id); el.style.display = show && o > .001 ? '' : 'none';
+  el.style.opacity = o; el.style.transform = `translate(${x}px, ${y}px) scale(${s}) rotate(${r}deg)`;
+}
+
+const typed = (text, t, a, b) => text.slice(0, Math.round(text.length * seg(t, a, b)));
+const words = (html, t, a, step) => html.split(' ').map((w, i) => `<span style="opacity:${seg(t, a + i * step, a + i * step + .35)}">${w}</span>`).join(' ');
+
+window.render = function render(t) {
+  pixels(t); noise(t);
+  // S1
+  set('cap1', { o: fade(t, 1.2, 2, 3.7, 4.3), y: lerp(20, 0, out(seg(t, 1.2, 2))) });
+  // S2: the tab, its download, the break.
+  const bIn = back(seg(t, 4, 4.9));
+  set('browser', { o: Math.min(seg(t, 4, 4.5), 1 - seg(t, 7.6, 8)), s: lerp(.86, 1, bIn), y: lerp(40, 0, bIn) });
+  const chipIn = out(seg(t, 5.3, 5.9)); const slide = io(seg(t, 6.3, 7.6)); const fall = io(seg(t, 9.4, 10.6));
+  set('chip', { o: Math.min(chipIn, 1 - seg(t, 10.4, 10.8)),
+    x: lerp(1015, 1390, slide) - lerp(0, 1390 - 795, fall), y: lerp(665, 600, slide) + Math.sin(seg(t, 7.6, 9.4) * Math.PI * 2) * 10 * (1 - fall) - lerp(0, 140, fall),
+    s: lerp(.9, 1, chipIn) * lerp(1, .5, fall), r: lerp(0, 4, slide) * (1 - fall) });
+  set('cap2', { o: fade(t, 7, 7.7, 9.3, 9.8), y: lerp(20, 0, out(seg(t, 7, 7.7))) });
+  // S3: the hands catch it.
+  const h = io(seg(t, 9.8, 12));
+  set('hands', { o: Math.min(seg(t, 9.8, 10.6), 1 - seg(t, 13.6, 14.2)), s: lerp(2.4, .82, h), y: lerp(60, -40, h) });
+  set('cap3', { o: fade(t, 10.8, 11.6, 13.6, 14.1), y: lerp(20, 0, out(seg(t, 10.8, 11.6))) });
+  // S4: native apps, in the background, while your pointer stays where you left it.
+  const w = (a) => back(seg(t, a, a + .8));
+  const wo = 1 - seg(t, 25.4, 26);
+  set('wFinder', { x: lerp(-700, 90, w(14.2)), y: 300, r: lerp(-8, -3, w(14.2)), o: seg(t, 14.2, 14.5) * wo });
+  set('wPreview', { x: 680, y: lerp(1100, 260, w(14.5)), r: lerp(6, 1, w(14.5)), o: seg(t, 14.5, 14.8) * wo });
+  set('wSheet', { x: lerp(2000, 1270, w(14.8)), y: 330, r: lerp(8, 3, w(14.8)), o: seg(t, 14.8, 15.1) * wo });
+  // The agent's cursor: Finder row, then the PDF total, then the sheet's new row.
+  const path = [[960, 540], [280, 400], [1010, 525], [1330, 548]];
+  const p1 = io(seg(t, 15.8, 16.8)), p2 = io(seg(t, 17.6, 18.8)), p3 = io(seg(t, 20, 21.2));
+  let ax = lerp(860, path[1][0], p1), ay = lerp(700, path[1][1], p1);
+  ax = lerp(ax, path[2][0], p2); ay = lerp(ay, path[2][1], p2); ax = lerp(ax, path[3][0], p3); ay = lerp(ay, path[3][1], p3);
+  const click = (c) => 1 - .14 * Math.sin(Math.PI * seg(t, c, c + .25));
+  set('agent', { x: ax, y: ay, o: fade(t, 15.6, 16, 25.2, 25.6), s: click(16.9) * click(18.9) * click(21.3) });
+  document.querySelector('#wFinder .frow').classList.toggle('hit', t > 16.9);
+  $('tot').style.background = t > 18.9 ? 'rgba(77,134,255,.18)' : 'transparent';
+  $('c1').textContent = typed('INV-0412', t, 21.4, 22); $('c2').textContent = typed('Oct', t, 22.1, 22.3);
+  $('c3').textContent = typed('1,284.00', t, 22.4, 23);
+  for (const c of ['c1', 'c2', 'c3']) $(c).classList.toggle('act', t > 21.3 && t < 23.6 && $(c).textContent.length > 0);
+  set('you', { o: fade(t, 15, 15.6, 25.3, 25.8) });
+  const c4 = t < 18.7 ? 'Any Mac app.' : t < 22.2 ? 'In the background.' : 'Your pointer stays yours.';
+  const c4a = t < 18.7 ? 15.3 : t < 22.2 ? 18.7 : 22.2;
+  $('cap4').innerHTML = words(c4, t, c4a, .12);
+  set('cap4', { o: fade(t, 15.2, 15.5, 25.3, 25.8) * (1 - .9 * (seg(t, 18.4, 18.7) - seg(t, 18.7, 18.9)) - .9 * (seg(t, 21.9, 22.2) - seg(t, 22.2, 22.4))) });
+  // S5: the numbers.
+  NUMBERS.forEach((n, i) => {
+    const el = $('s' + (i + 1)); el.innerHTML = `<div class="k">${n.k}</div><div class="v">${n.v}</div><div class="n">${n.n}</div>`;
+    const a = 26.2 + i * .9; const f = back(seg(t, a, a + .8));
+    set('s' + (i + 1), { x: 110 + i * 590, y: lerp(470, 370, f), o: Math.min(seg(t, a, a + .4), 1 - seg(t, 32.6, 33.2)), r: lerp(-4 + i * 4, 0, f) });
+  });
+  // S6: the end card, with the hands small above the name.
+  const e = out(seg(t, 33.3, 34.3));
+  set('end', { o: e, y: lerp(30, 40, e) });
+  if (t > 33) set('hands', { o: e, s: .26, y: -300 });
+};
+window.DURATION = DURATION;
+</script>
+</body>
+</html>

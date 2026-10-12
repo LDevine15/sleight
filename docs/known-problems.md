@@ -56,6 +56,19 @@ our own runs. Dates and engine versions are given where they matter.
   simulator (`docs/benchmarks/2026-10-08-await-split-view.json`). Moving a window into a full-screen
   Space needs private macOS APIs, so leave full screen while sleight drags.
 
+## Browsers
+
+On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s against FowlBrowser's 26/26
+in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Each of these is being fixed:
+
+- The input lease refuses a tab call that has any extra JavaScript in it (52 refusals in one round), and
+  it's held per app, so parallel sessions in one browser wait on each other.
+- `SLEIGHT_SURFACES=browser` fails every call ("Cannot read properties of undefined (reading 'bind')").
+- Chrome and Helium both report as "Chrome" in `listBrowsers`.
+- A session never closes the tabs it opened.
+- A web page's tree can fill a result past what Claude Code keeps (242,375 characters for one article).
+- A headless run stops before any payment, since the engine tells Claude to confirm it first.
+
 ## Clipboard
 
 - Preservation cannot snapshot unreadable formats, file promises or more than 64 MiB, and macOS has
