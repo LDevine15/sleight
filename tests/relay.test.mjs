@@ -1085,7 +1085,8 @@ test('the user list does not approve notifications, document grants, or unrelate
   const other = { jsonrpc: '2.0', id: 22, method: 'elicitation/create', params: { message: 'Other', _meta: { connector_id: 'other', tool_params: { app: 'Calculator' }, riskLevel: 'low' } } };
   h.fromServer(other); await tick(); assert.deepEqual(h.toClient.at(-1), other);
   const d = harness({ approvalScope: 'document', preapproved: preapproved(), ask: async () => 'decline' });
-  flowCall(d, 2); await tick(); assert.equal(d.toServer.length, 0);
+  documentRead(d, 1);
+  flowCall(d, 2); await tick(); assert.equal(d.toServer.some(m => m.id === 2), false);
 });
 
 test('scopes an accepted app approval to the session', async () => {
@@ -1387,10 +1388,11 @@ const documentApprove = (h, id) => h.fromClient({ jsonrpc: '2.0', id, method: 't
 
 test('document mode blocks action code until the observed document is approved', async () => {
   const h = harness({ approvalScope: 'document', ask: async () => 'accept' });
+  documentRead(h, 0);
   documentCall(h, 1);
   await settle();
-  assert.equal(h.toServer.length, 0);
-  assert.match(h.toClient[0].result.content[0].text, /document_scope/);
+  assert.equal(h.toServer.some(m => m.id === 1), false);
+  assert.match(h.toClient.find(m => m.id === 1).result.content[0].text, /document_scope/);
   documentRead(h, 2);
   documentApprove(h, 3);
   await settle();
@@ -1610,6 +1612,7 @@ test('textedit-edit: a standalone read recovers a late document with a later und
   const path = join(fixtureRoot, 'late-transcript.txt'); writeFileSync(path, 'alpha beta gamma\n');
   const header = `Window: "late-transcript.txt", App: TextEdit\nURL: ${pathToFileURL(path).href}`;
   const h = harness({ ask: async () => 'undo' });
+  flowCall(h, 0, 'let app = await cua.getApp("TextEdit")'); flowAnswer(h, 0, '');
   flowCall(h, 1, 'await app.click(64);'); flowAnswer(h, 1, header);
   flowCall(h, 2, 'await app.setValue(2,"alpha delta gamma\\n");');
   assert.equal(h.toServer.some(m => m.id === 2), false, 'needs a fresh read before a late snapshot');
@@ -1906,6 +1909,7 @@ test('getAXState({ disableDiffing: true }) in Claude\'s code returns the whole t
 test('an action written as a statement without await is refused before it reaches the engine', async () => {
   // A failed un-awaited action can end the engine's session and every handle (3/3, 2026-10-07).
   const h = harness({ changeReview: false });
+  helperRead(h, 0, 'let app = await cua.getApp("Editor")'); helperReply(h, 0, '', false);
   const call = (id, code) => h.fromClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } });
   call(1, 'app.click(3); await app.getAXState()'); await tick();
   call(2, 'app.typeText("x")\nawait app.click(1)'); await tick();
@@ -1924,6 +1928,7 @@ test('an action written as a statement without await is refused before it reache
 
 test('un-awaited action chains are refused, while awaited and returned chains reach the engine', async () => {
   const h = harness({ changeReview: false });
+  helperRead(h, 0, 'let app = await cua.getApp("Editor")'); helperReply(h, 0, '', false);
   const refused = [
     'const p = app.click(99999).then(f); await app.getAXState()',
     'let p = app.click(99999).catch(f); moreCode()',

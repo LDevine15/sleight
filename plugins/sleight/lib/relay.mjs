@@ -60,7 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
-import { browserCall, browserReply } from './browser-call.mjs';
+import { browserCall, browserReply, nativeBindings } from './browser-call.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
@@ -587,7 +587,7 @@ export function createRelay({
   let reviewing = false;
   let disposed = false;
   const browserHandles = new Set();
-  const nativeHandles = new Set(['app']);
+  const nativeHandles = new Set();
   const browserPlan = code => browserCall(code, browserHandles, nativeHandles);
   const browserCalls = new Map();
   const helperStates = new Map();
@@ -908,7 +908,7 @@ export function createRelay({
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
   function forgetHandles() {
     forgetGuard();
-    clearSelection(); browserHandles.clear(); nativeHandles.clear(); nativeHandles.add('app'); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); nativeHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
   }
   const handleBundles = new Map();
   const handleSelectors = new Map();
@@ -996,7 +996,7 @@ export function createRelay({
     if (name === 'js' && browser) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return false; }
       // Tabs are isolated by the extension. Never reserve the previous native app for a tab call.
-      const nativeDenied = 'Native access stopped: send a standalone native app read before acting. No native lease for this browser call.';
+      const nativeDenied = 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.';
       leaseCalls.set(msg.id, { nativeDenied, observe: false });
       return true;
     }
@@ -1028,7 +1028,7 @@ export function createRelay({
         const recovery = target ? `${constApp ? '' : 'let app = '}await ${target}` : 'await cua.getState()';
         const inventory = /\bcua\.(?:listApps|listWindows|getState)\(/.test(code)
           ? ' To look up apps or windows, send one expression, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
-        leaseStop(msg, `a bundle ID and full window header are required. Send exactly \u0060${recovery}\u0060 in js.${inventory}`);
+        leaseStop(msg, `a bundle ID and full window header are required. Send exactly \u0060${recovery}\u0060 in js.${inventory} Use the handle returned by cua.getApp directly.`);
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }
@@ -1637,8 +1637,8 @@ export function createRelay({
     }
     const originalCode = msg.params?.arguments?.code;
     if (typeof originalCode === 'string') {
-      for (const native of originalCode.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.getApp\(/g)) {
-        browserHandles.delete(native[1]); nativeHandles.add(native[1]);
+      for (const native of nativeBindings(originalCode, nativeHandles)) {
+        browserHandles.delete(native); nativeHandles.add(native);
       }
     }
     const browser = msg.method === 'tools/call' && msg.params?.name === 'js' && browserPlan(originalCode ?? '');
@@ -1649,6 +1649,7 @@ export function createRelay({
       leaseStop(msg, 'browser candidates need a request id and no pending call.'); return;
     }
     const healthPlan = msg.method === 'tools/call' && msg.params?.name === 'js' && !browser ? helperPlan(originalCode) : undefined;
+    if (healthPlan?.acquisition && healthPlan.handle) nativeHandles.add(healthPlan.handle);
     if (!healthPlan?.read && healthPlan?.keys?.some(key =>
       [...helperProbes.values()].some(probe => probe.control?.key === key) || [...lateDiagnosticControls.values()].some(control => control.key === key && control.generation === diagnosisGeneration))) {
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'A diagnostic read of this app is still pending. Wait for it to finish, then send a standalone full app read before acting.' }] } });
@@ -1827,8 +1828,7 @@ export function createRelay({
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
               { ...setup, timing: guardTiming, careful: guardMode === 'careful', fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
-                nativeDenied: nativeDenied ?? (!target
-                  ? 'Native access stopped: send a standalone native app read before acting. No confirmed native window.' : undefined) });
+                nativeDenied: nativeDenied ?? 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.' });
           } else if (read) {
             let code = originalCode;
             if (healthPlan && !helperProbes.has(msg.id) && helperFullReads.has(healthPlan.key)) {

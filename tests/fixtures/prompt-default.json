@@ -3,7 +3,7 @@
   "tools": "5c20895ce631d415d6ee11ea9a1357b1f32d64f5634b6045175c090422b6721a",
   "batch": "aab9c612b29e726dcacf915b1c565dfc65ae3c455bc7561a3f1ea2d3733d4406",
   "merge": "5bd0464e07e16924b32d03a806ec8a6f47c2ed254026b394cbaa26b5c3e8a32d",
-  "notices": "47c6293b112f957627b4ce2c778b1c17fe02e22071b5ce34c77dd9b06146afd1",
+  "notices": "3882ad03c9385375dde68335847fc2e78ae89f6798b3b02bb929199e2fa80453",
   "skillSafety": [
     "Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes\nit. If an app isn't approved, ask the user, or stop when a headless run refuses it.",
     "- A sign-in, update, permission or first-run screen: stop and tell the user. Don't answer it.",

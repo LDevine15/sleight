@@ -1184,8 +1184,10 @@ test('a read bound to a name and returned passes as a read, and an action bound 
   assert.equal(fresh.forwarded.at(-1)?.id, 1);
   fresh.reply(result(1));
   const other = setup(t).harness('bound-action', { fresh: true });
+  other.send(rpc(0, 'js', { code: 'let app = await cua.getApp("TextEdit")' }));
+  other.reply(result(0, ''));
   other.send(rpc(2, 'js', { code: 'const x = await app.click(3); return x;' }));
-  assert.equal(other.forwarded.length, 0);
+  assert.equal(other.forwarded.some(m => m.id === 2), false);
 });
 
 test('a refused inventory statement is told the one-expression form that passes', t => {

@@ -20,6 +20,63 @@ test('literal browser calls are classified as browser', () => {
   assert.ok(browserCall('const tabs = await cua.listTabs(); nodeRepl.write(tabs[0])'));
 });
 
+test('optional and parenthesized native roots retain native routing', () => {
+  for (const code of ['await app?.click(3)', 'await (app).click(3)']) {
+    assert.equal(browserCall(code, new Set(), new Set(['app'])), undefined, code);
+  }
+});
+
+for (const code of [
+  'await tab.playwright.evaluate(() => window.store.getState().cart.length)',
+  'await tab.playwright.evaluate(() => { const app = document.getElementById("app"); return app.innerText })',
+  'let app = {x:1}; console.log(app.x); await tab.click(1)',
+]) {
+  test(`page JavaScript passes without native word matches: ${code}`, () => {
+    assert.ok(browserCall(code, new Set(['tab'])), code);
+    assert.ok(browserCall(code, new Set(['tab']), new Set(['app'])), 'local app bindings shadow native roots');
+  });
+}
+
+for (const [binding, names] of [
+  ['const [a, b] = await Promise.all([cua.getApp("X"), cua.getApp("Y")])', ['a', 'b']],
+  ['const alias = app', ['alias']],
+  ['const { editor } = { editor: app }', ['editor']],
+  ['const { getApp: acquire } = cua; const editor = await acquire("X")', ['editor']],
+]) {
+  test(`native bindings retain their lease route: ${binding}`, t => {
+    const h = runtime(t);
+    h.call(1, 'app = await cua.getApp("Editor")'); h.reply(1, { content: [] });
+    h.call(2, binding);
+    if (h.sent.some(msg => msg.id === 2)) h.reply(2, { content: [] });
+    for (const [i, name] of names.entries()) {
+      h.call(3 + i, `await ${name}.click(1)`);
+      assert.equal(h.sent.some(msg => msg.id === 3 + i), false, name);
+      assert.match(h.received.at(-1).result.content[0].text, /bundle ID and full window header/);
+    }
+  });
+}
+
+test('browser plans deny indirect native input even when inputLease is disabled', async t => {
+  const h = runtime(t, { inputLease: undefined });
+  h.call(1, 'app = await cua.getApp("TextEdit")');
+  await h.run(h.sent.at(-1).params.arguments.code);
+  h.reply(1, { content: [{ type: 'text', text: 'Window: "b.txt", App: TextEdit' }] });
+  runInContext('var nativeAction = () => app.typeText("blocked")', h.context);
+  h.call(2, 'await cua.listTabs(); await nativeAction()');
+  await assert.rejects(h.run(h.sent.at(-1).params.arguments.code), /Native access stopped.*handle.*cua.getApp.*directly/i);
+  assert.deepEqual(Array.from(h.context.writes), []);
+});
+
+test('an unknown read handle learns its native identity from the engine reply', t => {
+  const h = runtime(t);
+  h.call(1, 'await editor.getAXState({ disableDiffing: true })');
+  h.reply(1, { content: [{ type: 'text', text: 'Window: "a.txt", App: Editor' }],
+    _meta: { 'codex/toolSurface': { kind: 'computerUse', app: { appId: 'org.test.editor' } } } });
+  h.call(2, 'await editor.click(1)');
+  assert.ok(h.sent.some(msg => msg.id === 2));
+  assert.equal(h.lease.owned.size, 1, 'the newly identified native handle acquires its app lease');
+});
+
 const refusedTabCalls = [
   'console.log(await tab.getAXState({disableDiffing:true, emit:false}));',
   'const s = await tab.getAXState({disableDiffing:true, emit:false}); s.slice(0, 15000)',
@@ -116,11 +173,12 @@ const bypasses = [
 
 test('named native APIs and app handles keep the call on the native path', () => {
   for (const code of [
-    ...bypasses.slice(0, 5), bypasses[6], bypasses[7], bypasses[8], bypasses[9], bypasses[11],
+    ...bypasses.slice(0, 5), bypasses[7], bypasses[8],
+    'await cua?.getApp("Editor")',
     'await cua.computer.click({ x: 1, y: 2 })',
     'await cua.listApps(); await tab.reload()',
     'await cua.getState(); await tab.reload()',
-  ]) assert.equal(browserCall(code, new Set(['tab'])), undefined, code);
+  ]) assert.equal(browserCall(code, new Set(['tab']), new Set(['app'])), undefined, code);
 });
 
 function runtime(t, options = {}) {
@@ -213,6 +271,7 @@ for (const result of [
 ]) {
   test(`unconfirmed engine reply never teaches browser handles: ${JSON.stringify(result)}`, t => {
     const h = runtime(t);
+    h.call(0, 'app = await cua.getApp("Editor")'); h.reply(0, { content: [] });
     h.call(1, 'let app = await cua.getTab("1")'); h.reply(1, result);
     h.call(2, 'await app.reload()');
     assert.equal(h.sent.some(msg => msg.id === 2), false);
@@ -283,6 +342,7 @@ test('browser handles from getBrowser and getTab survive a session that already 
   h.call(5, 'await cua.createBrowserTab(browser.browserId, "https://example.com")');
   assert.ok(h.sent.find(msg => msg.id === 5), h.received.at(-1)?.result?.content?.[0]?.text);
   h.reply(5, { content: [], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } });
+  h.call('native', 'app = await cua.getApp("Editor")'); h.reply('native', { content: [] });
   h.call(6, 'await app.click(1)');
   assert.equal(h.sent.some(msg => msg.id === 6), false);
   assert.match(h.received.at(-1).result.content[0].text, /bundle ID and full window header/);
