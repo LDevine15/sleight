@@ -16,15 +16,15 @@ now resends a read that met a crash and routes a menu-bar-only timeout to `menu_
 
 Lane ledger at `~/Projects/sleight-wt/ledger` (LEDGER.md, claims by `mkdir`, reports in
 `claims/<ID>/REPORT.md`, and a `MERGED` file for each item sleight-arch merged). Merged after review, unit-tested
-only. There are 17 of them (every G item and every K item except K5, K6, K9 and K10), and each
-REPORT.md says what it changed and what its live check is. K4R runs only under
-`SLEIGHT_LAUNCH_REREAD=1`, and K7's row trim only under `SLEIGHT_RESULT_TRIM=1`. Open: K6R then K5R (drag, review fixes),
-K9R (preapproved write guard, review fixes), K10 (needs a Swift build on a free Mac). Lanes that
-finished their loop need the restart line to take new items.
+only: every item except K10 (20 merged, K4, K5, K6 and K9 through their review-fix items K4R, K5R,
+K6R and K9R). Each REPORT.md says what it changed and what its live check is. K4R runs only under
+`SLEIGHT_LAUNCH_REREAD=1`, and K7's row trim only under `SLEIGHT_RESULT_TRIM=1`. The drag changes
+(K5R, K6R) rely on JXA bridging that unit tests mock, so a live drag run gates any release. K10 needs
+a Swift build on a free Mac.
 
 The engine plugin is now 26.1007.30912 (folder dated 2026-10-11 12:45); the watch's baseline is still
 26.1007.21159, so the 9:00 watch diffs it. Live lock and hold are free. No background job of this
-session runs besides the ledger watcher.
+session runs.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
