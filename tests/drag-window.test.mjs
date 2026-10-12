@@ -52,6 +52,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     if (movedOnActivate) { frames.get(11).X = 300; frames.get(11).Y = 400; }
   } };
   const $ = {
+    malloc: () => ({}), free() {},
     NSWorkspace: { sharedWorkspace: { frontmostApplication: previous } },
     CGEventCreate: () => ({}), CGEventGetLocation: () => ({ x: 4, y: 8 }),
     CGPointMake: (x, y) => ({ x, y }), CGWarpMouseCursorPosition: p => restored.push(p),
@@ -100,11 +101,21 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
   const axWrites = [];
   context.axTextArea = () => {
     if (!ax) throw new Error('AX unavailable');
+    if (ax.failArea) throw new Error('area unavailable');
     const x0 = frames.get(11).X + 5, y0 = frames.get(11).Y + 30, text = () => values.get(11);
     return {
-      value: () => ax.changedBeforeMove ? 'owner edit\n' : text(),
-      selection: () => ({ location: text().indexOf(selected.get(11)), length: selected.get(11).length }),
-      hasAttributes: () => { if (ax.unreadableAttributes) throw new Error('attributed string unavailable'); return !!ax.formatted; },
+      value: () => { if (ax.failValue) throw new Error('value unavailable'); return ax.changedBeforeMove ? 'owner edit\n' : text(); },
+      selection: () => { if (ax.failSelection) throw new Error('selection unavailable'); return { location: text().indexOf(selected.get(11)), length: selected.get(11).length }; },
+      hasAttributes: (location, length, baseline) => {
+        if (ax.unreadableAttributes) throw new Error('attributed string unavailable');
+        if (!ax.attributes) return !!ax.formatted;
+        assert.equal(baseline, 0);
+        const size = location + length - baseline;
+        return context.attributedTextHasAttributes({ length: size, attributesAtIndexEffectiveRange: index => {
+          const font = ax.attributes[baseline + index];
+          return { count: 2, font, isEqualToDictionary: other => font === other.font };
+        } }, size, location - baseline);
+      },
       indexAt: p => { const i = Math.floor((p.x - x0) / 8); return p.y >= y0 && p.y < y0 + 13 && i >= 0 && i < text().length - 1 ? i : 0; },
       rect: i => i < text().length - 1 ? { X: x0 + 8 * i, Y: y0, Width: 8, Height: 13 } : null,
       lineEnd: () => text().length,
@@ -127,6 +138,27 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
 const pastEnd = { windowId: 11, to: [150, 38.5] };
+test('default attributes keep AX moves while mixed or uniform bold selections use posting', () => {
+  for (const [selectionFonts, expectedPath] of [[['regular', 'regular', 'regular', 'regular'], 'accessibility'],
+    [['regular', 'bold', 'regular', 'regular'], 'background'], [['bold', 'bold', 'bold', 'bold'], 'background']]) {
+    const attributes = Array(17).fill('regular'); attributes.splice(6, 4, ...selectionFonts);
+    const h = harness({ background: true, selection: 'beta', ax: { attributes }, backgroundAfter: 'alpha gamma beta\n' });
+    const result = h.run(pastEnd);
+    assert.equal(result.ok, true, result.error); assert.equal(result.path, expectedPath);
+    assert.equal(h.axWrites.length > 0, expectedPath === 'accessibility');
+    assert.equal(h.pidEvents.length > 0, expectedPath === 'background');
+  }
+});
+test('unconfirmed formatting does not suppress spacing repair after failed AX setup or reads', () => {
+  for (const failure of ['failArea', 'failValue', 'failSelection']) {
+    const h = harness({ background: true, ax: { [failure]: true } });
+    const result = h.run(pastEnd);
+    assert.equal(result.ok, true, result.error); assert.equal(result.path, 'background');
+    assert.equal(result.spaceInserted, true, failure);
+    assert.equal(h.values.get(11), 'beta gamma alpha\n', failure);
+    assert.equal(h.textWrites.length, 1, failure);
+  }
+});
 test('formatted selections use posted dragging without plain text writes', () => {
   const h = harness({ background: true, ax: { formatted: true }, backgroundAfter: 'beta gamma alpha\n' });
   const result = h.run(pastEnd);
