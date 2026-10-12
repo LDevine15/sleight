@@ -83,6 +83,7 @@ import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { ReplWarmup } from './repl-warmup.mjs';
+import { TabClickResults } from './tab-click-result.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
@@ -448,6 +449,7 @@ export function createRelay({
     context: { approvalScope, firstCallBatch, prompt, changeReview, flowRules: !!flowRules, tools: localTools?.tools },
     send: msg => toClient(msg), forward: msg => clientLine(JSON.stringify(msg), true),
   });
+  const clickResults = new TabClickResults();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
   const receiptEnds = new Map();
   let latestReceipt;
@@ -2072,6 +2074,8 @@ export function createRelay({
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
           msg.params.arguments.code = tabCode;
           if (browser) msg.params.arguments.code = browserAliasesCode(msg.params.arguments.code);
+          if (browser || /\bagent\.browsers\.get\s*\(/.test(originalCode))
+            msg.params.arguments.code = clickResults.code(msg.params.arguments.code);
         }
       }
       if (browser) browserCalls.set(msg.id, browser);
@@ -2369,6 +2373,7 @@ export function createRelay({
     const automatic = msg.method === undefined && helperProbes.has(msg.id);
     let windowNote;
     const confirmedBrowser = msg.method === undefined && browserCalls.has(msg.id) && browserReply(msg);
+    if (confirmedBrowser && !resultFailed) clickResults.observe(msg.result);
     // An unknown read handle may turn out to be native. Its engine identity keeps later actions
     // on the native path, including the selected-window and bundle checks.
     if (msg.method === undefined && browserCalls.has(msg.id) && !confirmedBrowser &&
