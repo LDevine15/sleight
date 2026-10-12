@@ -255,3 +255,12 @@ test('lean and min reference hints name a replaceable browser handle', () => {
     assert.match(out, /await b\.documentation\(\)/);
   }
 });
+
+test('a page added after compaction receives the same cap below the total result limit', () => {
+  const full = 'Browser tab: 1, Title: "Article", URL: "https://example.com".\n0 AXWebArea Article\n' +
+    Array.from({ length: 600 }, (_, i) => `\t${i + 1} text ${'x'.repeat(30)}`).join('\n');
+  assert.ok(full.length < RESULT_LIMIT);
+  const out = createResultBudget().apply([{ type: 'text', text: full }])[0].text;
+  assert.ok(out.length <= 12000);
+  assert.match(out, /omitted/);
+});

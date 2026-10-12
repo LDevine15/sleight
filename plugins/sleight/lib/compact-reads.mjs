@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
+import { trimBrowserResults } from './browser-read-cap.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -270,61 +271,6 @@ export function dropAcquisitionTree(head, rest) {
     if (at < 0) return [item];
     const kept = item.text.slice(0, at).replace(/\n+$/, '');
     return kept ? [{ ...item, text: kept }] : [];
-  });
-}
-
-// Cap browser trees and diffs while leaving docs and caller output to the result budget.
-function trimBrowserResults(content, code = '') {
-  const header = /^Browser tab: (\d+), Title: "(?:[^"\\\n]|\\.)*", URL: "(?:[^"\\\n]|\\.)*"\.\n(?=(?:[+~-] )?\t*\d+ )/gm;
-  const parts = content.map(item => {
-    if (item?.type !== 'text' || typeof item.text !== 'string') return { item, parts: [] };
-    if (/^(?:## Computer Use|# Other Browser APIs)\n/.test(item.text)) return { item, parts: [] };
-    const starts = [...item.text.matchAll(header)], parts = [];
-    let pos = 0;
-    for (let i = 0; i < starts.length; i++) {
-      const start = starts[i].index, limit = starts[i + 1]?.index ?? item.text.length;
-      const nextWindow = item.text.slice(start, limit).search(/^Window: /m);
-      const tail = item.text.slice(start, nextWindow < 0 ? limit : start + nextWindow);
-      const focus = tail.search(/\n\nThe focused UI element (?:is|was) /);
-      const rows = [...tail.matchAll(/^(?:[+~-] \t*\d+ |\t+\d+ |\d+ AXWebArea\b)[^\n]*/gm)];
-      if (!rows.length) continue;
-      const last = rows.at(-1), afterRow = last.index + last[0].length;
-      const end = start + (focus >= 0 ? focus : afterRow);
-      parts.push({ text: item.text.slice(pos, start) });
-      parts.push({ text: item.text.slice(start, end), tab: starts[i][1] });
-      pos = end;
-    }
-    parts.push({ text: item.text.slice(pos) });
-    return { item, parts };
-  });
-  const trees = parts.flatMap(entry => entry.parts).filter(part => part.tab);
-  if (!trees.length) return content;
-  const fixed = parts.flatMap(entry => entry.parts).filter(part => !part.tab).reduce((n, part) => n + part.text.length, 0);
-  let budget = Math.max(0, 40000 - fixed - parts.filter(entry => entry.parts.length).length);
-  for (let i = 0; i < trees.length; i++) {
-    const part = trees[i], lines = part.text.split('\n');
-    const share = Math.min(30000, Math.floor(budget / (trees.length - i)));
-    if (lines.length <= 400 && part.text.length <= share) { budget -= part.text.length; continue; }
-    const names = [...code.matchAll(/\b([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.(getTab|createBrowserTab)\s*\(\s*(?:(['"])([^'"]*)\3)?/g)];
-    const bound = names.find(match => match[2] === 'getTab' && match[4] === part.tab);
-    const read = [...code.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*getAXState(?:AndScreenshot)?\s*\(/g)].at(-1);
-    const name = bound?.[1] ?? read?.[1] ?? names.find(match => match[2] === 'createBrowserTab')?.[1];
-    const more = name ? `Read more: nodeRepl.write(await ${name}.playwright.locator('main').innerText()).`
-      : "Read more with your tab handle's Playwright locator('main').innerText(), written with nodeRepl.write(...).";
-    const notice = count => `sleight: ${count} browser tree lines omitted. Numbers past the cut need a locator or a filtered read. ${more}`;
-    const room = Math.max(0, share - notice(lines.length).length - 1);
-    const kept = [lines[0]];
-    let chars = lines[0].length;
-    for (let j = 1; j < lines.length && kept.length < 400; j++) {
-      if (chars + 1 + lines[j].length > room) break;
-      kept.push(lines[j]); chars += 1 + lines[j].length;
-    }
-    part.text = kept.join('\n') + '\n' + notice(lines.length - kept.length);
-    budget -= part.text.length;
-  }
-  return parts.map(({ item, parts }) => {
-    const text = parts.map(part => part.text).join('');
-    return parts.length && text !== item.text ? { ...item, text } : item;
   });
 }
 

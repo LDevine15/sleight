@@ -4,6 +4,8 @@
 // benchmark runs Claude started without any of it. This keeps results under RESULT_LIMIT: on macOS it drops
 // the engine's Linux- and Windows-only paragraphs, and if the result is still too big it moves the browser
 // API reference to the start of the next result. Safety and confirmation sections never move.
+import { trimBrowserResults } from './browser-read-cap.mjs';
+
 export const RESULT_LIMIT = 45000;
 
 const GENERAL_DOCS = /^## Computer Use\n/;
@@ -79,14 +81,15 @@ export function createResultBudget({ platform = process.platform, limit = RESULT
       if (!fullDocs) out = out.map((c) => (c.type === 'text' && BROWSER_DOCS.test(c.text) && c.text.includes(REFERENCE)
         ? { ...c, text: minDocs || leanDocs ? leanReference(c.text, minDocs) : trimReference(c.text) } : c));
       if (pending) { out = [{ type: 'text', text: pending }, ...out]; pending = null; }
-      if (size(out) <= limit) return out;
-      return out.map((c) => {
+      if (size(out) <= limit) return trimBrowserResults(out, '', { limit, countDocs: true });
+      out = out.map((c) => {
         if (pending || c.type !== 'text' || !BROWSER_DOCS.test(c.text)) return c;
         const at = c.text.indexOf(REFERENCE);
         if (at < 0) return c;
         pending = c.text.slice(at + 1);
         return { ...c, text: `${c.text.slice(0, at)}\n\nsleight: the browser API reference (${pending.length} characters) follows at the start of your next result, to keep this one under Claude Code's size limit. Until then, use only the methods named above.` };
       });
+      return trimBrowserResults(out, '', { limit, countDocs: true });
     },
   };
 }
