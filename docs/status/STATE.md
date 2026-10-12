@@ -3,21 +3,28 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 00:05 UTC, after the owner's clear)
+## Banner (2026-10-12 00:45 UTC)
 
-**The owner's Mac is still under load** (owner, 2026-10-12 00:00 UTC; load average 14 to 17): no live
-runs and no full `npm run check` until they say it's free. Codex's "-1005" timeouts were the engine's,
-not sleight's: `-10005 timeoutReached` on 2 of 2 `getApp` calls on OpenUsage, a menu-bar-only app the
-engine can't acquire, after the engine service segfaulted (its 4th crash since 2026-10-05, same stack).
-Both are in known-problems, and the relay now handles both (a read that met the crash is resent once;
-a menu-bar-only timeout points to `menu_bar`), 272/272 on the touched test files; the live run waits
-for a free Mac. Triage of known-problems (2026-10-12), of about 120 items: 19 are fixable and 30
-are outside our control. The other 73 leave the doc (65 aren't user problems, and 8 are stale). The doc cut and
-21 fixes are a lane ledger at `~/Projects/sleight-wt/ledger` (LEDGER.md, claims by `mkdir`, reports in
-`claims/<ID>/REPORT.md`), for Codex and Grok lanes. sleight-arch reviews and squash-merges each branch. The engine plugin is now 26.1007.30912 (folder dated 2026-10-11 12:45);
-the watch's baseline is still 26.1007.21159, so the 9:00 watch diffs it. `remove-blocked-app` is cherry-picked onto `pane/auto-mode`. Everything since 1.2.5 passed only the test
-files it touched, plus `lint:prose`. The first full check on `pane/auto-mode` is owed. Live lock and
-hold are free. No background job is running and none needs relaunching.
+**The owner's Mac is still under load** (owner, 2026-10-12 00:00 UTC; load average 14 to 21): no live
+runs and no full `npm run check` until they say it's free. Everything since 1.2.5 passed only the test
+files it touched, plus `lint:prose`. The first full check and one live pass over all of it are owed.
+
+Codex's "-1005" timeouts were the engine's: `-10005 timeoutReached` on 2 of 2 `getApp` calls on
+OpenUsage (menu-bar-only), after the engine service segfaulted (4 crashes since 2026-10-05). The relay
+now resends a read that met a crash and routes a menu-bar-only timeout to `menu_bar` (`ff41cd0`).
+`remove-blocked-app` is cherry-picked (`8ff3317`). known-problems is 190 lines, down from 1,151.
+
+Lane ledger at `~/Projects/sleight-wt/ledger` (LEDGER.md, claims by `mkdir`, reports in
+`claims/<ID>/REPORT.md`, and a `MERGED` file for each item sleight-arch merged). Merged after review, unit-tested
+only. There are 17 of them (every G item and every K item except K5, K6, K9 and K10), and each
+REPORT.md says what it changed and what its live check is. K4R runs only under
+`SLEIGHT_LAUNCH_REREAD=1`, and K7's row trim only under `SLEIGHT_RESULT_TRIM=1`. Open: K6R then K5R (drag, review fixes),
+K9R (preapproved write guard, review fixes), K10 (needs a Swift build on a free Mac). Lanes that
+finished their loop need the restart line to take new items.
+
+The engine plugin is now 26.1007.30912 (folder dated 2026-10-11 12:45); the watch's baseline is still
+26.1007.21159, so the 9:00 watch diffs it. Live lock and hold are free. No background job of this
+session runs besides the ledger watcher.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
