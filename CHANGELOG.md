@@ -25,6 +25,8 @@
   Cursor) instead of Claude. The Claude Code text is unchanged.
 - `hover` refuses a window that crosses two displays, asking the user to move it onto one, since its
   capture of that rectangle could include another app's pixels.
+- Recording from the desktop pane goes through a file instead of the mod's 4 MiB output limit, and
+  after a replay that acquired an app by window id, Refresh and the next prompt find that app.
 
 ## 1.2.5 (2026-10-11)
 

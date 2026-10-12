@@ -69,9 +69,14 @@ async function recordCurrent($: any, file?: string) {
     // The live API's messages may have been compacted. The CLI reads the saved transcript.
     // Write to a sidecar so a script over the host's 4 MiB stdout cap still records.
     const staging = `${path}.recording`
-    const run = await $.process.run([`${$.plugin.root}/bin/sleight-mcp`, 'record', session, staging])
-    if (run.exitCode !== 0) throw new Error(run.stderr || `Recorder exited ${run.exitCode}.`)
-    const recorded = JSON.parse(await $.fs.read(staging))
+    let recorded
+    try {
+      const run = await $.process.run([`${$.plugin.root}/bin/sleight-mcp`, 'record', session, staging])
+      if (run.exitCode !== 0) throw new Error(run.stderr || `Recorder exited ${run.exitCode}.`)
+      recorded = JSON.parse(await $.fs.read(staging))
+    } finally {
+      try { await $.process.run(['/bin/rm', '-f', staging]) } catch {}
+    }
     if (!recorded.steps?.length) throw new Error('No successful sleight actions in this session yet.')
     await $.fs.write(path, JSON.stringify(recorded, null, 2) + '\n')
     await update($, replayFile, () => path)
