@@ -190,6 +190,11 @@ test('origin-hook accepts the hand-off apps and 127.0.0.1, and declines other ap
   assert.equal(answer(hook('Allow Computer Use to use "Safari"?')), 'decline');
   assert.equal(answer(hook('Allow Computer Use to use "Mail"?')), 'decline');
   assert.equal(answer(hook('Allow Browser use to access https://example.com?')), 'decline');
+  assert.equal(answer(hook('Allow download from http://127.0.0.1:5431/t/invoice-preview/?')), 'accept');
+  assert.equal(answer(hook('Allow download from http://127.0.0.1:9999/t/invoice-preview/?')), 'decline');
+  assert.equal(answer(hook('Allow download from https://example.com/invoice.pdf?')), 'decline');
+  assert.equal(answer(hook('Allow download from http://u:p@127.0.0.1:5431/x?')), 'decline');
+  assert.equal(answer(hook('Allow Browser use to use full Chrome Developer Tools access on http://127.0.0.1:5413')), 'decline');
 });
 
 test('fowl+sleight setup loads FowlBrowser for tabs and computer-only sleight for apps', async () => {

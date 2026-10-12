@@ -18,8 +18,9 @@ export function answer(e) {
   const message = e.message ?? '';
   const origin = /^Allow Browser use to access (\S+)\?$/.exec(message)?.[1];
   const site = origin && origin.replace(/:\d+$/, '');
-  // The whole message must be one of the two forms, on one of the rounds' own servers, with no credentials.
-  const url = /^Allow Browser use to (?:access|download files from) (https?:\/\/[^\s?]+)\?$/.exec(message)?.[1];
+  // The whole message must be one of these forms, on one of the rounds' own servers, with no credentials. The engine's
+  // download prompt reads "Allow download from <url>?" (the hand-off invoice, 2026-10-12 18:40 UTC).
+  const url = /^Allow (?:Browser use to (?:access|download files from)|download from) (https?:\/\/[^\s?]+)\?$/.exec(message)?.[1];
   let local = false;
   try {
     const u = url && new URL(url);
