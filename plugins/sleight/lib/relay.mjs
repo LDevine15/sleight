@@ -71,7 +71,7 @@ import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree } from './compact-reads.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, matchBlockedApp, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
-import { offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
+import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
 import { TurnJournal, writeReceipt } from './turn-receipts.mjs';
 import { simulatorScreenshotNote } from './simulator-focus.mjs';
 
@@ -155,7 +155,8 @@ export function promptNotice(text, prompt) {
     .replace("sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.", 'sleight: last window closed; nothing more to read.')
     .replace("sleight: noWindowsAvailable means the engine found no window of this app on the current desktop. If the app has a window, it's on another Space (the user may be in full screen or Split View), minimized or hidden. Clicks may still reach it, but drags and some reads won't. ", 'sleight: noWindowsAvailable. ')
     .replace("sleight: the engine's JavaScript session restarted before this call, so handles from earlier calls (such as `app`) are gone. An action that fails without `await` can end the session. ", 'sleight: JS restarted. ')
-    .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ');
+    .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ')
+    .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ');
 }
 const SHUTDOWN_GRACE_MS = 3000;
 
@@ -1832,7 +1833,7 @@ export function createRelay({
         observeServerMessage(result);
       });
     } else {
-      if (msg.method === 'tools/call' && msg.id !== undefined && !restartRetries.has(msg.id)) restartRetries.set(msg.id, JSON.stringify(msg));
+      if (msg.method === 'tools/call' && msg.id !== undefined && !restartRetries.has(msg.id)) restartRetries.set(msg.id, { sent: JSON.stringify(msg), read: !!healthPlan?.read });
       if (frontRestore && healthPlan?.acquisition && !healthPlan.selector.startsWith('{') && msg.id !== undefined) {
         forwardAcquisition(msg, healthPlan.key);
       } else toServer(msg);
@@ -1841,20 +1842,25 @@ export function createRelay({
 
   // The helper quits after about 20 s idle, and a call that arrives while it relaunches fails
   // before reaching any app (2026-10-05). Send that call again once, a second later, instead of
-  // spending Claude's turn on it. Values are the call as sent; true means it was already resent.
+  // spending Claude's turn on it. The helper also crashes now and then (a segfault in its
+  // WindowServer callback, 4 times from 2026-10-05 to 2026-10-11) and launchd relaunches it within
+  // seconds: a read that met the crash is sent again too, but never a call with actions, which may
+  // have run. Values are the call as sent and whether it only reads; true means it was resent.
   const restartRetries = new Map();
   const HELPER_RESTARTING = /Sky Computer Use native pipe startup failed/;
+  const HELPER_CRASHED = /Sky Computer Use native pipe closed before response/;
   function retriedHelperStart(msg) {
     if (msg.method !== undefined || !restartRetries.has(msg.id)) return false;
-    const sent = restartRetries.get(msg.id);
-    const failed = msg.result?.isError && (msg.result.content ?? []).some(c => c.type === 'text' && HELPER_RESTARTING.test(c.text ?? ''));
-    if (!failed || sent === true || closing) { restartRetries.delete(msg.id); return false; }
+    const entry = restartRetries.get(msg.id);
+    const failedWith = pattern => msg.result?.isError && (msg.result.content ?? []).some(c => c.type === 'text' && pattern.test(c.text ?? ''));
+    const crashed = entry !== true && entry.read && failedWith(HELPER_CRASHED);
+    if (!(crashed || failedWith(HELPER_RESTARTING)) || entry === true || closing) { restartRetries.delete(msg.id); return false; }
     restartRetries.set(msg.id, true);
-    trace('helper-restart-retry', { id: msg.id });
+    trace(crashed ? 'helper-crash-retry' : 'helper-restart-retry', { id: msg.id });
     const generation = stopGeneration, epoch = engineEpoch;
     setTimeout(() => {
-      if (generation === stopGeneration && epoch === engineEpoch && !closing && !disposed && restartRetries.has(msg.id)) toServer(JSON.parse(sent));
-    }, 1000).unref?.();
+      if (generation === stopGeneration && epoch === engineEpoch && !closing && !disposed && restartRetries.has(msg.id)) toServer(JSON.parse(entry.sent));
+    }, crashed ? 2000 : 1000).unref?.();
     return true;
   }
 
@@ -1982,6 +1988,21 @@ export function createRelay({
         ? Promise.race([Promise.resolve().then(() => spaceProbe(check.key)).catch(() => undefined), new Promise(resolve => setTimeout(resolve, 600).unref?.())])
         : health).then(health => {
         preHealth.set(msg.id, health);
+        const failure = msg.error?.message ?? (msg.result?.isError ? (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n') : '');
+        if (health?.menuBarOnly === true && health.windows === 0 && /\btimeoutReached\b/.test(failure)) {
+          // Not a stuck app or helper: no recovery reads, and the same read is pointless.
+          const plan = helperReads.get(msg.id);
+          helperReads.delete(msg.id);
+          if (plan) {
+            const state = helperStates.get(plan.key);
+            if (state) { clearTimeout(state.timer); state.pending = undefined; }
+            helperStates.delete(plan.key); helperControls.delete(plan.key);
+          }
+          const note = promptNotice(menuBarOnlyNote(health.app ?? check.key, localNames.has('menu_bar')), prompt);
+          if (msg.error) msg.error.message += `\n\n${note}`;
+          else msg.result.content = [...(msg.result.content ?? []), { type: 'text', text: note }];
+          trace('menu-bar-only', { id: msg.id, app: check.key });
+        }
         if (health && !offSpace(health)) spaceNoted.delete(check.key);
         if (offSpace(health) && !spaceNoted.has(check.key) && Array.isArray(msg.result?.content)) {
           spaceNoted.add(check.key);
@@ -2272,6 +2293,9 @@ export function createRelay({
     if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
       msg.result.content.some(c => c.type === 'text' && /Sky Computer Use (?:native pipe|service) startup (?:request )?failed/.test(c.text ?? ''))) {
       msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. Call js_reset and retry. If that fails too, tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", prompt) });
+    } else if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
+      msg.result.content.some(c => c.type === 'text' && HELPER_CRASHED.test(c.text ?? ''))) {
+      msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. Any action in this call may or may not have run, so read the app before you repeat one. A read alone is safe to repeat.", prompt) });
     }
     if (localNames.has('blocked_app') && msg.method === undefined && msg.result) {
       const text = (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');

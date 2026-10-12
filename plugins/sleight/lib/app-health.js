@@ -135,7 +135,10 @@ function probe(selector) {
   const target = apps[0];
   const pid = Number(target.processIdentifier), app = $.AXUIElementCreateApplication(pid);
   const { onlySavePanel, savePanelWindowIds, ...counts } = spaces(pid);
-  const space = { hidden: target.hidden === true, ...counts };
+  // An accessory app (LSUIElement) lives in the menu bar; with no window open the engine can't
+  // acquire it and times out (OpenUsage, 2 of 2, 2026-10-11).
+  const menuBarOnly = Number(target.activationPolicy) === 1;
+  const space = { hidden: target.hidden === true, menuBarOnly, ...(menuBarOnly ? { app: ObjC.unwrap(target.localizedName) } : {}), ...counts };
   if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) return { status: 'unknown', ...space };
   const value = Ref();
   const error = Number($.AXUIElementCopyAttributeValue(app, $('AXWindows'), value));

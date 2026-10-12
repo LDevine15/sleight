@@ -5,6 +5,12 @@
 - `blocked_app` no longer refuses a window just because its tree passes 300 nodes or 12 levels.
   That rule refused every Codex window (titled "ChatGPT"). The settings scan now goes breadth first
   and decides on the first 300 nodes.
+- When the engine's helper crashes during a read ("native pipe closed before response"), sleight
+  sends the read again once, 2 s later, so Claude doesn't spend a turn on it. A call with actions is
+  never resent, and Claude hears that its actions may or may not have run.
+- An app that lives only in the menu bar (OpenUsage, for one) and times out in `getApp` now gets the
+  `menu_bar` route on the first timeout. Before, Claude retried, and the second timeout started
+  stuck-app recovery that could advise quitting and reopening an app that answered Accessibility.
 
 ## 1.2.5 (2026-10-11)
 

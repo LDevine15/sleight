@@ -119,6 +119,15 @@ export function offSpaceNote(app) {
   return `sleight: the user is in a full-screen or Split View Space, and none of ${app}'s windows are on it. Clicks and typing still reach the app, but drags fail and reads can time out. Before you drag, or if a read times out, ask the user to show ${app}'s window on the current desktop (leave full screen or Split View), then read it again.`;
 }
 
+// The engine times out acquiring an accessory app (LSUIElement) that has no window open, for any
+// client: Codex's own computer use got the same timeout on OpenUsage, 2 of 2 (2026-10-11).
+export function menuBarOnlyNote(app, menuBarTool) {
+  const route = menuBarTool
+    ? `Use the menu_bar tool instead: { op: "open", app: "${app}" } clicks its menu bar icon and returns the menu or window it opens, with numbered elements for "choose" or "press".`
+    : 'Tell the user the engine cannot drive it.';
+  return `sleight: ${app} lives only in the menu bar and has no window open, so the engine can't open it. Don't retry getApp. ${route}`;
+}
+
 export function classifyReadFailure({ target, control, read }) {
   if (target?.savePanelOnly === true) return 'app-save-panel';
   if (offSpace(target)) return 'app-off-space';

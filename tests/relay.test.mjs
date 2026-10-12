@@ -2063,6 +2063,58 @@ test('a call that met the helper mid-restart is sent again once, and only a seco
   assert.equal(h.toServer.filter(m => m.id === 1).length, 2, 'never a third time');
 });
 
+test('a read that met a helper crash is sent again once; a call with actions never is', async () => {
+  const h = harness({ changeReview: false });
+  const crash = { content: [{ type: 'text', text: 'Sky Computer Use native pipe closed before response' }], isError: true };
+  helperRead(h, 1); await tick();
+  h.fromServer({ jsonrpc: '2.0', id: 1, result: crash }); await tick();
+  assert.equal(h.toClient.filter(m => m.id === 1).length, 0, 'the crash stays inside the relay');
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  const sent = h.toServer.filter(m => m.id === 1);
+  assert.equal(sent.length, 2); assert.deepEqual(sent[1], sent[0]);
+  h.fromServer({ jsonrpc: '2.0', id: 1, result: crash }); await tick();
+  assert.match(JSON.stringify(h.toClient.find(m => m.id === 1)), /crashed during this call/);
+
+  helperRead(h, 2, 'await app.click(3)'); await tick();
+  h.fromServer({ jsonrpc: '2.0', id: 2, result: crash }); await tick();
+  const reply = h.toClient.find(m => m.id === 2);
+  assert.equal(reply.result.isError, true);
+  assert.match(JSON.stringify(reply), /may or may not have run, so read the app before you repeat one/);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(h.toServer.filter(m => m.id === 2).length, 1, 'an action is never resent');
+});
+
+test('a menu-bar-only app that times out gets the menu_bar route, without stuck-app recovery', async () => {
+  const diagnosed = [];
+  const health = menuBarOnly => async () => ({ status: 'responding', windows: 0, allWindows: 0, onScreen: 0, hidden: false, menuBarOnly, ...(menuBarOnly ? { app: 'OpenUsage' } : {}) });
+  const h = harness({ changeReview: false, spaceProbe: health(true), diagnoseRead: async app => { diagnosed.push(app); return { kind: 'unknown' }; },
+    localTools: { tools: [{ name: 'menu_bar' }], call: async () => ({ content: [] }) } });
+  for (const id of [1, 2, 3]) {
+    helperRead(h, id, 'let app = await cua.getApp("OpenUsage")'); await tick();
+    assert.equal(h.toServer.filter(m => m.id === id).length, 1, 'never refused as a stuck app');
+    helperReply(h, id); for (let i = 0; i < 5; i++) await tick();
+    const text = JSON.stringify(h.toClient.find(m => m.id === id));
+    assert.match(text, /OpenUsage lives only in the menu bar/);
+    assert.match(text, /\{ op: \\"open\\", app: \\"OpenUsage\\" \}/);
+  }
+  assert.deepEqual(diagnosed, [], 'no stuck-app diagnosis or quit-and-reopen advice');
+
+  const bare = harness({ changeReview: false, spaceProbe: health(true) });
+  helperRead(bare, 1, 'let app = await cua.getApp("OpenUsage")'); await tick();
+  helperReply(bare, 1); for (let i = 0; i < 5; i++) await tick();
+  assert.match(JSON.stringify(bare.toClient.find(m => m.id === 1)), /Tell the user the engine cannot drive it/);
+
+  const regular = harness({ changeReview: false, spaceProbe: health(false) });
+  helperRead(regular, 1, 'let app = await cua.getApp("TextEdit")'); await tick();
+  helperReply(regular, 1); for (let i = 0; i < 5; i++) await tick();
+  assert.doesNotMatch(JSON.stringify(regular.toClient.find(m => m.id === 1)), /menu bar/);
+
+  const open = harness({ changeReview: false, spaceProbe: async () => ({ ...(await health(true)()), windows: 1 }) });
+  helperRead(open, 1, 'let app = await cua.getApp("OpenUsage")'); await tick();
+  helperReply(open, 1); for (let i = 0; i < 5; i++) await tick();
+  assert.doesNotMatch(JSON.stringify(open.toClient.find(m => m.id === 1)), /menu bar/, 'with a window open, a timeout is a real one');
+});
+
 test('when a turn ends, an app this session drove that holds a keyboard tap is named once', async () => {
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
