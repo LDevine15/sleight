@@ -49,6 +49,10 @@ test('three hand-off tasks name a local page, a native step, a site log and a fi
   assert.match(tasks[0].prompt, /Preview.*invoice-total.txt/i);
 });
 
+test('the round wrapper preserves the selected Sleight prompt through its clean environment', () => {
+  assert.match(readFileSync(join(root, 'bench/fowl/rounds.sh'), 'utf8'), /SLEIGHT_PROMPT="\$\{SLEIGHT_PROMPT:-\}"/);
+});
+
 test('invoice grader needs the saved PDF with the page total, not the answer text', async () => {
   const { gradeNative, INVOICE_TOTAL } = await load('../bench/fowl/grade.mjs');
   const dir = temp('sleight-handoff-inv-');
@@ -59,17 +63,30 @@ test('invoice grader needs the saved PDF with the page total, not the answer tex
   };
   const site = { lines: ['view /', 'download /invoice.pdf'] };
   const answer = `RESULT: the total is $${INVOICE_TOTAL}`;
-  assert.ok(gradeNative({ task, dir, site, answer }).problems.length > 0, 'missing file fails');
+  let extracted = '';
+  const extractPdf = () => extracted;
+  const grade = (opts = {}) => gradeNative({ task, dir, site, answer, extractPdf, ...opts });
+  assert.ok(grade().problems.length > 0, 'missing file fails');
   writeFileSync(join(dir, 'invoice.pdf'), '%PDF-1.4\n(Total: $0.00)\n');
-  assert.match(gradeNative({ task, dir, site, answer }).problems.join('\n'), /total/);
+  assert.match(grade().problems.join('\n'), /total/);
   writeFileSync(join(dir, 'invoice.pdf'), '%PDF-1.7\ncompressed without readable total');
   writeFileSync(join(dir, 'invoice-total.txt'), 'INV-4419 0.00\n');
-  assert.ok(gradeNative({ task, dir, site, answer }).problems.length > 0);
+  assert.ok(grade().problems.length > 0);
   writeFileSync(join(dir, 'invoice-total.txt'), `INV-4419 ${INVOICE_TOTAL}\n`);
-  assert.deepEqual(gradeNative({ task, dir, site, answer }).problems, []);
-  assert.ok(gradeNative({ task, dir, site: { lines: ['view /'] }, answer }).problems.length > 0, 'download log required');
+  assert.ok(grade().problems.length > 0, 'a bogus PDF with the right marker fails');
+  extracted = `Invoice INV-4419\nTotal: $${INVOICE_TOTAL}`;
+  assert.deepEqual(grade().problems, []);
+  extracted = `Invoice OTHER\nTotal: $${INVOICE_TOTAL}`;
+  assert.ok(grade().problems.length > 0, 'the saved PDF must name this invoice');
+  extracted = `Invoice INV-44190\nTotal: $${INVOICE_TOTAL}`;
+  assert.ok(grade().problems.length > 0, 'an invoice id prefix fails');
+  extracted = 'Invoice INV-4419\nTotal: $0.00';
+  assert.ok(grade().problems.length > 0, 'the saved PDF must contain this total');
+  assert.ok(grade({ extractPdf: () => { throw new Error('extract failed'); } }).problems.length > 0);
+  extracted = `Invoice INV-4419\nTotal: $${INVOICE_TOTAL}`;
+  assert.ok(grade({ site: { lines: ['view /'] } }).problems.length > 0, 'download log required');
   writeFileSync(join(dir, 'invoice.pdf'), 'not a PDF');
-  assert.ok(gradeNative({ task, dir, site, answer }).problems.length > 0, 'PDF signature required');
+  assert.ok(grade().problems.length > 0, 'PDF signature required');
 });
 
 test('table grader needs the saved TextEdit file to contain every roster row', async () => {
@@ -88,6 +105,25 @@ test('table grader needs the saved TextEdit file to contain every roster row', a
   assert.deepEqual(gradeNative({ task, dir, site }).problems, []);
   writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name}\t${r.hours}9`).join('\n'));
   assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'numeric prefixes fail');
+  writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name} ${r.hours}`).join(' '));
+  assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'one line cannot contain the whole roster');
+  writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name} 99 ${r.hours}`).join('\n'));
+  assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'the first number after each name is its hours');
+  writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name} 12.5 8.0 20.0`).join('\n'));
+  assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'one name cannot claim every hours value');
+});
+
+test('PDF extraction reads the file through PDFKit with a bounded command and rejects absent text', async () => {
+  const { extractPdfText } = await load('../bench/fowl/grade.mjs');
+  let called;
+  const text = extractPdfText('/tmp/invoice.pdf', (...args) => { called = args; return 'INV-4419 1,247.50'; });
+  assert.equal(text, 'INV-4419 1,247.50');
+  assert.equal(called[0], '/usr/bin/osascript');
+  assert.deepEqual(called[1].slice(0, 2), ['-l', 'JavaScript']);
+  assert.match(called[1][3], /PDFDocument/);
+  assert.equal(called[1].at(-1), '/tmp/invoice.pdf');
+  assert.equal(called[2].timeout, 10000);
+  assert.throws(() => extractPdfText('/tmp/invoice.pdf', () => ''));
 });
 
 test('note grader needs the saved text and site log', async () => {

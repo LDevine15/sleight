@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cleanupNative } from './grade.mjs';
+import { INVOICE_ID, INVOICE_TOTAL, NOTE, ROSTER } from './data.mjs';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const ARMS = ['fowlbrowser', 'sleight', 'fowl+sleight'];
@@ -38,6 +39,27 @@ export function cleanupDownloads({ dir, before, name, started, ended }) {
   }
 }
 
+const UNTITLED_CONTENT = new Set([
+  `${INVOICE_ID} ${INVOICE_TOTAL}`,
+  `${NOTE.title}\n${NOTE.body}`,
+  ...['\t', ' '].flatMap((sep) => [
+    ROSTER.map((r) => [r.name, r.role, r.hours].join(sep)).join('\n'),
+    ROSTER.map((r) => [r.name, r.hours].join(sep)).join('\n'),
+  ]),
+]);
+
+export function findUntitled({ dir, before, started, ended }) {
+  const found = [];
+  for (const [name, stat] of snapshotDownloads(dir)) {
+    if (!/^Untitled(?: \d+)?(?:\.txt)?$/.test(name) || before.has(name) || !stat.isFile() || stat.size > 65536) continue;
+    if (stat.birthtimeMs < started || stat.birthtimeMs > ended || stat.mtimeMs < started || stat.mtimeMs > ended) continue;
+    const file = join(dir, name);
+    const body = readFileSync(file, 'utf8').replaceAll('\r\n', '\n').replace(/\n$/, '');
+    if (UNTITLED_CONTENT.has(body)) found.push(file);
+  }
+  return found.sort();
+}
+
 function runRound({ out, args }) {
   return new Promise((resolve, reject) => {
     const fd = openSync(out + '.log', 'wx');
@@ -57,6 +79,7 @@ function runRound({ out, args }) {
 
 export async function runHandoffs({
   outRoot = '/tmp/fb-rounds', downloads = join(homedir(), 'Downloads'),
+  icloud = join(homedir(), 'Library/Mobile Documents/com~apple~TextEdit/Documents'), cleanup = cleanupNative,
   stamp = new Date().toISOString().replace(/[:.]/g, '-'), run = runRound,
 } = {}) {
   const tasks = JSON.parse(readFileSync(join(DIR, 'handoff.json'), 'utf8'));
@@ -67,19 +90,35 @@ export async function runHandoffs({
     mkdirSync(out);
     const downloadName = 'invoice-' + randomUUID() + '.pdf';
     const before = snapshotDownloads(downloads);
+    const cleanupErrors = [];
+    let untitledBefore;
+    try { untitledBefore = snapshotDownloads(icloud); }
+    // Advisory: an unreadable iCloud folder is reported, never counted as a failed arm.
+    catch (err) { console.error(`Untitled snapshot skipped: ${err.message}`); }
     const started = Date.now() - 1;
     const serve = 'node ' + quote(join(DIR, 'site/server.mjs')) + ' --download-name ' + downloadName;
     const args = ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--serve', serve,
       '--codex-browsers', IDS, '--out', out];
     let code;
     let error;
+    let untitled = [];
     try { code = await run({ arm, out, downloadName, args }); }
     catch (err) { code = 1; error = err.message; }
     finally {
-      try { for (const task of tasks) cleanupNative(join(out, task.name)); }
-      finally { cleanupDownloads({ dir: downloads, before, name: downloadName, started, ended: Date.now() + 1 }); }
+      const ended = Date.now() + 1;
+      for (const task of tasks) {
+        const dir = join(out, task.name);
+        try { cleanup(dir); } catch (err) { cleanupErrors.push(`${dir}: ${err.message}`); }
+      }
+      try { cleanupDownloads({ dir: downloads, before, name: downloadName, started, ended }); }
+      catch (err) { cleanupErrors.push(`Downloads cleanup: ${err.message}`); }
+      if (untitledBefore) {
+        try { untitled = findUntitled({ dir: icloud, before: untitledBefore, started, ended }); }
+        catch (err) { console.error(`Untitled scan skipped: ${err.message}`); }
+      }
     }
-    results.push({ arm, out, code, ...(error ? { error } : {}) });
+    results.push({ arm, out, code: cleanupErrors.length && code === 0 ? 1 : code, untitled,
+      ...(error ? { error } : {}), ...(cleanupErrors.length ? { cleanupErrors } : {}) });
     if (code === 130) break;
   }
   return results;
