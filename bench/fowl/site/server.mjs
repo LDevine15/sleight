@@ -1,9 +1,9 @@
 // Local pages for the three hand-off tasks. Each task lives under /t/<name>/ so its views, downloads
 // and clicks land in GET /t/<name>/api/log, the same shape FowlBrowser's demo shop uses.
 import { createServer } from 'node:http';
-import { INVOICE_ID, INVOICE_TOTAL, MAIL, ROSTER, SITE_PORT } from '../data.mjs';
+import { INVOICE_ID, INVOICE_TOTAL, NOTE, ROSTER, SITE_PORT } from '../data.mjs';
 
-export { INVOICE_TOTAL, MAIL, ROSTER, SITE_PORT };
+export { INVOICE_TOTAL, NOTE, ROSTER, SITE_PORT };
 
 export function invoicePdf() {
   const stream = `BT
@@ -44,17 +44,8 @@ table{border-collapse:collapse}td,th{padding:6px 12px;border-bottom:1px solid #d
 a.button{display:inline-block;padding:8px 16px;border:1px solid #888;border-radius:8px;background:#f2f2f2;color:inherit;text-decoration:none}
 </style>`;
 
-const PAGE_SCRIPT = `<script>
-const root = location.pathname.split('/').slice(0, 3).join('/');
-const log = (e) => fetch(root + '/api/log', { method: 'POST', body: JSON.stringify({ ...e, path: location.pathname.slice(root.length) || '/' }), keepalive: true });
-addEventListener('click', (e) => {
-  const a = e.target.closest && e.target.closest('a');
-  if (a && a.href && a.href.startsWith('mailto:')) log({ kind: 'pointer', field: a.href });
-}, true);
-</script>`;
-
 function page(title, body) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${esc(title)}</title>${STYLE}<main>${body}</main>${PAGE_SCRIPT}</html>`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${esc(title)}</title>${STYLE}<main>${body}</main></html>`;
 }
 
 function invoicePage(base) {
@@ -70,10 +61,8 @@ function tablePage() {
 <table><thead><tr><th>Name</th><th>Role</th><th>Hours</th></tr></thead><tbody>${rows}</tbody></table>`);
 }
 
-function mailPage() {
-  return page('Billing contact', `<h1>Billing</h1>
-<p>Email accounts payable. Subject: ${esc(MAIL.subject)}.</p>
-<p><a class="button" href="${esc(MAIL.href)}">Email billing</a></p>`);
+function notePage() {
+  return page(NOTE.title, `<h1>${esc(NOTE.title)}</h1><p>${esc(NOTE.body)}</p>`);
 }
 
 export function logLines(events) {
@@ -81,7 +70,8 @@ export function logLines(events) {
     .filter((x) => x !== undefined && x !== '').join(' '));
 }
 
-export function startServer({ port = SITE_PORT } = {}) {
+export function createHandler({ downloadName = 'invoice.pdf' } = {}) {
+  if (!/^invoice(?:-[a-zA-Z0-9-]+)?\.pdf$/.test(downloadName)) throw new Error('invalid download name');
   const tags = new Map();
   const stateOf = (tag) => {
     if (!tags.has(tag)) tags.set(tag, { events: [] });
@@ -112,12 +102,12 @@ export function startServer({ port = SITE_PORT } = {}) {
       state.events.push({ at: Date.now(), kind: 'download', path: '/invoice.pdf' });
       res.writeHead(200, {
         'content-type': 'application/pdf',
-        'content-disposition': 'attachment; filename="invoice.pdf"',
+        'content-disposition': `attachment; filename="${downloadName}"`,
         'cache-control': 'no-store',
       }).end(pdf);
       return;
     }
-    const pages = { 'invoice-preview': () => invoicePage(base), 'table-textedit': tablePage, 'mailto-draft': mailPage };
+    const pages = { 'invoice-preview': () => invoicePage(base), 'table-textedit': tablePage, 'note-textedit': notePage };
     const render = pages[tag];
     if (render && rest === '') {
       state.events.push({ at: Date.now(), kind: 'view', path: '/' });
@@ -125,6 +115,11 @@ export function startServer({ port = SITE_PORT } = {}) {
     }
     return html(null);
   }
+  return handle;
+}
+
+export function startServer({ port = SITE_PORT, downloadName } = {}) {
+  const handle = createHandler({ downloadName });
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => handle(req, res).catch(() => res.writeHead(500).end()));
     server.listen(port, '127.0.0.1', () => {
@@ -138,6 +133,7 @@ export function startServer({ port = SITE_PORT } = {}) {
 }
 
 if (import.meta.main) {
-  const server = await startServer({ port: SITE_PORT });
+  const downloadName = process.argv[process.argv.indexOf('--download-name') + 1];
+  const server = await startServer({ port: SITE_PORT, downloadName: process.argv.includes('--download-name') ? downloadName : undefined });
   console.log(`handoff site on http://127.0.0.1:${server.port}`);
 }

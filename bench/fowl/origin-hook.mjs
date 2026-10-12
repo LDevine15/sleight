@@ -5,7 +5,7 @@
 // sites, for the session only (sleight never sends "always"), and declines everything else, as FowlBrowser's own
 // elicitation hook declines every prompt.
 // Browsers the h2h rounds use, plus the hand-off tasks' native apps, all on the benchmark allowlist (LAWS).
-const APPS = ['Google Chrome', 'Helium', 'Preview', 'TextEdit', 'Mail'];
+const APPS = ['Google Chrome', 'Helium', 'Preview', 'TextEdit'];
 const ORIGINS = ['http://127.0.0.1', 'https://en.wikipedia.org', 'https://developer.mozilla.org'];
 
 export function answer(e) {

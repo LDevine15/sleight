@@ -4,7 +4,7 @@
     "browser": "chrome",
     "budgetSeconds": 180,
     "needsClicks": true,
-    "prompt": "open http://127.0.0.1:5431/t/invoice-preview/ in {browser}, download the invoice PDF, open that file in Preview (not the browser) and read the invoice total from Preview. save a copy of the PDF as {out}/invoice.pdf. remove any other downloaded copy, including one in Downloads",
+    "prompt": "open http://127.0.0.1:5431/t/invoice-preview/ in {browser}. download the invoice PDF, choosing {out}/invoice.pdf as the save path if the browser permits it. otherwise keep the unique suggested download name. open that file in Preview and read its invoice ID and total. save a copy from Preview as {out}/invoice.pdf. in TextEdit save a plain-text read-back marker as {out}/invoice-total.txt containing one line: the invoice ID, one space, and the total without a dollar sign. use the values read from Preview",
     "result": "the invoice total as shown in Preview",
     "expect": ["1,?247\\.50"],
     "site": {
@@ -28,17 +28,17 @@
     "native": { "kind": "textedit-file", "file": "roster.txt" }
   },
   {
-    "name": "mailto-draft",
+    "name": "note-textedit",
     "browser": "chrome",
     "budgetSeconds": 180,
     "needsClicks": true,
-    "prompt": "open http://127.0.0.1:5431/t/mailto-draft/ in {browser} and click Email billing. in Mail, add the exact line \"Confirming INV-4419, do not send\" to the draft body. do not send the message",
-    "result": "the To address and subject of the draft, and that it was not sent",
-    "expect": ["billing@northbound\\.example", "INV-4419", "do not send"],
+    "prompt": "open http://127.0.0.1:5431/t/note-textedit/ in {browser}. copy the Delivery note title and its sentence. in TextEdit create a plain-text document with the title on the first line and the sentence on the second line, then save it as {out}/note.txt",
+    "result": "the saved delivery note",
+    "expect": ["Delivery note", "loading bay 4", "14:30"],
     "site": {
-      "log": "http://127.0.0.1:5431/t/mailto-draft/api/log",
-      "expect": ["^view /", "^pointer / mailto:billing@northbound\\.example"]
+      "log": "http://127.0.0.1:5431/t/note-textedit/api/log",
+      "expect": ["^view /"]
     },
-    "native": { "kind": "mail-draft" }
+    "native": { "kind": "note-file", "file": "note.txt" }
   }
 ]

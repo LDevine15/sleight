@@ -1,13 +1,20 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
+const temps = [];
+const temp = (prefix) => {
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), prefix)));
+  temps.push(dir);
+  return dir;
+};
+after(() => { for (const dir of temps) rmSync(dir, { recursive: true, force: true }); });
 const load = async (rel) => {
   const module = await import(new URL(rel, import.meta.url).href).catch((err) => {
     if (err.code !== 'ERR_MODULE_NOT_FOUND') throw err;
@@ -17,10 +24,10 @@ const load = async (rel) => {
   return module;
 };
 
-test('three hand-off tasks name a local page, a native step, a site log and a file or mail check', async () => {
+test('three hand-off tasks name a local page, a native step, a site log and a file check', async () => {
   const tasks = JSON.parse(readFileSync(join(root, 'bench/fowl/handoff.json'), 'utf8'));
   assert.equal(tasks.length, 3);
-  assert.deepEqual(tasks.map((t) => t.name), ['invoice-preview', 'table-textedit', 'mailto-draft']);
+  assert.deepEqual(tasks.map((t) => t.name), ['invoice-preview', 'table-textedit', 'note-textedit']);
   for (const task of tasks) {
     assert.match(task.prompt, /\{browser\}/);
     assert.match(task.prompt, new RegExp(`http://127\\.0\\.0\\.1:5431/t/${task.name}/`));
@@ -37,14 +44,14 @@ test('three hand-off tasks name a local page, a native step, a site log and a fi
   assert.equal(tasks[1].native.file, 'roster.txt');
   assert.match(tasks[1].prompt, /\{out\}\/roster\.txt/);
   assert.match(tasks[1].prompt, /TextEdit/);
-  assert.equal(tasks[2].native.kind, 'mail-draft');
-  assert.match(tasks[2].prompt, /mailto|Mail/);
-  assert.match(tasks[2].prompt, /do not send/i);
+  assert.equal(tasks[2].native.kind, 'note-file');
+  assert.match(tasks[2].prompt, /TextEdit/);
+  assert.match(tasks[0].prompt, /Preview.*invoice-total.txt/i);
 });
 
 test('invoice grader needs the saved PDF with the page total, not the answer text', async () => {
   const { gradeNative, INVOICE_TOTAL } = await load('../bench/fowl/grade.mjs');
-  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-handoff-inv-')));
+  const dir = temp('sleight-handoff-inv-');
   const task = {
     name: 'invoice-preview',
     native: { kind: 'preview-pdf', file: 'invoice.pdf', total: INVOICE_TOTAL },
@@ -55,93 +62,97 @@ test('invoice grader needs the saved PDF with the page total, not the answer tex
   assert.ok(gradeNative({ task, dir, site, answer }).problems.length > 0, 'missing file fails');
   writeFileSync(join(dir, 'invoice.pdf'), '%PDF-1.4\n(Total: $0.00)\n');
   assert.match(gradeNative({ task, dir, site, answer }).problems.join('\n'), /total/);
-  writeFileSync(join(dir, 'invoice.pdf'), `%PDF-1.4\n(Invoice INV-4419)\n(Total: $${INVOICE_TOTAL})\n`);
+  writeFileSync(join(dir, 'invoice.pdf'), '%PDF-1.7\ncompressed without readable total');
+  writeFileSync(join(dir, 'invoice-total.txt'), 'INV-4419 0.00\n');
+  assert.ok(gradeNative({ task, dir, site, answer }).problems.length > 0);
+  writeFileSync(join(dir, 'invoice-total.txt'), `INV-4419 ${INVOICE_TOTAL}\n`);
   assert.deepEqual(gradeNative({ task, dir, site, answer }).problems, []);
   assert.ok(gradeNative({ task, dir, site: { lines: ['view /'] }, answer }).problems.length > 0, 'download log required');
+  writeFileSync(join(dir, 'invoice.pdf'), 'not a PDF');
+  assert.ok(gradeNative({ task, dir, site, answer }).problems.length > 0, 'PDF signature required');
 });
 
 test('table grader needs the saved TextEdit file to contain every roster row', async () => {
   const { gradeNative, ROSTER } = await load('../bench/fowl/grade.mjs');
-  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-handoff-tab-')));
+  const dir = temp('sleight-handoff-tab-');
   const task = { name: 'table-textedit', native: { kind: 'textedit-file', file: 'roster.txt' }, site: { expect: ['^view /'] } };
   const site = { lines: ['view /'] };
   assert.ok(gradeNative({ task, dir, site }).problems.length > 0);
   writeFileSync(join(dir, 'roster.txt'), 'not the table\n');
   assert.ok(gradeNative({ task, dir, site }).problems.length > 0);
+  writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r, i) => `${r.name}\t${ROSTER[(i + 1) % 3].hours}`).join('\n'));
+  assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'swapped hours fail');
+  writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name}\n${r.hours}`).join('\n'));
+  assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'split lines fail');
   writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name}\t${r.role}\t${r.hours}`).join('\n'));
   assert.deepEqual(gradeNative({ task, dir, site }).problems, []);
+  writeFileSync(join(dir, 'roster.txt'), ROSTER.map((r) => `${r.name}\t${r.hours}9`).join('\n'));
+  assert.ok(gradeNative({ task, dir, site }).problems.length > 0, 'numeric prefixes fail');
 });
 
-test('mail grader needs a matching unsent draft with the confirmation line, and the mailto click', async () => {
-  const { gradeNative, MAIL } = await load('../bench/fowl/grade.mjs');
-  const task = { name: 'mailto-draft', native: { kind: 'mail-draft' }, site: { expect: ['^pointer /'] } };
-  const site = { lines: ['view /', `pointer / ${MAIL.href}`] };
-  const draft = { to: MAIL.to, subject: MAIL.subject, body: MAIL.token, sent: false };
-  assert.ok(gradeNative({ task, site, mail: { drafts: [] } }).problems.length > 0);
-  assert.ok(gradeNative({ task, site, mail: { drafts: [{ ...draft, body: 'hello' }] } }).problems.length > 0);
-  assert.ok(gradeNative({ task, site, mail: { drafts: [{ ...draft, sent: true }] } }).problems.length > 0);
-  assert.deepEqual(gradeNative({ task, site, mail: { drafts: [draft] } }).problems, []);
-  assert.ok(gradeNative({ task, site: { lines: ['view /'] }, mail: { drafts: [draft] } }).problems.length > 0);
+test('note grader needs the saved text and site log', async () => {
+  const { gradeNative, NOTE } = await load('../bench/fowl/grade.mjs');
+  const dir = temp('sleight-handoff-note-');
+  const task = { native: { kind: 'note-file', file: 'note.txt' }, site: { expect: ['^view /'] } };
+  const site = { lines: ['view /'] };
+  assert.ok(gradeNative({ task, dir, site }).problems.length);
+  writeFileSync(join(dir, 'note.txt'), 'wrong text');
+  assert.ok(gradeNative({ task, dir, site }).problems.length);
+  writeFileSync(join(dir, 'note.txt'), NOTE.title + '\n' + NOTE.body + '\n');
+  assert.deepEqual(gradeNative({ task, dir, site }).problems, []);
+  assert.ok(gradeNative({ task, dir, site: { lines: [] } }).problems.length);
 });
 
 test('cleanup deletes the native files under the task dir and leaves other names', async () => {
   const { cleanupNative } = await load('../bench/fowl/grade.mjs');
-  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-handoff-cln-')));
+  const dir = temp('sleight-handoff-cln-');
   writeFileSync(join(dir, 'invoice.pdf'), 'pdf');
   writeFileSync(join(dir, 'roster.txt'), 'table');
+  writeFileSync(join(dir, 'invoice-total.txt'), 'total');
+  writeFileSync(join(dir, 'note.txt'), 'note');
   writeFileSync(join(dir, 'keep.md'), 'stay');
   cleanupNative(dir);
   assert.equal(readFileSync(join(dir, 'keep.md'), 'utf8'), 'stay');
   assert.throws(() => readFileSync(join(dir, 'invoice.pdf')));
   assert.throws(() => readFileSync(join(dir, 'roster.txt')));
+  assert.throws(() => readFileSync(join(dir, 'invoice-total.txt')));
+  assert.throws(() => readFileSync(join(dir, 'note.txt')));
 });
 
-test('the local site serves the invoice PDF, table and mailto, and logs download and click', async (t) => {
-  const { startServer, INVOICE_TOTAL, ROSTER, MAIL } = await load('../bench/fowl/site/server.mjs');
-  const server = await startServer({ port: 0 });
-  t.after(() => server.close());
-  const base = `http://127.0.0.1:${server.port}`;
-  const get = async (path, init) => {
-    const res = await fetch(`${base}${path}`, init);
-    return { status: res.status, type: res.headers.get('content-type'), text: await res.text() };
+test('local site handler serves a uniquely named PDF and the account-free note', async () => {
+  const { createHandler, NOTE, ROSTER } = await load('../bench/fowl/site/server.mjs');
+  const handle = createHandler({ downloadName: 'invoice-run.pdf' });
+  const get = async (url) => {
+    const result = {};
+    const res = { writeHead(code, headers) { Object.assign(result, { code, headers }); return this; },
+      end(body) { result.body = body; } };
+    await handle({ url, method: 'GET' }, res);
+    return result;
   };
-  const invoice = await get('/t/invoice-preview/');
-  assert.equal(invoice.status, 200);
-  assert.match(invoice.text, new RegExp(INVOICE_TOTAL.replace('.', '\\.')));
-  assert.match(invoice.text, /invoice\.pdf/);
   const pdf = await get('/t/invoice-preview/invoice.pdf');
-  assert.equal(pdf.status, 200);
-  assert.match(pdf.type, /pdf/);
-  assert.match(pdf.text, /%PDF/);
-  assert.match(pdf.text, new RegExp(INVOICE_TOTAL.replace('.', '\\.')));
+  assert.equal(pdf.code, 200);
+  assert.match(pdf.headers['content-disposition'], /invoice-run.pdf/);
+  assert.match(pdf.body, /^%PDF/);
   const table = await get('/t/table-textedit/');
-  assert.equal(table.status, 200);
-  for (const row of ROSTER) {
-    assert.match(table.text, new RegExp(row.name));
-    assert.match(table.text, new RegExp(row.hours.replace('.', '\\.')));
-  }
-  const mail = await get('/t/mailto-draft/');
-  assert.equal(mail.status, 200);
-  assert.match(mail.text, new RegExp(`mailto:${MAIL.to}`));
-  assert.match(mail.text, new RegExp(MAIL.subject.replace(/[()]/g, '\\$&')));
-  const log = JSON.parse((await get('/t/invoice-preview/api/log')).text);
-  assert.ok(log.lines.some((l) => /^view \//.test(l)));
-  assert.ok(log.lines.some((l) => /^download \/invoice\.pdf/.test(l)));
-  await get('/t/mailto-draft/api/log', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind: 'pointer', path: '/', field: MAIL.href }) });
-  const mailLog = JSON.parse((await get('/t/mailto-draft/api/log')).text);
-  assert.ok(mailLog.lines.some((l) => l.includes(MAIL.to)));
-  await server.close();
+  for (const row of ROSTER) assert.ok(table.body.includes(row.name));
+  const note = await get('/t/note-textedit/');
+  assert.equal(note.code, 200);
+  assert.ok(note.body.includes(NOTE.body));
+  assert.equal((await get('/t/mailto-draft/')).code, 404);
+  const log = JSON.parse((await get('/t/invoice-preview/api/log')).body);
+  assert.ok(log.lines.includes('download /invoice.pdf'));
+  assert.throws(() => createHandler({ downloadName: '../invoice.pdf' }));
 });
 
 test('origin-hook accepts the hand-off apps and 127.0.0.1, and declines other apps', async () => {
   const { answer } = await load('../bench/fowl/origin-hook.mjs');
   const hook = (message) => ({ mcp_server_name: 'plugin:sleight:computer', message });
   assert.equal(answer(hook('Allow Browser use to access http://127.0.0.1:5431?')), 'accept');
-  for (const app of ['Preview', 'TextEdit', 'Mail', 'Google Chrome', 'Helium']) {
+  for (const app of ['Preview', 'TextEdit', 'Google Chrome', 'Helium']) {
     assert.equal(answer(hook(`Allow Computer Use to use "${app}"?`)), 'accept', app);
   }
   assert.equal(answer(hook('Allow Computer Use to use "Safari"?')), 'decline');
+  assert.equal(answer(hook('Allow Computer Use to use "Mail"?')), 'decline');
   assert.equal(answer(hook('Allow Browser use to access https://example.com?')), 'decline');
 });
 
@@ -161,18 +172,30 @@ test('fowl+sleight setup loads FowlBrowser for tabs and computer-only sleight fo
   assert.equal(setup.pluginDir, join(root, 'plugins/sleight'));
 });
 
-test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+sleight', () => {
+test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+sleight', (t) => {
   const cache = join(process.env.HOME, 'Library/Caches/sleight-bench/fowlbrowser');
-  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-handoff-patch-')));
-  const orig = spawnSync('git', ['-C', cache, 'show', '8b68924:tools/rounds.mjs'], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+  const dir = temp('sleight-handoff-patch-');
+  t.after(async () => (await import('node:fs')).rmSync(dir, { recursive: true, force: true }));
+  const orig = spawnSync('/usr/bin/git', ['-C', cache, 'show', '8b68924:tools/rounds.mjs'], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
   assert.equal(orig.status, 0, orig.stderr);
   mkdirSync(join(dir, 'tools'), { recursive: true });
   writeFileSync(join(dir, 'tools/rounds.mjs'), orig.stdout);
-  const apply = spawnSync('git', ['apply', join(root, 'bench/fowl/sleight-surface.patch')], { cwd: dir, encoding: 'utf8' });
+  for (const args of [['init', '-q'], ['add', 'tools/rounds.mjs']]) {
+    const result = spawnSync('/usr/bin/git', args, { cwd: dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const apply = spawnSync('/usr/bin/git', ['apply', join(root, 'bench/fowl/sleight-surface.patch')], { cwd: dir, encoding: 'utf8' });
   assert.equal(apply.status, 0, apply.stderr + apply.stdout);
   const patched = readFileSync(join(dir, 'tools/rounds.mjs'), 'utf8');
   assert.match(patched, /fowl\+sleight/);
   assert.match(patched, /replaceAll\('\{out\}'/);
   assert.match(patched, /gradeNative/);
   assert.match(patched, /bench\/fowl\/surface\.mjs/);
+  const diff = spawnSync('/usr/bin/git', ['diff', '--', 'tools/rounds.mjs'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(diff.stdout, readFileSync(join(root, 'bench/fowl/sleight-surface.patch'), 'utf8'));
+  assert.doesNotMatch(patched, /async function agentSetup/);
+  const probe = spawnSync(process.execPath, ['--input-type=module', '-e',
+    "import { agentSetup } from './tools/rounds.mjs'; for (const surface of ['fowlbrowser', 'sleight', 'fowl+sleight']) { const s = agentSetup({ task: { name: 'test', browser: 'chrome', prompt: 'save {out}', result: 'done' }, surface, dir: '/tmp/test', mcpRoot: '/fowl', settings: '/tmp/settings', model: 'opus', effort: 'medium' }); if (s instanceof Promise || !s.mcpConfig || !s.prompt.includes('/tmp/test')) throw Error(surface); }"],
+    { cwd: dir, encoding: 'utf8', env: { ...process.env, SLEIGHT_REPO: root } });
+  assert.equal(probe.status, 0, probe.stderr);
 });

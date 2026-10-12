@@ -10,12 +10,10 @@ export const ROSTER = [
   { name: 'Aiko Brennan', role: 'Producer', hours: '20.0' },
 ];
 
-export const MAIL = {
-  to: 'billing@northbound.example',
-  subject: 'Invoice INV-4419',
-  token: 'Confirming INV-4419, do not send',
-  href: 'mailto:billing@northbound.example?subject=Invoice%20INV-4419',
+export const NOTE = {
+  title: 'Delivery note',
+  body: 'Leave the blue crate at loading bay 4 before 14:30.',
 };
 
-export const NATIVE_FILES = ['invoice.pdf', 'roster.txt'];
+export const NATIVE_FILES = ['invoice.pdf', 'invoice-total.txt', 'roster.txt', 'note.txt'];
 export const SITE_PORT = 5431;

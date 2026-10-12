@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 // Combined arm: FowlBrowser drives the tab, sleight drives Mac apps. agentSetup in the patched
-// rounds.mjs loads this (async import) when --surface fowl+sleight.
+// rounds.mjs loads this synchronously when --surface fowl+sleight.
 
 export function fowlSleightSetup({ dir, mcpRoot, sleightRepo, label, remote = null, remoteDir, remoteServer }) {
   const fowl = {

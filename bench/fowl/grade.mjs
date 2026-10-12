@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { INVOICE_TOTAL, MAIL, NATIVE_FILES, ROSTER } from './data.mjs';
+import { INVOICE_ID, INVOICE_TOTAL, NOTE, NATIVE_FILES, ROSTER } from './data.mjs';
 
-export { INVOICE_TOTAL, MAIL, NATIVE_FILES, ROSTER };
+export { INVOICE_TOTAL, NOTE, NATIVE_FILES, ROSTER };
 
 function siteProblems(task, site) {
   if (!task.site?.expect?.length) return [];
@@ -20,8 +20,11 @@ function previewPdf({ task, dir }) {
   const total = task.native.total || INVOICE_TOTAL;
   if (!existsSync(file)) return [`missing ${file}`];
   const body = readFileSync(file, 'utf8');
-  if (!body.includes('%PDF')) return [`${file} is not a PDF`];
-  if (!body.includes(total)) return [`${file} does not contain the invoice total ${total}`];
+  if (!body.startsWith('%PDF-')) return [`${file} is not a PDF`];
+  const marker = join(dir, 'invoice-total.txt');
+  if (!existsSync(marker) || readFileSync(marker, 'utf8').trim() !== `${INVOICE_ID} ${total}`) {
+    return [`${marker} is missing the Preview read-back total ${total}`];
+  }
   return [];
 }
 
@@ -31,38 +34,36 @@ function texteditFile({ dir }) {
   const body = readFileSync(file, 'utf8');
   const problems = [];
   for (const row of ROSTER) {
-    if (!body.includes(row.name) || !body.includes(row.hours)) {
+    const hours = new RegExp(`(?:^|[^\\d.])${row.hours.replace('.', '\\.')}($|[^\\d.])`);
+    if (!body.split(/\r?\n/).some((line) => line.includes(row.name) && hours.test(line))) {
       problems.push(`${file} is missing ${row.name} ${row.hours}`);
     }
   }
   return problems;
 }
 
-function mailDraft({ mail }) {
-  const drafts = mail?.drafts || [];
-  const hit = drafts.find((d) => (d.to || '').toLowerCase() === MAIL.to.toLowerCase()
-    && (d.subject || '').includes(MAIL.subject) && (d.body || '').includes(MAIL.token));
-  if (!hit) return ['no matching Mail draft with the confirmation line'];
-  if (hit.sent) return ['the Mail draft was sent'];
-  if ((mail.sent || []).length) return ['Mail recorded a send'];
+function noteFile({ task, dir }) {
+  const file = join(dir, task.native.file);
+  if (!existsSync(file)) return [`missing ${file}`];
+  if (readFileSync(file, 'utf8').replaceAll('\r\n', '\n').trim() !== `${NOTE.title}\n${NOTE.body}`) {
+    return [`${file} does not contain the delivery note`];
+  }
   return [];
 }
 
-// Native step for a hand-off task. Also checks task.site.expect so a passing grade is the page log
-// plus a file or an unsent draft, never the RESULT line alone. mail is injected (unit tests stub it;
-// a live round that cannot read Mail will fail this check, which sleight-arch has to supply).
-export function gradeNative({ task, dir, site, mail } = {}) {
+// The page log and saved artifacts are checked independently of the RESULT line.
+export function gradeNative({ task, dir, site } = {}) {
   if (!task?.native) return { problems: [] };
   const problems = siteProblems(task, site);
   if (task.native.kind === 'preview-pdf') problems.push(...previewPdf({ task, dir }));
   else if (task.native.kind === 'textedit-file') problems.push(...texteditFile({ dir }));
-  else if (task.native.kind === 'mail-draft') problems.push(...mailDraft({ mail }));
+  else if (task.native.kind === 'note-file') problems.push(...noteFile({ task, dir }));
   else problems.push(`unknown native kind ${task.native.kind}`);
   return { problems };
 }
 
 export function cleanupNative(dir) {
   for (const name of NATIVE_FILES) {
-    try { unlinkSync(join(dir, name)); } catch { /* already gone */ }
+    try { unlinkSync(join(dir, name)); } catch (err) { if (err.code !== 'ENOENT') throw err; }
   }
 }
