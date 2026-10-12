@@ -19,6 +19,8 @@
 - Under the `SLEIGHT_RESULT_TRIM=1` A/B, a result over 25,000 characters drops runs of 20 or more
   sibling rows in a list or outline, keeping selected rows, folders and rows that match the window
   title or file name. A constructed 198-file folder went from 72,616 characters to under 25,000.
+- When the helper won't start and launchd still holds an old job for it, the result gives the
+  `launchctl remove` command for the user to run. sleight never runs it.
 
 ## 1.2.5 (2026-10-11)
 
