@@ -406,6 +406,7 @@ export function createRelay({
   chromeSettleMs = CHROME_SETTLE_MS,
   chromeSettleIntervalMs = 100,
   chromeSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
+  launchSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
 }) {
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
@@ -1142,6 +1143,28 @@ export function createRelay({
       });
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code: `await ${handle}.getScreenshot()` } } });
     });
+  }
+  async function fullerLaunchRead(msg, plan) {
+    const text = content => (content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+    const size = value => [...value.matchAll(/^\t*\d+ /gm)].length;
+    const before = text(msg.result?.content), window = windowFromText(before), count = size(before);
+    if (!plan?.acquisition || msg.error || msg.result?.isError || !window || count === 0 || count >= 20) return;
+    const generation = stopGeneration;
+    await launchSettleSleep(2500);
+    if (generation !== stopGeneration || closing || disposed) return;
+    const reply = await new Promise(resolve => {
+      const id = `sleight-launch-read-${nextInternalId++}`;
+      const timer = setTimeout(() => {
+        internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined);
+      }, 5500);
+      internalRequests.set(id, reply => { clearTimeout(timer); resolve(reply); });
+      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code: `await ${plan.handle}.getAXState({ disableDiffing: true })` }, _meta: { [META_KEY]: turnMeta() } } });
+    });
+    if (generation !== stopGeneration || closing || disposed || !reply?.result || reply.result.isError) return;
+    const after = text(reply.result.content);
+    if (windowFromText(after)?.app !== window.app || size(after) <= count) return;
+    msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content), ...reply.result.content];
   }
   const toClient = msg => {
     if (msg.method === undefined && stoppedClients.has(msg.id)) return;
@@ -2026,10 +2049,16 @@ export function createRelay({
       const deadline = new Promise(resolve => setTimeout(resolve, 600).unref?.());
       // An acquisition that launches the app is still launching when the first probe runs, so an
       // absent app is probed once more now that the engine has answered.
-      Promise.race([check.health, deadline]).then(health => health?.status === 'absent'
-        ? Promise.race([Promise.resolve().then(() => spaceProbe(check.key)).catch(() => undefined), new Promise(resolve => setTimeout(resolve, 600).unref?.())])
-        : health).then(health => {
-        preHealth.set(msg.id, health);
+      let launched = false;
+      Promise.race([check.health, deadline]).then(health => {
+        launched = health?.status === 'absent';
+        return launched
+          ? Promise.race([Promise.resolve().then(() => spaceProbe(check.key)).catch(() => undefined), new Promise(resolve => setTimeout(resolve, 600).unref?.())])
+          : health;
+      }).then(async health => {
+        preHealth.set(msg.id, launched ? { ...health, launched: true } : health);
+        if (launched) await fullerLaunchRead(msg, helperReads.get(msg.id));
+        if (closing || disposed) return;
         const failure = msg.error?.message ?? (msg.result?.isError ? (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n') : '');
         if (health?.menuBarOnly === true && health.windows === 0 && /\btimeoutReached\b/.test(failure)) {
           // Not a stuck app or helper: no recovery reads, and the same read is pointless.
@@ -2204,7 +2233,7 @@ export function createRelay({
       // running with a window, never one the acquisition launched (owner, 2026-10-09). Refusing it
       // cost 173 reads and 98 s in the benchmark runs of 2026-10-09.
       const split = String(msg.id).startsWith('sleight-acquire-'), health = preHealth.get(msg.id);
-      const settled = split && health?.status === 'responding' && health.windows > 0;
+      const settled = split && health?.status === 'responding' && !health.launched && health.windows > 0;
       priorRead = call.read && !msg.result?.isError && (!before || before.length <= 1) && lastWindow && text.includes('Window: ') &&
         /\n\t*\d+ /.test(text.slice(text.indexOf('Window: ')))
         ? { seq: callSeqs.get(msg.id), at: Date.now(), ms: Date.now() - (callStarts.get(msg.id) ?? Date.now()),

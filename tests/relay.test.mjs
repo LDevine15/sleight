@@ -181,6 +181,47 @@ test('a read is not held up or annotated when the Space check finds the window o
   assert.equal(h.toClient.find(msg => msg.id === 1).result.content.length, 1, 'answers after 600 ms without a note');
 });
 
+test('only a launched acquisition with a small tree gets one fuller read in the same call', async () => {
+  const tree = n => `Window: "a.txt", App: TextEdit\n0 standard window a.txt\n` +
+    Array.from({ length: n - 1 }, (_, i) => `\t${i + 1} button Item ${i + 1}`).join('\n');
+  for (const [launched, count, second, reread, last] of [
+    [true, 11, 500, true, 499], [true, 50, 500, false, 49], [false, 11, 500, false, 10],
+    [true, 11, 11, true, 10], [true, 11, null, true, 10],
+  ]) {
+    const waits = [];
+    let probes = 0;
+    const h = harness({ changeReview: false, launchSettleSleep: async ms => waits.push(ms),
+      spaceProbe: async () => probes++ === 0 && launched ? { status: 'absent' } : { status: 'responding', windows: 1, onScreen: 1 } });
+    helperRead(h, 1, 'let app = await cua.getApp("TextEdit")'); await settle();
+    helperReply(h, 1, tree(count), false); await settle();
+    const extra = h.toServer.find(m => /^sleight-launch-read-/.test(m.id));
+    assert.equal(!!extra, reread, `${launched}, ${count}`);
+    if (reread) {
+      assert.deepEqual(waits, [2500]);
+      assert.match(extra.params.arguments.code, /app\.getAXState\(\{ disableDiffing: true \}\)/);
+      assert.ok(!h.toClient.some(m => m.id === 1));
+      helperReply(h, extra.id, second === null ? 'read failed' : tree(second), second === null); await settle();
+    }
+    const replies = h.toClient.filter(m => m.id === 1);
+    assert.equal(replies.length, 1);
+    const text = replies[0].result.content.map(c => c.text ?? '').join('\n');
+    assert.match(text, new RegExp(`Item ${last}\\b`));
+    assert.equal(h.toClient.some(m => m.id === extra?.id), false, 'internal read stays hidden');
+    assert.equal(h.toServer.filter(m => /^sleight-launch-read-/.test(m.id)).length, reread ? 1 : 0);
+  }
+});
+
+test('a small tree from a regular read is never treated as a launched acquisition', async () => {
+  const h = harness({ changeReview: false, launchSettleSleep: async () => assert.fail('unexpected wait'),
+    spaceProbe: async () => ({ status: 'absent' }) });
+  helperRead(h, 1, 'let app = await cua.getApp("TextEdit")');
+  helperReply(h, 1, 'Window: "a.txt", App: TextEdit', false); await settle();
+  helperRead(h, 2, 'await app.getAXState()');
+  helperReply(h, 2, 'Window: "a.txt", App: TextEdit\n0 standard window a.txt\n1 button One', false); await settle();
+  assert.ok(h.toClient.some(m => m.id === 2));
+  assert.equal(h.toServer.length, 2);
+});
+
 test('an app hang is diagnosed before its second failed reply and uses a fresh guarded control read', async () => {
   const { diagnoseReadFailure } = await import('../plugins/sleight/lib/read-failure.mjs');
   const h = harness({ diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, {
@@ -2210,15 +2251,20 @@ test('a split acquisition\'s read stands in for the first action only when the a
   const { mkdtempSync } = await import('node:fs');
   const state = 'Window: "Calculator", App: Calculator\n0 standard window Calculator\n\t1 button Description: 1, ID: One';
   for (const [health, reused] of [[{ status: 'responding', windows: 1 }, true], [{ status: 'absent' }, false],
-    [{ status: 'responding', windows: 0 }, false], [{ status: 'unknown' }, false]]) {
-    const h = harness({ changeReview: false, spaceProbe: async () => health,
+    [{ status: 'responding', windows: 0 }, false], [{ status: 'unknown' }, false],
+    [[{ status: 'absent' }, { status: 'responding', windows: 1 }], false]]) {
+    let probes = 0;
+    const h = harness({ changeReview: false, launchSettleSleep: async () => {},
+      spaceProbe: async () => Array.isArray(health) ? health[Math.min(probes++, 1)] : health,
       inputLease: new InputLease({ directory: leaseDir('sleight-split-'), holder: 'A' }) });
     flowCall(h, 1, 'let app = await cua.getApp("Calculator"); await app.click({ id: "One" })'); await tick();
     const acquisition = h.toServer.find(m => String(m.id).startsWith('sleight-acquire-'));
     assert.ok(acquisition, 'the call was split');
     h.fromServer({ jsonrpc: '2.0', id: acquisition.id, result: { content: [{ type: 'text', text: '[sleight:windows][]\n' + state }],
       _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.calculator', kind: 'appId' }, kind: 'computerUse' } } } });
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await settle();
+    const extra = h.toServer.find(m => /^sleight-launch-read-/.test(m.id));
+    if (extra) { helperReply(h, extra.id, state, false); await settle(); }
     const code = h.toServer.find(m => m.id === 1).params.arguments.code;
     assert.match(code, /"split":true/, JSON.stringify(health));
     assert.equal(/"windows":null/.test(code), reused, JSON.stringify(health));
