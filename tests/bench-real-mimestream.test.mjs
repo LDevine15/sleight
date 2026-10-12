@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import * as mail from '../bench/real-mimestream.mjs';
 import { runOwned } from '../bench/preapproved-process.mjs';
 import { probeMimestream } from '../bench/mimestream-probe.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 function context(t) {
-  const ctx = { dir: mkdtempSync(join(tmpdir(), 'sleight-private-mail-')), nonce: 'private-test' };
+  const ctx = { dir: trackTemp(mkdtempSync(join(tmpdir(), 'sleight-private-mail-'))), nonce: 'private-test' };
   t.after(() => rmSync(ctx.dir, { recursive: true, force: true }));
   return ctx;
 }

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // Characterize the two places sleight could multiply a native typing request:
 // newline framing and the injected app proxy. No native helper runs here.
@@ -36,7 +37,7 @@ test('fragmented typing requests and repeated approval prompts forward one actio
 });
 
 test('repeated app reads and guards invoke native typing once per submitted call', async t => {
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-double-keys-unit-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-double-keys-unit-')));
   const path = join(bank, 'fixture.txt');
   writeFileSync(path, '');
   const clientIn = new PassThrough(), clientOut = new PassThrough();

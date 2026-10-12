@@ -8,6 +8,7 @@ import { resolveInstall, launchRoutine } from '../plugins/sleight/lib/routine-la
 import { relayServer } from '../plugins/sleight/lib/replay.mjs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const app = { name: 'Calculator', bundle: 'com.apple.calculator', pid: 123, windows: [{ title: 'Calculator' }] };
 const snapshot = { result: { content: [{ type: 'text', text: 'Window: "Calculator", App: Calculator.\n0 standard window Calculator' }] } };
@@ -58,7 +59,7 @@ test('idle is checked again after the AX read, immediately before input', async 
   await assert.rejects(guard.beforeCall('js', { code: 'await app.click({"id":"Seven"});' }, () => { idle = 0; return snapshot; }), /user.*active/);
 });
 test('locks persist owner identity, exclude overlaps, and recover only gone processes and groups', t => {
-  const root = mkdtempSync('/private/tmp/sleight-lock-test-');
+  const root = trackTemp(mkdtempSync('/private/tmp/sleight-lock-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = join(root, 'routine'); mkdirSync(directory);
   const options = { directory, coordinator: join(root, 'lock.sqlite'), alive: () => false };
@@ -88,7 +89,7 @@ test('locks persist owner identity, exclude overlaps, and recover only gone proc
   assert.equal(sameProcessStart('Fri Oct  9 01:00:00 2026', 'Sat Oct 10 15:00:00 2026'), false);
 });
 test('launcher follows the current plugin registry and reports missing installs', async t => {
-  const home = mkdtempSync('/private/tmp/sleight-launcher-test-');
+  const home = trackTemp(mkdtempSync('/private/tmp/sleight-launcher-test-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(join(home, '.claude/plugins'), { recursive: true });
   const registry = join(home, '.claude/plugins/installed_plugins.json');

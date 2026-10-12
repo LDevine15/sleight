@@ -11,12 +11,13 @@ import { selectSurfaces } from '../plugins/sleight/lib/launch.mjs';
 import { createAppHealthHelper } from '../plugins/sleight/lib/read-failure.mjs';
 import { snapshotCode } from '../plugins/sleight/hooks/snapshot.ts';
 import { pane, loadCodec } from '../bench/footprint-spawns.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgbYnAAAAEklEQVR4AWP4z8Dwn4GB4f9/ABH4A/1gtGwYAAAAAElFTkSuQmCC', 'base64');
 const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64');
 
 test('automatic launch without a cached extension stays computer-only without a preflight engine', async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-no-discovery-'));
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-no-discovery-')));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const requests = join(directory, 'requests');
   const server = { command: process.execPath, args: [new URL('fixtures/browser-discovery-engine.mjs', import.meta.url).pathname],

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveServer } from '../plugins/sleight/lib/launch.mjs';
 import { serverFromChatGPTApp, setup } from '../plugins/sleight/lib/setup.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const NODE_REL = 'Contents/Resources/cua_node/bin/node';
 const REPL_REL = 'Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs';
@@ -36,7 +37,7 @@ function probeEnv(app, codexHome) {
 }
 
 async function fakeBundle(t, { status = 'OK: installed', statusExit = 0 } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'sleight-setup-'));
+  const root = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-setup-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const app = join(root, 'ChatGPT.app');
   const installer = join(app, INSTALLER_REL);

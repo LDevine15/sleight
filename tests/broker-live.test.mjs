@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { brokerRequest } from '../plugins/sleight/lib/lease-broker.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 async function harness() {
   const module = await import('../bench/broker-live.mjs').catch(error => {
@@ -17,7 +18,7 @@ async function harness() {
 // Only the app and model are fake. Admission, expiry and stale tokens use the
 // real broker in an isolated store, with a clock advanced by the trial runner.
 function world(t, { duplicate = false, unsafeRefusal = false, failRelease = false, holdAt = Infinity } = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-broker-live-test-'));
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-live-test-')));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let time = 1000, steps = 0;
   const documents = new Map(), renewals = [], calls = [];
@@ -182,7 +183,7 @@ test('unconfirmed different-document reservation stops before selecting the othe
 test('the stdio adapter exercises normal relay refusal and collects its fake engine', async t => {
   const { fileURLToPath, pathToFileURL } = await import('node:url');
   const { baseClient } = await import('../bench/other-hosts-client.mjs');
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-broker-relay-test-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-relay-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   writeFileSync(join(bank, 'fixture.txt'), '');
   const fixture = fileURLToPath(new URL('./fixtures/broker-live-relay.mjs', import.meta.url));
@@ -206,7 +207,7 @@ test('the stdio adapter exercises normal relay refusal and collects its fake eng
 test('headless Codex receives the scoped rule and CLI, persists no instruction file, and releases only after collection', async t => {
   const { codexClient } = await harness();
   assert.equal(typeof codexClient, 'function', 'the actual Codex adapter must be testable');
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-broker-client-test-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-client-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   writeFileSync(join(bank, 'auth.json'), '{}');
   const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: 'file:///private/tmp/fixture.txt' };
@@ -249,7 +250,7 @@ test('headless Codex receives the scoped rule and CLI, persists no instruction f
 
 test('renewal refusal cancels the active Codex child and preserves its failed raw receipt', async t => {
   const { codexClient } = await harness();
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-broker-cancel-test-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-cancel-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   writeFileSync(join(bank, 'auth.json'), '{}');
   const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: 'file:///private/tmp/fixture.txt' };
@@ -278,7 +279,7 @@ test('renewal refusal cancels the active Codex child and preserves its failed ra
 test('disconnecting a pending relay call collects its fake engine and reports failure', async t => {
   const { fileURLToPath } = await import('node:url');
   const { baseClient } = await import('../bench/other-hosts-client.mjs');
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-broker-hung-test-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-hung-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   writeFileSync(join(bank, 'fixture.txt'), '');
   const fixture = fileURLToPath(new URL('./fixtures/broker-live-relay.mjs', import.meta.url));

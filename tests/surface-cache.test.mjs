@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { selectSurfaces } from '../plugins/sleight/lib/launch.mjs';
 import { refreshAfterFirstCall } from '../plugins/sleight/lib/surface-cache.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('the inventory refresh waits for the engine\'s first call answer, not initialize', () => {
   const output = new PassThrough();
@@ -46,7 +47,7 @@ test('a refresh started by the first call answer is not started again by the fal
 });
 
 function setup(t, discover) {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-surface-cache-'));
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-surface-cache-')));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let now = 100000;
   const file = join(directory, 'extensions.json');

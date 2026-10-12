@@ -2,11 +2,12 @@ import { test } from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync,
+  closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/temp-leftovers.mjs', import.meta.url));
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -40,15 +41,15 @@ function listPrefix(prefix) {
 }
 
 function harness(t) {
-  const root = mkdtempSync(join(tmpdir(), 'sleight-leftovers-harness-'));
+  const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-leftovers-harness-')));
   t.after(() => { if (process.env.SLEIGHT_KEEP_TEMP !== '1') rmSync(root, { recursive: true, force: true }); });
   return root;
 }
 
 test('lists old sleight folders without removing them and skips sleight-bench', t => {
   const root = harness(t);
-  const oldDir = mkdtempSync(join(root, 'sleight-old-'));
-  const newDir = mkdtempSync(join(root, 'sleight-new-'));
+  const oldDir = trackTemp(mkdtempSync(join(root, 'sleight-old-')));
+  const newDir = trackTemp(mkdtempSync(join(root, 'sleight-new-')));
   const other = mkdtempSync(join(root, 'other-'));
   mkdirSync(join(root, 'sleight-bench'));
   writeFileSync(join(oldDir, 'note.txt'), 'x');
@@ -81,8 +82,8 @@ test('refuses a path that is not a sleight- folder', t => {
 
 test('--remove deletes only old sleight folders and leaves a held-open one', t => {
   const root = harness(t);
-  const oldDir = mkdtempSync(join(root, 'sleight-old-'));
-  const held = mkdtempSync(join(root, 'sleight-held-'));
+  const oldDir = trackTemp(mkdtempSync(join(root, 'sleight-old-')));
+  const held = trackTemp(mkdtempSync(join(root, 'sleight-held-')));
   mkdirSync(join(root, 'sleight-bench'));
   writeFileSync(join(oldDir, 'note.txt'), 'x');
   writeFileSync(join(held, 'open.txt'), 'y');
@@ -118,4 +119,16 @@ test('skill-rules test leaves no sleight-skill folder', () => {
 
 test('preapproved-always test leaves no sleight-always folder', () => {
   assert.deepEqual(leftoverAfter('./preapproved-always.test.mjs', 'sleight-always-'), []);
+});
+
+test('test files that create sleight-* temp dirs import trackTemp or removeTemp', () => {
+  const testsDir = fileURLToPath(new URL('.', import.meta.url));
+  const offenders = [];
+  for (const name of readdirSync(testsDir).filter(n => n.endsWith('.test.mjs'))) {
+    const text = readFileSync(join(testsDir, name), 'utf8');
+    if (!/mkdtemp(?:Sync)?\([^;\n]*sleight-/.test(text)) continue;
+    if (/from '\.\.\/scripts\/temp-leftovers\.mjs'/.test(text)) continue;
+    offenders.push(name);
+  }
+  assert.deepEqual(offenders, [], offenders.join(', '));
 });

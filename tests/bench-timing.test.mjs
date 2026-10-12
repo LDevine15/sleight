@@ -4,13 +4,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runTiming, traceTiming } from '../bench/timing.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const at = ms => new Date(Date.UTC(2026, 9, 7) + ms).toISOString();
 const line = (ms, direction, msg) => JSON.stringify({ t: at(ms), direction, msg });
 const call = (id, name) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } });
 
 test('splits tool time into engine, relay and local tools; a refusal is relay time only', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-timing-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-timing-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'trace-1.jsonl'), [
     line(0, 'call-received', call(1, 'js')), line(5, 'to-server', call(1, 'js')),
@@ -27,7 +28,7 @@ test('splits tool time into engine, relay and local tools; a refusal is relay ti
 });
 
 test('an acquisition sent ahead of its actions counts as engine time, not relay time', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-timing-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-timing-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'trace-1.jsonl'), [
     line(0, 'call-received', call(1, 'js')),
@@ -47,7 +48,7 @@ test('no trace leaves only the model split', () => {
 });
 
 test('guard reads are counted as a subset of engine time, including failed reads', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-guard-timing-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-guard-timing-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'trace-2.jsonl'), [
     line(0, 'call-received', call(1, 'js')), line(2, 'to-server', call(1, 'js')),

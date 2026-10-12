@@ -5,9 +5,10 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'no
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as wait } from 'node:timers/promises';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('live wrapper waits for owned child cleanup before removing its lock on interruption', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-lock-test-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-lock-test-')));
   const lock = join(dir, 'live.lock');
   const source = readFileSync(new URL('../bench/drag-polish-live.sh', import.meta.url), 'utf8');
   const script = source.replaceAll('/tmp/sleight-live.lock', lock);
@@ -34,7 +35,7 @@ while :; do sleep 0.1; done
   }
 });
 test('a Chess cleanup failure keeps its lock and returns the remaining-window failure code', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-lock-test-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-lock-test-')));
   const lock = join(dir, 'live.lock');
   const source = readFileSync(new URL('../bench/drag-polish-live.sh', import.meta.url), 'utf8');
   writeFileSync(join(dir, 'run.sh'), source.replaceAll('/tmp/sleight-live.lock', lock));

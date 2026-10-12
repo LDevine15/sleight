@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const window = { appId: 'com.apple.TextEdit', title: 'broker.txt', url: 'file:///private/tmp/broker.txt' };
 const otherWindow = { ...window, title: 'other.txt', url: 'file:///private/tmp/other.txt' };
@@ -13,7 +14,7 @@ const fixture = fileURLToPath(new URL('./fixtures/lease-broker-cli.mjs', import.
 const claim = (client = 'outside A', target = window, scope = 'window') => ({ operation: 'acquire', client, window: target, scope });
 const use = (operation, lease) => ({ operation, key: lease.key, token: lease.token });
 function bank(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-broker-test-'));
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-test-')));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

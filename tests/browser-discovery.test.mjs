@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { probeSurfaces as selectSurfaces } from '../plugins/sleight/lib/launch.mjs';
 import { discoverExtensions } from '../plugins/sleight/lib/browser-discovery.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 function server(t, browsers, extra = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-browser-discovery-'));
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-browser-discovery-')));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return { command: process.execPath, args: [fileURLToPath(new URL('fixtures/browser-discovery-engine.mjs', import.meta.url))],
     env: { SLEIGHT_TEST_BROWSERS: JSON.stringify(browsers), SLEIGHT_TEST_REQUESTS: join(directory, 'requests.jsonl'), ...extra } };

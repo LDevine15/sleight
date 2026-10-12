@@ -6,9 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('launcher bounds a hung call on EOF, collects its engine, then removes its lease', { timeout: 16000 }, async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-launcher-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-launcher-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
   const codexHome = join(bank, 'codex');
   const config = join(codexHome, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
@@ -48,7 +49,7 @@ test('launcher bounds a hung call on EOF, collects its engine, then removes its 
   await assert.rejects(stat(snapshot.msg.directory), { code: 'ENOENT' });
 });
 test('launcher stays connected across stop and lazily initializes a new engine with remembered approval', { timeout: 20000 }, async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-restart-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-restart-test-')));
   const codexHome = join(bank, 'codex'), config = join(codexHome, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
   await mkdir(config, { recursive: true });
   await writeFile(join(config, '.mcp.json'), JSON.stringify({ mcpServers: { cua_repl: {

@@ -6,12 +6,13 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const api = await import('../bench/lcu-arm-setup.mjs');
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function tempDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-lcu-arm-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-lcu-arm-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

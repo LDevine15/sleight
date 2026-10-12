@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TurnJournal, writeReceipt } from '../plugins/sleight/lib/turn-receipts.mjs';
 import { auditRecordedTraces } from '../bench/receipt-traces.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const request = (id, code, extra = {}) => ({ id, method: 'tools/call', params: { name: 'js', arguments: { code, ...extra } } });
 const reply = (id, text, isError = false) => ({ id, result: { content: [{ type: 'text', text }], isError } });
@@ -176,7 +177,7 @@ test('a caller-supplied pane title cannot hide a mutation', () => {
 });
 
 test('receipt writes are private, unique and never follow an output symlink', t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-receipts-test-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-receipts-test-')))); t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = join(root, 'receipts');
   const a = writeReceipt({ calls: [] }, { directory });
   const b = writeReceipt({ calls: [] }, { directory });
@@ -264,7 +265,7 @@ test('completed entries release code and read text even when their call objects 
 });
 
 test('each write prunes receipts older than seven days and retains at most 200 writer files', t => {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-retention-')));
+  const directory = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-retention-'))));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const now = Date.now(), week = 7 * 86400000;
   const files = Array.from({ length: 205 }, (_, i) => writeReceipt({}, { directory, now: now - 1000 + i }));
@@ -283,7 +284,7 @@ test('each write prunes receipts older than seven days and retains at most 200 w
 });
 
 test('retention leaves files with a different owner untouched', t => {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-retention-owner-')));
+  const directory = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-retention-owner-'))));
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(directory, { recursive: true, force: true }); });
   const now = Date.now(), foreign = writeReceipt({}, { directory, now: now - 8 * 86400000 });
   const original = fs.lstatSync;
@@ -298,7 +299,7 @@ test('retention leaves files with a different owner untouched', t => {
 });
 
 test('concurrent receipt writers tolerate pruning the same expired or excess files', async t => {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-retention-concurrent-')));
+  const directory = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-retention-concurrent-'))));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   for (let i = 0; i < 200; i++) writeReceipt({}, { directory, now: Date.now() - 10000 + i });
   const source = new URL('../plugins/sleight/lib/turn-receipts.mjs', import.meta.url).href;
@@ -312,7 +313,7 @@ test('concurrent receipt writers tolerate pruning the same expired or excess fil
 });
 
 test('concurrent first writers validate a directory created between stat and mkdir', t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-retention-mkdir-'))), directory = join(root, 'receipts');
+  const root = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-retention-mkdir-')))), directory = join(root, 'receipts');
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); });
   const original = fs.mkdirSync;
   t.mock.method(fs, 'mkdirSync', (path, options) => {

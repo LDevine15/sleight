@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const api = await import('../bench/turn-study.mjs').catch(e => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
@@ -42,7 +43,7 @@ test('missing or reversed timestamps remain unknown rather than becoming zero du
   assert.equal(r.calls[1].attributableMs, null);
 });
 test('resolves spilled files only beneath the owning session tool-results directory', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-study-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-study-'))); t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, 'session/tool-results'), { recursive: true });
   writeFileSync(join(dir, 'session/tool-results/a.json'), JSON.stringify([{ type: 'text', text: 'x'.repeat(60000) }]));
   const wrapper = `<persisted-output>Full output saved to: ${dir}/session/tool-results/a.json\nPreview: x</persisted-output>`;
@@ -119,7 +120,7 @@ test('matches exact prompt run coordinates and refuses ambiguous traces', () => 
   assert.equal(api.matchRun([user(), call('a', 1000, 'app')], candidates.slice(0, 1)).status, 'trace');
 });
 test('CLI selects a result file, writes JSON and a ranked table, omitting transcript content', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-study-cli-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-study-cli-'))); t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, 'projects/p'), { recursive: true });
   const stamp = '2026-10-10T00-00-00-000Z';
   writeFileSync(join(dir, 'projects/p/session.jsonl'), [...pair('app', 'private owner'), user(4000, `/tmp/sleight-bench/${stamp}/sleight-textedit-save-1/a.txt`)].map(JSON.stringify).join('\n'));
@@ -145,7 +146,7 @@ test('matches exact numeric usage fingerprints when neither a path nor trace cod
   assert.equal(api.matchRun(rows, [run, { ...run }]).status, 'ambiguous');
 });
 test('time ranges cut off an unfinished result and retain result rows whose transcripts are absent', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-study-range-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-study-range-'))); t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, 'projects/p'), { recursive: true });
   const stamp = '2026-10-10T00-00-00-000Z';
   writeFileSync(join(dir, 'projects/p/session.jsonl'), [user(0, `/tmp/sleight-bench/${stamp}/sleight-textedit-save-1/a.txt`), call('a', 1000, 'app'), result('a', 4000, 'late')].map(JSON.stringify).join('\n'));

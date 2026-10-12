@@ -6,11 +6,12 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // Dynamic imports keep each missing-feature assertion independent on the old tree.
 const load = name => import(`../bench/battery/${name}.mjs`);
 function bank(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-battery-test-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -478,7 +479,7 @@ test('one fixture script can close two retained windows without reading a stale 
 test('owned host collects fragmented cleanup diagnostics and only grants scripting for its temp document', async t => {
   const { startHost } = await load('runtime');
   assert.equal(typeof startHost, 'function');
-  const dir = mkdtempSync('/private/tmp/sleight-battery-test-');
+  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'fixture.txt'); writeFileSync(path, 'BATTERY-test');
   for (const own of [true, false]) {

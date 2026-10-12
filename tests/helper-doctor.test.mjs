@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
 import { doctor } from '../plugins/sleight/lib/launch.mjs';
 import { probeHelper, staleHelperJobs } from '../plugins/sleight/lib/helper-health.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const STALE_LISTING = 'PID\tStatus\tLabel\n-\t0\tapplication.com.openai.sky.CUAService.1.2\n83422\t0\tapplication.com.openai.codex.3.4\n';
 
@@ -21,7 +22,7 @@ for (const [mode, code, message] of [
   ['launch-failed', 1, /live read FAILED: Native apps: Error: Sky Computer Use service startup request failed\n.*\n  launchctl remove application\.com\.openai\.sky\.CUAService\.1\.2$/],
 ]) {
   test(`doctor performs a bounded live read: ${mode}`, async t => {
-    const bank = await mkdtemp(join(tmpdir(), 'sleight-doctor-test-'));
+    const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-doctor-test-')));
     t.after(() => rm(bank, { recursive: true, force: true }));
     const config = join(bank, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
     await mkdir(config, { recursive: true });
@@ -52,7 +53,7 @@ for (const [mode, entries, auditFails, expected] of [
   ['app-preapproved', [{ app: 'com.apple.calculator', riskLevel: 'low' }], true, 'skipped'],
 ]) {
   test(`doctor applies the user list before app approval: ${mode}, ${entries.length} entries, audit failure ${auditFails}`, async t => {
-    const bank = await mkdtemp(join(tmpdir(), 'sleight-doctor-list-'));
+    const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-doctor-list-')));
     t.after(() => rm(bank, { recursive: true, force: true }));
     const listFile = join(bank, 'user-list.json');
     await writeFile(listFile, JSON.stringify({ version: 1, apps: entries }), { mode: 0o600 });
@@ -123,7 +124,7 @@ for (const [mode, app, code, message] of [
   ['app-rpc-private', 'Calculator', 1, /app read FAILED.*window header: no.*engine error/],
 ]) {
   test(`doctor reports an optional running app read: ${mode}, ${app}`, async t => {
-    const bank = await mkdtemp(join(tmpdir(), 'sleight-doctor-app-'));
+    const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-doctor-app-')));
     t.after(() => rm(bank, { recursive: true, force: true }));
     const config = join(bank, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
     await mkdir(config, { recursive: true });

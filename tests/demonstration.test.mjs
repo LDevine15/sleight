@@ -6,6 +6,7 @@ import { DemoRecording, recordWatch, watchOptions, collectCompiler, createDemoHe
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { routineApps } from '../plugins/sleight/lib/routines.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const seven = { id: 'Seven', idCount: 1, role: 'AXButton' };
 const text = { label: 'Text', labelCount: 1, role: 'AXTextArea', editable: true };
@@ -90,7 +91,7 @@ test('secure, ambiguous, drag, web, window-switch and unsupported input observat
 });
 
 test('watch checks trust before starting observation and never replaces a file', async t => {
-  const home = mkdtempSync('/private/tmp/sleight-demo-test-');
+  const home = trackTemp(mkdtempSync('/private/tmp/sleight-demo-test-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const output = join(home, 'task.json');
   let observed = 0;
@@ -106,7 +107,7 @@ test('watch checks trust before starting observation and never replaces a file',
 });
 
 test('watch refuses missing listen permission and incomplete event streams without saving', async t => {
-  const home = mkdtempSync('/private/tmp/sleight-demo-test-');
+  const home = trackTemp(mkdtempSync('/private/tmp/sleight-demo-test-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const output = join(home, 'task.json');
   await assert.rejects(recordWatch({ app: 'com.apple.calculator', output, input: { isTTY: true }, notify: async () => {}, helper: { check: async () => ({ trusted: true, listening: false }) } }), /Input Monitoring/);
@@ -133,7 +134,7 @@ test('menu opening records a step and AX/mouse duplicates reconcile in either ca
 
 test('HID idle time is nanoseconds from ioreg, and the observer compiles once per source hash', async t => {
   assert.equal(await sessionIdleSeconds({ execFile: async () => ({ stdout: '| | |   "HIDIdleTime" = 10865666\n' }) }), 10865666 / 1e9);
-  const home = mkdtempSync('/private/tmp/sleight-observer-cache-');
+  const home = trackTemp(mkdtempSync('/private/tmp/sleight-observer-cache-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const source = join(home, 'demonstration.swift');
   writeFileSync(source, 'source-a');

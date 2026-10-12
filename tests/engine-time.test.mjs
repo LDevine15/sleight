@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { guardedCode, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t2 button Save, ID: Save') =>
@@ -140,7 +141,7 @@ test('a target without combined observations keeps the screenshot fallback', asy
 });
 
 test('a screenshot snapshot cannot outlive lease ownership or expiry', async t => {
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-screenshot-lease-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-screenshot-lease-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   const path = join(bank, 'lease.json');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { intervalSeconds, routineApps, routinePlan, routineBeforeCall, routineCommand, RoutineStore } from '../plugins/sleight/lib/routines.mjs';
 import { PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const step = code => ({ tool: 'js', args: { code }, positions: [] });
 const task = { sleightReplay: 1, steps: [step('let app = await cua.getApp("com.apple.calculator");'), step('await app.click({"id":"Seven"});')] };
 const grants = new PreapprovedApps({ version: 1, apps: [{ app: 'com.apple.calculator', riskLevel: 'medium' }] });
 function fixture(t, options = {}) {
-  const home = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-routines-'));
+  const home = trackTemp(mkdtempSync(join(realpathSync(tmpdir()), 'sleight-routines-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const calls = [], notices = [];
   const store = new RoutineStore({ home, confirm: async () => true,

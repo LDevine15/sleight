@@ -5,9 +5,10 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('live runner waits for cancelled child cleanup before releasing its lock', { timeout: 5000 }, async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-lock-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-lock-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
   const bin = join(bank, 'bin'); await mkdir(bin);
   const log = join(bank, 'events');

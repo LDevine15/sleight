@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const traces = JSON.parse(readFileSync(new URL('./fixtures/verified-results.json', import.meta.url)));
 const text = text => ({ type: 'text', text });
@@ -178,7 +179,7 @@ test('saving then navigating or observing a different handle cannot confirm the 
 test('a save is observed when the document\'s file on disk changes during the call', async () => {
   const { mkdtempSync, writeFileSync, utimesSync, rmSync } = await import('node:fs');
   const { join } = await import('node:path'); const { tmpdir } = await import('node:os'); const { pathToFileURL } = await import('node:url');
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-filesave-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-filesave-')));
   try {
     const file = join(dir, 'a.txt'); writeFileSync(file, 'before'); utimesSync(file, 1000, 1000);
     const url = pathToFileURL(file).href, doc = tree(rows, 'a.txt', url);

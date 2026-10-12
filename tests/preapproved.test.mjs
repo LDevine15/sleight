@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { loadPreapproved, PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
 import os from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const config = { version: 1, apps: [{ app: 'com.apple.calculator', riskLevel: 'medium' }] };
 const fixed = join(userInfo().homedir, 'Library/Application Support/sleight/preapproved.json');
@@ -26,7 +27,7 @@ test('OS identity is resolved when loading, never while importing', async t => {
   }
 });
 function fixture(t) {
-  const bank = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'sleight-preapproved-')));
+  const bank = fs.realpathSync(trackTemp(fs.mkdtempSync(join(tmpdir(), 'sleight-preapproved-'))));
   t.after(() => fs.rmSync(bank, { recursive: true, force: true }));
   const file = join(bank, 'preapproved.json');
   fs.writeFileSync(file, JSON.stringify(config), { mode: 0o600 });

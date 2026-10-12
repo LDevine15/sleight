@@ -8,12 +8,13 @@ import { approvalLogging } from '../plugins/sleight/lib/launch.mjs';
 import { PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const grant = { app: 'com.apple.calculator', riskLevel: 'low', tool: 'engine',
   source: '~/Library/Application Support/sleight/preapproved.json' };
 const name = `preapproved-${process.pid}.jsonl`;
 function bank(t) {
-  const dir = fs.mkdtempSync(join(tmpdir(), 'sleight-grant-audit-'));
+  const dir = trackTemp(fs.mkdtempSync(join(tmpdir(), 'sleight-grant-audit-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

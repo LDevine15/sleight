@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { FlowRules, loadFlowRules } from '../plugins/sleight/lib/flow-rules.mjs';
 import * as flowModule from '../plugins/sleight/lib/flow-rules.mjs';
 import { runInNewContext } from 'node:vm';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const pattern = { id: 'ssns', kind: 'pattern', pattern: '\\b\\d{3}-\\d{2}-\\d{4}\\b', destinations: ['*'], except: ['1Password'] };
 const source = { id: 'contacts-mail', kind: 'source', sources: ['Contacts'], destinations: ['Mail'] };
@@ -177,7 +178,7 @@ test('validates rules rather than silently disabling bad configuration', () => {
 });
 
 test('loads opt-in user files once and rejects a rules file inside the working project', t => {
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-flow-test-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-flow-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   const file = join(bank, 'rules.json'); writeFileSync(file, JSON.stringify({ version: 1, rules: [pattern] }));
   assert.equal(loadFlowRules({}), undefined);
@@ -189,7 +190,7 @@ test('loads opt-in user files once and rejects a rules file inside the working p
 });
 
 test('rules paths cannot enter the project through symlinks or a subdirectory cwd', t => {
-  const bank = mkdtempSync(join(tmpdir(), 'sleight-flow-path-'));
+  const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-flow-path-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   const project = join(bank, 'project'); const sub = join(project, 'sub');
   mkdirSync(sub, { recursive: true }); mkdirSync(join(project, '.git'));

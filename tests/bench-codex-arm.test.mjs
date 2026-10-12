@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // A stand-in `codex` on PATH that prints `codex exec --json` events, then waits with a child of its own.
 function fakeCodex(events, { hang = false } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-fake-codex-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-fake-codex-')));
   const script = join(dir, 'codex');
   writeFileSync(script, `#!/bin/sh\n${events.map(e => `echo '${JSON.stringify(e)}'`).join('\n')}\n${hang ? 'sleep 60 &\nwait\n' : ''}`);
   chmodSync(script, 0o755);

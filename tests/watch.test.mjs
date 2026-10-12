@@ -6,12 +6,13 @@ import { mkdtemp, mkdir, copyFile, writeFile, readFile, rm, readdir } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const run = promisify(execFile);
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
 async function harness(t) {
-  const root = await mkdtemp(join(tmpdir(), 'sleight-watch-'));
+  const root = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-watch-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const dir of ['scripts', 'plugins/sleight/bin', 'bench', '.local/bin']) await mkdir(join(root, dir), { recursive: true });
   for (const file of ['watch.sh', 'engine-docs.mjs']) await copyFile(new URL(`../scripts/${file}`, import.meta.url), join(root, 'scripts', file));

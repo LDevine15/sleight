@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLiveLock } from '../bench/live-lock.mjs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('live runs admit one holder and release the lock after cleanup', async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
   const path = join(bank, 'lock');
   const results = await Promise.allSettled([acquireLiveLock(path), acquireLiveLock(path)]);
@@ -20,7 +21,7 @@ test('live runs admit one holder and release the lock after cleanup', async t =>
 });
 
 test('a live run cannot remove another holder or an existing lock file', async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
   const path = join(bank, 'lock');
   const release = await acquireLiveLock(path);
@@ -32,7 +33,7 @@ test('a live run cannot remove another holder or an existing lock file', async t
 });
 
 test('a waiting live run takes the lock only after the holder releases it', async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
   const path = join(bank, 'lock');
   const release = await acquireLiveLock(path);
@@ -47,7 +48,7 @@ test('a waiting live run takes the lock only after the holder releases it', asyn
 });
 
 test('interrupting a lock wait leaves the other holder intact', async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
   const path = join(bank, 'lock');
   const release = await acquireLiveLock(path);
