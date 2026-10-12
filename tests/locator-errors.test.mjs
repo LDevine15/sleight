@@ -33,6 +33,27 @@ test('an intercepted click is composed the way actionError emits it', () => {
   assert.doesNotMatch(out, /sent no input/);
 });
 
+test('a caller prefix still starts an intercept block, including dblclick', () => {
+  const diag = { kind: 'intercepted', action: 'dblclick', locator: 'body', matchCount: 1,
+    matches: [{ tag: 'body', visible: true, disabled: false }], visibleCount: 1 };
+  for (const prefix of ['Error clicking Pay: Error: ', 'click failed: ']) {
+    const src = `${prefix}Element does not receive pointer events at the dblclick point; <div#ov.x> intercepts the dblclick\n` +
+      'waiting on dblclick for selector body\n' +
+      `Locator diagnostics: ${JSON.stringify(diag)}`;
+    const out = rewriteLocatorFailure(src);
+    assert.match(out.split('\n')[0], /dblclick body is covered by <div#ov\.x>/, prefix);
+    assert.ok(out.includes(src), prefix);
+  }
+});
+
+test('an intercepted action without a covering node names another element', () => {
+  const src = failure({ kind: 'intercepted', action: 'click', locator: 'body', matchCount: 1,
+    matches: [{ tag: 'body', visible: true, disabled: false }], visibleCount: 1 });
+  const out = rewriteLocatorFailure(src);
+  assert.match(out.split('\n')[0], /covered by another element/);
+  assert.doesNotMatch(out, /undefined/);
+});
+
 test('Element is not enabled, visible or editable uses the engine wording', () => {
   const enabled = rewriteLocatorFailure(failure(matched, 'Element is not enabled'));
   assert.match(enabled.split('\n')[0], /is disabled/);

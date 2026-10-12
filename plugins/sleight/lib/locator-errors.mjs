@@ -6,7 +6,7 @@ const ENGINE = [
   /^(?:Error: )?(?:Browser Use encountered an error interacting with this webpage: Error: )?strict mode violation:/,
   /^(?:Error(?: [^:\n]+)?: )?(?:Error: )?Playwright selector deadline exceeded/,
   /^(?:Error: )?Timed out after \d+ms (?:evaluating|waiting for) selector .+: (?:Playwright selector deadline exceeded|No element matched|Browser Use encountered)/,
-  /^(?:Error: )?Element does not receive pointer events/,
+  /^(?:(?:Error(?: [^:\n]+)?|click failed): )?(?:Error: )?Element does not receive pointer events/,
 ];
 
 export function rewriteLocatorFailure(text) {
@@ -62,7 +62,7 @@ function locatorAdvice(block) {
     : kind === 'hidden' ? `${action} ${target} is hidden`
     : kind === 'disabled' ? `${action} ${target} is disabled`
     : kind === 'readonly' ? `${action} ${target} is read-only`
-    : kind === 'covered' ? `${action} ${target} is covered by ${coveringElement(block)}`
+    : kind === 'covered' ? `${action} ${target} is covered by ${coveringElement(block) || 'another element'}`
     : kind === 'matched' ? `${action} ${target}: the action failed after the element matched`
     : `${action} ${target} timed out`;
   return `${causeText}. Next: ${nextCall(kind)}.`;
