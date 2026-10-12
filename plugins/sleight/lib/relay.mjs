@@ -62,6 +62,7 @@ import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings } from './browser-call.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
+import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
@@ -2258,6 +2259,11 @@ export function createRelay({
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
+    if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
+        msg.result?.isError && Array.isArray(msg.result.content)) {
+      msg.result.content = msg.result.content.map(c =>
+        c.type === 'text' ? { ...c, text: rewriteTabError(c.text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }) } : c);
+    }
     // A "call failed" line after this message sent Claude to check again (h2h-3, 2026-10-10), so the
     // close it reports gets no verified-results line.
     let closedLast = false;

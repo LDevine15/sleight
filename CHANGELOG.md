@@ -65,6 +65,9 @@
   posts one Shift press to that app between the two, the fix for the save that hung after an Accessibility write. When
   that press can't be sent, the call goes through unsplit as before, with a note.
 - A click that opens a sheet or dialog lets the rest of the call act on it, when the click itself opened it.
+- A browser tab's common engine errors get one more line: the cause, whether input was sent, and the next call to make:
+  a covered or stale element, a page dialog (with the right `accept` or `dismiss` for its kind), CDP timeouts, a lost
+  debugger, a stalled download, and a `TypeError` from code in the read-only page scope. The original text stays.
 
 ## 1.2.5 (2026-10-11)
 
