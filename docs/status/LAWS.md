@@ -146,6 +146,8 @@ belong in [STATE.md](STATE.md).
 - The engine refuses a key press made only of modifiers (`pressKey("shift")` returns
   `-10005 keyPressIncludedNoNonModifierKeys`). A settle that needs a bare modifier is posted by sleight's
   own helper, never sent through the engine.
+- The engine's page `evaluate` (and a locator's) runs in a read-only scope: no event constructors, no `fetch`, read-only
+  element wrappers, and assigning a global throws. Changes to a page go through the tab's actions and locators.
 - The engine doesn't remember a session's approvals. In Codex the host does, so here the relay does. It
   does honor the "Always allow" list ChatGPT keeps (`ComputerUseAppApprovals.json`), with no prompt to
   sleight. That file is the user's ChatGPT setting: sleight reads it at most, and the owner decides any change.

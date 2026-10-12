@@ -3,47 +3,39 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 19:15 UTC, flushed before the owner's clear)
+## Banner (2026-10-12 19:20 UTC)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
-then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `5e5752a` (private), full
-check 2146/2146 exit 0. The main checkout is fast-forwarded to it.
+then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `faeea9d` (private), full
+check 2169 pass, 1 skipped, mod 33/33, exit 0. The main checkout is fast-forwarded to it.
 
 Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders, `/tmp/fb-rounds/h2h-*`):
 - 10:25: sleight 23/26, 2,109 s, $13.33, against 26/26, 972 s, $7.98. Published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`.
-- 13:09: 22/26, 1,258 s, $10.64 against 26/26, 884 s. 13:22: 25/26, 1,101 s, $9.13 against 26/26, 943 s, $7.11 (normal
-  order won on time, 461 s against 489 s). 14:27: 22/26, 1,414 s, $9.07 against 26/26, 967 s, $7.19. Not yet published.
-- Per call the extension through sleight is as fast as FowlBrowser or faster (`bench/fowl/ext-speed.mjs`: click 48 against
-  131 ms). The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over
-  13 runs), and every call re-reads them.
-- Remaining failures and their items: the HTML5 drag list (A8 done, awaiting review), checkout in Chrome freezing after
-  the payment confirm (the extension's `Emulation.setFocusEmulationEnabled` timeouts; next try: have the page accept its own
-  confirm when the user asked for the payment, `bench/fowl/dialog-probe.mjs --way preempt`, not yet run).
-- A sleight-only round with A1 was running at the clear under `nohup` (pid 71778). It keeps going after the clear.
-  It writes its report to `/tmp/fb-rounds/r6-sleight-a1/report.md`. Read it first.
+- 13:09: 22/26, 1,258 s, $10.64 against 26/26, 884 s. 13:22: 25/26, 1,101 s, $9.13 against 26/26, 943 s, $7.11. 14:27:
+  22/26, 1,414 s, $9.07 against 26/26, 967 s, $7.19. Not yet published.
+- 14:49 sleight-only round with A1 (`/tmp/fb-rounds/r6-sleight-a1/report.md`, one browser order): 13/13, 814 s, $5.98.
+  FowlBrowser's half of a round is about 470 s and $3.55. 313 s and $2.01 of ours is form-settings in Helium, where about
+  280 s went on the HTML5 priority list: `tab.drag` does start HTML5 drags (the list reordered several times) but picks up
+  the item a row away from the aimed `getBoundingClientRect` center. Next: `bench/fowl/drag-probe.mjs` logs where
+  `tab.drag` presses and drops.
+- The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over 13 runs).
 
-Merged today on `pane/auto-mode`: F1 and F1R2 (tab calls skip the native lease), F2, F7, F8/F8R, F10/F10R, F11/F11R
-(payment rule, LAWS), F13, F14, A1 (fillForm helper), the result budget (spill fix, Linux and Windows paragraphs, docs diet:
-`plugins/sleight/lib/result-budget.mjs`), the hand-off tasks (F9/F9R/F9R2, `bench/fowl/handoff.*`) and the bench harness
-(`bench/fowl/rounds.sh` runs Opus on the owner's account, other models on the API key with a $190 stop and per-round spend;
-every tool outside the arm's own blocked).
+Found 2026-10-12: the engine's `evaluate` is a read-only scope (`browser-service.mjs:8585-8640`: no `Event`,
+`DragEvent` or `DataTransfer`, read-only element wrappers, global assignment throws). So A8's in-page drag events (STALE),
+A4's network watch (STALE) and the confirm pre-accept probe (`window.confirm = ...`) can't work through it.
 
-Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`; 3 Codex and 2 Grok lanes):
-- Done and awaiting review (Sonnet high, then merge):
-  - A3 `grok/a3` `f810e4d`, error hints.
-  - A7 `codex/a7` `2e30186`, a split at a save after setValue.
-  - A8 `grok/a8` `ff28350`, the HTML5 drag helper.
-  - F6R3 `codex/f6r3` `0a17f4d`, tree caps.
-- In progress: A2 (diffs after tab actions), F5R2. Open: A5, A6 (after F6R3), F4, F7R2 (after F5R2), F12.
-- A4 STALE: the engine's page evaluate is read-only, so the page's network can't be watched from it. F3 parked (no way to tie an extension to its app).
-- Every lane item must end with a bare `npm run check` exit 0 (lanes skipped it twice and broke 7 tests).
+Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`): reviews today (Sonnet high) merged F6R3
+and F5R2; A3 and A7 failed review and went back as A3R and A7R; F5R3 (receipts) is new; A6 also takes F6R3's leftovers
+(a small tree cut to 0 rows under the limit, the first Wikipedia result still 55,450 characters). In progress: A2. Open:
+A3R, A5, A6, A7R, F4, F5R3, F7R2, F12. F3 parked. A lane item is done only after a bare `npm run check` at exit 0.
 
-Hand-off tasks (`bench/fowl/handoff.sh`, one task per round): sleight 2/3 and FowlBrowser + sleight 2/3 at 18:37 UTC.
-The invoice misses because the engine's download prompt reads "Allow download from <url>?", which
-`bench/fowl/origin-hook.mjs` doesn't match yet. FowlBrowser's earlier TextEdit "passes" went through Monitor's shell
-and are invalid. The runner now blocks that.
+Hand-off tasks (`bench/fowl/handoff.sh`): at 18:37 UTC sleight 2/3 and FowlBrowser + sleight 2/3; the invoice missed on
+the engine's "Allow download from <url>?" prompt, which `bench/fowl/origin-hook.mjs` accepts since `faeea9d` (rounds'
+ports only). Rerun started 18:57 UTC, log `/tmp/fb-rounds/handoff-run6.log`.
 
-API spend this month: $119.92 of $200 (ledger `~/Library/Logs/sleight/bench-api-spend.json`). Opus rounds no longer count.
+API spend this month: $119.92 of $200 (ledger `~/Library/Logs/sleight/bench-api-spend.json`). Opus rounds don't count.
+
+The engine updated to 26.1007.30912 on 2026-10-12 (the 09:00 watch). Its API docs didn't change (empty diff).
 
 Waiting on the owner:
 - Bench leftovers in their iCloud TextEdit folder, "Delivery Note.txt" (65 bytes) and "Untitled 6.txt" (empty), from
@@ -57,11 +49,12 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Read `/tmp/fb-rounds/r6-sleight-a1/report.md` (A1's effect on forms) and the ledger; review and merge A3, A7, A8, F6R3.
-2. Hook: accept "Allow download from http://127.0.0.1:<rounds port>/...?" (anchored, ports list), then rerun the hand-offs.
-3. Try the confirm pre-accept probe in Chrome; if it works, a skill line under the payment rule.
-4. Once A2 is merged: a full head-to-head (both arms, Opus on the account). Publish every round next to the 10:25 one.
-5. Video and release once a head-to-head is a win, or on the owner's call.
+1. Read the hand-off rerun's results and publish them with the 18:37 run.
+2. Run `node bench/fowl/drag-probe.mjs` (Helium and Chrome, holding the live lock) and fix the aim: a skill line or a
+   generic helper that drags between two locators.
+3. Review lane branches as they land (A2 first), merge, then a full head-to-head (both arms, Opus on the account). Publish
+   every round next to the 10:25 one.
+4. Video and release once a head-to-head is a win, or on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -121,7 +114,7 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 - Daily launchd job `com.landoclusters.sleight-watch` (9:00, `scripts/watch.sh`), daily since
   2026-10-10 on the owner's OK because a competitor hinted at an engine change; weekly with
   `npm run watch:install`. It saves the engine's API docs, without sleight's skill since 2026-10-10
-  (`~/Library/Logs/sleight/engine-api-26.1007.21159.md` is the latest), and diffs them on an engine
+  (`~/Library/Logs/sleight/engine-api-26.1007.30912.md` is the latest), and diffs them on an engine
   update. Remove with `npm run watch:remove`.
 - `~/Library/Application Support/sleight/preapproved.json` lists Calculator (owner, 2026-10-04) and
   Helium (`net.imput.helium` and `Helium`, all `high`). Helium was added on the owner's order on
@@ -150,7 +143,7 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
   The list holds 6 apps of the owner's (TextEdit among them, written 2026-07-26).
 - `~/Library/Caches/sleight-bench/keyboard-taps`: compiled from `bench/keyboard-taps.swift`, lists
   keyboard filter taps. The runner builds it if missing.
-- The watch's baseline (`~/Library/Logs/sleight/watch-engine-version`) is 26.1007.21159 (2026-10-10).
+- The watch's baseline (`~/Library/Logs/sleight/watch-engine-version`) is 26.1007.30912 (2026-10-12).
 - `~/.config/sleight-bench/anthropic-api-key` (0600): the owner's API key for benchmark runs
   (2026-10-10). Spend ledger: `~/Library/Logs/sleight/bench-api-spend.json`.
 - `.git/hooks/pre-push` (shared by every worktree): refuses pushes to the public repo without
