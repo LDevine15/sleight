@@ -232,6 +232,24 @@ export function chromeOnlyTree(text) {
   return true;
 }
 
+function chromeSwipe(app, size, target, direction, distance = 1) {
+  const axis = { up: 1, u: 1, down: 1, d: 1, left: 0, l: 0, right: 0, r: 0 }[direction];
+  const amount = typeof distance === 'number' ? distance : distance?.pixels;
+  if (![0, 1].includes(axis) || !Number.isFinite(amount) || amount <= 0) return app.scroll(target, direction, distance);
+  const span = Math.min(size[axis] * 0.65, typeof distance === 'number' ? amount * size[axis] * 0.65 : amount);
+  const sign = ['up', 'u', 'left', 'l'].includes(direction) ? 1 : -1;
+  const from = [size[0] * 0.5, size[1] * 0.525], to = [...from];
+  from[axis] -= sign * span / 2; to[axis] += sign * span / 2;
+  return app.drag(from, to);
+}
+
+function chromeScrollCode(code, tree, size, handles) {
+  if (typeof code !== 'string' || !chromeOnlyTree(tree) || !size?.every(n => Number.isFinite(n) && n > 0)) return code;
+  // Skip quoted text and comments; only known native handles on this observed window can swipe.
+  return code.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\b([A-Za-z_$][\w$]*)\.scroll\s*\(/g,
+    (match, handle) => handles.has(handle) ? `(${chromeSwipe.toString()}).bind(null, ${handle}, ${JSON.stringify(size)})(` : match);
+}
+
 export function lastImageData(content) {
   return (content ?? []).filter(c => c?.type === 'image' && typeof c.data === 'string').at(-1)?.data;
 }
@@ -1725,6 +1743,10 @@ export function createRelay({
       if (name === 'js') {
         if (!clipboard && typeof originalCode === 'string' && clipboardActions(originalCode).some(action => ['c', 'x'].includes(action))) nativeCopies.add(msg.id);
         const read = typeof originalCode === 'string' && isLeaseRead(originalCode);
+        const key = lastWindow && (helperAliases.get(lastWindow.app.toLowerCase()) ?? lastWindow.app.toLowerCase());
+        const swipeCode = !browser && !read ? chromeScrollCode(originalCode, lastWindowText,
+          screenshots.get(lastWindow?.app.toLowerCase())?.byTitle[lastWindow?.title],
+          new Set([...helperHandles].filter(([, plan]) => plan.key === key).map(([handle]) => handle))) : originalCode;
         const safe = read || (typeof originalCode === 'string' && isChangeCancel(originalCode, lastWindowText));
         let entry, nativeDenied = leaseCalls.get(msg.id)?.nativeDenied;
         try {
@@ -1794,14 +1816,14 @@ export function createRelay({
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
             const prior = !documentMode && !changeReview && guardMode !== 'careful' && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
               target?.app === priorRead.app ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
-            msg.params.arguments.code = guardedCode(originalCode, target, reason,
+            msg.params.arguments.code = guardedCode(swipeCode, target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, timing: guardTiming, careful: guardMode === 'careful' || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines: compactor.seenLines(target, [...new Set([...originalCode.matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))]) });
-          }
+          } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
         }
