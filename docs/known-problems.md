@@ -80,6 +80,9 @@ Engine behavior that sleight works around or can't change:
   out, `downloadMedia` and `waitForEvent("download")` alike (2/2 each, raw engine and sleight). Without that
   click both returned in under 0.4 s. A new tab downloads normally (`bench/fowl/download-probe.mjs`).
 - The page's `evaluate` is read-only: it can't dispatch events, assign globals or watch the page's network.
+- The engine opens tabs one at a time. A tab took 0.9 s to open alone, and 1.3 to 2.9 s each when 6 sessions opened
+  one at once, about 0.3 s more per session in line (`bench/fowl/coldstart-probe.mjs`). In a round that starts 13 sessions at
+  once, the first call's median was 4.8 s.
 
 ## Clipboard
 
