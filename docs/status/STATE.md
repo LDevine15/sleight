@@ -3,54 +3,65 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 17:00 UTC)
+## Banner (2026-10-12 19:15 UTC, flushed before the owner's clear)
 
-The owner is at the Mac working, and the box is ours: live runs and full checks are fine, but runs
-that take the pointer or keyboard still wait until they're away. Claude's quota is tight, so builds
-go to Codex and Grok lanes today (owner). The full `npm run check` passed at `e7da0a0` (2074/2074,
-exit 0), the first since 1.2.5, after a fix to one test's temp folders. The live pass over the
-ledger's items is still owed.
+Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser in the browser on its own 13 tasks (tasks, time and cost),
+then a release and a launch video showing it. Not there yet. Pushed: `pane/auto-mode` at `5e5752a` (private), full
+check 2146/2146 exit 0. The main checkout is fast-forwarded to it.
 
-FowlBrowser launched (ROADMAP 0b, the owner's new plan): benchmark against it, then the release, then
-a video sleight-arch builds. Done so far:
-- FowlBrowser installed from a pinned clone (`~/Library/Caches/sleight-bench/fowlbrowser`, `8b68924`)
-  with `FOWLBROWSER_SKIP_CLAUDE=1 sh install.sh --lite` (owner's OK, 2026-10-12): no Claude config
-  change. Its extension is loaded unpacked in Chrome (Developer mode on) and in Helium through a
-  `--load-extension` launch flag, which lasts until Helium restarts. Remove: `sh uninstall.sh` in the
-  clone, then the extension in Chrome.
-- `bench/fowl/`: `rounds.sh` runs FowlBrowser's own runner with a sleight arm
-  (`sleight-surface.patch`), clean env, API key, live lock. `origin-hook.mjs` accepts the engine's
-  site prompt only for the rounds' sites and the two browsers. `h2h.sh` runs both arms in both
-  browser orders, Opus 5.5 at medium (owner).
-- Result, published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`: FowlBrowser 26/26 in 972 s
-  ($7.98), sleight 23/26 in 2,109 s ($13.33), 139 tool errors against 4. All 3 failures are checkout,
-  where the engine's payment-confirmation rule stopped Claude. known-problems has a Browsers section.
-- Batch F (F1 to F9) is in the ledger for Codex and Grok, and the owner has the two prompts
-  (`~/Projects/sleight-wt/ledger/lane-prompt-F.md`). F1 to F8 are the gaps the rounds showed, F9 is the
-  hand-off tasks. Review each branch with Sonnet at high, merge, rerun `bench/fowl/h2h.sh`, publish it.
-- Video draft 1 (`media/launch/`, rendered to `~/Desktop/sleight-launch/sleight-launch-draft1.mp4`, sent
-  to the owner) runs 38 s with drawn windows and measured numbers. Real footage comes from F9's hand-off runs.
-- Owner, 2026-10-12: beat FowlBrowser in the browser, and a video showing it by end of day. 3 Codex and 2
-  Grok lanes are on the ledger (F1 to F13, F1R, F8R). Merged so far: F2. F1 and F8 went back as fix items.
-  F3 is BLOCKED (no way to tie an extension instance to its browser app). Reviews of F6 and F9 running.
-- sleight with F1 on top (worktree `~/Projects/sleight-wt/live-f1`, one round, normal order): 12/13 in 805 s,
-  $4.40, 139 calls, 20 errors, against 11/13, 1,085 s, $6.99, 271 calls, 80 errors before. Checkout passed.
-  The miss was a list drag aimed from screenshot pixels in Chrome (F13).
-- Not in the ledger: a Go to Folder paste right after the shortcut was lost once (Chrome's Open panel).
-- The user's pre-approved list now also holds Chrome, ZCode, Cursor, iPhone Mirroring and others,
-  added through Always allow on 2026-10-11 and 2026-10-12.
+Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders, `/tmp/fb-rounds/h2h-*`):
+- 10:25: sleight 23/26, 2,109 s, $13.33, against 26/26, 972 s, $7.98. Published in `docs/benchmarks/2026-10-12-fowlbrowser-h2h.md`.
+- 13:09: 22/26, 1,258 s, $10.64 against 26/26, 884 s. 13:22: 25/26, 1,101 s, $9.13 against 26/26, 943 s, $7.11 (normal
+  order won on time, 461 s against 489 s). 14:27: 22/26, 1,414 s, $9.07 against 26/26, 967 s, $7.19. Not yet published.
+- Per call the extension through sleight is as fast as FowlBrowser or faster (`bench/fowl/ext-speed.mjs`: click 48 against
+  131 ms). The gap is calls and cost: engine docs are 81% of what results send Claude (571,870 of 705,611 characters over
+  13 runs), and every call re-reads them.
+- Remaining failures and their items: the HTML5 drag list (A8 done, awaiting review), checkout in Chrome freezing after
+  the payment confirm (the extension's `Emulation.setFocusEmulationEnabled` timeouts; next try: have the page accept its own
+  confirm when the user asked for the payment, `bench/fowl/dialog-probe.mjs --way preempt`, not yet run).
+- A sleight-only round with A1 was running at the clear under `nohup` (pid 71778). It keeps going after the clear.
+  It writes its report to `/tmp/fb-rounds/r6-sleight-a1/report.md`. Read it first.
 
-Open from before:
-- K10 (record into non-empty fields) is BLOCKED on a Swift change (`claims/K10/REPORT.md`).
-- Lane owned-abort (`~/Projects/sleight-wt/owned-abort`): uncommitted, no report, expect a conflict.
-- The benchmark's Codex arm defaults to gpt-6-luna (LAWS). The published head-to-heads get rerun on it.
-- Launch post draft: `~/Desktop/sleight-launch/thread-next.md`, with [PENDING] lines.
+Merged today on `pane/auto-mode`: F1 and F1R2 (tab calls skip the native lease), F2, F7, F8/F8R, F10/F10R, F11/F11R
+(payment rule, LAWS), F13, F14, A1 (fillForm helper), the result budget (spill fix, Linux and Windows paragraphs, docs diet:
+`plugins/sleight/lib/result-budget.mjs`), the hand-off tasks (F9/F9R/F9R2, `bench/fowl/handoff.*`) and the bench harness
+(`bench/fowl/rounds.sh` runs Opus on the owner's account, other models on the API key with a $190 stop and per-round spend;
+every tool outside the arm's own blocked).
+
+Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`; 3 Codex and 2 Grok lanes):
+- Done and awaiting review (Sonnet high, then merge):
+  - A3 `grok/a3` `f810e4d`, error hints.
+  - A7 `codex/a7` `2e30186`, a split at a save after setValue.
+  - A8 `grok/a8` `ff28350`, the HTML5 drag helper.
+  - F6R3 `codex/f6r3` `0a17f4d`, tree caps.
+- In progress: A2 (diffs after tab actions), F5R2. Open: A5, A6 (after F6R3), F4, F7R2 (after F5R2), F12.
+- A4 STALE: the engine's page evaluate is read-only, so the page's network can't be watched from it. F3 parked (no way to tie an extension to its app).
+- Every lane item must end with a bare `npm run check` exit 0 (lanes skipped it twice and broke 7 tests).
+
+Hand-off tasks (`bench/fowl/handoff.sh`, one task per round): sleight 2/3 and FowlBrowser + sleight 2/3 at 18:37 UTC.
+The invoice misses because the engine's download prompt reads "Allow download from <url>?", which
+`bench/fowl/origin-hook.mjs` doesn't match yet. FowlBrowser's earlier TextEdit "passes" went through Monitor's shell
+and are invalid. The runner now blocks that.
+
+API spend this month: $119.92 of $200 (ledger `~/Library/Logs/sleight/bench-api-spend.json`). Opus rounds no longer count.
+
+Waiting on the owner:
+- Bench leftovers in their iCloud TextEdit folder, "Delivery Note.txt" (65 bytes) and "Untitled 6.txt" (empty), from
+  2026-10-12 13:44 to 13:45 EDT. Theirs to trash.
+- The video (draft 1 at `~/Desktop/sleight-launch/sleight-launch-draft1.mp4`, source `media/launch/`): the owner asked
+  for it to show sleight beating FowlBrowser. sleight-arch proposed leading with the hand-off tasks plus browser parity. No answer yet.
+- Preview auto-approval in the hand-off hook (LAWS approves Preview for real-use tasks). No answer yet.
+
+FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fowlbrowser` (`8b68924`, our patch applied by
+`rounds.sh`), installed with `--lite` and no Claude config changes. Its extension is loaded unpacked in Chrome (Developer mode on) and in
+Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Review and merge batch F as branches land, then rerun the rounds.
-2. Hand-off tasks (ROADMAP 0b.2) as a lane, then their live runs on three arms.
-3. The owed live pass, the away sitting, then the release (ROADMAP 5b).
-4. Build the video's motion frame now, and add footage from the live runs.
+1. Read `/tmp/fb-rounds/r6-sleight-a1/report.md` (A1's effect on forms) and the ledger; review and merge A3, A7, A8, F6R3.
+2. Hook: accept "Allow download from http://127.0.0.1:<rounds port>/...?" (anchored, ports list), then rerun the hand-offs.
+3. Try the confirm pre-accept probe in Chrome; if it works, a skill line under the payment rule.
+4. Once A2 is merged: a full head-to-head (both arms, Opus on the account). Publish every round next to the 10:25 one.
+5. Video and release once a head-to-head is a win, or on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this

@@ -161,6 +161,9 @@ belong in [STATE.md](STATE.md).
   is clear of system dialogs. Any other pass is published with that caveat.
 - The owner's installed sleight is a copy keyed by version, refreshed only by `claude plugin update`.
   Before asking the owner to check anything in a session, update it and confirm its `gitCommitSha`.
+- A lane finishes an item with a bare `npm run check` at exit 0, not only the test files it touched: two branches that
+  passed their own files broke 7 tests elsewhere (2026-10-12).
+- A shell script a live run is executing is never edited in place: `sh` reads it as it goes.
 - Every lane branch (Codex, Grok or GLM) gets a code review by a Sonnet subagent at high effort before
   sleight-arch merges it, and a finding goes back as a fix item rather than being merged around
   (owner, 2026-10-12). Exploration and docs subagents run Sonnet at medium effort.
@@ -193,7 +196,8 @@ belong in [STATE.md](STATE.md).
 - A benchmark run quits every app it launched, so no keyboard event tap is still installed after it. When the owner
   reports a dead keyboard or pointer, stop every live run first, then look (2026-10-09).
 - Claude arms run without tools that reach outside the app or search files (Bash, Write, Edit, Glob,
-  Grep, Read, Skill, the web tools). The user's own plugins and settings load in a run, and each of
+  Grep, Read, Skill, Monitor, Agent, the web tools). A hand-off arm wrote its "TextEdit" file through Monitor's shell
+  on 2026-10-12, and its grader passed it. The user's own plugins and settings load in a run, and each of
   these has once changed or stalled a run (Glob never returned, 2026-10-09).
 - Benchmark cleanup closes only windows it holds a reference to, never one found by title. It leaves any
   other window open and names it to the owner.
