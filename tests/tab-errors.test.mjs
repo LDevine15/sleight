@@ -230,7 +230,6 @@ test('recorded evaluate writes name the failed operation and the replacement act
     ['TypeError: MouseEvent is not a constructor', /MouseEvent/, /locator\.click/],
     ['TypeError: Event is not a constructor', /Event cannot run|so Event cannot/, /locator\.click/],
     ['TypeError: document.createEvent is not a function', /createEvent/, /locator\.click/],
-    ['TypeError: Cannot set property scrollTop of [object Object] which has only a getter', /scrollTop/, /tab\.ax\.scroll/],
     ['TypeError: Cannot set property checked of [object Object] which has only a getter', /checked/, /locator\.setChecked/],
     ['TypeError: CustomEvent is not a constructor', /CustomEvent/, /locator\.click/],
     ['TypeError: Cannot set property selectedIndex of [object Object] which has only a getter', /selectedIndex/, /selectOption/],
@@ -262,6 +261,14 @@ test('recorded evaluate writes name the failed operation and the replacement act
   const handler = 'TypeError: Cannot add property onsubmit, object is not extensible' + stack;
   assert.match(rewriteTabError(handler), /If this call meant to change the page/);
   assert.doesNotMatch(rewriteTabError(handler), /Next:|locator\.click/);
+});
+
+test('recorded scrollTop error 2AemEM retains the error without an unsupported action', () => {
+  const raw = 'TypeError: Cannot set property scrollTop of [object Object] which has only a getter\n    at __playwrightEvaluate (<anonymous>:2688:28)\n    at <anonymous>:2690:14\n    at runUserScript (<anonymous>:2691:10)\n    at <anonymous>:2695:10\n    at <anonymous>:2696:3\nWarning: axState was declared with const; use let for reassignable variables.';
+  const out = rewriteTabError(raw);
+  assert.ok(out.startsWith(raw));
+  assert.match(out, /If this call meant to change the page, setting scrollTop cannot run in evaluate\./);
+  assert.doesNotMatch(out, /Next:|\.ax\.|no input/);
 });
 
 test('evaluate write hints skip array bugs and unnamed setAttribute', () => {

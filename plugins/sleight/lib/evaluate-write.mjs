@@ -180,5 +180,7 @@ export function evaluateWrite(code) {
   const write = writes[0];
   if (!write) return;
   const line = code.slice(0, write.token.at).split('\n').length;
-  return `Line ${line}: evaluate is read-only; ${write.token.v} cannot run there. ${write.action === 'read' ? 'Read the controls with' : 'Use'} ${EVALUATE_ACTION[write.action]}. Rejected before the engine call.`;
+  const action = EVALUATE_ACTION[write.action];
+  const advice = action ? ` ${write.action === 'read' ? 'Read the controls with' : 'Use'} ${action}.` : '';
+  return `Line ${line}: evaluate is read-only; ${write.token.v} cannot run there.${advice} Rejected before the engine call.`;
 }

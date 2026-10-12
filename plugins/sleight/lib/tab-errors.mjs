@@ -8,10 +8,10 @@ const CONFIRM = /^(?:Error: )?Browser action "([^"]+)" interrupted by JavaScript
 const LEGACY = /^(?:The action may already have taken effect; do not retry it\.(?: Inspect or dismiss the dialog before continuing\.)?|Inspect or dismiss the dialog before continuing\.)$/;
 export const EVALUATE_ACTION = Object.freeze({
   drag: 'sleight.dragTo(tab, from, to)', fill: 'locator.fill(...)', click: 'locator.click()',
-  select: 'selectOption(...)', scroll: 'tab.ax.scroll(...)', check: 'locator.setChecked(...)',
-  read: 'await tab.ax.write()',
+  select: 'selectOption(...)', check: 'locator.setChecked(...)',
+  read: 'await tab.getAXState()',
 });
-const { drag: DRAG, fill: FILL, click: CLICK, select: SELECT, scroll: SCROLL, check: CHECK } = EVALUATE_ACTION;
+const { drag: DRAG, fill: FILL, click: CLICK, select: SELECT, check: CHECK } = EVALUATE_ACTION;
 export const EVALUATE_WRITE = [
   [/\binsertBefore is not a function/, 'insertBefore', DRAG],
   [/\bappendChild is not a function/, 'appendChild', DRAG],
@@ -30,7 +30,7 @@ export const EVALUATE_WRITE = [
   [/Cannot set property (value)\b/, 'setting $1', FILL],
   [/Cannot set property (checked)\b/, 'setting $1', CHECK],
   [/Cannot set property (innerHTML|textContent|className)\b/, 'setting $1'],
-  [/Cannot set property (scrollTop|scrollLeft)\b/, 'setting $1', SCROLL],
+  [/Cannot set property (scrollTop|scrollLeft)\b/, 'setting $1'],
   [/Cannot add property (on\w+)\b/, 'assigning $1'],
 ];
 

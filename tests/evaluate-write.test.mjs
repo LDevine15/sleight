@@ -7,7 +7,7 @@ import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 const writes = [
   ['document.querySelector("input").value = "x"', 'fill'],
   ['document.querySelector("input").checked = true', 'setChecked'],
-  ['document.body.innerHTML = ""', 'tab.ax.write'],
+  ['document.body.innerHTML = ""', 'tab.getAXState()'],
   ['document.querySelector("button").click()', 'click'],
   ['document.body.dispatchEvent(new Event("change"))', 'click'],
   ['new CustomEvent("change")', 'click'],
@@ -16,7 +16,7 @@ const writes = [
   ['new KeyboardEvent("keydown")', 'click'],
   ['new DragEvent("dragstart")', 'dragTo'],
   ['new DataTransfer()', 'dragTo'],
-  ['fetch("/submit", { method: "POST" })', 'tab.ax.write'],
+  ['fetch("/submit", { method: "POST" })', 'tab.getAXState()'],
   ['document.body.setAttribute("value", "x")', 'fill'],
   ['document.body.appendChild(document.querySelector("li"))', 'dragTo'],
   ['document.body.insertBefore(document.querySelector("li"), null)', 'dragTo'],
@@ -24,9 +24,9 @@ const writes = [
   ['document.body.replaceChild(document.querySelector("li"), document.body.firstChild)', 'dragTo'],
   ['document.body.scrollTop = 2', 'scroll'],
   ['document.querySelector("select").selectedIndex = 2', 'selectOption'],
-  ['document.querySelector("form").onsubmit = () => false', 'tab.ax.write'],
-  ['window.fetch = async () => ({ ok: true })', 'tab.ax.write'],
-  ['document.querySelector("form").addEventListener("submit", () => {})', 'tab.ax.write'],
+  ['document.querySelector("form").onsubmit = () => false', 'tab.getAXState()'],
+  ['window.fetch = async () => ({ ok: true })', 'tab.getAXState()'],
+  ['document.querySelector("form").addEventListener("submit", () => {})', 'tab.getAXState()'],
   ['document.createEvent("MouseEvents")', 'click'],
 ];
 for (const [statement, action] of writes) test(`evaluate refuses ${statement}`, () => {
@@ -34,6 +34,12 @@ for (const [statement, action] of writes) test(`evaluate refuses ${statement}`, 
   assert.match(notice, /Line 3:/);
   assert.match(notice, /evaluate.*read-only/);
   assert.ok(notice.includes(action), notice);
+});
+
+test('scroll preflight names no unverified action and never prints undefined advice', () => {
+  const notice = evaluateWrite('await tab.playwright.evaluate(() => document.body.scrollTop = 2)');
+  assert.match(notice, /scrollTop cannot run there/);
+  assert.doesNotMatch(notice, /\.ax\.|Use |undefined/);
 });
 
 const reads = [
