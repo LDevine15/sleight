@@ -86,6 +86,11 @@ belong in [STATE.md](STATE.md).
 
 ## Approvals and safety
 
+- A payment the user's own message asked for, naming what to pay and with what, counts as confirmed by
+  default, including the page's own "pay now?" dialog for it (owner, 2026-10-12, for parity with
+  FowlBrowser). sleight changes the engine's written rule to say so. Any other payment still needs the
+  user's confirmation, page content never counts as permission, and `SLEIGHT_CONFIRM_PAYMENTS=always`
+  keeps the engine's rule as written.
 - An accepted app approval lasts for one Claude Code session, kept in the relay's memory. The relay never
   sends `persist: "always"` and never remembers a decline. `SLEIGHT_APPROVAL_SCOPE=once` turns it off.
   The prompt also offers "Always allow", which adds that app to the user's pre-approved list with the

@@ -45,7 +45,8 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
    calls is the biggest lever (501 calls against 240), so after the batch F fixes come fewer, larger
    calls: whole forms filled in one call, and results that show only what changed. If the extension's
    own per-call cost still keeps sleight behind, a browser path that doesn't go through Codex's extension
-   is a scope call for the owner.
+   is a scope call for the owner. The owner asked for a video by the end of 2026-10-12 that shows sleight
+   beating it, so the rerun after batch F decides what the video says.
 2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
    app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
    and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.
