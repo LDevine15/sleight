@@ -34,6 +34,8 @@
   across the content, since the engine's scroll did nothing there.
 - `SLEIGHT_FIRST_CALL_BATCH=nosavestop`, for an A/B: the default wording without the instruction to
   end a call after Cmd+S, saying instead that sleight waits for the sheet a shortcut opens.
+- `SLEIGHT_LAUNCH_REREAD=1`, for an A/B: when a launch returns a tree of 1 to 19 elements, sleight
+  reads once more after 2.5 s and keeps the fuller tree only if it shows the same window.
 
 ## 1.2.5 (2026-10-11)
 

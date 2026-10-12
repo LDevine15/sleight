@@ -249,6 +249,12 @@ call returned a newer full one. It tied the default (24.8 s against 23.8 s a run
 also drops runs of 20 or more sibling rows from a result over 25,000 characters, keeping selected
 rows, folders and rows matching the window title or file name (unit-tested, not yet measured live).
 
+## Launch re-read
+
+`SLEIGHT_LAUNCH_REREAD=1` (for an A/B, not yet run): when an acquisition launched the app and its
+tree has 1 to 19 elements, sleight waits 2.5 s, reads once more and keeps the fuller tree if it shows
+the same window. Electron apps build their tree seconds after launch. Off by default.
+
 ## Doctor app reads
 
 `sleight-mcp --doctor` checks the helper's inventory. Add a running app name or bundle ID, such as
