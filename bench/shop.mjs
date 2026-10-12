@@ -197,10 +197,13 @@ function answerUnits(answer) {
   return units;
 }
 
+const ITEM_ABSENT = /\b(?:was|were|is|are|been)\s+not\s+added\b|\b(?:did not|didn't|could not|couldn't|never)\s+add(?:ed)?\b|\bnot in (?:the )?cart\b/i;
+
 function itemNamedInAnswer(item, answer) {
   return answerUnits(answer).some(unit => {
     const words = shopWords(unit);
-    return item.tokens.every(token => hasTokenSequence(words, token));
+    if (!item.tokens.every(token => hasTokenSequence(words, token))) return false;
+    return !ITEM_ABSENT.test(unit);
   });
 }
 
@@ -212,8 +215,9 @@ export function checkRealShop(ctx) {
   const shotOk = Boolean(shot?.bytes && shot.bytes.length >= 800);
   const missing = spec.items.filter(item => !itemNamedInAnswer(item, answer));
   if (REFUSAL.test(answer)) return 'blocked by an input lease or tool refusal';
-  const named = answer.match(HUMAN_CHECK);
-  if (named && !HUMAN_CHECK_DENIED.test(answer) && SAID_STOPPED.test(answer)) {
+  const namedUnit = answerUnits(answer).find(unit => HUMAN_CHECK.test(unit) && !HUMAN_CHECK_DENIED.test(unit));
+  const named = namedUnit?.match(HUMAN_CHECK);
+  if (named && SAID_STOPPED.test(answer)) {
     return shotOk ? { outcome: 'human-check', reason: `stopped at a human check (${named[1].toLowerCase()}; cart screenshot captured)` }
       : 'answer names a human check but no cart-page screenshot confirms it';
   }

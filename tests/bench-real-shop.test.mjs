@@ -216,6 +216,21 @@ test('wrong size, wrong cell type or a different brand fail the smoke check', ()
   }), true);
 });
 
+test('a sentence that names an item as not added does not count as a cart item', () => {
+  const spec = REAL_SHOP['real-shop-bestbuy'];
+  const rest = spec.items.slice(1).map(item => `${item.name} (${item.option})`).join(', ');
+  const answer = `${spec.items[0].name} (${spec.items[0].option}) was not added. ${rest} at ZIP ${spec.zip}`;
+  const verdict = checkRealShop({ shopSmoke: 'real-shop-bestbuy', answer, cartShot: shot });
+  assert.notEqual(verdict, true);
+  assert.match(verdict, /does not name/);
+});
+
+test('a plain sentence that names the same item still passes', () => {
+  const spec = REAL_SHOP['real-shop-bestbuy'];
+  const answer = `${spec.items.map(item => `${item.name} (${item.option})`).join(', ')} at ZIP ${spec.zip}`;
+  assert.equal(checkRealShop({ shopSmoke: 'real-shop-bestbuy', answer, cartShot: shot }), true);
+});
+
 test('tokens split across unrelated sentences do not count as an item', () => {
   const answer = 'I saw Duracell on the homepage. AA is a common size. They sold a 16 pack in another aisle. ' +
     'Anker makes charging cables. USB-C is the connector. The 6 ft length was listed separately. ' +
