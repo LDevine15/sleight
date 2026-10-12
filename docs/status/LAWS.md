@@ -25,8 +25,9 @@ belong in [STATE.md](STATE.md).
   sleight's fault.
 - The owner's rule for every open-source project of theirs, sleight included (2026-10-03), in order:
   do what competitors do, but better. Improve on them where they haven't. Then build what nobody has.
-- No benchmark against Claude's own computer use (owner, 2026-10-04): its shortcomings are why sleight
-  exists. The README compares the two from Anthropic's documentation.
+- sleight benchmarks against Claude in Chrome, Claude's own computer use and other reputable computer-use plugins, toward a
+  public claim to be the fastest computer use plugin in the world (owner, 2026-10-12). This supersedes the 2026-10-04 rule that
+  ruled out benchmarking Claude's own computer use.
 - A release means a git tag plus a GitHub release with notes from the changelog (owner, 2026-10-04).
 - Haiku 5.5 at high effort is the default driver for the benchmark and the docs (owner, 2026-10-10,
   once runs moved to the API key). It supersedes Sonnet 5.5 at medium (owner, 2026-10-08, after the

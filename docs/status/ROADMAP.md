@@ -69,6 +69,9 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
    Tab opens queue in the Codex extension (4.8 s first call against 244 ms later, 15:23). The owner is tempted by a direct
    browser path like FowlBrowser's but wants data first (2026-10-12). Once the cold-start probe split and the T4, T5 and S1 results are in, the
    owner decides with the numbers.
+   The claim (owner, 2026-10-12): the fastest computer use plugin in the world. That means a head-to-head against Claude in
+   Chrome, Claude's own computer use, FowlBrowser, Codex and the other reputable plugins a survey finds, on one published task
+   suite (browser and native Mac), same model where possible, reporting tasks done, time, turns and cost.
 2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
    app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
    and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.
