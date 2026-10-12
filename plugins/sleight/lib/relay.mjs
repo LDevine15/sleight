@@ -69,6 +69,7 @@ import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree } from './compact-reads.mjs';
+import { dropRepeatedText } from './repeated-text.mjs';
 import { createResultBudget } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
@@ -1236,7 +1237,7 @@ export function createRelay({
       else msg.result = { ...msg.result, content: [...(msg.result?.content ?? []), { type: 'text', text: saveNote }] };
     }
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
-      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(msg.result.content) } };
+      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(dropRepeatedText(msg.result.content)) } };
     }
     journal?.reply(msg);
     trace('to-client', msg);
@@ -2617,7 +2618,7 @@ export function createRelay({
       // sleight's own advice says getAXState({ disableDiffing: true }) gives a full read. Compacting
       // it to "no change" sent Claude to a screenshot instead (2026-10-08). Recovery's visible read
       // is full too. The read wrapper decides whether to emit each observation.
-      if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(msg.result.content, prompt),
+      if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(dropRepeatedText(msg.result.content), prompt),
         { code: jsCode, forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failed: !closedLast && (resultFailed || !!msg.result?.isError) });
     }

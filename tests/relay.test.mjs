@@ -54,6 +54,30 @@ function harness(options = {}) {
 
 const tick = () => new Promise(r => setImmediate(r));
 
+test('results drop exact long text repeats while preserving images, order and short lines', () => {
+  const h = harness({ changeReview: false });
+  const tree = 'Window: "Draft", App: Example\n\t1 textArea ' + 'value '.repeat(50);
+  const long = 'caller output '.repeat(30), image = { type: 'image', data: 'AA', mimeType: 'image/png' };
+  const secondImage = { ...image, data: 'BB' };
+  const text = value => ({ type: 'text', text: value });
+  const content = [text(long), image, text(tree), text(long), text('ok'), text('ok'), text(tree), secondImage,
+    text('x'.repeat(200)), text('x'.repeat(200)), text('x'.repeat(201)), text('x'.repeat(201)), text(long + ' ')];
+  h.fromServer({ id: 99, result: { content, isError: true, _meta: { retained: true } } });
+  assert.deepEqual(h.toClient.at(-1).result, { content: [content[0], image, content[2], content[4], content[5], secondImage,
+    content[8], content[9], content[10], content[12]], isError: true, _meta: { retained: true } });
+  h.fromServer({ id: 100, result: { content: [text(long)] } });
+  assert.deepEqual(h.toClient.at(-1).result.content, [text(long)], 'deduplication is per result');
+});
+
+test('duplicated full native reads reach the compactor only once', () => {
+  const h = harness({ changeReview: false });
+  h.fromClient({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.getAXState({ disableDiffing: true })' } } });
+  const text = 'Window: "Draft", App: Example\n' + Array.from({ length: 20 }, (_, i) => `\t${i + 1} button Item ${i}`).join('\n');
+  h.fromServer({ id: 1, result: { content: [{ type: 'text', text }, { type: 'text', text }] } });
+  const output = h.toClient.at(-1).result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+  assert.equal(output.split('Window: "Draft"').length - 1, 1);
+});
+
 const helperRead = (h, id, code = 'let app = await cua.getApp("Calculator")') => h.fromClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } });
 const helperReply = (h, id, text = 'Error: -10005 timeoutReached', isError = true) => h.fromServer({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError } });
 
