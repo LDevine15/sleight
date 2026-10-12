@@ -84,7 +84,7 @@ export function isTabBinding(code = '') {
     if (value.startsWith('/') && !/^\/[/*]/.test(value)) regex = true;
     return ' ';
   });
-  return !regex && !templateAction && !/\b(?:click|dblclick|fill|clear|type|typeText|press|pressKey|pressSequentially|drag|dragTo|htmlDrag|setValue|selectOption|check|uncheck|setChecked|goto|back|forward|reload|paste|performSecondaryAction|scroll|scrollIntoViewIfNeeded|selectText|fillForm|pickFromList|accept|dismiss|close|downloadMedia)\s*(?:\?\.)?\s*\(/.test(source);
+  return !regex && !templateAction && !/\b(?:click|dblclick|fill|clear|type|typeText|press|pressKey|pressSequentially|drag|dragTo|htmlDrag|setValue|selectOption|check|uncheck|setChecked|goto|back|forward|reload|paste|performSecondaryAction|scroll|scrollIntoViewIfNeeded|selectText|fillForm|pickFromList|reorder|accept|dismiss|close|downloadMedia)\s*(?:\?\.)?\s*\(/.test(source);
 }
 
 function rewriteLine(text, read) {

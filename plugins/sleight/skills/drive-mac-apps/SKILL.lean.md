@@ -18,7 +18,7 @@ Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Na
 Use locators when validation/autocomplete moves fields, indices on static forms.
 Submit in that call only when the user asked and the engine's confirmation policy doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.
-Tab drag-and-drop: `nodeRepl.write(await sleight.dragTo(tab, from, to))` takes selectors, locators or page coordinates and reads back sibling indices.
+`nodeRepl.write(await sleight.dragTo(tab, from, to))`: selectors, locators or page coordinates, reads back indices.
 Downloads: `locator.downloadMedia({})`, never `tab.click` (stalls later downloads).
 Click a button that may open a page dialog (pay, delete, leave) with
 `tab.click(index)`, not a locator, then answer it: `(await tab.getJsDialog()).accept()` or `.dismiss()`.

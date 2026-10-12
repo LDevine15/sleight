@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { rewriteTabError } from '../plugins/sleight/lib/tab-errors.mjs';
+import { isTabBinding, rewriteTabError } from '../plugins/sleight/lib/tab-errors.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 
 const READ = 'await tab.getAXState({ disableDiffing: true })';
@@ -392,4 +392,17 @@ test('download recovery names the current browser and reads the current tab URL'
   const out = rewriteTabError('Timed out after 20000ms downloading media');
   assert.match(out, /cua\.createBrowserTab\(b\.browserId, await tab\.url\(\)\)/);
   assert.match(out, /downloadMedia\(\{\}\)/);
+});
+
+test('reorder, pickFromList and fillForm count as tab input', () => {
+  for (const code of [
+    'await sleight.reorder(tab, list, order)',
+    'await sleight.pickFromList(tab, list, "Ada")',
+    'await sleight.fillForm(tab, [{label:"Name",value:"Ada"}])',
+  ]) {
+    assert.equal(isTabBinding(code), false);
+    const out = rewriteTabError('Debugger unattached (target closed)', { read: isTabBinding(code) });
+    assert.doesNotMatch(out, /no input was sent/);
+  }
+  assert.equal(isTabBinding('await cua.getTab(id, { browser })'), true);
 });

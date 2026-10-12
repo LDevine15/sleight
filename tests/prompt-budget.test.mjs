@@ -38,6 +38,8 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
     assert.match(skill, /nodeRepl\.write\(await sleight\.dragTo\(tab, from, to\)\)/);
     assert.match(skill, /selectors, locators or page coordinates.*reads back/s);
+    if (env.SLEIGHT_PROMPT === 'lean') assert.doesNotMatch(skill, /sleight\.reorder/);
+    else assert.match(skill, /nodeRepl\.write\(await sleight\.reorder\(tab,list,order\)\)/);
     assert.match(skill, /Downloads: `locator\.downloadMedia\(\{\}\)`, never `tab\.click` \(stalls later downloads\)\./);
     assert.match(skill, /`tab\.click\(index\)`, not a locator, then answer it: `\(await tab\.getJsDialog\(\)\)\.accept\(\)`/);
     assert.ok(skill.trim().split(/\s+/).length <= limit, 'skill word budget');

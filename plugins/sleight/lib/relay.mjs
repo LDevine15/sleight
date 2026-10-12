@@ -77,6 +77,7 @@ import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession,
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
 import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
+import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { ReplWarmup } from './repl-warmup.mjs';
@@ -2044,6 +2045,7 @@ export function createRelay({
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
+          msg.params.arguments.code = reorderCode(msg.params.arguments.code);
           const tabCode = tabCleanupCode(msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
           msg.params.arguments.code = tabCode;
@@ -2384,7 +2386,7 @@ export function createRelay({
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
       msg.result.content = msg.result.content.map(c =>
-        c.type === 'text' ? { ...c, text: rewriteTabError(c.text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }) } : c);
+        c.type === 'text' ? { ...c, text: rewriteDragAttempt(rewriteTabError(c.text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }), jsCode) } : c);
     }
     // A "call failed" line after this message sent Claude to check again (h2h-3, 2026-10-10), so the
     // close it reports gets no verified-results line.
