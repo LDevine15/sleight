@@ -29,5 +29,5 @@ trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
 OUT=""; prev=""; for a in "$@"; do [ "$prev" = --out ] && OUT="$a"; prev="$a"; done
 trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -f "$OUT/report.md" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT/report.md" "$SPEND"' EXIT
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
-  SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
+  SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" SLEIGHT_ENGINE_DOCS="${SLEIGHT_ENGINE_DOCS:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
   node tools/rounds.mjs --model opus --effort medium "$@"
