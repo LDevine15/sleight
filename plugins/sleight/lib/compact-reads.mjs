@@ -273,7 +273,68 @@ export function dropAcquisitionTree(head, rest) {
   });
 }
 
-export function createReadCompactor() {
+function trimSiblingRows(text) {
+  if (text.length < 25000 || !hasFullTree(text) || !windowFromText(text)) return;
+  const lines = text.split('\n'), names = [windowFromText(text).title];
+  for (const line of lines) {
+    if (/\btext (?:field|entry area)\b/.test(line) && /\b(?:Name|saveAsNameTextField|nameField)\b/i.test(line)) {
+      const value = /\bValue: (.*?)(?=, (?:ID|Help|Description|Secondary Actions):|$)/.exec(line)?.[1];
+      if (value) names.push(value);
+    }
+  }
+  const targets = names.filter(name => name.length >= 3).map(name => name.toLowerCase());
+  const stack = [], groups = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = ELEMENT.exec(lines[i]);
+    if (!m) { stack.length = 0; continue; }
+    const depth = m[1].length;
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const parent = stack.at(-1);
+    if (/^row\b/.test(m[3]) && /^(?:list|outline)\b/.test(parent?.role ?? '')) {
+      let end = i + 1;
+      while (end < lines.length) {
+        const child = ELEMENT.exec(lines[end]);
+        if (!child || child[1].length <= depth) break;
+        end++;
+      }
+      const body = lines.slice(i, end).join('\n');
+      const keep = /\([^)]*\bselected\b[^)]*\)|\b(?:folder|directory)\b/i.test(body) ||
+        targets.some(name => body.toLowerCase().includes(name));
+      let group = groups.at(-1);
+      if (!group || group.parent !== parent.index || group.rows.at(-1).end !== i) {
+        group = { parent: parent.index, rows: [] }; groups.push(group);
+      }
+      group.rows.push({ start: i, end, keep });
+    }
+    stack.push({ depth, index: i, role: m[3] });
+  }
+  const replacements = new Map(), hidden = new Set();
+  for (const group of groups) {
+    if (group.rows.length < 20) continue;
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      replacements.set(run[0].start, { end: run.at(-1).end,
+        text: `sleight: ${run.length} sibling rows omitted. Full tree: getAXState({ disableDiffing: true }).` });
+      for (const row of run) for (const line of lines.slice(row.start, row.end)) {
+        const num = parse(line).num; if (num !== undefined) hidden.add(num);
+      }
+      run = [];
+    };
+    for (const row of group.rows) { if (row.keep) flush(); else run.push(row); }
+    flush();
+  }
+  if (!replacements.size) return;
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const replacement = replacements.get(i);
+    if (replacement) { out.push(replacement.text); i = replacement.end; }
+    else out.push(lines[i++]);
+  }
+  return { text: out.join('\n'), hidden };
+}
+
+export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map();
@@ -430,6 +491,18 @@ export function createReadCompactor() {
       const note = action && resultNote(action, observedInResult, failed);
       if (note) out.push({ type: 'text', text: note });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
+      if (resultTrim && !forceFull) for (let i = 0; i < out.length; i++) {
+        const item = out[i];
+        if (item?.type !== 'text' || typeof item.text !== 'string') continue;
+        const trimmed = trimSiblingRows(item.text);
+        if (!trimmed) continue;
+        const entry = seen.get(documentKey(windowFromText(item.text)));
+        if (entry) {
+          entry.valid = new Set([...(entry.valid ?? numbered(entry.lines).map(([num]) => num))].filter(num => !trimmed.hidden.has(num)));
+          entry.believed = new Map([...(entry.believed ?? numbered(entry.lines))].filter(([num]) => !trimmed.hidden.has(num)));
+        }
+        out[i] = { ...item, text: trimmed.text };
+      }
       return out;
     },
     beginAction(code) {
