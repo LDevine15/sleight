@@ -11,6 +11,7 @@
 
 ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
+ObjC.import('ApplicationServices');
 
 // The person at the Mac. The foreground path takes the pointer and keyboard
 // focus for a few seconds, and keys typed then land in the target app: a
@@ -85,9 +86,44 @@ function resolveWindow(own, request) {
   if (candidates.length !== 1) throw new Error(`drag target is ${candidates.length > 1 ? 'ambiguous; supply windowId' : 'unavailable; read the window again'}. Windows: ${list()}`);
   return candidates[0];
 }
+// Keep the guard's element interface, with bounded C API reads instead of an
+// Apple event for each attribute. Retain bridged elements for later readback.
+function axAttribute(el, name) {
+  const out = Ref(), error = Number($.AXUIElementCopyAttributeValue(el, $(name), out));
+  if (error) throw new Error(`AX ${name} failed (${error})`);
+  return ObjC.castRefToObject(out[0]);
+}
+function axElements(value) {
+  return Array.from({ length: Number(value.count) }, (_, i) => axElement(value.objectAtIndex(i)));
+}
+function axElement(el) {
+  const scalar = name => ObjC.unwrap(axAttribute(el, name));
+  const geometry = (name, type, keys) => {
+    const out = Ref(type === 1 ? 'CGPoint' : 'CGSize');
+    if (!$.AXValueGetValue(axAttribute(el, name), type, out)) throw new Error('AX geometry is unavailable');
+    return keys.map(key => out[0][key]);
+  };
+  return {
+    role: () => scalar('AXRole'), subrole: () => scalar('AXSubrole'), name: () => scalar('AXTitle'),
+    position: () => geometry('AXPosition', 1, ['x', 'y']), size: () => geometry('AXSize', 2, ['width', 'height']),
+    value: () => scalar('AXValue'), uiElements: () => axElements(axAttribute(el, 'AXChildren')),
+    attributes: { byName: name => ({
+      get value() { return () => scalar(name); },
+      set value(value) {
+        const error = Number($.AXUIElementSetAttributeValue(el, $(name), $(value)));
+        if (error) throw new Error(`AX write of ${name} failed (${error})`);
+      },
+    }) },
+    actions: { byName: name => ({ perform: () => {
+      const error = Number($.AXUIElementPerformAction(el, $(name)));
+      if (error) throw new Error(`AX ${name} failed (${error})`);
+    } }) },
+  };
+}
 function axWindow(pid, window) {
-  const proc = Application('System Events').processes.whose({ unixId: pid })[0];
-  const all = proc.windows();
+  const app = $.AXUIElementCreateApplication(pid);
+  if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
+  const all = axElements(axAttribute(app, 'AXWindows'));
   const byId = all.filter(w => attempt(() => w.attributes.byName('AXWindowNumber').value(), null) === window.id);
   const matches = byId.length ? byId : all.filter(w =>
     attempt(() => sameBounds(frame(w), window.bounds) && (!window.title || w.name() === window.title), false));
@@ -610,8 +646,7 @@ function run(argv) {
     delay(settleMs / 1000);
     main = windows(true).find(w => w.id === main.id && w.pid === pid && w.layer === 0);
     if (!main || !sameBounds(frame(win), main.bounds)) throw new Error('the chosen window changed or disappeared; read it again');
-    // Each content scan is hundreds of Apple Events. Reuse the background path's scan while the
-    // window hasn't moved: two scans of Chess ran past the launcher's 30 s limit (2026-10-09).
+    // Reuse the background path's content scan while the window hasn't moved.
     const info = scanned && sameBounds(scanned.bounds, main.bounds) ? scanned.info : content(win, main.bounds);
     const { start, end, text } = validatePoints(info, main.bounds, pointFrom, pointTo, app);
     if (text) text.pid = pid;

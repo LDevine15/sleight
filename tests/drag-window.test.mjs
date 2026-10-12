@@ -91,7 +91,27 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
   const delays = [];
   // slowDelays: every wait takes 30 s on the script's clock, as slow window reads would.
   let clock = 0;
-  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $, ObjC: { import() {}, unwrap: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); if (slowDelays) clock += 30000; },
+  // Adapt the same fixture elements at the native AX boundary. Guard assertions
+  // below still exercise run(), including all text and foreground fallbacks.
+  const list = items => ({ count: items.length, objectAtIndex: i => items[i] });
+  const native = Object.assign(value => value, $, {
+    AXUIElementCreateApplication: () => proc,
+    AXUIElementSetMessagingTimeout: () => 0,
+    AXUIElementCopyAttributeValue: (el, name, out) => {
+      const methods = { AXWindows: 'windows', AXChildren: 'uiElements', AXRole: 'role', AXSubrole: 'subrole', AXTitle: 'name', AXValue: 'value' };
+      try {
+        if (name === 'AXPosition') { const [x, y] = el.position(); out[0] = { x, y }; }
+        else if (name === 'AXSize') { const [width, height] = el.size(); out[0] = { width, height }; }
+        else if (methods[name]) { const value = el[methods[name]](); out[0] = Array.isArray(value) ? list(value) : value; }
+        else out[0] = el.attributes.byName(name).value();
+        return 0;
+      } catch { return -25205; }
+    },
+    AXValueGetValue: (value, _type, out) => { out[0] = value; return true; },
+    AXUIElementSetAttributeValue: (el, name, value) => { el.attributes.byName(name).value = value; return 0; },
+    AXUIElementPerformAction: (el, name) => { el.actions.byName(name).perform(); return 0; },
+  });
+  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); if (slowDelays) clock += 30000; },
     Date: { now: () => clock },
     Application: () => ({ processes: { whose: () => [proc] } }) });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);
