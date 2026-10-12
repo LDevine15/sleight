@@ -66,6 +66,9 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
    source first (the 21:05 UTC study feeds batch H). Then the installed code of Claude in Chrome, the Codex browser
    extension and the ChatGPT engine, with REA (github.com/morluto/rea, MIT) where the code isn't readable as is.
    Those reads are clean-room: notes on behavior and design, never their code in sleight.
+   Tab opens queue in the Codex extension (4.8 s first call against 244 ms later, 15:23). The owner is tempted by a direct
+   browser path like FowlBrowser's but wants data first (2026-10-12). Once the cold-start probe split and the T4, T5 and S1 results are in, the
+   owner decides with the numbers.
 2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
    app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
    and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.
