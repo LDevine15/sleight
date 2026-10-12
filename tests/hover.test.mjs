@@ -160,7 +160,7 @@ test('benchmark approval admits hover only for its three apps and expected serve
   }
 });
 
-function windowPlatform(windows, allWindows = windows) {
+function windowPlatform(windows, allWindows = windows, displays = [{ X: 0, Y: 0, Width: 1920, Height: 1080 }]) {
   const c = controller();
   const collection = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const app = { localizedName: 'TextEdit', bundleIdentifier: 'com.apple.TextEdit', processIdentifier: 123,
@@ -168,11 +168,37 @@ function windowPlatform(windows, allWindows = windows) {
   const win = ({ pid = 123, layer = 0, title, id, bounds }) => ({ objectForKey: key => ({ kCGWindowOwnerPID: pid, kCGWindowOwnerName: 'TextEdit', kCGWindowName: title, kCGWindowNumber: id, kCGWindowLayer: layer, kCGWindowBounds: bounds })[key] });
   c.ObjC.unwrap = c.ObjC.deepUnwrap = c.ObjC.castRefToObject = value => value;
   c.$ = { NSWorkspace: { sharedWorkspace: { runningApplications: collection([app]) } },
+    NSScreen: { screens: collection(displays.map((_, i) => ({ deviceDescription: { objectForKey: () => i } }))) },
+    CGDisplayBounds: id => ({ origin: { x: displays[id].X, y: displays[id].Y }, size: { width: displays[id].Width, height: displays[id].Height } }),
     CGPreflightScreenCaptureAccess: () => true,
     kCGWindowListOptionOnScreenOnly: 1, kCGWindowListOptionAll: 0, kCGWindowListExcludeDesktopElements: 16,
     CGWindowListCopyWindowInfo: options => collection(((options & 1) ? windows : allWindows).map(win)) };
   return { c, app, collection, native: c.nativeHover() };
 }
+test('hover refuses windows spanning displays before takeover even when the point is on one display', () => {
+  const displays = [{ X: -800, Y: 0, Width: 800, Height: 600 }, { X: 0, Y: 0, Width: 800, Height: 600 }];
+  for (const bounds of [{ X: -100, Y: 100, Width: 200, Height: 200 },
+    { X: 700, Y: 100, Width: 200, Height: 200 }, { X: 10, Y: 500, Width: 200, Height: 200 }]) {
+    const { c, native } = windowPlatform([{ id: 1, title: 'a.txt', bounds }], undefined, displays);
+    assert.throws(() => native.point(native.resolve('TextEdit'), [10, 20]), /move.*onto one display/i);
+    const effects = [];
+    for (const name of ['save', 'activate', 'move', 'capture']) native[name] = () => effects.push(name);
+    const result = c.performHover({ app: 'TextEdit', at: [10, 20] }, native);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /move.*onto one display/i);
+    assert.equal(result.takeoverMs, 0);
+    assert.deepEqual(effects, []);
+  }
+});
+test('hover accepts complete windows on either display, including exact edges and negative origins', () => {
+  const displays = [{ X: -800, Y: 0, Width: 800, Height: 600 }, { X: 0, Y: 0, Width: 800, Height: 600 }];
+  for (const bounds of displays) {
+    const { native } = windowPlatform([{ id: 1, title: 'a.txt', bounds }], undefined, displays);
+    const point = native.point(native.resolve('TextEdit'), [10, 20]);
+    assert.equal(point.x, bounds.X + 10);
+    assert.equal(point.y, 20);
+  }
+});
 test('native hover resolves one app and refuses points outside its only normal window', () => {
   const { c, app, collection, native } = windowPlatform([
     { id: 1, layer: 1, bounds: { X: 0, Y: 0, Width: 999, Height: 999 } },

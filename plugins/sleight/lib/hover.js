@@ -73,6 +73,18 @@ function windowList(onScreenOnly = true) {
 }
 const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y < b.Y + b.Height;
 
+function requireOneDisplay(bounds) {
+  const screens = $.NSScreen.screens;
+  for (let i = 0; i < screens.count; i++) {
+    const id = Number(ObjC.unwrap(screens.objectAtIndex(i).deviceDescription.objectForKey('NSScreenNumber')));
+    const display = $.CGDisplayBounds(id);
+    if (bounds.X >= display.origin.x && bounds.Y >= display.origin.y &&
+        bounds.X + bounds.Width <= display.origin.x + display.size.width &&
+        bounds.Y + bounds.Height <= display.origin.y + display.size.height) return;
+  }
+  throw new Error('hover needs the whole window on one display; move it onto one display before retrying');
+}
+
 function nativeHover() {
   return {
     now: () => Date.now(),
@@ -105,6 +117,7 @@ function nativeHover() {
       target.bounds = matches[0].bounds;
       target.windowId = matches[0].id;
       target.windowTitle = matches[0].title;
+      requireOneDisplay(target.bounds);
       const point = { x: target.bounds.X + at[0], y: target.bounds.Y + at[1] };
       if (!inside(target.bounds, point)) throw new Error('hover point is outside the selected window');
       return point;
@@ -120,6 +133,7 @@ function nativeHover() {
     wait: ms => delay(ms / 1000),
     move(point) { $.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, $.CGPointMake(point.x, point.y), $.kCGMouseButtonLeft)); },
     capture(target) {
+      requireOneDisplay(target.bounds);
       // Capture only the app's rectangle, including its visible hover surfaces.
       const dir = ObjC.unwrap($.NSTemporaryDirectory()) + 'sleight-hover-' + ObjC.unwrap($.NSUUID.UUID.UUIDString);
       const fm = $.NSFileManager.defaultManager;
