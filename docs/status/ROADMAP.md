@@ -31,6 +31,13 @@ keyboard wait until they're away, in one away sitting.
 
 ## 0b. FowlBrowser, then the release and a video (owner, 2026-10-12)
 
+The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
+1. Freeze sleight's code after the items in flight: H3R3, H5R4, H12R3, H15R2, T2R5, D6, K12. No new feature items. An item that
+   fails a third review is parked.
+2. The FowlBrowser gate: one Haiku round (sleight at least FowlBrowser's 24/26 on tasks), then one Opus head-to-head.
+3. The Mac claim: W1R4, W2R2, W3R3, W4R4, W5R2, W6, then one full suite run with every arm on Haiku, published.
+4. Release 1.3.0, the claim post, then the video.
+
 The owner's long-term goal (2026-10-12): the world's fastest computer use plugin, chasing every lever
 down to milliseconds over months. The method: `bench/fowl/anatomy.mjs` splits every round into time
 (start, model, tool), result characters by kind, tokens and turns by class, and work goes to the biggest
