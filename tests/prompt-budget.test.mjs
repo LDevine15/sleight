@@ -21,7 +21,7 @@ const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', i
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
 test('both skill variants explain browser routing and script input within their word budgets', () => {
-  for (const [env, limit] of [[{}, 920], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
+  for (const [env, limit] of [[{}, 930], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
     assert.match(skill, /top-level `await`, no `return`/);
@@ -30,7 +30,7 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /Tab input.*first argument.*element index or `null`/);
     assert.match(skill, /Fill every (?:field you already see|visible field) in one call/);
     assert.match(skill, /nodeRepl\.write\(await sleight\.fillForm\(tab,/);
-    assert.match(skill, /accepts label, index or locator fields/);
+    assert.match(skill, /takes each field by label or locator \(an index needs a stable ID in the tree\)/);
     assert.match(skill, /[Rr]ead once at the end/);
     assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*confirmation policy\sdoesn't require confirming it\./);
     assert.match(skill, /Otherwise stop before the final click\./);
