@@ -38,6 +38,12 @@ measured lever first. On 2026-10-12 at 15:23 those were the engine's docs in res
 (time), and turns lost to errors and repeated reads. Turns become the lever again once latency is down
 (owner), so every round also reports which turns look avoidable.
 
+Test across models (owner, 2026-10-12): the first Haiku round showed what Opus hid. On FowlBrowser's tasks sleight went 8/13
+with 76 tool errors against FowlBrowser's 11/13 with 9, because Haiku invents calls, leaves actions unawaited and misuses
+selectors in sleight's code interface. So Haiku runs on every incremental change (strictest on how forgiving the interface is, and
+cheapest), Sonnet at checkpoints and Opus once at the end of a batch. Each round runs both arms on the same model, on the API key
+except Opus. Fixes that make the interface forgive a weaker model's mistakes are a lever of their own.
+
 FowlBrowser launched on 2026-10-11 (github.com/argofowl/FowlBrowser, MIT). It's an extension for Chrome
 and Helium that drives tabs through `chrome.debugger` and its own MCP server. It reports 26/26 on 13
 tasks against 23/26 for Claude through Codex's extension, and 21/26 for Codex itself. It covers the
