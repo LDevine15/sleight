@@ -3,38 +3,42 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 20:00 UTC)
+## Banner (2026-10-12 20:35 UTC, flushed before the owner's clear)
 
 Goal (owner, 2026-10-12, ROADMAP 0b): beat FowlBrowser on its own 13 browser tasks in tasks done, time and cost. A release
 and a launch video follow. Longer term (owner): the world's fastest computer use plugin, every lever down to milliseconds.
-Pushed: `pane/auto-mode` at `ec59d81` (private), full check 2213 pass, 1 skipped, mod 33/33, exit 0. The main checkout is
-fast-forwarded to it.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2271 pass, 1 skipped, mod 33/33,
+exit 0. `~/Projects/sleight` is fast-forwarded to it.
 
-Head-to-heads today (FowlBrowser's runner, Opus 5.5 medium, both browser orders), all published in
-`docs/benchmarks/2026-10-12-fowlbrowser-h2h.md` (10:25) and `-h2h-2.md` (13:09 to 15:23):
-- 15:23, both arms on `118b1b3`: sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls. First tie
-  on tasks. Earlier rounds: sleight 22 to 25/26.
-- Anatomy of 15:23 (`bench/fowl/anatomy.mjs`): model and tool time equal per arm (497 s, 206 s). sleight 230 turns against 266.
-  Time gap is the first call (median 4.8 s against 53 ms): the engine opens tabs one at a time (6 sessions at once: 1.3 to 2.9 s
-  each, alone 0.9 s; `tabs.new` plus `goto` queues the same). Later calls 244 ms against 721 ms. Server start 158 ms against
-  100 ms, 110 ms of it waiting on the engine's `initialize` (lane S2). Cost gap is the docs (950K of 1,366K result characters).
-- Character audit (`bench/char-audit.mjs`, history `docs/benchmarks/char-audit/history.jsonl`): a web session's first two
-  results hold 40.9K of engine docs and 5.9K of skill against a 1 to 2.5K form tree. Native sessions: 17.4K docs plus 6K skill.
-- Turns: 15 of 15:23's error turns had known causes (dragTo below the fold, stale tab numbers, Claude's evaluate code assuming
-  globals). form-travel spent 10 calls on a virtualized list (lane T2).
-- Lean-skill A/B, 15:54 EDT on `ec59d81` (`docs/benchmarks/2026-10-12-lean-skill-ab.md`): lean 24/26, 981 s, $8.92 against
-  default 25/26, 1,006 s, $8.72. Within noise. The default skill stays.
-- Owner (evening): work through all the fixes now. Incremental tests run on Haiku on the API key, and one Opus head-to-head
-  against FowlBrowser comes at the very end (LAWS).
+Under the owner's testing rule (LAWS), incremental runs use Haiku 5.5 high on the API key; Opus once, at the end of the fix batch, as the
+head-to-head against FowlBrowser. ROADMAP 0b: test across models, both arms on the same model.
 
-Engine facts found today (LAWS and known-problems): `evaluate` is a read-only scope (A8, A4 and the confirm pre-accept can't
-work); `tab.drag` moves in 8 steps and drops only when the last two are inside the target (A9's `dragTo`); `tab.click` on a
-download link stalls that tab's downloads. Tabs open one at a time.
+Where we stand (all published in `docs/benchmarks/2026-10-12-*`):
+- Opus, 15:23 EDT, `118b1b3`: sleight 26/26, 893 s, $8.39, 204 calls; FowlBrowser 26/26, 805 s, $5.55, 241 calls.
+- Haiku baseline, 16:06 to 16:29 EDT, `fd48fa1` (`/tmp/fb-rounds/hk-20261012-1606-*`, not yet published): FowlBrowser 22/26
+  (inject-order and inject-mail answers), sleight 19/26 (all four forms in one order, settings twice, mobile once). sleight made
+  145 tool errors against 22. Haiku invents calls (`tab.evaluate`, `cua.getAXState`), leaves actions unawaited (sleight
+  refuses), misuses selectors (deadlines, strict mode), tries `DragEvent` in the read-only scope. Wall 2,962 s against 1,742 s.
+  This is the next lever (batch H below). Publish this round first.
+- Lean skill A/B (Opus): within noise, the default stays.
+- Anatomy and char audit: the first call (engine opens tabs one at a time), the engine docs (40.9K of a web session's first
+  two results) and errors are the gaps. Later calls are 3x faster than FowlBrowser's.
 
-Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`, prompt `lane-prompt-F.md`). Merged today after Sonnet-high reviews: F6R3,
-F5R2, F5R3, A9, F7R2, A7R (plus F1R2, A1 and earlier). Back for fixes: A2R (after A5R and A6R), A3R3, A5R, A6R, A9R2, A10R.
-Batch D comes first: D1, D2 and D4 trim results, S1 and S2 cut startup, T1 to T3 cut turns. Also open: F4, F12. A lane item is done
-only after a bare `npm run check` at exit 0. A7R's live check (TextEdit save split) is sleight-arch's, not yet run.
+Merged tonight after Sonnet-high reviews (squash commits on `pane/auto-mode`): A9 `dragTo`, F6R3, F5R2, F5R3, F7R2, A7R, D1,
+D5 (`SLEIGHT_ENGINE_DOCS=min`: the API reference on demand, 11,897 to 672 characters, A/B pending), A3R3 and A3R4 (tab
+error hints), F12 (resend a read after Debugger unattached), A9R2.
+
+Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
+- Done, awaiting review: D2 (repeated text blocks), D4 (platform sentences), A9R3, T2R (list picker on the real travel list).
+- In progress: A3R5, D5R, T1.
+- Open: A5R, A6R, then A2R (after both); A10R, F4R2, S1, S2, T3.
+- Superseded by their R items (never merge): A2, A3, A3R, A3R2, A5, A6, A7, A9R, A10, F4, F4R, T2, F1R, F5, F5R, F6, F6R,
+  F6R2, F7R. Parked: F3, K10.
+- Not yet written: batch H for Haiku robustness. Tally both Haiku orders' errors first. Candidates are aliases for invented
+  calls such as `tab.evaluate`, adding a missing `await` instead of refusing the call, and selector-error hints.
+
+Untested live: A7R's save split (`bench/save-split-probe.mjs`, written, never run, and TextEdit must not be running). D5 `min`
+needs a Haiku A/B. No background jobs of sleight-arch's are running. The lanes run on their own.
 
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
 (203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
@@ -56,11 +60,10 @@ FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fow
 Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
 
 **Next steps:**
-1. Review and merge lane branches as they land (no model needed). Run the char audit after each docs or result change.
-2. Live checks without a model: A7R's save split (a fixture TextEdit file with `setValue` then Cmd+S through a probe client),
-   S1 and S2 with `coldstart-probe.mjs` and the startup trace.
-3. Haiku rounds on the API key for each A/B (D5 first). Once every open item is merged: one Opus head-to-head, published.
-4. Video and release once a head-to-head is a win, or on the owner's call.
+1. Publish the Haiku baseline (`docs/benchmarks/`, with anatomy), tally its 145 errors, write batch H.
+2. Review the done lane items (D2, D4, A9R3, T2R), merge, keep the ledger moving.
+3. Run `bench/save-split-probe.mjs` (A7R live), then Haiku A/Bs: D5 `min`, then batch H.
+4. Once every open item is merged, one Opus head-to-head, published. Video and release follow on the owner's call.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
