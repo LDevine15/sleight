@@ -63,8 +63,10 @@ test('results drop exact long text repeats while preserving images, order and sh
   const content = [text(long), image, text(tree), text(long), text('ok'), text('ok'), text(tree), secondImage,
     text('x'.repeat(200)), text('x'.repeat(200)), text('x'.repeat(201)), text('x'.repeat(201)), text(long + ' ')];
   h.fromServer({ id: 99, result: { content, isError: true, _meta: { retained: true } } });
+  const note = { type: 'text', text: 'sleight: dropped 3 repeated text blocks.' };
+  assert.ok(note.text.length < 100);
   assert.deepEqual(h.toClient.at(-1).result, { content: [content[0], image, content[2], content[4], content[5], secondImage,
-    content[8], content[9], content[10], content[12]], isError: true, _meta: { retained: true } });
+    content[8], content[9], content[10], content[12], note], isError: true, _meta: { retained: true } });
   h.fromServer({ id: 100, result: { content: [text(long)] } });
   assert.deepEqual(h.toClient.at(-1).result.content, [text(long)], 'deduplication is per result');
 });

@@ -358,7 +358,7 @@ test('recorded tab setup and Playwright reads send no input on debugger failures
   for (const code of ['tab = await cua.getTab({ url }, { browser }); await tab.getAXState()',
     'let tab = await cua.createBrowserTab(browser, url)', 'await tab.playwright.domSnapshot()',
     'tab = await cua.getTab(id, { browser }); nodeRepl.write(await tab.playwright.evaluate(() => document.body.innerText))',
-    'nodeRepl.write("tab.click(1)"); // tab.pressKey(null, "Enter")\nawait tab.playwright.domSnapshot()']) {
+    'await tab.playwright.domSnapshot()']) {
     // Reads F12 resends answer twice; the others answer at once (replyAfterResend handles both).
     const out = (await replyAfterResend(t, 'Debugger unattached', code)).content[0].text;
     assert.match(out, /no input was sent/, code);
@@ -368,7 +368,8 @@ test('recorded tab setup and Playwright reads send no input on debugger failures
     'await tab.playwright.getByRole("button").click()', 'await sleight.fillForm(tab, fields)',
     'await sleight.pickFromList(tab, list, "Portland")',
     'await cua.getTab(await tab.click(1), { browser })', 'nodeRepl.write(`${await tab.click(1)}`)',
-    'await tab["click"](1)', 'await tab.click?.(1)']) {
+    'await tab["click"](1)', 'await tab.click?.(1)',
+    'nodeRepl.write("tab.click(1)"); // tab.pressKey(null, "Enter")\nawait tab.playwright.domSnapshot()']) {
     assert.match(reply(t, 'Debugger unattached', true, code).content[0].text, /input may already have been sent/, code);
   }
 });
@@ -396,7 +397,46 @@ test('regex literal quotes cannot hide actions from debugger error advice', t =>
     '/[\"]/; await tab.click(2); const t = "x"',
     'const r = /\\\//; await tab.click(3)',
     'const r = /[/]/; await tab.click(4)',
-    'const r = /hello/; await tab.getAXState()']) {
+    'const r = /hello/; await tab.click(5)']) {
+    assert.equal(isTabBinding(code), false, code);
+    const out = reply(t, 'Debugger unattached', true, code).content[0].text;
+    assert.match(out, /input may already have been sent/, code);
+    assert.doesNotMatch(out, /no input was sent/);
+  }
+});
+
+test('division and replace slashes are not regex starts, so those reads stay reads', t => {
+  for (const code of [".replace(/\\s+/g,' ')", 'a/2 + b/2', 'done/total*100',
+    'await tab.getAXState(); a/2 + b/2', 'const r = /hello/; await tab.getAXState()']) {
+    assert.equal(isTabBinding(code), true, code);
+    const out = reply(t, 'Debugger unattached', true, code).content[0].text;
+    assert.match(out, /no input was sent/, code);
+  }
+});
+
+test('spaced division and slashes inside strings cannot hide a later click', t => {
+  for (const code of [
+    'const m = (a + b) / 2; await tab.click(1); const n = c / 2',
+    'const s = "go to /home"; await tab.click(1); const t = "/x"',
+    'await tab.evaluate("a / b"); await tab.click(2); await tab.evaluate("c / d")',
+    'x / 2; await tab.click(1)',
+  ]) {
+    assert.equal(isTabBinding(code), false, code);
+    const out = reply(t, 'Debugger unattached', true, code).content[0].text;
+    assert.match(out, /input may already have been sent/, code);
+    assert.doesNotMatch(out, /no input was sent/);
+  }
+});
+
+test('a tokenizer would hide a real click; raw text still names the action', t => {
+  for (const code of [
+    'const f = () => /x/; await tab.click(1)',
+    '/[\'"]/; await tab.click(1)',
+    'const s = "x"; / 2; await tab.click(1)',
+    'obj.return / 2; await tab.click(1)',
+    'const s = "unterminated; await tab.click(1)',
+  ]) {
+    assert.equal(isTabBinding(code), false, code);
     const out = reply(t, 'Debugger unattached', true, code).content[0].text;
     assert.match(out, /input may already have been sent/, code);
     assert.doesNotMatch(out, /no input was sent/);

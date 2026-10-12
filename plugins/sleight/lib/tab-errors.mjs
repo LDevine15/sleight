@@ -78,16 +78,10 @@ export function evaluateWriteAdvice(text) {
 }
 
 export function isTabBinding(code = '') {
-  // Error wording only: binding and arbitrary reads send no input unless a known action is named.
-  let templateAction = false, regex = false;
-  const source = code.replace(/\[\s*["'](\w+)["']\s*\]/g, '.$1')
-    .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\/(?![/*])(?:\\.|[^\n/\\])+\/[a-z]*/g, value => {
-    if (value.startsWith('`')) templateAction ||= [...value.matchAll(/\$\{([\s\S]*?)\}/g)].some(m => !isTabBinding(m[1]));
-    // A regex quote can hide later input from string stripping. Keep its advice uncertain.
-    if (value.startsWith('/') && !/^\/[/*]/.test(value)) regex = true;
-    return ' ';
-  });
-  return !regex && !templateAction && !/\b(?:click|dblclick|fill|clear|type|typeText|press|pressKey|pressSequentially|drag|dragTo|htmlDrag|setValue|selectOption|check|uncheck|setChecked|goto|back|forward|reload|paste|performSecondaryAction|scroll|scrollIntoViewIfNeeded|selectText|fillForm|pickFromList|reorder|accept|dismiss|close|downloadMedia)\s*(?:\?\.)?\s*\(/.test(source);
+  // Error wording only. Read-only when the raw text names no action call; a string or
+  // comment that merely mentions one makes the answer uncertain.
+  const source = String(code).replace(/\[\s*["'](\w+)["']\s*\]/g, '.$1');
+  return !/\b(?:click|dblclick|fill|type|press|pressSequentially|pressKey|setValue|typeText|paste|scroll|selectText|selectOption|setChecked|check|uncheck|drag|dragTo|performSecondaryAction|goto|reload|downloadMedia|dispatchEvent|clear|htmlDrag|back|forward|scrollIntoViewIfNeeded|fillForm|pickFromList|reorder|accept|dismiss|close)\s*(?:\?\.)?\s*\(/.test(source);
 }
 
 function rewriteLine(text, read) {
