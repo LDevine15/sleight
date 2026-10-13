@@ -94,6 +94,7 @@ test('world dry-run gives every Claude arm the same prefix, isolation, version a
     assert.equal(plan.args[plan.args.indexOf('--setting-sources') + 1], '');
     assert.equal(plan.args[plan.args.indexOf('--effort') + 1], 'high');
     assert.ok(plan.prompt.includes(`sessionName: '🧪 ${plan.task}'`),plan.surface+' lost the task label');
+    if (['sleight', 'codex'].includes(plan.surface)) assert.match(plan.prompt, /cua\.createBrowserTab[^\n]*\{ sessionName: '🧪 [^']+' \}/);
   }
   assert.equal(existsSync(join(dir, 'never')), false);
 });

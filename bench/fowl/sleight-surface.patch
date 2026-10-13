@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..87b73cf 100644
+index e7f1db8..b255b66 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,6 @@
@@ -142,7 +142,7 @@ index e7f1db8..87b73cf 100644
 +  if (world) {
 +    const common = require(path.join(SLEIGHT_REPO, 'bench/world/arms/browser.mjs')).worldAgentSetup({ surface, dir });
 +    arm = { ...common, ...arm, args: arm?.args || common.args };
-+    prompt = common.promptPrefix + `When a browser tool accepts sessionName, use sessionName: '${labelOf(task.name)}'.\n\n` + (arm.setupPrefix || '') + taskPrompt;
++    prompt = common.promptPrefix + `When cua.createBrowserTab is available, open tabs with cua.createBrowserTab(browserId, url, { sessionName: '${labelOf(task.name)}' }). Other tools accepting sessionName use the same label.\n\n` + (arm.setupPrefix || '') + taskPrompt;
 +  }
    const args = ['-p', '--model', model, '--effort', effort, '--input-format', 'stream-json', '--output-format', 'stream-json',
      '--verbose', '--strict-mcp-config', '--mcp-config', path.join(dir, 'mcp.json'), '--settings', settings,

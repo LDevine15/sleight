@@ -152,6 +152,22 @@ test('Chrome confirmation retries for ten seconds without allowing task tools', 
   assert.notEqual(JSON.parse(fs.readFileSync(state)).confirmed,true);
 });
 
+test('a confirming selection result wins after ten seconds while new attempts still expire', t => {
+  const {dir}=fixture(t), state=path.join(dir,'slow-confirm.json'); let time=1000;
+  const input={tool_name:'mcp__claude-in-chrome__select_browser',tool_input:{deviceId:device},tool_use_id:'slow'};
+  assert.deepEqual(chrome.chromeDeviceHook({...input,hook_event_name:'PreToolUse'},state,device,{now:()=>time}),{});
+  time=15000;
+  const result=chrome.chromeDeviceHook({...input,hook_event_name:'PostToolUse',tool_response:[{deviceId:device,inUse:true}]},state,device,{now:()=>time});
+  assert.deepEqual(result,{});
+  assert.equal(JSON.parse(fs.readFileSync(state)).confirmed,true);
+  assert.deepEqual(chrome.chromeDeviceHook({hook_event_name:'PreToolUse',tool_name:'mcp__claude-in-chrome__computer'},state,device,{now:()=>time}),{});
+  fs.rmSync(state);
+  time=1000; chrome.chromeDeviceHook({...input,hook_event_name:'PreToolUse'},state,device,{now:()=>time});
+  time=15000;
+  assert.equal(chrome.chromeDeviceHook({...input,hook_event_name:'PostToolUse',tool_response:[{deviceId:device,inUse:false}]},state,device,{now:()=>time}).continue,undefined);
+  assert.equal(chrome.chromeDeviceHook({...input,hook_event_name:'PreToolUse'},state,device,{now:()=>time}).continue,false);
+});
+
 test('stale manifest backup gives recovery instructions and preserves its bytes', async t => {
   const {files}=fixture(t), active=path.join(files.backupDir,'active'); fs.mkdirSync(active,{recursive:true});
   const original=path.join(active,'original.json'); fs.writeFileSync(original,'saved owner bytes');

@@ -73,7 +73,6 @@ export function chromeDeviceHook(input, stateFile, deviceId, { now = Date.now } 
     const refuse = reason => { state.failed = reason; save(); return stop(reason); };
     if (state.failed) return stop(state.failed);
     if (changesDevice) return refuse('Chrome benchmark device cannot be changed');
-    if (!state.confirmed && state.confirmationDeadline !== undefined && now() >= state.confirmationDeadline) return refuse('Chrome device was not confirmed within 10 seconds; retry the run after checking the benchmark profile');
     const retry = () => {
       state.phase = 'verify'; save();
       return { hookSpecificOutput: { hookEventName: input.hook_event_name,
@@ -81,6 +80,7 @@ export function chromeDeviceHook(input, stateFile, deviceId, { now = Date.now } 
     };
     if (input.hook_event_name === 'PreToolUse') {
       if (state.confirmed) return {};
+      if (state.confirmationDeadline !== undefined && now() >= state.confirmationDeadline) return refuse('Chrome device was not confirmed within 10 seconds; retry the run after checking the benchmark profile');
       if ((state.phase === 'first' && select) || (state.phase === 'verify' && (select || list))) {
         state.confirmationDeadline ??= now() + 10000;
         state.phase = select ? 'selecting' : 'listing'; state.toolUseId = input.tool_use_id; save(); return {};
