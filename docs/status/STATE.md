@@ -23,7 +23,10 @@ Astra (`astra-report.md`, branch `codex/astra-tab-queue` at 8f63d6e, 196 trials)
 took 2,974 ms median and 14 ms with discovery bound to the verified socket; the first empty session command took 4,932 ms and the
 next 2 ms. The owner lifted the freeze for AS-1 and AS-2 (discovery, warm-up priming). The gate round waits for them.
 At the owner's request (03:10 UTC) sleight-arch added `http://127.0.0.1:*` to the engine's origin allowlist, so tab opens on
-local benchmark pages no longer ask, in Helium and the benchmark Chrome profile (probed in both). Then the gate round on Haiku 5.5.
+local benchmark pages no longer ask, in Helium and the benchmark Chrome profile (probed in both).
+A Haiku 5.5 A/B (`hk55-20261012-2351`) was stopped about a minute into sleight's arm because Chrome kept taking the owner's
+screen. sleight's arm takes focus on pages that open popups (FS1, urgent). No browser rounds while the owner is at the Mac until
+FS1 is fixed. The FowlBrowser arm's half finished and is saved. Then the gate round on Haiku 5.5.
 API spend for October is $151.00 of $200, in `~/Library/Logs/sleight/bench-api-spend.json`. Opus rounds don't count.
 
 Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):

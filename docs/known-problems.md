@@ -62,6 +62,10 @@ our own runs. Dates and engine versions are given where they matter.
 
 ## Browsers
 
+- A page that opens a popup or a new tab can take the screen during a browser session. In FowlBrowser's 13-task round on
+  2026-10-12 (Haiku 4.5), sleight's arm let 3 popup windows open and Chrome or Helium take focus 7 times, which pulls the user
+  to the browser's Space. FowlBrowser's arm took focus 2 times with no popups. We don't know the cause yet (ledger FS1).
+
 On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s against FowlBrowser's 26/26
 in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from that list:
 
