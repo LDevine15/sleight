@@ -67,6 +67,10 @@ belong in [STATE.md](STATE.md).
   one app. App knowledge belongs to the engine or to the model. A workaround for one app
   needs the owner's OK and says so. Benchmark tasks name apps, but their checks are generic: they judge
   the answer and the app's state, with no per-app harness.
+- sleight gets its own direct browser path for Chromium browsers, and the ChatGPT engine keeps everything outside the browser
+  (owner, 2026-10-13, after the engine's browser path left sleight's form runs at 17 of 40 against FowlBrowser's 26 of 26 per
+  round). It is designed from a teardown of FowlBrowser and the other browser tools, keeping what works, improving the rest and
+  adding what none of them have, never a copy. MIT and Apache-2.0 code may be adapted with credit and notices.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,

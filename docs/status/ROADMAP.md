@@ -31,6 +31,11 @@ keyboard wait until they're away, in one away sitting.
 
 ## 0b. FowlBrowser, then the release and a video (owner, 2026-10-12)
 
+Direct browser path (owner, 2026-10-13): yes. A gpt-6-astra design teardown compares FowlBrowser with Claude in Chrome,
+Playwright MCP, Chrome DevTools MCP, Codex's extension and Browser Use, one subsystem at a time, and a second astra measures the
+options on a throwaway Chromium. The owner sees the design before lanes build it. The
+engine keeps native apps and Safari.
+
 The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
 1. Freeze sleight's code after the items in flight: H3R3, H5R4, H12R3, H15R2, T2R5, D6, K12. No new feature items. An item that
    fails a third review is parked.
