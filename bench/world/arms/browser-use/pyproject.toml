@@ -1,0 +1,11 @@
+[project]
+name = "sleight-browser-use-arm"
+version = "0"
+description = "FowlBrowser arm: Browser Use agent loop on local Chrome"
+requires-python = ">=3.11"
+dependencies = [
+  "browser-use==0.13.11",
+]
+
+[tool.uv]
+package = false

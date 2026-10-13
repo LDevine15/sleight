@@ -1,5 +1,8 @@
 .dev/
 node_modules/
+bench/world/arms/*/.venv/
+__pycache__/
+*.pyc
 .DS_Store
 plugins/sleight/.claude-plugin/types/
 bench/results/

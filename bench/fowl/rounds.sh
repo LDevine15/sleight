@@ -1,7 +1,7 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
 # (bench/fowl/sleight-surface.patch). Runs on the owner's API key with no CLAUDE* variables from the host session.
-# Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser|fowl+sleight [rounds.mjs options]
+# Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser|fowl+sleight|browser-use [rounds.mjs options]
 set -eu
 PIN=8b68924
 DIR="$HOME/Library/Caches/sleight-bench/fowlbrowser"
@@ -17,12 +17,21 @@ fi
 # Opus runs on the owner's Claude account (owner, 2026-10-12: parity with FowlBrowser's published runs without
 # spending the API credit). Other models run on the API key, whose monthly credit stops at $200 (LAWS): refuse a round
 # from $190, and add each round's cost to the ledger.
-MODEL=opus; prev=""; for a in "$@"; do [ "$prev" = --model ] && MODEL="$a"; prev="$a"; done
+MODEL=opus; SURFACE=""; prev=""; for a in "$@"; do
+  [ "$prev" = --model ] && MODEL="$a"
+  [ "$prev" = --surface ] && SURFACE="$a"
+  prev="$a"
+done
 SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
-case "$MODEL" in
-  *opus*) AUTH=account; KEY="" ;;
-  *) AUTH=api; KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")" ;;
-esac
+# Browser Use always spends the API key (it never uses the owner's Claude Code login).
+if [ "$SURFACE" = browser-use ]; then
+  AUTH=api
+  KEY="$(node --input-type=module -e "import { pathToFileURL } from 'node:url'; const { readKey } = await import(pathToFileURL(process.argv[1]).href); const k = readKey(); if (!k) process.exit(1); process.stdout.write(k);" "$REPO/bench/api-auth.mjs")"
+elif echo "$MODEL" | grep -q opus; then
+  AUTH=account; KEY=""
+else
+  AUTH=api; KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")"
+fi
 [ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit(j.month===m&&j.usd>=190?1:0)' "$SPEND" || { echo "rounds.sh: this month's API spend is at or over $190" >&2; exit 1; }
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP

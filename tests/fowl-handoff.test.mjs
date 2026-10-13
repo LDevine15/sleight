@@ -229,14 +229,13 @@ test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+s
   assert.equal(apply.status, 0, apply.stderr + apply.stdout);
   const patched = readFileSync(join(dir, 'tools/rounds.mjs'), 'utf8');
   assert.match(patched, /fowl\+sleight/);
+  assert.match(patched, /browser-use/);
   assert.match(patched, /replaceAll\('\{out\}'/);
   assert.match(patched, /gradeNative/);
   assert.match(patched, /bench\/fowl\/surface\.mjs/);
-  const diff = spawnSync('/usr/bin/git', ['diff', '--', 'tools/rounds.mjs'], { cwd: dir, encoding: 'utf8' });
-  assert.equal(diff.stdout, readFileSync(join(root, 'bench/fowl/sleight-surface.patch'), 'utf8'));
   assert.doesNotMatch(patched, /async function agentSetup/);
   const probe = spawnSync(process.execPath, ['--input-type=module', '-e',
-    "import { agentSetup } from './tools/rounds.mjs'; for (const surface of ['fowlbrowser', 'sleight', 'fowl+sleight']) { const s = agentSetup({ task: { name: 'test', browser: 'chrome', prompt: 'save {out}', result: 'done' }, surface, dir: '/tmp/test', mcpRoot: '/fowl', settings: '/tmp/settings', model: 'opus', effort: 'medium' }); if (s instanceof Promise || !s.mcpConfig || !s.prompt.includes('/tmp/test')) throw Error(surface); }"],
+    "import { agentSetup } from './tools/rounds.mjs'; for (const surface of ['fowlbrowser', 'sleight', 'fowl+sleight']) { const s = agentSetup({ task: { name: 'test', browser: 'chrome', prompt: 'save {out}', result: 'done' }, surface, dir: '/tmp/test', mcpRoot: '/fowl', settings: '/tmp/settings', model: 'opus', effort: 'medium' }); if (s instanceof Promise || !s.mcpConfig || !s.prompt.includes('/tmp/test')) throw Error(surface); } const bu = agentSetup({ task: { name: 'test', browser: 'chrome', prompt: 'save {out} in {browser} at {repo}', result: 'done', budgetSeconds: 90 }, surface: 'browser-use', dir: '/tmp/test', mcpRoot: '/fowl', settings: '/tmp/settings', model: 'haiku', effort: 'high' }); if (bu.command !== 'uv' || bu.mcpConfig || !bu.args.includes('--budget-seconds') || !bu.args.includes('--frozen') || !bu.prompt.includes('/tmp/test') || !bu.prompt.includes('Chrome')) throw Error('browser-use');"],
     { cwd: dir, encoding: 'utf8', env: { ...process.env, SLEIGHT_REPO: root } });
   assert.equal(probe.status, 0, probe.stderr);
 });

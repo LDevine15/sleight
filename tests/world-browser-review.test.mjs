@@ -128,7 +128,7 @@ test('all world surfaces use the same eager tool-loading mode despite the host s
 test('unobservable browser checks report not measured and do not alter site outcomes', async (t) => {
   const { file } = runner(t);
   const mod = await import(pathToFileURL(file));
-  for (const surface of ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome']) {
+  for (const surface of ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'browser-use']) {
     assert.equal(mod.surfaceObserved(surface), false);
     const grade = mod.observationGrade(surface, () => { throw new Error('unobservable check ran'); });
     assert.equal(grade.ok, null);
