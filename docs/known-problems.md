@@ -215,3 +215,9 @@ Engine behavior that sleight works around or can't change:
   prove app notification delivery.
 - A pane replay is untested in Auto mode, where the classifier may refuse the mod's `replay` call
   because the mod doesn't approve it (the classifier refused the pane's snapshot on 2026-10-08).
+
+- `sleight.pickFromList` throws "needs a browser tab" on a real browser tab: it calls `tab.scroll`, which the engine's Tab doesn't have.
+  Its search also gives up before rows past about index 360 of a 1,000-row virtualized list. Found 2026-10-12 with real Playwright on
+  FowlBrowser's travel page. The fix is in progress.
+- After a kernel reset, sleight restores `tab` and `b` only for calls whose source it can parse: 87 of 403 recorded browser calls (21.6%)
+  aren't tracked, and a name the call assigns isn't restored.
