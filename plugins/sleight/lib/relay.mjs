@@ -61,6 +61,7 @@ import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRe
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
+import { BrowserRecovery } from './browser-recovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
@@ -626,6 +627,7 @@ export function createRelay({
   const nativeHandles = new Set();
   const browserPlan = code => browserCall(code, browserHandles, nativeHandles);
   const browserCalls = new Map();
+  const browserRecovery = new BrowserRecovery();
   const helperStates = new Map();
   const helperHandles = new Map();
   // js calls awaiting a reply, and whether this engine session has shown its first-call docs:
@@ -1873,6 +1875,7 @@ export function createRelay({
       return;
     }
     if (msg.method === 'tools/call' && msg.params?.name === 'js_reset') {
+      browserRecovery.reset();
       forgetGuard(); compactor.reset();
       for (const action of resultCalls.values()) { action.before = undefined; action.overlap = true; }
       invalidateDiagnostics(); helperHandles.clear(); helperControls.clear(); helperActive = undefined; docsShown = false;
@@ -2035,7 +2038,7 @@ export function createRelay({
             ? 'Input lease stopped this action: window or URL changed. Read the intended window again before acting.'
             : 'Change review stopped this action: window or URL changed. Read the intended window with one standalone cua.getApp call before editing.';
           if (browser) {
-            msg.params.arguments.code = guardedCode(originalCode, target, reason,
+            msg.params.arguments.code = guardedCode(browserRecovery.code(originalCode), target, reason,
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
               { ...setup, timing: guardTiming, careful: guardMode === 'careful', fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
@@ -2424,6 +2427,7 @@ export function createRelay({
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (jsCode !== undefined) replWarmup.attach(msg);
+    if (jsCode !== undefined) browserRecovery.observe(jsCode, msg);
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
       const rewritten = text => rewriteDragAttempt(
