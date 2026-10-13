@@ -72,7 +72,10 @@ belong in [STATE.md](STATE.md).
   round). It is designed from a teardown of FowlBrowser and the other browser tools, keeping what works, improving the rest and
   adding what none of them have, never a copy. MIT and Apache-2.0 code may be adapted with credit and notices.
   It doesn't need an extra install (owner, 2026-10-13): a plugin that asks users to install an extension for browser speed is bad UX,
-  while a visible moment where sleight hooks into the browser is fine. Chrome's built-in remote debugging consent comes first.
+  while a visible moment where sleight hooks into the browser is fine. The engine's browser path stays the default, needing
+  no setup. The direct path is an opt-in turbo that sleight offers the first time a browser task runs, through Chrome's built-in
+  remote debugging consent: one switch, then Chrome's own prompt once per browser launch (owner, 2026-10-13: the user chooses).
+  Benchmarks and the claim run in turbo and say so.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,

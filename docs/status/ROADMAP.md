@@ -35,6 +35,10 @@ Direct browser path (owner, 2026-10-13): yes. A gpt-6-astra design teardown comp
 Playwright MCP, Chrome DevTools MCP, Codex's extension and Browser Use, one subsystem at a time, and a second astra measures the
 options on a throwaway Chromium. The owner sees the design before lanes build it. The
 engine keeps native apps and Safari.
+The owner approved design v2 (2026-10-13, `ledger/browser-path-design-v2.md`) with all six of its recommendations (section
+"Owner decisions first"). sleight keeps the connection until Disconnect, and confirmations come from a sleight window. Chrome and
+Helium are qualified separately. Popups get a tested subset with handoff, and a separate profile is only a last resort. The
+hookup gets a one-second animation and a connected indicator. Lanes build BP2-1 to BP2-12 as separate modules in parallel, joined in BP2-9 and BP2-12.
 
 The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
 1. Freeze sleight's code after the items in flight: H3R3, H5R4, H12R3, H15R2, T2R5, D6, K12. No new feature items. An item that
