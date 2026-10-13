@@ -166,7 +166,9 @@ belong in [STATE.md](STATE.md).
   never drops. `sleight.dragTo` aims inside the target's near edge.
 - After `tab.click` on a download link, the engine doesn't show a download prompt, and that tab's later downloads stall. Downloads go
   through `locator.downloadMedia({})`, or `waitForEvent("download")` registered before the click.
-- The engine's browser extension opens tabs one at a time, so sessions that start together queue on their first tab.
+- The Codex browser extension keeps one lifecycle queue per session, not one across sessions (read from the installed extension,
+  2026-10-13). Sessions that start together wait instead on the engine's browser discovery, which probes every backend socket on
+  each selection, and on a one-time first session command. Neither needs our own extension to avoid.
 - The engine marks `Tab.ax` unsupported by default for extension, iab, cdp and mcpapps browsers, so hints never name `tab.ax`. Locator
   action timeouts, `waitForLoadState`, locator `waitFor` and `waitForURL` are capped at 3 s and `pressSequentially` at 5 s. Only
   `waitForTimeout` is uncapped. Locators have no `scrollIntoViewIfNeeded`, and `el.scrollIntoView` inside `evaluate` is allowed.

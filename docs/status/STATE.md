@@ -16,7 +16,13 @@ ledger items, the whole finish line now. Grok has T2R7 and W3R5. Codex has M3 (M
 extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch).
 Grok stopped for the night (owner, 02:15 UTC). Every item is pool codex. Codex lanes review each other by the ledger's REVIEW
 RULES, with fix items in `queue/` and proposals in `queue/next/`. After the fix items come R1 and R2 (release prep), then Q1, Q2 and B1,
-which merge after the 1.3.0 tag. A gpt-6-astra investigator studies the first-call tab queue (`astra-prompt.md`, `astra-report.md`). Then the gate round on Haiku 5.5.
+which merge after the 1.3.0 tag. RS1 to RS8 study competitors' designs, and X1 measures merging key presses.
+Merged at 03:00 UTC after Codex peer reviews: T2R7, W3R5, R1, W4R6 (owner's call past the cap; the nested-label gap is in
+known-problems). Full check 2965 pass, 2 skipped, mod 33/33, exit 0. M3, W7 and R2 failed review: M3R, W7R and R2R are queued.
+Astra (`astra-report.md`, branch `codex/astra-tab-queue` at 8f63d6e, 196 trials): at 13 concurrent sessions, browser selection
+took 2,974 ms median and 14 ms with discovery bound to the verified socket; the first empty session command took 4,932 ms and the
+next 2 ms. The owner lifted the freeze for AS-1 and AS-2 (discovery, warm-up priming). The gate round waits for them.
+Astra couldn't measure tab opens: the extension asks before opening 127.0.0.1, which the owner still has to allow. Then the gate round on Haiku 5.5.
 API spend for October is $151.00 of $200, in `~/Library/Logs/sleight/bench-api-spend.json`. Opus rounds don't count.
 
 Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):
