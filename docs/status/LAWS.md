@@ -209,6 +209,9 @@ belong in [STATE.md](STATE.md).
 - Tests of page helpers use fakes that throw on any method the engine lacks, and helpers that `relay.mjs` injects as source keep every
   name they use inside the injected function (module scope is lost). A page helper also gets a real-page test with Playwright where
   available. Unit tests with invented engine methods passed three helpers that failed on the real page (2026-10-12).
+- Real-page tests use `node:test` with `playwright-core` on a disposable headless Chromium and skip unless
+  SLEIGHT_LIVE_DOM_TEST=1. sleight-arch runs them at every merge: lanes' sandboxes may not launch a browser, and Codex refuses the
+  Playwright Test runner the repo doesn't install (2026-10-13).
 - A lane item that fails a third review is parked, not sent round again (owner, 2026-10-12).
 - Every lane branch (Codex, Grok or GLM) gets a code review by a Sonnet subagent at high effort before
   sleight-arch merges it, and a finding goes back as a fix item rather than being merged around

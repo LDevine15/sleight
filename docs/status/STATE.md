@@ -3,103 +3,54 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-13 02:25 UTC, boot after the clear)
+## Banner (2026-10-13 23:35 UTC, flushed before the owner's clear)
 
-Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac (LAWS, ROADMAP 0b).
-The finish line is locked in ROADMAP 0b (owner, 2026-10-12 20:00 EDT), four steps ending in release 1.3.0 and the video. Read it first.
-Claude quota is short (owner, 2026-10-13): finish the rows and the release, nothing else. Build work stays in lanes.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2817 pass, 1 skipped, mod 33/33, exit 0.
-`~/Projects/sleight` is fast-forwarded to it, and there are 0 open PRs. Public CI is green on 1.2.5.
+Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
+1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 3760 pass, 0 fail, 33 skipped, mod 33/33.
+`~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
 
-At boot all seven finished lane items (M1, M2, T2R6, W2R3, W3R4, W4R5, W6) failed Sonnet-high review. Their fixes are five
-ledger items, the whole finish line now. Grok has T2R7 and W3R5. Codex has M3 (M1 plus M2 in one patch), W4R6 (the owner's one
-extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch).
-Grok stopped for the night (owner, 02:15 UTC). Every item is pool codex. Codex lanes review each other by the ledger's REVIEW
-RULES, with fix items in `queue/` and proposals in `queue/next/`. After the fix items come R1 and R2 (release prep), then Q1, Q2 and B1,
-which merge after the 1.3.0 tag. RS1 to RS8 study competitors' designs, and X1 measures merging key presses.
-16:10 UTC: FM1 (forms) passed form-travel 2/2 live but left the four forms at 5/8. FM2 (custom switch, Pay click, "debugger
-lost") and TB1 (tabs) are building in headless Codex lanes (`codex exec`, prompts in `/private/tmp/claude-501/lanes/`). The
-owner's login keychain locked while they were away and hung git, gh and claude until a stuck SecurityAgent dialog was closed.
-Gate round on Haiku 5.5 (2026-10-13 12:08 UTC, `docs/benchmarks/2026-10-13-gate.md`): sleight 23/26, 1,206 s, 39 errors;
-FowlBrowser 26/26, 677 s, 9 errors. The gate (24/26) isn't met. All 3 misses were forms. sleight leaves 35 to 39 tabs open per
-order. Merged before it: AS-1R, AS-2R, FS2R, W8R2 (full check 3203 pass, 0 fail). FS2 stopped link-opened tabs taking focus;
-script popups (demoid, size-guide) still take it once each. API spend for October: $155.09 of $200.
-Merged at 05:00 UTC: M3R (with M1, M2, M3, Haiku 5.5 ids and token-based cost), full check 2987 pass, 0 fail, 2 skipped,
-mod 33/33. W7R2 and W6R passed review but conflict with merged work in 8 files: W8 rebases them. AS-1 failed review (AS-1R).
-Merged at 03:00 UTC after Codex peer reviews: T2R7, W3R5, R1, W4R6 (owner's call past the cap; the nested-label gap is in
-known-problems). Full check 2965 pass, 2 skipped, mod 33/33, exit 0. M3, W7 and R2 failed review: M3R, W7R and R2R are queued.
-Astra (`astra-report.md`, branch `codex/astra-tab-queue` at 8f63d6e, 196 trials): at 13 concurrent sessions, browser selection
-took 2,974 ms median and 14 ms with discovery bound to the verified socket; the first empty session command took 4,932 ms and the
-next 2 ms. The owner lifted the freeze for AS-1 and AS-2 (discovery, warm-up priming). The gate round waits for them.
-At the owner's request (03:10 UTC) sleight-arch added `http://127.0.0.1:*` to the engine's origin allowlist, so tab opens on
-local benchmark pages no longer ask, in Helium and the benchmark Chrome profile (probed in both).
-A Haiku 5.5 A/B (`hk55-20261012-2351`) was stopped about a minute into sleight's arm because Chrome kept taking the owner's
-screen. sleight's arm takes focus on pages that open popups. FS1 found the cause: the Codex extension's popup interception
-sits behind a remote OpenAI flag with no supported local switch. FS2 (urgent) opens new-context links as background tabs inside
-sleight instead. No browser rounds while the owner is at the Mac until
-FS1 is fixed. The FowlBrowser arm's half finished and is saved. Then the gate round on Haiku 5.5.
-API spend for October is $151.00 of $200, in `~/Library/Logs/sleight/bench-api-spend.json`. Opus rounds don't count.
+The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
+FowlBrowser's 26/26 at about twice its time. Every miss was a form (form runs 17/40, non-form 36/36,
+`docs/benchmarks/2026-10-13-gate.md`), and every form failure traced to the engine's browser path. The owner then decided
+(LAWS) that sleight gets a direct browser path as an opt-in turbo through Chrome's built-in remote debugging consent. The engine
+path remains the zero-setup default. Design v2 (`~/Projects/sleight-wt/ledger/browser-path-design-v2.md`) and the native-app
+design (`native-path-design.md`) are approved. The Electron design (`electron-path-design.md`) waits on four owner decisions.
+Engine-browser fixes (AS-3, AS-4, FM2, FM3, QT1) are parked: their checks are in the gate doc.
 
-Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):
-- Every FowlBrowser-runner "Haiku" round ran Haiku 4.5 (the `haiku` alias in Claude Code 2.1.289 resolves to
-  `claude-haiku-4-5-20251001`), both arms. The docs say so. M1 makes the gate run 5.5. The Opus rounds ran `claude-opus-5-5`.
-- Opus, 15:23 EDT: sleight 26/26, 893 s, $8.39. FowlBrowser 26/26, 805 s, $5.55.
-- Haiku 4.5, 16:06 EDT: FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145.
-- Haiku 4.5, 19:12 EDT at `2ad83d1a` (`haiku-round-2.md`): sleight 21/26, 2,607 s, $3.73, 107 errors, 2 resets. FowlBrowser 24/26,
-  1,234 s, $2.08, 8 errors. The anatomy's unexplained time is the model writing (D7: 565 s against 119 s): next sprint's lever.
-- REPL warm-up (S1R): an empty first call with 13 sessions at once went from 0.8 to 1.2 s to about 30 ms.
-- D5 `min` docs: within noise, opt-in. First-call queueing: a tab open is 0.9 s alone, 3.2 s mean with 13 sessions.
+Merged on 2026-10-13, all peer-reviewed by Codex lanes: AS-1R and AS-2R (discovery, warm-up priming), FS2R (links open as
+background tabs), W8R2 (world runner), FM1, TB1, M3R (Haiku 5.5 ids, token-based cost), T2R7, W3R5, R1, W4R6 (owner's call
+past the cap), AS-5, Q1, RS5-1R, RS6-1R, and the turbo and native prototypes under `bench/` (not wired into the plugin yet):
+BP2-1, BP2-2, BP2-3, BP2-5, BP2-7, BP2-9, BP2-10, NP-1, NP-2, NP-7. The check runs every prototype test folder, and checks run the
+Claude CLI with a throwaway config (`scripts/claude-isolated.sh`) so parallel lanes don't raise keychain dialogs.
 
-Merged and pushed 2026-10-12 after Sonnet-high reviews: D2, D5R, A9R3, A3R5, A10R, F4R3, E1, H1R, H11, H14, A6R4, S1R, S1R3, S2R2,
-H6R2, H4R2, T1R3, T2R4, H2R4, H8R4, T4R4, H5R4, H15R2 (sleight-arch moved one regex into the injected function), H16, H17, N1R2, D6
-(sleight-arch guarded one assignment and named four functions in its notice), K12, W1R4, W3R3, W4R2, W5R3, A7R's live fix. Parked:
-A5/A2R, P1, T3, D4, H12. Stale: H9, H10, H13, T5, H4.
+In flight at the clear: headless Codex lanes (`codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`) keep running
+through the clear and report only through `~/Projects/sleight-wt/ledger/claims/`. Logs and prompts are in
+`/private/tmp/claude-501/lanes/`. Running: codex-hdlac and codex-hdlag (BP2 fix rounds), codex-hdlaj, hdlak, hdlam and hdlap
+(NP-3 to NP-6 fix rounds), codex-hdlaq (AM1 fix), codex-hdlar (BP2-4R3), codex-hdlas (BP2-6R3), codex-hdlat (BP2-11, DONE),
+codex-hdlau (BP2-1R2). Ledger: BP2-4R3, BP2-6R3 and BP2-11 are DONE and wait for review; BP2-1R2 fixes a confirmed
+navigation exfiltration gap in the merged contract and must merge before BP2-12; BP2-8R2, NP-3R to NP-6R and AM1's fix are
+building. Waiting in `queue/next/`: BP2-12 (wires turbo into the plugin), NP-8, EP-1 to EP-7, the Q1, IN, AA1 and RS proposals.
+B1 and Q2-1 are plugin changes held until after the 1.3.0 freeze. Re-arm a watcher at boot: sleight-arch's background watchers end at the clear.
 
-In flight at the clear (`~/Projects/sleight-wt/ledger/LEDGER.md`, claims marked SEEN2 when sent to review):
-- H3R3 merged at the flush. T2R5 failed review and found that the merged `sleight.pickFromList` calls `tab.scroll`, which the
-  engine's Tab lacks, so it throws on a real tab, and its search gives up before rows past about index 360: T2R6, first after M1/M2.
-- W4R4 failed review on three audit gaps: W4R5 in the ledger. D7 is a finished report only (`codex/d7`).
-- Lanes building: M1 (Haiku 5.5 ids and token-based cost in `rounds.sh`), M2 (bound the FowlBrowser runner's inventory awaits: the
-  19:25 hang), W2R3 (rebase W2R2 onto W4R2's world design), W3R4 (Browser Use temp-profile leak, `uv` test skip for CI).
-- Unclaimed: W6 (Claude's own computer use through an interactive harness).
-- Background work at the clear: the ledger monitor loop stopped and wasn't relaunched. Restart it at boot (memory `lane-ledger`).
-  The REA study of the engine's native helper finished after the flush: notes in `~/Projects/sleight-wt/ledger/rea-helper-study.md`
-  (settle floor about 100 ms after the last AX notification, 5 s cap, per-app FIFO, ranked speed ideas for next sprint).
+Merging a prototype item: squash `private/codex/<id>`, run `SLEIGHT_LIVE_DOM_TEST=1 node --test` on its test folder (real-page
+tests are sleight-arch's), then the bare `npm run check`, push, and `touch claims/<ID>/MERGED`. Keep about 12 lanes at most:
+16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
-Next steps: review and merge M1, M2 and T2R6. Then run the gate round with Haiku 5.5, both arms (`/tmp/fb-rounds`, the
-`hk2.sh` pattern: `rounds.sh --model haiku` maps to 5.5 after M1). Then the Opus head-to-head. Then W2R3, W3R4, W6 and the claim
-run. The owner owes two things. First, the login for the Claude in Chrome arm, after sleight-arch reinstalls that arm (its pinned claude is the
-stub): `env CLAUDE_CONFIG_DIR=~/.config/sleight-bench/world/arms/claude-in-chrome/claude-config <pinned claude> auth login`. Second, the
-Cua and Peekaboo permission clicks once W2R3 is merged.
-Helium was relaunched with FowlBrowser's extension at 19:12 EDT (owner's OK). The Chrome profile "sleight benchmark" holds Claude in
-Chrome, device id in `~/.config/sleight-bench/world/claude-in-chrome-device`.
+Next steps, in order:
+1. Merge reviewed BP2 and NP items as they pass, with BP2-1R2 before BP2-12.
+2. BP2-12 wires turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
+   the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
+3. AM1's live speed map in an away window.
+4. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
+5. The claim suite with the W8 runner. The Claude in Chrome arm is signed in (Max plan, 2026-10-13); Cua and Peekaboo need the
+   owner's permission clicks on first run.
+6. Release 1.3.0 on the owner's call once all of it is done (CHANGELOG draft in `ledger/claims/R2R/`), then the claim post
+   and the video.
 
-Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`): the source of open items. Its FINISH LINE header lists what is left.
-
-A7R's save split, live (21:15 UTC): 0/3 saved at first, because `settle-text-write.js` called `isNil()` on a CGEvent (a CF
-pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 ms (`bench/save-split-probe.mjs`). No background jobs of sleight-arch's are running. The lanes run on their own.
-
-Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
-(203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
-the engine's download prompt, which the hook accepts since `faeea9d`. sleight's arms may use `open_file` since `e815a8e`.
-
-The engine updated to 26.1007.30912 on 2026-10-12 (the 09:00 watch). Its API docs didn't change (empty diff).
-
-Waiting on the owner:
-- Bench leftovers in their iCloud TextEdit folder, "Delivery Note.txt" (65 bytes) and "Untitled 6.txt" (empty), from
-  2026-10-12 13:44 to 13:45 EDT. Theirs to trash.
-- The video waits until the claim work is done (owner, 2026-10-12).
-
-FowlBrowser on this Mac is a pinned clone at `~/Library/Caches/sleight-bench/fowlbrowser` (`8b68924`, our patch applied by
-`rounds.sh`), installed with `--lite` and no Claude config changes. Its extension is loaded unpacked in Chrome (Developer mode on) and in
-Helium by a launch flag that lasts until Helium restarts (relaunch: `open -g -a Helium --args --load-extension="$HOME/Library/Application Support/FowlBrowser/extension"`).
-
-**Next steps:**
-1. Keep the ledger moving: review and merge each done item, fix items for failed reviews.
-2. Haiku A/Bs: D5 `min`, then batch H once merged.
-3. Clean-room reads (LAWS): the FowlBrowser study is in batch H (H5 is new); a Sonnet subagent is reading Claude in Chrome, the
-   Codex extension and the engine's browser code. REA (owner's pick) waits on the owner's install.
-4. Once every open item is merged, one Opus head-to-head, published. Video and release follow on the owner's call.
+Waiting on the owner: the four Electron decisions; the Cua and Peekaboo clicks; an away window for steps 3 and 4; two iCloud
+TextEdit leftovers ("Delivery Note.txt", "Untitled 6.txt", 2026-10-12) and an unused keychain entry `Claude Code-credentials-…`
+from a mistyped arm path, both theirs to delete. API spend for October: $156.76 of $200. `/tmp/sleight-owner-away` is on at the clear: the owner is stepping away.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -111,12 +62,6 @@ HEAD:pane/auto-mode`, then `git -C ~/Projects/sleight merge --ff-only <branch>`.
 `HEAD:refs/heads/main` and the tag to `origin` with `SLEIGHT_RELEASE_PUSH=1` (owner's release call),
 then `gh release create` from the CHANGELOG section. Public CI is Linux, without `npm install`, on
 Claude Code 2.1.288: check new tests for macOS binaries, `/private/tmp` and dev-dependency imports first.
-
-**Measured 2026-10-11, owner away** (docs/benchmark.md, raw in `docs/benchmarks/2026-10-11-*`), against
-gpt-6.1-sol: clean-arms head-to-head 9/9 each, sleight 22.0 s and 7.11 turns a run against Codex 44.6 s
-and 8.67, 4.68 against 4.84 CPU s. Normal setup 9/9 each, 27.1 s against 36.2 s, 5.94 against 4.30 CPU
-s. Browser head-to-head (12 tasks, Safari and Helium) 24/24 each, 28.5 s against 41.8 s, faster on 11
-of 12. API spend for October: $7.84 of $200.
 
 The away-sitting tool reads its steps from the list below, pinned by hash in `bench/away-sitting.mjs`.
 Its first step (live checks with the owner present) is older than the Next list above.
@@ -155,6 +100,11 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 
 ## Machine state outside the repo
 
+- Remote debugging is on in the Chrome "sleight benchmark" profile and in Helium (`chrome://inspect/#remote-debugging`, turned on
+  by the owner 2026-10-13) for turbo's qualification. The owner turns it off on the same page.
+- The Claude in Chrome arm's pinned Claude Code 2.1.289 (`~/.config/sleight-bench/world/arms/claude-in-chrome/node_modules`) was
+  rebuilt with its install script approved (`npm approve-scripts @anthropic-ai/claude-code`, 2026-10-13). Its login is stored
+  in that arm's `claude-config` (Max plan).
 - `~/.codex/browser/config.toml` `[origins] allowed` holds `http://127.0.0.1:*` (owner's request, 2026-10-13), the engine's own
   store for "always" site approvals, read for every browser it drives. Backup: `config.toml.before-localhost-20261013T031052Z`
   beside it. Remove that line to undo.
