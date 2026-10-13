@@ -3,11 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 00:00 UTC)
+## Banner (2026-10-14 00:30 UTC)
 
 Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
 1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 3964 pass, 0 fail, 39 skipped, mod 33/33.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4062 pass, 0 fail, 41 skipped, mod 33/33.
 `~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
 
 The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
@@ -20,31 +20,36 @@ Engine-browser fixes (AS-3, AS-4, FM2, FM3, QT1) are parked: their checks are in
 
 Merged on 2026-10-13, all peer-reviewed by Codex lanes: AS-1R and AS-2R, FS2R, W8R2, FM1, TB1, M3R, T2R7, W3R5, R1, W4R6, AS-5,
 Q1, RS5-1R, RS6-1R, and the turbo and native prototypes under `bench/` (not wired into the plugin yet): BP2-1, BP2-2, BP2-3,
-BP2-5, BP2-6R3, BP2-7, BP2-9, BP2-10, NP-1, NP-2, NP-4R, NP-6R, NP-7. After the clear: AM1R (`bench/app-speed-map.mjs`, which times app reads without a model.
+BP2-4R4, BP2-5, BP2-6R3, BP2-7, BP2-9, BP2-10, BP2-11R, NP-1, NP-2, NP-4R, NP-5R2, NP-6R, NP-7. After the clear: AM1R (`bench/app-speed-map.mjs`, which times app reads without a model.
 Every app it names is on the LAWS allowlist, and account apps need `--owner-present`).
 
 Real-page tests: FowlBrowser's playwright-core 1.64 needs Chromium build 1248, which wasn't installed, so `SLEIGHT_LIVE_DOM_TEST=1`
 runs skipped or failed to launch before 2026-10-14 ("the installed playwright-core Chromium build is unavailable"). Installed on
 the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and 1 skips. Read the TAP skip reasons at every merge.
 
-Past the cap (owner, 2026-10-13 23:45 UTC): BP2-1R2 and BP2-4R3 were parked and block BP2-12. In BP2-1R2 the navigation fix holds, but the last gate
-misses an identity recheck after the final clock callback. In BP2-4R3 the cursor fix holds, but autofill tokens match case-sensitively. The
-owner allowed one more round each, BP2-1R3 and BP2-4R4, and pre-approved one round after that (BP2-1R4, BP2-4R5). After that they park.
+Past the cap (owner): BP2-4R4 passed and merged. BP2-1R3 failed, so codex-hdlaw builds BP2-1R4, its pre-approved last round.
+BP2-8R2 parked on two cleanup races, and the owner allowed one last round, BP2-8R3 (codex-hdlaz, 2026-10-14). BP2-12, the
+promotion plan, is dispatched (codex-hdlba). It moves no code, and its wiring items wait until BP2-1R4 and BP2-8R3 merge.
+NP-3R2 passed review but failed the merge check on a 5 ms real-time deadline under load, as did merged BP2-5's forms test. The
+test-only fixes NP-3R3 (DONE, awaiting review) and BP2-5T (claimed) come first. NP-3R2 merges with NP-3R3.
+
+Keychain prompts (owner's complaint, 2026-10-14): lanes on branches older than `scripts/claude-isolated.sh` ran bare `claude
+plugin validate`, which raised paired `/usr/bin/security` prompts. Lanes now start with a throwaway `CLAUDE_CONFIG_DIR`, and
+LEDGER.md and the lane prompt tell lanes to run every check that way. Lanes started before 00:15 UTC may still raise one until they exit, and
+Deny is safe for them.
 
 Lanes (headless `codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`; logs and prompts in `/private/tmp/claude-501/lanes/`;
-report only through `~/Projects/sleight-wt/ledger/claims/`): codex-hdlav (BP2-1R3) and codex-hdlaw (BP2-4R4) started 23:55 UTC;
-codex-hdlas reviews NP-5R, codex-hdlat reviews NP-3R2 and BP2-8R2. BP2-11R's claim was overwritten in a collision by codex-hdlar
-(OWNER-CORRECTION.md); its owner codex-hdlap exited with uncommitted work in `~/Projects/sleight-wt/bp2-11r`, and codex-hdlax
-took it over at 00:00 UTC. Waiting in `queue/next/`: BP2-12 (wires turbo into the plugin), NP-8, EP-1 to EP-7, the Q1, IN, AA1 and RS proposals.
-B1 and Q2-1 are plugin changes held until after the 1.3.0 freeze.
+report only through `~/Projects/sleight-wt/ledger/claims/`): codex-hdlaw, hdlax, hdlaz and hdlba at 00:30 UTC. Waiting in
+`queue/next/`: NP-8, EP-1 to EP-7 (after 1.3.0), the Q1, IN, AA1 and RS proposals. B1 and Q2-1 are plugin changes held until
+after the 1.3.0 freeze.
 
 Merging a prototype item: squash `private/codex/<id>`, run `SLEIGHT_LIVE_DOM_TEST=1 node --test` on its test files (real-page
 tests are sleight-arch's), then the bare `npm run check`, push, and `touch claims/<ID>/MERGED`. Keep about 12 lanes at most:
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge reviewed BP2 and NP items as they pass, with BP2-1R3 and BP2-4R4 before BP2-12. Reassign BP2-11R.
-2. BP2-12 wires turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
+1. Merge reviewed items as they pass: BP2-1R4 and BP2-8R3, the test fixes, then BP2-12's wiring items.
+2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. AM1's live speed map in an away window.
 4. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
