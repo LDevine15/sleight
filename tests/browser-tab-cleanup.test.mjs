@@ -150,21 +150,20 @@ test('deliverables and handoffs survive cleanup, including a newly bound handle'
   assert.deepEqual(f.closed, []);
 });
 
-test('the selected tab in each browser survives cleanup', async () => {
+test('unmarked session tabs close in each browser regardless of selection', async () => {
   const f = fixture();
   await f.run(tabCleanupCode('var a = await cua.createBrowserTab("one"); var b = await cua.createBrowserTab("two"); var c = await cua.createBrowserTab("two");'));
   f.selected.set('one', '1'); f.selected.set('two', '3');
   await f.run(cleanupTabsCode);
-  assert.deepEqual(f.closed, ['2']);
+  assert.deepEqual(f.closed, ['1', '2', '3']);
 });
 
-test('an unavailable selection check leaves every tab in that browser open', async () => {
+test('an unavailable selection check does not prevent owned-tab cleanup', async () => {
   const f = fixture();
   await f.run(tabCleanupCode('await cua.createBrowserTab("b");'));
   f.failSelection();
   await f.run(cleanupTabsCode);
-  assert.deepEqual(f.closed, []);
-  assert.match(f.notes.join('\n'), /kept tab 1.*selection.*could not/);
+  assert.deepEqual(f.closed, ['1']);
 });
 
 test('explicit closes and missing close methods do not prevent later cleanup', async () => {
@@ -183,12 +182,12 @@ test('setup is idempotent and does not access browsers before the caller does', 
   assert.deepEqual(f.closed, ['1', '2']);
 });
 
-test('a stalled selection is bounded and cannot close a tab after its deadline', async t => {
+test('a stalled form read is bounded and cannot close a tab after its deadline', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = fixture();
-  await f.run(tabCleanupCode('await cua.createBrowserTab("b");'));
+  await f.run(tabCleanupCode('globalThis.tab = await cua.createBrowserTab("b");'));
   let release;
-  f.cua.getBrowser = async () => ({ tabs: { selected: () => new Promise(resolve => { release = resolve; }) } });
+  f.context.tab.playwright.evaluate = () => new Promise(resolve => { release = resolve; });
   let finished = false;
   const pending = f.run(cleanupTabsCode).then(() => { finished = true; });
   await new Promise(resolve => setImmediate(resolve));
@@ -196,10 +195,10 @@ test('a stalled selection is bounded and cannot close a tab after its deadline',
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(finished, true, 'cleanup must return at its deadline');
   await pending;
-  release(undefined);
+  release({ loading: false, edited: false });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(f.closed, []);
-  f.cua.getBrowser = async () => ({ tabs: { list: async () => [...f.listed.values()], selected: async () => undefined } });
+  f.context.tab.playwright.evaluate = async () => ({ loading: false, edited: false });
   await f.run(cleanupTabsCode);
   assert.deepEqual(f.closed, ['1'], 'the next explicit cleanup retries deadline leftovers');
 });
@@ -338,5 +337,49 @@ for (const mode of ['Stop', 'endOpenTurn', 'shutdown']) {
         assert.match(JSON.stringify(replies.find(reply => reply.id === 2)), /kept tabs.*cleanup.*deadline/);
       }
     } finally { relay.dispose(); }
+  });
+}
+
+
+test('a finished session-created tab closes even when it is selected', async () => {
+  const f = fixture();
+  await f.run(tabCleanupCode('var made = await cua.createBrowserTab("b");'));
+  f.selected.set('b', '1');
+  await f.run(cleanupTabsCode);
+  assert.deepEqual(f.closed, ['1']);
+});
+
+test('session-owned cleanup uses supported identity reads without a selection API', async () => {
+  const f = fixture();
+  const browser = { browserId: 'b', tabs: { list: async () => [...f.listed.values()] } };
+  f.cua.getBrowser = async () => browser;
+  await f.run(tabCleanupCode('var made = await cua.createBrowserTab("b"); var user = await cua.getTab("user");'));
+  await f.run(cleanupTabsCode);
+  assert.deepEqual(f.closed, ['1']);
+});
+
+test('a handoff through browser.tabs.get preserves the session-created tab', async () => {
+  const f = fixture();
+  const browser = { browserId: 'b', tabs: {
+    list: async () => [...f.listed.values()], selected: async () => undefined,
+    new: async () => f.cua.createBrowserTab('b'), get: async id => ({ id, markHandoff: async () => {} }),
+  } };
+  f.cua.getBrowser = async () => browser;
+  await f.run(tabCleanupCode('var made = await cua.createBrowserTab("b");'));
+  await f.run(tabCleanupCode('var b = await cua.getBrowser({id:"b"}); await (await b.tabs.get("1")).markHandoff();'));
+  await f.run(cleanupTabsCode);
+  assert.deepEqual(f.closed, []);
+});
+
+for (const checked of [false, true]) {
+  test(`cleanup reads the checkbox default from the read-only DOM attributes: checked=${checked}`, async () => {
+    const f = fixture();
+    await f.run(tabCleanupCode('globalThis.tab = await cua.createBrowserTab("b");'));
+    const input = { tagName: 'INPUT', type: 'checkbox', value: 'on', defaultValue: 'on', checked,
+      hasAttribute: name => { assert.equal(name, 'checked'); return false; } };
+    f.context.document = { readyState: 'complete', querySelectorAll: () => [input] };
+    f.context.tab.playwright.evaluate = async fn => fn();
+    await f.run(cleanupTabsCode);
+    assert.deepEqual(f.closed, checked ? [] : ['1']);
   });
 }

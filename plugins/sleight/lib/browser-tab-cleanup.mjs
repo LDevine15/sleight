@@ -43,10 +43,20 @@ function installTabCleanup(cua) {
   if (create) cua.createBrowserTab = async (browser, ...args) => remember(browser, await create(browser, ...args), args[0]);
   if (getBrowser) cua.getBrowser = async (...args) => {
     const browser = await getBrowser(...args);
-    if (!browsers.has(browser) && typeof browser.tabs?.new === 'function') {
+    if (!browsers.has(browser) && browser.tabs) {
       browsers.add(browser);
-      const make = browser.tabs.new.bind(browser.tabs);
-      browser.tabs.new = async (...values) => remember(browser.browserId, await make(...values));
+      if (typeof browser.tabs.new === 'function') {
+        const make = browser.tabs.new.bind(browser.tabs);
+        browser.tabs.new = async (...values) => remember(browser.browserId, await make(...values));
+      }
+      if (typeof browser.tabs.get === 'function') {
+        const getTab = browser.tabs.get.bind(browser.tabs);
+        browser.tabs.get = async (...values) => {
+          const tab = await getTab(...values);
+          const matches = [...owned].filter(r => r.browser === browser.browserId && r.tab.id === tab.id);
+          return wrap(tab, matches.length === 1 ? matches[0] : undefined);
+        };
+      }
     }
     return browser;
   };
@@ -68,22 +78,17 @@ function installTabCleanup(cua) {
     };
     for (const record of [...owned]) {
       if (Date.now() >= deadline) break;
-      // Marks and user-selected tabs leave this turn's cleanup ownership permanently.
+      // Explicit handoffs and deliverables leave cleanup ownership permanently.
       if (record.keep) { owned.delete(record); continue; }
-      let unread = 'its browser selection could not be read';
+      let unread = 'its form state could not be read';
       try {
         const browser = await bounded(cua.getBrowser({ id: record.browser }));
-        if (typeof browser.tabs?.selected !== 'function') throw new Error('selection unavailable');
-        const selected = await bounded(browser.tabs.selected());
-        if (Date.now() >= deadline) break;
-        if (selected?.id === record.tab.id) { owned.delete(record); continue; }
-        unread = 'its form state could not be read';
         const state = await bounded(record.tab.playwright.evaluate(() => ({
           loading: document.readyState !== 'complete',
           edited: [...document.querySelectorAll('input, textarea, select')].some(el => {
             if (el.tagName === 'INPUT' && (el.type === 'range' || el.type === 'color')) return false;
             if (el.tagName !== 'SELECT') return el.value !== el.defaultValue ||
-              (el.tagName === 'INPUT' && el.checked !== el.defaultChecked);
+              (el.tagName === 'INPUT' && el.checked !== (el.defaultChecked ?? el.hasAttribute('checked')));
             const options = [...el.options];
             if (el.multiple) return options.some(option => option.selected !== option.defaultSelected);
             const marked = options.reduce((index, option, i) => option.defaultSelected ? i : index, -1);
