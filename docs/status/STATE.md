@@ -22,7 +22,8 @@ known-problems). Full check 2965 pass, 2 skipped, mod 33/33, exit 0. M3, W7 and 
 Astra (`astra-report.md`, branch `codex/astra-tab-queue` at 8f63d6e, 196 trials): at 13 concurrent sessions, browser selection
 took 2,974 ms median and 14 ms with discovery bound to the verified socket; the first empty session command took 4,932 ms and the
 next 2 ms. The owner lifted the freeze for AS-1 and AS-2 (discovery, warm-up priming). The gate round waits for them.
-Astra couldn't measure tab opens: the extension asks before opening 127.0.0.1, which the owner still has to allow. Then the gate round on Haiku 5.5.
+At the owner's request (03:10 UTC) sleight-arch added `http://127.0.0.1:*` to the engine's origin allowlist, so tab opens on
+local benchmark pages no longer ask, in Helium and the benchmark Chrome profile (probed in both). Then the gate round on Haiku 5.5.
 API spend for October is $151.00 of $200, in `~/Library/Logs/sleight/bench-api-spend.json`. Opus rounds don't count.
 
 Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):
@@ -120,9 +121,8 @@ Next, in order:
 4. If the gate is met, the full release pass and the release (ROADMAP 5b), including README's
    release-pass numbers, then update the owner's installed copy and confirm its `gitCommitSha`.
 
-**Waiting on the owner.** Allow `127.0.0.1` in the Codex extension's site settings in Helium and
-Chrome (their OK; sleight-arch couldn't: the engine's read of Helium timed out twice), then the 20
-extension ids run with `--surfaces browser,computer --extension-sites-allowed`. For the full battery
+**Waiting on the owner.** The 20 extension ids can run now with `--surfaces browser,computer --extension-sites-allowed`
+(127.0.0.1 is allowed since 2026-10-13). For the full battery
 they seed 5 self-messages (Slack, Discord, WhatsApp, Messages, Mail) and 5 app items (Music, Maps,
 Photos, Spotify, Zoom) and name local Notes, Reminders and Calendar containers. Leftovers for them:
 guest carts with test items in Safari on Target and Best Buy, one benchmark Helium tab on 127.0.0.1.
@@ -141,6 +141,9 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 
 ## Machine state outside the repo
 
+- `~/.codex/browser/config.toml` `[origins] allowed` holds `http://127.0.0.1:*` (owner's request, 2026-10-13), the engine's own
+  store for "always" site approvals, read for every browser it drives. Backup: `config.toml.before-localhost-20261013T031052Z`
+  beside it. Remove that line to undo.
 - Daily launchd job `com.landoclusters.sleight-watch` (9:00, `scripts/watch.sh`), daily since
   2026-10-10 on the owner's OK because a competitor hinted at an engine change; weekly with
   `npm run watch:install`. It saves the engine's API docs, without sleight's skill since 2026-10-10
