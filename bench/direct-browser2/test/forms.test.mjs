@@ -24,6 +24,27 @@ function harness(states, extra = {}) {
     waitForDependencies: async () => {}, ...extra };
   return { adapter, writes, calls, run: fields => fillForm(adapter, { operation: 'op1', identity, fields }) };
 }
+function manualClock() {
+  let time = 0, next = 0;
+  const timers = new Map();
+  return {
+    now: () => time,
+    setTimer: (fn, delay) => { const id = ++next; timers.set(id, { fn, at: time + delay }); return id; },
+    clearTimer: id => timers.delete(id),
+    pending: () => timers.size,
+    tick: ms => {
+      time += ms;
+      for (const [id, timer] of timers) if (timer.at <= time) { timers.delete(id); timer.fn(); }
+    },
+  };
+}
+async function reach(condition) {
+  for (let i = 0; i < 100; i++) {
+    if (condition()) return;
+    await Promise.resolve();
+  }
+  assert.fail('expected asynchronous fixture stage was not reached');
+}
 test('ordinary sequential fields verify and leave no implicit submit', async () => {
   const h = harness({ r1: field(), r2: field('checkbox', { ref: 'r2', value: false }) });
   const r = await h.run([{ ref: 'r1', value: 'Example' }, { ref: 'r2', value: true }]);
@@ -158,15 +179,29 @@ test('repeated names never substitute another observed ref',async()=>{
   const r=await h.run([{ref:'r2',value:'second'}]);assert.equal(r.completed,1);assert.equal(h.writes[0].node,13);
 });
 test('hung observation is bounded, with no later dispatch',async()=>{
-  const h=harness({r1:field()},{observe:async()=>new Promise(()=>{})});
-  const r=await fillForm(h.adapter,{operation:'timeout',identity,timeoutMs:5,fields:[{ref:'r1',value:'x'}]});
+  const clock = manualClock(); let observing = false;
+  const h=harness({r1:field()},{observe:async()=>{ observing = true; return new Promise(()=>{}); }});
+  const pending=fillForm(h.adapter,{operation:'timeout',identity,timeoutMs:5,fields:[{ref:'r1',value:'x'}]},clock);
+  await reach(() => observing);
+  assert.equal(clock.pending(), 1);
+  clock.tick(5);
+  const r=await pending;
   assert.equal(r.effect,'none');assert.equal(h.writes.length,0);
+  assert.equal(clock.pending(), 0);
 });
 test('dependency timeout retains verified prefix and untouched suffix',async()=>{
-  const h=harness({r1:field(),r2:field('text',{ref:'r2'})},{waitForDependencies:async()=>new Promise(()=>{})});
-  const r=await fillForm(h.adapter,{operation:'barrier',identity,timeoutMs:5,fields:[{ref:'r1',value:'x'},{ref:'r2',value:'y'}]});
+  const clock = manualClock(); let waiting = false;
+  const h=harness({r1:field(),r2:field('text',{ref:'r2'})},{waitForDependencies:async()=>{
+    waiting = true; return new Promise(()=>{});
+  }});
+  const pending=fillForm(h.adapter,{operation:'barrier',identity,timeoutMs:5,fields:[{ref:'r1',value:'x'},{ref:'r2',value:'y'}]},clock);
+  await reach(() => waiting);
+  assert.equal(clock.pending(), 1);
+  clock.tick(5);
+  const r=await pending;
   assert.equal(r.completed,1);assert.equal(r.fields[0].status,'verified');assert.equal(r.fields[1].status,'notAttempted');
   assert.equal(r.pending,'dependencies');
+  assert.equal(clock.pending(), 0);
 });
 test('missing trusted adapter cannot be replaced with model approved:true',async()=>{
   const r=await fillForm({approved:true},{operation:'fake',identity,fields:[{ref:'r1',value:'x'}]});
@@ -253,14 +288,18 @@ test('failed upload cleanup retains proof and supports cleanup-only recovery', a
 });
 
 test('cleanup timeout keeps its in-flight recovery fenced until completion', async () => {
-  let cleanups = 0, complete;
+  let cleanups = 0, complete; const clock = manualClock();
   const h = harness({ r1: field('file') }, {
     files: { unchanged: () => true, stage: () => ({ paths: ['/fixture/public.txt'], snapshot: [{ signature: '1:2:6' }],
       cleanup: () => { if (++cleanups === 1) throw null; return new Promise(resolve => { complete = resolve; }); } }) },
     dispatch: async (_, fence) => { await fence(); } });
   const result = await h.run([{ ref: 'r1', value: { fileCapability: {} } }]);
-  assert.equal((await retryFormCleanup(result.cleanupRecovery, 1)).cleaned, false);
-  assert.equal((await retryFormCleanup(result.cleanupRecovery, 1)).cleaned, false);
+  const pending = retryFormCleanup(result.cleanupRecovery, 1, clock);
+  await reach(() => complete !== undefined);
+  assert.equal(clock.pending(), 1);
+  clock.tick(1);
+  assert.equal((await pending).cleaned, false);
+  assert.equal((await retryFormCleanup(result.cleanupRecovery, 1, clock)).cleaned, false);
   assert.equal(cleanups, 2);
   complete(); await Promise.resolve(); await Promise.resolve();
   assert.equal((await retryFormCleanup(result.cleanupRecovery)).cleaned, true);

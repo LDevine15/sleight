@@ -18,7 +18,8 @@ function fail(reason) {
 
 // Trusted broker handle, kept in memory outside model serialization. Retrying
 // this handle performs only cleanup, never input or the rest of a form batch.
-export async function retryFormCleanup(handle, timeoutMs = 3000) {
+export async function retryFormCleanup(handle, timeoutMs = 3000,
+  { setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   const record = cleanupRecovery.get(handle);
   const pending = () => ({ cleaned: false, cleanupRequired: true });
   if (!record || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) return pending();
@@ -33,12 +34,12 @@ export async function retryFormCleanup(handle, timeoutMs = 3000) {
   let timer;
   try {
     await Promise.race([work, new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('cleanup deadline')), timeoutMs);
+      timer = setTimer(() => reject(new Error('cleanup deadline')), timeoutMs);
     })]);
     cleanupRecovery.delete(handle);
     return { cleaned: true, cleanupRequired: false };
   } catch { return pending(); }
-  finally { clearTimeout(timer); }
+  finally { clearTimer(timer); }
 }
 function sameIdentity(actual, expected) {
   return identityKeys.every(k => expected?.[k] !== undefined && actual?.[k] === expected[k]);
@@ -125,7 +126,8 @@ const safeReasons = new Set(['stale-ref', 'unsupported-origin', 'missing-node', 
   'number-step-mismatch', 'range-needs-qualified-strategy', 'file-capability-required', 'unsupported-field',
   'authority-required', 'field-changed', 'file-changed', 'adapter-missing']);
 
-export async function fillForm(adapter, request) {
+export async function fillForm(adapter, request,
+  { now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (!request || typeof request.operation !== 'string' || !Array.isArray(request.fields) ||
       request.fields.length > 100 || request.fields.some(f => typeof f?.ref !== 'string' || !/^r[\w-]{1,64}$/.test(f.ref)) ||
       new Set(request.fields.map(f => f.ref)).size !== request.fields.length)
@@ -136,15 +138,15 @@ export async function fillForm(adapter, request) {
   const identity = Object.freeze({ ...request.identity });
   const budget = request.timeoutMs ?? 3000;
   if (!Number.isInteger(budget) || budget < 1 || budget > 30_000) throw new Error('Invalid form deadline');
-  const deadline = Date.now() + budget;
+  const deadline = now() + budget;
   let finished = false;
   async function bounded(fn) {
     let timer;
     try {
       return await Promise.race([Promise.resolve().then(fn), new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('deadline')), Math.max(0, deadline - Date.now()));
+        timer = setTimer(() => reject(new Error('deadline')), Math.max(0, deadline - now()));
       })]);
-    } finally { clearTimeout(timer); }
+    } finally { clearTimer(timer); }
   }
   const receipt = { operation: request.operation, phase: 'prepared', effect: 'none', completed: 0,
     fields: fields.map(f => ({ ref: f.ref, status: 'notAttempted', reason: 'untouched-suffix' })) };
@@ -168,12 +170,12 @@ export async function fillForm(adapter, request) {
       }
       let fileSnapshot;
       const fence = async () => {
-        if (sent || finished || Date.now() >= deadline) fail('field-changed');
+        if (sent || finished || now() >= deadline) fail('field-changed');
         const fresh = await bounded(() => adapter.observe(f.ref, { identity }));
         usable(fresh, identity, f.ref);
         if (fingerprint(fresh) !== fingerprint(before)) fail('field-changed');
         if ((await bounded(() => adapter.authorize(intent)))?.verdict !== 'allow') fail('authority-required');
-        if (finished || Date.now() >= deadline) fail('field-changed');
+        if (finished || now() >= deadline) fail('field-changed');
         if (p.action === 'setFiles') {
           if (!adapter.files) fail('file-capability-required');
           upload = adapter.files.stage(p.value, intent);
