@@ -32,8 +32,9 @@ In flight at the clear (`~/Projects/sleight-wt/ledger/LEDGER.md`, claims marked 
 - Lanes building: M1 (Haiku 5.5 ids and token-based cost in `rounds.sh`), M2 (bound the FowlBrowser runner's inventory awaits: the
   19:25 hang), W2R3 (rebase W2R2 onto W4R2's world design), W3R4 (Browser Use temp-profile leak, `uv` test skip for CI).
 - Unclaimed: W6 (Claude's own computer use through an interactive harness).
-- Background work at the clear, none relaunched: the ledger monitor loop (restart it at boot, see memory `lane-ledger`), a REA study
-  of the engine's native helper (a Sonnet subagent; its result is lost, rerun it next sprint), and the review subagents above.
+- Background work at the clear: the ledger monitor loop stopped and wasn't relaunched. Restart it at boot (memory `lane-ledger`).
+  The REA study of the engine's native helper finished after the flush: notes in `~/Projects/sleight-wt/ledger/rea-helper-study.md`
+  (settle floor about 100 ms after the last AX notification, 5 s cap, per-app FIFO, ranked speed ideas for next sprint).
 
 Next steps: review and merge M1, M2 and T2R6. Then run the gate round with Haiku 5.5, both arms (`/tmp/fb-rounds`, the
 `hk2.sh` pattern: `rounds.sh --model haiku` maps to 5.5 after M1). Then the Opus head-to-head. Then W2R3, W3R4, W6 and the claim
