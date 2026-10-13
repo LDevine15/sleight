@@ -1,8 +1,10 @@
 # sleight against FowlBrowser on Haiku (2026-10-12)
 
 The setup is the one in [the 15:23 round](2026-10-12-fowlbrowser-h2h-2.md): FowlBrowser's runner and grader at `8b68924`
-with sleight's patch, its 13 tasks, each run in Chrome and Helium (normal and swapped order). Both arms ran Haiku 5.5 at
+with sleight's patch, its 13 tasks, each run in Chrome and Helium (normal and swapped order). Both arms ran Haiku 4.5 (see the correction below) at
 high effort on the API key, from 16:06 to 16:29 EDT, with sleight at `fd48fa1`. The owner was using the Mac during the round.
+
+Correction (20:10 EDT): the events record `claude-haiku-4-5-20251001` for every run. FowlBrowser's runner passes the `haiku` alias, which Claude Code 2.1.289 resolves to Haiku 4.5, not 5.5. Both arms ran the same model.
 
 | Arm | Done right | Time, 26 runs | Cost | Calls | Tool errors | Kernel resets |
 | --- | --- | --- | --- | --- | --- | --- |

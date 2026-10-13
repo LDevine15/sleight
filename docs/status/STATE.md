@@ -11,6 +11,8 @@ Pushed: `pane/auto-mode` at the commit holding this banner (private); last full 
 `~/Projects/sleight` is fast-forwarded to it.
 
 Measured today (all in `docs/benchmarks/2026-10-12-*`):
+- Every FowlBrowser-runner "Haiku" round today ran Haiku 4.5: the runner passes the `haiku` alias, which Claude Code 2.1.289
+  resolves to `claude-haiku-4-5-20251001` (found at 20:10 EDT, docs corrected). Both arms always ran the same model. G1 makes the gate run 5.5.
 - Opus, 15:23 EDT: sleight 26/26, 893 s, $8.39; FowlBrowser 26/26, 805 s, $5.55.
 - Haiku baseline, 16:06 EDT: FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145. FowlBrowser forwarded the injected mail twice.
 - D5 `min` A/B: 42/52 against 37/52 over two passes, within Haiku's spread. Stays opt-in.

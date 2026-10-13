@@ -1,17 +1,19 @@
 # sleight against FowlBrowser on Haiku, second round (2026-10-12)
 
 Same setup as [the 16:06 baseline](2026-10-12-haiku-baseline.md): FowlBrowser's runner and grader at `8b68924` with sleight's
-patch, its 13 tasks in Chrome and Helium (normal and swapped order), Haiku 5.5 at high effort on the API key. sleight ran at
+patch, its 13 tasks in Chrome and Helium (normal and swapped order), Haiku 4.5 (see the correction below) at high effort on the API key. sleight ran at
 `2ad83d1a`, which adds tonight's batch H merges (API forgiveness, page-write preflight, the no-output note, `sleight.reorder`,
 `sleight.pickFromList`, the tab stale guard, tab cleanup, read caps and the REPL warm-up). It doesn't have the later multi-select,
 custom-switch, `tab.ax` and startup-cache fixes. The owner was away. Lanes ran checks throughout (load 5 to 11).
+
+Correction (20:10 EDT): the events record `claude-haiku-4-5-20251001` for every run. FowlBrowser's runner passes the `haiku` alias, which Claude Code 2.1.289 resolves to Haiku 4.5, not 5.5. Both arms ran the same model.
 
 | Round | Arm | Done right | Time | Cost | Calls | Tool errors | Kernel resets |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 16:06 | sleight | 19/26 | 2,961 s | $4.11 | 417 | 145 | 7 |
 | 19:12 | sleight | 21/26 | 2,607 s | $3.73 | 391 | 107 | 2 |
 | 16:06 | FowlBrowser | 22/26 | 1,744 s | $3.29 | 445 | 22 | 0 |
-| 19:12 | FowlBrowser | 24/26 | 1,234 s | $2.09 | 283 | 8 | 0 |
+| 19:12 | FowlBrowser | 24/26 | 1,234 s | $2.08 | 283 | 8 | 0 |
 
 sleight improved on every column. FowlBrowser also got faster without any change to it, so part of each arm's change is
 run-to-run spread. FowlBrowser is still about twice as fast and makes about a tenth of the tool errors.
