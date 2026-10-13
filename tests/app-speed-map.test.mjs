@@ -1,0 +1,245 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { speedPlan, readMetrics, runSpeedMap, summarizeSpeedMap, speedMarkdown } from '../bench/app-speed-map.mjs';
+
+function closed(values) {
+  return new Proxy(values, { get(t, key) {
+    if (key === 'then') return undefined;
+    if (!(key in t) && typeof key !== 'symbol') throw Error('unsupported engine method: ' + key);
+    return t[key];
+  } });
+}
+function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false } = {}) {
+  const calls = [], outputs = []; let time = 0, active = 0, peak = 0;
+  return { calls, outputs, get peak() { return peak; }, held: () => held, now: () => time += 5,
+    async prepare(task, cohort) { calls.push(['prepare', task.id, cohort]); return { marker: 'AM1-fixture', url:'http://127.0.0.1:45123/fixture', browserId:'bench-id', profileName:'benchmark', requiredText: ownerPresent ? undefined : 'AM1-fixture' }; },
+    async openSession(task) {
+      active++; peak = Math.max(peak, active); calls.push(['session', task.id]);
+      const app = closed({ getAXState: async options => {
+        assert.deepEqual(JSON.parse(JSON.stringify(options)), { disableDiffing: true, emit: false });
+        if (badRead) throw Error('private account content must not be published');
+        return 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 static text AM1-fixture';
+      }, scroll: async (...args) => { calls.push(['scroll', ...args]); } });
+      const tab = closed({ getAXState:app.getAXState, cua:closed({scroll:async options=>calls.push(['browser-scroll',JSON.parse(JSON.stringify(options))])}), close:async()=>calls.push(['tab-close']) });
+      const ctx = { cua: closed({ getApp: async () => app, listBrowsers:async()=>[{id:'owner-id',name:'Helium',profileName:'owner'},{id:'bench-id',name:'Helium',profileName:'benchmark'}], createBrowserTab:async(id,url,options)=>{assert.equal(id,'bench-id');assert.equal(url,'http://127.0.0.1:45123/fixture');assert.equal(options.visible,false);return tab;} }), nodeRepl: { write: value => outputs.push(value) } };
+      return { async js(code) {
+        outputs.length = 0;
+        await runInNewContext('(async () => {' + code + (/var am1App =/.test(code) ? ';globalThis.am1App = am1App;' : /var am1Tab =/.test(code) ? ';globalThis.am1Tab = am1Tab;' : '') + '})()', ctx);
+        return { content: outputs.map(text => ({ type: 'text', text })) };
+      }, async close() { if(ctx.am1Tab) await ctx.am1Tab.close(); active--; calls.push(['session-close']); } };
+    },
+    async closeFixture() { calls.push(['fixture-close']); return { confirmed: !badCleanup, focusChanged: false }; },
+    async publish(report) { calls.push(['publish']); assert.doesNotMatch(JSON.stringify(report), /private account|AM1-fixture/); },
+  };
+}
+
+test('plan defaults to ten repetitions and four concurrent read-only sessions on one app', () => {
+  const plan = speedPlan();
+  assert.equal(plan.runs, 10); assert.equal(plan.concurrency, 4); assert.equal(plan.concurrentApp, 'textedit');
+  assert.equal(plan.apps.length, 10); assert.equal(plan.excluded.length, 5);
+  assert.deepEqual([...new Set(plan.apps.map(a => a.class))].sort(), ['Apple native', 'Chromium', 'Electron/CEF', 'Office']);
+  for (const id of ['notes', 'calendar']) assert.equal(plan.apps.find(a => a.id === id).fixture, 'local-container');
+});
+test('owner account apps are explicit, read-only and require owner-present', () => {
+  assert.throws(() => speedPlan({ ids: ['slack'] }), /owner-present/);
+  const p = speedPlan({ ids: ['slack', 'discord', 'mail'], ownerPresent: true, concurrentApp: 'slack' });
+  assert.ok(p.apps.every(a => a.ownerPresent && a.readOnly));
+  assert.throws(() => speedPlan({ runs: 0 }), /runs/);
+  assert.throws(() => speedPlan({ ids: ['unknown'] }), /unknown/);
+});
+test('CLI dry-run returns before importing live runtime, spawning children or writing files', () => {
+  const r = spawnSync(process.execPath, ['bench/app-speed-map.mjs', '--dry-run'], { encoding: 'utf8', cwd: new URL('..', import.meta.url) });
+  assert.equal(r.status, 0, r.stderr); assert.equal(JSON.parse(r.stdout).runs, 10);
+  const source = readFileSync(new URL('../bench/app-speed-map.mjs', import.meta.url), 'utf8');
+  assert.ok(source.indexOf('if (plan.dryRun)') < source.indexOf("import('./app-speed-map-live.mjs')"));
+});
+test('read metrics use supported engine methods and return only numbers, not tree content', async () => {
+  const app = closed({ getAXState: async () => 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t2 static text private account' });
+  const fn = readMetrics.toString();
+  const result = await runInNewContext('(' + fn + ')(app, {marker:"AM1-fixture"})', { app });
+  assert.equal(result.nodes, 3); assert.equal(result.scrollTarget, 1);
+  assert.equal(result.chars, 100); assert.doesNotMatch(JSON.stringify(result), /private|AM1-fixture/);
+});
+test('ambiguous scroll areas refuse input; a mismatched fixture refuses the read', async () => {
+  const app = closed({ getAXState: async () => 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t2 scroll area' });
+  assert.equal((await readMetrics(app, { marker: 'AM1-fixture' })).scrollTarget, null);
+  await assert.rejects(readMetrics(app, { marker: 'other-window' }), /FIXTURE_IDENTITY/);
+});
+test('sequential samples measure acquisition, first/warm reads, literal scroll and readback', async () => {
+  const r = runtime();
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 2 }), r);
+  const rows = report.rows.filter(row => row.mode === 'sequential');
+  assert.equal(rows.length, 2); assert.ok(rows.every(row => row.status === 'complete'));
+  for (const key of ['acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs']) assert.ok(rows.every(row => row[key] === 5));
+  assert.deepEqual(r.calls.filter(c => c[0] === 'scroll'), [['scroll', 1, 'down', 1], ['scroll', 1, 'down', 1]]);
+  assert.equal(r.calls.filter(c => c[0] === 'fixture-close').length, 4);
+});
+test('concurrent cohort shares one fixture, overlaps four clients, and sends no input', async () => {
+  const r = runtime();
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  const rows = report.rows.filter(row => row.mode === 'concurrent');
+  assert.equal(rows.length, 4); assert.equal(r.peak, 4);
+  assert.equal(r.calls.filter(c => c[0] === 'scroll').length, 1);
+  assert.ok(rows.every(row => row.actionMs === null && row.afterReadMs === null));
+});
+test('owner-present rows collect read timing and tree size without any action', async () => {
+  const r = runtime({ ownerPresent: true });
+  const report = await runSpeedMap(speedPlan({ ids: ['slack'], runs: 1, ownerPresent: true, concurrentApp: 'slack' }), r);
+  assert.ok(report.rows.every(row => row.actionMs === null && row.status === 'complete'));
+  assert.equal(r.calls.filter(c => c[0] === 'scroll').length, 0);
+});
+test('read failure remains a failure, is sanitized and still closes the owned resources', async () => {
+  const r = runtime({ badRead: true });
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  assert.ok(report.rows.every(row => row.status === 'failed'));
+  assert.doesNotMatch(JSON.stringify(report), /private account/);
+  assert.equal(r.calls.filter(c => c[0] === 'session-close').length, 5);
+  assert.equal(r.calls.filter(c => c[0] === 'fixture-close').length, 2);
+});
+test('hold and unconfirmed cleanup stop before the next fixture', async () => {
+  const held = runtime({ held: true });
+  await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), held), /HOLD/);
+  assert.deepEqual(held.calls, []);
+  const bad = runtime({ badCleanup: true });
+  await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 2 }), bad), /CLEANUP/);
+  assert.equal(bad.calls.filter(c => c[0] === 'prepare').length, 1);
+});
+test('aggregate uses nearest-rank p90, explicit coverage and excludes failed rows', () => {
+  const rows = Array.from({ length: 10 }, (_, i) => ({ app: 'fixture', class: 'Office', mode: 'sequential', status: 'complete', firstReadMs: i + 1, chars: 100, nodes: 5 }));
+  rows.push({ ...rows[0], status: 'failed', firstReadMs: 999 });
+  const summary = summarizeSpeedMap({ rows });
+  assert.equal(summary[0].completed, 10); assert.equal(summary[0].attempted, 11);
+  assert.deepEqual(summary[0].firstReadMs, { n: 10, median: 5.5, p90: 9 });
+  const md = speedMarkdown({ rows, summary });
+  assert.match(md, /10\/11/); assert.match(md, /Office/); assert.match(md, /median/); assert.match(md, /p90/);
+});
+
+test('live setup validates local receipts and uses the launcher with a clean environment', async () => {
+  const { validateSpeedReceipt, speedEnvironment, speedLauncher } = await import('../bench/app-speed-map-live.mjs');
+  const task = speedPlan().apps.find(a => a.id === 'notes');
+  assert.throws(() => validateSpeedReceipt(task), /LOCAL_CONTAINER/);
+  assert.throws(() => validateSpeedReceipt(task, { local: false, id: 'x', marker: 'local' }), /LOCAL_CONTAINER/);
+  assert.deepEqual(validateSpeedReceipt(task, { local: true, id: 'fixture-id', marker: 'AM1-local' }),
+    { containerId: 'fixture-id', containerMarker: 'AM1-local' });
+  const env = speedEnvironment({ PATH: '/bin', HOME: '/home/fixture', CLAUDECODE: 'private', CLAUDE_CONFIG_DIR: 'private', SECRET: 'private' });
+  assert.equal(env.PATH, '/bin'); assert.equal(env.CLAUDECODE, undefined); assert.equal(env.SECRET, undefined);
+  assert.equal(env.SLEIGHT_TRACE, ''); assert.equal(env.SLEIGHT_RECEIPTS, '0');
+  const descriptor = speedLauncher('/repo', env);
+  assert.equal(descriptor.command, '/repo/plugins/sleight/bin/sleight-mcp'); assert.equal(descriptor.inheritEnvironment, false);
+});
+test('session startup with unconfirmed cleanup stops the pass', async () => {
+  const r = runtime(); r.openSession = async () => { throw Error('startup failed'); };
+  await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r), /CLEANUP/);
+  assert.equal(r.calls.filter(c => c[0] === 'prepare').length, 1);
+});
+test('probe client opt-out drops inherited environment without altering its default', async () => {
+  const { probeEnvironment } = await import('../bench/double-keys-client.mjs');
+  assert.deepEqual(probeEnvironment({ env: { CHILD: '1' } }, { PARENT: '1' }), { PARENT: '1', CHILD: '1' });
+  assert.deepEqual(probeEnvironment({ inheritEnvironment: false, env: { CHILD: '1' } }, { CLAUDECODE: 'private' }), { CHILD: '1' });
+});
+
+test('uppercase exception text cannot become a published failure code', async () => {
+  const r = runtime(); r.prepare = async () => { const e = Error('PRIVATE_ACCOUNT_TOKEN'); e.cleanupConfirmed = true; throw e; };
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  assert.doesNotMatch(JSON.stringify(report), /PRIVATE_ACCOUNT_TOKEN/);
+  assert.ok(report.rows.every(row => row.failure === 'READ_FAILED'));
+});
+test('AM1 approval uses the requested app catalog without pretending the owner is present', () => {
+  const input = { mcp_server_name:'plugin:sleight:computer', message:'Allow Computer Use to use "Spotify"?', requested_schema:{properties:{choice:{enum:['session','always','decline']}},required:['choice']} };
+  const run = (message, present = '') => spawnSync(process.execPath, ['bench/approve.mjs'], {cwd:new URL('..',import.meta.url), input:JSON.stringify({...input,message}),encoding:'utf8',env:{...process.env,BENCH_SUITE:'app-speed-map',BENCH_OWNER_PRESENT:present,BENCH_HOOK_LOG:'',BENCH_ARM_SERVERS:'["plugin:sleight:computer"]'}});
+  const spotify = run(input.message); assert.equal(spotify.status,0,spotify.stderr);
+  assert.equal(JSON.parse(spotify.stdout).hookSpecificOutput.action,'accept');
+  assert.equal(JSON.parse(spotify.stdout).hookSpecificOutput.content.choice,'session');
+  assert.equal(JSON.parse(run('Allow Computer Use to use "Slack"?').stdout).hookSpecificOutput.action,'decline');
+  assert.equal(JSON.parse(run('Allow Computer Use to use "Slack"?','1').stdout).hookSpecificOutput.action,'accept');
+});
+
+test('browser receipt requires explicit benchmark-profile identity before setup', async () => {
+  const {validateSpeedReceipt} = await import('../bench/app-speed-map-live.mjs');
+  const task = speedPlan().apps.find(a=>a.id==='helium');
+  assert.throws(()=>validateSpeedReceipt(task),/BROWSER_PROFILE/);
+  assert.throws(()=>validateSpeedReceipt(task,{ownerApproved:false,browserId:'1',profileName:'bench'}),/BROWSER_PROFILE/);
+  assert.deepEqual(validateSpeedReceipt(task,{ownerApproved:true,browserId:'1',profileName:'bench'}),{browserId:'1',profileName:'bench'});
+});
+
+test('browser samples select only the receipted profile and close only created tab handles', async()=>{
+  const r=runtime();
+  const report=await runSpeedMap(speedPlan({ids:['helium'],runs:1}),r);
+  assert.ok(report.rows.every(row=>row.status==='complete'));
+  assert.deepEqual(r.calls.filter(c=>c[0]==='browser-scroll'),[['browser-scroll',{x:120,y:200,scrollX:0,scrollY:400}]]);
+  assert.equal(r.calls.filter(c=>c[0]==='tab-close').length,5);
+});
+
+test('owner account tables stay separate and cohort lifecycle wall time has its own coverage', ()=>{
+  const good={app:'fixture',class:'Office',mode:'concurrent',trial:1,status:'complete',cleanupConfirmed:true,ownerAccount:false};
+  const rows=[good,{...good,trial:2,status:'failed'},{...good,app:'mail',mode:'sequential',ownerAccount:true}];
+  const report={rows,cohorts:[{app:'fixture',trial:1,sessions:1,wallMs:42},{app:'fixture',trial:2,sessions:1,wallMs:999}]};
+  report.summary=summarizeSpeedMap(report);
+  assert.deepEqual(report.summary.find(r=>r.app==='fixture').cohortWallMs,{n:1,median:42,p90:42});
+  const md=speedMarkdown(report); assert.match(md,/Owner-present reads/); assert.match(md,/Cohort lifecycle/);
+  assert.ok(md.indexOf('| Office |')<md.indexOf('Owner-present reads'));
+});
+
+test('owner-present planning disables actions for every selected app', async () => {
+  const plan = speedPlan({ ownerPresent: true });
+  assert.ok(plan.apps.every(app => app.readOnly));
+  const r = runtime();
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1, ownerPresent: true }), r);
+  assert.ok(report.rows.every(row => row.status === 'complete' && row.actionMs === null));
+  assert.equal(r.calls.filter(call => call[0] === 'scroll').length, 0);
+});
+
+test('a unique text view or outline is a scroll fallback, while value controls are excluded', async () => {
+  for (const role of ['text area', 'outline', 'list']) {
+    const app = closed({ getAXState: async () => 'Window: "fixture", App: Fixture.\n0 standard window\n\t2 ' + role });
+    assert.equal((await readMetrics(app)).scrollTarget, 2);
+  }
+  const app = closed({ getAXState: async () => 'Window: "fixture", App: Fixture.\n0 standard window\n\t1 slider Value: 10\n\t2 stepper Value: 3' });
+  assert.equal((await readMetrics(app)).scrollTarget, null);
+  const ambiguous = closed({ getAXState: async () => 'Window: "fixture", App: Fixture.\n0 standard window\n\t2 text area\n\t3 outline' });
+  assert.equal((await readMetrics(ambiguous)).scrollTarget, null);
+});
+
+test('away local-container cells refuse before preparation or client access even with a sidebar marker', async () => {
+  for (const id of ['notes', 'calendar']) {
+    const r = runtime();
+    const report = await runSpeedMap(speedPlan({ ids: [id], runs: 1 }), r);
+    assert.ok(report.rows.length > 0);
+    assert.ok(report.rows.every(row => row.status === 'refused' && row.failure === 'LOCAL_CONTAINER_UNQUALIFIED'
+      && row.scope === 'unqualified-local-container' && row.cleanupConfirmed));
+    assert.ok(report.summary.every(row => row.completed === 0 && row.acquireMs.n === 0 && row.actionMs.n === 0));
+    assert.deepEqual(r.calls.filter(call => call[0] !== 'publish'), []);
+  }
+});
+
+test('local receipts retain exact IDs but never assert current container membership', async () => {
+  const { validateSpeedReceipt } = await import('../bench/app-speed-map-live.mjs');
+  for (const id of ['notes', 'calendar']) {
+    const task = speedPlan({ ids: [id] }).apps[0];
+    const a = validateSpeedReceipt(task, { local: true, id: 'local-A', marker: 'AM1-local' });
+    const b = validateSpeedReceipt(task, { local: true, id: 'local-B', marker: 'AM1-local' });
+    assert.notDeepEqual(a, b);
+    assert.equal(a.containerId, 'local-A');
+    assert.equal(a.requiredText, undefined);
+    for (const receipt of [{ local: true, marker: 'AM1-local' }, { local: true, id: '', marker: 'AM1-local' },
+      { local: false, id: 'cloud-A', marker: 'AM1-local' }, { local: true, id: 'local-A' }]) {
+      assert.throws(() => validateSpeedReceipt(task, receipt), /LOCAL_CONTAINER_RECEIPT_REQUIRED/);
+    }
+  }
+});
+
+test('owner-present local-container reads have an explicit unbound scope and cannot send input', async () => {
+  const plan = speedPlan({ ids: ['notes', 'calendar'], runs: 1, ownerPresent: true, concurrentApp: 'notes' });
+  // Even a modified row cannot turn the owner-present read-only plan into input.
+  plan.apps[0].readOnly = false;
+  const r = runtime({ ownerPresent: true });
+  const report = await runSpeedMap(plan, r);
+  assert.ok(report.rows.every(row => row.status === 'complete' && row.scope === 'owner-present-read-only'
+    && row.actionMs === null && row.afterReadMs === null && row.ownerAccount));
+  assert.equal(r.calls.filter(call => call[0] === 'scroll').length, 0);
+  assert.match(speedMarkdown(report), /Owner-present reads/);
+  assert.match(speedMarkdown(report), /owner-present-read-only/);
+});

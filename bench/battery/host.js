@@ -30,15 +30,27 @@ function run(argv) {
     return out;
   }
   function same(a, b) { return !!$.CFEqual(a, b); }
+  function markerMatches(w, doc) {
+    if (!request.windowMarker || doc.value || [0, -25205, -25212].indexOf(doc.code) < 0) return false;
+    var title = readAttribute(w, 'AXTitle');
+    return title.code === 0 && title.value && String(ObjC.unwrap(ObjC.castRefToObject(title.value))).indexOf(request.windowMarker) >= 0;
+  }
   var before = [];
   function retain(current) {
     current = current || windows();
+    if (request.windowMarker && current.filter(function(w) {
+      var doc = readAttribute(w, 'AXDocument');
+      return markerMatches(w, doc);
+    }).length > 1) {
+      emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['FIXTURE_WINDOW_AMBIGUOUS'], windows: [] } });
+      throw new Error('FIXTURE_WINDOW_AMBIGUOUS');
+    }
     var foreign = [];
     current.forEach(function(w, index) {
       if (before.some(function(old) { return same(w, old); }) || retained.some(function(old) { return same(w, old); })) return;
       var doc = readAttribute(w, 'AXDocument');
       var document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
-      var match = expected && doc.code === 0 && document === expected;
+      var match = expected && doc.code === 0 && document === expected || markerMatches(w, doc);
       // A launch does not grant ownership of restored documents.
       if (match || (launched && !ready && !expected)) retained.push(w);
       else if (launched && !ready && expected) foreign.push({ index: index, retained: false, expectedURL: expected,
@@ -87,7 +99,7 @@ function run(argv) {
       row.document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
       row.documentStatus = doc.code;
       row.documentReads.push({ document: row.document, status: doc.code });
-      row.matched = !!expected && doc.code === 0 && row.document === expected;
+      row.matched = !!expected && doc.code === 0 && row.document === expected || !!markerMatches(w, doc);
       var sheets = readAttribute(w, 'AXSheets');
       row.sheetStatus = sheets.code;
       row.sheet = !!sheets.value && ObjC.castRefToObject(sheets.value).count > 0;

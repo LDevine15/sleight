@@ -277,6 +277,7 @@ function cleanupHost(options = {}) {
         if (options.changedDocumentCloses && now >= 10000) present = false;
         out[0] = options.changedDocument && now >= 10000 ? options.changedDocument : options.document ?? expected; return 0;
       }
+      if (name === 'AXTitle') { out[0] = options.windowTitle ?? ''; return 0; }
       if (name === 'AXCloseButton' && !options.closeMissing) { out[0] = close; return 0; }
       if (name === 'AXSheets') { out[0] = list(options.sheet || (options.lateSheet && now >= 10000) ? [{}] : []); return 0; }
       return -25205;
@@ -300,7 +301,7 @@ function cleanupHost(options = {}) {
   const ObjC = { import() {}, unwrap: value => value?.value ?? value, deepUnwrap: value => value,
     castRefToObject: value => value?.rawApplication ?? (options.strictRefs && value === close ? { cast: close } : value) };
   const request = { bundle: 'org.example.fixture', targetURL: expected, control: 'ignored', fixturePath: path,
-    fixtureRoot: '/private/tmp/sleight-battery-unit/pair' };
+    fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }) };
   const source = readFileSync(new URL('../bench/battery/host.js', import.meta.url), 'utf8');
   runInNewContext(`${source}\nrun([request]);`, { $: dollar, ObjC, Ref: () => [], Date: { now: () => now }, request: JSON.stringify(request) });
   return { ...events.findLast(e => e.stage === 'cleanup'), events, presses, scripts, terminations, present };
@@ -595,4 +596,32 @@ test('a restored-window startup receipt reaches the published row before any dri
   assert.deepEqual(native.presses, []);
   assert.deepEqual(native.scripts, []);
   assert.equal(native.terminations, 0);
+});
+
+
+test('owned workspace marker can retain a fresh window without AXDocument, but not a different document', () => {
+  const accepted = cleanupHost({ documentMissing: true, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
+  assert.equal(accepted.confirmed, true); assert.equal(accepted.presses.length, 1);
+  const refused = cleanupHost({ document: 'file:///private/tmp/owner.txt', windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
+  assert.equal(refused.confirmed, false); assert.equal(refused.presses.length, 0);
+});
+test('duplicate workspace markers refuse before retaining or closing a window', () => {
+  const result = cleanupHost({ documentMissing: true, multipleWindows: true, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
+  assert.equal(result.confirmed, false); assert.equal(result.presses.length, 0); assert.equal(result.terminations, 0);
+});
+test('workspace and prepared-container prerequisites refuse before open', async t => {
+  const { startHost } = await load('runtime'); const dir = bank(t);
+  for (const [wasRunning, option] of [[true, 'requireStopped'], [false, 'requireRunning']]) {
+    const response = Promise.withResolvers(); let opened = false;
+    const runProcess = (executable, args, options) => {
+      if (executable === '/usr/bin/open') { opened = true; throw Error('must not open'); }
+      options.onStdout(JSON.stringify({stage:'armed', wasRunning}) + '\n{"stage":"ready"}\n');
+      options.signal.addEventListener('abort', () => response.resolve({exit:{code:0}, groupClean:true}));
+      return response.promise;
+    };
+    await assert.rejects(startHost({bundle:'org.example.fixture'}, {dir, [option]:true}, new AbortController().signal, runProcess), error => {
+      assert.equal(error.hostCleanup.confirmed, true); return /APP_ALREADY_RUNNING|FIXTURE_NOT_OPEN/.test(error.message);
+    });
+    assert.equal(opened, false);
+  }
 });

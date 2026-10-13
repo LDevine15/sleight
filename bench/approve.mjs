@@ -1,46 +1,44 @@
 #!/usr/bin/env node
-// Elicitation hook for benchmark runs only (bench/settings.json). Headless
-// `claude -p` can't show sleight's app approval prompts, so this accepts
-// them for the benchmark's own apps (BENCH_APPS in tasks.mjs), on either arm's
-// server, and nothing else. Any other request falls through to Claude Code's default.
+// Elicitation hook for benchmark runs only. The decision is also used by the model-free speed map.
 import { BENCH_APPS, REAL_APPS } from './tasks.mjs';
 import { WORLD_APPS } from './world/tasks.mjs';
-import { approvedApps } from './battery/tasks.mjs';
-import { writeFileSync } from 'node:fs';
+import { approvedApps, tasks as batteryTasks } from './battery/tasks.mjs';
+import { speedPlan } from './app-speed-map.mjs';
+import { appendFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-let input = '';
-for await (const chunk of process.stdin) input += chunk;
-const e = JSON.parse(input);
-// BENCH_HOOK_LOG=<file> records each request, for debugging an arm.
-if (process.env.BENCH_HOOK_LOG) {
-  (await import('node:fs')).appendFileSync(process.env.BENCH_HOOK_LOG, JSON.stringify(e) + '\n');
+export function benchmarkDecision(e, env = process.env) {
+  const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1] ??
+    /^Allow Claude to (?:drag|hover|open files) in (.+?)\? /.exec(e.message ?? '')?.[1] ??
+    /^Allow Claude to use (.+)'s menu bar item\?$/.exec(e.message ?? '')?.[1] ??
+    /^Allow Claude to select a window in (.+?)\? /.exec(e.message ?? '')?.[1];
+  const generic = Boolean(env.BENCH_ARM_SERVERS);
+  const servers = generic ? JSON.parse(env.BENCH_ARM_SERVERS) : ['plugin:sleight:computer', 'lcu'];
+  // iPhone Mirroring stays on the owner's real-suite, owner-present boundary.
+  const ownerPresentApps = ['iPhone Mirroring', 'com.apple.ScreenContinuity'];
+  const speedApps = env.BENCH_SUITE === 'app-speed-map' ? speedPlan({ ownerPresent: env.BENCH_OWNER_PRESENT === '1' }).apps
+    .flatMap(app => [app.app, app.bundle, ...(batteryTasks.find(task => task.bundle === app.bundle)?.aliases ?? [])]) : undefined;
+  const apps = speedApps ?? (env.BENCH_SUITE === 'world' ? WORLD_APPS : env.BENCH_SUITE === 'battery' ? approvedApps(env.BENCH_OWNER_PRESENT === '1') :
+    [...BENCH_APPS, ...(env.BENCH_SUITE === 'real' ? REAL_APPS : []),
+    ...(env.BENCH_SUITE === 'real' && env.BENCH_OWNER_PRESENT === '1' ? ownerPresentApps : [])]);
+  const choices = e.requested_schema?.properties?.choice?.enum ?? [];
+  const supported = (!choices.length || choices.includes('session') || choices.includes('once')) &&
+    (!generic || (e.requested_schema?.required ?? []).every(key => key === 'choice' && choices.length));
+  if (servers.includes(e.mcp_server_name) && apps.includes(app) && supported && e.mode !== 'url') {
+    const content = choices.length ? { choice: choices.includes('session') ? 'session' : 'once' } : {};
+    return { hookSpecificOutput: { hookEventName: 'Elicitation', action: 'accept', content } };
+  }
+  if (generic) return { hookSpecificOutput: { hookEventName: 'Elicitation', action: 'decline' } };
 }
-// The engine asks 'Allow Computer Use to use "App"?'; local pointer tools ask
-// 'Allow Claude to drag/hover in App? …'.
-const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1] ??
-  /^Allow Claude to (?:drag|hover|open files) in (.+?)\? /.exec(e.message ?? '')?.[1] ??
-  /^Allow Claude to use (.+)'s menu bar item\?$/.exec(e.message ?? '')?.[1] ??
-  /^Allow Claude to select a window in (.+?)\? /.exec(e.message ?? '')?.[1];
-// The computer-use server of each benchmark arm (see run.mjs).
-const generic = Boolean(process.env.BENCH_ARM_SERVERS);
-const SERVERS = generic ? JSON.parse(process.env.BENCH_ARM_SERVERS) : ['plugin:sleight:computer', 'lcu'];
-// iPhone Mirroring needs the owner's sign-in and focus, so it's approved only in a real-suite run
-// started with --owner-present (owner, 2026-10-11). Headless claude -p can't show a prompt.
-const OWNER_PRESENT_APPS = ['iPhone Mirroring', 'com.apple.ScreenContinuity'];
-const apps = process.env.BENCH_SUITE === 'world' ? WORLD_APPS : process.env.BENCH_SUITE === 'battery' ? approvedApps(process.env.BENCH_OWNER_PRESENT === '1') :
-  [...BENCH_APPS, ...(process.env.BENCH_SUITE === 'real' ? REAL_APPS : []),
-  ...(process.env.BENCH_SUITE === 'real' && process.env.BENCH_OWNER_PRESENT === '1' ? OWNER_PRESENT_APPS : [])];
-const choices = e.requested_schema?.properties?.choice?.enum ?? [];
-const supported = (!choices.length || choices.includes('session') || choices.includes('once')) &&
-  (!generic || (e.requested_schema?.required ?? []).every(key => key === 'choice' && choices.length));
-if (SERVERS.includes(e.mcp_server_name) && apps.includes(app) && supported && e.mode !== 'url') {
-  // LCU turns the approval into a form with a required `choice` (once,
-  // session, always, decline). Answer "session" where offered, as sleight
-  // scopes approvals, else "once". Never "always".
-  const content = choices.length ? { choice: choices.includes('session') ? 'session' : 'once' } : {};
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Elicitation', action: 'accept', content } }));
-} else if (generic) {
-  if (process.env.BENCH_APPROVAL_STOP) writeFileSync(process.env.BENCH_APPROVAL_STOP,
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  let input = '';
+  for await (const chunk of process.stdin) input += chunk;
+  const event = JSON.parse(input);
+  if (process.env.BENCH_HOOK_LOG) appendFileSync(process.env.BENCH_HOOK_LOG, JSON.stringify(event) + '\n');
+  const decision = benchmarkDecision(event);
+  if (decision?.hookSpecificOutput.action === 'decline' && process.env.BENCH_APPROVAL_STOP) writeFileSync(process.env.BENCH_APPROVAL_STOP,
     'unsupported approval: elicitation is outside the benchmark app allowlist or uses an unsupported form\n', { mode: 0o600 });
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Elicitation', action: 'decline' } }));
+  if (decision) process.stdout.write(JSON.stringify(decision));
 }

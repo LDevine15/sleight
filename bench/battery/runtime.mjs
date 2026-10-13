@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOwned } from '../preapproved-process.mjs';
 import { runDriver } from '../driver.mjs';
@@ -37,7 +37,7 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
   const command = value => writeFileSync(control, JSON.stringify({ command: value }), { mode: 0o600 });
   command('observe');
   const samples = [], stages = new Map(); let confirmed = false, buffer = '', details = { reasons: ['HOST_RECEIPT_MISSING'], windows: [] };
-  let startStage = 'armed', windowCount = null;
+  let startStage = 'armed', windowCount = null, preflightRefused = false;
   const stage = name => { if (!stages.has(name)) stages.set(name, Promise.withResolvers()); return stages.get(name); };
   const hostController = new AbortController();
   // setupFixture created this exact file in the run's private bank. Never grant a URL or another file.
@@ -45,7 +45,10 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
     ctx.dir.startsWith('/private/tmp/sleight-battery-') && dirname(ctx.path) === ctx.dir &&
     realpathSync(ctx.path) === ctx.path && realpathSync(ctx.dir) === ctx.dir ? ctx.path : undefined;
   const response = runProcess('/usr/bin/osascript', ['-l', 'JavaScript', hostScript, JSON.stringify({
-    bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined })], { timeoutMs: 650000, signal: hostController.signal,
+    bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined,
+    ...(ctx.windowMarker && ctx.target && ctx.dir.startsWith('/private/tmp/sleight-battery-') &&
+      dirname(ctx.target) === ctx.dir && realpathSync(ctx.target) === ctx.target && realpathSync(ctx.dir) === ctx.dir &&
+      ctx.windowMarker === basename(ctx.target) ? { windowMarker: ctx.windowMarker } : {}) })], { timeoutMs: 650000, signal: hostController.signal,
     onStdout: receive });
   function receive(data) {
     buffer += String(data);
@@ -53,7 +56,7 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
       const line = buffer.slice(0, n); buffer = buffer.slice(n + 1);
       let event; try { event = JSON.parse(line); } catch { continue; }
       if (Number.isInteger(event.windowCount)) windowCount = event.windowCount;
-      if (event.stage === 'sample') samples.push(event.sample);
+      if (event.stage === 'sample') { samples.push(event.sample); ctx.onSample?.(event.sample); }
       if (event.stage === 'cleanup') { confirmed = event.confirmed === true; details = scrub(event.details ?? { reasons: ['HOST_DETAILS_MISSING'], windows: [] }); }
       stage(event.stage).resolve(event);
     }
@@ -81,6 +84,9 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
   try {
     const armed = await wait('armed');
     signal.throwIfAborted();
+    if (ctx.requireStopped && armed.wasRunning || ctx.requireRunning && !armed.wasRunning) {
+      preflightRefused = true; throw new Error(armed.wasRunning ? 'APP_ALREADY_RUNNING' : 'FIXTURE_NOT_OPEN');
+    }
     if (ctx.target || !armed.wasRunning) {
       startStage = 'open';
       const opened = await runProcess('/usr/bin/open', ['-g', '-b', task.bundle, ...(ctx.target ? [ctx.target] : []),
@@ -97,7 +103,7 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
     if (!stages.has('cleanup')) details = { reasons: ['HOST_NOT_STARTED'], windows: [] };
     details.startError = scrub(error.hostStart ?? { message: String(error.message || error).slice(0, 500), stage: startStage, windowCount });
     if (!result?.groupClean || result.exit.code !== 0) details.reasons.push('HOST_PROCESS_UNCONFIRMED');
-    error.hostCleanup = { confirmed: false, details, samples };
+    error.hostCleanup = { confirmed: preflightRefused && result?.groupClean === true, details, samples };
     throw error;
   }
 }

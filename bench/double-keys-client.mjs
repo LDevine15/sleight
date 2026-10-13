@@ -37,6 +37,10 @@ export async function benchmarkApproval(params) {
   return answer?.action === 'accept' ? { action: 'accept', content: answer.content ?? {} } : { action: 'decline' };
 }
 
+export function probeEnvironment(server, inherited = process.env) {
+  return { ...(server.inheritEnvironment === false ? {} : inherited), ...server.env };
+}
+
 export async function probeClient(server, { relay: throughRelay, record, timeoutMs = 60000,
   relayOptions = {},
   approve = benchmarkApproval,
@@ -44,7 +48,7 @@ export async function probeClient(server, { relay: throughRelay, record, timeout
   const sessionId = randomUUID();
   let turnId = randomUUID();
   const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ...server.env } });
+    env: probeEnvironment(server) });
   let ended = false, closing;
   const stopped = new Promise(resolve => child.once('close', (code, signal) => {
     ended = true;
@@ -128,5 +132,5 @@ export async function probeClient(server, { relay: throughRelay, record, timeout
       clientInfo: { name: `double-keys-${label}`, version: '1' } });
     send({ method: 'notifications/initialized' });
     return { call, close, pid: child.pid };
-  } catch (error) { await close(); throw error; }
+  } catch (error) { await close(); error.cleanupConfirmed = true; throw error; }
 }
