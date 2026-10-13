@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scoped read fixture</title>
+<main aria-label="Fixture">
+  <section aria-label="Nested scope">
+    <button id="first">Duplicate</button><button id="second">Duplicate</button>
+    <label>Editable <input id="field" value="before"></label>
+    <label>Protected <input type="password" value="synthetic-secret"></label>
+    <ul><li id="recycled">Initial row</li></ul>
+  </section>
+  <div id="dense"></div>
+</main>
+<script>
+  const count = Math.min(3000, Number(new URL(location.href).searchParams.get('items')) || 0);
+  for (let i = 0; i < count; i++) {
+    const button = document.createElement('button'); button.textContent = `選択 ${i} 🧪`;
+    document.querySelector('#dense').append(button);
+  }
+</script>
