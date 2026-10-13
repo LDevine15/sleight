@@ -39,6 +39,8 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    The drag audit gets one more round, W4R6, past the three-review cap (owner, 2026-10-13), because the merged audit rejects four
    of sleight's own tool names. Claude's computer use runs Haiku 5.5 on the owner's login (owner, 2026-10-13).
    Claude quota is short (owner, 2026-10-13): the work is finishing these rows and the release, nothing else.
+   Codex quota reset the same night, so Codex lanes also take release prep and next-sprint items (merged after the 1.3.0 tag),
+   and a gpt-6-astra investigator studies the first-call tab queue. The owner doubts that only our own extension removes it.
 4. Release 1.3.0, the claim post, then the video.
 Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
 streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
