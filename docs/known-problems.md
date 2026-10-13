@@ -56,6 +56,10 @@ our own runs. Dates and engine versions are given where they matter.
   simulator (`docs/benchmarks/2026-10-08-await-split-view.json`). Moving a window into a full-screen
   Space needs private macOS APIs, so leave full screen while sleight drags.
 
+- The benchmark's drag audit (`bench/world/method-check.mjs`) credits a drag that follows a nested labeled block whose inner
+  `break` targets the outer label (`outer: { inner: { break outer; } await app.drag() }`), though that drag never runs. A peer
+  review found it on 2026-10-13. No recorded run wrote such code.
+
 ## Browsers
 
 On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s against FowlBrowser's 26/26

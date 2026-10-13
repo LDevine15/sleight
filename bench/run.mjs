@@ -222,6 +222,9 @@ if (privatePass && (selected.some(task => !task.privateMail) || armNames.some(na
 const auth = !preparationErrors.length && armNames.some(name => !ARMS[name].codex)
   ? benchAuth({ mode: option('auth', 'auto'), capUsd: Number(process.env.SLEIGHT_BENCH_API_CAP_USD || DEFAULT_CAP_USD) })
   : { mode: 'login', env: {}, unset: [] };
+if (suite === 'world' && !preparationErrors.length && armNames.some(name => !ARMS[name].codex) && auth.mode === 'login') {
+  throw new Error('world auth resolved to login: isolated Claude arm configs have no login; configure the benchmark API key');
+}
 if (auth.mode === 'api') console.log(`Claude arms run on the API key: $${auth.spent.toFixed(2)} of the $${auth.capUsd} monthly cap spent.`);
 // A pass started from a Claude session inherits that session's identity: CLAUDE_CODE_ENTRYPOINT,
 // the account's IDs and email, and the desktop app's messaging socket. Arms carried all of it, so

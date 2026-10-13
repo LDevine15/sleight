@@ -15,7 +15,11 @@ import { WORLD_APPS } from '../bench/world/tasks.mjs';
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth = { mode: 'login', env: {}, unset: [] }, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks } = {}) {
+async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks } = {}) {
+  if (!auth) {
+    auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
+    if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
+  }
   const calls = [], saved = [], envs = [], tailScopes = [], directories = [];
   const logs = [], driverOptions = [], codexRuns = [], files = new Map();
   let preflightDone = false, calculatorObservations = 0;
@@ -114,6 +118,15 @@ test('world refuses login auth before preparing an empty isolated config', async
   const result = await runner({ suite: 'world', extraArgs: ['--owner-away', '--auth', 'login'] });
   assert.match(result.error?.message ?? '', /world.*--auth login.*isolated/i);
   assert.equal(result.directories.length, 0);
+  assert.equal(result.envs.length, 0);
+});
+
+test('world refuses auto auth that resolves to login before server or monitor startup', async () => {
+  const result = await runner({ suite: 'world', extraArgs: ['--owner-away', '--auth', 'auto'],
+    auth: { mode: 'login', env: {}, unset: [] } });
+  assert.match(result.error?.message ?? '', /world.*auth.*login.*isolated/i);
+  assert.equal(result.calls.includes('lock'), false);
+  assert.equal(result.calls.includes('real run'), false);
   assert.equal(result.envs.length, 0);
 });
 

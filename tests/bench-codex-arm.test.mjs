@@ -35,7 +35,7 @@ test('runCodex reads the answer, counts engine calls and flags a shell', async (
 
 test('the Codex world drag audit reads completed MCP tool arguments', { skip: packageSkip('typescript') }, async () => {
   const fake = fakeCodex([{ type: 'item.completed', item: { type: 'mcp_tool_call', tool: 'js',
-    arguments: { code: 'await app.drag({})' }, result: { isError: false } } }]);
+    arguments: { code: 'let app = await cua.getApp("Fixture"); await app.drag({})' }, result: { isError: false } } }]);
   const path = process.env.PATH;
   process.env.PATH = `${fake.dir}:${path}`;
   try {

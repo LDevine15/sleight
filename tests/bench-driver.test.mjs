@@ -8,7 +8,7 @@ import { packageSkip } from './requirements.mjs';
 test('the opt-in world drag audit uses matched tool results and stays absent from other runs', { skip: packageSkip('typescript') }, async () => {
   const { runDriver } = await import('../bench/driver.mjs');
   const events = [
-    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'drag', name: 'js', input: { code: 'await app.drag({})' } }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'drag', name: 'js', input: { code: 'let app = await cua.getApp("Fixture"); await app.drag({})' } }] } },
     { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'drag', is_error: false }] } },
     { type: 'result', result: 'done' },
   ];
