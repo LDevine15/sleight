@@ -17,6 +17,10 @@ extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch)
 Grok stopped for the night (owner, 02:15 UTC). Every item is pool codex. Codex lanes review each other by the ledger's REVIEW
 RULES, with fix items in `queue/` and proposals in `queue/next/`. After the fix items come R1 and R2 (release prep), then Q1, Q2 and B1,
 which merge after the 1.3.0 tag. RS1 to RS8 study competitors' designs, and X1 measures merging key presses.
+Gate round on Haiku 5.5 (2026-10-13 12:08 UTC, `docs/benchmarks/2026-10-13-gate.md`): sleight 23/26, 1,206 s, 39 errors;
+FowlBrowser 26/26, 677 s, 9 errors. The gate (24/26) isn't met. All 3 misses were forms. sleight leaves 35 to 39 tabs open per
+order. Merged before it: AS-1R, AS-2R, FS2R, W8R2 (full check 3203 pass, 0 fail). FS2 stopped link-opened tabs taking focus;
+script popups (demoid, size-guide) still take it once each. API spend for October: $155.09 of $200.
 Merged at 05:00 UTC: M3R (with M1, M2, M3, Haiku 5.5 ids and token-based cost), full check 2987 pass, 0 fail, 2 skipped,
 mod 33/33. W7R2 and W6R passed review but conflict with merged work in 8 files: W8 rebases them. AS-1 failed review (AS-1R).
 Merged at 03:00 UTC after Codex peer reviews: T2R7, W3R5, R1, W4R6 (owner's call past the cap; the nested-label gap is in
