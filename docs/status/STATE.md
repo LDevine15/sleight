@@ -3,36 +3,46 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-12 23:15 UTC)
+## Banner (2026-10-13 00:17 UTC, flushed before the owner's clear)
 
-Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac (LAWS, ROADMAP 0b). Beat
-FowlBrowser on its own tasks on the way. A release and a video follow, the video after the claim work (owner).
-Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2563 pass, 1 skipped, mod 33/33, exit 0.
-`~/Projects/sleight` is fast-forwarded to it.
+Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac (LAWS, ROADMAP 0b).
+The finish line is locked in ROADMAP 0b (owner, 2026-10-12 20:00 EDT), four steps ending in release 1.3.0 and the video. Read it first.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2817 pass, 1 skipped, mod 33/33, exit 0.
+`~/Projects/sleight` is fast-forwarded to it. `git status` showed 0 modified tracked files at the flush, and there are 0 open PRs.
 
-Measured today (all in `docs/benchmarks/2026-10-12-*`):
-- Every FowlBrowser-runner "Haiku" round today ran Haiku 4.5: the runner passes the `haiku` alias, which Claude Code 2.1.289
-  resolves to `claude-haiku-4-5-20251001` (found at 20:10 EDT, docs corrected). Both arms always ran the same model. M1 makes the gate run 5.5.
-- Opus, 15:23 EDT: sleight 26/26, 893 s, $8.39; FowlBrowser 26/26, 805 s, $5.55.
-- Haiku baseline, 16:06 EDT: FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145. FowlBrowser forwarded the injected mail twice.
-- D5 `min` A/B: 42/52 against 37/52 over two passes, within Haiku's spread. Stays opt-in.
-- First-call queueing: a tab open takes 0.9 s alone, 3.2 s mean with 13 sessions started together (the Codex extension's queue).
-- REPL warm-up (S1R, merged, default on): an empty first call with 13 sessions at once went from 0.8 to 1.2 s to about 30 ms.
+Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):
+- Every FowlBrowser-runner "Haiku" round ran Haiku 4.5 (the `haiku` alias in Claude Code 2.1.289 resolves to
+  `claude-haiku-4-5-20251001`), both arms. The docs say so. M1 makes the gate run 5.5. The Opus rounds ran `claude-opus-5-5`.
+- Opus, 15:23 EDT: sleight 26/26, 893 s, $8.39. FowlBrowser 26/26, 805 s, $5.55.
+- Haiku 4.5, 16:06 EDT: FowlBrowser 22/26 with 22 tool errors, sleight 19/26 with 145.
+- Haiku 4.5, 19:12 EDT at `2ad83d1a` (`haiku-round-2.md`): sleight 21/26, 2,607 s, $3.73, 107 errors, 2 resets. FowlBrowser 24/26,
+  1,234 s, $2.08, 8 errors. The anatomy's unexplained time is the model writing (D7: 565 s against 119 s): next sprint's lever.
+- REPL warm-up (S1R): an empty first call with 13 sessions at once went from 0.8 to 1.2 s to about 30 ms.
+- D5 `min` docs: within noise, opt-in. First-call queueing: a tab open is 0.9 s alone, 3.2 s mean with 13 sessions.
 
-Merged since 21:00 UTC, each after a Sonnet-high review: D2, D5R, A9R3, A3R5, A10R, F4R3 (closes the session's agent tabs at
-turn end), E1 (error tally), H1R (forgives API guesses), H11 (catches page writes before the call), H14 (no-output note), A6R to A6R4
-(page read caps), S1R (warm-up), H6R2 (`sleight.reorder`), H4R2 (no false unawaited refusals), T1R3 (tab stale guard), T2R4
-(`sleight.pickFromList`), and A7R's live fix (3/3 saves). Parked: P1 (0.05 ms a call), T3, D4.
+Merged and pushed 2026-10-12 after Sonnet-high reviews: D2, D5R, A9R3, A3R5, A10R, F4R3, E1, H1R, H11, H14, A6R4, S1R, S1R3, S2R2,
+H6R2, H4R2, T1R3, T2R4, H2R4, H8R4, T4R4, H5R4, H15R2 (sleight-arch moved one regex into the injected function), H16, H17, N1R2, D6
+(sleight-arch guarded one assignment and named four functions in its notice), K12, W1R4, W3R3, W4R2, W5R3, A7R's live fix. Parked:
+A5/A2R, P1, T3, D4, H12. Stale: H9, H10, H13, T5, H4.
 
-The claim benchmark (batch W): survey in `~/Projects/sleight-wt/ledger/competitor-survey.md`. The arms built or in review are Playwright
-MCP, Chrome DevTools MCP, Claude in Chrome, Cua Driver, Peekaboo, Browser Use (W1 to W3, with fix items); Claude's own computer use
-needs an interactive harness (W6). The suite (W4R) and the report (W5R) are in fix rounds. Claude in Chrome runs in the account-less
-Chrome profile "sleight benchmark", device id in `~/.config/sleight-bench/world/claude-in-chrome-device`.
+In flight at the clear (`~/Projects/sleight-wt/ledger/LEDGER.md`, claims marked SEEN2 when sent to review):
+- Done, review results pending in this session (lost at the clear, so re-review): H3R3 (`codex/h3r3`), T2R5 (`grok/t2r5`), W4R4
+  (`codex/w4r4`). D7 is a finished report only (`codex/d7`).
+- Lanes building: M1 (Haiku 5.5 ids and token-based cost in `rounds.sh`), M2 (bound the FowlBrowser runner's inventory awaits: the
+  19:25 hang), W2R3 (rebase W2R2 onto W4R2's world design), W3R4 (Browser Use temp-profile leak, `uv` test skip for CI).
+- Unclaimed: W6 (Claude's own computer use through an interactive harness).
+- Background work at the clear, none relaunched: the ledger monitor loop (restart it at boot, see memory `lane-ledger`), a REA study
+  of the engine's native helper (a Sonnet subagent; its result is lost, rerun it next sprint), and the review subagents above.
 
-Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`):
-- Open (ledger is the source): W1R2, W2R, W3R2, W4R, W5R, W6; H2R3, H3R, H5R2, H8R3, H12R2, N1R2, S1R2, S2R2, T4R3, A5R4, A2R.
-  Stale: H9, H10, H13 (`tab.ax` is off for our browsers), T5, H4. Report-only: H7. Branches that failed review are
-  replaced by their R items. Parked: F3, K10.
+Next steps: re-review H3R3, T2R5 and W4R4, and merge them. Merge M1 and M2. Then run the gate round with Haiku 5.5, both arms (`/tmp/fb-rounds`, the
+`hk2.sh` pattern: `rounds.sh --model haiku` maps to 5.5 after M1). Then the Opus head-to-head. Then W2R3, W3R4, W6 and the claim
+run. The owner owes two things. First, the login for the Claude in Chrome arm, after sleight-arch reinstalls that arm (its pinned claude is the
+stub): `env CLAUDE_CONFIG_DIR=~/.config/sleight-bench/world/arms/claude-in-chrome/claude-config <pinned claude> auth login`. Second, the
+Cua and Peekaboo permission clicks once W2R3 is merged.
+Helium was relaunched with FowlBrowser's extension at 19:12 EDT (owner's OK). The Chrome profile "sleight benchmark" holds Claude in
+Chrome, device id in `~/.config/sleight-bench/world/claude-in-chrome-device`. API spend for October is $151.00 of $200.
+
+Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`): the source of open items. Its FINISH LINE header lists what is left.
 
 A7R's save split, live (21:15 UTC): 0/3 saved at first, because `settle-text-write.js` called `isNil()` on a CGEvent (a CF
 pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 ms (`bench/save-split-probe.mjs`). No background jobs of sleight-arch's are running. The lanes run on their own.

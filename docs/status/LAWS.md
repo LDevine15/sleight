@@ -164,6 +164,10 @@ belong in [STATE.md](STATE.md).
 - After `tab.click` on a download link, the engine doesn't show a download prompt, and that tab's later downloads stall. Downloads go
   through `locator.downloadMedia({})`, or `waitForEvent("download")` registered before the click.
 - The engine's browser extension opens tabs one at a time, so sessions that start together queue on their first tab.
+- The engine marks `Tab.ax` unsupported by default for extension, iab, cdp and mcpapps browsers, so hints never name `tab.ax`. Locator
+  action timeouts, `waitForLoadState`, locator `waitFor` and `waitForURL` are capped at 3 s and `pressSequentially` at 5 s. Only
+  `waitForTimeout` is uncapped. Locators have no `scrollIntoViewIfNeeded`, and `el.scrollIntoView` inside `evaluate` is allowed.
+  `tabs.content` is off for local browsers (read from the engine's `api.json` and `browser-service.mjs`, 2026-10-12).
 - The engine doesn't remember a session's approvals. In Codex the host does, so here the relay does. It
   does honor the "Always allow" list ChatGPT keeps (`ComputerUseAppApprovals.json`), with no prompt to
   sleight. That file is the user's ChatGPT setting: sleight reads it at most, and the owner decides any change.
@@ -182,6 +186,12 @@ belong in [STATE.md](STATE.md).
 - A lane finishes an item with a bare `npm run check` at exit 0, not only the test files it touched: two branches that
   passed their own files broke 7 tests elsewhere (2026-10-12).
 - A shell script a live run is executing is never edited in place: `sh` reads it as it goes.
+- A benchmark round records the model id each arm actually ran, checked in its events, because Claude Code aliases resolve per version (the
+  `haiku` alias in 2.1.289 ran Haiku 4.5 all day on 2026-10-12). Rounds pass explicit model ids.
+- Tests of page helpers use fakes that throw on any method the engine lacks, and helpers that `relay.mjs` injects as source keep every
+  name they use inside the injected function (module scope is lost). A page helper also gets a real-page test with Playwright where
+  available. Unit tests with invented engine methods passed three helpers that failed on the real page (2026-10-12).
+- A lane item that fails a third review is parked, not sent round again (owner, 2026-10-12).
 - Every lane branch (Codex, Grok or GLM) gets a code review by a Sonnet subagent at high effort before
   sleight-arch merges it, and a finding goes back as a fix item rather than being merged around
   (owner, 2026-10-12). Exploration and docs subagents run Sonnet at medium effort.
