@@ -41,6 +41,8 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    Claude quota is short (owner, 2026-10-13): the work is finishing these rows and the release, nothing else.
    Codex quota reset the same night, so Codex lanes also take release prep and next-sprint items (merged after the 1.3.0 tag),
    and a gpt-6-astra investigator studies the first-call tab queue. The owner doubts that only our own extension removes it.
+   The owner widened the design studies the same night to Claude in Chrome, LCU, Peekaboo, Cua Driver, Browser Use, Playwright MCP,
+   Chrome DevTools MCP and FowlBrowser's tool surface (ledger RS1 to RS7). MIT code may be adapted with credit. The rest give notes only.
 4. Release 1.3.0, the claim post, then the video.
 Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
 streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
