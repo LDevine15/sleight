@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { ChangeReview } from '../plugins/sleight/lib/change-review.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
 function fixture(t) {
   // The system temp folder, resolved (macOS links /var to /private/var), so CI on Linux works too.
@@ -127,7 +128,7 @@ test('a later copy and a newly captured document retain separate backups', t => 
   review.decide(late, 'undo'); assert.equal(readFileSync(path, 'utf8'), 'before\n');
 });
 
-test('macOS undo preserves extended attributes and detects outside metadata edits', { skip: process.platform !== 'darwin' }, t => {
+test('macOS undo preserves extended attributes and detects outside metadata edits', { skip: macCommandSkip('xattr') }, t => {
   const { review, path, doc } = fixture(t);
   const attr = 'com.sleight.review-test';
   execFileSync('/usr/bin/xattr', ['-w', attr, 'before', path]);

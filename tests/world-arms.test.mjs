@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { PRICES } from '../bench/api-auth.mjs';
+import { commandSkip } from './requirements.mjs';
 import {
   ARMS, CHROME, KEY_DIR, TELEMETRY, armCommand, hasLockfile, parseEvents, resultEvent, runArm,
 } from '../bench/world/arms/python.mjs';
@@ -14,8 +15,8 @@ import {
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LIB = join(ROOT, 'bench/world/arms/lib');
 const ARM = join(ROOT, 'bench/world/arms/browser-use');
-const uvCheck = spawnSync('uv', ['--version'], { encoding: 'utf8' });
-const noUv = uvCheck.error || uvCheck.status !== 0 ? 'uv is not installed' : false;
+const uvSkip = commandSkip('uv') || (spawnSync('uv', ['python', 'find', '--offline', '--no-python-downloads', '--no-cache', '3.12'],
+  { encoding: 'utf8' }).status !== 0 && 'needs an installed Python 3.12 for uv');
 
 function tmp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-world-arm-')));
@@ -68,7 +69,7 @@ test('browser-use live path uses ChatAnthropic, a throwaway profile, and kill()'
   assert.match(cli, /BROWSER_USE_CLOUD_SYNC/);
 });
 
-test('UsageSummary fakes of the 0.13.11 shape price from PRICES, not total_cost', { skip: noUv }, () => {
+test('UsageSummary fakes of the 0.13.11 shape price from PRICES, not total_cost', { skip: uvSkip }, () => {
   const prices = JSON.stringify(PRICES);
   const ran = py(`
 from usage import usage_from_browser_use, load_prices
@@ -98,7 +99,7 @@ print('ok')
   assert.match(ran.stdout, /ok/);
 });
 
-test('a run without done or with errors is an error and never stringifies the history', { skip: noUv }, () => {
+test('a run without done or with errors is an error and never stringifies the history', { skip: uvSkip }, () => {
   const ran = py(`
 import sys
 sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bench/world/arms/browser-use'))})
@@ -123,7 +124,7 @@ print('ok')
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 });
 
-test('llm_kwargs uses adaptive thinking and output_config effort', { skip: noUv }, () => {
+test('llm_kwargs uses adaptive thinking and output_config effort', { skip: uvSkip }, () => {
   const ran = py(`
 from cli import llm_kwargs
 class ChatAnthropic:
@@ -142,7 +143,7 @@ print('ok')
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 });
 
-test('fake model dry-run writes the FowlBrowser result event via uv 3.12', { skip: noUv }, t => {
+test('fake model dry-run writes the FowlBrowser result event via uv 3.12', { skip: uvSkip }, t => {
   const out = tmp(t);
   const plan = armCommand({
     arm: 'browser-use', out, prompt: 'open wikipedia and tell me when Ada Lovelace was born',
@@ -168,7 +169,7 @@ test('fake model dry-run writes the FowlBrowser result event via uv 3.12', { ski
   assert.equal(existsSync(join(out, 'events.jsonl')), false);
 });
 
-test('a missing key still writes events.jsonl with is_error', { skip: noUv }, t => {
+test('a missing key still writes events.jsonl with is_error', { skip: uvSkip }, t => {
   const out = tmp(t);
   const ran = py(`
 import os, sys, tempfile
@@ -193,7 +194,7 @@ test('rounds.sh stops at $190 and always uses the API key for browser-use', () =
   assert.match(sh, /api-auth\.mjs/);
 });
 
-test('high effort builds a ChatAnthropic request the SDK accepts', { skip: noUv }, t => {
+test('high effort builds a ChatAnthropic request the SDK accepts', { skip: uvSkip }, t => {
   const envDir = tmp(t);
   const hadVenv = existsSync(join(ARM, '.venv'));
   const ran = spawnSync('uv', [
@@ -230,7 +231,7 @@ print('ok')
   assert.equal(existsSync(join(ARM, '.venv')), hadVenv);
 });
 
-test('kill_browser retries kill and never calls stop', { skip: noUv }, () => {
+test('kill_browser retries kill and never calls stop', { skip: uvSkip }, () => {
   const ran = py(`
 import asyncio, sys
 sys.path.insert(0, ${JSON.stringify(ARM)})
@@ -254,7 +255,7 @@ print('ok')
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 });
 
-test('a Browser constructor error removes the throwaway profile and reports failure', { skip: noUv }, t => {
+test('a Browser constructor error removes the throwaway profile and reports failure', { skip: uvSkip }, t => {
   const out = tmp(t);
   const ran = py(`
 import asyncio, contextlib, io, json, shutil, sys, tempfile, types
@@ -300,7 +301,7 @@ print('ok')
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 });
 
-test('timeout and exception paths report spend from token_cost_service', { skip: noUv }, () => {
+test('timeout and exception paths report spend from token_cost_service', { skip: uvSkip }, () => {
   const ran = py(`
 import asyncio, sys
 sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bench/world/arms/browser-use'))})

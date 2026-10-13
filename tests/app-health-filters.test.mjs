@@ -2,8 +2,9 @@ import { test } from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { macCommandSkip } from './requirements.mjs';
 
-test('native filters preserve exact case-insensitive app matching and document-window exclusions', () => {
+test('native filters preserve exact case-insensitive app matching and document-window exclusions', { skip: macCommandSkip('osascript') }, () => {
   const result = execFileSync('/usr/bin/osascript', ['-l', 'JavaScript',
     fileURLToPath(new URL('../bench/footprint-parity-filters.js', import.meta.url)),
     fileURLToPath(new URL('../plugins/sleight/lib/app-health.js', import.meta.url))], { encoding: 'utf8', timeout: 10000 });

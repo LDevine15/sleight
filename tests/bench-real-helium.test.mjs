@@ -2,13 +2,14 @@ import test from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runOwned } from '../bench/preapproved-process.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
 for (const scenario of ['fixture-navigation', 'safari-address', 'safari-recovery', 'control-command', 'timeout-recovery', 'shop-smoke',
   'window-cleanup-tab', 'window-cleanup-sheet', 'window-cleanup-dialog', 'window-cleanup-refused',
   'window-cleanup-still-listed', 'window-cleanup-second', 'window-cleanup-system',
   'window-cleanup-cancel-refused', 'window-cleanup-dialog-changed', 'window-cleanup-late-sheet',
   'window-cleanup-late-second']) {
-  test(`browser regression: ${scenario}`, async () => {
+  test(`browser regression: ${scenario}`, { skip: macCommandSkip('xcrun') }, async () => {
     const { heliumHelper } = await import('../bench/real-helium.mjs');
     const command = await heliumHelper();
     const result = await runOwned(command, ['--self-test', scenario], { timeoutMs: 15000 });
@@ -18,7 +19,7 @@ for (const scenario of ['fixture-navigation', 'safari-address', 'safari-recovery
   });
 }
 
-test('Helium acquires creation events and recovers only a retained window reference', async () => {
+test('Helium acquires creation events and recovers only a retained window reference', { skip: macCommandSkip('xcrun') }, async () => {
   const { heliumHelper } = await import('../bench/real-helium.mjs');
   const command = await heliumHelper();
   const result = await runOwned(command, ['--self-test'], { timeoutMs: 15000 });

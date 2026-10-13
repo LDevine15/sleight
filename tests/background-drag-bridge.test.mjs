@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { macCommandSkip } from './requirements.mjs';
 
-test('production JXA builder round-trips private coordinates without posting or app access', { skip: process.platform !== 'darwin' }, () => {
+test('production JXA builder round-trips private coordinates without posting or app access', { skip: macCommandSkip('osascript') }, () => {
   const source = readFileSync('plugins/sleight/lib/drag.js', 'utf8') + `
     function run() {
       const main = { id: 1, bounds: { X: 100, Y: 100, Width: 600, Height: 400 } };

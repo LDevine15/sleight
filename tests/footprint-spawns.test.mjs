@@ -227,7 +227,9 @@ test('invalid dimensions fall back to the decoder instead of producing an invali
   await assert.rejects(pane(snapshotCode('Calculator', 46, 13, false), shot, () => { throw new Error('decoder fallback'); }), /decoder fallback/);
 });
 
-test('oversized desktop images still resize to fit the MCP frame budget', { skip: !existsSync('/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/pngjs') }, async () => {
+test('oversized desktop images still resize to fit the MCP frame budget', { skip:
+  !['pngjs/lib/png.js', 'jpeg-js/index.js'].every(file => existsSync('/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/' + file)) &&
+  'needs the bundled pngjs and jpeg-js codecs' }, async () => {
   const { default: { PNG } } = await loadCodec('pngjs');
   const data = Buffer.alloc(128 * 128 * 4);
   let seed = 12345;

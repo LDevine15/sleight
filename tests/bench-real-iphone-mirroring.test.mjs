@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { checkIosVersion } from '../bench/tasks-iphone.mjs';
 import { selectSuiteTasks } from '../bench/shop.mjs';
 import * as benchmark from '../bench/tasks.mjs';
+import { macCommandSkip } from './requirements.mjs';
+import { existsSync } from 'node:fs';
 
 const getTask = () => {
   const task = benchmark.getTasks('real').find(item => item.id === 'iphone-mirroring-settings');
@@ -42,7 +44,8 @@ test('setup refuses without --owner-present and does not open the app', async ()
     error.noMutation === true && /owner-present/.test(error.message));
 });
 
-test('task is read-only Settings > General > About, with the system bundle ID, and is not allowlisted', () => {
+test('task is read-only Settings > General > About, with the system bundle ID, and is not allowlisted',
+  { skip: macCommandSkip('plutil') || (!existsSync('/System/Applications/iPhone Mirroring.app/Contents/Info.plist') && 'iPhone Mirroring is not installed') }, () => {
   const task = getTask();
   const bundle = execFileSync('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw',
     '/System/Applications/iPhone Mirroring.app/Contents/Info.plist'], { encoding: 'utf8' }).trim();

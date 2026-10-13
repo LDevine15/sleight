@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { packageSkip } from './requirements.mjs';
 
 // A stand-in `codex` on PATH that prints `codex exec --json` events, then waits with a child of its own.
 function fakeCodex(events, { hang = false } = {}) {
@@ -32,7 +33,7 @@ test('runCodex reads the answer, counts engine calls and flags a shell', async (
   } finally { process.env.PATH = path; fake.done(); }
 });
 
-test('the Codex world drag audit reads completed MCP tool arguments', async () => {
+test('the Codex world drag audit reads completed MCP tool arguments', { skip: packageSkip('typescript') }, async () => {
   const fake = fakeCodex([{ type: 'item.completed', item: { type: 'mcp_tool_call', tool: 'js',
     arguments: { code: 'await app.drag({})' }, result: { isError: false } } }]);
   const path = process.env.PATH;

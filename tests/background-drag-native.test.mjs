@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { macCommandSkip } from './requirements.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { swiftModuleCache } from '../bench/swift-cache.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
-test('native prototype compiles and validates diagnostic requests without app access', { skip: process.platform !== 'darwin' }, t => {
+test('native prototype compiles and validates diagnostic requests without app access', { skip: macCommandSkip('swiftc') }, t => {
   const bank = trackTemp(mkdtempSync('/private/tmp/sleight-drag-native-test-'));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   const executable = join(bank, 'drag');

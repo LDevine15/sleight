@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { runOwned } from '../bench/preapproved-process.mjs';
 import { fileURLToPath } from 'node:url';
+import { macCommandSkip } from './requirements.mjs';
 
 function nativeSource() {
   const sandbox = { ObjC: { import() {}, unwrap: value => value } };
@@ -1147,7 +1148,7 @@ test('native Office setup waits in both running cases and retains a failed PID w
 });
 
 test('native JXA quit identity unwraps a bridged bundle string without accessing an app',
-  { skip: process.platform !== 'darwin' }, async () => {
+  { skip: macCommandSkip('osascript') }, async () => {
     const result = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript',
       fileURLToPath(new URL('../bench/real-fixture.js', import.meta.url)), '{"mode":"self-test"}'], { timeoutMs: 15000 });
     assert.equal(result.groupClean, true);

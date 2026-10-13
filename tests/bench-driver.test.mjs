@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { packageSkip } from './requirements.mjs';
 
-test('the opt-in world drag audit uses matched tool results and stays absent from other runs', async () => {
+test('the opt-in world drag audit uses matched tool results and stays absent from other runs', { skip: packageSkip('typescript') }, async () => {
   const { runDriver } = await import('../bench/driver.mjs');
   const events = [
     { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'drag', name: 'js', input: { code: 'await app.drag({})' } }] } },

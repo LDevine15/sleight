@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { macCommandSkip } from './requirements.mjs';
 import vm from 'node:vm';
 
 const source = readFileSync(new URL('../plugins/sleight/lib/clipboard.js', import.meta.url), 'utf8');
@@ -107,7 +108,7 @@ test('a requested representation that reads back changed or missing still fails 
       error => /verification/.test(error.message) && error.clipboardMutation === true && error.clipboardCount === 21);
   }
 });
-test('a private AppKit pasteboard takes the recorded staged RTF, with no clipboard or app access', { skip: process.platform !== 'darwin' }, () => {
+test('a private AppKit pasteboard takes the recorded staged RTF, with no clipboard or app access', { skip: macCommandSkip('osascript') }, () => {
   const h = fixture();
   const code = `ObjC.import('AppKit'); const LIMIT = 64 * 1024 * 1024;
     ${h.context.read.toString()}

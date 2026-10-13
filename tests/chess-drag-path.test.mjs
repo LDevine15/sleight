@@ -5,8 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { swiftModuleCache } from '../bench/swift-cache.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
-test('native Chess fixture accepts the owned private temporary path before Foundation normalizes it', { skip: process.platform !== 'darwin' }, () => {
+test('native Chess fixture accepts the owned private temporary path before Foundation normalizes it', { skip: macCommandSkip('swiftc') }, () => {
   const dir = trackTemp(mkdtempSync('/private/tmp/sleight-chess-path-test-'));
   try {
     const helper = join(dir, 'fixture');

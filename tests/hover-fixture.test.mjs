@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { macCommandSkip } from './requirements.mjs';
 
 test('hover fixture refuses other apps, unknown operations and unnamed Chess windows before access',
-  { skip: process.platform !== 'darwin' }, () => {
+  { skip: macCommandSkip('swiftc') }, () => {
     const build = spawnSync(process.execPath, ['bench/hover-build.mjs'], { encoding: 'utf8', timeout: 60000 });
     assert.equal(build.status, 0, build.stderr);
     for (const request of [{ app: 'Mail', op: 'prepare' }, { app: 'TextEdit', op: 'prepare' },

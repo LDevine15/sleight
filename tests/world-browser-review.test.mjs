@@ -6,6 +6,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+const cacheSkip = !existsSync(join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/.git')) && 'pinned FowlBrowser cache is absent';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const task = { name: 'fixture', browser: 'chrome', prompt: 'Read the value at http://127.0.0.1:4811/t/fixture/', result: 'the value' };
@@ -71,7 +72,7 @@ test('world configuration is identical for legacy arms and discards host Claude 
   }
 });
 
-test('world dry-run gives every Claude arm the same prefix, isolation, version and settings source', async (t) => {
+test('world dry-run gives every Claude arm the same prefix, isolation, version and settings source', { skip: cacheSkip }, async (t) => {
   const { dir, file } = runner(t);
   const tasks = join(dir, 'tasks.json');
   const entry = join(dir, 'codex-entry.json');
@@ -99,7 +100,7 @@ test('world dry-run gives every Claude arm the same prefix, isolation, version a
   assert.equal(existsSync(join(dir, 'never')), false);
 });
 
-test('world executable preflight checks every selected arm before server and monitor startup', async t => {
+test('world executable preflight checks every selected arm before server and monitor startup', { skip: cacheSkip }, async t => {
   const {dir,file}=runner(t), previous=process.env.SLEIGHT_REPO; process.env.SLEIGHT_REPO=root;
   t.after(()=>{if(previous===undefined) delete process.env.SLEIGHT_REPO; else process.env.SLEIGHT_REPO=previous;});
   const mod=await import(pathToFileURL(file)); const calls=[];
@@ -126,7 +127,7 @@ test('all world surfaces use the same eager tool-loading mode despite the host s
   }
 });
 
-test('unobservable browser checks report not measured and do not alter site outcomes', async (t) => {
+test('unobservable browser checks report not measured and do not alter site outcomes', { skip: cacheSkip }, async (t) => {
   const { file } = runner(t);
   const mod = await import(pathToFileURL(file));
   for (const surface of ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'browser-use']) {
@@ -143,7 +144,7 @@ test('unobservable browser checks report not measured and do not alter site outc
   assert.equal(mod.observationGrade('sleight', () => ({ ok: false, cell: 'FAIL', problems: ['actual'] })).ok, false);
 });
 
-test('unsupported task pairs are written before any remote or browser connection', (t) => {
+test('unsupported task pairs are written before any remote or browser connection', { skip: cacheSkip }, (t) => {
   const { dir, file } = runner(t);
   const tasks = join(dir, 'tasks.json');
   writeFileSync(tasks, JSON.stringify([{ ...task, surface: 'claude-cu' }, { ...task, name: 'native', browser: 'native', surface: 'playwright-mcp' }]));
@@ -162,7 +163,7 @@ test('unsupported task pairs are written before any remote or browser connection
   assert.equal(existsSync(join(out, 'monitor.jsonl')), false);
 });
 
-test('agent timeout collects its whole process group and stops signaling after collection', async (t) => {
+test('agent timeout collects its whole process group and stops signaling after collection', { skip: cacheSkip }, async (t) => {
   const { EventEmitter } = await import('node:events');
   const { file } = runner(t);
   const { startAgent } = await import(pathToFileURL(file));
@@ -199,7 +200,7 @@ test('Chrome profile lookup takes only the exact benchmark name and refuses ambi
   assert.throws(() => benchmarkProfile(file), /folder/);
 });
 
-test('Chrome world setup preserves device selection, hooks and --chrome', async (t) => {
+test('Chrome world setup preserves device selection, hooks and --chrome', { skip: cacheSkip }, async (t) => {
   const { dir, file } = runner(t);
   const previous = process.env.SLEIGHT_REPO; process.env.SLEIGHT_REPO = root;
   t.after(() => { if (previous === undefined) delete process.env.SLEIGHT_REPO; else process.env.SLEIGHT_REPO = previous; });
