@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=4 tests/*.test.mjs",
+    "test": "node --test --test-concurrency=4 tests/*.test.mjs bench/direct-browser2/test/*.test.mjs bench/native-path/test/*.test.mjs",
     "test:mod": "scripts/claude-isolated.sh plugin test plugins/sleight",
     "validate": "scripts/claude-isolated.sh plugin validate . && scripts/claude-isolated.sh plugin validate plugins/sleight",
     "typecheck": "scripts/typecheck.sh",
