@@ -37,6 +37,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
 2. The FowlBrowser gate: one Haiku round (sleight at least FowlBrowser's 24/26 on tasks), then one Opus head-to-head.
 3. The Mac claim: W1R4, W2R2, W3R3, W4R4, W5R2, W6, then one full suite run with every arm on Haiku, published.
 4. Release 1.3.0, the claim post, then the video.
+Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
+streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
+small tool arguments. Less code per action (higher-level helpers, a small fixed set of verbs) is the lever, to measure first.
 
 The owner's long-term goal (2026-10-12): the world's fastest computer use plugin, chasing every lever
 down to milliseconds over months. The method: `bench/fowl/anatomy.mjs` splits every round into time
