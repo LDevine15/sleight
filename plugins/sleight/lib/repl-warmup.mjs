@@ -1,10 +1,51 @@
 import { readCode } from './document-scope.mjs';
+import { selectedBrowserCode } from './browser-discovery.mjs';
 
-export const replSetupCode = () => readCode('void 0;', { acknowledge: true });
+export function replSetupCode({ browserChoice, scope, token = scope } = {}) {
+  const setup = readCode('void 0;', { acknowledge: true });
+  if (!browserChoice) return setup;
+  const query = JSON.stringify({ extensionInstanceId: browserChoice.extensionInstanceId });
+  return setup + '\n' + selectedBrowserCode(`{
+    const prepared = { key: ${JSON.stringify(JSON.stringify([browserChoice, scope]))}, token: ${JSON.stringify(token)} };
+    globalThis.__sleightBrowserReadiness = prepared;
+    let record;
+    try {
+      const browser = await cua.getBrowser(${query});
+      record = globalThis.__sleightSelectedBrowser;
+      if (record?.key !== prepared.key || record.browser !== browser) throw new Error('Browser readiness identity changed.');
+      delete globalThis.__sleightSelectedBrowser;
+      const tabs = await browser.tabs.list();
+      if (!Array.isArray(tabs) || tabs.length) throw new Error('Browser readiness requires an empty session.');
+      const choice = ${JSON.stringify(browserChoice)};
+      const rows = (await cua.listBrowsers({ emit: false })).filter(row => row.type === 'extension' &&
+        row.metadata?.extensionInstanceId === choice.extensionInstanceId && (!choice.profileName || row.profileName === choice.profileName));
+      if (rows.length !== 1 || rows[0].id !== browser.browserId) throw new Error('Browser readiness identity changed.');
+      if (!prepared.cancelled) prepared.record = record;
+    } catch (error) {
+      if (globalThis.__sleightSelectedBrowser === record) delete globalThis.__sleightSelectedBrowser;
+      prepared.cancelled = true;
+      throw error;
+    }
+  }`, browserChoice, scope);
+}
+
+export function browserWarmupUseCode(code, { browserChoice, scope, token = scope, confirmed } = {}) {
+  if (!browserChoice) return code;
+  return `{
+    const prepared = globalThis.__sleightBrowserReadiness;
+    if (prepared) {
+      prepared.cancelled = true;
+      delete globalThis.__sleightBrowserReadiness;
+      if (${!!confirmed} && prepared.token === ${JSON.stringify(token)} &&
+          prepared.key === ${JSON.stringify(JSON.stringify([browserChoice, scope]))} && prepared.record &&
+          !globalThis.__sleightSelectedBrowser) globalThis.__sleightSelectedBrowser = prepared.record;
+    }
+  }\n` + code;
+}
 
 export class ReplWarmup {
-  constructor({ enabled, request, resume, refuse, abort }) {
-    Object.assign(this, { request, resume, refuse, abort });
+  constructor({ enabled, request, resume, refuse, abort, setup = replSetupCode }) {
+    Object.assign(this, { request, resume, refuse, abort, setup });
     this.state = enabled ? 'cold' : 'off';
     this.waiting = [];
     this.docs = [];
@@ -33,7 +74,7 @@ export class ReplWarmup {
   start() {
     if (this.state !== 'cold' || !this.ready || !this.notified) return;
     this.state = 'warming';
-    try { Promise.resolve(this.request(replSetupCode())).then(reply => this.finish(reply), () => this.finish({})); }
+    try { Promise.resolve(this.request(this.setup())).then(reply => this.finish(reply), () => this.finish({})); }
     catch { this.finish({}); }
   }
 

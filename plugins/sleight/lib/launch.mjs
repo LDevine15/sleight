@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { discoverExtensions } from './browser-discovery.mjs';
+import { discoverExtensions, createBrowserSelection } from './browser-discovery.mjs';
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
@@ -640,9 +640,13 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let surfaceCache, child, childClosed, firstCallObserver, relay;
   let stoppingForReceipt = false;
   let terminating = false;
-  function startEngine() {
+  const browserSelection = createBrowserSelection();
+  let activeServer = s;
+  async function startEngine(isCurrent = () => true) {
     surfaceCache = selectSurfaces(s);
-    const current = spawn(s.command, s.args, { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...s.env } });
+    activeServer = await browserSelection.prepare(s);
+    if (!isCurrent()) { await surfaceCache?.close(); throw new Error('Engine restart was stopped.'); }
+    const current = spawn(activeServer.command, activeServer.args, { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...activeServer.env } });
     child = current;
     trace?.('engine-started', { pid: current.pid });
     childClosed = new Promise(resolve => current.once('close', (code, signal) => resolve({ code, signal })));
@@ -656,7 +660,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     terminating = false; stoppingForReceipt = false;
     return { serverIn: current.stdin, serverOut: current.stdout };
   }
-  startEngine();
+  await startEngine();
   function terminateEngine(signal = 'SIGTERM') {
     if (terminating || child.exitCode !== null || child.signalCode !== null) return;
     terminating = true;
@@ -675,7 +679,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const approval = approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
-    startupCache: createStartupCache({ identity: startupIdentity(s, join(LIB, '..')) }),
+    startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
+    browserChoice: browserSelection.choice,
+    backendChanged: () => browserSelection.changed(),
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
     staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
     settleTextWrite: (target, current, grant) => settleTextWrite(target, current, grant,
@@ -748,7 +754,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       resumeHelpers();
       appHealth = healthHelperFactory();
-      return startEngine();
+      return startEngine(isCurrent);
     },
     inspectInput: inspectStoppedInput ?? (async () => {
       const pointer = await runScript('input-state.js', {}, { cleanup: true });

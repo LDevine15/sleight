@@ -2,7 +2,7 @@ import { browserReply } from './browser-call.mjs';
 
 // Keep positions while masking strings and comments. Ambiguous syntax is left
 // out of identity tracking rather than interpreted as a factory call.
-function sourceOf(code) {
+export function sourceOf(code) {
   const out = code.split('');
   for (let i = 0; i < code.length; i++) {
     const start = i, quote = code[i];

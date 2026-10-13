@@ -62,6 +62,7 @@ import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
 import { BrowserRecovery } from './browser-recovery.mjs';
+import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
@@ -83,7 +84,7 @@ import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases
 import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
-import { ReplWarmup } from './repl-warmup.mjs';
+import { ReplWarmup, replSetupCode, browserWarmupUseCode } from './repl-warmup.mjs';
 import { TabClickResults } from './tab-click-result.mjs';
 import { openedTabNote, tabReuseCode, readOpened, createdTabCall, parseOpenedPayload } from './tab-reuse.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
@@ -377,7 +378,7 @@ export function createRelay({
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
-  beginStop = () => {}, stopEngine, restartEngine, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
+  beginStop = () => {}, stopEngine, restartEngine, backendChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
   clientIn, clientOut, serverIn, serverOut,
   sessionId = randomUUID(),
   approvalScope = 'session',
@@ -537,6 +538,7 @@ export function createRelay({
   const pendingClients = new Map();
   const stoppedClients = new Set();
   let stopCollected = false;
+  let backendRestartUnconfirmed = false;
   let stopUnconfirmed = false, resumeRequested = false;
   let stopFinished = false, restarting, initialization;
   let engineEpoch = 0, nextEngineRequest = 0;
@@ -570,7 +572,7 @@ export function createRelay({
       for (const state of helperStates.values()) if (state.stuck && state.pending === undefined) scheduleHelperRead(state);
     }
   }
-  async function restartCollectedEngine() {
+  async function restartCollectedEngine(backend = false) {
     const generation = stopGeneration;
     const isCurrent = () => generation === stopGeneration && !closing && !disposed;
     try {
@@ -592,9 +594,10 @@ export function createRelay({
         toServer({ jsonrpc: '2.0', method: 'notifications/initialized' });
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
-      clipboard = newClipboard(); compactor = createReadCompactor(); resultCalls.clear(); docsShown = false; priorRead = undefined;
+      clipboard = newClipboard(); compactor = createReadCompactor(); resultCalls.clear(); docsShown = backend; priorRead = undefined;
       selectorWindows.clear(); helperStates.clear(); helperHandles.clear(); helperAliases.clear();
-      screenshots.clear(); turnId = randomUUID();
+      screenshots.clear();
+      if (!backend) turnId = randomUUID();
       trace('engine-restarted-after-stop', {});
     } catch (error) {
       if (isCurrent()) {
@@ -637,14 +640,20 @@ export function createRelay({
   let guardReady = false, guardGeneration = 0;
   const guardCalls = new Map();
   let abortWarm = () => {};
+  const browserWarmToken = randomUUID();
+  let browserWarmConfirmed = false;
+  const privateWarmRequests = new Set();
   const replWarmup = new ReplWarmup({ enabled: warmRepl,
-    abort: () => abortWarm(),
+    setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken }),
+    abort: () => { browserWarmConfirmed = false; abortWarm(); },
     request: code => new Promise(resolve => {
       const id = `sleight-warm-${nextInternalId++}`;
+      privateWarmRequests.add(id);
       let pending = true;
       const finish = (reply, expired = false) => {
         if (!pending) return;
         pending = false;
+        browserWarmConfirmed = !expired && !!reply.result && !reply.error && !reply.result.isError;
         clearTimeout(timer);
         abortWarm = () => {};
         if (expired) {
@@ -1784,6 +1793,27 @@ export function createRelay({
       void interruptTurn(msg); return;
     }
     if (closing && msg.method === 'tools/call') { leaseStop(msg, 'this session is closing.'); return; }
+    if (backendRestartUnconfirmed && msg.method === 'tools/call') {
+      leaseStop(msg, 'Engine collection is unconfirmed. Run /sleight stop before retrying.'); return;
+    }
+    if (!restarting && !stopCollected && backendChanged && stopEngine && restartEngine &&
+        msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name) && backendChanged() === true) {
+      if (running.size || localRunning.size || internalRequests.size || approvalRequests.size) {
+        leaseStop(msg, 'another call in this session is pending. Retry after it finishes.'); return;
+      }
+      const generation = stopGeneration, attempt = { generation };
+      restarting = attempt;
+      beginStop();
+      attempt.promise = (async () => {
+        const receipt = await stopEngine();
+        if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+        stopCollected = receipt?.collected === true;
+        if (!stopCollected) { stopUnconfirmed = true; throw new Error('Engine collection is unconfirmed. Run /sleight stop before retrying.'); }
+        invalidateDiagnostics(); forgetHandles(); browserRecovery.reset();
+        await restartCollectedEngine(true);
+      })().catch(error => { backendRestartUnconfirmed = !stopCollected; throw error; })
+        .finally(() => { if (restarting === attempt) restarting = undefined; });
+    }
     if (restarting && restarting.generation !== stopGeneration && !stopCollected && msg.method === 'tools/call') {
       leaseStop(msg, 'engine initialization was stopped and collection is unconfirmed. Run /sleight stop again before retrying.'); return;
     }
@@ -2038,7 +2068,7 @@ export function createRelay({
             ? 'Input lease stopped this action: window or URL changed. Read the intended window again before acting.'
             : 'Change review stopped this action: window or URL changed. Read the intended window with one standalone cua.getApp call before editing.';
           if (browser) {
-            msg.params.arguments.code = guardedCode(browserRecovery.code(originalCode), target, reason,
+            msg.params.arguments.code = guardedCode(selectedBrowserCode(browserRecovery.code(originalCode), browserChoice, `${sessionId}:${turnId}`), target, reason,
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
               { ...setup, timing: guardTiming, careful: guardMode === 'careful', fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
@@ -2095,6 +2125,10 @@ export function createRelay({
       if (name === 'js' && msg.id !== undefined) {
         resultBudget.request(msg.id, { browser: !!browser, code: originalCode });
         if (typeof msg.params.arguments?.code === 'string') msg.params.arguments.code = resultBudget.code(msg.params.arguments.code);
+      }
+      if (name === 'js' && typeof msg.params.arguments?.code === 'string') {
+        msg.params.arguments.code = browserWarmupUseCode(msg.params.arguments.code,
+          { browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken, confirmed: browserWarmConfirmed });
       }
       msg.params._meta = { ...msg.params._meta, [META_KEY]: turnMeta() };
       turnUsed = true;
@@ -2232,7 +2266,14 @@ export function createRelay({
   }
   function observeServerMessage(msg) {
     replWarmup.reply(msg);
+    if (msg.method === undefined) privateWarmRequests.delete(msg.id);
     if (stopCollected || (msg.method === undefined && stoppedClients.has(msg.id))) return;
+    // Engine permission tokens have no parent RPC ID. Fail closed until even a late
+    // private reply settles, rather than showing or accepting a warm-up prompt.
+    if (msg.method === 'elicitation/create' && privateWarmRequests.size) {
+      toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
+      return;
+    }
     if (msg.method === undefined && frontCalls.has(msg.id)) {
       const token = frontCalls.get(msg.id); frontCalls.delete(msg.id);
       const generation = stopGeneration;
@@ -2899,6 +2940,9 @@ export function createRelay({
         const engine = await stopEngine();
         if (engine?.collected === true) {
           stopCollected = true;
+          backendRestartUnconfirmed = false;
+          // The collected engine cannot send a late private permission prompt.
+          privateWarmRequests.clear();
           cancelInternalRequests('Engine collected.');
         }
         return engine;
