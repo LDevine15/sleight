@@ -28,14 +28,14 @@ A5/A2R, P1, T3, D4, H12. Stale: H9, H10, H13, T5, H4.
 In flight at the clear (`~/Projects/sleight-wt/ledger/LEDGER.md`, claims marked SEEN2 when sent to review):
 - H3R3 merged at the flush. T2R5 failed review and found that the merged `sleight.pickFromList` calls `tab.scroll`, which the
   engine's Tab lacks, so it throws on a real tab, and its search gives up before rows past about index 360: T2R6, first after M1/M2.
-- W4R4 (`codex/w4r4`) is done, its review result lost at the clear: re-review it. D7 is a finished report only (`codex/d7`).
+- W4R4 failed review on three audit gaps: W4R5 in the ledger. D7 is a finished report only (`codex/d7`).
 - Lanes building: M1 (Haiku 5.5 ids and token-based cost in `rounds.sh`), M2 (bound the FowlBrowser runner's inventory awaits: the
   19:25 hang), W2R3 (rebase W2R2 onto W4R2's world design), W3R4 (Browser Use temp-profile leak, `uv` test skip for CI).
 - Unclaimed: W6 (Claude's own computer use through an interactive harness).
 - Background work at the clear, none relaunched: the ledger monitor loop (restart it at boot, see memory `lane-ledger`), a REA study
   of the engine's native helper (a Sonnet subagent; its result is lost, rerun it next sprint), and the review subagents above.
 
-Next steps: re-review W4R4 and merge it. Merge M1, M2 and T2R6 (each reviewed). Then run the gate round with Haiku 5.5, both arms (`/tmp/fb-rounds`, the
+Next steps: review and merge M1, M2 and T2R6. Then run the gate round with Haiku 5.5, both arms (`/tmp/fb-rounds`, the
 `hk2.sh` pattern: `rounds.sh --model haiku` maps to 5.5 after M1). Then the Opus head-to-head. Then W2R3, W3R4, W6 and the claim
 run. The owner owes two things. First, the login for the Claude in Chrome arm, after sleight-arch reinstalls that arm (its pinned claude is the
 stub): `env CLAUDE_CONFIG_DIR=~/.config/sleight-bench/world/arms/claude-in-chrome/claude-config <pinned claude> auth login`. Second, the
