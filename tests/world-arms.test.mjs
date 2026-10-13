@@ -13,6 +13,9 @@ import {
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LIB = join(ROOT, 'bench/world/arms/lib');
+const ARM = join(ROOT, 'bench/world/arms/browser-use');
+const uvCheck = spawnSync('uv', ['--version'], { encoding: 'utf8' });
+const noUv = uvCheck.error || uvCheck.status !== 0 ? 'uv is not installed' : false;
 
 function tmp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-world-arm-')));
@@ -46,7 +49,10 @@ test('browser-use live path uses ChatAnthropic, a throwaway profile, and kill()'
   assert.match(text, /from browser_use import Agent, Browser, ChatAnthropic/);
   assert.match(text, /ChatAnthropic\(\*\*llm_kwargs/);
   assert.match(text, /user_data_dir=profile/);
-  assert.match(text, /browser\.kill/);
+  assert.match(text, /browser-use-user-data-dir-/);
+  assert.match(text, /llm_timeout=900/);
+  assert.match(text, /browser\.kill|getattr\(browser, 'kill'/);
+  assert.doesNotMatch(text, /\.stop\(/);
   assert.match(text, /budget_seconds/);
   assert.match(text, /token_cost_service/);
   assert.match(text, /get_usage_summary/);
@@ -62,7 +68,7 @@ test('browser-use live path uses ChatAnthropic, a throwaway profile, and kill()'
   assert.match(cli, /BROWSER_USE_CLOUD_SYNC/);
 });
 
-test('UsageSummary fakes of the 0.13.11 shape price from PRICES, not total_cost', () => {
+test('UsageSummary fakes of the 0.13.11 shape price from PRICES, not total_cost', { skip: noUv }, () => {
   const prices = JSON.stringify(PRICES);
   const ran = py(`
 from usage import usage_from_browser_use, load_prices
@@ -92,7 +98,7 @@ print('ok')
   assert.match(ran.stdout, /ok/);
 });
 
-test('a run without done or with errors is an error and never stringifies the history', () => {
+test('a run without done or with errors is an error and never stringifies the history', { skip: noUv }, () => {
   const ran = py(`
 import sys
 sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bench/world/arms/browser-use'))})
@@ -117,7 +123,7 @@ print('ok')
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 });
 
-test('llm_kwargs uses adaptive thinking and output_config effort', () => {
+test('llm_kwargs uses adaptive thinking and output_config effort', { skip: noUv }, () => {
   const ran = py(`
 from cli import llm_kwargs
 class ChatAnthropic:
@@ -136,7 +142,7 @@ print('ok')
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 });
 
-test('fake model dry-run writes the FowlBrowser result event via uv 3.12', t => {
+test('fake model dry-run writes the FowlBrowser result event via uv 3.12', { skip: noUv }, t => {
   const out = tmp(t);
   const plan = armCommand({
     arm: 'browser-use', out, prompt: 'open wikipedia and tell me when Ada Lovelace was born',
@@ -156,12 +162,13 @@ test('fake model dry-run writes the FowlBrowser result event via uv 3.12', t => 
   const events = ran.stdout.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));
   const result = resultEvent(events);
   assert.equal(result.is_error, false);
+  assert.equal(result.model, 'claude-opus-5-5');
   assert.match(String(result.result), /claude-opus-5-5/);
   assert.match(ran.stdout, /"type": "result"/);
   assert.equal(existsSync(join(out, 'events.jsonl')), false);
 });
 
-test('a missing key still writes events.jsonl with is_error', t => {
+test('a missing key still writes events.jsonl with is_error', { skip: noUv }, t => {
   const out = tmp(t);
   const ran = py(`
 import os, sys, tempfile
@@ -186,9 +193,11 @@ test('rounds.sh stops at $190 and always uses the API key for browser-use', () =
   assert.match(sh, /api-auth\.mjs/);
 });
 
-test('high effort builds a ChatAnthropic request the SDK accepts', () => {
+test('high effort builds a ChatAnthropic request the SDK accepts', { skip: noUv }, t => {
+  const envDir = tmp(t);
+  const hadVenv = existsSync(join(ARM, '.venv'));
   const ran = spawnSync('uv', [
-    'run', '--python', '3.12', '--frozen', '--project', join(ROOT, 'bench/world/arms/browser-use'),
+    'run', '--python', '3.12', '--frozen', '--project', ARM,
     '--', 'python', '-c', `
 import asyncio, httpx2
 from anthropic import AsyncAnthropic, DEFAULT_TIMEOUT
@@ -215,12 +224,83 @@ asyncio.run(client.messages.create(model=kw['model'], max_tokens=kw['max_tokens'
 assert transport.requests, 'SDK sent a request'
 print('ok')
 `,
-  ], { encoding: 'utf8', env: { ...process.env, PYTHONPATH: LIB } });
+  ], { encoding: 'utf8', env: { ...process.env, PYTHONPATH: LIB, UV_PROJECT_ENVIRONMENT: envDir } });
   assert.equal(ran.status, 0, ran.stderr + ran.stdout);
   assert.match(ran.stdout, /ok/);
+  assert.equal(existsSync(join(ARM, '.venv')), hadVenv);
 });
 
-test('timeout and exception paths report spend from token_cost_service', () => {
+test('kill_browser retries kill and never calls stop', { skip: noUv }, () => {
+  const ran = py(`
+import asyncio, sys
+sys.path.insert(0, ${JSON.stringify(ARM)})
+from run import kill_browser
+class B:
+    def __init__(self):
+        self.kills = 0
+        self.stops = 0
+    def kill(self):
+        self.kills += 1
+        if self.kills == 1:
+            raise RuntimeError('first kill failed')
+    def stop(self):
+        self.stops += 1
+        raise AssertionError('stop must not be called')
+b = B()
+asyncio.run(kill_browser(b))
+assert b.kills == 2 and b.stops == 0
+print('ok')
+`);
+  assert.equal(ran.status, 0, ran.stderr + ran.stdout);
+});
+
+test('a Browser constructor error removes the throwaway profile and reports failure', { skip: noUv }, t => {
+  const out = tmp(t);
+  const ran = py(`
+import asyncio, contextlib, io, json, shutil, sys, tempfile, types
+from pathlib import Path
+sys.path.insert(0, ${JSON.stringify(ARM)})
+import run
+profiles = []
+mkdtemp = tempfile.mkdtemp
+def profile(**kwargs):
+    path = mkdtemp(**kwargs)
+    profiles.append(path)
+    return path
+class ChatAnthropic:
+    def __init__(self, model, api_key=None, thinking=None, output_config=None, max_tokens=8192, timeout=None):
+        pass
+def Browser(**kwargs):
+    assert kwargs['user_data_dir'] == profiles[-1]
+    raise RuntimeError('constructor failed')
+def Agent(**kwargs):
+    raise AssertionError('agent must not start')
+sys.modules['browser_use'] = types.SimpleNamespace(Agent=Agent, Browser=Browser, ChatAnthropic=ChatAnthropic)
+run.CHROME = run.__file__
+run.anthropic_key = lambda: 'sk-ant-test'
+run.tempfile.mkdtemp = profile
+args = run.parse_args(['--prompt', 'fixture', '--out', ${JSON.stringify(out)}, '--arm', 'browser-use', '--model', 'haiku'])
+output = io.StringIO()
+try:
+    with contextlib.redirect_stdout(output):
+        try:
+            asyncio.run(run.live_async(args))
+        except RuntimeError as error:
+            assert str(error) == 'constructor failed'
+    assert len(profiles) == 1
+    assert not Path(profiles[0]).exists(), 'constructor error leaked the profile'
+    result = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')][-1]
+    assert result['type'] == 'result' and result['is_error']
+    assert result['result'] == 'constructor failed'
+finally:
+    for path in profiles:
+        shutil.rmtree(path, ignore_errors=True)
+print('ok')
+`);
+  assert.equal(ran.status, 0, ran.stderr + ran.stdout);
+});
+
+test('timeout and exception paths report spend from token_cost_service', { skip: noUv }, () => {
   const ran = py(`
 import asyncio, sys
 sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bench/world/arms/browser-use'))})

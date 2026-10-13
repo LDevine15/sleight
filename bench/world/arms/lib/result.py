@@ -18,7 +18,7 @@ def usage_dict(usage=None):
     }
 
 
-def write_events(out_dir, answer, duration_ms, calls, usage=None, cost=0, is_error=False):
+def write_events(out_dir, answer, duration_ms, calls, usage=None, cost=0, is_error=False, model=None):
     os.makedirs(out_dir, exist_ok=True)
     started = int(time.time() * 1000)
     events = []
@@ -61,6 +61,7 @@ def write_events(out_dir, answer, duration_ms, calls, usage=None, cost=0, is_err
         'num_turns': len(calls),
         'usage': usage_dict(usage),
         'total_cost_usd': float(cost or 0),
+        **({'model': model} if model else {}),
     })
     for event in events:
         sys.stdout.write(json.dumps(event) + '\n')

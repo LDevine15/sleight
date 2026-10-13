@@ -22,6 +22,7 @@ def fake_run(args):
         calls=[{'name': args.arm, 'input': {'fake': True}, 'result': 'dry-run'}],
         usage={},
         cost=0,
+        model=map_model(args.model),
     )
 
 
@@ -86,15 +87,15 @@ async def maybe_await(value):
 
 
 async def kill_browser(browser):
-    try:
-        await maybe_await(browser.kill())
-    except Exception:
-        close = getattr(browser, 'close', None) or getattr(browser, 'stop', None)
-        if callable(close):
-            try:
-                await maybe_await(close())
-            except Exception:
-                pass
+    for _ in range(2):
+        kill = getattr(browser, 'kill', None)
+        if not callable(kill):
+            return
+        try:
+            await maybe_await(kill())
+            return
+        except Exception:
+            continue
 
 
 async def live_async(args):
@@ -105,19 +106,19 @@ async def live_async(args):
     from browser_use import Agent, Browser, ChatAnthropic
     model = map_model(args.model)
     llm = ChatAnthropic(**llm_kwargs(ChatAnthropic, args.model, args.effort, key))
-    profile = tempfile.mkdtemp(prefix='sleight-browser-use-')
+    profile = tempfile.mkdtemp(prefix='browser-use-user-data-dir-')
     os.environ.pop('ANTHROPIC_API_KEY', None)
     started = time.time()
-    browser = Browser(executable_path=CHROME, user_data_dir=profile)
-
-    async def on_timeout():
-        await asyncio.sleep(args.budget_seconds)
-        await kill_browser(browser)
-
-    killer = asyncio.create_task(on_timeout())
-    agent = None
+    browser = killer = agent = None
     try:
-        agent = Agent(task=task_prompt(args), llm=llm, browser=browser)
+        browser = Browser(executable_path=CHROME, user_data_dir=profile)
+
+        async def on_timeout():
+            await asyncio.sleep(args.budget_seconds)
+            await kill_browser(browser)
+
+        killer = asyncio.create_task(on_timeout())
+        agent = Agent(task=task_prompt(args), llm=llm, browser=browser, llm_timeout=900)
         try:
             history = await asyncio.wait_for(maybe_await(agent.run()), timeout=args.budget_seconds)
         except asyncio.TimeoutError:
@@ -126,7 +127,7 @@ async def live_async(args):
                 args.out, 'budget-seconds exceeded',
                 duration_ms=int((time.time() - started) * 1000),
                 calls=[{'name': args.arm, 'input': {}, 'result': 'timeout'}],
-                usage=usage, cost=cost, is_error=True,
+                usage=usage, cost=cost, is_error=True, model=model,
             )
             return
         usage, cost = usage_from_browser_use(history, model)
@@ -139,6 +140,7 @@ async def live_async(args):
             usage=usage,
             cost=cost,
             is_error=is_error,
+            model=model,
         )
     except BaseException as error:
         if isinstance(error, (KeyboardInterrupt, SystemExit)):
@@ -148,15 +150,17 @@ async def live_async(args):
             args.out, str(error),
             duration_ms=int((time.time() - started) * 1000),
             calls=[{'name': args.arm, 'input': {}, 'result': str(error)}],
-            usage=usage, cost=cost, is_error=True,
+            usage=usage, cost=cost, is_error=True, model=model,
         )
     finally:
-        killer.cancel()
-        try:
-            await killer
-        except (asyncio.CancelledError, Exception):
-            pass
-        await kill_browser(browser)
+        if killer is not None:
+            killer.cancel()
+            try:
+                await killer
+            except (asyncio.CancelledError, Exception):
+                pass
+        if browser is not None:
+            await kill_browser(browser)
         shutil.rmtree(profile, ignore_errors=True)
 
 
@@ -164,7 +168,7 @@ def fail(args, error):
     write_events(
         args.out, str(error), duration_ms=0,
         calls=[{'name': args.arm, 'input': {}, 'result': str(error)}],
-        usage={}, cost=0, is_error=True,
+        usage={}, cost=0, is_error=True, model=map_model(args.model),
     )
 
 
