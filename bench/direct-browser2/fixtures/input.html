@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Owned input fixture</title>
+<style>
+  button { width: 120px; height: 40px; margin: 8px; }
+  #overlay { position: absolute; inset: 0; background: #8888; display: none; z-index: 10; }
+  #clip { height: 80px; width: 200px; overflow: auto; }
+  #clip button { margin-top: 500px; }
+  .moving { animation: move 150ms linear infinite alternate; }
+  @keyframes move { to { transform: translateX(100px); } }
+</style>
+<button id="pay">Pay fixture</button>
+<button id="disabled" disabled>Disabled fixture</button>
+<button id="delayed">Delayed fixture</button>
+<button id="dialog">Confirm fixture</button>
+<button id="navigate">Navigate fixture</button>
+<input id="text" aria-label="Fixture text">
+<input id="readonly" readonly value="fixture default">
+<div id="clip"><button id="below">Below fold</button></div>
+<iframe id="frame" srcdoc="<button id='child' onclick='this.dataset.clicked=String(event.isTrusted)'>Frame fixture</button>"></iframe>
+<div id="overlay"></div>
+<output id="effect"></output>
+<script>
+  const pay = document.querySelector('#pay');
+  pay.dataset.count = '0';
+  pay.addEventListener('click', event => {
+    pay.dataset.count = String(Number(pay.dataset.count) + 1);
+    pay.dataset.trusted = String(event.isTrusted);
+    document.querySelector('#effect').textContent = 'paid';
+  });
+  document.querySelector('#below').addEventListener('click', event => { event.currentTarget.dataset.trusted = String(event.isTrusted); });
+  document.querySelector('#delayed').addEventListener('click', event => {
+    const start = performance.now();
+    setTimeout(() => {
+      document.querySelector('#effect').textContent = 'delayed';
+      document.querySelector('#delayed').dataset.actualDelay = String(performance.now() - start);
+      document.querySelector('#delayed').dataset.trusted = String(event.isTrusted);
+    }, 30);
+  });
+  document.querySelector('#dialog').addEventListener('click', () => confirm('Fixture confirm'));
+  document.querySelector('#navigate').addEventListener('click', () => location.assign('/next'));
+</script>
