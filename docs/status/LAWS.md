@@ -84,6 +84,8 @@ belong in [STATE.md](STATE.md).
   stops at $200 of spend in a month, because anything past the credit is billed to the owner's card.
   Opus arms run on the owner's Claude account instead (`claude -p` signed in, no API key), and Haiku and Sonnet
   arms stay on the API key (owner, 2026-10-12). The FowlBrowser head-to-head keeps Opus without spending the credit.
+  Claude's own computer use needs a Pro or Max login. Its arm runs Haiku 5.5 high on the owner's login like any other model, and
+  its runs never count toward the API credit (owner, 2026-10-13).
 - Incremental benchmark runs use Haiku on the API key, within the $200 stop (owner, 2026-10-12 evening, because Opus rounds were
   eating the owner's quota). Measure with the model-free tools first (char audit, probes, anatomy of saved rounds). Opus runs
   once, at the end of a batch of fixes, as the head-to-head against FowlBrowser.

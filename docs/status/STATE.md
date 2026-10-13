@@ -3,12 +3,18 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-13 00:17 UTC, flushed before the owner's clear)
+## Banner (2026-10-13 02:25 UTC, boot after the clear)
 
 Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac (LAWS, ROADMAP 0b).
 The finish line is locked in ROADMAP 0b (owner, 2026-10-12 20:00 EDT), four steps ending in release 1.3.0 and the video. Read it first.
+Claude quota is short (owner, 2026-10-13): finish the rows and the release, nothing else. Build work stays in lanes.
 Pushed: `pane/auto-mode` at the commit holding this banner (private); last full check 2817 pass, 1 skipped, mod 33/33, exit 0.
-`~/Projects/sleight` is fast-forwarded to it. `git status` showed 0 modified tracked files at the flush, and there are 0 open PRs.
+`~/Projects/sleight` is fast-forwarded to it, and there are 0 open PRs. Public CI is green on 1.2.5.
+
+At boot all seven finished lane items (M1, M2, T2R6, W2R3, W3R4, W4R5, W6) failed Sonnet-high review. Their fixes are five
+ledger items, the whole finish line now. Grok has T2R7 and W3R5. Codex has M3 (M1 plus M2 in one patch), W4R6 (the owner's one
+extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch). Then the gate round on Haiku 5.5.
+API spend for October is $151.00 of $200, in `~/Library/Logs/sleight/bench-api-spend.json`. Opus rounds don't count.
 
 Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):
 - Every FowlBrowser-runner "Haiku" round ran Haiku 4.5 (the `haiku` alias in Claude Code 2.1.289 resolves to
@@ -42,7 +48,7 @@ run. The owner owes two things. First, the login for the Claude in Chrome arm, a
 stub): `env CLAUDE_CONFIG_DIR=~/.config/sleight-bench/world/arms/claude-in-chrome/claude-config <pinned claude> auth login`. Second, the
 Cua and Peekaboo permission clicks once W2R3 is merged.
 Helium was relaunched with FowlBrowser's extension at 19:12 EDT (owner's OK). The Chrome profile "sleight benchmark" holds Claude in
-Chrome, device id in `~/.config/sleight-bench/world/claude-in-chrome-device`. API spend for October is $151.00 of $200.
+Chrome, device id in `~/.config/sleight-bench/world/claude-in-chrome-device`.
 
 Lane ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`): the source of open items. Its FINISH LINE header lists what is left.
 
@@ -52,8 +58,6 @@ pointer in JXA). Fixed, then 3/3 saved, save 2.1 s, the read after it under 65 m
 Hand-off tasks (`bench/fowl/handoff.sh`), published in `docs/benchmarks/2026-10-12-handoff.md`: at 18:57 UTC sleight 3/3
 (203 s, $2.39), FowlBrowser + sleight 3/3 (143 s, $1.57), FowlBrowser 0/3. At 18:37 the sleight arms missed the invoice on
 the engine's download prompt, which the hook accepts since `faeea9d`. sleight's arms may use `open_file` since `e815a8e`.
-
-API spend this month: $119.92 of $200 (ledger `~/Library/Logs/sleight/bench-api-spend.json`). Opus rounds don't count.
 
 The engine updated to 26.1007.30912 on 2026-10-12 (the 09:00 watch). Its API docs didn't change (empty diff).
 

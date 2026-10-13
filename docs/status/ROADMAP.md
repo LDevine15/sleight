@@ -36,6 +36,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    fails a third review is parked.
 2. The FowlBrowser gate: one Haiku round (sleight at least FowlBrowser's 24/26 on tasks), then one Opus head-to-head.
 3. The Mac claim: W1R4, W2R2, W3R3, W4R4, W5R2, W6, then one full suite run with every arm on Haiku, published.
+   The drag audit gets one more round, W4R6, past the three-review cap (owner, 2026-10-13), because the merged audit rejects four
+   of sleight's own tool names. Claude's computer use runs Haiku 5.5 on the owner's login (owner, 2026-10-13).
+   Claude quota is short (owner, 2026-10-13): the work is finishing these rows and the release, nothing else.
 4. Release 1.3.0, the claim post, then the video.
 Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
 streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
