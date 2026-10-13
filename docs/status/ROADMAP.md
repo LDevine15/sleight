@@ -43,6 +43,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    and a gpt-6-astra investigator studies the first-call tab queue. The owner doubts that only our own extension removes it.
    The owner widened the design studies the same night to Claude in Chrome, LCU, Peekaboo, Cua Driver, Browser Use, Playwright MCP,
    Chrome DevTools MCP, FowlBrowser's tool surface and Claude Code's computer use (ledger RS1 to RS8).
+   After the astra find, the owner queued five more items (2026-10-13). AA1 tries to falsify every inferred engine claim.
+   The others are reads that overlap the model's writing (IN1), waits that cost no turns (IN2), learned routines (IN3)
+   and a direct accessibility read for simple checks (IN4). All merge after 1.3.0.
    The astra report (2026-10-13) disproved one extension queue across sessions. The owner lifted the code freeze for AS-1 (bind discovery
    to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. MIT and Apache-2.0 code may be adapted (Apache with its notice). Closed code gives notes only.
 4. Release 1.3.0, the claim post, then the video.
