@@ -17,6 +17,9 @@ extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch)
 Grok stopped for the night (owner, 02:15 UTC). Every item is pool codex. Codex lanes review each other by the ledger's REVIEW
 RULES, with fix items in `queue/` and proposals in `queue/next/`. After the fix items come R1 and R2 (release prep), then Q1, Q2 and B1,
 which merge after the 1.3.0 tag. RS1 to RS8 study competitors' designs, and X1 measures merging key presses.
+16:10 UTC: FM1 (forms) passed form-travel 2/2 live but left the four forms at 5/8. FM2 (custom switch, Pay click, "debugger
+lost") and TB1 (tabs) are building in headless Codex lanes (`codex exec`, prompts in `/private/tmp/claude-501/lanes/`). The
+owner's login keychain locked while they were away and hung git, gh and claude until a stuck SecurityAgent dialog was closed.
 Gate round on Haiku 5.5 (2026-10-13 12:08 UTC, `docs/benchmarks/2026-10-13-gate.md`): sleight 23/26, 1,206 s, 39 errors;
 FowlBrowser 26/26, 677 s, 9 errors. The gate (24/26) isn't met. All 3 misses were forms. sleight leaves 35 to 39 tabs open per
 order. Merged before it: AS-1R, AS-2R, FS2R, W8R2 (full check 3203 pass, 0 fail). FS2 stopped link-opened tabs taking focus;
