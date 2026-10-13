@@ -7,6 +7,14 @@ import { execFileSync } from 'node:child_process';
 
 const api = await import('../bench/plugin-arm.mjs').catch(() => ({}));
 
+for (const kind of ['plugin', 'mcp']) test(`${kind} dry preparation reads provenance without creating its arm folder`, t => {
+  const f = fixture(t);
+  const arm = api.prepareGenericArm(`${kind}:rival`, { ...f, dryRun: true,
+    env: { PLUGIN_ARM_RIVAL_DIR: f.plugin, MCP_ARM_RIVAL_CONFIG: f.config } });
+  assert.equal(existsSync(arm.cwd), false);
+  assert.ok(arm.identity.packageHash);
+});
+
 function preparedServer(arm) {
   return Object.values(JSON.parse(readFileSync(arm.args[arm.args.indexOf('--mcp-config') + 1], 'utf8')).mcpServers)[0];
 }

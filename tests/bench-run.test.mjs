@@ -12,16 +12,19 @@ import { genericSettings } from '../bench/plugin-arm.mjs';
 import { cpuSplit } from '../bench/footprint.mjs';
 import { webBrowsers } from '../bench/tasks-web.mjs';
 import { WORLD_APPS } from '../bench/world/tasks.mjs';
+import { isNativeArm, nativeArmPlan } from '../bench/world/native-arms.mjs';
+import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/world/native-world.mjs';
+import { dragMethodAudit } from '../bench/world/method-check.mjs';
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks } = {}) {
+async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289' } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
   }
   const calls = [], saved = [], envs = [], tailScopes = [], directories = [];
-  const logs = [], driverOptions = [], codexRuns = [], files = new Map();
+  const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [];
   let preflightDone = false, calculatorObservations = 0;
   const source = readFileSync(new URL('../bench/run.mjs', import.meta.url), 'utf8')
     .replace(/^#!.*\n/, '').replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', '"file:///fixture/bench/run.mjs"');
@@ -43,11 +46,28 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
       if (preparationError) throw new Error(preparationError);
       return { generic: true, cwd: '/private/tmp/own-arm', args: ['--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence'], env: {}, identity: {}, servers: ['rival'] };
     },
-    genericSettings, acceptGenericCatalog() {},
+    genericSettings, acceptGenericCatalog() {}, worldCLI, worldArm, worldSettings, assertWorldCLI,
+    isNativeArm,
+    prepareNativeArm: (name, options) => {
+      const plan = nativeArmPlan(name, options);
+      if (options.dryRun || plan.unsupported) return plan;
+      return { ...sandbox.prepareGenericArm(), ...plan, identity: plan.identity };
+    },
+    dragMethodAudit,
+    interactivePlan: options => ({ ...options, cwd: options.armDir, command: 'fake-claude', env: { CLAUDE_CONFIG_DIR: join(options.armDir, 'claude') } }),
+    verifyInteractiveCLI: () => { calls.push('interactive version'); },
+    runInteractive: async (plan, options) => {
+      assert.ok(calls.includes('lock'), 'interactive tasks require the runner lock');
+      calls.push(['interactive driver', plan]); envs.push(plan.env); options.onSpawn?.(1234);
+      options.onEvent?.({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'drag', name: 'mcp__computer-use__drag', input: {} }] } });
+      options.onEvent?.({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'drag', content: 'done' }] } });
+      return { type: 'result', is_error: false, result: 'RESULT fixture', groupClean: true, num_turns: 1, ...driverOut };
+    },
     guardGenericOperation: (operation, options) => guardGenericOperation(operation, { ...options, stopFile: undefined, held: () => false }),
     genericTask: task => { calls.push('retained setup'); return task; },
     publishPrivateMailResults: (_path, value, options) => { calls.push('private audit'); assert.ok(options.terms.every(term => term === 'private label')); saved.push(JSON.parse(value)); },
     execFileSync(command, args) {
+      if (args?.[0] === '--version') return worldVersion + ' (Claude Code)';
       if (command === '/usr/bin/git') throw new Error('outside repo');
       if (command === 'id') return privateMail ? 'Owner Example' : ownerName;
       calls.push('tap check'); return JSON.stringify(taps);
@@ -71,11 +91,12 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
       return { load: [1, 2, 3], calculatorPid: 123, onScreenWindows: 1 };
     },
     runOwned: async (_command, _args, options) => {
-      envs.push(options.env); options.onStdout(JSON.stringify({ type: 'system', subtype: 'init', apiKeySource: keySource, mcp_servers: [{ name: 'plugin:sleight:computer', status: 'connected' }, ...(extraServer ? [{ name: extraServer, status: 'connected' }] : [])] }) + '\n');
+      commands.push(_command);
+      envs.push(options.env); options.onStdout(JSON.stringify({ type: 'system', subtype: 'init', apiKeySource: keySource, mcp_servers: [{ name: arm === 'lcu' ? 'lcu' : 'plugin:sleight:computer', status: 'connected' }, ...(extraServer ? [{ name: extraServer, status: 'connected' }] : [])] }) + '\n');
       preflightDone = true;
       return { groupClean: true };
     },
-    runDriver: async (_command, args, options) => { calls.push(['driver', ...args]); envs.push(options.env); driverOptions.push(options); options.onSpawn?.(1234); return { code: 0, out: { total_cost_usd: 0.25, ...driverOut }, groupClean: true }; },
+    runDriver: async (_command, args, options) => { commands.push(_command); calls.push(['driver', ...args]); envs.push(options.env); driverOptions.push(options); options.onSpawn?.(1234); return { code: 0, out: { total_cost_usd: 0.25, ...driverOut }, groupClean: true }; },
     executeRealTask: async (_task, ctx, options) => {
       ctx.windowLeases = leases;
       if (setupOnly) assert.equal(options.setupOnly, true);
@@ -90,8 +111,68 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
   };
   let error;
   try { await runInNewContext(`(async () => { ${source}\n})()`, sandbox); } catch (caught) { error = caught; }
-  return { calls, saved, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, exitCode: sandbox.process.exitCode };
+  const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
+  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, commands, exitCode: sandbox.process.exitCode };
 }
+
+test('claude-cu drives the retained native fixture through an isolated interactive session', async () => {
+  const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true, outcome: { passed: true },
+    auth: { mode: 'api', env: { ANTHROPIC_API_KEY: 'unrelated-api-key' }, unset: [] } });
+  assert.equal(result.error, undefined);
+  const drives = result.calls.filter(c => Array.isArray(c) && c[0] === 'interactive driver');
+  assert.equal(drives.length, 3);
+  assert.ok(drives.every(c => c[1].prompt === 'task' && c[1].model === 'claude-haiku-5-5' && c[1].effort === 'high'));
+  assert.equal(result.driverOptions.length, 0);
+  assert.ok(result.envs.every(env => env.ANTHROPIC_API_KEY === undefined));
+  assert.equal(result.saved.at(-1).armMetadata['claude-cu'].auth, 'isolated direct-plan login');
+});
+
+test('claude-cu approval refusal fails the native result and stops remaining runs', async () => {
+  const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true,
+    driverOut: { is_error: true, reason: 'approval required', gateBlocked: true, groupClean: true } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(c => Array.isArray(c) && c[0] === 'interactive driver').length, 1);
+  assert.equal(result.saved.at(-1).results[0].passed, false);
+  assert.match(result.saved.at(-1).results[0].reason, /approval/);
+});
+
+test('claude-cu unconfirmed cleanup stops the pass even without a permission gate', async () => {
+  const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true,
+    driverOut: { is_error: true, reason: 'interactive task timeout', groupClean: false } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(c => Array.isArray(c) && c[0] === 'interactive driver').length, 1);
+  assert.match(result.saved.at(-1).results[0].reason, /cleanup unverified/);
+});
+
+test('interactive login stays separate from a mixed API cohort and contributes no API spend', async () => {
+  const result = await runner({ arm: 'sleight,claude-cu', suite: 'world', drive: true, outcome: { passed: true },
+    extraArgs: ['--owner-away', '--auth', 'api'], keySource: 'ANTHROPIC_API_KEY',
+    auth: { mode: 'api', env: { ANTHROPIC_API_KEY: 'fixture', CLAUDE_CONFIG_DIR: '/shared' }, unset: [], spent: 0, capUsd: 200 },
+    driverOut: { total_cost_usd: 0.25 } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(c => Array.isArray(c) && c[0] === 'spend').length, 3);
+  const interactive = result.calls.filter(c => Array.isArray(c) && c[0] === 'interactive driver');
+  assert.equal(interactive.length, 3);
+  assert.ok(interactive.every(c => !c[1].env.ANTHROPIC_API_KEY));
+  assert.ok(result.driverOptions.every(o => o.env.ANTHROPIC_API_KEY === 'fixture'));
+});
+
+for (const cause of ['interactive task timeout', 'session exited before confirmed RESULT and idle prompt']) {
+  test(`confirmed interactive cleanup continues the pass after ${cause}`, async () => {
+    const result = await runner({ arm: 'claude-cu', suite: 'world', drive: true, extraArgs: ['--owner-away'],
+      driverOut: { is_error: true, reason: cause, groupClean: true, timedOut: cause.includes('timeout') } });
+    assert.equal(result.error, undefined);
+    assert.equal(result.calls.filter(c => Array.isArray(c) && c[0] === 'interactive driver').length, 3);
+    assert.ok(result.saved.at(-1).results.every(row => row.reason === cause && row.passed === false && !row.approvalStop));
+  });
+}
+
+test('claude-cu provides executed drag receipts to the retained method grader', async () => {
+  const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true,
+    tasks: [{ id: 'textedit-window-drag', app: 'TextEdit', prompt: () => 'drag', timeoutMs: 17000 }] });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.saved.at(-1).results[0].methodAudit, { drag: true, replacement: false, complete: true });
+});
 
 test('world suite uses retained fixtures, world approvals and each task deadline', async () => {
   const result = await runner({ suite: 'world', arm: 'sleight,codex', drive: true, outcome: { passed: true },
@@ -146,6 +227,144 @@ test('world paired-window drag requests the method audit for both drivers', asyn
   assert.equal(result.error, undefined);
   assert.ok(result.driverOptions.every(options => options.auditDrag === true));
   assert.ok(result.codexRuns.every(run => run.options.auditDrag === true));
+});
+
+for (const arm of ['cua', 'peekaboo', 'claude-cu']) test(`${arm} dry run starts no CLI, fixture, observer or live lock`, async () => {
+  const result = await runner({ arm, dryRun: true });
+  assert.equal(result.error, undefined);
+  assert.equal(result.envs.length, 0);
+  assert.equal(result.driverOptions.length, 0);
+  assert.equal(result.calls.includes('lock'), false);
+  assert.equal(result.calls.includes('real run'), false);
+  const rows = result.plan.results;
+  assert.equal(rows.length, 3);
+  for (const row of rows) {
+    assert.equal(row.arm, arm);
+    assert.equal(row.task, 'fixture');
+    assert.equal(row.passed, undefined);
+    if (arm === 'claude-cu') {
+      assert.equal(row.dryRun, true);
+      assert.equal(row.runner, 'runInteractive');
+      assert.equal(row.command, undefined);
+    } else {
+      assert.equal(row.dryRun, true);
+      assert.equal(row.command[1], '-p');
+      assert.ok(row.command.includes('--strict-mcp-config'));
+      assert.ok(row.command.includes('--no-chrome'));
+      assert.deepEqual(Object.keys(row.mcp.mcpServers), [arm]);
+    }
+  }
+});
+
+for (const arm of ['sleight', 'codex', 'lcu', 'cua', 'peekaboo', 'claude-cu', 'mcp:rival']) test(`${arm} dry run creates no directories or result files`, async () => {
+  const result = await runner({ arm, dryRun: true });
+  assert.equal(result.error, undefined);
+  assert.equal(result.directories.length, 0);
+  assert.equal(result.files.size, 0);
+  assert.equal(result.plan.results.length, 3);
+  assert.doesNotMatch(result.logs.join('\n'), /results:/);
+  for (const row of result.plan.results) if (row.command) assert.ok(row.command.includes('--no-chrome'));
+});
+
+for (const arm of ['sleight', 'lcu', 'cua', 'peekaboo']) test(`${arm} world dry plan matches the live driver flags`, async () => {
+  const dry = await runner({ suite: 'world', arm, dryRun: true });
+  const live = await runner({ suite: 'world', arm, drive: true, extraArgs: ['--owner-away'] });
+  assert.equal(dry.error, undefined);
+  assert.equal(live.error, undefined);
+  const planned = [...dry.plan.results[0].command.slice(1)];
+  const actual = [...live.calls.find(call => Array.isArray(call) && call[0] === 'driver').slice(1)];
+  planned[1] = actual[1];
+  assert.deepEqual(planned, actual);
+  assert.equal(dry.files.size, 0);
+  assert.equal(dry.directories.length, 0);
+});
+
+test('world API authentication cannot replace the isolated arm config with a shared directory', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight,cua', drive: true, extraArgs: ['--owner-away'], keySource: 'ANTHROPIC_API_KEY',
+    auth: { mode: 'api', env: { ANTHROPIC_API_KEY: 'fixture', CLAUDE_CONFIG_DIR: '/shared/api' }, unset: [], spent: 0, capUsd: 100 } });
+  assert.equal(result.error, undefined);
+  assert.ok(result.envs.every(env => env.CLAUDE_CONFIG_DIR.endsWith('/claude') && env.ANTHROPIC_API_KEY === 'fixture'));
+});
+
+test('ordinary Claude arms also force the requested do-not-track setting', async () => {
+  const result = await runner({ arm: 'sleight', drive: true, base: { DO_NOT_TRACK: '0' } });
+  assert.equal(result.error, undefined);
+  assert.ok(result.envs.every(env => env.DO_NOT_TRACK === '1'));
+});
+
+test('a world CLI version mismatch publishes its preflight failure without a model or fixture', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight', extraArgs: ['--owner-away'], worldVersion: '2.1.288' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.envs.length, 0);
+  assert.equal(result.calls.includes('real run'), false);
+  assert.equal(result.saved.at(-1).results[0].passed, false);
+  assert.match(result.saved.at(-1).results[0].reason, /requires Claude Code 2\.1\.289/);
+});
+
+test('world mode isolates sleight and the native rivals with the same pinned CLI', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight,cua,peekaboo', drive: true, extraArgs: ['--owner-away'],
+    base: { CLAUDE_CONFIG_DIR: '/owner/config', CLAUDE_OWNER: 'owner', PATH: '/bin' } });
+  assert.equal(result.error, undefined);
+  for (const env of result.envs) {
+    assert.notEqual(env.CLAUDE_CONFIG_DIR, '/owner/config');
+    assert.match(env.CLAUDE_CONFIG_DIR, /\/claude$/);
+    assert.equal(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, '1');
+    assert.equal(env.DISABLE_TELEMETRY, '1');
+  }
+  for (const args of result.calls.filter(call => Array.isArray(call) && call[0] === 'driver')) {
+    assert.ok(args.includes('--setting-sources'));
+    assert.ok(args.includes('--no-chrome'));
+  }
+  assert.ok([...result.files.values()].some(value => value.autoMemoryEnabled === false && value.claudeMdExcludes?.includes('**')));
+  assert.equal(new Set(result.commands).size, 1);
+  assert.match(result.commands[0], /world-cli\/node_modules\/\.bin\/claude$/);
+});
+
+test('interactive-only world login skips pinned print CLI checks and discovery', async () => {
+  const result = await runner({ arm: 'claude-cu', suite: 'world', drive: true, extraArgs: ['--owner-away', '--auth', 'login'],
+    worldVersion: '2.1.288', auth: { mode: 'login', env: {}, unset: [] }, outcome: { passed: true } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.driverOptions.length, 0);
+  assert.equal(result.commands.length, 0);
+  assert.equal(result.calls.filter(c => c === 'interactive version').length, 1);
+});
+
+for (const arm of ['sleight', 'codex', 'claude-cu']) test(`${arm} world dry plan never resolves login or launches a CLI`, async () => {
+  const result = await runner({ arm, suite: 'world', dryRun: true });
+  assert.equal(result.error, undefined);
+  assert.equal(result.commands.length, 0);
+  assert.equal(result.directories.length, 0);
+  assert.equal(result.calls.includes('lock'), false);
+});
+
+test('native arms retain task prompts and checks, strip every inherited CLAUDE variable', async () => {
+  const result = await runner({ suite: 'world', arm: 'cua,peekaboo', drive: true, extraArgs: ['--owner-away'], outcome: { passed: true },
+    base: { CLAUDE_CONFIG_DIR: '/owner/config', CLAUDE_CUSTOM: 'owner', CLAUDE_BIN: 'claude', PATH: '/bin' } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(call => call === 'real run').length, 6);
+  assert.ok(result.saved.at(-1).results.every(row => row.passed));
+  for (const env of result.envs) {
+    assert.equal(env.CLAUDE_CUSTOM, undefined);
+    assert.equal(env.CLAUDE_BIN, undefined);
+    assert.match(env.CLAUDE_CONFIG_DIR, /mcp-(cua|peekaboo)-arm\/claude$/);
+  }
+});
+
+test('native API arms keep their own config directory while using the benchmark key', async () => {
+  const result = await runner({ arm: 'cua', drive: true, outcome: { passed: true }, keySource: 'ANTHROPIC_API_KEY',
+    auth: { mode: 'api', env: { ANTHROPIC_API_KEY: 'fixture', CLAUDE_CONFIG_DIR: '/shared-api-config' }, unset: [], spent: 0, capUsd: 100 } });
+  assert.equal(result.error, undefined);
+  for (const env of result.envs) {
+    assert.match(env.CLAUDE_CONFIG_DIR, /mcp-cua-arm\/claude$/);
+    assert.equal(env.ANTHROPIC_API_KEY, 'fixture');
+  }
+});
+
+test('the superseded world flag refuses before any setup or driver', async () => {
+  const result = await runner({ extraArgs: ['--world'] });
+  assert.match(result.error?.message ?? '', /--suite world/);
+  assert.equal(result.envs.length, 0);
+  assert.equal(result.directories.length, 0);
 });
 
 test('extension tasks require both surfaces before any live lock or fixture', async () => {
@@ -310,7 +529,9 @@ test('generic dry discovery records commands without a model, live lock or host 
   const result = await runner({ suite: 'default', arm: 'mcp:rival', dryRun: true, outcome: { dryRun: true } });
   assert.equal(result.error, undefined); assert.equal(result.driverOptions.length, 0);
   assert.equal(result.calls.includes('lock'), false);
-  assert.ok(result.saved.at(-1).results.every(row => row.dryRun && row.command.includes('--disallowedTools')));
+  assert.ok(result.plan.results.every(row => row.dryRun && row.command.includes('--disallowedTools')));
+  assert.equal(result.files.size, 0);
+  assert.equal(result.directories.length, 0);
 });
 
 test('Calculator live conditions are checked under the lock before preflight and every arm driver', async () => {

@@ -53,6 +53,10 @@ import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
 import { WORLD_APPS } from './world/tasks.mjs';
+import { isNativeArm, prepareNativeArm } from './world/native-arms.mjs';
+import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
+import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
+import { dragMethodAudit } from './world/method-check.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -67,6 +71,7 @@ function gitRoot(dir) {
   catch { return undefined; }
 }
 const isDryRun = process.argv.includes('--dry-run');
+if (process.argv.includes('--world')) throw new Error('use --suite world for world isolation');
 const isSetupOnly = process.argv.includes('--setup-only');
 const ownerAway = process.argv.includes('--owner-away');
 const ownerPresent = process.argv.includes('--owner-present');
@@ -74,7 +79,7 @@ if (ownerAway && ownerPresent) throw new Error('--owner-present is the opposite 
 const calculatorGate = process.argv.includes('--calculator-gate');
 const cleanArms = process.argv.includes('--clean-arms');
 const suite = option('suite', 'default');
-if (suite === 'world' && option('auth', 'auto') === 'login') throw new Error('world refuses --auth login: isolated arm configs have no login; use --auth api');
+const world = suite === 'world';
 if (suite === 'world' && !isDryRun && !ownerAway) throw new Error('world live fixtures require --owner-away');
 if (suite === 'battery') {
   try { process.exitCode = await (await import('./battery/run.mjs')).main(); }
@@ -87,6 +92,9 @@ const controller = new AbortController();
 process.on('SIGINT', () => controller.abort(new Error('run interrupted')));
 process.on('SIGTERM', () => controller.abort(new Error('run interrupted')));
 const armOption = option('arm', 'sleight');
+if (world && !isDryRun && option('auth', 'auto') === 'login' && armOption.split(',').some(name => !['codex', 'claude-cu'].includes(name))) {
+  throw new Error('world refuses --auth login: isolated arm configs have no login; use --auth api');
+}
 const ARM_HOME = process.env.BENCH_ARM_HOME || join(homedir(), 'Library', 'Caches', 'sleight-bench');
 const ARMS = {
   // Each arm runs from its own empty folder outside any git repo, so neither
@@ -97,7 +105,7 @@ const ARMS = {
   sleight: {
     cwd: (() => {
       const dir = process.env.SLEIGHT_ARM_DIR || join(ARM_HOME, 'sleight-arm');
-      mkdirSync(dir, { recursive: true });
+      if (!isDryRun) mkdirSync(dir, { recursive: true });
       return dir;
     })(),
     args: ['--plugin-dir', join(ROOT, 'plugins', 'sleight'), // Every sleight tool, as a user who approves its prompts would have. Without
@@ -108,7 +116,7 @@ const ARMS = {
   },
   // Native Codex computer use, for the head-to-head (owner, 2026-10-08). See codex-arm.mjs.
   codex: {
-    cwd: (() => { const dir = join(ARM_HOME, 'codex-arm'); mkdirSync(dir, { recursive: true }); return dir; })(),
+    cwd: (() => { const dir = join(ARM_HOME, 'codex-arm'); if (!isDryRun) mkdirSync(dir, { recursive: true }); return dir; })(),
     codex: true,
     check: codexReady,
   },
@@ -125,27 +133,30 @@ const ARMS = {
   })(),
 };
 const armNames = armOption === 'all' ? ['sleight', 'lcu'] : armOption.split(',');
-const guardedPass = suite === 'world' || armNames.some(name => /^(plugin|mcp):/.test(name));
+const guardedPass = world || armNames.includes('claude-cu') || armNames.some(name => /^(plugin|mcp):/.test(name) || isNativeArm(name));
 const preparationErrors = [];
 let codexCleanConfig;
-for (const name of armNames.filter(name => /^(plugin|mcp):/.test(name))) {
+for (const name of armNames.filter(name => /^(plugin|mcp):/.test(name) || isNativeArm(name))) {
   try {
-    ARMS[name] = prepareGenericArm(name, { root: ROOT, armHome: ARM_HOME });
+    ARMS[name] = isNativeArm(name) ? prepareNativeArm(name, { root: ROOT, armHome: ARM_HOME, dryRun: isDryRun })
+      : prepareGenericArm(name, { root: ROOT, armHome: ARM_HOME, dryRun: isDryRun });
   } catch (error) {
     ARMS[name] = { generic: true, rejected: true, identity: { rejected: true } };
     preparationErrors.push({ arm: name, phase: 'configuration', passed: false, reason: error.message });
   }
 }
+if (armNames.includes('claude-cu')) ARMS['claude-cu'] = { cwd: join(ARM_HOME, 'claude-cu'), interactive: true,
+  args: [], env: {}, server: 'computer-use', identity: { name: 'claude-cu', interactive: true, auth: 'isolated direct-plan login', claudeVersion: '2.1.289', toolCatalog: 'unverified until interactive connection' } };
 for (const name of armNames) {
   if (!ARMS[name]) throw new Error(`unknown arm ${name}`);
-  if (ARMS[name].rejected) continue;
-  const arm = ARMS[name];
-  if (suite === 'world' && !arm.codex) {
-    arm.world = true;
-    arm.env.CLAUDE_CONFIG_DIR = join(arm.cwd, 'claude');
-    mkdirSync(arm.env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
-    arm.args.push('--no-chrome');
+  if (ARMS[name].rejected || ARMS[name].unsupported) continue;
+  let arm = ARMS[name];
+  if (arm.interactive) continue;
+  if (world && !arm.codex) {
+    arm = ARMS[name] = worldArm(arm, name);
+    if (!isDryRun) mkdirSync(arm.env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
+  if (!arm.codex && !arm.args.includes('--no-chrome')) arm.args.push('--no-chrome');
   if (guardedPass && !arm.codex) {
     arm.guarded = true;
     arm.servers ??= [arm.server];
@@ -153,7 +164,8 @@ for (const name of armNames) {
       if (name === 'sleight') {
         // Strict mode suppresses plugin MCP registration; retain the same server identity.
         const mcp = join(arm.cwd, 'bench-mcp.json');
-        writeFileSync(mcp, JSON.stringify({ mcpServers: { [arm.server]: { command: join(ROOT, 'plugins/sleight/bin/sleight-mcp') } } }), { mode: 0o600 });
+        arm.mcp = { mcpServers: { [arm.server]: { command: join(ROOT, 'plugins/sleight/bin/sleight-mcp') } } };
+        if (!isDryRun) writeFileSync(mcp, JSON.stringify(arm.mcp), { mode: 0o600 });
         arm.args.push('--mcp-config', mcp);
       }
       arm.args.push('--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--no-session-persistence', '--permission-prompts', 'none');
@@ -162,15 +174,17 @@ for (const name of armNames) {
     arm.env.BENCH_ARM_SERVERS = JSON.stringify(arm.servers);
     arm.env.BENCH_APPROVAL_STOP = arm.stopFile;
     arm.settings = join(arm.cwd, 'bench-settings.json');
-    writeFileSync(arm.settings, JSON.stringify(genericSettings(arm, ROOT)), { mode: 0o600 });
+    const settings = genericSettings(arm, ROOT);
+    if (!isDryRun) writeFileSync(arm.settings, JSON.stringify(world ? worldSettings(settings) : settings), { mode: 0o600 });
   }
   if (cleanArms && name === 'sleight' && !guardedPass) {
     // Clean arms keep the owner's user plugins, settings and MCP servers out of the CPU comparison:
     // strict MCP with only sleight's server, the mod still loaded through --plugin-dir.
     const mcp = join(arm.cwd, 'bench-mcp.json');
-    writeFileSync(mcp, JSON.stringify({ mcpServers: { [arm.server]: { command: join(ROOT, 'plugins/sleight/bin/sleight-mcp') } } }), { mode: 0o600 });
+    if (!isDryRun) writeFileSync(mcp, JSON.stringify({ mcpServers: { [arm.server]: { command: join(ROOT, 'plugins/sleight/bin/sleight-mcp') } } }), { mode: 0o600 });
     arm.args.push('--mcp-config', mcp, '--strict-mcp-config', '--setting-sources', '');
   }
+  if (isDryRun) continue;
   const ok = ARMS[name].check?.() ?? true;
   if (ok !== true) throw new Error(ok);
   if (cleanArms && arm.codex) {
@@ -196,7 +210,7 @@ const effort = option('effort', 'high');
 const codexModel = option('codex-model', 'gpt-6-luna');
 const codexEffort = option('codex-effort', effort);
 const wanted = option('tasks', undefined)?.split(',');
-const claudeBin = process.env.CLAUDE_BIN || 'claude';
+const claudeBin = world ? worldCLI(ARM_HOME) : process.env.CLAUDE_BIN || 'claude';
 const selected = selectSuiteTasks(suiteTasks.filter(task => task.surface !== 'extension' || realSurfaces === 'browser,computer' || wanted?.includes(task.id)), wanted);
 if (selected.some(task => task.surface === 'extension') && realSurfaces !== 'browser,computer') {
   throw new Error('extension tasks require --surfaces browser,computer');
@@ -219,13 +233,14 @@ if (privatePass && (selected.some(task => !task.privateMail) || armNames.some(na
 // account request on the owner's login, which shares a rate limit with their usage meter (2026-10-10).
 // Claude arms run on the owner's API key when ~/.config/sleight-bench/anthropic-api-key exists
 // (--auth api|login|auto), up to a monthly cap (bench/api-auth.mjs).
-const auth = !preparationErrors.length && armNames.some(name => !ARMS[name].codex)
+const auth = !preparationErrors.length && !isDryRun && armNames.some(name => !ARMS[name].codex && !ARMS[name].unsupported && !ARMS[name].interactive)
   ? benchAuth({ mode: option('auth', 'auto'), capUsd: Number(process.env.SLEIGHT_BENCH_API_CAP_USD || DEFAULT_CAP_USD) })
   : { mode: 'login', env: {}, unset: [] };
-if (suite === 'world' && !preparationErrors.length && armNames.some(name => !ARMS[name].codex) && auth.mode === 'login') {
+if (world && !isDryRun && !preparationErrors.length && armNames.some(name => !ARMS[name].codex && !ARMS[name].interactive && !ARMS[name].unsupported) && auth.mode === 'login') {
   throw new Error('world auth resolved to login: isolated Claude arm configs have no login; configure the benchmark API key');
 }
 if (auth.mode === 'api') console.log(`Claude arms run on the API key: $${auth.spent.toFixed(2)} of the $${auth.capUsd} monthly cap spent.`);
+if (armNames.includes('claude-cu') && !isDryRun) console.log('claude-cu uses its isolated direct-plan login.');
 // A pass started from a Claude session inherits that session's identity: CLAUDE_CODE_ENTRYPOINT,
 // the account's IDs and email, and the desktop app's messaging socket. Arms carried all of it, so
 // the API grant billed them as the desktop app's Claude Code and refused them, while the same key
@@ -238,7 +253,9 @@ const armEnv = (arm, extra = {}) => {
     ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
     ...(['real', 'world'].includes(suite) ? { SLEIGHT_SURFACES: realSurfaces } : {}) };
   for (const key of auth.unset) delete env[key];
-  if (arm.world) env.CLAUDE_CONFIG_DIR = arm.env.CLAUDE_CONFIG_DIR;
+  if (arm.interactive) { delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; }
+  env.DO_NOT_TRACK = '1';
+  if (arm.native || arm.world) env.CLAUDE_CONFIG_DIR = arm.env.CLAUDE_CONFIG_DIR;
   return env;
 };
 
@@ -284,10 +301,17 @@ function armServers(arm) {
 // until settings.json turned off the installed sleight).
 const otherServers = Object.values(ARMS).flatMap(a => a.servers ?? [a.server]).filter(Boolean);
 async function checkArms() {
+if (world && !isDryRun && armNames.some(name => !ARMS[name].codex && !ARMS[name].interactive && !ARMS[name].unsupported && !ARMS[name].rejected)) {
+  assertWorldCLI(claudeBin, execFileSync);
+}
 if (calculatorGate) await calculatorReady('preflight');
-for (const name of armNames.filter(n => !ARMS[n].codex && !isSetupOnly)) {
+for (const name of armNames.filter(n => !ARMS[n].codex && !ARMS[n].unsupported && !isSetupOnly && !isDryRun)) {
   if (guardedPass && !isDryRun) assertNoHold();
   const arm = ARMS[name];
+  if (arm.interactive) {
+    if (!isDryRun) verifyInteractiveCLI(interactivePlan({ armDir: arm.cwd, prompt: 'version preflight only', model, effort }));
+    continue;
+  }
   const catalog = await armServers(arm);
   if (arm.generic) { acceptGenericCatalog(arm, catalog); continue; }
   const { servers } = catalog;
@@ -339,18 +363,19 @@ function footprint(apps, client) {
 
 async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermissionRefusal, privateMail = false, onSpawn, fixtureLifecycle = false, auditDrag = false, timeoutMs = TIMEOUT_MS } = {}) {
   if (privateMail) assertPrivateClaudePolicy();
-  const args = [
-    '-p', prompt,
-    ...(privateMail ? ['--no-session-persistence'] : []),
-    ...arm.args,
-    '--disallowedTools', OUTSIDE_TOOLS.join(','),
-    ...(privateMail ? ['--setting-sources', ''] : []),
-    '--settings', arm.settings ?? join(ROOT, 'bench', privateMail ? 'private-settings.json' : 'settings.json'),
-    '--output-format', suite === 'real' || guardedPass || fixtureLifecycle ? 'stream-json' : 'json',
-    ...(suite === 'real' || guardedPass || fixtureLifecycle ? ['--verbose'] : []),
-    '--model', model,
-    '--effort', effort,
-  ];
+  if (arm.interactive) {
+    const plan = interactivePlan({ armDir: arm.cwd, prompt, model, effort, timeoutMs, hostEnv: armEnv(arm, env) });
+    const events = [];
+    const out = await runInteractive(plan, { signal: signal ?? controller.signal, onSpawn,
+      onEvent: auditDrag ? event => events.push(JSON.stringify(event)) : undefined });
+    const approvalStop = out.gateBlocked ? out.reason : !out.groupClean ? 'interactive cleanup unverified' : undefined;
+    if (approvalStop) onPermissionRefusal?.();
+    return { code: out.is_error ? 1 : 0, out, groupClean: out.groupClean, timedOut: out.timedOut,
+      ...(out.is_error && { passed: false, reason: out.reason }),
+      ...(auditDrag && { methodAudit: dragMethodAudit(events.join('\n')) }),
+      ...(approvalStop && { approvalStop }) };
+  }
+  const args = claudeArgs(prompt, arm, { privateMail, fixtureLifecycle });
   const drive = (driverSignal, stop) => runDriver(claudeBin, args, { cwd: arm.cwd, env: armEnv(arm, env), timeoutMs, onSpawn,
       signal: driverSignal,
       evidenceDir, privateMail, auditDrag, privatePolicyCheck: privateMail ? assertPrivateClaudePolicy : undefined,
@@ -363,6 +388,21 @@ async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermiss
   return { ...response, ...(approvalStop && { approvalStop }) };
 }
 
+function claudeArgs(prompt, arm, { privateMail = false, fixtureLifecycle = false } = {}) {
+  return [
+    '-p', prompt,
+    ...(privateMail ? ['--no-session-persistence'] : []),
+    ...arm.args,
+    '--disallowedTools', OUTSIDE_TOOLS.join(','),
+    ...(privateMail ? ['--setting-sources', ''] : []),
+    '--settings', arm.settings ?? join(ROOT, 'bench', privateMail ? 'private-settings.json' : 'settings.json'),
+    '--output-format', suite === 'real' || guardedPass || fixtureLifecycle ? 'stream-json' : 'json',
+    ...(suite === 'real' || guardedPass || fixtureLifecycle ? ['--verbose'] : []),
+    '--model', model,
+    '--effort', effort,
+  ];
+}
+
 // Window titles can carry the user's name (Chess: "Game 1 | Name - Computer"),
 // and Claude quotes them. Results are published, so answers lose it.
 const fullName = (() => { try { return execFileSync('id', ['-F'], { encoding: 'utf8' }).trim(); } catch { return ''; } })();
@@ -373,7 +413,7 @@ const scrub = text => {
 };
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-if (!isDryRun) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
+if (!isDryRun && armNames.some(name => !ARMS[name].unsupported)) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
 const results = [];
 const liveConditions = [];
 async function calculatorReady(stage) {
@@ -382,10 +422,14 @@ async function calculatorReady(stage) {
 }
 const realContexts = [], passCleanupErrors = [];
 const resultsDir = join(ROOT, 'bench', 'results');
-mkdirSync(resultsDir, { recursive: true });
+if (!isDryRun) mkdirSync(resultsDir, { recursive: true });
 const file = join(resultsDir, `${stamp}${isDryRun ? '-dry' : isSetupOnly ? '-setup' : ''}.json`);
 // Written after every run, so a run cut short keeps what it finished.
 const save = () => {
+  if (isDryRun) {
+    console.log(JSON.stringify({ dryRun: true, world, arms: armNames, results }, null, 2));
+    return;
+  }
   if (privatePass) {
     if (!fullName) throw new Error('PRIVATE_MAIL_OWNER_AUDIT_UNAVAILABLE');
     const json = JSON.stringify({ results: publicPrivateMailRows(results) }, null, 2);
@@ -395,7 +439,7 @@ const save = () => {
   }
   const json = JSON.stringify({ stamp, ...(['real', 'world'].includes(suite) ? { suite, surfaces: realSurfaces, ownerAway, ownerPresent } : {}),
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
-    arms: armNames, armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
+    arms: armNames, ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
     ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }) }, null, 2);
   writeFileSync(file, scrub(json) + '\n');
@@ -405,7 +449,7 @@ const save = () => {
 let unlock, lockIdentity;
 function finishRun(result) {
   if (isDryRun) return;
-  if (auth.mode === 'api' && Number.isFinite(result.costUsd)) {
+  if (!ARMS[result.arm]?.interactive && auth.mode === 'api' && Number.isFinite(result.costUsd)) {
     const spent = addSpend(result.costUsd);
     if (spent >= auth.capUsd) {
       controller.abort(new Error(`benchmark API spend reached the $${auth.capUsd} monthly cap`));
@@ -427,7 +471,7 @@ if (preparationErrors.length) {
   controller.abort(new Error('arm configuration refused')); process.exitCode = 1;
 }
 if (!controller.signal.aborted && guardedPass && !isDryRun && existsSync('/tmp/sleight-hold')) throw new Error('live run stopped: /tmp/sleight-hold exists');
-if (!controller.signal.aborted && !isDryRun) {
+if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name].unsupported)) {
   save();
   console.error('Acquiring /tmp/sleight-live.lock.');
   unlock = await acquireLiveLock(undefined, { wait: !guardedPass, signal: controller.signal, interval: 2000 });
@@ -464,6 +508,16 @@ pass: for (let run = 1; run <= runs; run++) {
     const task = guardedPass && suite === 'default' ? genericTask(originalTask) : originalTask;
     for (const armName of armNames) {
       if (controller.signal.aborted) break pass;
+      const arm = ARMS[armName];
+      if (arm.unsupported || isDryRun) {
+        results.push({ arm: armName, task: task.id, run,
+          ...(arm.unsupported ? { unsupported: true, reason: arm.reason } : { dryRun: true,
+            ...(arm.interactive ? { runner: 'runInteractive', model, effort, auth: arm.identity.auth } : arm.codex ? { runner: 'runCodex', reference: true } : {
+              command: [claudeBin, ...claudeArgs('<fixture task prompt>', arm)], mcp: arm.mcp }),
+            check: 'same task.check after fixture setup; not executed during planning' }) });
+        save();
+        continue;
+      }
       const nonce = randomBytes(4).toString('hex');
       const dir = join(suite === 'real' ? realpathSync(tmpdir()) : tmpdir(), 'sleight-bench', stamp, `${armName}-${task.id}-${run}`);
       mkdirSync(dir, { recursive: true });
@@ -559,7 +613,6 @@ pass: for (let run = 1; run <= runs; run++) {
       const started = Date.now();
       const stopWatching = watchAppWindows(ctx.sim?.app ?? task.app);
       // sleight traces into the run's scratch folder, so its timing comes from this run alone.
-      const arm = ARMS[armName];
       const cpu = footprint([ctx.sim?.app ?? task.app], arm.codex ? 'codex' : 'claude');
       const codexRun = arm.codex ? await runCodex(prompt, { cwd: arm.cwd, model: codexModel, effort: codexEffort, timeoutMs: TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn }) : undefined;
       const { code, out, stderr, groupClean = true, cancelled } = codexRun ?? await runClaude(prompt, arm, armName === 'sleight' ? { SLEIGHT_TRACE: dir } : {}, { onSpawn: cpu.onSpawn });
@@ -641,6 +694,10 @@ if (!isDryRun && !privatePass) {
   const median = xs => { const s = xs.filter(x => x != null).sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : '–'; };
   for (const task of selected) {
     for (const armName of armNames) {
+      if (ARMS[armName].unsupported) {
+        console.log(`| ${armName} | ${task.id} | not supported | ${Array(11).fill('–').join(' | ')} |`);
+        continue;
+      }
       const rs = results.filter(r => r.task === task.id && r.arm === armName && !r.skipped);
       const cost = rs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
       const ms = (key, scale) => { const m = median(rs.map(r => r.timing?.[key])); return m === '–' ? m : Math.round(m / scale * 10) / 10; };
@@ -651,4 +708,4 @@ if (!isDryRun && !privatePass) {
     }
   }
 }
-console.log(`\nresults: ${privatePass ? scrub(file) : file}`);
+if (!isDryRun) console.log(`\nresults: ${privatePass ? scrub(file) : file}`);

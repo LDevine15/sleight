@@ -188,7 +188,7 @@ fail(args, SystemExit('missing key'))
 
 test('rounds.sh stops at $190 and always uses the API key for browser-use', () => {
   const sh = readFileSync(join(ROOT, 'bench/fowl/rounds.sh'), 'utf8');
-  assert.match(sh, /SURFACE" = browser-use/);
+  assert.match(sh, /SURFACES" \| grep -qx browser-use/);
   assert.match(sh, /usd>=190/);
   assert.match(sh, /add-spend\.mjs/);
   assert.match(sh, /api-auth\.mjs/);

@@ -230,8 +230,7 @@ test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+s
   assert.equal(apply.status, 0, apply.stderr + apply.stdout);
   const diff = spawnSync('/usr/bin/git', ['diff'], { cwd: dir, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
   assert.equal(diff.status, 0, diff.stderr);
-  const dropIndex = text => String(text).replace(/^index .*$/gm, 'index');
-  assert.equal(dropIndex(diff.stdout), dropIndex(readFileSync(join(root, 'bench/fowl/sleight-surface.patch'), 'utf8')));
+  assert.equal(diff.stdout, readFileSync(join(root, 'bench/fowl/sleight-surface.patch'), 'utf8'));
   const patched = readFileSync(join(dir, 'tools/rounds.mjs'), 'utf8');
   assert.match(patched, /fowl\+sleight/);
   assert.match(patched, /browser-use/);

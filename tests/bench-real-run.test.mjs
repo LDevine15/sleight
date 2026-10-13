@@ -15,6 +15,17 @@ function fixture(t) {
   return { dir: join(bank, 'fixture'), nonce: 'abc123', lockPath: join(bank, 'lock') };
 }
 
+for (const reason of ['interactive task timeout', 'session exited before confirmed RESULT and idle prompt']) {
+  test(`retained fixture records the actual driver failure: ${reason}`, async t => {
+    const execute = await runner(), ctx = fixture(t);
+    const result = await execute({ setup() {}, prompt: () => 'fixture', check: () => true, cleanup() {} }, ctx,
+      { drive: async () => ({ code: 1, groupClean: true, reason, out: { is_error: true } }) });
+    assert.equal(result.passed, false);
+    assert.equal(result.reason, reason);
+    assert.equal(result.groupClean, true);
+  });
+}
+
 test('fixture-only diagnostics run setup and cleanup under the lock without a model or task verdict', async t => {
   const execute = await runner(), ctx = fixture(t), calls = [];
   const result = await execute({ setup() { assert.equal(existsSync(ctx.lockPath), true); calls.push('setup'); },

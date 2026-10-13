@@ -74,11 +74,11 @@ test('each setup script pins its packages and dry-run writes nothing', (t) => {
     assert.equal(run.status, 0, run.stderr);
     assert.equal(existsSync(target), false);
     const plan = JSON.parse(run.stdout);
-    if (surface === 'claude-cu') { assert.equal(plan.supported, false); continue; }
+    if (surface === 'claude-cu') assert.equal(plan.supported, true);
     const cmd = plan.install;
     assert.equal(cmd.command, 'npm');
-    assert.equal(cmd.args[cmd.args.indexOf('--prefix') + 1], target);
-    assert.equal(cmd.args[cmd.args.indexOf('--cache') + 1], join(target, 'npm-cache'));
+    assert.equal(cmd.args[cmd.args.indexOf('--prefix') + 1], surface === 'claude-cu' ? plan.target : target);
+    assert.equal(cmd.args[cmd.args.indexOf('--cache') + 1], join(surface === 'claude-cu' ? plan.target : target, 'npm-cache'));
     assert.ok(cmd.args.includes('@anthropic-ai/claude-code@2.1.289'));
     assert.ok(cmd.args.includes('--ignore-scripts'));
     if (surface === 'playwright-mcp') assert.ok(cmd.args.includes('@playwright/mcp@0.0.83'));
@@ -113,7 +113,13 @@ test('the patched runner dry-runs every new surface without spawning an agent or
     assert.equal(run.status, 0, run.stderr);
     const plan = JSON.parse(run.stdout)[0];
     assert.equal(existsSync(output), false);
-    if (surface === 'claude-cu') { assert.equal(plan.supported, false); assert.equal(plan.command, null); continue; }
+    if (surface === 'claude-cu') {
+      assert.equal(plan.supported, true, plan.reason);
+      assert.equal(plan.command, process.execPath);
+      assert.ok(plan.args.includes('--prompt'));
+      assert.equal(plan.args.includes('-p'), false);
+      continue;
+    }
     assert.ok(plan.args.includes('claude-haiku-5-5'));
     assert.ok(plan.args.includes('high'));
     assert.ok(plan.prompt.endsWith('End your answer with one line starting with RESULT: that states submitted.'));

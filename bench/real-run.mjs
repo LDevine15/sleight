@@ -67,7 +67,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       // A check may name a stop that isn't a plain failure, such as a shop's human check.
       if (verdict?.outcome && !signal?.aborted) result.outcome = verdict.outcome;
       result.reason = dialogReason() || (result.permissionPrompt ? 'macOS permission prompt: stopped' : result.permissionRefusal ? 'computer-use permission refused: stopped' : signal?.aborted ? 'run interrupted' :
-        verdict !== true ? verdict?.reason ?? verdict : response.code !== 0 ? `driver exited ${response.code}` : undefined);
+        verdict !== true ? verdict?.reason ?? verdict : response.code !== 0 ? response.reason ?? `driver exited ${response.code}` : undefined);
       result.seconds = Math.round((Date.now() - started) / 100) / 10;
     }
   } catch (error) {

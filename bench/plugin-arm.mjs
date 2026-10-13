@@ -99,7 +99,7 @@ function outsideGit(path) {
   if (repo) throw new Error('generic arm folders must be outside any git repository');
 }
 
-export function prepareGenericArm(name, { root, armHome, env = process.env }) {
+export function prepareGenericArm(name, { root, armHome, env = process.env, dryRun = false }) {
   const match = /^(plugin|mcp):([a-z0-9][a-z0-9_-]*)$/.exec(name);
   if (!match) throw new Error(`invalid generic arm ${name}`);
   const [, kind, label] = match;
@@ -108,7 +108,7 @@ export function prepareGenericArm(name, { root, armHome, env = process.env }) {
   const source = realpathSync(resolve(env[variable]));
   const cwd = join(armHome, `${kind}-${label}-arm`);
   outsideGit(cwd);
-  mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  if (!dryRun) mkdirSync(cwd, { recursive: true, mode: 0o700 });
   let servers, identity, sourceArgs;
   if (kind === 'plugin') {
     const manifest = readJSON(join(source, '.claude-plugin/plugin.json'));
@@ -133,7 +133,7 @@ export function prepareGenericArm(name, { root, armHome, env = process.env }) {
     const plugin = sourceIdentity(source);
     identity = { kind, name: manifest.name, version: manifest.version, ...plugin,
       pluginHash: plugin.packageHash, packageHash: digest(JSON.stringify([plugin, artifacts])), servers: artifacts };
-    writeFileSync(mcp, JSON.stringify({ mcpServers: Object.fromEntries(Object.entries(expanded).map(([server, value], index) =>
+    if (!dryRun) writeFileSync(mcp, JSON.stringify({ mcpServers: Object.fromEntries(Object.entries(expanded).map(([server, value], index) =>
       [`plugin:${manifest.name}:${server}`, isolatedServer(value, artifacts[server].executable, cwd, index, env)])) }), { mode: 0o600 });
     sourceArgs = ['--plugin-dir', source, '--mcp-config', mcp];
   } else {
@@ -144,7 +144,7 @@ export function prepareGenericArm(name, { root, armHome, env = process.env }) {
     const artifacts = Object.fromEntries(servers.map(server => [server, serverIdentity(normalized[server], dirname(source), env)]));
     identity = { kind, name: label, source, configHash: digest(readFileSync(source)), packageHash: digest(JSON.stringify(artifacts)), servers: artifacts };
     const mcp = join(cwd, 'mcp.json');
-    writeFileSync(mcp, JSON.stringify({ mcpServers: Object.fromEntries(servers.map((server, index) =>
+    if (!dryRun) writeFileSync(mcp, JSON.stringify({ mcpServers: Object.fromEntries(servers.map((server, index) =>
       [server, isolatedServer(normalized[server], artifacts[server].executable, cwd, index, env)])) }), { mode: 0o600 });
     sourceArgs = ['--mcp-config', mcp];
   }

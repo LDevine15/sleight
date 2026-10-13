@@ -9,9 +9,10 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 for a in "$@"; do
   [ "$a" != --plan ] || exec node "$REPO/bench/fowl/accounting.mjs" "$@"
 done
-MODEL=opus; SURFACE=""; OUT=""; prev=""; for a in "$@"; do
+MODEL=opus; SURFACE=""; TASKS=""; OUT=""; prev=""; for a in "$@"; do
   [ "$prev" = --model ] && MODEL="$a"
   [ "$prev" = --surface ] && SURFACE="$a"
+  [ "$prev" = --tasks ] && TASKS="$a"
   [ "$prev" = --out ] && OUT="$a"
   prev="$a"
 done
@@ -28,8 +29,15 @@ fi
 # spending the API credit). Other models run on the API key, whose monthly credit stops at $200 (LAWS): refuse a round
 # from $190, and add each round's cost to the ledger.
 SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
-# Browser Use always spends the API key (it never uses the owner's Claude Code login).
-if [ "$SURFACE" = browser-use ]; then
+# Task overrides determine whether any arm needs the API key. Computer use always uses its login.
+SURFACE="${SURFACE:-fowlbrowser}"
+SURFACES="$SURFACE"
+if [ -n "${TASKS:-}" ]; then
+  SURFACES="$(node -e 'const tasks=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write([...new Set(tasks.map(t=>t.surface??process.argv[2]))].join("\n"))' "$TASKS" "$SURFACE")"
+fi
+if [ "$SURFACES" = claude-cu ]; then
+  AUTH=account; KEY=""
+elif echo "$SURFACES" | grep -qx browser-use; then
   AUTH=api
   KEY="$(node --input-type=module -e "import { pathToFileURL } from 'node:url'; const { readKey } = await import(pathToFileURL(process.argv[1]).href); const k = readKey(); if (!k) process.exit(1); process.stdout.write(k);" "$REPO/bench/api-auth.mjs")"
 elif echo "$MODEL" | grep -q opus; then
@@ -38,7 +46,7 @@ else
   AUTH=api; KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")"
 fi
 [ "$AUTH" = account ] || [ -n "$OUT" ] || { echo "rounds.sh: API rounds require --out so token spend can be recorded" >&2; exit 1; }
-[ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit(j.month===m&&(j.usd>=190||j.unpriced)?1:0)' "$SPEND" || { echo "rounds.sh: API spend is at or over 190 USD, or a round's token cost needs reconciliation" >&2; exit 1; }
+[ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit((j.unpriced||j.month===m&&j.usd>=190)?1:0)' "$SPEND" || { echo "rounds.sh: API spend is at or over 190 USD, or a round's token cost needs reconciliation" >&2; exit 1; }
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
 trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"' EXIT
