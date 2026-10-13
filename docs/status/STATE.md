@@ -3,11 +3,11 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-13 23:35 UTC, flushed before the owner's clear)
+## Banner (2026-10-14 00:00 UTC)
 
 Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
 1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 3760 pass, 0 fail, 33 skipped, mod 33/33.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 3964 pass, 0 fail, 39 skipped, mod 33/33.
 `~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
 
 The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
@@ -18,27 +18,32 @@ path remains the zero-setup default. Design v2 (`~/Projects/sleight-wt/ledger/br
 design (`native-path-design.md`) are approved. The Electron design (`electron-path-design.md`) waits on four owner decisions.
 Engine-browser fixes (AS-3, AS-4, FM2, FM3, QT1) are parked: their checks are in the gate doc.
 
-Merged on 2026-10-13, all peer-reviewed by Codex lanes: AS-1R and AS-2R (discovery, warm-up priming), FS2R (links open as
-background tabs), W8R2 (world runner), FM1, TB1, M3R (Haiku 5.5 ids, token-based cost), T2R7, W3R5, R1, W4R6 (owner's call
-past the cap), AS-5, Q1, RS5-1R, RS6-1R, and the turbo and native prototypes under `bench/` (not wired into the plugin yet):
-BP2-1, BP2-2, BP2-3, BP2-5, BP2-7, BP2-9, BP2-10, NP-1, NP-2, NP-7. The check runs every prototype test folder, and checks run the
-Claude CLI with a throwaway config (`scripts/claude-isolated.sh`) so parallel lanes don't raise keychain dialogs.
+Merged on 2026-10-13, all peer-reviewed by Codex lanes: AS-1R and AS-2R, FS2R, W8R2, FM1, TB1, M3R, T2R7, W3R5, R1, W4R6, AS-5,
+Q1, RS5-1R, RS6-1R, and the turbo and native prototypes under `bench/` (not wired into the plugin yet): BP2-1, BP2-2, BP2-3,
+BP2-5, BP2-6R3, BP2-7, BP2-9, BP2-10, NP-1, NP-2, NP-4R, NP-6R, NP-7. After the clear: AM1R (`bench/app-speed-map.mjs`, which times app reads without a model.
+Every app it names is on the LAWS allowlist, and account apps need `--owner-present`).
 
-In flight at the clear: headless Codex lanes (`codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`) keep running
-through the clear and report only through `~/Projects/sleight-wt/ledger/claims/`. Logs and prompts are in
-`/private/tmp/claude-501/lanes/`. Running: codex-hdlac and codex-hdlag (BP2 fix rounds), codex-hdlaj, hdlak, hdlam and hdlap
-(NP-3 to NP-6 fix rounds), codex-hdlaq (AM1 fix), codex-hdlar (BP2-4R3), codex-hdlas (BP2-6R3), codex-hdlat (BP2-11, DONE),
-codex-hdlau (BP2-1R2). Ledger: BP2-4R3, BP2-6R3 and BP2-11 are DONE and wait for review; BP2-1R2 fixes a confirmed
-navigation exfiltration gap in the merged contract and must merge before BP2-12; BP2-8R2, NP-3R to NP-6R and AM1's fix are
-building. Waiting in `queue/next/`: BP2-12 (wires turbo into the plugin), NP-8, EP-1 to EP-7, the Q1, IN, AA1 and RS proposals.
-B1 and Q2-1 are plugin changes held until after the 1.3.0 freeze. Re-arm a watcher at boot: sleight-arch's background watchers end at the clear.
+Real-page tests: FowlBrowser's playwright-core 1.64 needs Chromium build 1248, which wasn't installed, so `SLEIGHT_LIVE_DOM_TEST=1`
+runs skipped or failed to launch before 2026-10-14 ("the installed playwright-core Chromium build is unavailable"). Installed on
+the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and 1 skips. Read the TAP skip reasons at every merge.
 
-Merging a prototype item: squash `private/codex/<id>`, run `SLEIGHT_LIVE_DOM_TEST=1 node --test` on its test folder (real-page
+Past the cap (owner, 2026-10-13 23:45 UTC): BP2-1R2 and BP2-4R3 were parked and block BP2-12. In BP2-1R2 the navigation fix holds, but the last gate
+misses an identity recheck after the final clock callback. In BP2-4R3 the cursor fix holds, but autofill tokens match case-sensitively. The
+owner allowed one more round each, BP2-1R3 and BP2-4R4, and pre-approved one round after that (BP2-1R4, BP2-4R5). After that they park.
+
+Lanes (headless `codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`; logs and prompts in `/private/tmp/claude-501/lanes/`;
+report only through `~/Projects/sleight-wt/ledger/claims/`): codex-hdlav (BP2-1R3) and codex-hdlaw (BP2-4R4) started 23:55 UTC;
+codex-hdlas reviews NP-5R, codex-hdlat reviews NP-3R2 and BP2-8R2. BP2-11R's claim was overwritten in a collision by codex-hdlar
+(OWNER-CORRECTION.md); its owner codex-hdlap exited with uncommitted work in `~/Projects/sleight-wt/bp2-11r`, and codex-hdlax
+took it over at 00:00 UTC. Waiting in `queue/next/`: BP2-12 (wires turbo into the plugin), NP-8, EP-1 to EP-7, the Q1, IN, AA1 and RS proposals.
+B1 and Q2-1 are plugin changes held until after the 1.3.0 freeze.
+
+Merging a prototype item: squash `private/codex/<id>`, run `SLEIGHT_LIVE_DOM_TEST=1 node --test` on its test files (real-page
 tests are sleight-arch's), then the bare `npm run check`, push, and `touch claims/<ID>/MERGED`. Keep about 12 lanes at most:
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge reviewed BP2 and NP items as they pass, with BP2-1R2 before BP2-12.
+1. Merge reviewed BP2 and NP items as they pass, with BP2-1R3 and BP2-4R4 before BP2-12. Reassign BP2-11R.
 2. BP2-12 wires turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. AM1's live speed map in an away window.
@@ -50,7 +55,7 @@ Next steps, in order:
 
 Waiting on the owner: the four Electron decisions; the Cua and Peekaboo clicks; an away window for steps 3 and 4; two iCloud
 TextEdit leftovers ("Delivery Note.txt", "Untitled 6.txt", 2026-10-12) and an unused keychain entry `Claude Code-credentials-…`
-from a mistyped arm path, both theirs to delete. API spend for October: $156.76 of $200. `/tmp/sleight-owner-away` is on at the clear: the owner is stepping away.
+from a mistyped arm path, both theirs to delete. API spend for October: $156.76 of $200.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -100,6 +105,8 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 
 ## Machine state outside the repo
 
+- Playwright's Chromium 1248 and its headless shell in `~/Library/Caches/ms-playwright` (installed 2026-10-14 on the owner's OK)
+  for real-page tests with FowlBrowser's playwright-core 1.64. Builds 1228 and 1234 are still there.
 - Remote debugging is on in the Chrome "sleight benchmark" profile and in Helium (`chrome://inspect/#remote-debugging`, turned on
   by the owner 2026-10-13) for turbo's qualification. The owner turns it off on the same page.
 - The Claude in Chrome arm's pinned Claude Code 2.1.289 (`~/.config/sleight-bench/world/arms/claude-in-chrome/node_modules`) was
