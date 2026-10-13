@@ -38,7 +38,11 @@ engine keeps native apps and Safari.
 The owner approved design v2 (2026-10-13, `ledger/browser-path-design-v2.md`) with all six of its recommendations (section
 "Owner decisions first"). sleight keeps the connection until Disconnect, and confirmations come from a sleight window. Chrome and
 Helium are qualified separately. Popups get a tested subset with handoff, and a separate profile is only a last resort. The
-hookup gets a one-second animation and a connected indicator. Lanes build BP2-1 to BP2-12 as separate modules in parallel, joined in BP2-9 and BP2-12.
+hookup gets a one-second animation and a connected indicator.
+The owner approved the native-app design (2026-10-13, `ledger/native-path-design.md`) with its recommendations. A
+sleight-owned accessibility reader handles read-only metadata checks after the engine's app approval. Compact native tools stay
+an opt-in prototype until an A/B wins. Parallel runtimes wait for a stability investigation, and the native claim uses the
+design's per-class bar. The default read size waits for the AM1 speed map. Lanes build BP2-1 to BP2-12 as separate modules in parallel, joined in BP2-9 and BP2-12.
 
 The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
 1. Freeze sleight's code after the items in flight: H3R3, H5R4, H12R3, H15R2, T2R5, D6, K12. No new feature items. An item that

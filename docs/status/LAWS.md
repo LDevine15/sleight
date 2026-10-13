@@ -143,6 +143,8 @@ belong in [STATE.md](STATE.md).
   switch that lifts the refusal (owner, 2026-10-05). A refusal tells the user that switch exists.
   sleight has no other path to these apps: the owner removed `blocked_app` on 2026-10-11, replacing
   the 2026-10-04 scope call. With the switch on, their settings windows are refused.
+- sleight may read accessibility metadata such as window titles and element state itself for read-only checks, never document content,
+  only after the engine's approval for that app in the session (owner, 2026-10-13). Writes always go through the engine.
 - sleight's `menu_bar`, `notifications` and `drag` tools act outside the engine, through macOS
   Accessibility and posted mouse events (owner's scope calls, 2026-10-03 and 2026-10-04). Each app's icon needs the user's approval, as do notifications,
   with the same session memory as engine approvals. Every action on an app waits for that approval.
