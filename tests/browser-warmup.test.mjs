@@ -11,13 +11,16 @@ const row = () => ({ id: '1', type: 'extension', profileName: 'Fixture', metadat
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const closed = object => new Proxy(object, { get(target, name) {
   if (name === 'then') return undefined;
+  // sleight's own markers on engine objects (tab-reuse.mjs) aren't engine methods.
+  if (typeof name === 'string' && name.startsWith('__sleight')) return target[name];
   if (!(name in target)) throw Error('unsupported engine method: ' + String(name));
   return target[name];
 } });
 function engine(options = {}) {
   const calls = { gets: 0, lists: 0, inventories: 0 }, docs = [];
   const forbidden = () => assert.fail('warm-up must not acquire or create a tab');
-  const browser = closed({ browserId: '1', tabs: closed({ get: forbidden, new: forbidden, list: async () => {
+  // The engine's Tabs has no close (api.json); tab-reuse.mjs checks for it with typeof before wrapping.
+  const browser = closed({ browserId: '1', tabs: closed({ get: forbidden, new: forbidden, close: undefined, list: async () => {
     calls.lists++;
     return options.list ? options.list() : [];
   } }) });
