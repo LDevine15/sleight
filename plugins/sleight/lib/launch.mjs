@@ -125,11 +125,11 @@ export async function probeSurfaces(server, env = process.env, options) {
 }
 
 // The helper's own opt-out of its app refusals, which only the user sets.
-const readForbiddenTargets = () => execFileSync('/usr/bin/defaults', ['read', '-g', 'ComputerUseAllowForbiddenTargets'],
-  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
+const readForbiddenTargets = () => execFileSync(process.execPath, [join(LIB, 'probe-supervisor.mjs'), '--forbidden-targets'],
+  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 });
 
 const listLaunchdJobs = () => new Promise((resolve, reject) =>
-  execFile('/bin/launchctl', ['list'], { timeout: 5000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
+  execFile(process.execPath, [join(LIB, 'probe-supervisor.mjs'), '--launchd-jobs'], { timeout: 6000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
 
 export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
@@ -456,17 +456,8 @@ const LAUNCHER_BUNDLES = new Set(['org.python.pythonlauncher', 'com.apple.jarlau
 // Files that run code when the right app opens them, refused whatever app is named.
 const RUNNABLE = /\.(?:command|tool|sh|bash|zsh|csh|ksh|fish|py|pyc|pyw|rb|pl|php|js|mjs|jar|app|pkg|mpkg|dmg|scpt|scptd|applescript|workflow|action|shortcut|terminal|osax|plugin|kext|so|dylib)$/i;
 // LaunchServices' answer for an app name or bundle ID: its real bundle ID, or '' when no app matches.
-const RESOLVE_APP = `ObjC.import('AppKit');
-function run(argv) {
-  const ws = $.NSWorkspace.sharedWorkspace, name = argv[0];
-  let url = /^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$/.test(name) ? ws.URLForApplicationWithBundleIdentifier(name) : undefined;
-  if (!url || url.isNil()) { const path = ws.fullPathForApplication(name); if (!path.isNil()) url = $.NSURL.fileURLWithPath(path); }
-  if (!url || url.isNil()) return '';
-  const bundle = $.NSBundle.bundleWithURL(url);
-  return bundle.isNil() || bundle.bundleIdentifier.isNil() ? '' : ObjC.unwrap(bundle.bundleIdentifier);
-}`;
-const resolveAppId = name => new Promise(resolve => execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', RESOLVE_APP, name],
-  { timeout: 10000 }, (err, stdout) => resolve(err ? '' : String(stdout).trim())));
+const resolveAppId = name => new Promise(resolve => execFile(process.execPath, [join(LIB, 'probe-supervisor.mjs'), '--resolve-app', name],
+  { timeout: 11000 }, (err, stdout) => resolve(err ? '' : String(stdout).trim())));
 const runOpen = (file, argv) => new Promise((resolve, reject) =>
   execFile(file, argv, { timeout: 15000 }, err => (err ? reject(err) : resolve())));
 // Refuses what would run code or reach outside the app: a path or .app as the app, an app that
@@ -786,8 +777,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     // Begin the deadline before draining, not after an unanswered call.
     const deadline = setTimeout(() => terminateEngine(signal), 3000);
     deadline.unref();
-    await relay.shutdown();
-    clearTimeout(deadline);
+    const ended = await relay.shutdown();
+    if (ended !== false) clearTimeout(deadline);
     terminateEngine(signal);
   }
   process.stdin.on('end', () => stop());

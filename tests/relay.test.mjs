@@ -973,6 +973,37 @@ test('endOpenTurn does nothing when no call used the turn', async () => {
   assert.equal(h.toServer.length, 0);
 });
 
+test('endOpenTurn bounds an unanswered leased call without claiming its input ended', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const lease = { owned: new Map(), release() {}, releaseChecked() {}, releaseIfInvalid() {}, close() {} };
+  const h = harness({ inputLease: lease, stopGraceMs: 100 });
+  h.fromClient({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await cua.listApps()' } } });
+  await Promise.resolve();
+  let ended = false;
+  const ending = h.relay.endOpenTurn().then(result => { ended = true; return result; });
+  t.mock.timers.tick(100); await Promise.resolve(); await Promise.resolve();
+  assert.equal(ended, true);
+  assert.equal(await ending, false);
+  assert.equal(h.toServer.some(call => call.params?.name === 'turn_ended'), false);
+  await h.relay.close();
+});
+
+test('shutdown retains leases after the drain deadline until its owner collects the engine', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let releases = 0;
+  const lease = { owned: new Map(), release() { releases++; }, releaseChecked() { releases++; }, releaseIfInvalid() {}, close() { releases++; } };
+  const h = harness({ inputLease: lease, stopGraceMs: 100 });
+  h.fromClient({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await cua.listApps()' } } });
+  await Promise.resolve();
+  const ending = h.relay.shutdown();
+  t.mock.timers.tick(100); await Promise.resolve(); await Promise.resolve();
+  const result = await ending;
+  assert.equal(releases, 0);
+  assert.equal(result, false);
+  assert.equal(h.toServer.some(call => call.params?.name === 'turn_ended'), false);
+  await h.relay.close();
+});
+
 const appApproval = (id, persist = ['session', 'always'], app = 'com.apple.calculator', riskLevel = 'low') => ({
   jsonrpc: '2.0', id, method: 'elicitation/create',
   params: { message: `Allow Computer Use to use "${app}"?`, mode: 'form', requestedSchema: { type: 'object', properties: {} },

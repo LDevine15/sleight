@@ -1,9 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
 
-const HEALTH_SCRIPT = fileURLToPath(new URL('./app-health.js', import.meta.url));
+const HEALTH_SUPERVISOR = fileURLToPath(new URL('./probe-supervisor.mjs', import.meta.url));
 
 // Each lane dispatches one operation at a time. Its deadline starts at dispatch, so killing a
 // timed-out helper cannot interrupt queued work. Probes never share a process with slow queries.
@@ -68,8 +67,7 @@ function helperLane(kind, timeoutMs, spawnHelper) {
 }
 
 export function spawnAppHealthHelper(kind) {
-  return spawn('/usr/bin/osascript', ['-l', 'JavaScript', HEALTH_SCRIPT,
-    '--session', dirname(HEALTH_SCRIPT)], { stdio: ['pipe', 'pipe', 'ignore'] });
+  return spawn(process.execPath, [HEALTH_SUPERVISOR, '--session'], { stdio: ['pipe', 'pipe', 'ignore'] });
 }
 
 // Three lazy lanes: 2 s probes, 30 s targets, 30 s taps. A stuck scan cannot delay a target.
@@ -93,7 +91,7 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
 
 export function probeAppHealth(app, { deadlineSeconds = 0.5 } = {}) {
   return new Promise(resolve => {
-    execFile('/usr/bin/osascript', ['-l', 'JavaScript', HEALTH_SCRIPT, JSON.stringify(app), JSON.stringify(deadlineSeconds)],
+    execFile(process.execPath, [HEALTH_SUPERVISOR, '--once', JSON.stringify(app), JSON.stringify(deadlineSeconds)],
       { timeout: deadlineSeconds * 1000 + 1500, maxBuffer: 4096 }, (error, stdout) => {
         // A process deadline alone cannot attribute a hang to the target app.
         if (error) { resolve({ status: 'unknown' }); return; }

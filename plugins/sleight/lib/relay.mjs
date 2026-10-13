@@ -2832,7 +2832,14 @@ export function createRelay({
   // Ends the open turn, if any call used it. Resolves once the server answers
   // or after a short grace period.
   async function endOpenTurn(cleanupTabs = true) {
-    if (inputLease && running.size) await new Promise(resolve => drained.add(resolve));
+    if (inputLease && running.size) {
+      const ready = await new Promise(resolve => {
+        const done = () => { clearTimeout(timer); resolve(true); };
+        const timer = setTimeout(() => { drained.delete(done); resolve(false); }, stopGraceMs);
+        drained.add(done);
+      });
+      if (!ready) return false;
+    }
     if (cleanupTabs && (tabsMayNeedCleanup || tabCleanupPending)) await cleanupBrowserTabs();
     const owed = [...failedTurnEnds.values(), ...(turnUsed ? [endTurnArgs()] : [])];
     failedTurnEnds.clear();
@@ -2964,8 +2971,9 @@ export function createRelay({
   async function shutdown() {
     closing = true;
     replWarmup.cancel();
-    await endOpenTurn();
+    if (await endOpenTurn() === false) return false;
     await close();
+    return true;
   }
   return { endOpenTurn, shutdown, close, dispose: close, get snapshotDirectory() { return changes.directory; }, get sessionId() { return sessionId; }, get turnId() { return turnId; } };
 }
