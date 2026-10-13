@@ -181,15 +181,23 @@ export function sumRuns(runs) {
   return runs.reduce((acc, r) => add(acc, r), {});
 }
 
-function loadRound(dir) {
+export function loadRoundEvents(dir) {
   const runs = {};
   for (const task of fs.readdirSync(dir).sort()) {
+    const entry = fs.lstatSync(path.join(dir, task));
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     const file = path.join(dir, task, 'events.jsonl');
     if (!fs.existsSync(file)) continue;
+    const record = fs.lstatSync(file);
+    if (!record.isFile() || record.isSymbolicLink()) continue;
     const events = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return {}; } });
-    runs[task] = runAnatomy(events);
+    runs[task] = events;
   }
   return runs;
+}
+
+function loadRound(dir) {
+  return Object.fromEntries(Object.entries(loadRoundEvents(dir)).map(([task, events]) => [task, runAnatomy(events)]));
 }
 
 const k = (n) => `${Math.round(n / 1000)}K`;
