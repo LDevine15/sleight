@@ -14,8 +14,8 @@ belong in [STATE.md](STATE.md).
 - sleight is public (owner, 2026-10-03), and promoting it is cleared: the owner checked the licensing
   of depending on the ChatGPT app's engine (2026-10-05). LCU gets a link and credit in the README, no heads-up, and
   the desktop app's declined prompts aren't reported to Anthropic.
-- The owner cleared reading other vendors' installed code to learn their design (2026-10-12). That covers Claude in Chrome, the Codex
-  browser extension and the ChatGPT engine, by hand or with REA. Only notes on behavior and design come back, never their
+- The owner cleared reading other vendors' installed code to learn their design (2026-10-12). That covers Claude in Chrome, Claude Code's own
+  computer use (added 2026-10-13), the Codex browser extension and the ChatGPT engine, by hand or with REA. Only notes on behavior and design come back, never their
   code. MIT projects like FowlBrowser may be copied with credit.
 - The project's name is sleight, and its icon is the two-hands image from ChatGPT (2026-10-03).
 - sleight launched at 0.x (owner, 2026-10-03) and reached 1.0.0 on 2026-10-09, after it survived
