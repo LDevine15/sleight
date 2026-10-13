@@ -54,6 +54,24 @@ function harness(options = {}) {
 
 const tick = () => new Promise(r => setImmediate(r));
 
+test('browser-first routing defers native docs and a later native call receives them once', () => {
+  const h=harness({changeReview:false});
+  const docs='## Computer Use\n\nNative API reference.\n\n# Computer Use Confirmations Policy\nKeep this confirmation policy.';
+  const browser='# Other Browser APIs\n\n# Browser Safety\nKeep browser safety.';
+  const call=(id,code)=>h.fromClient({id,method:'tools/call',params:{name:'js',arguments:{code}}});
+  call(1,'let b = await cua.getBrowser({id:"iab"});');
+  h.fromServer({id:1,result:{content:[{type:'text',text:docs},{type:'text',text:browser}],_meta:{'codex/toolSurface':{kind:'browserUse'}}}});
+  const first=h.toClient.at(-1).result.content.map(c=>c.text).join('\n');
+  assert.doesNotMatch(first,/Native API reference/);
+  assert.match(first,/Keep this confirmation policy/); assert.match(first,/Keep browser safety/);
+  call(2,'await cua.listApps();'); h.fromServer({id:2,result:{content:[{type:'text',text:'[]'}]}});
+  assert.ok(h.toClient.at(-1).result.content.some(c=>c.text===docs));
+  call(3,'await cua.listApps();'); h.fromServer({id:3,result:{content:[{type:'text',text:'[]'}]}});
+  assert.ok(!h.toClient.at(-1).result.content.some(c=>c.text===docs));
+  call(4,'nodeRepl.write("Full native reference:\\n" + await sleight.nativeDocumentation());');
+  assert.match(h.toServer.find(m=>m.id===4).params.arguments.code,/nativeDocumentation\s*=/);
+});
+
 test('results drop exact long text repeats while preserving images, order and short lines', () => {
   const h = harness({ changeReview: false });
   const tree = 'Window: "Draft", App: Example\n\t1 textArea ' + 'value '.repeat(50);

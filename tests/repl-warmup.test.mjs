@@ -112,21 +112,27 @@ function relayFixture(t, options = {}) {
   return { relay, sent, received, send, respond, serverIn, warm: sent.find(msg => String(msg.id).startsWith('sleight-warm-')) };
 }
 
-test('relay hides warm-up, reuses confirmed setup and delivers its docs with the first client result', async t => {
+test('relay hides warm-up, reuses confirmed setup and defers native docs for a browser-first client', async t => {
   const h = relayFixture(t), written = [];
   const context = createContext({ cua: {}, nodeRepl: { write: text => written.push({ type: 'text', text }) } });
-  h.send(js(2)); assert.equal(h.sent.some(m => m.id === 2), false);
+  h.send({ ...js(2), params: { name: 'js', arguments: { code: 'let b = await cua.getBrowser({ id: "iab" });' } } });
+  assert.equal(h.sent.some(m => m.id === 2), false);
   await runInContext('(async () => {' + h.warm.params.arguments.code + '})()', context);
-  const docs = { type: 'text', text: '## Computer Use\n\n# Computer Use Confirmations Policy\nAlways ask.' };
+  const docs = { type: 'text', text: '## Computer Use\n\nNative app reference.\n# Computer Use Confirmations Policy\nAlways ask.' };
   h.respond({ id: h.warm.id, result: { content: [docs, ...written] } }); await tick();
   const actual = h.sent.find(m => m.id === 2);
   assert.doesNotMatch(actual.params.arguments.code, /globalThis\.__sleightDocumentGuardSetup = update =>/, 'acknowledged setup is reused alongside current helpers');
   assert.equal(h.received.some(m => m.id === h.warm.id), false);
   h.respond({ id: 2, result: { content: [{ type: 'text', text: 'actual' }], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } } });
   const result = h.received.find(m => m.id === 2).result;
-  assert.ok(result.content.some(c => c.text === docs.text));
+  assert.ok(result.content.some(c => c.text.includes('# Computer Use Confirmations Policy\nAlways ask.')));
+  assert.ok(result.content.some(c => c.text.includes('sleight.nativeDocumentation()')));
+  assert.ok(result.content.every(c => !c.text?.includes('Native app reference.')));
   assert.ok(result.content.some(c => c.text === 'SLEIGHT RULES'));
   assert.ok(result.content.some(c => c.text === 'actual'));
+  h.send({ ...js(3), params: { name: 'js', arguments: { code: 'await cua.listApps();' } } });
+  h.respond({ id: 3, result: { content: [{ type: 'text', text: 'apps' }] } });
+  assert.ok(h.received.find(m => m.id === 3).result.content.some(c => c.text === docs.text));
 });
 
 test('failed warm-up leaves the next real call with full setup', async t => {

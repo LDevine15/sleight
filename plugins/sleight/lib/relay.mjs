@@ -1332,9 +1332,11 @@ export function createRelay({
       else msg.result = { ...msg.result, content: [...(msg.result?.content ?? []), { type: 'text', text: saveNote }] };
     }
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
-      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content))) } };
+      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
+        { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
       browserStale.observe(msg.result.content);
     }
+    if (msg.method === undefined) resultBudget.finish(msg.id);
     journal?.reply(msg);
     trace('to-client', msg);
     if (msg.method === undefined && msg.id !== undefined) onClientReply(msg);
@@ -2087,6 +2089,10 @@ export function createRelay({
         }
       }
       if (browser) browserCalls.set(msg.id, browser);
+      if (name === 'js' && msg.id !== undefined) {
+        resultBudget.request(msg.id, { browser: !!browser, code: originalCode });
+        if (typeof msg.params.arguments?.code === 'string') msg.params.arguments.code = resultBudget.code(msg.params.arguments.code);
+      }
       msg.params._meta = { ...msg.params._meta, [META_KEY]: turnMeta() };
       turnUsed = true;
       clearTimeout(idleTimer);

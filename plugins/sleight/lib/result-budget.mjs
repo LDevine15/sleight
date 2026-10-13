@@ -13,6 +13,8 @@ const BROWSER_DOCS = /^# Other Browser APIs\n/;
 const POLICY = '\n# Computer Use Confirmations Policy';
 const REFERENCE = '\n# API Reference\n';
 const OTHER_PLATFORM = /\b(?:Linux|Windows)\b/;
+const NATIVE_REFERENCE = /\bsleight\.nativeDocumentation\s*\(/;
+const NATIVE_NOTICE = 'sleight: Read the native reference with `nodeRepl.write("Full native reference:\\n" + await sleight.nativeDocumentation())` when needed. It documents `cua.getTab`, `cua.listTabs`, `cua.getState`, `cua.getApp` and the rest.';
 
 function dropOtherPlatforms(text) {
   const cut = text.indexOf(POLICY);
@@ -74,10 +76,38 @@ const size = (content) => content.reduce((n, c) => n + (c.type === 'text' ? c.te
 export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT, fullDocs = process.env.SLEIGHT_ENGINE_DOCS === 'full',
   leanDocs = process.env.SLEIGHT_ENGINE_DOCS === 'lean', minDocs = process.env.SLEIGHT_ENGINE_DOCS === 'min' } = {}) {
   let pending = null;
+  let browserFirst, nativeDocs, nativeDelivered = false;
+  const requests = new Map();
   return {
-    apply(content) {
+    request(id, { browser, code = '' }) {
+      browserFirst ??= browser;
+      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code) });
+    },
+    finish(id) { requests.delete(id); },
+    code(code) {
+      if (!nativeDocs || !NATIVE_REFERENCE.test(code)) return code;
+      return `globalThis.sleight ??= {}; globalThis.sleight.nativeDocumentation = async () => ${JSON.stringify(nativeDocs)};\n` + code;
+    },
+    apply(content, { id, native = false } = {}) {
       let out = content.map((c) => (platform === 'darwin' && c.type === 'text' && GENERAL_DOCS.test(c.text)
         ? { ...c, text: dropOtherPlatforms(c.text) } : c));
+      if (browserFirst && !fullDocs) {
+        const request = requests.get(id);
+        const nativeCall = request && (native || !request.browser) && !request.reference;
+        if (nativeCall && !nativeDelivered && nativeDocs && !out.some(c => c.type === 'text' && GENERAL_DOCS.test(c.text))) {
+          out = [{ type: 'text', text: nativeDocs }, ...out];
+        }
+        const deliver = (nativeCall && !nativeDelivered) || request?.reference;
+        out = out.map(c => {
+          if (c.type !== 'text' || !GENERAL_DOCS.test(c.text)) return c;
+          const policy = c.text.indexOf(POLICY);
+          if (policy < 0) return c;
+          nativeDocs = c.text;
+          if (deliver) { nativeDelivered = true; return c; }
+          return { ...c, text: (nativeDelivered ? '' : NATIVE_NOTICE + '\n') + c.text.slice(policy + 1) };
+        });
+        if (request?.reference && nativeDocs && out.some(c => c.type === 'text' && c.text.includes(nativeDocs))) nativeDelivered = true;
+      }
       if (!fullDocs) out = out.map((c) => (c.type === 'text' && BROWSER_DOCS.test(c.text) && c.text.includes(REFERENCE)
         ? { ...c, text: minDocs || leanDocs ? leanReference(c.text, minDocs) : trimReference(c.text) } : c));
       if (pending) { out = [{ type: 'text', text: pending }, ...out]; pending = null; }
