@@ -1,7 +1,7 @@
 import { locateList } from './list-locate.mjs';
 
 export async function pickFromList(tab, list, text, opts = {}) {
-  if (!tab?.playwright || typeof tab.scroll !== 'function') throw new Error('pickFromList needs a browser tab.');
+  if (!tab?.playwright || typeof tab.cua?.scroll !== 'function') throw new Error('pickFromList needs a browser tab.');
   if (typeof text !== 'string' || !text.trim()) throw new Error('pickFromList needs nonempty option text.');
   const normalize = value => String(value).replace(/\s+/g, ' ').trim();
   const wanted = normalize(text);
@@ -18,7 +18,7 @@ export async function pickFromList(tab, list, text, opts = {}) {
         return { text: String(option.getAttribute('aria-label') ?? option.innerText ?? option.textContent ?? '').replace(/\s+/g, ' ').trim(),
           disabled: option.disabled === true || option.getAttribute('aria-disabled') === 'true',
           selected: option.selected === true || option.getAttribute('aria-selected') === 'true',
-          visible: rect.width > 0 && rect.height > 0 && rect.y >= top && rect.y + rect.height <= bottom && rect.x < right && rect.x + rect.width > left };
+          visible: rect.width > 0 && rect.height > 0 && rect.y < bottom && rect.y + rect.height > top && rect.x < right && rect.x + rect.width > left };
       });
       return { position: el.scrollTop, max: Math.max(0, el.scrollHeight - el.clientHeight), height: el.clientHeight,
         viewport: root.clientHeight, point: [(left + right) / 2, (top + bottom) / 2], inView: right > left && bottom > top,
@@ -46,6 +46,15 @@ export async function pickFromList(tab, list, text, opts = {}) {
     const option = loc.getByRole('option', { name, exact: true });
     const count = await option.count();
     if (count !== 1) return fail(count === 0 ? 'The matching option was not found.' : 'The matching option is ambiguous.');
+    try {
+      await loc.evaluate((el, name) => {
+        const row = Array.from(el.querySelectorAll('[role="option"], option')).find(option => {
+          const text = String(option.getAttribute('aria-label') ?? option.innerText ?? option.textContent ?? '').replace(/\s+/g, ' ').trim();
+          return text === name;
+        });
+        row?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      }, name, options);
+    } catch {}
     try { await option.click(options); }
     catch (error) {
       return { found: true, verified: null, matched: name, selected: null, position: state.position, scrolls,
@@ -62,7 +71,8 @@ export async function pickFromList(tab, list, text, opts = {}) {
         seen: [...seen], note: 'Selection readback failed after the click. Read the page before retrying.' };
     }
   };
-  const ended = note => (!prefix || prefix === wanted) ? fail(note) : pickFromList(tab, list, prefix, { scan: true, started });
+  const rel = text => (text === wanted || text.startsWith(wanted + ' ') ? 0 : compare(wanted, text));
+  const ended = note => (prefix && prefix !== wanted) ? choose(prefix) : fail(note);
   for (;;) {
     remember();
     if (Date.now() - started >= 20_000) return fail('The search reached its 20s cap.');
@@ -72,28 +82,42 @@ export async function pickFromList(tab, list, text, opts = {}) {
     const prefixes = state.rows.filter(row => row.text.startsWith(wanted + ' '));
     if (exact.length > 1) return fail('The matching option is ambiguous.');
     if (exact.length === 1) return choose(exact[0].text);
+    const currentOrder = order(state.rows);
+    if (sort && state.rows.length >= 3 && currentOrder !== sort) {
+      sort = 0; scanning = true; fromStart = false;
+    }
     if (prefixes.length) {
       const names = [...new Set(prefixes.map(row => row.text))];
-      if (names.length > 1 && (!prefix || names.some(name => name !== prefix))) return fail('The matching option is ambiguous.');
+      if (names.length > 1 || (prefix && names.some(name => name !== prefix))) return fail('The matching option is ambiguous.');
       prefix ??= names[0];
+      if (sort && state.rows.length >= 3 && currentOrder === sort) {
+        const predecessor = state.rows[0].text !== names[0];
+        const atHead = state.position <= 1 && state.rows[0].text === names[0];
+        const lastPrefix = state.rows.findLastIndex(row => row.text === names[0]);
+        const successor = state.rows[lastPrefix + 1];
+        const bounded = state.position >= state.max - 1 || (successor && sort * rel(successor.text) < 0);
+        if ((predecessor || atHead) && bounded) return choose(names[0]);
+      }
     }
     if (scrolls >= (opts.scan ? 48 : 24)) return ended('The search reached its 24-scroll cap.');
     let next;
     if (!scanning) {
       if (order(state.rows) !== sort) scanning = true;
-      else if (sort * compare(wanted, state.rows[0].text) < 0) high = Math.min(high, Math.max(0, state.position - 1));
-      else if (sort * compare(wanted, state.rows.at(-1).text) > 0) low = Math.max(low, Math.min(state.max, state.position + 1));
+      else if (sort * rel(state.rows[0].text) < 0) high = Math.min(high, Math.max(0, state.position - 1));
+      else if (sort * rel(state.rows.at(-1).text) > 0) low = Math.max(low, Math.min(state.max, state.position + 1));
       else scanning = true;
       if (!scanning) {
         next = (low + Math.min(high, state.max)) / 2;
         if (Math.abs(next - state.position) < 1) {
-          next = sort * compare(wanted, state.rows[0].text) < 0 ? Math.floor(next) : Math.ceil(next);
+          next = sort * rel(state.rows[0].text) < 0 ? Math.floor(next) : Math.ceil(next);
         }
         if (low > high || Math.abs(next - state.position) < 0.5) scanning = true;
       }
     }
     if (scanning) {
-      if (!fromStart && state.position > 1) next = 0;
+      if (prefix && sort && state.rows[0].text === prefix && state.position > 1) {
+        next = Math.max(0, state.position - state.height * 0.5);
+      } else if (!fromStart && state.position > 1 && (!prefix || !sort)) next = 0;
       else {
         fromStart = true;
         if (state.position >= state.max - 1) return ended('The list ended without the requested option.');
@@ -103,8 +127,8 @@ export async function pickFromList(tab, list, text, opts = {}) {
     const previous = state.position, delta = next - previous;
     const previousRows = JSON.stringify(state.rows.map(row => row.text));
     try {
-      // Coordinate scroll pages use the tab's viewport height, not the list's height.
-      await tab.scroll(state.point, delta < 0 ? 'up' : 'down', Math.min(8, Math.abs(delta) / Math.max(100, state.viewport)));
+      const pages = Math.min(8, Math.abs(delta) / Math.max(100, state.viewport));
+      await tab.cua.scroll({ x: state.point[0], y: state.point[1], scrollX: 0, scrollY: (delta < 0 ? -1 : 1) * pages * state.viewport });
       scrolls++;
       for (let attempt = 0; attempt < 5; attempt++) {
         if (attempt) await new Promise(resolve => setTimeout(resolve, 50));

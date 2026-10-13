@@ -2,21 +2,27 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { PassThrough } from 'node:stream';
+import { createServer } from 'node:http';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { extname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { pickFromList, pickFromListCode } from '../plugins/sleight/lib/pick-from-list.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 
-function fixture(labels, { top = 0, height = 100, disabled = [], duplicate = false, stalls = false, verify = true } = {}) {
-  const calls = [], clicks = [], selected = [];
+function fixture(labels, { top = 0, height = 100, rowHeight = 20, disabled = [], duplicate = false, stalls = false, verify = true } = {}) {
+  const calls = [], clicks = [], selected = [], optionScrolls = [];
   let offset = top, attached = true;
   const root = { clientHeight: 800, clientWidth: 1000 };
   const document = { documentElement: root };
   const options = labels.map((text, i) => ({ textContent: text, selected: false,
     getAttribute: key => key === 'aria-disabled' ? String(disabled.includes(text)) :
       key === 'aria-selected' ? String(selected.includes(text)) : null,
-    getBoundingClientRect: () => ({ x: 100, y: 100 + i * 20 - offset, width: 200, height: 20 }) }));
-  const list = { get scrollTop() { return offset; }, scrollHeight: labels.length * 20, clientHeight: height,
+    getBoundingClientRect: () => ({ x: 100, y: 100 + i * rowHeight - offset, width: 200, height: rowHeight }),
+    scrollIntoView: opts => { optionScrolls.push({ text, ...opts }); } }));
+  const list = { get scrollTop() { return offset; }, scrollHeight: labels.length * rowHeight, clientHeight: height,
     getBoundingClientRect: () => ({ x: 100, y: 100, width: 200, height }),
-    querySelectorAll: () => options.filter((el, i) => i * 20 >= offset - 20 && i * 20 < offset + height + 20) };
+    querySelectorAll: () => options.filter((el, i) => i * rowHeight >= offset - rowHeight && i * rowHeight < offset + height + rowHeight) };
   const locator = { count: async () => attached ? 1 : 0,
     evaluate: async (fn, arg) => {
       if (/\.click\s*\(|innerHTML\s*=/.test(fn.toString())) throw new Error('evaluate is read-only');
@@ -27,7 +33,7 @@ function fixture(labels, { top = 0, height = 100, disabled = [], duplicate = fal
       return { count: async () => duplicate ? 2 : labels.filter(text => text === name).length,
         click: async () => {
           const i = labels.indexOf(name);
-          assert.ok(i * 20 >= offset && i * 20 < offset + height, 'only rendered options can be clicked');
+          assert.ok(i * rowHeight + rowHeight > offset && i * rowHeight < offset + height, 'only rendered options can be clicked');
           clicks.push(name);
           if (verify) selected.splice(0, selected.length, name);
         } };
@@ -47,13 +53,15 @@ function fixture(labels, { top = 0, height = 100, disabled = [], duplicate = fal
       return { count: async () => 0 };
     },
   },
-    scroll: async (point, direction, pages) => {
-      calls.push({ point, direction, pages });
-      assert.ok(point[0] > 100 && point[0] < 300 && point[1] > 100 && point[1] < 100 + height);
-      assert.ok(Number.isFinite(pages) && pages > 0);
-      if (!stalls) offset = Math.max(0, Math.min(labels.length * 20 - height, offset + (direction === 'up' ? -1 : 1) * pages * 800));
+    cua: {
+      scroll: async ({ x, y, scrollX, scrollY }) => {
+        calls.push({ x, y, scrollX, scrollY });
+        assert.ok(x > 100 && x < 300 && y > 100 && y < 100 + height);
+        assert.ok(Number.isFinite(scrollY) && scrollY !== 0);
+        if (!stalls) offset = Math.max(0, Math.min(labels.length * rowHeight - height, offset + scrollY));
+      },
     } };
-  return { tab, locator, calls, clicks, selected, list, detach: () => { attached = false; } };
+  return { tab, locator, calls, clicks, selected, list, optionScrolls, detach: () => { attached = false; } };
 }
 
 test('a rendered option is selected exactly and read back without scrolling', async () => {
@@ -72,7 +80,7 @@ test('a sorted virtualized list uses bisection to find a distant option', async 
   const result = await pickFromList(h.tab, '#list', 'Option 0876');
   assert.equal(result.verified, true);
   assert.ok(h.calls.length > 0 && h.calls.length <= 14, String(h.calls.length));
-  assert.ok(h.calls[0].pages > 1, 'the first scroll bisects rather than scanning every page');
+  assert.ok(Math.abs(h.calls[0].scrollY) > 800, 'the first scroll bisects rather than scanning every page');
   assert.deepEqual(h.clicks, ['Option 0876']);
 });
 
@@ -83,13 +91,13 @@ test('descending lists bisect and an unsorted list scans with overlapping steps'
   const h = fixture(['Zulu', 'Alpha', 'Echo', 'Beta', 'Mike', 'Delta', 'Oscar', 'Foxtrot', 'Tango', 'Hotel', 'India', 'Juliet']);
   const result = await pickFromList(h.tab, '#list', 'India');
   assert.equal(result.verified, true); assert.ok(h.calls.length > 0);
-  assert.ok(h.calls.every(call => call.pages <= 0.125));
+  assert.ok(h.calls.every(call => Math.abs(call.scrollY) <= 0.125 * 800));
 });
 
 test('a search starting midway scans earlier options when the list is unsorted', async () => {
   const h = fixture(['Zulu', 'Alpha', 'Echo', 'Beta', 'Mike', 'Delta', 'Oscar', 'Foxtrot', 'Tango', 'Hotel'], { top: 100 });
   const result = await pickFromList(h.tab, '#list', 'Alpha');
-  assert.equal(result.verified, true); assert.ok(h.calls.some(call => call.direction === 'up'));
+  assert.equal(result.verified, true); assert.ok(h.calls.some(call => call.scrollY < 0));
 });
 
 test('missing options and a stalled scroll fail with observed labels and scroll position', async () => {
@@ -214,12 +222,14 @@ function travelList({ belowFold = false, delayed = false, missingOption = false 
       if (name === 'Departing from') { assert.equal(options?.exact, true); return locator; }
       return { count: async () => 0 };
     },
-  }, scroll: async (point, direction, pages) => {
-    assert.ok(point[1] >= 0 && point[1] < 800, 'scroll point is in the viewport');
-    scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, scrollTop + (direction === 'up' ? -1 : 1) * pages * 800));
-    scrolls.push({ direction, pages, position: scrollTop });
-    if (delayed) pending = 4;
-    else renderRows();
+  }, cua: {
+    scroll: async ({ x, y, scrollX, scrollY }) => {
+      assert.ok(y >= 0 && y < 800, 'scroll point is in the viewport');
+      scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, scrollTop + scrollY));
+      scrolls.push({ x, y, scrollX, scrollY, position: scrollTop });
+      if (delayed) pending = 4;
+      else renderRows();
+    },
   } };
   return { tab, locator, selected, scrolls, clickNames, list, reads: () => reads, reveals: () => reveals };
 }
@@ -309,17 +319,12 @@ test('the search stops after about 20 seconds', async () => {
   } finally { Date.now = started; }
 });
 
-test('a prefix rescan keeps the same 20s wall-clock cap', async () => {
+test('a prefix-only sorted list picks the full row without a second scan from the top', async () => {
   const h = fixture(['Portland International PDX', 'Quebec', 'Rome']);
-  const realNow = Date.now;
-  let n = 0;
-  Date.now = () => ++n <= 2 ? 0 : 21_000;
-  try {
-    const result = await pickFromList(h.tab, '#list', 'Portland');
-    assert.equal(result.found, false);
-    assert.match(result.note, /20s|20 s|wall/i);
-    assert.deepEqual(h.clicks, []);
-  } finally { Date.now = realNow; }
+  const result = await pickFromList(h.tab, '#list', 'Portland');
+  assert.equal(result.found, true);
+  assert.equal(result.matched, 'Portland International PDX');
+  assert.ok(!h.calls.some(call => call.scrollY < 0 && Math.abs(call.scrollY) >= 800));
 });
 
 test('the travel list is found by accessible name when the string is not a selector', async () => {
@@ -401,4 +406,118 @@ test('getByLabel uses an exact name, and a count error that is not a selector pa
   assert.deepEqual(labels, [{ exact: true }]);
   h.tab.playwright.locator = () => ({ count: async () => { throw new Error('Target closed'); } });
   await assert.rejects(pickFromList(h.tab, '#list', 'Beta'), /Target closed/);
+});
+
+test('a row clipped at the viewport edge is still picked', async () => {
+  const labels = ['A0', 'A1', 'A2', 'A3', 'Edge', 'A5', 'A6', 'A7'];
+  const h = fixture(labels, { height: 90 });
+  const result = await pickFromList(h.tab, '#list', 'Edge');
+  assert.equal(result.verified, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ['Edge']);
+  assert.equal(h.calls.length, 0);
+});
+
+test('choose scrolls the option into view before click', async () => {
+  const h = fixture(['Alpha', 'Beta', 'Gamma']);
+  const result = await pickFromList(h.tab, '#list', 'Beta');
+  assert.equal(result.verified, true);
+  assert.ok(h.optionScrolls.some(row => row.text === 'Beta' && row.block === 'nearest'));
+});
+
+test('an initially sorted window does not settle on a prefix before a later exact row', async () => {
+  const h = fixture(['Atlanta ATL', 'Boston BOS', 'Portland International PDX', 'Denver DEN', 'Austin AUS',
+    'Miami MIA', 'Chicago ORD', 'Dallas DFW', 'Houston IAH', 'Portland'], { rowHeight: 60, height: 180 });
+  assert.equal(typeof h.tab.scroll, 'undefined');
+  const result = await pickFromList(h.tab, '#list', 'Portland');
+  assert.equal(result.verified, true, JSON.stringify(result));
+  assert.equal(result.matched, 'Portland');
+  assert.deepEqual(h.clicks, ['Portland']);
+  assert.ok(h.calls.length > 0);
+});
+
+test('a second prefix below the fold is ambiguous and sends no click', async () => {
+  const h = fixture(['Atlanta ATL', 'Boston BOS', 'Portland International PDX', 'Portland Jetport PWM',
+    'Seattle SEA', 'Tucson TUS', 'Wichita ICT'], { rowHeight: 60, height: 180 });
+  const result = await pickFromList(h.tab, '#list', 'Portland');
+  assert.equal(result.found, false, JSON.stringify(result));
+  assert.match(result.note, /ambiguous/);
+  assert.deepEqual(h.clicks, []);
+  assert.ok(h.calls.length > 0);
+});
+
+test('a bisected window must confirm its order before settling on a bounded prefix', async () => {
+  const h = fixture(['Atlanta ATL', 'Boston BOS', 'Chicago ORD', 'Denver DEN', 'Austin AUS',
+    'Portland International PDX', 'Seattle SEA', 'Tucson TUS', 'Wichita ICT', 'Portland'], { rowHeight: 60, height: 180 });
+  const result = await pickFromList(h.tab, '#list', 'Portland');
+  assert.equal(result.verified, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ['Portland']);
+});
+
+test('a prefix at the head with only two visible rows waits for an exact row', async () => {
+  const h = fixture(['Portland International PDX', 'Quebec', 'Denver DEN', 'Portland'], { rowHeight: 60, height: 120 });
+  const result = await pickFromList(h.tab, '#list', 'Portland');
+  assert.equal(result.verified, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ['Portland']);
+});
+
+const playwrightModule = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/mcp/node_modules/playwright-core/index.mjs');
+const travelSite = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/test/forms/site');
+const travelAirports = [
+  [0, 'Ashbridge International', 'FTZ'],
+  [100, 'Calbury Point Field', 'IOW'],
+  [360, 'Hartby Falls Regional', 'FNS'],
+  [500, 'Junwater Municipal', 'KAJ'],
+  [612, 'Norcrest Point International', 'MAO'],
+  [900, 'Valmoor Heights Regional', 'CFV'],
+  [999, 'Zelwood Bay Airport', 'QDE'],
+];
+
+test('real travel.html finds MAO and airports at the start, middle and end of the list', {
+  skip: !existsSync(playwrightModule) ? 'playwright-core is not installed' :
+    process.env.SLEIGHT_LIVE_DOM_TEST !== '1' && 'live browser test is reserved for sleight-arch; set SLEIGHT_LIVE_DOM_TEST=1',
+}, async t => {
+  assert.ok(existsSync(join(travelSite, 'travel.html')));
+  delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+  const { chromium } = await import(pathToFileURL(playwrightModule).href);
+  const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+  const server = createServer((req, res) => {
+    const file = join(travelSite, req.url === '/' ? 'travel.html' : req.url.replace(/\?.*$/, ''));
+    if (!file.startsWith(travelSite) || !existsSync(file)) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': mime[extname(file)] || 'text/plain' });
+    res.end(readFileSync(file));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const shells = [
+    join(homedir(), 'Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell'),
+    join(homedir(), 'Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'),
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ];
+  const executablePath = shells.find(path => existsSync(path));
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+  await page.goto(`http://127.0.0.1:${port}/travel.html`);
+  await page.evaluate(() => {
+    document.querySelector('[data-panel="1"]')?.classList.add('hidden');
+    document.querySelector('[data-panel="2"]')?.classList.remove('hidden');
+  });
+  await page.waitForSelector('#airports [role="option"]');
+  const tab = {
+    playwright: page,
+    cua: {
+      scroll: async ({ x, y, scrollX, scrollY }) => {
+        await page.mouse.move(x, y);
+        await page.mouse.wheel(scrollX, scrollY);
+      },
+    },
+  };
+  for (const [index, name, code] of travelAirports) {
+    const result = await pickFromList(tab, '#airports', name);
+    assert.equal(result.found, true, `${index} ${name} ${JSON.stringify(result)}`);
+    assert.equal(result.verified, true, `${index} ${name} ${JSON.stringify(result)}`);
+    assert.match(String(result.matched), new RegExp(`${code}$`));
+    assert.ok(result.selected.some(row => row.endsWith(code)), `${index} ${name} selected ${JSON.stringify(result.selected)}`);
+  }
 });
