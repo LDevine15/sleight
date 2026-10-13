@@ -16,7 +16,8 @@ belong in [STATE.md](STATE.md).
   the desktop app's declined prompts aren't reported to Anthropic.
 - The owner cleared reading other vendors' installed code to learn their design (2026-10-12). That covers Claude in Chrome, Claude Code's own
   computer use (added 2026-10-13), the Codex browser extension and the ChatGPT engine, by hand or with REA. Only notes on behavior and design come back, never their
-  code. MIT projects like FowlBrowser may be copied with credit.
+  code. MIT projects like FowlBrowser may be copied with credit. Apache-2.0 projects may be copied too (owner, 2026-10-13): the
+  copied file keeps its copyright header and says we changed it, and `THIRD-PARTY-NOTICES` holds their license and NOTICE text.
 - The project's name is sleight, and its icon is the two-hands image from ChatGPT (2026-10-03).
 - sleight launched at 0.x (owner, 2026-10-03) and reached 1.0.0 on 2026-10-09, after it survived
   two ChatGPT engine updates, someone else installed it from the marketplace, the desktop pane's
