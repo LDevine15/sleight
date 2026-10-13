@@ -121,8 +121,8 @@ belong in [STATE.md](STATE.md).
   battery (owner, 2026-10-11, fixtures only, read only in the owner's accounts), ZCode for the battery's
   flows in its sleight-scrap project only, owner away allowed, never the agent seats (owner, 2026-10-11), iPhone Mirroring
   only in real-suite runs started with `--owner-present` (owner, 2026-10-11), and the repo's own
-  hang fixture (`org.sleight.reliability-fixture`, owner, 2026-10-08) in its probe and in the native cost probe of ledger item
-  AS-7, for that probe session only and never "always" (owner, 2026-10-13), browser-extension access to
+  hang fixture (`org.sleight.reliability-fixture`, owner, 2026-10-08) in its probe and in the native probes of ledger items
+  AS-7 and AA1, for that probe session only and never "always" (owner, 2026-10-13), browser-extension access to
   the benchmark's own local pages on `127.0.0.1` (owner, 2026-10-10), and a list the user writes in
   a file outside any project, read by sleight in every session, headless or not (owner, 2026-10-04).
   No project or plugin can add to either. Claude edits the user's list only on the owner's explicit
