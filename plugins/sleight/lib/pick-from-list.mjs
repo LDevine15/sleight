@@ -1,9 +1,11 @@
+import { locateList } from './list-locate.mjs';
+
 export async function pickFromList(tab, list, text, opts = {}) {
   if (!tab?.playwright || typeof tab.scroll !== 'function') throw new Error('pickFromList needs a browser tab.');
   if (typeof text !== 'string' || !text.trim()) throw new Error('pickFromList needs nonempty option text.');
   const normalize = value => String(value).replace(/\s+/g, ' ').trim();
-  const wanted = normalize(text), loc = typeof list === 'string' ? tab.playwright.locator(list) : list;
-  if (!loc || await loc.count() !== 1) throw new Error('pickFromList needs exactly one list.');
+  const wanted = normalize(text);
+  const { loc } = await locateList(tab, list, 'pickFromList');
   const options = { timeoutMs: 1000 }, seen = new Set(), started = opts.started ?? Date.now();
   const read = async () => {
     if (await loc.count() !== 1) throw new Error('List is missing or ambiguous.');
@@ -118,5 +120,5 @@ export async function pickFromList(tab, list, text, opts = {}) {
 
 export function pickFromListCode(code) {
   if (!/\bsleight\s*\.\s*pickFromList\s*\(/.test(code)) return code;
-  return `globalThis.sleight ??= {}; globalThis.sleight.pickFromList = (${pickFromList.toString()});\n${code}`;
+  return `globalThis.sleight ??= {}; globalThis.sleight.pickFromList = ((locateList) => (${pickFromList.toString()}))(${locateList.toString()});\n${code}`;
 }

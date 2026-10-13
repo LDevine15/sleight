@@ -1,12 +1,12 @@
 import { dragTo } from './drag-to.mjs';
+import { locateList } from './list-locate.mjs';
 
 // The drop-and-render list in FowlBrowser's MIT settings fixture showed why a
 // successful input call is insufficient: verify the whole order after each drop.
 export async function reorder(tab, list, order, drag = dragTo) {
   if (!tab?.playwright || !Array.isArray(order) || order.length < 1 || order.length > 50 ||
       order.some(name => typeof name !== 'string' || !name.trim())) throw new Error('reorder needs a tab, list and 1 to 50 row names.');
-  const loc = typeof list === 'string' ? tab.playwright.locator(list) : list;
-  if (!loc || await loc.count() !== 1) throw new Error('reorder needs exactly one list.');
+  const { loc } = await locateList(tab, list, 'reorder');
   const normalize = text => text.replace(/\s+/g, ' ').trim();
   order = order.map(normalize);
   const read = () => loc.evaluate(el => {
@@ -57,7 +57,7 @@ export async function reorder(tab, list, order, drag = dragTo) {
 export function reorderCode(code) {
   if (!/\bsleight\s*\.\s*reorder\s*\(/.test(code)) return code;
   return `globalThis.sleight ??= {}; globalThis.sleight.dragTo = (${dragTo.toString()});\n` +
-    `globalThis.sleight.reorder = ((dragTo) => (${reorder.toString()}))(globalThis.sleight.dragTo);\n${code}`;
+    `globalThis.sleight.reorder = ((dragTo, locateList) => (${reorder.toString()}))(globalThis.sleight.dragTo, ${locateList.toString()});\n${code}`;
 }
 
 const DRAG_FAIL = /dragTo is not a function|DragEvent\b/;

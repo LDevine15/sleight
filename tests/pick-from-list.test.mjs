@@ -33,7 +33,20 @@ function fixture(labels, { top = 0, height = 100, disabled = [], duplicate = fal
         } };
     },
   };
-  const tab = { playwright: { locator: selector => selector === '#list' ? locator : { count: async () => 0 } },
+  const tab = { playwright: {
+    locator: selector => selector === '#list' ? locator : { count: async () => 0 },
+    getByRole: (role, { name, exact } = {}) => {
+      if (['listbox', 'combobox', 'list'].includes(role) && name === 'Departing from') {
+        assert.equal(exact, true);
+        return locator;
+      }
+      return { count: async () => 0 };
+    },
+    getByLabel: (name, options) => {
+      if (name === 'Departing from') { assert.equal(options?.exact, true); return locator; }
+      return { count: async () => 0 };
+    },
+  },
     scroll: async (point, direction, pages) => {
       calls.push({ point, direction, pages });
       assert.ok(point[0] > 100 && point[0] < 300 && point[1] > 100 && point[1] < 100 + height);
@@ -189,7 +202,19 @@ function travelList({ belowFold = false, delayed = false, missingOption = false 
       return { count: async () => missingOption ? 0 : matches().length,
         click: async () => { assert.equal(matches().length, 1); clickNames.push(name); matches()[0].onclick(); } };
     } };
-  const tab = { playwright: { locator: () => locator }, scroll: async (point, direction, pages) => {
+  const named = { listbox: 'Departing from' };
+  const tab = { playwright: {
+    locator: selector => selector === '#airports' ? locator : { count: async () => 0 },
+    getByRole: (role, { name, exact } = {}) => {
+      if (role === 'option') return locator.getByRole(role, { name, exact: true });
+      if (named[role] === name) { assert.equal(exact, true); return locator; }
+      return { count: async () => 0 };
+    },
+    getByLabel: (name, options) => {
+      if (name === 'Departing from') { assert.equal(options?.exact, true); return locator; }
+      return { count: async () => 0 };
+    },
+  }, scroll: async (point, direction, pages) => {
     assert.ok(point[1] >= 0 && point[1] < 800, 'scroll point is in the viewport');
     scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, scrollTop + (direction === 'up' ? -1 : 1) * pages * 800));
     scrolls.push({ direction, pages, position: scrollTop });
@@ -297,6 +322,46 @@ test('a prefix rescan keeps the same 20s wall-clock cap', async () => {
   } finally { Date.now = realNow; }
 });
 
+test('the travel list is found by accessible name when the string is not a selector', async () => {
+  const h = travelList();
+  const result = await pickFromList(h.tab, 'Departing from', 'Norcrest Point International');
+  assert.equal(result.found, true, JSON.stringify(result));
+  assert.equal(result.verified, true, JSON.stringify(result));
+  assert.deepEqual(h.clickNames, ['Norcrest Point International MAO']);
+});
+
+test('a missing list names a CSS selector, a locator, or the list accessible name', async () => {
+  const h = fixture(['Alpha', 'Beta']);
+  await assert.rejects(pickFromList(h.tab, 'No such list', 'Beta'), /CSS selector, a locator, or the list's accessible name/);
+});
+
+test('unparseable CSS is treated as zero matches and falls back to the accessible name', async () => {
+  for (const selector of ['Departing from (airport)', 'From:', 'Depart[ing']) {
+    const h = fixture(['Alpha', 'Beta', 'Gamma']);
+    h.tab.playwright.locator = () => ({ count: async () => { throw new Error('Unexpected token'); } });
+    h.tab.playwright.getByRole = (role, { exact } = {}) => {
+      assert.equal(exact, true);
+      return role === 'listbox' ? h.locator : { count: async () => 0 };
+    };
+    const result = await pickFromList(h.tab, selector, 'Beta');
+    assert.equal(result.verified, true, selector);
+  }
+});
+
+test('two listbox matches throw and do not fall through to combobox', async () => {
+  const h = fixture(['Alpha', 'Beta']);
+  let combobox = 0;
+  h.tab.playwright.locator = () => ({ count: async () => 0 });
+  h.tab.playwright.getByRole = (role, { exact } = {}) => {
+    assert.equal(exact, true);
+    if (role === 'listbox') return { count: async () => 2 };
+    if (role === 'combobox') { combobox++; return h.locator; }
+    return { count: async () => 0 };
+  };
+  await assert.rejects(pickFromList(h.tab, 'Departing from', 'Beta'), /found 2 lists for "Departing from"/);
+  assert.equal(combobox, 0);
+});
+
 test('the helper injects into a fresh realm and the relay installs it only when requested', async t => {
   const h = fixture(['Alpha', 'Beta']);
   const result = await runInNewContext('(async () => {' + pickFromListCode('return await sleight.pickFromList(tab, "#list", "Beta")') + '})()', { tab: h.tab });
@@ -311,4 +376,29 @@ test('the helper injects into a fresh realm and the relay installs it only when 
     code: 'nodeRepl.write(await sleight.pickFromList(tab, "#list", "Beta"))',
   } } }) + '\n');
   assert.match(sent[0].params.arguments.code, /globalThis\.sleight\.pickFromList\s*=/);
+});
+
+test('the injected helper resolves a list name that is not valid CSS', async () => {
+  const h = fixture(['Alpha', 'Beta']);
+  h.tab.playwright.locator = () => ({ count: async () => { throw new Error('Unexpected token ":" while parsing css selector "From:"'); } });
+  h.tab.playwright.getByRole = (role, { name, exact } = {}) => (role === 'listbox' && name === 'From:' && exact === true ? h.locator : { count: async () => 0 });
+  const result = await runInNewContext('(async () => {' + pickFromListCode('return await sleight.pickFromList(tab, "From:", "Beta")') + '})()', { tab: h.tab });
+  assert.equal(result.verified, true);
+});
+
+test('getByLabel uses an exact name, and a count error that is not a selector parse is rethrown', async () => {
+  const h = fixture(['Alpha', 'Beta']);
+  const labels = [];
+  h.tab.playwright.locator = () => ({ count: async () => 0 });
+  h.tab.playwright.getByRole = () => ({ count: async () => 0 });
+  h.tab.playwright.getByLabel = (name, options) => {
+    labels.push(options);
+    assert.equal(options?.exact, true);
+    return name === 'Departing from' ? h.locator : { count: async () => 0 };
+  };
+  const result = await pickFromList(h.tab, 'Departing from', 'Beta');
+  assert.equal(result.verified, true);
+  assert.deepEqual(labels, [{ exact: true }]);
+  h.tab.playwright.locator = () => ({ count: async () => { throw new Error('Target closed'); } });
+  await assert.rejects(pickFromList(h.tab, '#list', 'Beta'), /Target closed/);
 });

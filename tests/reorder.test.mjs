@@ -34,7 +34,20 @@ function fixture(names, { noDrop = false, replace = false } = {}) {
       }, new Set(['nth']));
     },
   }, ENGINE_LIST);
-  const tab = { playwright: { locator: () => list } };
+  const tab = { playwright: {
+    locator: selector => selector === '#list' ? list : { count: async () => 0 },
+    getByRole: (role, { name, exact } = {}) => {
+      if (['listbox', 'combobox', 'list'].includes(role) && name === 'Notification order') {
+        assert.equal(exact, true);
+        return list;
+      }
+      return { count: async () => 0 };
+    },
+    getByLabel: (name, options) => {
+      if (name === 'Notification order') { assert.equal(options?.exact, true); return list; }
+      return { count: async () => 0 };
+    },
+  } };
   const drag = async (targetTab, from, to) => {
     assert.equal(targetTab, tab);
     calls.push(['drag', from.index, to.index]);
@@ -198,4 +211,65 @@ test('the relay injects reorder only when requested', t => {
     name: 'js', arguments: { code: 'nodeRepl.write(await sleight.reorder(tab, "#list", ["A", "B"]))' } } }) + '\n');
   assert.match(sent[0].params.arguments.code, /globalThis.sleight.reorder/);
   assert.equal(reorderCode('await tab.getAXState()'), 'await tab.getAXState()');
+});
+
+test('an accessible name finds the list when it is not a CSS selector', async () => {
+  const h = fixture(['Billing', 'Security']);
+  const out = await reorder(h.tab, 'Notification order', ['Security', 'Billing'], h.drag);
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.after, ['Security', 'Billing']);
+});
+
+test('a missing list names a CSS selector, a locator, or the list accessible name', async () => {
+  const h = fixture(['A', 'B']);
+  await assert.rejects(reorder(h.tab, 'No such list', ['B', 'A'], h.drag),
+    /CSS selector, a locator, or the list's accessible name/);
+  assert.equal(h.calls.length, 0);
+});
+
+test('unparseable CSS is treated as zero matches and falls back to the accessible name', async () => {
+  for (const selector of ['Departing from (airport)', 'From:', 'Depart[ing']) {
+    const h = fixture(['Billing', 'Security']);
+    h.tab.playwright.locator = () => ({ count: async () => { throw new Error('Unexpected token'); } });
+    h.tab.playwright.getByRole = (role, { exact } = {}) => {
+      assert.equal(exact, true);
+      return role === 'listbox' ? h.list : { count: async () => 0 };
+    };
+    const out = await reorder(h.tab, selector, ['Security', 'Billing'], h.drag);
+    assert.equal(out.verified, true, selector);
+  }
+});
+
+test('two listbox matches throw and do not fall through to combobox', async () => {
+  const h = fixture(['A', 'B']);
+  let combobox = 0;
+  h.tab.playwright.locator = () => ({ count: async () => 0 });
+  h.tab.playwright.getByRole = (role, { exact } = {}) => {
+    assert.equal(exact, true);
+    if (role === 'listbox') return { count: async () => 2 };
+    if (role === 'combobox') { combobox++; return h.list; }
+    return { count: async () => 0 };
+  };
+  await assert.rejects(reorder(h.tab, 'Notification order', ['B', 'A'], h.drag),
+    /found 2 lists for "Notification order"/);
+  assert.equal(combobox, 0);
+  assert.equal(h.calls.length, 0);
+});
+
+test('getByLabel uses an exact name, and a count error that is not a selector parse is rethrown', async () => {
+  const h = fixture(['Billing', 'Security']);
+  const labels = [];
+  h.tab.playwright.locator = () => ({ count: async () => 0 });
+  h.tab.playwright.getByRole = () => ({ count: async () => 0 });
+  h.tab.playwright.getByLabel = (name, options) => {
+    labels.push(options);
+    assert.equal(options?.exact, true);
+    return name === 'Notification order' ? h.list : { count: async () => 0 };
+  };
+  const out = await reorder(h.tab, 'Notification order', ['Security', 'Billing'], h.drag);
+  assert.equal(out.verified, true);
+  assert.deepEqual(labels, [{ exact: true }]);
+  h.tab.playwright.locator = () => ({ count: async () => { throw new Error('Target closed'); } });
+  await assert.rejects(reorder(h.tab, '#list', ['Security', 'Billing'], h.drag), /Target closed/);
+  assert.equal(h.calls.length, 1);
 });
