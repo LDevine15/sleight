@@ -35,7 +35,7 @@ test-only fixes NP-3R3 (DONE, awaiting review) and BP2-5T (claimed) come first. 
 
 Keychain prompts (owner's complaint, 2026-10-14): lanes on branches older than `scripts/claude-isolated.sh` ran bare `claude
 plugin validate`, which raised paired `/usr/bin/security` prompts. Lanes now start with a throwaway `CLAUDE_CONFIG_DIR`, and
-LEDGER.md and the lane prompt tell lanes to run every check that way. Lanes started before 00:15 UTC may still raise one until they exit, and
+Both LEDGER.md and the prompt each lane starts from now require it for every check. Lanes started before 00:15 UTC may still raise one until they exit, and
 Deny is safe for them.
 
 Lanes (headless `codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`; logs and prompts in `/private/tmp/claude-501/lanes/`;
