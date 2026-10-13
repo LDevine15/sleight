@@ -38,7 +38,8 @@ export async function fillForm(tab, fields) {
       if (!loc || await loc.count() !== 1) throw new Error('field must match exactly one control');
       const state = () => loc.evaluate(el => ({
         tag: el.tagName?.toLowerCase(), type: el.type, role: el.getAttribute('role'), multiple: el.multiple === true,
-        checked: typeof el.checked === 'boolean' ? el.checked : el.getAttribute('aria-checked'),
+        checked: el.getAttribute('aria-checked') ?? (typeof el.checked === 'boolean' ? el.checked : undefined),
+        readOnly: el.readOnly === true, popup: el.getAttribute('aria-haspopup'),
         value: el.value ?? el.getAttribute('aria-valuenow'),
         min: el.getAttribute('min') ?? el.getAttribute('aria-valuemin') ?? '0',
         max: el.getAttribute('max') ?? el.getAttribute('aria-valuemax') ?? '100',
@@ -90,6 +91,9 @@ export async function fillForm(tab, fields) {
         if (['file', 'submit', 'reset', 'button', 'image', 'hidden'].includes(meta.type) || meta.role === 'button') {
           throw new Error('control is not a form value; fillForm never submits');
         }
+        if (meta.readOnly) throw new Error('control is read-only; ' +
+          (meta.popup && meta.popup !== 'false' ? 'use locator.click() to open its picker, then choose with locators' :
+            'read the control to find its UI input path'));
         try { await loc.fill(String(field.value), options); }
         catch {
           if (meta.role === 'combobox' && meta.tag !== 'input' && meta.tag !== 'textarea') {

@@ -2,6 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createContext, runInContext } from 'node:vm';
 import { PassThrough } from 'node:stream';
+import { createServer } from 'node:http';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { extname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { fillForm, fillFormCode } from '../plugins/sleight/lib/fill-form.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 
@@ -24,7 +29,10 @@ function fixture(specs) {
       click: async () => { calls.push([name, 'click']); el.checked = !el.checked; },
       selectOption: async value => { calls.push([name, 'select', value]); if (spec.labelError && value.label) throw Error('no option label'); },
     };
-    return [name, loc];
+    return [name, new Proxy(loc, { get(target, key) {
+      if (!(key in target)) throw Error('unsupported engine locator method: ' + String(key));
+      return target[key];
+    } })];
   }));
   const tab = { playwright: { getByLabel: name => controls[name], locator: name => controls[name] },
     getAXState: async () => 'Browser tab: 1, Title: "Form", URL: "https://example.com".\n0 AXWebArea Form\n\t1 text field Description: Name, ID: name\n\t2 checkbox Description: Terms' };
@@ -99,6 +107,31 @@ test('a custom host with a boolean checked property toggles via click-and-verify
   assert.ok(h.calls.some(call => call[1] === 'check' && call[2] === true));
   assert.equal(h.calls.filter(call => call[1] === 'click').length, 1);
   assert.match(out, /fallback/);
+});
+
+test('a read-only picker reports its UI path without typing and continues other fields', async () => {
+  const h = fixture({ Dates: { readOnly: true, 'aria-haspopup': 'dialog' }, Name: {} });
+  const out = await fillForm(h.tab, [{ label: 'Dates', value: 'Dec 14 2026' }, { label: 'Name', value: 'Ada' }]);
+  assert.match(out, /^Filled 1 of 2 fields\./);
+  assert.match(out, /read-only.*locator\.click\(\).*picker/);
+  assert.deepEqual(h.calls, [['Name', 'fill', 'Ada']]);
+});
+
+test('an ARIA switch uses aria-checked before the engine default checked property', async () => {
+  const h = fixture({ Alerts: { tagName: 'BUTTON', role: 'switch', 'aria-checked': 'true',
+    checked: false, checkError: 'not a checkbox' } });
+  const out = await fillForm(h.tab, [{ label: 'Alerts', value: true }]);
+  assert.match(out, /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.calls, [['Alerts', 'check', true]]);
+});
+
+test('the injected helper refuses read-only text and keeps ARIA check state in its own scope', async () => {
+  const h = fixture({ Dates: { readOnly: true }, Alerts: { tagName: 'BUTTON', role: 'switch',
+    'aria-checked': 'true', checked: false, checkError: 'not a checkbox' } });
+  const context = createContext({ tab: h.tab });
+  const out = await runInContext('(async () => {' + fillFormCode('return await sleight.fillForm(tab, [{label:"Dates",value:"x"},{label:"Alerts",value:true}])') + '})()', context);
+  assert.match(out, /^Filled 1 of 2 fields\./);
+  assert.deepEqual(h.calls, [['Alerts', 'check', true]]);
 });
 
 test('the injected helper runs in a fresh realm and is hooked into browser calls', async t => {
@@ -188,4 +221,54 @@ test('arrays are rejected on other controls and non-string array entries send no
   const multi = groupedSelect();
   assert.match(await fillForm(multi.tab, [{ label: 'Languages', value: ['French', 2] }]), /^Filled 0 of 1 fields\./);
   assert.equal(multi.calls.filter(call => call[0] === 'select').length, 0);
+});
+
+const playwrightModule = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/mcp/node_modules/playwright-core/index.mjs');
+const formsSite = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/test/forms/site');
+
+test('real fixture forms preserve read-only dates and already-on ARIA switches', {
+  skip: !existsSync(playwrightModule) ? 'playwright-core is not installed' :
+    !existsSync(join(formsSite, 'travel.html')) ? 'FowlBrowser fixture forms are not installed' :
+      process.env.SLEIGHT_LIVE_DOM_TEST !== '1' && 'live browser test is reserved for sleight-arch; set SLEIGHT_LIVE_DOM_TEST=1',
+}, async t => {
+  const { chromium } = await import(pathToFileURL(playwrightModule).href);
+  const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+  const server = createServer((req, res) => {
+    const file = join(formsSite, (req.url ?? '/').replace(/\?.*$/, ''));
+    if (!file.startsWith(formsSite + '/') || !existsSync(file)) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': mime[extname(file)] || 'text/plain' });
+    res.end(readFileSync(file));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const executablePath = [1234, 1228].map(version => join(homedir(),
+    `Library/Caches/ms-playwright/chromium_headless_shell-${version}/chrome-headless-shell-mac-arm64/chrome-headless-shell`))
+    .find(path => existsSync(path));
+  if (!executablePath) { t.skip('headless Chromium is not installed'); return; }
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  // Only the engine locator methods fillForm uses are exposed. Playwright's timeout name
+  // is adapted here; unsupported methods throw rather than inheriting Playwright's extras.
+  const loc = selector => {
+    const target = page.locator(selector);
+    const api = { count: () => target.count(), evaluate: (fn, arg) => target.evaluate(fn, arg),
+      fill: (value, options) => target.fill(value, { timeout: options.timeoutMs }),
+      setChecked: (value, options) => target.setChecked(value, { timeout: options.timeoutMs }),
+      click: options => target.click({ timeout: options.timeoutMs }) };
+    return new Proxy(api, { get(target, key) {
+      if (!(key in target)) throw Error('unsupported engine locator method: ' + String(key));
+      return target[key];
+    } });
+  };
+  const tab = { playwright: { locator: loc } }, origin = `http://127.0.0.1:${server.address().port}`;
+  await page.goto(origin + '/travel.html');
+  const dates = await fillForm(tab, [{ locator: '#dates', value: 'Dec 14 2026' }]);
+  assert.match(dates, /^Filled 0 of 1 fields\./);
+  assert.match(dates, /read-only.*locator\.click\(\)/);
+  assert.equal(await page.locator('#dates').inputValue(), '');
+  await page.goto(origin + '/settings.html');
+  const alerts = await fillForm(tab, [{ locator: '#emailAlerts button', value: true }]);
+  assert.match(alerts, /^Filled 1 of 1 fields\./);
+  assert.equal(await page.locator('#emailAlerts button').getAttribute('aria-checked'), 'true');
 });

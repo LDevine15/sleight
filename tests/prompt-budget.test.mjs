@@ -20,6 +20,13 @@ const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json',
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
+test('the default skill explains masked field reads without claiming a fill succeeded', () => {
+  const skill = skillRules(skillPath, {});
+  assert.match(skill, /engine masks protected field reads as `<redacted>`/);
+  assert.match(skill, /does not mean input was replaced/);
+  assert.match(skill, /Use validation or submission results\. Never try to unmask it/);
+});
+
 test('both skill variants explain browser routing and script input within their word budgets', () => {
   for (const [env, limit] of [[{}, 930], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
     const skill = skillRules(skillPath, env);

@@ -22,12 +22,12 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   Batch clicks you're sure of in one call.
 - Each result shows what changed since the last full tree you saw. A full read is
   `await app.getAXState({ disableDiffing: true })`.
-- A newly launched app can return an empty tree. Read once more.
+- If acquisition returns an empty tree, read again.
 - If a result says the user changed the app, or a header changed or disappeared after an action,
   read again before retrying. The user may be working in it.
 - To choose among several windows, call `select_window` with the app and an exact `url` or `title`,
   then acquire the app in a call of its own and check its Window line.
-- If a result gives a screenshot multiplier, multiply x and y by it before you tap.
+- Multiply tap coordinates by the result's screenshot multiplier.
 
 ## Text, menus and files
 
@@ -41,7 +41,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
-- If a list doesn't move when you scroll, use the app's search field or keyboard navigation instead.
+- If scrolling fails, use search or keyboard navigation.
 
 ## When to stop
 
@@ -63,6 +63,7 @@ Fill every field you already see in one call.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.
+The engine masks protected field reads as `<redacted>`. This does not mean input was replaced. Use validation or submission results. Never try to unmask it.
 Use locators when validation or autocomplete can add or move fields, indices on static forms.
 Submit in that call only when the user asked for that submit and the engine's confirmation policy
 doesn't require confirming it. Otherwise stop before the final click.
