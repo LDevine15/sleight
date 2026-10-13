@@ -80,6 +80,7 @@ import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession,
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
 import { pickFromListCode } from './pick-from-list.mjs';
+import { backgroundLinksCode } from './browser-background-links.mjs';
 import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
 import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
 import { isBrowserRead } from './browser-read.mjs';
@@ -2113,7 +2114,7 @@ export function createRelay({
           msg.params.arguments.code = reorderCode(msg.params.arguments.code);
           msg.params.arguments.code = pickFromListCode(msg.params.arguments.code);
           if (browser) msg.params.arguments.code = browserStale.code(msg.params.arguments.code);
-          const tabCode = tabCleanupCode(msg.params.arguments.code);
+          const tabCode = tabCleanupCode(browser ? backgroundLinksCode(msg.params.arguments.code) : msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
           msg.params.arguments.code = tabReuseCode(tabCode, msg.id);
           if (browser) msg.params.arguments.code = browserAliasesCode(msg.params.arguments.code);
@@ -2432,6 +2433,8 @@ export function createRelay({
     let windowNote;
     const confirmedBrowser = msg.method === undefined && browserCalls.has(msg.id) && browserReply(msg);
     if (confirmedBrowser && !resultFailed) clickResults.observe(msg.result);
+    if (browserCalls.has(msg.id) && msg.result?.content?.some(item => item.type === 'text' &&
+        /^sleight: new tab \S+ created for this link\.$/m.test(item.text ?? ''))) tabsMayNeedCleanup = true;
     // An unknown read handle may turn out to be native. Its engine identity keeps later actions
     // on the native path, including the selected-window and bundle checks.
     if (msg.method === undefined && browserCalls.has(msg.id) && !confirmedBrowser &&
