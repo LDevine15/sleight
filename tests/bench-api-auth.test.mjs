@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addSpend, benchAuth, monthSpend, prepareConfigDir, readKey } from '../bench/api-auth.mjs';
@@ -38,6 +38,24 @@ test('spend adds up within a month and starts over in the next', () => {
   assert.equal(monthSpend(ledger, oct), 1.75);
   assert.equal(monthSpend(ledger, nov), 0);
   assert.equal(addSpend(2, ledger, nov), 2);
+});
+
+test('adding priced spend preserves an unresolved round and other ledger fields', () => {
+  const ledger = join(mkdtempSync(join(tmpdir(), 'bench-ledger-')), 'spend.json');
+  const now = new Date('2026-10-13T02:00:00Z');
+  writeFileSync(ledger, JSON.stringify({ month: '2026-10', usd: 4, unpriced: true, unpricedRound: '/fixture/round', note: 'owner' }));
+  assert.equal(addSpend(2, ledger, now), 6);
+  assert.deepEqual(JSON.parse(readFileSync(ledger, 'utf8')), { month: '2026-10', usd: 6, unpriced: true, unpricedRound: '/fixture/round', note: 'owner' });
+});
+
+test('API auth refuses an unresolved round before preparing its config', () => {
+  const { dir, file } = keyFile();
+  const ledger = join(dir, 'spend.json');
+  writeFileSync(ledger, JSON.stringify({ month: '2026-10', usd: 4, unpriced: true }));
+  let prepared = false;
+  assert.throws(() => benchAuth({ mode: 'api', keyFile: file, ledgerFile: ledger,
+    now: new Date('2026-10-13T02:00:00Z'), prepare: () => { prepared = true; } }), /reconcil|unpriced/i);
+  assert.equal(prepared, false);
 });
 
 test('auto uses the key when present, api requires it, login never uses it, and the cap refuses', () => {

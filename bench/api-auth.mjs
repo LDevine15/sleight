@@ -80,8 +80,9 @@ export function monthSpend(file = LEDGER_FILE, now = new Date()) {
 export function addSpend(usd, file = LEDGER_FILE, now = new Date()) {
   if (!Number.isFinite(usd) || usd <= 0) return monthSpend(file, now);
   const total = monthSpend(file, now) + usd;
+  let ledger; try { ledger = JSON.parse(readFileSync(file, 'utf8')); } catch { ledger = {}; }
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(`${file}.tmp`, JSON.stringify({ month: month(now), usd: Math.round(total * 1e6) / 1e6 }) + '\n');
+  writeFileSync(`${file}.tmp`, JSON.stringify({ ...ledger, month: month(now), usd: Math.round(total * 1e6) / 1e6 }) + '\n');
   renameSync(`${file}.tmp`, file);
   return total;
 }
@@ -98,6 +99,8 @@ export function benchAuth({ mode = 'auto', capUsd = DEFAULT_CAP_USD, keyFile = K
     if (mode === 'api') throw new Error(`--auth api needs a key in ${keyFile}`);
     return { mode: 'login', env: {}, unset: [] };
   }
+  let ledger; try { ledger = JSON.parse(readFileSync(ledgerFile, 'utf8')); } catch {}
+  if (ledger?.unpriced) throw new Error('Reconcile the unpriced benchmark round before using the API key');
   const spent = monthSpend(ledgerFile, now);
   if (spent >= capUsd) {
     throw new Error(`benchmark API spend this month is $${spent.toFixed(2)}, at the $${capUsd} cap ` +

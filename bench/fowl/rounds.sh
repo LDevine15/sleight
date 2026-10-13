@@ -6,6 +6,16 @@ set -eu
 PIN=8b68924
 DIR="$HOME/Library/Caches/sleight-bench/fowlbrowser"
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+for a in "$@"; do
+  [ "$a" != --plan ] || exec node "$REPO/bench/fowl/accounting.mjs" "$@"
+done
+MODEL=opus; SURFACE=""; OUT=""; prev=""; for a in "$@"; do
+  [ "$prev" = --model ] && MODEL="$a"
+  [ "$prev" = --surface ] && SURFACE="$a"
+  [ "$prev" = --out ] && OUT="$a"
+  prev="$a"
+done
+MODEL=$(node "$REPO/bench/fowl/accounting.mjs" --model-id "$MODEL")
 [ -d "$DIR/.git" ] || git clone -q https://github.com/argofowl/FowlBrowser "$DIR"
 cd "$DIR"
 # The clone is this benchmark's own cache: when its tracked files differ from the current patch (an older
@@ -17,11 +27,6 @@ fi
 # Opus runs on the owner's Claude account (owner, 2026-10-12: parity with FowlBrowser's published runs without
 # spending the API credit). Other models run on the API key, whose monthly credit stops at $200 (LAWS): refuse a round
 # from $190, and add each round's cost to the ledger.
-MODEL=opus; SURFACE=""; prev=""; for a in "$@"; do
-  [ "$prev" = --model ] && MODEL="$a"
-  [ "$prev" = --surface ] && SURFACE="$a"
-  prev="$a"
-done
 SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
 # Browser Use always spends the API key (it never uses the owner's Claude Code login).
 if [ "$SURFACE" = browser-use ]; then
@@ -32,11 +37,11 @@ elif echo "$MODEL" | grep -q opus; then
 else
   AUTH=api; KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")"
 fi
-[ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit(j.month===m&&j.usd>=190?1:0)' "$SPEND" || { echo "rounds.sh: this month's API spend is at or over $190" >&2; exit 1; }
+[ "$AUTH" = account ] || [ -n "$OUT" ] || { echo "rounds.sh: API rounds require --out so token spend can be recorded" >&2; exit 1; }
+[ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit(j.month===m&&(j.usd>=190||j.unpriced)?1:0)' "$SPEND" || { echo "rounds.sh: API spend is at or over 190 USD, or a round's token cost needs reconciliation" >&2; exit 1; }
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
-OUT=""; prev=""; for a in "$@"; do [ "$prev" = --out ] && OUT="$a"; prev="$a"; done
-trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -f "$OUT/report.md" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT/report.md" "$SPEND"' EXIT
+trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"' EXIT
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
   SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" SLEIGHT_ENGINE_DOCS="${SLEIGHT_ENGINE_DOCS:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
-  node tools/rounds.mjs --model opus --effort medium "$@"
+  node tools/rounds.mjs --effort medium "$@" --model "$MODEL"

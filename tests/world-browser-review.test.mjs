@@ -10,6 +10,30 @@ const cacheSkip = !existsSync(join(homedir(), 'Library/Caches/sleight-bench/fowl
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const task = { name: 'fixture', browser: 'chrome', prompt: 'Read the value at http://127.0.0.1:4811/t/fixture/', result: 'the value' };
+test('runner-dependent tests name their missing pinned cache requirement', t => {
+  const home = temp(t);
+  const env = { ...process.env, HOME: home }; delete env.NODE_TEST_CONTEXT;
+  const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', '--test-name-pattern', 'both.*round arms', fileURLToPath(import.meta.url)], {
+    encoding: 'utf8', env,
+  });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /pinned FowlBrowser cache is absent/);
+  assert.match(run.stdout, /skipped 2/);
+});
+
+test('both Claude round arms pin their background model to Haiku 5.5', { skip: cacheSkip }, async t => {
+  const { dir, file } = runner(t), previous = process.env.SLEIGHT_REPO;
+  process.env.SLEIGHT_REPO = root;
+  t.after(() => { if (previous === undefined) delete process.env.SLEIGHT_REPO; else process.env.SLEIGHT_REPO = previous; });
+  const mod = await import(pathToFileURL(file));
+  for (const surface of ['sleight', 'fowlbrowser']) {
+    for (const world of [false, true]) {
+      const setup = mod.agentSetup({ task, surface, dir, mcpRoot: '/fixture/mcp', settings: '/fixture/settings.json',
+        model: 'haiku', effort: 'high', world });
+      assert.equal(setup.env?.ANTHROPIC_SMALL_FAST_MODEL, 'claude-haiku-5-5');
+    }
+  }
+});
 function temp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-world-review-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -25,6 +49,22 @@ function runner(t) {
   assert.equal(applied.status, 0, applied.stderr);
   return { dir, file: join(dir, 'tools/rounds.mjs') };
 }
+
+test('both round arms use explicit 5.5 model IDs and the token price in their report grade', { skip: cacheSkip }, async t => {
+  const {dir,file}=runner(t), tasks=join(dir,'models.json');
+  writeFileSync(tasks,JSON.stringify(['sleight','fowlbrowser'].map(surface=>({...task,name:surface,surface}))));
+  for(const alias of ['haiku','sonnet','opus']) {
+    const run=spawnSync(process.execPath,[file,'--tasks',tasks,'--world','--dry-run','--model',alias],
+      {encoding:'utf8',env:{...process.env,SLEIGHT_REPO:root}});
+    assert.equal(run.status,0,run.stderr);
+    for(const plan of JSON.parse(run.stdout)) assert.equal(plan.args[plan.args.indexOf('--model')+1],`claude-${alias}-5-5`);
+  }
+  const previous=process.env.SLEIGHT_REPO; process.env.SLEIGHT_REPO=root;
+  t.after(()=>{if(previous===undefined) delete process.env.SLEIGHT_REPO; else process.env.SLEIGHT_REPO=previous;});
+  const mod=await import(pathToFileURL(file));
+  const recorded=JSON.parse(readFileSync(new URL('fixtures/fowl-haiku-5-5-result.json',import.meta.url)));
+  assert.equal(mod.gradeTokens({result:recorded}).cost,0.0016165);
+});
 
 test('setup runs only the pinned Claude installer after npm and validates its executable', async (t) => {
   const { setupPlan } = await import('../bench/world/arms/browser.mjs');

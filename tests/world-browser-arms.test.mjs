@@ -114,11 +114,11 @@ test('the patched runner dry-runs every new surface without spawning an agent or
     const plan = JSON.parse(run.stdout)[0];
     assert.equal(existsSync(output), false);
     if (surface === 'claude-cu') { assert.equal(plan.supported, false); assert.equal(plan.command, null); continue; }
-    assert.ok(plan.args.includes('haiku'));
+    assert.ok(plan.args.includes('claude-haiku-5-5'));
     assert.ok(plan.args.includes('high'));
     assert.ok(plan.prompt.endsWith('End your answer with one line starting with RESULT: that states submitted.'));
     assert.ok(plan.prompt.includes('Complete the form in Chrome at http://127.0.0.1:4811/t/local-form/'));
-    assert.equal(plan.args[plan.args.indexOf('--model') + 1], 'haiku');
+    assert.equal(plan.args[plan.args.indexOf('--model') + 1], 'claude-haiku-5-5');
     assert.ok(plan.args[plan.args.indexOf('--disallowedTools') + 1].includes('Bash'));
   }
 });
