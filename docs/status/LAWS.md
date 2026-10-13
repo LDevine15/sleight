@@ -76,6 +76,13 @@ belong in [STATE.md](STATE.md).
   no setup. The direct path is an opt-in turbo that sleight offers the first time a browser task runs, through Chrome's built-in
   remote debugging consent: one switch, then Chrome's own prompt once per browser launch (owner, 2026-10-13: the user chooses).
   Benchmarks and the claim run in turbo and say so.
+- Electron apps get the same opt-in turbo through Chromium's debugging pipe, after 1.3.0 (owner, 2026-10-14, approving
+  `electron-path-design.md`'s six decisions). The debugger is its own approval for each app, in sleight's own card, never implied by
+  an app's computer-use approval. The card offers Always allow, which only the user's click writes to their list. sleight relaunches a
+  running app only on the user's click, through the app's own Quit, and never restarts one on its own. The connection lasts until the
+  user quits the app or disconnects, and revoking stops commands without closing the pipe. Windows are matched from read-only metadata,
+  and ambiguity stops. Benchmarks use temporary profiles that fail on any touch of the owner's state, while users keep their real
+  profile, never a copy. Apps stay on the normal path until each is qualified live, and app packages are never patched.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,

@@ -48,14 +48,16 @@ Next steps, in order:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. AM1's live speed map in an away window.
 4. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
-5. The claim suite with the W8 runner. The Claude in Chrome arm is signed in (Max plan, 2026-10-13); Cua and Peekaboo need the
-   owner's permission clicks on first run.
+5. The claim suite with the W8 runner. The Claude in Chrome arm is signed in (Max plan, 2026-10-13); Cua and Peekaboo are installed (2026-10-14),
+   and the owner granted their permissions.
 6. Release 1.3.0 on the owner's call once all of it is done (CHANGELOG draft in `ledger/claims/R2R/`), then the claim post
    and the video.
 
-Waiting on the owner: the four Electron decisions; the Cua and Peekaboo clicks; an away window for steps 3 and 4; two iCloud
-TextEdit leftovers ("Delivery Note.txt", "Untitled 6.txt", 2026-10-12) and an unused keychain entry `Claude Code-credentials-…`
-from a mistyped arm path, both theirs to delete. API spend for October: $156.76 of $200.
+Owner, 2026-10-14: the Electron design's six decisions are approved (LAWS), and EP-1 to EP-7 build after 1.3.0. The away window is
+open whenever sleight-arch asks: one sitting, once BP2-12 has merged and turbo passed its live qualification with the owner present.
+The two iCloud TextEdit leftovers went to the Trash on the owner's order (renamed "... (sleight 2026-10-12).txt"). "Untitled 6.rtfd"
+(2026-10-13 10:59) is still in TextEdit's iCloud folder, unnamed so far. Still theirs: an unused keychain entry
+`Claude Code-credentials-…` from a mistyped arm path. API spend for October: $156.76 of $200.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -105,6 +107,10 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 
 ## Machine state outside the repo
 
+- Benchmark arms installed 2026-10-14 (owner's 2026-10-12 OK, pinned with checksums). Cua 0.34.0 is at
+  `~/Library/Caches/sleight-bench/mcp-cua-arm` (the grants are on CuaDriver.app itself). Peekaboo
+  4.9.2 is at `mcp-peekaboo-arm`, and its grants go to Terminal.app (owner's pick), so Peekaboo passes run from a Terminal window. Runtime
+  folders `~/.cua-driver` and `~/.peekaboo`. Removal steps are in each arm's setup plan (`bench/world/native-setup.mjs`).
 - Playwright's Chromium 1248 and its headless shell in `~/Library/Caches/ms-playwright` (installed 2026-10-14 on the owner's OK)
   for real-page tests with FowlBrowser's playwright-core 1.64. Builds 1228 and 1234 are still there.
 - Remote debugging is on in the Chrome "sleight benchmark" profile and in Helium (`chrome://inspect/#remote-debugging`, turned on
