@@ -196,7 +196,8 @@ belong in [STATE.md](STATE.md).
 - A lane item that fails a third review is parked, not sent round again (owner, 2026-10-12).
 - Every lane branch (Codex, Grok or GLM) gets a code review by a Sonnet subagent at high effort before
   sleight-arch merges it, and a finding goes back as a fix item rather than being merged around
-  (owner, 2026-10-12). Exploration and docs subagents run Sonnet at medium effort.
+  (owner, 2026-10-12). Exploration and docs subagents run Sonnet at medium effort. When Claude quota is
+  short, another Codex lane reviews instead, never the branch's own author, by the ledger's review rules (owner, 2026-10-13).
 - The guard follows a stale element number to a new one only when the line Claude saw was unique in
   that tree, is on exactly one element now, isn't a bare role, and the call has one literal number.
   A number the code computed from its own read in the call is checked against that read.

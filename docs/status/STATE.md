@@ -13,7 +13,10 @@ Pushed: `pane/auto-mode` at the commit holding this banner (private); last full 
 
 At boot all seven finished lane items (M1, M2, T2R6, W2R3, W3R4, W4R5, W6) failed Sonnet-high review. Their fixes are five
 ledger items, the whole finish line now. Grok has T2R7 and W3R5. Codex has M3 (M1 plus M2 in one patch), W4R6 (the owner's one
-extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch). Then the gate round on Haiku 5.5.
+extra round past the cap) and W7 (W2R3, W6 and W4R5's runner part in one branch).
+Grok stopped for the night (owner, 02:15 UTC). Every item is pool codex. Codex lanes review each other by the ledger's REVIEW
+RULES, with fix items in `queue/` and proposals in `queue/next/`. After the fix items come R1 and R2 (release prep), then Q1, Q2 and B1,
+which merge after the 1.3.0 tag. A gpt-6-astra investigator studies the first-call tab queue (`astra-prompt.md`, `astra-report.md`). Then the gate round on Haiku 5.5.
 API spend for October is $151.00 of $200, in `~/Library/Logs/sleight/bench-api-spend.json`. Opus rounds don't count.
 
 Measured 2026-10-12 (all in `docs/benchmarks/2026-10-12-*`):
