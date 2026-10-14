@@ -37,7 +37,12 @@ use their first physical command and submits their last, excluding late cleanup
 as evidence of a newer capture.
 Uncertainty follows the browser incarnation, target, frame, document and origin
 across turn, session, lease and broker changes. Recovery preserves that order;
-older receipts without order require a new read. Command authority still checks
+older receipts without order require a new read dispatched by the recovering
+authority. Their private needsNewRead flag remains true across imports. A
+successful new read on the same document sets it false. A later import keeps
+that retry fence resolved. This records retry readiness, not proof of the
+submit's effect. Recovery is a trusted host entry and must preserve this field.
+Command authority still checks
 the full current scope. A read does not prove the earlier submit succeeded.
 Ordinary clicks and links can continue after unknown effects.
 The broker caches receipts by request id and never automatically resends input.

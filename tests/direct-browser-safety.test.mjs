@@ -190,3 +190,51 @@ test('late physical cleanup cannot make an earlier semantic read fresh', () => {
   completeTransport(transport, plan, 'verified');
   assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny');
 });
+
+function retained(id, kind, phase, sequence) {
+  const op = kind === 'read' ? readOperation(id) : submitOperation(id);
+  return { ...op, phase, ...(sequence === undefined ? {} : { sequence }) };
+}
+
+for (const sequence of [undefined, 0]) for (const reversed of [false, true])
+  test('unordered recovery survives retained reads and another recovery, sequence=' + sequence + ', reversed=' + reversed, () => {
+    const receipts = [retained('legacy-submit', 'click', 'unknown', sequence),
+      retained('ordered-submit', 'click', 'unknown', 8), retained('retained-read', 'read', 'verified', 10)];
+    if (reversed) receipts.reverse();
+    let f = fixture({ recovery: receipts });
+    assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny');
+    assert.equal(f.authority.receipt('legacy-submit').needsNewRead, true);
+    const journal = f.authority.recovery();
+    journal.push(retained('another-retained-read', 'read', 'verified', 20));
+    f = fixture({ recovery: journal.reverse() });
+    assert.equal(f.authority.prepare(submitOperation('retry-again')).verdict, 'deny');
+    const fresh = readOperation('new-authority-read'); dispatch(f, fresh); verifyRead(f, fresh);
+    assert.equal(f.authority.prepare(submitOperation('after-new-read')).verdict, 'allow');
+    assert.equal(f.authority.receipt('legacy-submit').needsNewRead, false);
+    assert.equal(f.authority.receipt('legacy-submit').phase, 'unknown', 'retry readiness cannot prove the submit effect');
+    const resolved = fixture({ recovery: JSON.parse(JSON.stringify(f.authority.recovery().reverse())) });
+    assert.equal(resolved.authority.prepare(submitOperation('after-second-recovery')).verdict, 'allow');
+  });
+
+test('unordered submit resolution does not erase a later ordered uncertainty on second recovery', () => {
+  const f = fixture({ recovery: [retained('legacy', 'click', 'unknown'), retained('old-read', 'read', 'verified', 10)] });
+  const read = readOperation('fresh'); dispatch(f, read); verifyRead(f, read);
+  dispatch(f, submitOperation('later-submit'), () => { throw Error('lost later reply'); });
+  const recovered = fixture({ recovery: f.authority.recovery().reverse() });
+  assert.equal(recovered.authority.prepare(submitOperation('too-early')).verdict, 'deny');
+  const newer = readOperation('newer'); dispatch(recovered, newer); verifyRead(recovered, newer);
+  assert.equal(recovered.authority.prepare(submitOperation('after-newer')).verdict, 'allow');
+});
+
+test('unordered uncertainty survives failed and foreign new reads, including recovered reads without sequence', () => {
+  const f = fixture({ recovery: [retained('legacy', 'click', 'unknown', 0), retained('unordered-read', 'read', 'verified')] });
+  const failed = readOperation('failed'); dispatch(f, failed, () => { throw Error('read failed'); });
+  assert.equal(f.authority.prepare(submitOperation('after-failed')).verdict, 'deny');
+  const foreign = readOperation('foreign'); foreign.scope = { ...foreign.scope, frame: 'other' };
+  dispatch(f, foreign); verifyRead(f, foreign); f.current(submitOperation('target'));
+  assert.equal(f.authority.prepare(submitOperation('after-foreign')).verdict, 'deny');
+  const unresolved = fixture({ recovery: f.authority.recovery().reverse() });
+  assert.equal(unresolved.authority.prepare(submitOperation('after-recovery')).verdict, 'deny');
+  const fresh = readOperation('fresh'); dispatch(unresolved, fresh); verifyRead(unresolved, fresh);
+  assert.equal(unresolved.authority.prepare(submitOperation('after-fresh')).verdict, 'allow');
+});

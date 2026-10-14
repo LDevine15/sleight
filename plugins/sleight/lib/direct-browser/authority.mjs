@@ -112,16 +112,32 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     canonical(state);
     return state && ['present', 'visible', 'enabled', 'same'].every(k => state[k] === true);
   };
-  const record = (op, phase) => ({ id: op.id, scope: clone(op.scope), kind: op.kind, phase, effect: 'untouched', submit: submit(op), sequence: op.sequence ?? 0 });
+  const record = (op, phase) => ({ id: op.id, scope: clone(op.scope), kind: op.kind, phase, effect: 'untouched', submit: submit(op), sequence: op.sequence ?? 0,
+    ...(op.needsNewRead !== undefined ? { needsNewRead: op.needsNewRead } : {}) });
   const quarantine = r => {
     if (r.submit) {
       const key = targetKey(r.scope);
-      quarantined.set(key, Math.max(quarantined.get(key) ?? 0, r.sequence));
+      // A missing order cannot be reconstructed from another recovered receipt.
+      // Retain whether a live read resolved it, separately from effect proof.
+      if (r.sequence === 0 && r.needsNewRead === undefined) r.needsNewRead = true;
+      if (r.needsNewRead === false) return;
+      const held = quarantined.get(key) ?? { sequence: 0, unordered: new Set() };
+      held.sequence = Math.max(held.sequence, r.sequence);
+      if (r.needsNewRead === true) held.unordered.add(r.id);
+      quarantined.set(key, held);
     }
   };
-  const clearRead = r => {
-    if (r.phase === 'verified' && r.kind === 'read' && r.sequence > (quarantined.get(targetKey(r.scope)) ?? Infinity))
-      quarantined.delete(targetKey(r.scope));
+  const clearRead = (r, live = false) => {
+    if (r.phase !== 'verified' || r.kind !== 'read' || r.sequence === 0) return;
+    const key = targetKey(r.scope), held = quarantined.get(key);
+    if (!held) return;
+    if (live) {
+      // Only verification of a read dispatched in this authority resolves legacy
+      // capture order. Export the disposition so another recovery cannot revive it.
+      for (const id of held.unordered) records.get(id).needsNewRead = false;
+      held.unordered.clear();
+    }
+    if (held.unordered.size === 0 && r.sequence > held.sequence) quarantined.delete(key);
   };
   const unknown = r => {
     // Independent effect proof is stronger than a late transport failure.
@@ -134,15 +150,16 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     validateScope(r.scope);
     if (!identifier(r.id) || !Object.hasOwn(OPERATIONS, r.kind) ||
       !['prepared', 'dispatched', 'observed', 'verified', 'unknown'].includes(r.phase) ||
-      r.sequence !== undefined && (!Number.isSafeInteger(r.sequence) || r.sequence < 0)) throw new Error('recovery');
+      r.sequence !== undefined && (!Number.isSafeInteger(r.sequence) || r.sequence < 0) ||
+      r.needsNewRead !== undefined && typeof r.needsNewRead !== 'boolean') throw new Error('recovery');
     const retained = record(r, r.phase);
     sequence = Math.max(sequence, retained.sequence);
     if (['unknown', 'dispatched', 'observed'].includes(r.phase)) unknown(retained);
     else if (r.phase === 'verified') { retained.effect = 'verified'; retained.result = 'verified'; }
     records.set(r.id, retained);
   }
-  // Older receipts have no capture order. They retain uncertainty until a new
-  // read; only ordered verified reads can discharge a recovered submit fence.
+  // Recovered reads can discharge ordered fences only. Unordered receipts keep
+  // their live-read requirement across imports until a new read verifies it.
   for (const r of records.values()) clearRead(r);
   const cancel = session => {
     if (!session) { fence++; capabilities.clear(); }
@@ -268,7 +285,7 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     r.phase = proof === 'unverifiable' ? 'unknown' : 'verified';
     r.effect = r.phase === 'verified' ? 'verified' : 'unknown'; r.result = proof;
     if (r.phase === 'unknown') quarantine(r);
-    clearRead(r);
+    clearRead(r, true);
     return clone(r);
   }
   function timeout(id) { const r = records.get(id); if (r && ['dispatched', 'observed'].includes(r.phase)) unknown(r); }
