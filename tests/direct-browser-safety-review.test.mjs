@@ -70,3 +70,59 @@ test('clicking a payment-labelled text field only focuses that field', () => {
 test('page-opened payment dialogs raise risk independently of the prior click', () => {
   const f = fixture(); assert.equal(rules.check(f.ctx, 'dialog', f.target({ accept: true, message: 'Pay $18.00 now?' })).verdict, 'confirm');
 });
+
+for (const control of ['link', 'image']) for (const pending of [false, true])
+  test(`payment ${control} click requires authority and respects pending=${pending}`, () => {
+    const element = classify(({ Element, HTMLInputElement }) => control === 'link'
+      ? new Element('a', { href: '/charge' }, 'Pay $18 now')
+      : new HTMLInputElement('input', { type: 'image', value: 'Pay $18 now' }, '', new Element('form')));
+    assert.equal(element.payment, true);
+    const f = fixture(), target = f.target({ element });
+    if (pending) { const submit = rules.beginSubmit(f.state, 100); rules.finishSubmit(f.state, submit, {}, 5100); }
+    assert.equal(rules.check(f.ctx, 'click', target).verdict, pending ? 'refuse' : 'confirm');
+  });
+
+for (const control of ['link', 'image']) test(`one private request activates the payment ${control} once`, () => {
+  const element = classify(({ Element, HTMLInputElement }) => control === 'link'
+    ? new Element('a', { href: '/charge' }, 'Pay $18 now')
+    : new HTMLInputElement('input', { type: 'image', value: 'Pay $18 now' }, '', new Element('form')));
+  const f = fixture(terms), target = f.target({ element });
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'confirm');
+});
+
+test('payment anchor metadata from the v3 action inspector cannot be treated as editable text', () => {
+  const f = fixture(), element = input({ tag: 'a', kind: 'text', payment: true });
+  assert.equal(rules.check(f.ctx, 'click', f.target({ element })).verdict, 'confirm');
+});
+
+for (const control of ['file', 'color', 'select']) for (const key of ['Space', ' ', 'Enter', 'Return'])
+  test(`native ${control} picker refuses ${JSON.stringify(key)} before input`, () => {
+    const element = classify(({ Element, HTMLInputElement }) => control === 'select'
+      ? new Element('select') : new HTMLInputElement('input', { type: control }));
+    const f = fixture(), result = rules.check(f.ctx, 'press', f.target({ element, key }));
+    assert.equal(result.verdict, 'refuse'); assert.match(result.message, /browser_fill|upload/);
+  });
+
+for (const key of ['Alt+ArrowDown', 'F4']) test(`select refuses its picker-opening ${key}`, () => {
+  const element = classify(({ Element }) => new Element('select')), f = fixture();
+  assert.equal(rules.check(f.ctx, 'press', f.target({ element, key })).verdict, 'refuse');
+});
+for (const kind of ['file', 'color', 'select']) for (const key of ['Tab', 'Escape', 'ArrowLeft'])
+  test(`native ${kind} keeps harmless ${key} available`, () => {
+    const f = fixture(); assert.equal(rules.check(f.ctx, 'press', f.target({ element: input({ kind }), key })).verdict, 'allow');
+  });
+test('Enter in a neutral field inherits payment risk from an image submit', () => {
+  const element = classify(({ Element, HTMLInputElement }) => {
+    const form = new Element('form'); new HTMLInputElement('input', { type: 'image', value: 'Pay $18 now' }, '', form);
+    return new HTMLInputElement('input', {}, '', form);
+  });
+  const f = fixture(); assert.equal(rules.check(f.ctx, 'press', f.target({ element, key: 'Enter' })).verdict, 'confirm');
+});
+for (const control of ['file', 'color', 'select']) test(`native ${control} remains a picker when its ARIA role is button`, () => {
+  const element = classify(({ Element, HTMLInputElement }) => control === 'select'
+    ? new Element('select', { role: 'button' }) : new HTMLInputElement('input', { type: control, role: 'button' }));
+  const f = fixture();
+  for (const [kind, key] of [['click', undefined], ['press', 'Space']])
+    assert.equal(rules.check(f.ctx, kind, f.target({ element, key })).verdict, 'refuse');
+});

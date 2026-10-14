@@ -23,19 +23,19 @@ export function inspectElement(el) {
   const payment = value => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(value);
   const type = el instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(el) : '';
   const tag = el.localName, role = get(el, 'role'), form = el.closest('form'), rect = el.getBoundingClientRect(), style = getComputedStyle(el);
-  const button = tag === 'button' || role === 'button' || ['submit', 'button', 'reset'].includes(type);
-  const state = { tag, role, kind: button ? 'button' : ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : 'text',
+  const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
+  const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
     form: !!form, connected: el.isConnected, visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
     enabled: !el.matches(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)),
-    submit: type === 'submit' || tag === 'button' && !!form && get(el, 'type') !== 'button' && get(el, 'type') !== 'reset' ||
+    submit: ['submit', 'image'].includes(type) || tag === 'button' && !!form && get(el, 'type') !== 'button' && get(el, 'type') !== 'reset' ||
       button && /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(words(el)) };
   state.formPayment = !!form && Array.from(form.querySelectorAll('input,button,iframe')).some(node => {
     const attrs = ['name', 'id', 'autocomplete', 'title', 'aria-label'].map(key => get(node, key)).join(' ');
     if (/\bcc-|card|cvv|cvc/i.test(attrs)) return true;
     if (node.localName === 'iframe') { try { return new URL(get(node, 'src'), location.href).origin !== location.origin; } catch { return true; } }
-    return (node.localName === 'button' || get(node, 'type') === 'submit') && payment(words(node));
+    return (node.localName === 'button' || ['submit', 'image'].includes(get(node, 'type'))) && payment(words(node));
   });
-  if (button && state.payment) state.submit = true;
+  if ((button || state.kind === 'link') && state.payment) state.submit = true;
   if (state.submit && state.formPayment) state.payment = true;
   return state;
 }
@@ -44,8 +44,9 @@ export function intent(kind, target = {}) {
   const key = target.key?.split('+').at(-1), activation = kind === 'press' && ['Enter', 'Return', 'Space', ' '].includes(key);
   let submit = kind === 'submit', payment = false;
   for (const el of [target.prior, target.element].filter(Boolean)) {
-    const sends = kind === 'click' || activation && (['Enter', 'Return'].includes(key) ? el.submit || el.form && el.tag !== 'textarea' : el.kind === 'button' || el.role === 'button');
-    const submits = kind === 'submit' || sends && (el.submit || el.payment && (el.kind === 'button' || el.role === 'button') || el.form && activation);
+    const button = el.kind === 'button' || el.role === 'button', link = el.kind === 'link' || el.role === 'link' || el.tag === 'a';
+    const sends = kind === 'click' || activation && (['Enter', 'Return'].includes(key) ? button || link || el.submit || el.form && el.tag !== 'textarea' : button);
+    const submits = kind === 'submit' || sends && (el.submit || el.payment && (button || link) || el.form && activation);
     submit ||= !!submits;
     payment ||= !!submits && (el.payment === true || el.formPayment === true);
   }
@@ -66,7 +67,10 @@ export function check(ctx, kind, target = {}) {
     }
     if (['click', 'press', 'submit'].includes(kind) && ['payment', 'submit', 'form', 'formPayment'].some(key => typeof el?.[key] !== 'boolean'))
       return refuse('Read final submit and payment classification before activation.');
-    if (kind === 'click' && ['file', 'color', 'select'].includes(el?.kind)) return refuse('Use browser_fill or upload instead of opening a native picker.');
+    const key = target.key?.split('+').at(-1);
+    const pickerOpening = kind === 'click' || kind === 'press' &&
+      (['Enter', 'Return', 'Space', ' '].includes(key) || el?.kind === 'select' && ['Alt+ArrowDown', 'F4'].includes(target.key));
+    if (pickerOpening && ['file', 'color', 'select'].includes(el?.kind)) return refuse('Use browser_fill or upload instead of opening a native picker.');
     const risk = intent(kind, target);
     if (risk.submit && (!target.state || !Number.isSafeInteger(target.state.snapshotNo))) return refuse('Submit needs its document state.');
     const retry = () => refuse('Submit unconfirmed. Deliver a fresh browser_read before retrying.');

@@ -28,3 +28,30 @@ for (const key of ['Shift+Enter', 'Meta+Enter', 'Control+Enter', 'Cmd+Enter', 'A
   test(`foreground activation chord ${key} is refused before input`, () => {
     const f = fixture(); assert.equal(rules.check(f.ctx, 'press', f.target({ key })).verdict, 'refuse');
   });
+
+for (const control of ['link', 'image']) for (const key of ['Enter', 'Return'])
+  test(`payment ${control} guards keyboard activation ${key}`, () => {
+    const f = fixture(), element = input({ tag: control === 'link' ? 'a' : 'input', kind: control === 'link' ? 'link' : 'button', payment: true });
+    const target = f.target({ element, key });
+    assert.equal(rules.check(f.ctx, 'press', target).verdict, 'confirm');
+    rules.beginSubmit(f.state, 100);
+    assert.equal(rules.check(f.ctx, 'press', target).verdict, 'refuse');
+  });
+for (const key of ['Space', ' ']) test(`payment image button guards keyboard activation ${JSON.stringify(key)}`, () => {
+  const f = fixture();
+  assert.equal(rules.check(f.ctx, 'press', f.target({ element: input({ kind: 'button', payment: true }), key })).verdict, 'confirm');
+});
+test('prior payment link risk survives changed wording for click and Enter', () => {
+  for (const kind of ['click', 'press']) {
+    const f = fixture(), prior = input({ tag: 'a', kind: 'link', payment: true });
+    assert.equal(rules.check(f.ctx, kind, f.target({ prior, element: input({ tag: 'a', kind: 'link' }), key: 'Enter' })).verdict, 'confirm');
+  }
+});
+test('ordinary links and payment field focus remain ordinary while submit is uncertain', () => {
+  const f = fixture(); rules.beginSubmit(f.state, 100);
+  const link = input({ tag: 'a', kind: 'link' });
+  for (const kind of ['click', 'press']) assert.equal(rules.check(f.ctx, kind, f.target({ element: link, key: 'Enter' })).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'press', f.target({ element: { ...link, payment: true }, key: 'Space' })).verdict, 'allow');
+  const field = input({ form: true, payment: true, formPayment: true });
+  for (const kind of ['click', 'type']) assert.equal(rules.check(f.ctx, kind, f.target({ element: field })).verdict, 'allow');
+});

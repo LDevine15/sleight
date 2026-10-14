@@ -107,3 +107,43 @@ test('real v3 a ten-second submit sends once until a post-settle snapshot is del
   assert.equal(check(f.ctx, 'click', target).verdict, 'allow');
   assert.equal(f.posts(), 1, 'no duplicate endpoint request');
 });
+
+test('real payment links and image submits require authority once and retain the unknown-submit fence', { skip }, async t => {
+  const f = await fixture(t, `<a id="link" href="#charged">Pay $18 now</a>
+    <form><input id="image" type="image" value="Pay $18 now" alt="Pay image"></form><output id="paid">0</output>
+    <script>for(const id of ['link','image']) document.getElementById(id).onclick = event => {
+      event.preventDefault(); document.querySelector('#paid').textContent++;
+    };</script>`);
+  for (const selector of ['#link', '#image']) {
+    const target = await f.target(selector);
+    assert.equal(target.element.payment, true);
+    assert.equal(check(f.ctx, 'click', target).verdict, 'confirm');
+    assert.equal(check(f.ctx, 'press', { ...target, key: 'Enter' }).verdict, 'confirm');
+    const submit = beginSubmit(f.state, 100); finishSubmit(f.state, submit, {}, 5100);
+    assert.equal(check(f.ctx, 'click', target).verdict, 'refuse');
+    assert.equal(check(f.ctx, 'press', { ...target, key: 'Enter' }).verdict, 'refuse');
+    assert.equal(deliverSnapshot(f.state, captureSnapshot(f.state, 5200)), true);
+    f.ctx.userMessage = { source: 'user', id: 'request-' + selector, session: 'session', turn: 'turn',
+      text: 'Pay for Fixture item with Fixture card', payment: terms };
+    assert.equal(check(f.ctx, 'click', target).verdict, 'allow');
+    await f.page.locator(selector).click();
+    assert.equal(check(f.ctx, 'click', target).verdict, 'confirm', 'the request cannot activate a second payment');
+    f.ctx.userMessage = undefined;
+  }
+  assert.equal(await f.page.locator('#paid').innerText(), '2', 'only the explicitly authorized activations dispatch');
+});
+
+test('real native picker controls refuse activation keys before any actuator and keep harmless keys available', { skip }, async t => {
+  const f = await fixture(t, '<input id="file" type="file"><input id="color" type="color"><select id="select"><option>A</option><option>B</option></select><input id="fileRole" type="file" role="button"><input id="colorRole" type="color" role="button"><select id="selectRole" role="button"><option>A</option></select>');
+  const dispatched = [];
+  for (const selector of ['#file', '#color', '#select', '#fileRole', '#colorRole', '#selectRole']) {
+    const target = await f.target(selector);
+    for (const key of ['Space', ' ', 'Enter', 'Return', ...(selector.startsWith('#select') ? ['Alt+ArrowDown', 'F4'] : [])]) {
+      const verdict = check(f.ctx, 'press', { ...target, key });
+      if (verdict.verdict === 'allow') dispatched.push({ selector, key });
+      assert.equal(verdict.verdict, 'refuse'); assert.match(verdict.message, /browser_fill|upload/);
+    }
+    for (const key of ['Tab', 'Escape', 'ArrowLeft']) assert.equal(check(f.ctx, 'press', { ...target, key }).verdict, 'allow');
+  }
+  assert.deepEqual(dispatched, [], 'qualification never invokes a native-picker actuator');
+});
