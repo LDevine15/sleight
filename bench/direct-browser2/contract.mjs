@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { verdict } from './policy.mjs';
+import { types } from 'node:util';
+import { siteOrigin, verdict } from './policy.mjs';
 
 export const CONTRACT_VERSION = 2;
 export const SCOPE_KEYS = Object.freeze(['browser', 'broker', 'session', 'turn', 'target', 'lease',
@@ -16,7 +17,16 @@ export function canonical(value, depth = 0) {
   if (depth > 20) throw new Error('data depth');
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(v => canonical(v, depth + 1)).join(',')}]`;
+  if (Array.isArray(value)) {
+    if (Object.getOwnPropertyNames(value).length !== value.length + 1) throw new Error('data array');
+    const entries = [];
+    for (let i = 0; i < value.length; i++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+      if (!descriptor || !('value' in descriptor)) throw new Error('data array');
+      entries.push(canonical(descriptor.value, depth + 1));
+    }
+    return `[${entries.join(',')}]`;
+  }
   if (!value || Object.getPrototypeOf(value) !== Object.prototype) throw new Error('plain data required');
   return `{${Object.keys(value).sort().map(key => {
     if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('data key');
@@ -54,10 +64,10 @@ function validateOperation(operation) {
   }
   if (operation.kind === 'dialog' && !['accept', 'dismiss'].includes(a.action)) throw new Error('arguments');
   if (operation.kind === 'navigate' || operation.kind === 'open') {
-    const url = new URL(a.url);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('navigation');
-    // Query data must be independently classified before sending it to a server.
-    if (url.search && !operation.transmission) throw new Error('query transmission');
+    const origin = siteOrigin(operation);
+    // Only literal bare origins/root URLs are exempt. URL parsing can erase
+    // paths, empty delimiters and whitespace from the submitted data.
+    if (a.url !== origin && a.url !== `${origin}/` && !operation.transmission) throw new Error('URL transmission');
   }
   if (operation.transmission) {
     const destination = new URL(operation.transmission.destination);
@@ -65,15 +75,20 @@ function validateOperation(operation) {
       typeof operation.transmission.data !== 'string') throw new Error('transmission');
     if ((operation.kind === 'fill' && operation.transmission.data !== a.value) ||
       (operation.kind === 'paste' && operation.transmission.data !== a.text)) throw new Error('transmission payload');
+    if ((operation.kind === 'navigate' || operation.kind === 'open') &&
+      (destination.origin !== siteOrigin(operation) || operation.transmission.data !== a.url)) throw new Error('transmission URL');
   }
 }
 
 /** Offline authority core. The integration owns current/process/frame evidence,
  * classify (actual semantics, data and canonical files), authenticate (trusted UI
- * or user-message channel), and synchronous final dispatch. No model endpoint
- * may expose user(), observe(), verify(), recovery import or classify. Missing
+ * or user-message channel), and synchronous final dispatch. snapshot must return
+ * {scope, time} from one coherent trusted host state at the transport boundary.
+ * Separate current()/now() reads cannot implement that guarantee. This private
+ * dependency has no qualified live provider yet; missing providers refuse dispatch.
+ * No model endpoint may expose user(), observe(), verify(), recovery import or classify. Missing
  * authentic integration must refuse; these callbacks are not proof of a user. */
-export function createAuthority({ current, classify, authenticate, now = Date.now,
+export function createAuthority({ current, classify, authenticate, snapshot, now = Date.now,
   ttl = 5000, confirmPayments = process.env.SLEIGHT_CONFIRM_PAYMENTS, persistAlways, recovery = [] } = {}) {
   if (![current, classify, authenticate].every(f => typeof f === 'function') || !Number.isFinite(ttl) || ttl <= 0 || ttl > 30000)
     throw new Error('trusted boundaries required');
@@ -87,6 +102,7 @@ export function createAuthority({ current, classify, authenticate, now = Date.no
   };
   const digest = value => createHmac('sha256', secret).update(canonical(value)).digest('hex');
   const siteKey = scope => canonical([scope.session, scope.origin]);
+  const operationSiteKey = op => siteKey({ ...op.scope, origin: siteOrigin(op) });
   const targetKey = scope => canonical([scope.session, scope.target]);
   const requestKey = (session, consequence) => canonical([session, consequence]);
   const exactTerms = (op, req) => {
@@ -95,7 +111,7 @@ export function createAuthority({ current, classify, authenticate, now = Date.no
       typeof op.terms[k] !== 'string' || !op.terms[k])) return false;
     return digest(op.terms) === digest(req.terms);
   };
-  const decide = op => verdict(op, { site: grants.has(siteKey(op.scope)),
+  const decide = op => verdict(op, { site: grants.has(operationSiteKey(op)),
     confirmed: confirmations.has(digest(op)), confirmPayments,
     exactRequest: exactTerms(op, requests.get(requestKey(op.scope.session, op.consequence))) &&
       (op.consequence !== 'payment' || !paymentUses.get(requestKey(op.scope.session, 'payment'))?.has(op.kind === 'dialog' ? 'dialog' : 'pay')),
@@ -197,14 +213,39 @@ export function createAuthority({ current, classify, authenticate, now = Date.no
     // check. current() can revoke authority or outlive the capability's expiry.
     const actual = current();
     if (!active || capabilities.get(capability) !== cap || cap.fence !== fence || digest(cap.op.scope) !== digest(actual) ||
-      decide(cap.op).verdict !== 'allow' || !grants.has(siteKey(cap.op.scope)) || quarantined.has(targetKey(cap.op.scope))) throw new Error('dispatch fence');
+      decide(cap.op).verdict !== 'allow' || !grants.has(operationSiteKey(cap.op)) || quarantined.has(targetKey(cap.op.scope))) throw new Error('dispatch fence');
     if (typeof send !== 'function') throw new Error('dispatch function');
     const finalTime = clock();
-    if (finalTime < cap.issued || finalTime >= cap.deadline || !active || capabilities.get(capability) !== cap || cap.fence !== fence) throw new Error('dispatch fence');
+    // The clock callback may replace target/frame/document/lease identity.
+    // Serialize that legacy scope before taking the joint terminal snapshot.
+    const finalScope = current();
+    const finalScopeHash = digest(finalScope);
+    let terminal;
+    try {
+      if (typeof snapshot !== 'function') throw new Error('unavailable');
+      terminal = snapshot();
+      if (types.isPromise(terminal)) {
+        Promise.prototype.then.call(terminal, undefined, () => {});
+        throw new Error('asynchronous');
+      }
+      if (!terminal || types.isProxy(terminal)) throw new Error('non-data');
+      const fields = Object.getOwnPropertyDescriptors(terminal);
+      if (types.isProxy(fields.scope?.value)) throw new Error('non-data scope');
+      canonical(terminal); // Reject accessor or non-data snapshots before reading fields.
+      if (!terminal || Object.keys(terminal).length !== 2 || !Object.hasOwn(terminal, 'scope') || !Object.hasOwn(terminal, 'time'))
+        throw new Error('shape');
+      validateScope(terminal.scope);
+    } catch { throw new Error('dispatch fence: coherent snapshot unavailable'); }
+    // No current/clock/integration callback follows this joint snapshot.
+    // The provider cannot grant authority: internal state is checked after it.
+    if (!Number.isFinite(terminal.time) || terminal.time < finalTime || terminal.time < started ||
+      terminal.time < cap.issued || terminal.time >= cap.deadline || !active || capabilities.get(capability) !== cap || cap.fence !== fence ||
+      digest(cap.op.scope) !== finalScopeHash || digest(cap.op.scope) !== digest(terminal.scope) || quarantined.has(targetKey(cap.op.scope)) ||
+      decide(cap.op).verdict !== 'allow' || !grants.has(operationSiteKey(cap.op))) throw new Error('dispatch fence');
     capabilities.delete(capability); confirmations.delete(cap.hash);
     if (cap.op.consequence === 'payment')
       paymentUses.get(requestKey(cap.op.scope.session, 'payment'))?.add(cap.op.kind === 'dialog' ? 'dialog' : 'pay');
-    if (grants.get(siteKey(cap.op.scope)) === 'once') grants.delete(siteKey(cap.op.scope));
+    if (grants.get(operationSiteKey(cap.op)) === 'once') grants.delete(operationSiteKey(cap.op));
     const r = records.get(cap.op.id); r.phase = 'dispatched'; r.effect = 'unknown';
     // No await or preparation between the final check and transport dispatch.
     // A promise represents a sent request, never evidence it took effect.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { createAuthority, receiptPrefix } from '../contract.mjs';
+import { canonical, createAuthority, receiptPrefix } from '../contract.mjs';
 import { verdict, CONSEQUENCES } from '../policy.mjs';
 
 const scope = () => ({ browser: 'pid-start-root', broker: 'epoch-1', session: 's1', turn: 't1',
@@ -11,6 +11,8 @@ const operation = (extra = {}) => ({ id: 'op1', kind: 'fill', args: { value: 'pr
 function fixture(options = {}) {
   let current = scope(), time = 100, sends = 0;
   const authority = createAuthority({ current: () => current, now: () => time,
+    // One synthetic state record supplies the coherent terminal host snapshot.
+    snapshot: () => ({ scope: structuredClone(current), time }),
     authenticate: event => event?.credential === 'fixture-user', classify: op => op, ...options });
   const user = (action, data) => authority.user({ credential: 'fixture-user' }, action, data);
   user('grant', { session: 's1', origin: current.origin, mode: 'session' });
@@ -87,11 +89,12 @@ for (const kind of ['fill', 'paste', 'navigate', 'upload']) test(`${kind} gates 
   const f = fixture(), args = { fill: { value: 'secret' }, paste: { text: 'secret' },
     navigate: { url: 'https://fixture.test/?q=secret' }, upload: { files: ['/fixture/file'] } }[kind];
   const op = operation({ kind, args, transmission: { destination: 'https://fixture.test/receive',
-    data: 'secret', ...(kind === 'upload' ? { files: ['/fixture/file'] } : {}) } });
+    data: kind === 'navigate' ? args.url : 'secret', ...(kind === 'upload' ? { files: ['/fixture/file'] } : {}) } });
   assert.equal(f.authority.prepare(op).verdict, 'confirm');
   f.user('request', { session: 's1', consequence: 'transmission', transmission: op.transmission });
   assert.equal(f.authority.prepare(op).verdict, 'allow');
-  assert.equal(f.authority.prepare({ ...op, transmission: { ...op.transmission, destination: 'https://other.test' } }).verdict, 'confirm');
+  assert.equal(f.authority.prepare({ ...op, transmission: { ...op.transmission, destination: 'https://other.test' } }).verdict,
+    kind === 'navigate' ? 'deny' : 'confirm');
   assert.equal(f.sends(), 0);
 });
 
@@ -281,7 +284,7 @@ test('transmission decline retires exact destination/data authority without cach
 });
 test('decline preserves unrelated terms, destination, session and prepared authority', () => {
   let current = scope();
-  const f = fixture({ current: () => current });
+  const f = fixture({ current: () => current, snapshot: () => ({ scope: structuredClone(current), time: 100 }) });
   const op = operation({ kind: 'click', args: {}, consequence: 'payment', terms: paymentTerms });
   f.user('request', { session: 's1', consequence: 'payment', terms: paymentTerms });
   f.user('decline', { operation: { ...op, terms: { ...paymentTerms, payee: 'other' } } });
@@ -303,7 +306,7 @@ test('decline preserves unrelated terms, destination, session and prepared autho
 });
 test('decline leaves another origin in the same session and its prepared capability intact', () => {
   let current = { ...scope(), origin: 'https://other.test' };
-  const f = fixture({ current: () => current });
+  const f = fixture({ current: () => current, snapshot: () => ({ scope: structuredClone(current), time: 100 }) });
   f.user('grant', { session: 's1', origin: current.origin, mode: 'session' });
   const other = operation({ id: 'other-origin', scope: current }), prepared = f.authority.prepare(other);
   current = scope();
@@ -353,4 +356,258 @@ for (const observed of [false, true]) test(`unproved ${observed ? 'observed' : '
   assert.equal(f.authority.receipt(op.id).phase, 'unknown');
   assert.equal(f.authority.prepare(operation({ id: 'no-retry' })).verdict, 'deny');
   assert.throws(() => f.authority.dispatch(prepared.capability, op, f.dispatch), /capability/);
+});
+
+for (const kind of ['navigate', 'open']) {
+  for (const suffix of ['/private-fixture', '/?q=private-fixture', '/#private-fixture']) {
+    test(`${kind} requires transmission authority for URL ${suffix}`, () => {
+      const f = fixture(), op = operation({ kind, args: { url: `https://fixture.test${suffix}` } });
+      assert.equal(f.authority.prepare(op).verdict, 'deny');
+      assert.equal(f.sends(), 0);
+    });
+    for (const mismatch of ['destination', 'data']) test(`${kind} binds ${mismatch} for URL ${suffix}`, () => {
+      const f = fixture(), url = `https://other.test${suffix}`;
+      f.user('grant', { session: 's1', origin: 'https://other.test', mode: 'session' });
+      const transmission = { destination: mismatch === 'destination' ? 'https://fixture.test' : 'https://other.test',
+        data: mismatch === 'data' ? 'approved fixture' : url };
+      f.user('request', { session: 's1', consequence: 'transmission', transmission });
+      const op = operation({ kind, args: { url }, transmission });
+      assert.equal(f.authority.prepare(op).verdict, 'deny');
+      assert.equal(f.sends(), 0);
+    });
+  }
+  for (const suffix of ['/private-fixture/..', '/%2e', '/?', '/#', '/\t']) {
+    test(`${kind} does not normalize URL ${JSON.stringify(suffix)} out of transmission approval`, () => {
+      const f = fixture(), op = operation({ kind, args: { url: `https://fixture.test${suffix}` } });
+      assert.equal(f.authority.prepare(op).verdict, 'deny');
+      assert.equal(f.sends(), 0);
+    });
+  }
+  test(`${kind} requires the target site grant even after exact operation confirmation`, () => {
+    const f = fixture(), op = operation({ kind, args: { url: 'https://other.test/' } });
+    f.user('confirm', { operation: op });
+    assert.deepEqual(f.authority.prepare(op), { verdict: 'confirm', reason: 'site' });
+    f.user('grant', { session: 's1', origin: 'https://other.test', mode: 'session' });
+    const prepared = f.authority.prepare(op);
+    assert.equal(prepared.verdict, 'allow');
+    assert.equal(f.authority.dispatch(prepared.capability, op, f.dispatch).phase, 'dispatched');
+    assert.equal(f.sends(), 1);
+  });
+  test(`${kind} dispatch consumes only the target once grant without needing a current-page grant`, () => {
+    const f = fixture(), op = operation({ kind, args: { url: 'https://other.test/' } });
+    f.user('revoke', { session: 's1' });
+    f.user('grant', { session: 's1', origin: 'https://other.test', mode: 'once' });
+    const prepared = f.authority.prepare(op);
+    assert.equal(prepared.verdict, 'allow');
+    assert.equal(f.authority.dispatch(prepared.capability, op, f.dispatch).phase, 'dispatched');
+    assert.deepEqual(f.authority.prepare({ ...op, id: 'second-navigation' }), { verdict: 'confirm', reason: 'site' });
+    assert.equal(f.sends(), 1);
+  });
+  test(`${kind} keeps current-page authority after consuming a target once grant`, () => {
+    const f = fixture(), op = operation({ kind, args: { url: 'https://other.test/' } });
+    f.user('grant', { session: 's1', origin: 'https://fixture.test', mode: 'once' });
+    f.user('grant', { session: 's1', origin: 'https://other.test', mode: 'once' });
+    const prepared = f.authority.prepare(op);
+    f.authority.dispatch(prepared.capability, op, f.dispatch);
+    assert.equal(f.authority.prepare(operation({ id: 'current-page-input' })).verdict, 'allow');
+    assert.deepEqual(f.authority.prepare({ ...op, id: 'target-again' }), { verdict: 'confirm', reason: 'site' });
+  });
+  test(`${kind} ordinary same-site bare origin remains usable and data URL needs exact approval`, () => {
+    const f = fixture();
+    for (const url of ['https://fixture.test', 'https://fixture.test/']) {
+      const op = operation({ id: `bare-${url.endsWith('/')}`, kind, args: { url } });
+      const prepared = f.authority.prepare(op);
+      assert.equal(prepared.verdict, 'allow');
+      f.authority.dispatch(prepared.capability, op, f.dispatch);
+    }
+    const url = 'https://fixture.test/path?q=fixture#fragment';
+    const op = operation({ id: 'approved-url', kind, args: { url },
+      transmission: { destination: 'https://fixture.test/receive', data: url } });
+    assert.deepEqual(f.authority.prepare(op), { verdict: 'confirm', reason: 'transmission-before-input' });
+    f.user('request', { session: 's1', consequence: 'transmission', transmission: op.transmission });
+    const prepared = f.authority.prepare(op);
+    assert.equal(prepared.verdict, 'allow');
+    f.authority.dispatch(prepared.capability, op, f.dispatch);
+    assert.equal(f.sends(), 3);
+  });
+}
+
+test('policy rejects unsupported navigation targets even with a granted current page', () => {
+  for (const url of ['file:///fixture', 'chrome://settings', 'https://user:pass@fixture.test/', 'invalid'])
+    assert.equal(verdict(operation({ kind: 'navigate', args: { url } }), { site: true }).verdict, 'deny');
+});
+
+for (const kind of ['navigate', 'open']) test(`${kind} cannot hide changed approved URL data in named array properties`, () => {
+  const f = fixture(), url = 'https://fixture.test/private-fixture';
+  assert.throws(() => f.user('request', { session: 's1', consequence: 'transmission',
+    transmission: Object.assign([], { destination: 'https://fixture.test/receive', data: 'https://fixture.test/approved' }) }), /data/);
+  f.user('request', { session: 's1', consequence: 'transmission',
+    transmission: { destination: 'https://fixture.test/receive', data: 'https://fixture.test/approved' } });
+  const op = operation({ kind, args: { url },
+    transmission: Object.assign([], { destination: 'https://fixture.test/receive', data: url }) });
+  assert.equal(f.authority.prepare(op).verdict, 'deny');
+  assert.equal(f.sends(), 0);
+});
+
+test('capability serialization rejects hidden array data, holes and accessors without reading getters', () => {
+  let reads = 0;
+  const getter = Object.defineProperty([], '0', { get: () => { reads++; return 'fixture'; }, enumerable: true });
+  for (const value of [Object.assign([], { url: 'https://fixture.test/private-fixture' }), Array(1), getter])
+    assert.throws(() => canonical(value), /data/);
+  assert.equal(reads, 0);
+  assert.equal(canonical(['fixture', false]), '["fixture",false]');
+});
+
+test('operation confirmation cannot hide a different navigation in named root-array properties', () => {
+  const f = fixture(), op = operation({ kind: 'navigate', args: { url: 'https://fixture.test/private-fixture' },
+    transmission: { destination: 'https://fixture.test/receive', data: 'https://fixture.test/private-fixture' } });
+  assert.throws(() => f.user('confirm', { operation: Object.assign([], op) }), /data/);
+  assert.equal(f.authority.prepare(Object.assign([], op)).verdict, 'deny');
+  assert.equal(f.sends(), 0);
+});
+
+for (const kind of ['navigate', 'open']) test(`${kind} rechecks exact transmission authority after the final clock callback`, () => {
+  let finishing = false, ticks = 0;
+  const f = fixture({ now: () => {
+    if (finishing && ++ticks === 2) f.user('request', { session: 's1', consequence: 'transmission',
+      transmission: { destination: 'https://fixture.test/receive', data: 'other fixture' } });
+    return 100;
+  } });
+  const url = 'https://fixture.test/private-fixture';
+  const op = operation({ kind, args: { url }, transmission: { destination: 'https://fixture.test/receive', data: url } });
+  f.user('request', { session: 's1', consequence: 'transmission', transmission: op.transmission });
+  const prepared = f.authority.prepare(op); assert.equal(prepared.verdict, 'allow');
+  finishing = true;
+  assert.throws(() => f.authority.dispatch(prepared.capability, op, f.dispatch), /fence/);
+  assert.equal(f.sends(), 0);
+});
+
+for (const key of ['document', 'lease', 'target', 'frame']) {
+  test(`navigation rechecks ${key} identity after the final clock callback`, () => {
+    let actual = scope(), finishing = false, ticks = 0, sends = 0;
+    const authority = createAuthority({ current: () => structuredClone(actual), classify: op => op,
+      snapshot: () => ({ scope: structuredClone(actual), time: 100 }),
+      authenticate: () => true, now: () => {
+        if (finishing && ++ticks === 2)
+          actual = { ...actual, [key]: typeof actual[key] === 'number' ? 2 : 'replacement' };
+        return 100;
+      } });
+    authority.user({}, 'grant', { session: 's1', origin: actual.origin, mode: 'session' });
+    const op = operation({ kind: 'navigate', args: { url: `${actual.origin}/` } });
+    const prepared = authority.prepare(op);
+    assert.equal(prepared.verdict, 'allow');
+    finishing = true;
+    let refused = false;
+    try { authority.dispatch(prepared.capability, op, () => { sends++; }); } catch { refused = true; }
+    assert.equal(sends, 0);
+    assert.equal(refused, true);
+    assert.equal(authority.receipt(op.id).phase, 'prepared');
+  });
+}
+
+test('final current-scope callback cannot outlive capability expiry before transport', () => {
+  let time = 100, finishing = false, snapshots = 0, sends = 0;
+  const actual = scope();
+  const authority = createAuthority({ now: () => time, classify: op => op, authenticate: () => true,
+    snapshot: () => ({ scope: structuredClone(actual), time }),
+    current: () => {
+      if (finishing && ++snapshots === 2) time = 10000;
+      return structuredClone(actual);
+    } });
+  authority.user({}, 'grant', { session: 's1', origin: actual.origin, mode: 'session' });
+  const op = operation({ kind: 'navigate', args: { url: actual.origin + '/' } });
+  const prepared = authority.prepare(op); assert.equal(prepared.verdict, 'allow');
+  finishing = true;
+  let refused = false;
+  try { authority.dispatch(prepared.capability, op, () => { sends++; }); } catch { refused = true; }
+  assert.equal(sends, 0); assert.equal(refused, true);
+  assert.equal(authority.receipt(op.id).phase, 'prepared');
+});
+
+test('missing coherent terminal snapshot refuses before transport', () => {
+  const f = fixture({ snapshot: undefined }), op = operation(), p = f.authority.prepare(op);
+  assert.throws(() => f.authority.dispatch(p.capability, op, f.dispatch), /fence/);
+  assert.equal(f.sends(), 0); assert.equal(f.authority.receipt(op.id).phase, 'prepared');
+});
+
+for (const time of [NaN, Infinity, -1, 99, 10000]) test(`terminal snapshot time ${time} refuses transport`, () => {
+  const f = fixture({ snapshot: () => ({ scope: scope(), time }) }), op = operation(), p = f.authority.prepare(op);
+  assert.throws(() => f.authority.dispatch(p.capability, op, f.dispatch), /fence/);
+  assert.equal(f.sends(), 0);
+});
+for (const key of Object.keys(scope())) test(`coherent terminal snapshot fences ${key}`, () => {
+  const f = fixture({ snapshot: () => ({ scope: { ...scope(), [key]: 'replacement' }, time: 100 }) });
+  const op = operation(), p = f.authority.prepare(op);
+  assert.throws(() => f.authority.dispatch(p.capability, op, f.dispatch), /fence/);
+  assert.equal(f.sends(), 0);
+});
+
+test('terminal snapshot rechecks revocation, transmission authority and quarantine', () => {
+  for (const effect of ['revoke', 'transmission', 'quarantine']) {
+    let nested = false;
+    const f = fixture({ snapshot: () => {
+      if (!nested) {
+        nested = true;
+        if (effect === 'revoke') f.user('revoke', { session: 's1' });
+        if (effect === 'transmission') f.user('request', { session: 's1', consequence: 'transmission',
+          transmission: { destination: 'https://fixture.test', data: 'different' } });
+        if (effect === 'quarantine') {
+          const other = operation({ id: 'other' }), prepared = f.authority.prepare(other);
+          f.authority.dispatch(prepared.capability, other, () => { throw Error('fixture loss'); });
+        }
+      }
+      return { scope: scope(), time: 100 };
+    } });
+    const url = 'https://fixture.test/private-fixture';
+    const op = operation({ kind: 'navigate', args: { url },
+      transmission: { destination: 'https://fixture.test', data: url } });
+    f.user('request', { session: 's1', consequence: 'transmission', transmission: op.transmission });
+    const p = f.authority.prepare(op); assert.equal(p.verdict, 'allow');
+    assert.throws(() => f.authority.dispatch(p.capability, op, f.dispatch), /fence/);
+    assert.equal(f.sends(), 0); assert.equal(f.authority.receipt(op.id).phase, 'prepared');
+  }
+});
+
+test('terminal snapshot must be synchronous plain data and never reads accessor state', () => {
+  let reads = 0;
+  for (const snapshot of [() => Promise.resolve({ scope: scope(), time: 100 }), () => Promise.reject(Error('fixture private error')), () => null,
+    () => ({ scope: scope(), time: 100, approved: true }),
+    () => Object.defineProperty({ scope: scope() }, 'time', { enumerable: true, get() { reads++; return 100; } })]) {
+    const f = fixture({ snapshot }), op = operation(), p = f.authority.prepare(op);
+    assert.throws(() => f.authority.dispatch(p.capability, op, f.dispatch), /fence/);
+    assert.equal(f.sends(), 0);
+  }
+  assert.equal(reads, 0);
+});
+
+test('dispatch performs no current or clock callback after its terminal snapshot', () => {
+  let terminal = false, sends = 0;
+  const f = fixture({ current: () => { assert.equal(terminal, false); return scope(); },
+    now: () => { assert.equal(terminal, false); return 100; },
+    snapshot: () => { terminal = true; return { scope: scope(), time: 100 }; } });
+  const op = operation(), p = f.authority.prepare(op);
+  assert.equal(f.authority.dispatch(p.capability, op, () => { sends++; }).phase, 'dispatched');
+  assert.equal(terminal, true); assert.equal(sends, 1);
+});
+
+test('terminal snapshot rejects proxy traps without reading them', () => {
+  let reads = 0;
+  const traps = { getPrototypeOf() { reads++; return Object.prototype; }, ownKeys(target) { reads++; return Reflect.ownKeys(target); } };
+  for (const snapshot of [() => new Proxy({ scope: scope(), time: 100 }, traps),
+    () => ({ scope: new Proxy(scope(), traps), time: 100 })]) {
+    const f = fixture({ snapshot }), op = operation(), p = f.authority.prepare(op);
+    assert.throws(() => f.authority.dispatch(p.capability, op, f.dispatch), /fence/);
+    assert.equal(f.sends(), 0);
+  }
+  assert.equal(reads, 0);
+});
+
+test('legacy scope serialization finishes before the coherent terminal snapshot', () => {
+  let terminal = false;
+  const f = fixture({ current: () => new Proxy(scope(), { getPrototypeOf() {
+    assert.equal(terminal, false); return Object.prototype;
+  } }), snapshot: () => { terminal = true; return { scope: scope(), time: 100 }; } });
+  const op = operation(), p = f.authority.prepare(op);
+  assert.equal(f.authority.dispatch(p.capability, op, f.dispatch).phase, 'dispatched');
+  assert.equal(terminal, true); assert.equal(f.sends(), 1);
 });
