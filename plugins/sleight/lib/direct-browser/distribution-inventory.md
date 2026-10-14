@@ -1,15 +1,15 @@
 # BP2-P1 distribution bank
 
 Source base: `f34f09b7` on private/pane/auto-mode, 2026-10-14.
-Status: proposed inventory. Owner acceptance and signed artifact hashes are pending.
+Status: source distribution selected by the owner. Installed-package acceptance and live qualification remain pending.
 These sources are inactive. No native binary, runtime or package is bundled or downloaded.
 launch.mjs, relay.mjs and the default engine route are unchanged.
 
 | Component | Proposed exact inventory | Acceptance still required |
 | --- | --- | --- |
-| Node | Existing host Node v26.4.0. built-in modules only. no bundled runtime or npm dependency | Owner accepts this required runtime, or dispatches a reviewed alternative |
-| Darwin peer reader | Original native/peer-host.c, compiled peer-host. libc, libproc and libbsm from the OS | arm64 and x86_64 builds, minimum OS, Developer ID signature, notarization and artifact SHA-256 |
-| Native consent/status | Original native/consent-host.swift, compiled consent-host. AppKit/Foundation from the OS | Same signed package, status visibility, no focus change without the person's menu action, authentic button test |
+| Node | ChatGPT's bundled Node first (v24.21.0 at this inventory), then node on PATH. Built-in modules only | Tests on both runtimes; no extra bundled runtime |
+| Darwin peer reader | Original native/peer-host.c. Compiled at first turbo use with Apple's command-line tools; libc, libproc and libbsm from the OS | Minimum OS and both architectures, native peer qualification |
+| Native consent/status | Original native/consent-host.swift. Compiled at first turbo use; AppKit/Foundation from the OS | Status visibility, no focus change without the person's menu action, authentic button test |
 | Broker source | authority, policy, discovery, broker, ipc, scoped-adapter, consent-ui, setup-ui, indicator and host.mjs | Independent source review and complete installed-package inventory |
 | Semantic joining | BP2-P2's separate dispatch | Closed helper and route inventory, trusted browser/root proof, coherent current scope/time and protected serialization |
 
@@ -18,18 +18,29 @@ clang-2100.3.34.1, target arm64-apple-macosx27.0.0. This is not a minimum-OS com
 The tests compile to their own temporary directory and remove the helper and module cache.
 They do not launch the consent host. The peer test uses a disposable UDS and inherited fd 3.
 
-Proposal: distribute the two helpers in a signed, notarized immutable package under native/, with
-an owner-accepted protocol-1 manifest with Node version and both executable SHA-256 values.
+Distribute the two helpers as source under native/ (owner, 2026-10-14). No signed or notarized
+helper binaries are distributed. The loader supplies an accepted protocol-1 source inventory with helperMode
+source, the running Node version and each exact source SHA-256, from trusted operator configuration
+outside model input and project files. First turbo use builds both into a per-user 0700 folder at
+~/Library/Caches/sleight/turbo-host. The module cache stays inside that private build bank. build.json
+records the exact source SHA-256 values, architecture and both resulting executable SHA-256 values.
 The fixed entry checks canonical paths, ordinary files, ownership, write bits and hashes before
-starting either helper. The frontend must load acceptance from trusted operator configuration,
-outside model input and project files. The acceptance object in this bank is a private integration
-contract, not a signed manifest verifier. Signature verification and the updater require a later
-dispatch after the owner selects a Team ID and package format. Do not activate this source bank.
+each helper launch. Missing or modified artifacts rebuild from accepted source; source updates
+require matching source acceptance. A changed source or binary after preparation refuses launch;
+the next preparation rebuilds. Only locally issued receipt objects can start a helper.
+
+An exclusive build.lock prevents overlapping publication. Existing locks refuse without takeover.
+Both compilers finish before the bank is published. Missing xcrun or a failed build returns a typed
+unavailable result explaining the command-line tools requirement; the loader keeps the engine path
+and doesn't create a broker socket or consent UI. This bank remains inactive until its joining and live
+qualification gates pass. The source acceptance object is a private integration contract, not a
+signed manifest verifier.
 
 There is no extension install, native messaging registration, launchd service, profile edit,
 Accessibility request, screen capture, shared-engine restart or Python runtime in this proposal.
-No package copy of Playwright is selected by P1. P2 must inventory any selected dependency before
-redistribution. Only test compiler outputs exist, outside the plugin package.
+Playwright-core 1.64.0 is distributed whole under the plugin's vendor directory (owner, 2026-10-14), pinned
+by every file's hash, with LICENSE and NOTICE in THIRD-PARTY-NOTICES. P2 inventories and loads that
+copy only when turbo is on. Compiler outputs remain outside the plugin package.
 
 IPC uses a pre-existing canonical 0700 per-user directory, a 0600 socket and an exclusive 0600
 broker.lock file. Existing locks/sockets refuse, including stale versions. No takeover or automatic
