@@ -5,6 +5,7 @@ import { stageUserUploads } from './files.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
+const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const clean = value => String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 240);
 const refOf = value => typeof value === 'string' && /^(?:f\d+)?e\d+$/.test(value) ? value : null;
@@ -73,20 +74,41 @@ function coverDetails(el) {
       .map(n => (n.getAttribute('aria-label') || n.innerText || n.value || '').slice(0, 80)) };
 }
 
-function watch(page) {
-  const pending = new Set(), completed = new Set(), listeners = []; let boundary, dialogResolve;
+function watch(page, state) {
+  const pending = new Set(), completed = new Set(), listeners = []; let boundary, dialogResolve, stopped = false;
   const dialogReady = new Promise(resolve => { dialogResolve = resolve; });
-  const on = (event, fn) => { page.on(event, fn); listeners.push([event, fn]); };
+  const stop = () => { stopped = true; for (const [event, fn] of listeners) page.off(event, fn); };
+  const on = (event, fn) => {
+    const listener = (...args) => { if (!stopped) fn(...args); };
+    page.on(event, listener); listeners.push([event, listener]);
+  };
   on('request', r => { if (['document', 'xhr', 'fetch', 'script', 'stylesheet'].includes(r.resourceType())) pending.add(r); });
   on('requestfinished', r => { if (pending.delete(r)) completed.add(r); });
   on('requestfailed', r => { pending.delete(r); });
   on('framenavigated', frame => { if (frame === page.mainFrame()) boundary = { kind: 'navigation' }; });
   on('load', () => { boundary ??= { kind: 'document' }; });
-  on('dialog', dialog => { boundary = { kind: 'dialog', dialog }; dialogResolve(boundary); });
+  on('dialog', dialog => { state.dialog = dialog; boundary = { kind: 'dialog', dialog }; dialogResolve(boundary); });
   on('popup', popup => { boundary = { kind: 'popup', popup }; });
-  on('close', () => { boundary = { kind: 'close' }; });
+  on('close', () => { boundary = { kind: 'close' }; state.dialog = null; stop(); });
   return { pending, completed, dialogReady, get boundary() { return boundary; },
-    stop() { for (const [event, fn] of listeners) page.off(event, fn); } };
+    stop };
+}
+
+function pendingGate(state, step) {
+  if (state.actionPending && step.do !== 'dialog') throw Error('an earlier input is still pending; wait for it before more input');
+  if (step.do === 'dialog' && [...pendingInputs.get(state)?.tokens ?? []].some(token => token.dialog === state.dialog))
+    throw Error('the dialog answer is still pending; wait for it before another answer');
+}
+
+function ownInput(state, dialog) {
+  let bank = pendingInputs.get(state);
+  if (!bank) { bank = { tokens: new Set(), external: !!state.actionPending }; pendingInputs.set(state, bank); }
+  const token = { dialog }; bank.tokens.add(token); state.actionPending = true;
+  return () => {
+    bank.tokens.delete(token);
+    state.actionPending = bank.external || bank.tokens.size > 0;
+    if (!bank.tokens.size) pendingInputs.delete(state);
+  };
 }
 
 function ruleMessage(result) {
@@ -106,11 +128,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
-      let locator, target, started = false, armed, staging, submit;
+      let locator, target, started = false, armed, staging, submit, inputPending = false, stepFinished = false;
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
         if (step.do === 'dialog' && !state.dialog) throw Error('no waiting dialog; read the page');
-        if (state.actionPending && step.do !== 'dialog') throw Error('an earlier input is still pending; wait for it before more input');
+        pendingGate(state, step);
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         const info = locator ? await locator.evaluate(inspectTarget, undefined, { timeout: TIMEOUT }) : {};
@@ -123,7 +145,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         if (verdict?.verdict === 'confirm' || verdict?.kind === 'confirm') confirmation = { step: index + 1, terms: verdict.terms };
         const message = ruleMessage(verdict);
         if (message) throw Error(message);
-        armed = watch(page); const start = now();
+        armed = watch(page, state); const start = now();
         if (step.do === 'upload') {
           staging = await stageUserUploads(ctx.files, step.paths, step.ref);
           if (!Array.isArray(staging?.payloads) || !staging.payloads.length) throw Error('user-named file staging required');
@@ -146,7 +168,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (step.do === 'dialog') {
             const dialog = state.dialog;
             if (step.accept) await dialog.accept(step.text); else await dialog.dismiss();
-            state.dialog = null; return;
+            if (state.dialog === dialog) state.dialog = null; return;
           }
           if (step.do === 'wait') {
             if (locator) return locator.waitFor({ ...options, state: 'visible' });
@@ -166,6 +188,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             }
           }
         };
+        pendingGate(state, step);
         if (submits) {
           submit = { startedAt: now(), snapshotNo: state.snapshotNo ?? 0 };
           state.submitUnconfirmed = submit;
@@ -174,8 +197,12 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // A Playwright click can remain pending until a page dialog is answered.
         // Returning the dialog stops the batch; the pending promise is observed,
         // never resent, and finishes after a later explicit dialog action.
-        state.actionPending = true;
-        const performed = perform().finally(() => { state.actionPending = false; });
+        const releaseInput = ownInput(state, step.do === 'dialog' ? state.dialog : undefined);
+        inputPending = true;
+        const performed = perform().finally(() => {
+          inputPending = false; releaseInput();
+          if (stepFinished) armed.stop();
+        });
         const result = await bounded(Promise.race([performed, armed.dialogReady]), actionTimeoutMs);
         let formChanged = false;
         const settleUntil = start + (submits ? 5000 : 600);
@@ -220,14 +247,18 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         lines.push(label + ': ' + (started ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
         stoppedAt = index + 1; break;
       } finally {
-        armed?.stop();
+        stepFinished = true;
+        // A deadline ends the call, not the underlying Playwright input. Keep
+        // its dialog listener until that exact promise settles or the page closes.
+        if (!inputPending) armed?.stop();
         try { await staging?.cleanup?.(); } catch { lines.push('Upload staging cleanup unavailable.'); }
       }
     }
     if (stoppedAt !== null) for (let i = stoppedAt; i < steps.length; i++) lines.push(`${i + 1} ${steps[i].do}: not reached`);
     // Never turn a delivered input into a tool error because its observation
     // failed. The caller delivers this snapshot and records its number.
-    if (!state.dialog) try { await read({ since, maxChars: 8000 }); } catch (error) { observeError = clean(error.message); }
+    if (!state.dialog && state.actionPending) lines.push('Read deferred: input still pending; wait for it before browser_read.');
+    else if (!state.dialog) try { await read({ since, maxChars: 8000 }); } catch (error) { observeError = clean(error.message); }
     if (blocker && observed && observed !== blocker && !observed.text.includes(blocker.text)) observed.text += '\nBlocker controls (untrusted page content):\n' + blocker.text;
     if (observed) {
       const changed = observed.text.split('\n').filter(line => /^[+~-]\s/.test(line)).length;

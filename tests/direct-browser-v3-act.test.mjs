@@ -261,3 +261,96 @@ test('v3 scroll until stops after at most sixty wheels when text never appears',
   const result = await run(f.tab, [{ do: 'scroll', ref: 'e1', until: 'missing' }], {});
   assert.match(result.lines[0], /not found/i); assert.equal(f.actions.filter(a => a[0] === 'wheel').length, 60);
 });
+
+function pendingDialog(t, { early = false, rejectAnswer = false, holdAnswer = false, submit = false } = {}) {
+  const page = new EventEmitter(), calls = []; let release, answerRelease, time = 0;
+  const held = new Promise(resolve => { release = resolve; });
+  const answerHeld = new Promise(resolve => { answerRelease = resolve; });
+  t.after(() => { release(); answerRelease(); });
+  const answer = async kind => {
+    calls.push(kind);
+    if (holdAnswer) await answerHeld;
+    if (rejectAnswer) throw Error('answer failed');
+  };
+  const dialog = { type: () => 'confirm', message: () => 'Continue?', accept: () => answer('accept'), dismiss: () => answer('dismiss') };
+  page.mainFrame = () => page; page.url = () => 'about:blank';
+  page.getByRef = ref => ({
+    async evaluate(fn) { assert.equal(fn.name, 'inspectTarget'); return { name: 'Continue', submit, form: submit, formSignature: 'same' }; },
+    async click() { calls.push(ref); if (ref === 'e1') { if (early) page.emit('dialog', dialog); await held; } },
+  });
+  const tab = { page, state: { snapshotNo: 1, submitUnconfirmed: false } };
+  const run = createActionRunner({ actionTimeoutMs: 10, check: () => 'allow', now: () => time, sleep: async ms => { time += ms; },
+    snapshot: async () => ({ text: 'No visible changes.', number: 2 }) });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  return { page, tab, run, calls, dialog, release, answerRelease, tick };
+}
+
+for (const mode of ['accept', 'dismiss', 'rejected answer']) test('v3 ' + mode + ' cannot release the original pending click', async t => {
+  const f = pendingDialog(t, { early: true, rejectAnswer: mode === 'rejected answer' });
+  const first = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(first.lines[0], /dialog confirm/);
+  await f.run(f.tab, [{ do: 'dialog', accept: mode !== 'dismiss' }], {});
+  assert.equal(f.tab.state.actionPending, true);
+  await f.run(f.tab, [{ do: 'click', ref: 'e2' }], {});
+  assert.deepEqual(f.calls, ['e1', mode === 'dismiss' ? 'dismiss' : 'accept']);
+  assert.equal(f.tab.state.dialog, mode === 'rejected answer' ? f.dialog : null);
+  f.release(); await f.tick();
+  assert.equal(f.tab.state.actionPending, false);
+  assert.equal(f.page.listenerCount('dialog'), 0);
+  if (mode !== 'rejected answer') {
+    await f.run(f.tab, [{ do: 'click', ref: 'e2' }], {});
+    assert.equal(f.calls.at(-1), 'e2');
+  }
+});
+
+test('v3 a late dialog from a timed-out submit remains answerable without replay', async t => {
+  const f = pendingDialog(t, { submit: true });
+  const first = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(first.lines[0], /still pending/);
+  assert.equal(f.page.listenerCount('dialog'), 1);
+  const marker = f.tab.state.submitUnconfirmed;
+  f.page.emit('dialog', f.dialog);
+  assert.equal(f.tab.state.dialog, f.dialog);
+  await f.run(f.tab, [{ do: 'dialog', accept: true }], {});
+  assert.deepEqual(f.calls, ['e1', 'accept']);
+  assert.equal(f.tab.state.submitUnconfirmed, marker);
+  f.release(); await f.tick();
+  assert.equal(f.tab.state.actionPending, false);
+  for (const name of ['request', 'requestfinished', 'requestfailed', 'framenavigated', 'load', 'dialog', 'popup', 'close'])
+    assert.equal(f.page.listenerCount(name), 0, name);
+});
+
+test('v3 settling the original click cannot release a still-pending dialog answer', async t => {
+  const f = pendingDialog(t, { early: true, holdAnswer: true });
+  await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  const answer = await f.run(f.tab, [{ do: 'dialog', accept: true }], {});
+  assert.match(answer.lines[0], /still pending/);
+  f.release(); await f.tick();
+  assert.equal(f.tab.state.actionPending, true);
+  await f.run(f.tab, [{ do: 'dialog', accept: true }], {});
+  assert.deepEqual(f.calls, ['e1', 'accept'], 'the pending answer cannot be dispatched twice');
+  f.answerRelease(); await f.tick();
+  assert.equal(f.tab.state.actionPending, false);
+  assert.equal(f.tab.state.dialog, null);
+  assert.equal(f.page.listenerCount('dialog'), 0);
+});
+
+test('v3 page teardown removes a pending input watcher without replay or a late dialog', async t => {
+  const f = pendingDialog(t);
+  await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.equal(f.page.listenerCount('dialog'), 1);
+  f.page.emit('close');
+  for (const name of ['request', 'requestfinished', 'requestfailed', 'framenavigated', 'load', 'dialog', 'popup', 'close'])
+    assert.equal(f.page.listenerCount(name), 0, name);
+  f.page.emit('dialog', f.dialog);
+  assert.equal(!!f.tab.state.dialog, false);
+  assert.deepEqual(f.calls, ['e1']);
+});
+
+test('v3 answering a dialog preserves a pending gate owned outside this runner', async () => {
+  const f = fixture();
+  f.tab.state.actionPending = true;
+  f.tab.state.dialog = { type: () => 'confirm', message: () => 'Continue?', accept: async () => {} };
+  await f.run(f.tab, [{ do: 'dialog', accept: true }], {});
+  assert.equal(f.tab.state.actionPending, true);
+});

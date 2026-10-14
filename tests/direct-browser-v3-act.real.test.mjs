@@ -9,7 +9,7 @@ import { createUserFileProvider } from '../plugins/sleight/lib/direct-browser/fi
 import { loadPlaywrightCore } from '../plugins/sleight/lib/direct-browser/worlds.mjs';
 
 const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' && 'real-page action qualification belongs to the host runner';
-async function fixture(t, html) {
+async function fixture(t, html, runnerOptions = {}) {
   const sockets = new Set();
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
@@ -47,7 +47,7 @@ async function fixture(t, html) {
   const run = createActionRunner({ snapshot, check: (ctx, kind, target) => {
     checks.push({ kind, target });
     return target.submit && target.state.submitUnconfirmed ? { verdict: 'refuse', message: 'Read before resubmitting' } : { verdict: 'allow' };
-  } });
+  }, ...runnerOptions });
   const ref = async name => {
     const raw = await page.ariaSnapshot({ mode: 'ai' });
     const line = raw.split('\n').find(line => line.includes('"' + name + '"'));
@@ -91,6 +91,43 @@ test('real v3 dialog returns promptly, stops the batch and accepts only an expli
   assert.equal(result.stoppedAt, 1); assert.match(result.lines[0], /dialog confirm/); assert.ok(f.tab.state.dialog);
   const answer = await f.run(f.tab, [{ do: 'dialog', accept: true }], {});
   assert.equal(answer.stoppedAt, null, answer.lines.join('\n')); assert.equal(await f.page.locator('output').textContent(), 'true');
+});
+
+test('real v3 a delayed dialog survives its pending click deadline and is explicitly dismissed once', { skip, timeout: 30000 }, async t => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  const f = await fixture(t, `<button onclick="window.asks=(window.asks||0)+1;setTimeout(()=>{
+    document.querySelector('output').textContent=confirm('Continue later?')},150)">Ask later</button>
+    <button onclick="window.next=(window.next||0)+1">Next</button><output>waiting</output>`, {
+    actionTimeoutMs: 25,
+    // Hold only the completion reply after the real input. The native dialog
+    // arrives from the page after the call deadline, with no test auto-answer.
+    backgroundClick: async (tab, locator, click) => { await click({}); await held; },
+  });
+  const ask = await f.ref('Ask later'), next = await f.ref('Next');
+  const waiting = f.page.waitForEvent('dialog', { timeout: 10000 });
+  const first = await f.run(f.tab, [{ do: 'click', ref: ask }], {});
+  assert.match(first.lines[0], /still pending/); assert.equal(f.tab.state.actionPending, true);
+  const dialog = await waiting;
+  assert.equal(f.tab.state.dialog, dialog);
+  const answered = await f.run(f.tab, [{ do: 'dialog', accept: false }], {});
+  assert.equal(answered.stoppedAt, null, answered.lines.join('\n'));
+  assert.equal(f.tab.state.actionPending, true);
+  assert.equal(await f.page.locator('output').textContent(), 'false');
+  const blocked = await f.run(f.tab, [{ do: 'click', ref: next }], {});
+  assert.match(blocked.lines[0], /not run:.*pending/);
+  assert.equal(await f.page.evaluate(() => window.asks), 1);
+  assert.equal(await f.page.evaluate(() => window.next || 0), 0);
+  release();
+  const deadline = Date.now() + 5000;
+  while (f.tab.state.actionPending && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(f.tab.state.actionPending, false);
+  for (const event of ['dialog', 'request', 'requestfinished', 'requestfailed', 'framenavigated', 'load', 'popup'])
+    assert.equal(f.page.listenerCount(event), 0, event);
+  const resumed = await f.run(f.tab, [{ do: 'click', ref: next }], {});
+  assert.doesNotMatch(resumed.lines[0], /not run:/);
+  await f.page.waitForFunction(() => window.next === 1);
+  assert.equal(await f.page.evaluate(() => window.next), 1);
 });
 
 test('real v3 cover outcome names the blocker and includes its dismiss button refs', { skip }, async t => {
