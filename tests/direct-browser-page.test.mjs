@@ -166,6 +166,7 @@ function hookFixture() {
   class Element {
     constructor(localName = 'button', attrs = {}) { Object.assign(this, { localName, attrs, isConnected: true }); }
     getAttribute(name) { return this.attrs[name] ?? null; }
+    hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
     getRootNode() { return {}; }
   }
   class EventTarget {
@@ -173,9 +174,9 @@ function hookFixture() {
     removeEventListener(name, fn) { this.listeners[name]?.delete(fn); }
   }
   const opens = [], window = { listeners: {}, open(...args) { opens.push(args); return { real: true }; } };
-  const document = { scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
+  const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   vm.runInNewContext(`(${popupHook})()`, { window, document, navigator: { userActivation: { isActive: true } },
-    MouseEvent, Element, Event, EventTarget, setTimeout, clearTimeout });
+    MouseEvent, Element, Event, EventTarget, URL, setTimeout, clearTimeout });
   const hook = window[Symbol.for('sleight.popup3')];
   return { window, document, hook, Element, MouseEvent, opens };
 }
@@ -265,4 +266,43 @@ test('filtered popup is admitted from trusted CDP opener metadata before Playwri
   assert.deepEqual(owned, ['child']);
   assert.equal(f.registry.tab(tab).popups.length, 1);
   await f.registry.endTurn();
+});
+
+test('a noopener link dispatches once and opens its captured default destination in the background', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.page.evaluate = async () => ({ url: 'https://fixture.invalid/shipping' });
+  f.entry.openChild = async url => f.calls.push(['openChild', url]);
+  await backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options]));
+  assert.deepEqual(f.calls.filter(c => ['click', 'openChild'].includes(c[0])), [
+    ['click', {}], ['openChild', 'https://fixture.invalid/shipping'],
+  ]);
+});
+
+test('a popup closing during its click returns the observed closure and its living opener', async () => {
+  const f = clickFixture(false);
+  f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
+  f.entry.closed = true;
+  const click = async () => { throw Error('locator.click: Target page, context or browser has been closed'); };
+  const result = await backgroundClick(f.entry, f.locator, click);
+  assert.deepEqual(result, { closed: true, opener: 'parent' });
+  f.entry.parent.page.isClosed = () => true;
+  await assert.rejects(backgroundClick(f.entry, f.locator, click), /Target page/);
+});
+
+test('serialized link hook replaces only an uncancelled trusted default open', () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  try {
+    assert.equal(f.hook.prepare(link, 'link', 1000).kind, 'link');
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link], defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; } });
+    for (const listener of f.window.listeners.click) listener(click);
+    assert.equal(click.defaultPrevented, true);
+    assert.equal(f.hook.takeRequest('link').url, 'https://fixture.invalid/shipping');
+    assert.equal(f.hook.takeRequest('link'), undefined);
+    f.hook.finish('link'); f.hook.prepare(link, 'cancelled', 1000);
+    const cancelled = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link], defaultPrevented: true });
+    for (const listener of f.window.listeners.click) listener(cancelled);
+    assert.equal(f.hook.takeRequest('cancelled'), undefined);
+    assert.deepEqual(f.opens, []);
+  } finally { f.hook.off(); }
 });

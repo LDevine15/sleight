@@ -1,12 +1,12 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import { createRequire } from "node:module";
-import { existsSync, readFileSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
-import { trackTemp } from "../scripts/temp-leftovers.mjs";
-import { createPageRegistry, backgroundClick } from "../plugins/sleight/lib/direct-browser/page.mjs";
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
+import { existsSync, readFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { createPageRegistry, backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
 
 const require = createRequire(import.meta.url);
 const { inprocess } = require('../plugins/sleight/vendor/playwright-core/lib/coreBundle.js');

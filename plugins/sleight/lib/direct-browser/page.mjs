@@ -21,7 +21,7 @@ export function popupHook() {
   const mouse = MouseEvent.prototype;
   const descriptors = ['ctrlKey', 'metaKey'].map(name => [name, Object.getOwnPropertyDescriptor(mouse, name)]);
   const modifierState = mouse.getModifierState;
-  const decided = new WeakMap(), retired = new Set();
+  const decided = new WeakMap(), retired = new Set(), requests = new Map();
   let armed, timer;
   const finish = token => {
     if (token) retired.add(token);
@@ -48,6 +48,24 @@ export function popupHook() {
     if (armed.active) apply(stop, event, []);
   };
   for (const type of ['keydown', 'keyup']) apply(listen, window, [type, keyboard, true]);
+  const consumeLink = event => {
+    if (!armed?.link || !event.isTrusted || event.defaultPrevented || !apply(path, event, []).includes(armed.element)) return;
+    const link = armed.link, target = link.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+    if (!/^_blank$/i.test(target) && !/\b(?:noopener|noreferrer)\b/i.test(link.getAttribute('rel') ?? '')) return;
+    if (!target || /^_(?:self|parent|top)$/i.test(target) || link.hasAttribute('download')) return;
+    try {
+      const url = new URL(link.getAttribute('href'), document.baseURI);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
+      // Only the default open is replaced. Page handlers have already run once.
+      event.preventDefault(); requests.set(armed.token, { url: url.href });
+    } catch { /* A page URL is never a grant to another protocol. */ }
+  };
+  const linkCapture = event => {
+    if (!armed?.link || !event.isTrusted) return;
+    apply(unlisten, window, ['click', consumeLink]);
+    apply(listen, window, ['click', consumeLink]);
+  };
+  apply(listen, window, ['click', linkCapture, true]);
   const open = function (url, name, features) {
     // Same browsing context navigation keeps native semantics. New windows must
     // consume the background click's trusted activation; never create a window.
@@ -76,13 +94,16 @@ export function popupHook() {
       const target = link?.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
       const opens = /\b(?:window\s*\.\s*open|open\s*\()/.test(source);
       if (link && (!target || /^_(?:self|top|parent)$/i.test(target)) && !/\bwindow\s*\.\s*open\s*\(/.test(handlerSource)) return false;
+      const independent = link && !/\bwindow\s*\.\s*open\s*\(/.test(handlerSource) &&
+        (/^_blank$/i.test(target) || /\b(?:noopener|noreferrer)\b/i.test(link.getAttribute('rel') ?? ''));
       if (!opens && !target && !Array.from(document.scripts).some(script => script.src)) return false;
       if (/^(iframe|frame|fencedframe|object|embed)$/.test(document.activeElement?.localName ?? ''))
         throw Error('background popup preparation needs focus outside a frame');
-      finish(); armed = { element, token, active: false, until: 0 };
+      finish(); armed = { element, token, active: false, until: 0, ...(independent ? { link } : {}) };
       timer = setTimeout(() => finish(token), capMs);
-      return true;
+      return independent ? { kind: 'link' } : true;
     },
+    takeRequest(token) { const request = requests.get(token); requests.delete(token); return request; },
     finish,
     off() {
       finish();
@@ -91,19 +112,29 @@ export function popupHook() {
         if (Object.getOwnPropertyDescriptor(mouse, name)?.get === getter) Object.defineProperty(mouse, name, descriptor);
       if (mouse.getModifierState === getModifierState) mouse.getModifierState = modifierState;
       for (const type of ['keydown', 'keyup']) apply(unlisten, window, [type, keyboard, true]);
+      apply(unlisten, window, ['click', linkCapture, true]);
+      apply(unlisten, window, ['click', consumeLink]);
       delete window[key]; return true;
     },
   };
   return true;
 }
 
-export async function backgroundClick(tab, locator, click = options => locator.click(options), { timeoutMs = 1000 } = {}) {
+export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
   const token = randomUUID(), page = tab.page;
   const before = tab.popupCheckpoint?.();
   const disarm = () => deadline(() => page.evaluate(token => {
     window[Symbol.for('sleight.popup3')]?.finish(token); return true;
   }, token), timeoutMs);
   let prepared;
+  const clickOnce = async options => {
+    try { return await click(options); }
+    catch (error) {
+      if (/Target page, context or browser has been closed/.test(error.message) && tab.closed && tab.parent && !tab.parent.page.isClosed())
+        return { closed: true, opener: tab.opener };
+      throw error;
+    }
+  };
   try {
     prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
       const hook = window[Symbol.for('sleight.popup3')];
@@ -114,11 +145,22 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     await disarm().catch(() => {});
     throw Error('background popup preparation failed; use the engine browser path');
   }
+  if (prepared?.kind === 'link') {
+    try {
+      const result = await clickOnce({});
+      const request = await page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token), token);
+      if (request) {
+        if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
+        await tab.openChild(request.url);
+      }
+      return result;
+    } finally { await disarm().catch(() => {}); }
+  }
   if (prepared !== true) {
-    const result = await click({}); await tab.settlePopups?.(before); return result;
+    const result = await clickOnce({}); await tab.settlePopups?.(before); return result;
   }
   let result;
-  try { result = await click({ modifiers: ['ControlOrMeta'] }); }
+  try { result = await clickOnce({ modifiers: ['ControlOrMeta'] }); }
   finally {
     // A failed click may leave Playwright's modifier held. Never replay input.
     await deadline(() => page.keyboard.up('ControlOrMeta'), timeoutMs).catch(() => {});
@@ -179,6 +221,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       state: { snapshotNo: 0, submitUnconfirmed: false }, opener: opener?.tab, popups: [], popupWaitMs,
       closed: page.isClosed(), released: false, queue: Promise.resolve() };
     entry.windowOpenNo = 0;
+    entry.parent = opener;
+    entry.openChild = url => openOwned(url, entry);
     entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length });
     entry.settlePopups = async before => {
       if (!before || entry.windowOpenNo === before.windows && entry.popups.length === before.popups) return;
@@ -256,9 +300,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     await entry.cdp.detach(); entry.released = true; entry.release = kind;
     return { tab: id, kept: true, handoff: kind === 'handoff' };
   };
-  const api = {
-    tab, idle,
-    async openTab({ url }) {
+  async function openOwned(url, opener) {
       if (ended) throw Error('turn ended');
       let parsed;
       try { parsed = new URL(url); } catch { throw Error('invalid browser URL'); }
@@ -276,14 +318,17 @@ export function createPageRegistry({ browser, session, context = browser?.contex
           throw Error(ended ? 'turn ended' : 'background page attachment timed out');
         }
         const page = seen.get(targetId);
-        const info = await identify(page), entry = adopt(page, info);
+        const info = await identify(page), entry = adopt(page, info, opener);
         await entry.ready;
         if (ended) throw Error('turn ended');
         await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
         return { tab: entry.tab };
       })());
       return deadline(() => opening, timeoutMs, 'background open pending; do not retry before cleanup');
-    },
+  }
+  const api = {
+    tab, idle,
+    openTab: ({ url }) => openOwned(url),
     async list() {
       await deadline(idle, timeoutMs);
       return [...records.values()].filter(r => !r.closed && !r.released).map(r => ({ tab: r.tab, targetId: r.targetId,
