@@ -306,3 +306,19 @@ test('serialized link hook replaces only an uncancelled trusted default open', (
     assert.deepEqual(f.opens, []);
   } finally { f.hook.off(); }
 });
+
+test('keep waits for queued input, fences new input, then releases filter ownership', async () => {
+  const released = [], f = fixture({ releaseTarget: target => released.push(target) });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  let finish, started;
+  const begun = new Promise(resolve => { started = resolve; });
+  const pending = f.registry.enqueue(tab, async () => { started(); await new Promise(resolve => { finish = resolve; }); });
+  await begun;
+  const keeping = f.registry.keep(tab);
+  assert.throws(() => f.registry.enqueue(tab, async () => {}), /owned|releas/i);
+  assert.deepEqual(released, []);
+  finish(); await pending; await keeping;
+  assert.deepEqual(released, ['target-1']);
+  assert.equal(f.pages[0].isClosed(), false);
+  await f.registry.endTurn();
+});

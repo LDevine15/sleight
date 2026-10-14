@@ -172,7 +172,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
 
 // browser is the Playwright connection through V1's CDP filter; session is the
 // approved root CDP {send,on,off,sessionId}. Existing pages are never acquired.
-export function createPageRegistry({ browser, session, context = browser?.contexts()[0], upstream, ownTarget,
+export function createPageRegistry({ browser, session, context = browser?.contexts()[0], upstream, ownTarget, releaseTarget,
   timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
   if (!context || typeof session?.send !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('approved browser connection required');
@@ -288,17 +288,23 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   }
   const tab = id => {
     const entry = records.get(id);
-    if (!entry || entry.released) throw Error('unknown owned tab');
+    if (!entry || entry.released || entry.releasing) throw Error('unknown or releasing owned tab');
     if (entry.closed || entry.page.isClosed()) throw Error('owned tab closed; read its opener');
     if (ended) throw Error('turn ended');
     return entry;
   };
   const release = async (id, kind) => {
     const entry = tab(id);
-    await deadline(() => entry.ready, timeoutMs);
-    await deadline(() => removeHook(entry), timeoutMs);
-    await entry.cdp.detach(); entry.released = true; entry.release = kind;
-    return { tab: id, kept: true, handoff: kind === 'handoff' };
+    entry.releasing = true;
+    try {
+      await deadline(() => entry.queue, timeoutMs);
+      await deadline(() => entry.ready, timeoutMs);
+      await deadline(() => removeHook(entry), timeoutMs);
+      await entry.cdp.detach();
+      await releaseTarget?.(entry.targetId);
+      entry.released = true; entry.release = kind;
+      return { tab: id, kept: true, handoff: kind === 'handoff' };
+    } finally { entry.releasing = false; }
   };
   async function openOwned(url, opener) {
       if (ended) throw Error('turn ended');
