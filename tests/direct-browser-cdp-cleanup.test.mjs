@@ -107,3 +107,142 @@ test('destroying one child revokes its subtree while preserving its parent and s
   await f.filter.session.send('Runtime.enable', {}, 'sibling');
   assert.equal(f.filter.owns('owned'), true); assert.equal(f.filter.owns('sibling'), true);
 });
+
+function collectionFixture() {
+  const listeners = new Set(), calls = [], delivered = [];
+  const info = { targetId: 'owned', type: 'page', url: 'about:blank' };
+  const emit = frame => { for (const fn of listeners) fn(frame); };
+  let onDetach = () => { throw Error('detach response lost'); }, answerAttach;
+  const upstream = { sessionId: 'root', on(name, fn) { assert.equal(name, 'event'); listeners.add(fn); },
+    off(name, fn) { assert.equal(name, 'event'); assert.equal(listeners.delete(fn), true); },
+    async send(method, params, route = 'root') {
+      calls.push({ method, params, route });
+      if (method === 'Target.attachToTarget') {
+        if (answerAttach) return new Promise((resolve, reject) => { answerAttach = { resolve, reject }; });
+        emit({ method: 'Target.attachedToTarget', params: { sessionId: 'acquired', targetInfo: info } });
+        return { sessionId: 'acquired' };
+      }
+      if (method === 'Target.detachFromTarget') return onDetach(params.sessionId, route);
+      assert.fail('unsupported fake method: ' + method);
+    } };
+  const filter = createCDPFilter({ session: upstream, ownedTargets: ['owned'] });
+  filter.session.on('event', frame => delivered.push(frame));
+  return { filter, listeners, calls, delivered, emit, info,
+    attach: () => filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true }),
+    detach(fn) { onDetach = fn; }, delayAttach() { answerAttach = true; },
+    rejectAttach() { answerAttach.reject(Error('attach response lost')); },
+    pendingAttach: () => typeof answerAttach === 'object' };
+}
+
+test('trusted detach during disposal proves collection even when the reply is lost', async () => {
+  const f = collectionFixture(); await f.attach(); f.delivered.length = 0;
+  f.detach((sessionId, route) => {
+    assert.equal(route, 'root');
+    f.emit({ method: 'Target.detachedFromTarget', params: { sessionId } });
+    throw Error('detach response lost');
+  });
+  assert.equal(await f.filter.dispose(), true);
+  assert.equal(f.listeners.size, 0); assert.deepEqual(f.delivered, []);
+  assert.equal(await f.filter.dispose(), true);
+});
+
+test('trusted detach after failed disposal allows recovery without retrying a missing session', async () => {
+  const f = collectionFixture(); await f.attach(); f.delivered.length = 0;
+  assert.equal(await f.filter.dispose(), false); assert.equal(f.listeners.size, 1);
+  await assert.rejects(f.filter.session.send('Runtime.enable', {}, 'acquired'), /CDP_FILTER_CLOSED/);
+  f.emit({ method: 'Runtime.consoleAPICalled', sessionId: 'acquired', params: { type: 'log' } });
+  const calls = f.calls.length;
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'acquired', targetId: 'owned' } });
+  assert.equal(await f.filter.dispose(), true); assert.equal(f.calls.length, calls);
+  assert.equal(f.listeners.size, 0); assert.deepEqual(f.delivered, []);
+});
+
+test('foreign and malformed detach events never prove closed filter collection', async () => {
+  const f = collectionFixture(); await f.attach(); f.delivered.length = 0;
+  assert.equal(await f.filter.dispose(), false);
+  for (const frame of [null, {}, { method: null, params: {} },
+    { method: 'Target.detachedFromTarget', params: [] },
+    { method: 'Target.detachedFromTarget', params: { sessionId: 'foreign' } },
+    { method: 'Target.detachedFromTarget', params: { sessionId: ['acquired'] } },
+    { method: 'Target.detachedFromTarget', sessionId: 'foreign', params: { sessionId: 'acquired' } },
+    { method: 'Target.detachedFromTarget', sessionId: null, params: { sessionId: 'acquired' } },
+    { method: 'Target.detachedFromTarget', sessionId: 'acquired', params: { sessionId: 'acquired' } },
+    { method: 'Target.detachedFromTarget', params: { sessionId: 'acquired', targetId: 'foreign' } },
+    { method: 'Target.detachedFromTarget', params: { sessionId: 'acquired', targetId: null } }]) {
+    assert.doesNotThrow(() => f.emit(frame));
+    assert.equal(await f.filter.dispose(), false); assert.equal(f.listeners.size, 1);
+  }
+  assert.deepEqual(f.delivered, []);
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'acquired' } });
+  assert.equal(await f.filter.dispose(), true); assert.equal(f.listeners.size, 0);
+});
+
+test('closed nested routes accept only their exact physical parent and never regain input', async () => {
+  const f = collectionFixture(); await f.attach();
+  for (const [parent, child] of [['acquired', 'child'], ['child', 'grandchild']])
+    f.emit({ method: 'Target.attachedToTarget', sessionId: parent, params: { sessionId: child,
+      targetInfo: { targetId: child, type: 'iframe' } } });
+  f.filter.release('owned'); f.delivered.length = 0;
+  assert.equal(await f.filter.dispose(), false);
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'child' } });
+  assert.equal(await f.filter.dispose(), false);
+  f.emit({ method: 'Target.detachedFromTarget', sessionId: 'acquired', params: { sessionId: 'child' } });
+  assert.equal(await f.filter.dispose(), false); assert.equal(f.listeners.size, 1);
+  f.emit({ method: 'Runtime.consoleAPICalled', sessionId: 'grandchild', params: {} });
+  await assert.rejects(f.filter.session.send('Runtime.enable', {}, 'grandchild'), /CDP_FILTER_CLOSED/);
+  f.detach(() => ({})); assert.equal(await f.filter.dispose(), true);
+  assert.deepEqual(f.calls.filter(call => call.method === 'Target.detachFromTarget').map(call => call.params.sessionId),
+    ['acquired', 'acquired', 'acquired', 'acquired']);
+  assert.equal(f.listeners.size, 0); assert.deepEqual(f.delivered, []);
+});
+
+test('closed parent detach proof collects its nested physical attachments', async () => {
+  const f = collectionFixture(); await f.attach();
+  for (const [parent, child] of [['acquired', 'child'], ['child', 'grandchild']])
+    f.emit({ method: 'Target.attachedToTarget', sessionId: parent, params: { sessionId: child,
+      targetInfo: { targetId: child, type: 'iframe' } } });
+  assert.equal(await f.filter.dispose(), false);
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'acquired' } });
+  assert.equal(await f.filter.dispose(), true); assert.equal(f.listeners.size, 0);
+  assert.equal(f.calls.filter(call => call.method === 'Target.detachFromTarget').length, 1);
+});
+
+test('pending attach retains cleanup events after closure even if its reply is lost', async () => {
+  const f = collectionFixture(); f.delayAttach();
+  const attaching = f.attach(); attaching.catch(() => {}); await wait(f.pendingAttach);
+  assert.equal(await f.filter.dispose(), false); assert.equal(f.listeners.size, 1);
+  f.emit({ method: 'Target.attachedToTarget', params: { sessionId: 'late', targetInfo: f.info } });
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'late' } });
+  assert.equal(f.listeners.size, 1, 'the attach reply is still outstanding');
+  f.rejectAttach(); await assert.rejects(attaching, /attach response lost/);
+  assert.equal(await f.filter.dispose(), true); assert.equal(f.listeners.size, 0);
+  assert.deepEqual(f.delivered, []);
+  await assert.rejects(f.filter.session.send('Runtime.enable', {}, 'late'), /CDP_FILTER_CLOSED/);
+});
+
+test('a late acquired session without detach proof remains in the closed cleanup bank', async () => {
+  const f = collectionFixture(); f.delayAttach();
+  const attaching = f.attach(); attaching.catch(() => {}); await wait(f.pendingAttach);
+  assert.equal(await f.filter.dispose(), false);
+  f.emit({ method: 'Target.attachedToTarget', params: { sessionId: 'late', targetInfo: f.info } });
+  f.emit({ method: 'Target.attachedToTarget', params: { sessionId: 'foreign', targetInfo: { ...f.info, targetId: 'foreign' } } });
+  f.rejectAttach(); await assert.rejects(attaching, /attach response lost/);
+  assert.equal(await f.filter.dispose(), false); assert.equal(f.listeners.size, 1);
+  assert.deepEqual(f.calls.filter(call => call.method === 'Target.detachFromTarget').map(call => [call.params.sessionId, call.route]),
+    [['late', 'root']]);
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'late' } });
+  assert.equal(await f.filter.dispose(), true); assert.equal(f.listeners.size, 0);
+  assert.deepEqual(f.delivered, []);
+});
+
+test('released nested routes still consume exact physical detach proof before closure', async () => {
+  const f = collectionFixture(); await f.attach();
+  f.emit({ method: 'Target.attachedToTarget', sessionId: 'acquired', params: { sessionId: 'child',
+    targetInfo: { targetId: 'child', type: 'iframe' } } });
+  f.filter.release('owned');
+  f.emit({ method: 'Target.detachedFromTarget', sessionId: 'acquired', params: { sessionId: 'child' } });
+  await assert.rejects(f.filter.session.send('Runtime.enable', {}, 'child'), /CDP_SESSION_NOT_OWNED/);
+  assert.equal(await f.filter.dispose(), false);
+  f.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'acquired' } });
+  assert.equal(await f.filter.dispose(), true); assert.equal(f.listeners.size, 0);
+});
