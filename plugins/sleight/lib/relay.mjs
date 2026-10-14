@@ -57,6 +57,7 @@
 // `trace`, when given, receives every message as it passes, for debugging.
 
 import { randomUUID } from 'node:crypto';
+import { isFrontend } from './direct-browser/surface.mjs';
 import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -376,6 +377,7 @@ function internalTurnEnd(tool) {
 }
 
 export function createRelay({
+  directBrowser,
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
@@ -444,6 +446,8 @@ export function createRelay({
   warmRepl = false,
   onClientReply = () => {},
 }) {
+  if (directBrowser !== undefined && !isFrontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ?? []);
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
   const browserStale = createBrowserStaleGuard();
@@ -1758,6 +1762,14 @@ export function createRelay({
     return true;
   }
   function handleClient(msg) {
+    if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
+      if (msg.id === undefined) return;
+      directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: !!result.error,
+          content: [{ type: 'text', text: JSON.stringify(result) }] } });
+      }).catch(() => toClient({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Direct browser route unavailable.' } }));
+      return;
+    }
     if (replWarmup.hold(msg)) return;
     if (msg.method === 'tools/call' && msg.id !== undefined && !callGenerations.has(msg.id)) callGenerations.set(msg.id, stopGeneration);
     if (msg.method === 'initialize') {
@@ -2820,7 +2832,7 @@ export function createRelay({
         .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
         .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t) : t))
         .map(t => (firstCallBatch && t.name === 'js' ? { ...t, description: batchingDescription(t.description, firstCallBatch, prompt) } : t))
-        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [])
+        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], directBrowser?.tools() ?? [])
         // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
         // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
         // are short, so all but the internal turn_ended load up front, local tools included.
@@ -3033,7 +3045,7 @@ export function createRelay({
     clipboardReplies.clear();
     clearTimeout(idleTimer);
     try { dispose(); } finally { releaseLeases(); }
-    return clipboard?.close() ?? Promise.resolve();
+    return Promise.all([clipboard?.close(), directBrowser?.end()]);
   }
   async function shutdown() {
     closing = true;

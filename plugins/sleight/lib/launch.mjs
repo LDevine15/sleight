@@ -20,6 +20,7 @@ import { discoverExtensions, createBrowserSelection } from './browser-discovery.
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
+import { isFrontend } from './direct-browser/surface.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
@@ -630,11 +631,21 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
   return { fallbackAsk: setting === 'client' ? undefined : prompt, ...extras };
 }
 
-export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper } = {}) {
+// Internal source-bank hook. The fixed trusted host loader must authenticate the
+// user's opt-in and package before constructing a branded frontend. Environment
+// and project settings cannot supply it. No default entry constructs one yet.
+export function directBrowserServer(server, frontend) {
+  if (frontend === undefined) return server;
+  if (!isFrontend(frontend)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  return { ...server, env: { ...server.env, CUA_REPL_ENABLED_SURFACES: 'computer' } };
+}
+
+export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
+  directBrowser } = {}) {
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   const { trace, grantAudit } = approvalLogging(preapproved);
-  const s = resolveServer();
+  const s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
   let surfaceCache, child, childClosed, firstCallObserver, relay;
@@ -643,8 +654,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const browserSelection = createBrowserSelection();
   let activeServer = s;
   async function startEngine(isCurrent = () => true) {
-    surfaceCache = selectSurfaces(s);
-    activeServer = await browserSelection.prepare(s);
+    surfaceCache = directBrowser ? undefined : selectSurfaces(s);
+    activeServer = directBrowser ? directBrowserServer(s, directBrowser) : await browserSelection.prepare(s);
     if (!isCurrent()) { await surfaceCache?.close(); throw new Error('Engine restart was stopped.'); }
     const current = spawn(activeServer.command, activeServer.args, { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...activeServer.env } });
     child = current;
@@ -679,6 +690,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const approval = approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
+    directBrowser,
     startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
     browserChoice: browserSelection.choice,
     backendChanged: () => browserSelection.changed(),
