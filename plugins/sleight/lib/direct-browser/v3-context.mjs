@@ -43,9 +43,25 @@ export function requestedPayment(message) {
 export function focusCheckedNode(el, focus) {
   if (!el.isConnected) return false;
   if (focus) HTMLElement.prototype.focus.call(el, { preventScroll: true });
-  let active = el.ownerDocument.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-  return active === el;
+  try {
+    // A closed root hides its real receiver behind activeElement's host. DOM
+    // evidence cannot distinguish that host from an ordinary focusable div.
+    // Refuse opaque potential hosts; an open root exposes the receiver below.
+    const opaqueHost = !el.shadowRoot && (el.localName.includes('-') ||
+      ['article','aside','blockquote','body','div','footer','h1','h2','h3','h4','h5','h6','header','main','nav','p','section','span'].includes(el.localName));
+    if (opaqueHost) return false;
+    let node = el;
+    for (;;) {
+      const doc = node.ownerDocument, view = doc.defaultView;
+      let active = doc.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      if (active !== node) return false;
+      const frame = view.frameElement;
+      if (!frame) return view === view.top;
+      if (!frame.isConnected) return false;
+      node = frame;
+    }
+  } catch { return false; }
 }
 
 export function ownDocument(el) { return el.ownerDocument; }
@@ -57,15 +73,34 @@ export function samePageDocument(el, doc) { return el.isConnected && el.ownerDoc
 export function readPaymentPage(el) {
   const doc = el.ownerDocument, view = doc.defaultView;
   const root = ('form' in el ? el.form : el.closest('form')) ?? el.closest('dialog,[role="dialog"]');
-  const visible = node => {
-    const r = node.getBoundingClientRect(), style = view.getComputedStyle(node);
-    return r.width > 0 && r.height > 0 && node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
-      style.visibility !== 'hidden' && style.display !== 'none';
+  const visible = (node, rects = node.getClientRects()) => {
+    if (!node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+    let left = 0, top = 0, right = view.innerWidth, bottom = view.innerHeight, opacity = 1;
+    for (let parent = node; parent; parent = parent.parentElement ?? parent.getRootNode?.().host) {
+      const style = view.getComputedStyle(parent);
+      opacity *= style.opacity === '' ? 1 : Number(style.opacity ?? 1);
+      if (opacity < 0.1 || style.visibility === 'hidden' || style.display === 'none' ||
+          style.clipPath && style.clipPath !== 'none' || style.clip && style.clip !== 'auto') return false;
+      const box = parent.getBoundingClientRect();
+      const clips = axis => /^(?:auto|scroll|hidden|clip)$/.test(style['overflow' + axis]) || /(?:paint|strict|content)/.test(style.contain ?? '');
+      if (clips('X')) { left = Math.max(left, box.left + parent.clientLeft); right = Math.min(right, box.left + parent.clientLeft + parent.clientWidth); }
+      if (clips('Y')) { top = Math.max(top, box.top + parent.clientTop); bottom = Math.min(bottom, box.top + parent.clientTop + parent.clientHeight); }
+    }
+    return [...rects].some(r => Math.min(right, r.right) - Math.max(left, r.left) >= 4 && Math.min(bottom, r.bottom) - Math.max(top, r.top) >= 4);
   };
-  const visibleText = (node, separator = ' ') => {
-    const walker = doc.createTreeWalker(node, 4), parts = []; let part;
-    while ((part = walker.nextNode())) if (part.parentElement && visible(part.parentElement)) parts.push(part.textContent);
-    return parts.join(separator);
+  const visibleText = node => {
+    const walker = doc.createTreeWalker(node, 5), parts = []; let part, previous;
+    while ((part = walker.nextNode())) if (part.nodeType === 1) {
+      if (part.localName === 'br') { parts.push('\n'); previous = undefined; }
+    } else if (part.parentElement) {
+      const range = doc.createRange(); range.selectNodeContents(part);
+      if (!part.textContent.trim() || !visible(part.parentElement, range.getClientRects())) continue;
+      let block = part.parentElement;
+      while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(view.getComputedStyle(block).display)) block = block.parentElement;
+      if (parts.length) parts.push(previous === block ? ' ' : '\n');
+      parts.push(part.textContent.trim()); previous = block;
+    }
+    return parts.join('');
   };
   const field = key => {
     if (!root) return;
@@ -73,14 +108,14 @@ export function readPaymentPage(el) {
     for (const node of root.querySelectorAll('[data-payment-' + key + '],[itemprop="' + key + '"],[name="' + key + '"],[aria-label="' + key + '" i]')) {
       if (!visible(node)) continue;
       const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : visibleText(node);
-      const shown = typeof value === 'string' ? value.trim().replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
+      const shown = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
       const attribute = node.getAttribute('data-payment-' + key);
       if (attribute !== null && attribute.trim() !== shown) return;
       if (shown) values.push(shown);
     }
     if (!values.length) {
       const label = new RegExp('^' + key + ':\\s*(.+)$', 'i');
-      for (const line of visibleText(root, '\n').split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
+      for (const line of visibleText(root).split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
     }
     return values.length === 1 && values[0].length <= 4096 ? values[0] : undefined;
   };
@@ -161,7 +196,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     finally { consuming = undefined; }
   } });
   const ruleContext = { now, dialogContinuation: target => dialogOwner?.dialog === target.state?.dialog &&
-      !!dialogOwner?.dialog && now() < dialogOwner.expires,
+      !!dialogOwner?.dialog && dialogOwner.doc.valid,
     session: bound.message.session, turn: bound.message.turn, userMessage: () => {
     if (!current()) return;
     const page = ruleTarget?.terms?.page;
@@ -185,15 +220,24 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         doc = { valid: true, handle: documentHandle, id: 'd' + randomUUID().replaceAll('-', '') }; documents.set(frame, doc); held.add(documentHandle);
       }
       if (typeof target.page?.on === 'function' && !watched.has(target.page)) {
-        const navigate = frame => { const document = documents.get(frame); if (document) document.valid = false; };
+        const revokeDialog = () => { dialogOwner = undefined; expirePaymentDialog(ruleContext); };
+        const navigate = frame => {
+          const document = documents.get(frame); if (document) document.valid = false;
+          if (dialogOwner?.page === target.page) revokeDialog();
+        };
         const dialog = value => {
-          if (!dialogOwner?.active || dialogOwner.page !== target.page || now() >= dialogOwner.expires || dialogOwner.dialog) {
-            dialogOwner = undefined; expirePaymentDialog(ruleContext); return;
+          if (!dialogOwner?.active || dialogOwner.page !== target.page || !dialogOwner.doc.valid || dialogOwner.dialog) {
+            revokeDialog(); return;
           }
           dialogOwner.dialog = value;
         };
-        target.page.on('framenavigated', navigate); target.page.on('dialog', dialog);
-        watched.set(target.page, { navigate, dialog });
+        // The pinned Playwright emits dialogclosed even for a user/browser
+        // answer outside our action runner. A stale state pointer grants nothing.
+        const dialogclosed = value => { if (dialogOwner?.dialog === value) revokeDialog(); };
+        const close = () => { if (dialogOwner?.page === target.page) revokeDialog(); };
+        const handlers = { framenavigated: navigate, dialog, dialogclosed, close };
+        for (const [event, handler] of Object.entries(handlers)) target.page.on(event, handler);
+        watched.set(target.page, handlers);
       }
       if (target.do === 'press' && !await handle.evaluate(focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
       const observed = await handle.evaluate(readPaymentPage);
@@ -221,7 +265,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         if (kind !== 'dialog') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         if (kind === 'dialog') {
           if (target.accept === false) { dialogOwner = undefined; expirePaymentDialog(ruleContext); return { verdict: 'allow' }; }
-          if (!dialogOwner?.dialog || target.state?.dialog !== dialogOwner.dialog || now() >= dialogOwner.expires || !dialogOwner.doc.valid || !current()) return refused();
+          if (!dialogOwner?.dialog || target.state?.dialog !== dialogOwner.dialog || !dialogOwner.doc.valid || !current()) return refused();
           if (target.page && dialogOwner.page !== target.page) return refused();
           if (new URL(dialogOwner.frame.url()).origin !== dialogOwner.origin) return refused();
           const page = dialogTerms(target.message), record = dialogOwner;
@@ -235,7 +279,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         ruleTarget = target;
         const result = check(ruleContext, kind, target);
         if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind))
-          dialogOwner = { ...targets.get(target), target, active: false, expires: now() + 5000 };
+          dialogOwner = { ...targets.get(target), target, active: false };
         if (kind === 'dialog' && result.verdict === 'allow') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         return result;
       } catch { return refused(); }
@@ -297,7 +341,8 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     },
     async dispose() {
       closed = true; native?.revoke();
-      for (const [page, handlers] of watched) { page.off('framenavigated', handlers.navigate); page.off('dialog', handlers.dialog); } watched.clear(); tickets.clear(); pending.clear(); offered.clear();
+      for (const [page, handlers] of watched) for (const [event, handler] of Object.entries(handlers)) page.off(event, handler);
+      watched.clear(); tickets.clear(); pending.clear(); offered.clear();
       const receipt = fileProvider.dispose();
       await Promise.allSettled([...held].map(handle => handle.dispose?.())); held.clear(); documents.clear();
       return receipt;

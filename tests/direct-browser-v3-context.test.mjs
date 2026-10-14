@@ -212,12 +212,15 @@ test('V10R5 classification uses the associated form for a control outside it', a
 });
 test('V10R5 payment terms follow el.form and exclude an opacity-zero amount decoy', () => {
   const node = (value,visible=true) => ({localName:'p',innerText:value,textContent:value,
-    getBoundingClientRect:() => ({width:10,height:10}), checkVisibility:() => visible,
+    getBoundingClientRect:() => ({left:0,top:0,right:10,bottom:10,width:10,height:10}),
+    getClientRects:() => [{left:0,top:0,right:10,bottom:10,width:10,height:10}], checkVisibility:() => visible,
     getAttribute:() => null});
   const hidden=node('Amount: 18.00',false), shown=node('Amount: 99.00');
   const root={...node(''),querySelectorAll:selector => selector.includes('amount') ? [hidden,shown] : []};
   const wrong={querySelectorAll:() => [],innerText:''};
-  const doc={createTreeWalker(node) { let read=false; return {nextNode() { if (read) return null; read=true; return node.innerText ? {parentElement:node,textContent:node.innerText} : null; }}; },defaultView:{location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({visibility:'visible',display:'block'})}};
+  const doc={createRange() {let node; return {selectNodeContents(n) {node=n;},getClientRects:() => node.parentElement.getClientRects()};},
+    createTreeWalker(node) { let read=false; return {nextNode() { if (read) return null; read=true; return node.innerText ? {parentElement:node,textContent:node.innerText} : null; }}; },
+    defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({visibility:'visible',display:'block',opacity:'1'})}};
   const observed=api.readPaymentPage({ownerDocument:doc,form:root,closest:() => wrong,getAttribute:() => null});
   assert.equal(observed.page.amount,'99.00');
 });
@@ -228,7 +231,7 @@ test('V10R6 dismissing a page dialog before an allowed click remains available',
   assert.equal(result.verdict,'allow'); await f.ctx.dispose();
 });
 
-for (const mode of ['own','other-dialog','expired','strict']) test('V10R4 only the initiating input can allow its exact dialog once: ' + mode, async () => {
+for (const mode of ['own','other-dialog','long-lived','strict']) test('V10R4 only the initiating input can allow its exact dialog once: ' + mode, async () => {
   let clock=100; const events=new WeakSet(), presentations=[];
   const ui={authenticate:e => events.delete(e),present(id,data,choices,deliver) {presentations.push({id,deliver});}};
   const f=fixture(payText(terms),{now:() => clock,...(mode === 'strict' ? {confirmPayments:'always',ui} : {})});
@@ -239,11 +242,28 @@ for (const mode of ['own','other-dialog','expired','strict']) test('V10R4 only t
   }
   assert.equal((await f.ctx.check('click',target)).verdict,'allow');
   f.ctx.beginInput(target); const dialog={}; f.state.dialog=dialog; page.emit('dialog',dialog); f.ctx.finishInput(target);
-  if (mode === 'other-dialog') f.state.dialog={}; if (mode === 'expired') clock+=5001;
+  if (mode === 'other-dialog') f.state.dialog={}; if (mode === 'long-lived' || mode === 'strict') clock+=60000;
   const d={page,state:f.state,type:'confirm',accept:true,message:payText({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'})};
-  assert.equal((await f.ctx.check('dialog',d)).verdict,['own','strict'].includes(mode) ? 'allow' : 'refuse');
-  if (['own','strict'].includes(mode)) assert.equal((await f.ctx.check('dialog',d)).verdict,'refuse');
+  assert.equal((await f.ctx.check('dialog',d)).verdict,mode !== 'other-dialog' ? 'allow' : 'refuse');
+  if (mode !== 'other-dialog') assert.equal((await f.ctx.check('dialog',d)).verdict,'refuse');
   await f.ctx.dispose();
+});
+
+for (const end of ['answer','dialogclosed','navigation','page-close','document-change']) test('V10R2B ordinary dialog lives until its own end: ' + end, async () => {
+  let clock=0; const f=fixture('Continue',{now:() => clock}); f.ordinary();
+  const page=new EventEmitter(), target=f.target({page}), dialog={};
+  assert.equal((await f.ctx.check('click',target)).verdict,'allow');
+  f.ctx.beginInput(target); f.state.dialog=dialog; page.emit('dialog',dialog); f.ctx.finishInput(target);
+  if (end === 'answer') clock+=120000;
+  const answer={page,state:f.state,type:'confirm',accept:true,message:'Continue with the fixture?'};
+  if (end === 'dialogclosed') page.emit('dialogclosed',dialog);
+  if (end === 'navigation') page.emit('framenavigated',await f.handle.ownerFrame());
+  if (end === 'page-close') page.emit('close');
+  if (end === 'document-change') { f.navigate(); page.emit('framenavigated',await f.handle.ownerFrame()); }
+  if (end === 'answer') assert.equal((await f.ctx.check('dialog',answer)).verdict,'allow');
+  assert.equal((await f.ctx.check('dialog',answer)).verdict,'refuse');
+  await f.ctx.dispose();
+  for (const event of ['dialog','dialogclosed','framenavigated','close']) assert.equal(page.listenerCount(event),0);
 });
 for (const kind of ['reload','back','forward']) test('V10R2 explicit user history request permits exactly one retry: ' + kind, async () => {
   const commands={reload:'Reload this page',back:'Go back',forward:'Go forward'};

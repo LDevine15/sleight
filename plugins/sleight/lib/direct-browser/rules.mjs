@@ -99,7 +99,7 @@ export function check(ctx, kind, target = {}) {
     const ask = () => ({ verdict: 'confirm', terms });
     if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
     let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
-    if (kind === 'dialog' && bank.dialog && (ctx.now ?? Date.now)() < bank.dialog.expires &&
+    if (kind === 'dialog' && bank.dialog &&
         (!ctx.dialogContinuation || ctx.dialogContinuation(target) === true) && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
       bank.dialog = undefined; return allow;
     }
@@ -111,7 +111,7 @@ export function check(ctx, kind, target = {}) {
     if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();
     if (requestKey) bank.used.add(requestKey);
     if (target.state) paymentPages.add(target.state);
-    bank.dialog = kind === 'dialog' ? undefined : { expires: (ctx.now ?? Date.now)() + 5000, session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
+    bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
     return allow;
   } catch { return refuse('Trusted rule evidence is unavailable.'); }
 }

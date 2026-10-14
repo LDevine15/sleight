@@ -38,14 +38,14 @@ async function fixture(t, text = 'Read only') {
   page.getByRef = ref => ref === 'f1e1' ? page.frameLocator('iframe').locator('#card') : page.locator('#' + ref);
   let active = true, clock = Date.now();
   const binding = createV3TurnBinding({ source:'user', session:'session', turn:'turn', id:'request', text }, () => active);
-  const ctx = createV3Context({ binding, browser: 'bfixture' }); t.after(() => ctx.dispose());
+  const ctx = createV3Context({ binding, browser: 'bfixture', now:() => clock }); t.after(() => ctx.dispose());
   const tab = { page, state: { snapshotNo:0, submitUnconfirmed:false } };
   let number = 0;
   const snapshot = async () => ({ text:'Untrusted fixture page', number: ++number });
   const runSteps = createActionRunner({ check, snapshot, now: () => clock, sleep: async ms => { clock += ms; } });
   const fillFields = createFillFields({ check, runSteps, inspectElement });
   const target = (ref, extra = {}) => ({ page, locator:page.getByRef(ref), ref, state:tab.state, ...extra });
-  return { page, ctx, tab, runSteps, fillFields, target, origin, posts:() => posts, end() { active = false; } };
+  return { page, ctx, tab, runSteps, fillFields, target, origin, posts:() => posts, advance(ms) {clock+=ms;}, end() { active = false; } };
 }
 test('real trust join refuses page and tool authority, masked payment controls and final Enter risk', { skip }, async t => {
   const f = await fixture(t);
@@ -191,4 +191,86 @@ test('V10R6 real alert before any input can always be dismissed', {skip}, async 
   f.tab.state.dialog=await opened;
   const result=await f.runSteps(f.tab,[{do:'dialog',accept:false}],f.ctx);
   assert.doesNotMatch(result.lines[0],/not run/); await script;
+});
+
+for (const redirect of [true, false]) test('V10R2A real iframe focus chain, parent redirect=' + redirect, {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.frameLocator('iframe').locator('#card').evaluate((el, redirect) => {
+    // The child's activeElement stays el after its handler moves focus upstairs.
+    el.closest('form').removeAttribute('id'); el.removeAttribute('autocomplete');
+    if (redirect) el.onfocus=() => parent.document.querySelector('#e1').focus();
+  },redirect);
+  const result=await f.runSteps(f.tab,[{do:'press',ref:'f1e1',key:'Enter'}],f.ctx);
+  if (redirect) assert.match(result.lines[0],/not run/);
+  else assert.doesNotMatch(result.lines[0],/not run|effect unconfirmed/);
+  assert.equal(await f.page.locator('#count').innerText(),'0');
+});
+for (const mode of ['open','closed']) test('V10R2A real delegatesFocus host never stands in for its shadow button: ' + mode, {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(mode => {
+    const host=document.createElement('div'); host.id='e9'; host.tabIndex=0; document.body.append(host);
+    const root=host.attachShadow({mode,delegatesFocus:true}); root.innerHTML='<button type="button">Pay</button>';
+    root.querySelector('button').onclick=() => document.querySelector('#count').textContent++;
+  },mode);
+  const result=await f.runSteps(f.tab,[{do:'press',ref:'e9',key:'Enter'}],f.ctx);
+  assert.match(result.lines[0],/not run/); assert.equal(await f.page.locator('#count').innerText(),'0');
+});
+
+for (const payment of [true,false]) test('V10R2B real exact dialog survives a model round trip, payment=' + payment, {skip}, async t => {
+  const f=await fixture(t,payment ? 'Pay ' + JSON.stringify(terms) : 'Continue');
+  const message=payment ? 'Pay ' + JSON.stringify({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'}) : 'Continue with the fixture?';
+  await f.page.evaluate(({payment,message}) => {
+    const button=document.querySelector('#e1'); button.type='button'; button.textContent=payment ? 'Pay' : 'Continue';
+    button.onclick=e => {e.preventDefault(); if(confirm(message)) document.querySelector('#count').textContent++;};
+  },{payment,message});
+  const click=await f.runSteps(f.tab,[{do:'click',ref:'e1'}],f.ctx); assert.match(click.lines[0],/dialog.*waiting/);
+  f.advance(120000);
+  const answer=await f.runSteps(f.tab,[{do:'dialog',accept:true}],f.ctx);
+  assert.doesNotMatch(answer.lines[0],/not run|unconfirmed/); assert.equal(await f.page.locator('#count').innerText(),'1');
+  const repeated=await f.runSteps(f.tab,[{do:'dialog',accept:true}],f.ctx); assert.match(repeated.lines[0],/not run/);
+});
+test('V10R2B real externally closed dialog loses its grant even with a stale state pointer', {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.evaluate(message => {document.querySelector('#e1').onclick=e => {e.preventDefault(); confirm(message);};},
+    'Pay ' + JSON.stringify({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'}));
+  await f.runSteps(f.tab,[{do:'click',ref:'e1'}],f.ctx);
+  const dialog=f.tab.state.dialog, closed=f.page.waitForEvent('dialogclosed'); await dialog.dismiss(); await closed;
+  assert.equal(f.tab.state.dialog,dialog);
+  assert.equal((await f.ctx.check('dialog',{page:f.page,state:f.tab.state,type:dialog.type(),message:dialog.message(),accept:true})).verdict,'refuse');
+  f.tab.state.dialog=null;
+});
+
+for (const hiding of ['faint','offscreen','tiny','scroll-clip','clip-path','hidden'])
+  test('V10R2C real unreadable terms never authorize payment: ' + hiding, {skip}, async t => {
+    const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+    await f.page.locator('[data-payment-amount]').evaluate((el,hiding) => {
+      if (hiding === 'faint') el.style.opacity='0.05';
+      if (hiding === 'offscreen') {el.style.position='absolute'; el.style.left='10000px';}
+      if (hiding === 'tiny') {el.style.width='2px'; el.style.height='2px'; el.style.overflow='hidden';}
+      if (hiding === 'hidden') el.style.visibility='hidden';
+      if (hiding === 'clip-path') el.style.clipPath='inset(99.9%)';
+      if (hiding === 'scroll-clip') {
+        const clip=document.createElement('div'); clip.style.cssText='height:2px;overflow:auto'; el.before(clip); clip.append(el);
+      }
+    },hiding);
+    assert.equal((await f.ctx.check('click',f.target('e1'))).verdict,'confirm');
+    assert.equal(await f.page.locator('#count').innerText(),'0');
+  });
+test('V10R2C real visible terms cannot be replaced by a hidden disagreeing value', {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.locator('[data-payment-amount]').evaluate(el => {
+    const hidden=el.cloneNode(true); hidden.textContent='Amount: 99.00'; hidden.setAttribute('data-payment-amount','99.00'); hidden.style.opacity='0.05'; el.before(hidden);
+  });
+  assert.equal((await f.ctx.check('click',f.target('e1'))).verdict,'allow');
+});
+test('V10R2D real inline labels supply exact terms and preserve block boundaries', {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.locator('#payment').evaluate(form => {
+    for (const key of ['item','amount','payee','currency']) {
+      const el=form.querySelector('[data-payment-' + key + ']'), value=el.getAttribute('data-payment-' + key);
+      el.removeAttribute('data-payment-' + key); el.replaceChildren();
+      const b=document.createElement('b'); b.textContent=key + ':'; el.append(b,document.createTextNode(' ' + value));
+    }
+  });
+  assert.equal((await f.ctx.check('click',f.target('e1'))).verdict,'allow');
 });
