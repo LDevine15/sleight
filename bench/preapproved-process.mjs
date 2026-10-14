@@ -9,6 +9,7 @@ export async function runOwned(command, args, { cwd, env, timeoutMs = 180000, gr
   let leaderExited = false, groupCollected = false;
   child.once('exit', () => { leaderExited = true; });
   let stdout = '', stderr = '', spawnError, timedOut = false, cancelled = false, stopping = false, force;
+  const signalErrors = [];
   child.stdout.on('data', data => { stdout += data; onStdout?.(data); });
   child.stderr.on('data', data => { stderr += data; });
   function collected(error) {
@@ -20,7 +21,12 @@ export async function runOwned(command, args, { cwd, env, timeoutMs = 180000, gr
   }
   function signalGroup(name) {
     if (!child.pid || groupCollected) return;
-    try { process.kill(-child.pid, name); } catch (error) { if (!collected(error)) throw error; }
+    try { process.kill(-child.pid, name); } catch (error) {
+      // Abort listeners and grace timers cannot deliver a thrown signal error to
+      // the awaiting caller. Keep exit/collection evidence, but never certify a
+      // group whose signaling failed while the leader was still alive.
+      if (!collected(error)) signalErrors.push({ signal: name, code: error.code, message: error.message });
+    }
   }
   function stop() {
     if (stopping) return;
@@ -53,5 +59,6 @@ export async function runOwned(command, args, { cwd, env, timeoutMs = 180000, gr
       while (await alive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     }
   }
-  return { exit, timedOut, cancelled, spawnError, stdout, stderr, groupClean: !await alive() };
+  const groupGone = !await alive();
+  return { exit, timedOut, cancelled, spawnError, stdout, stderr, signalErrors, groupClean: groupGone && signalErrors.length === 0 };
 }

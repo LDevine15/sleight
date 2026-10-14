@@ -121,18 +121,38 @@ for (const code of ['ESRCH', 'EPERM']) {
     });
   }
 }
-test('EPERM still fails cancellation before the leader exits', async t => {
-  const child = Object.assign(new EventEmitter(), { pid: 123456, stdout: new PassThrough(), stderr: new PassThrough() });
-  t.mock.method(childProcess, 'spawn', () => child);
-  syncBuiltinESMExports();
-  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
-  t.mock.method(process, 'kill', (pid, signal) => {
-    assert.equal(pid, -child.pid); assert.equal(signal, 'SIGTERM');
-    throw Object.assign(new Error('live group denied'), { code: 'EPERM' });
+for (const trigger of ['abort listener', 'already aborted', 'timeout']) {
+  test(`live EPERM during ${trigger} waits for exit and reports unconfirmed cleanup`, async t => {
+    const { child, close } = ownedProcess(t);
+    const sent = []; let abort, finished = false;
+    const signal = { aborted: trigger === 'already aborted',
+      addEventListener: (_name, listener) => { abort = listener; }, removeEventListener() {} };
+    t.mock.method(process, 'kill', (pid, name) => {
+      assert.equal(pid, -child.pid);
+      if (name !== 0) { sent.push(name); throw Object.assign(new Error('live group denied'), { code: 'EPERM' }); }
+      throw Object.assign(new Error('exited group denied'), { code: 'EPERM' });
+    });
+    const pending = runOwned('fixture', [], { signal, timeoutMs: 200, graceMs: 100 });
+    pending.then(() => { finished = true; }, () => { finished = true; });
+    if (trigger === 'abort listener') assert.doesNotThrow(() => abort());
+    if (trigger === 'timeout') assert.doesNotThrow(() => t.mock.timers.tick(200));
+    await Promise.resolve();
+    assert.equal(finished, false, 'a signal failure must keep waiting for the child');
+    assert.doesNotThrow(() => t.mock.timers.tick(100));
+    assert.deepEqual(sent, ['SIGTERM', 'SIGKILL']);
+    child.stdout.write('last evidence\n'); close(7, null);
+    const result = await pending;
+    assert.deepEqual(result.exit, { code: 7, signal: null });
+    assert.equal(result.groupClean, false);
+    assert.equal(result.cancelled, trigger !== 'timeout');
+    assert.equal(result.timedOut, trigger === 'timeout');
+    assert.match(result.stdout, /last evidence/);
+    assert.deepEqual(result.signalErrors, [
+      { signal: 'SIGTERM', code: 'EPERM', message: 'live group denied' },
+      { signal: 'SIGKILL', code: 'EPERM', message: 'live group denied' },
+    ]);
   });
-  const controller = new AbortController(); controller.abort();
-  await assert.rejects(runOwned('fixture', [], { signal: controller.signal }), { code: 'EPERM' });
-});
+}
 test('EPERM cancellation after leader exit but before pipe close collects the group', async t => {
   const child = Object.assign(new EventEmitter(), { pid: 123456, stdout: new PassThrough(), stderr: new PassThrough() });
   t.mock.method(childProcess, 'spawn', () => child);
