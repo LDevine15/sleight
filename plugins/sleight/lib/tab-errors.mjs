@@ -13,21 +13,21 @@ export const EVALUATE_ACTION = Object.freeze({
   select: 'selectOption(...)', check: 'locator.setChecked(...)',
   read: 'await tab.getAXState()',
 });
-const { drag: DRAG, fill: FILL, click: CLICK, select: SELECT, check: CHECK } = EVALUATE_ACTION;
+const { drag: DRAG, fill: FILL, select: SELECT, check: CHECK } = EVALUATE_ACTION;
 export const EVALUATE_WRITE = [
   [/\binsertBefore is not a function/, 'insertBefore', DRAG],
   [/\bappendChild is not a function/, 'appendChild', DRAG],
   [/\bremoveChild is not a function/, 'removeChild', DRAG],
   [/\breplaceChild is not a function/, 'replaceChild', DRAG],
-  [/\bcreateEvent is not a function/, 'createEvent', CLICK],
-  [/\bdispatchEvent is not a function/, 'dispatchEvent', CLICK],
+  [/\bcreateEvent is not a function/, 'createEvent'],
+  [/\bdispatchEvent is not a function/, 'dispatchEvent'],
   [/DragEvent is not a constructor/, 'DragEvent', DRAG],
   [/DataTransfer is not a constructor/, 'DataTransfer', DRAG],
-  [/CustomEvent is not a constructor/, 'CustomEvent', CLICK],
-  [/PointerEvent is not a constructor/, 'PointerEvent', CLICK],
-  [/MouseEvent is not a constructor/, 'MouseEvent', CLICK],
-  [/KeyboardEvent is not a constructor/, 'KeyboardEvent', CLICK],
-  [/\bEvent is not a constructor/, 'Event', CLICK],
+  [/CustomEvent is not a constructor/, 'CustomEvent'],
+  [/PointerEvent is not a constructor/, 'PointerEvent'],
+  [/MouseEvent is not a constructor/, 'MouseEvent'],
+  [/KeyboardEvent is not a constructor/, 'KeyboardEvent'],
+  [/\bEvent is not a constructor/, 'Event'],
   [/Cannot set property (selectedIndex|selected)\b/, 'setting $1', SELECT],
   [/Cannot set property (value)\b/, 'setting $1', FILL],
   [/Cannot set property (checked)\b/, 'setting $1', CHECK],
@@ -70,6 +70,8 @@ export function evaluateWriteAdvice(text) {
   if (!/^\s+at __playwrightEvaluate\b/m.test(text)) return;
   const head = text.split('\n').find(line => /TypeError:/.test(line))?.trim();
   if (!head || !/^(?:Error: )?TypeError:/.test(head)) return;
+  const nonextensible = /Cannot add property (fetch|draggable|cssText), object is not extensible\b/.exec(head);
+  if (nonextensible) return `The evaluate page scope is read-only. If this was a page object, assigning ${nonextensible[1]} cannot run there. Read the controls with ${EVALUATE_ACTION.read}.`;
   for (const [pattern, operation, next] of EVALUATE_WRITE) {
     const match = pattern.exec(head);
     if (!match) continue;

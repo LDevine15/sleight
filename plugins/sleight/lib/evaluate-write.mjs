@@ -1,8 +1,10 @@
 import { EVALUATE_ACTION } from './tab-errors.mjs';
 
 const setters = { value: 'fill', checked: 'check', innerHTML: 'read', textContent: 'read', className: 'read',
-  selected: 'select', selectedIndex: 'select', scrollTop: 'scroll', scrollLeft: 'scroll', fetch: 'read' };
-const methods = { click: 'click', dispatchEvent: 'click', createEvent: 'click', addEventListener: 'read',
+  selected: 'select', selectedIndex: 'select', scrollTop: 'scroll', scrollLeft: 'scroll', fetch: 'read',
+  draggable: 'read', cssText: 'read' };
+const methods = { click: 'click', dispatchEvent: 'read', createEvent: 'read', addEventListener: 'read',
+  append: 'read', prepend: 'read', replaceWith: 'read', remove: 'read', insertAdjacentHTML: 'read',
   setAttribute: 'read', appendChild: 'drag', insertBefore: 'drag', removeChild: 'drag', replaceChild: 'drag' };
 
 // Like the A3R5 check, ignore literal text. Keep offsets, regex character classes and
@@ -131,6 +133,14 @@ function receiverRoot(ts, index) {
 function writeIn(ts) {
   const locals = new Set(), data = new Set();
   for (let i = 0; i < ts.length; i++) {
+    if (ts[i].v === 'fetch' && ts[i + 1]?.v === '=>') locals.add('fetch');
+    if (ts[i].v !== '(') continue;
+    const end = closingToken(ts, i);
+    if (ts[end + 1]?.v === '=>' || ts[i - 1]?.v === 'function' || ts[i - 2]?.v === 'function') {
+      if (ts.slice(i + 1, end).some(t => !t.string && t.v === 'fetch')) locals.add('fetch');
+    }
+  }
+  for (let i = 0; i < ts.length; i++) {
     if (['const', 'let', 'var', 'function', 'class'].includes(ts[i - 1]?.v) && !ts[i].string) {
       locals.add(ts[i].v);
       if (ts[i + 1]?.v === '=' && ['{', '['].includes(ts[i + 2]?.v)) data.add(ts[i].v);
@@ -157,10 +167,11 @@ function writeIn(ts) {
     let constructor = i;
     while (['.', '?.'].includes(ts[constructor - 1]?.v)) constructor -= 2;
     if (!token.string && ts[constructor - 1]?.v === 'new' && next === '(' && !locals.has(v) && !data.has(receiver)) {
-      const action = v === 'DataTransfer' || v === 'DragEvent' ? 'drag' : /Event$/.test(v) ? 'click' : undefined;
+      const action = v === 'DataTransfer' || v === 'DragEvent' ? 'drag' : /Event$/.test(v) ? 'read' : undefined;
       if (action) return { token, action };
     }
     if (!token.string && v === 'fetch' && next === '(' && !locals.has(v) && !data.has(receiver)) return { token, action: 'read' };
+    if (!token.string && !property && v === 'fetch' && next === '=' && !locals.has(v)) return { token, action: 'read' };
     if ((!property && !computed) || data.has(receiver)) continue;
     if (next === '(' && Object.hasOwn(methods, v)) {
       const attribute = ts[nextIndex + 1];

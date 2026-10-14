@@ -9,11 +9,11 @@ const writes = [
   ['document.querySelector("input").checked = true', 'setChecked'],
   ['document.body.innerHTML = ""', 'tab.getAXState()'],
   ['document.querySelector("button").click()', 'click'],
-  ['document.body.dispatchEvent(new Event("change"))', 'click'],
-  ['new CustomEvent("change")', 'click'],
-  ['new PointerEvent("pointerdown")', 'click'],
-  ['new MouseEvent("mousedown")', 'click'],
-  ['new KeyboardEvent("keydown")', 'click'],
+  ['document.body.dispatchEvent(new Event("change"))', 'tab.getAXState()'],
+  ['new CustomEvent("change")', 'tab.getAXState()'],
+  ['new PointerEvent("pointerdown")', 'tab.getAXState()'],
+  ['new MouseEvent("mousedown")', 'tab.getAXState()'],
+  ['new KeyboardEvent("keydown")', 'tab.getAXState()'],
   ['new DragEvent("dragstart")', 'dragTo'],
   ['new DataTransfer()', 'dragTo'],
   ['fetch("/submit", { method: "POST" })', 'tab.getAXState()'],
@@ -27,7 +27,7 @@ const writes = [
   ['document.querySelector("form").onsubmit = () => false', 'tab.getAXState()'],
   ['window.fetch = async () => ({ ok: true })', 'tab.getAXState()'],
   ['document.querySelector("form").addEventListener("submit", () => {})', 'tab.getAXState()'],
-  ['document.createEvent("MouseEvents")', 'click'],
+  ['document.createEvent("MouseEvents")', 'tab.getAXState()'],
 ];
 for (const [statement, action] of writes) test(`evaluate refuses ${statement}`, () => {
   const notice = evaluateWrite(`const pw = tab.playwright;\nawait pw.evaluate(() => {\n  ${statement};\n});`);
@@ -121,4 +121,43 @@ test('a pure read is forwarded with its callback unchanged', t => {
   h.call(1, code);
   assert.equal(h.sent.length, 1);
   assert.ok(h.sent[0].params.arguments.code.includes(code));
+});
+
+for (const source of [
+  'new KeyboardEvent("keyup", {key:"ArrowDown"})',
+  'new CustomEvent("reorder")',
+  'document.body.dispatchEvent(new Event("change"))',
+]) test(`an event without a known input intent explains the boundary: ${source}`, t => {
+  const h = harness(t);
+  h.call(1, `await tab.playwright.evaluate(() => { ${source}; })`);
+  assert.equal(h.sent.length, 0);
+  const text = h.replies[0].result.content[0].text;
+  assert.match(text, /evaluate is read-only/);
+  assert.doesNotMatch(text, /locator\.click|locator\.fill|pressKey/);
+});
+
+for (const source of [
+  'fetch = async () => ({ok:true})',
+  'document.querySelector("li").draggable = true',
+  'document.body.append(document.querySelector("li"))',
+  'document.body.style.cssText = "color:red"',
+]) test(`unsupported page mutation is rejected before the engine: ${source}`, t => {
+  const h = harness(t);
+  h.call(1, `await tab.playwright.evaluate(() => { ${source}; })`);
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.replies[0].result.isError, true);
+  assert.match(h.replies[0].result.content[0].text, /evaluate is read-only.*Rejected before the engine call/);
+  assert.doesNotMatch(h.replies[0].result.content[0].text, /locator\.click|locator\.fill|sleight\.dragTo/);
+});
+
+test('callback-local fetch and drag data remain ordinary read-only computation', () => {
+  for (const source of [
+    'const fetch = 1; fetch = 2; return fetch',
+    'const data = {}; data.draggable = true; data.cssText = "x"; return data',
+    'return document.querySelector("li").draggable',
+  ]) assert.equal(evaluateWrite(`await tab.playwright.evaluate(() => { ${source}; })`), undefined);
+  for (const callback of ['fetch => { fetch = 2; return fetch; }',
+    '(fetch) => { fetch = 2; return fetch; }', 'function (fetch) { fetch = 2; return fetch; }']) {
+    assert.equal(evaluateWrite(`await tab.playwright.evaluate(${callback}, 1)`), undefined);
+  }
 });
