@@ -38,6 +38,9 @@ export const EVALUATE_WRITE = [
 
 export function rewriteTabError(text, { read = false } = {}) {
   if (typeof text !== 'string') return text;
+  if (/^(?:Error: )?Capability is not available: viewport$/.test(text.split('\n')[0])) {
+    return text + ' Requested capability viewport is unavailable in this backend. Next: await tab.capabilities.list() to read supported capability IDs. Choose only from documented available capabilities.';
+  }
   text = rewriteLocatorFailure(text);
   const lines = text.split('\n'), out = [];
   for (let i = 0; i < lines.length; i++) {
