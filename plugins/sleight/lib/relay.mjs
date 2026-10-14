@@ -97,6 +97,7 @@ import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
+import { syntaxErrorHint } from './syntax-errors.mjs';
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
@@ -663,6 +664,7 @@ export function createRelay({
   // js calls awaiting a reply, and whether this engine session has shown its first-call docs:
   // docs again without a js_reset mean the session restarted and every handle is gone.
   const jsCalls = new Map();
+  const syntaxSources = new Map();
   const chromeSettled = new Set();
   let guardReady = false, guardGeneration = 0;
   const guardCalls = new Map();
@@ -2242,6 +2244,7 @@ export function createRelay({
       if (msg.id !== undefined) running.add(msg.id);
       if (flowPlan) { flowRules.forward(flowPlan); flowCalls.set(msg.id, flowPlan); }
     }
+    if (jsCalls.has(msg.id)) syntaxSources.set(msg.id, msg.params?.arguments?.code);
     if (clipboardAction) {
       const generation = stopGeneration;
       let response;
@@ -2400,7 +2403,7 @@ export function createRelay({
         health.pending = undefined;
         if (!closing && !serverIn.writableEnded && !serverIn.destroyed) scheduleHelperRead(health);
       }
-      documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); browserCalls.delete(msg.id);
+      documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); syntaxSources.delete(msg.id); browserCalls.delete(msg.id);
       spaceChecks.delete(msg.id); preHealth.delete(msg.id); nativeChecked.delete(msg.id); focusedChecked.delete(msg.id); restartRetries.delete(msg.id);
       flowCalls.delete(msg.id); helperReads.delete(msg.id); remapNotes.delete(msg.id); preapprovalNotes.delete(msg.id);
       callSeqs.delete(msg.id); callStarts.delete(msg.id); resultCalls.delete(msg.id); guardCalls.delete(msg.id);
@@ -2568,6 +2571,14 @@ export function createRelay({
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
+    if (msg.method === undefined && syntaxSources.has(msg.id)) {
+      const sent = syntaxSources.get(msg.id); syntaxSources.delete(msg.id);
+      if (msg.result?.isError && Array.isArray(msg.result.content)) {
+        const hints = msg.result.content.filter(c => c.type === 'text')
+          .map(c => syntaxErrorHint(c.text, jsCode, sent)).filter(Boolean);
+        if (hints.length) msg.result.content.push({ type: 'text', text: hints[0] });
+      }
+    }
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (jsCode !== undefined) replWarmup.attach(msg);
@@ -3068,7 +3079,7 @@ export function createRelay({
         helperProbes.clear(); helperReads.clear(); helperControls.clear(); helperFullReads.clear(); lateDiagnosticControls.clear();
         for (const state of helperStates.values()) clearTimeout(state.timer);
         helperStates.clear(); helperHandles.clear(); helperAliases.clear();
-        leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); browserCalls.clear();
+        leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); syntaxSources.clear(); browserCalls.clear();
         spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
         // The stopped turn's receipt keeps its unanswered calls as unknown; nothing carries into the next engine.
         resultCalls.clear(); guardCalls.clear(); finishReceipt();
