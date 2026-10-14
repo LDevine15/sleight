@@ -7,6 +7,7 @@ import { isAbsolute, normalize, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import { parseActivePort, validateEndpoint } from './discovery.mjs';
+import { createCDPFilter } from './cdp-filter.mjs';
 import { createNativeProcessProvider, isNativeProcessProvider } from './host.mjs';
 
 const fail = code => { throw Error(code); };
@@ -225,6 +226,13 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
     catch { fenceClose(); return false; }
   }
   return Object.freeze({ session, connect, verifyConnection, disconnect, browserIncarnation, selectedBrowser, identity, endpoint,
+    createFilter(ownedTargets = []) {
+      if (!opened || fenced) fail('SELECTED_CONNECTION_CLOSED');
+      const filter = createCDPFilter({ session, ownedTargets });
+      const lost = () => { filter.dispose(); losses.delete(lost); };
+      losses.add(lost);
+      return Object.freeze({ ...filter, dispose() { losses.delete(lost); return filter.dispose(); } });
+    },
     onConnectionLoss(callback) {
       if (typeof callback !== 'function') fail('TRUSTED_ROUTE_REQUIRED');
       losses.add(callback); if (lossNotified) callback();
