@@ -37,7 +37,8 @@ Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging c
     call's first read, no reads between clicks, about 280 to 300 s), once its no-model probe passes: `node bench/engine-time.mjs
     bind` (Calculator, 10 trials an arm, owner away). It needs bind 10/10 at 391 with the control showing the renumber. Then
     `SLEIGHT_GUARD=bind`. Design B (quiet edit shortcuts and field clicks) is lane SR1B (codex-hdlcm, `SLEIGHT_GUARD=quiet-edits`).
-    Astra's readiness predicate is Opus's design C and comes after A. Skipping the wait after real openers stays rejected
+    Astra's readiness predicate is Opus's design C (a focus check after a real opener). The owner chose (2026-10-14) to build A, B and C as
+    one guard mode with one final read a call. C's TextEdit Open-panel probe runs in the same away window as A's, then one lane builds it. Skipping the wait after real openers stays rejected
     (Codex got 15 of 49 such calls wrong).
 - Done, to apply: RP1 (`ledger/claims/RP1/`: CHANGELOG-1.3.0.md, README-diff.md, release-checklist.md) for the release. CS1
   (`ledger/claims/CS1/REPORT.md`) found only the Codex native arm ready for the claim suite, out of 18. Its table gives each

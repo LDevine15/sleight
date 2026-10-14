@@ -75,6 +75,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    an A/B against no read (GR1). The read after a click, shortcut, Return, Escape, Tab or Space goes to an open-ended investigation
    by gpt-6-astra and an Opus subagent working independently (SR1), because it is the largest remaining tool-time cost. Lanes get a
    host-side runner for real-page tests (LD1).
+   SR1's designs combine into one guard mode (owner, 2026-10-14): no reads between clicks (A), quiet edit shortcuts and field
+   clicks (B), and a focus check in place of the read after a real opener (C). Each call keeps one final read, like Codex. A's
+   Calculator probe and C's TextEdit Open-panel probe run first, in the same away window, then one lane builds the mode for the A/B.
 4. Release 1.3.0, the claim post, then the video.
 After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
 the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
