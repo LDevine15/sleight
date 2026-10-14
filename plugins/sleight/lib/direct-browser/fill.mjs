@@ -1,0 +1,245 @@
+// Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
+// aria-ref selector routes fNeM refs to their child frame, without parent fallback.
+class FieldError extends Error {}
+const actionFailed = result => result?.lines?.some(line => /: not run:|effect unconfirmed;/.test(line));
+const refPattern = /^(?:(?:f\d+)?e\d+|s\d+)$/;
+const options = { timeout: 1500 };
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function order(el) {
+  const label = node => {
+    const named = node.getAttribute('aria-label');
+    if (named) return named.trim();
+    const text = n => n.nodeType === 3 ? n.textContent : n.getAttribute?.('aria-hidden') === 'true' ? '' :
+      n.childNodes ? [...n.childNodes].map(text).join('') : n.textContent ?? '';
+    return text(node).trim();
+  };
+  return [...el.children].map(label);
+}
+
+function inspect(el, expected) {
+  const attr = name => el.getAttribute(name), tag = el.tagName.toLowerCase(), role = attr('role') ?? '';
+  const type = tag === 'input' ? el.type : '';
+  const checked = typeof el.checked === 'boolean' ? el.checked : ['true', 'false'].includes(attr('aria-checked')) ? attr('aria-checked') === 'true' : null;
+  const kind = tag === 'select' ? 'select' : type === 'file' ? 'file' : type === 'color' ? 'color' : type === 'range' || role === 'slider' ? 'range' :
+    ['checkbox', 'radio'].includes(type) || ['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(role) ? 'check' :
+    ['ul', 'ol'].includes(tag) && [...el.children].every(n => n.getAttribute('draggable') === 'true') ? 'reorder' :
+    role === 'listbox' ? 'listbox' : role === 'combobox' || attr('aria-autocomplete') === 'list' ? 'combo' :
+    ['input', 'textarea'].includes(tag) || el.isContentEditable ? 'text' : 'custom';
+  const text = String(el.value ?? el.textContent ?? ''), form = el.closest('form');
+  const words = [attr('aria-label'), el.textContent, attr('value')].join(' ');
+  const payment = /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(words);
+  const button = tag === 'button' || role === 'button' || ['submit', 'button', 'reset'].includes(type);
+  const submit = !!(type === 'submit' || button && form && attr('type') !== 'button' && attr('type') !== 'reset' || button && payment);
+  const rect = el.getBoundingClientRect?.(), style = el.ownerDocument?.defaultView?.getComputedStyle(el);
+  return { kind, type, tag, role, editableText: !el.readOnly && (tag === 'input' || tag === 'textarea' || el.isContentEditable), submit, payment, form: !!form, formPayment: payment, enabled: !el.disabled && attr('aria-disabled') !== 'true',
+    hiddenLabel: ['checkbox', 'radio'].includes(type) && !!el.labels?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
+    visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: el.isConnected, readonly: !!el.readOnly, disabled: !!el.disabled || attr('aria-disabled') === 'true',
+    controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!el.multiple,
+    matched: text === String(expected),
+    min: el.min || attr('aria-valuemin') || '0', max: el.max || attr('aria-valuemax') || '100', step: el.step || '1',
+    number: Number(type === 'range' ? el.value : attr('aria-valuenow')),
+    options: kind === 'select' ? [...el.options].map(o => ({ value: o.value, label: o.label, disabled: o.disabled || !!o.parentElement?.disabled, selected: o.selected })) : undefined };
+}
+
+function validate(fields, submit) {
+  if (!Array.isArray(fields) || fields.length < 1 || fields.length > 60) throw new FieldError('fields must contain 1 to 60 entries');
+  if (submit !== undefined && !refPattern.test(submit)) throw new FieldError('submit needs a snapshot ref');
+  for (const field of fields) {
+    if (!field || typeof field.ref !== 'string' || !refPattern.test(field.ref)) throw new FieldError('each field needs a snapshot ref');
+    const value = field.value;
+    if (!(typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value) ||
+      typeof value === 'string' && value.length <= 65536 || Array.isArray(value) && value.length <= 100 &&
+      value.every(v => typeof v === 'string' && v.length <= 512))) throw new FieldError('unsupported field value');
+  }
+}
+function refusal(result) {
+  if (result === 'allow' || result?.status === 'allow' || result?.kind === 'allow' || result?.verdict === 'allow') return;
+  if (result?.status === 'confirm' || result?.kind === 'confirm' || result?.verdict === 'confirm') throw new FieldError('confirmation required; use the engine browser path');
+  const message = typeof result === 'string' ? result : result?.message ?? result?.msg;
+  throw new FieldError(message || 'rules refused input; use the engine browser path');
+}
+
+export function createFillFields({ check, runSteps, inspectElement = inspect, now = Date.now, sleep = pause } = {}) {
+  if (typeof check !== 'function' || typeof runSteps !== 'function') throw new FieldError('fill requires rules and actions');
+  return async function fillFields(tab, fields, { submit } = {}, ctx) {
+    validate(fields, submit);
+    if (!tab?.page || !tab.state) throw new FieldError('fill needs an owned tab');
+    const { page } = tab, rows = fields.map(({ ref }) => ({ ref, status: 'not reached' }));
+    let stopped, sent = false;
+    const handlers = { framenavigated: () => { stopped = 'new document; read the page before continuing'; },
+      dialog: () => { stopped = 'dialog is waiting; answer it before continuing'; },
+      popup: () => { stopped = 'background popup opened; read the tabs before continuing'; },
+      close: () => { stopped = 'tab closed'; } };
+    for (const [name, fn] of Object.entries(handlers)) page.on(name, fn);
+    let submitted = { status: submit === undefined ? 'not requested' : 'not reached' };
+    try {
+      for (let i = 0; i < fields.length && !stopped; i++) {
+        const { ref, value } = fields[i]; sent = false;
+        try {
+          if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+          if (/^s\d+$/.test(ref)) {
+            const step = typeof value === 'boolean' ? { do: value ? 'check' : 'uncheck', ref } :
+              Array.isArray(value) ? { do: 'select', ref, values: value } : { do: 'type', ref, text: String(value) };
+            const result = await runSteps(tab, [step], ctx);
+            sent = !result?.lines?.some(line => /: not run:/.test(line));
+            if (actionFailed(result)) throw new FieldError('closed-root field stopped; read the page');
+            rows[i].status = 'set'; continue;
+          }
+          const loc = typeof page.getByRef === 'function' ? page.getByRef(ref) : page.locator('aria-ref=' + ref);
+          let state = await loc.evaluate(inspect, value, options);
+          if (state.kind === 'select' && state.disabled) {
+            const until = now() + 1500;
+            while (state.disabled && !stopped && now() < until) {
+              await sleep(Math.min(25, until - now()));
+              state = await loc.evaluate(inspect, value, options);
+            }
+            if (state.disabled) throw new FieldError('dependent select stayed disabled; read the form');
+          }
+          if (!state.connected) throw new FieldError('stale ref; read the page');
+          if (state.readonly && state.kind !== 'combo') throw new FieldError('readonly picker; use browser_act on its choices');
+          const prior = await loc.evaluate(inspectElement, value, options);
+          if (stopped) throw new FieldError(stopped);
+          const send = async (action, kind = 'type', locator = loc) => {
+            if (stopped) throw new FieldError(stopped);
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+            const element = await locator.evaluate(inspectElement, value, options);
+            if (stopped) throw new FieldError(stopped);
+            const target = { ...element, element, prior, tab, page, ref, locator, state: tab.state, do: kind };
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+            if (kind === 'click' && (element.submit || prior.submit)) {
+              if (locator !== loc) throw new FieldError('submit-capable choice needs its own browser_act ref');
+              // V4 classifies, consumes consent once, journals the submit and
+              // retains pending input through its settle. Never pre-consume here.
+              sent = true;
+              const result = await runSteps(tab, [{ do: 'click', ref }], ctx);
+              if (!Array.isArray(result?.lines)) throw new FieldError('guarded submit result unavailable');
+              sent = !result.lines.some(line => /: not run:/.test(line));
+              if (actionFailed(result)) throw new FieldError('submit stopped; read the page before retrying');
+              return result;
+            }
+            // The real check is synchronous. No await may separate its one-use
+            // authority consumption from the physical operation it permits.
+            refusal(check(ctx, kind, target));
+            if (stopped) throw new FieldError(stopped);
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+            const pending = {};
+            tab.state.actionPending = pending;
+            try { sent = true; return await action(); }
+            finally { if (tab.state.actionPending === pending) tab.state.actionPending = false; }
+          };
+          if (state.kind === 'file') {
+            if (!Array.isArray(value) || !value.length) throw new FieldError('file fields need browser_act upload with user-named paths');
+            const result = await runSteps(tab, [{ do: 'upload', ref, paths: value }], ctx);
+            sent = !result?.lines?.some(line => /: not run:/.test(line));
+            if (actionFailed(result)) throw new FieldError('upload stopped; read the page');
+          } else if (state.kind === 'check' || state.kind === 'custom' && typeof value === 'boolean' && state.checked !== null) {
+            if (typeof value !== 'boolean' || state.checked === null) throw new FieldError('checkable fields need boolean values and a known checked state');
+            if (state.checked !== value) {
+              if (state.type === 'radio' && value === false) throw new FieldError('choose another radio instead of unchecking this one');
+              if (state.hiddenLabel) {
+                const handle = await loc.evaluateHandle(el => el.labels[0], undefined, options);
+                try {
+                  const label = handle.asElement();
+                  if (!label) throw new FieldError('associated label unavailable; read the form');
+                  await send(() => label.click(options), 'click', label);
+                } finally { await handle.dispose(); }
+              } else await send(() => state.kind === 'custom' || state.type === '' ? loc.click(options) : loc.setChecked(value, options),
+                state.kind === 'custom' || state.type === '' ? 'click' : value ? 'check' : 'uncheck');
+            }
+            if (!stopped && (await loc.evaluate(inspect, value, options)).checked !== value) throw new FieldError('checked state did not match; read the page');
+          } else if (state.kind === 'select') {
+            const wanted = Array.isArray(value) ? value : [value];
+            if (!wanted.every(v => typeof v === 'string') || !state.multiple && wanted.length !== 1 || new Set(wanted).size !== wanted.length)
+              throw new FieldError('select needs distinct option labels or values');
+            const selected = wanted.map(v => {
+              const exact = state.options.filter(o => o.value === v), matches = exact.length ? exact : state.options.filter(o => o.label === v);
+              if (matches.length !== 1 || matches[0].disabled) throw new FieldError('option missing, disabled or ambiguous; read the select');
+              return matches[0].value;
+            });
+            await send(() => loc.selectOption(selected.map(value => ({ value })), options), 'select');
+            if (!stopped) {
+              const after = await loc.evaluate(inspect, value, options), actual = after.options.filter(o => o.selected).map(o => o.value);
+              if (actual.length !== selected.length || selected.some(v => !actual.includes(v))) throw new FieldError('selection did not match; read the select');
+            }
+          } else if (state.kind === 'listbox') {
+            if (typeof value !== 'string') throw new FieldError('listbox needs exact option text');
+            const result = await runSteps(tab, [{ do: 'scroll', ref, until: value }], ctx);
+            if (actionFailed(result) || stopped) throw new FieldError('list search stopped; read the list');
+            const candidate = loc.getByRole('option', { name: value, exact: true });
+            await candidate.waitFor({ ...options, state: 'visible' });
+            if (await candidate.count() !== 1) throw new FieldError('option missing or ambiguous; read the list');
+            await send(() => candidate.click(options), 'click', candidate);
+          } else if (state.kind === 'combo') {
+            if (typeof value !== 'string' || !state.controls || /[\r\n\0]/.test(state.controls)) throw new FieldError('combobox needs text and a controlled option list');
+            if (state.editableText) await send(() => loc.fill(value, options));
+            else await send(() => loc.click(options), 'click');
+            const handle = await loc.elementHandle(options);
+            try {
+              const frame = await handle.ownerFrame();
+              if (!frame) throw new FieldError('stale frame; read the page');
+              const id = state.controls.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              const candidate = frame.locator('[id="' + id + '"]').getByRole('option', { name: value, exact: true });
+              await candidate.waitFor({ ...options, state: 'visible' });
+              if (await candidate.count() !== 1) throw new FieldError('ambiguous option; read the list');
+              await send(() => candidate.click(options), 'click', candidate);
+              if (!stopped && !(await loc.evaluate(inspect, value, options)).matched) throw new FieldError('combobox value did not match; read the field');
+            } finally { await handle?.dispose(); }
+          } else if (state.kind === 'range') {
+            const min = Number(state.min), max = Number(state.max), step = Number(state.step), count = Math.round((value - min) / step);
+            if (typeof value !== 'number' || ![min, max, step].every(Number.isFinite) || step <= 0 || value < min || value > max ||
+                Math.abs(min + count * step - value) > 1e-8 || count > 1000) throw new FieldError('range value is outside its bounds or step');
+            await send(() => loc.press('Home', options), 'press');
+            for (let j = 0; j < count && !stopped; j++) await send(() => loc.press('ArrowRight', options), 'press');
+            if (!stopped && (await loc.evaluate(inspect, value, options)).number !== value) throw new FieldError('range value did not match; read the field');
+          } else if (state.kind === 'reorder') {
+            const names = await loc.evaluate(order, undefined, options);
+            if (!Array.isArray(value) || value.length !== names.length || !names.length || names.length > 100 ||
+                new Set(names).size !== names.length || new Set(value).size !== value.length || value.some(v => !names.includes(v)))
+              throw new FieldError('reorder needs a complete permutation of distinct row names');
+            const children = loc.locator(':scope > li');
+            for (let j = 0; j < value.length && !stopped; j++) {
+              const current = await loc.evaluate(order, undefined, options), from = current.indexOf(value[j]);
+              if (from < 0 || current.length !== names.length) throw new FieldError('list changed; read it before continuing');
+              if (from !== j) await send(() => children.nth(from).dragTo(children.nth(j), options), 'drag');
+            }
+            if (!stopped && JSON.stringify(await loc.evaluate(order, undefined, options)) !== JSON.stringify(value)) throw new FieldError('order did not match; read the list');
+          } else if (state.kind === 'color') {
+            if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) throw new FieldError('color needs a six-digit hex value');
+            await send(() => loc.evaluate((el, color) => {
+              const view = el.ownerDocument.defaultView;
+              Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value').set.call(el, color);
+              for (const type of ['input', 'change']) el.dispatchEvent(new view.Event(type, { bubbles: true }));
+            }, value, options));
+            if (!stopped && !(await loc.evaluate(inspect, value.toLowerCase(), options)).matched) throw new FieldError('color did not match; read the field');
+          } else if (state.kind === 'text') {
+            if (!['string', 'number'].includes(typeof value)) throw new FieldError('text fields need a string or number');
+            await send(() => loc.fill(String(value), options));
+            if (!stopped && !(await loc.evaluate(inspect, value, options)).matched) rows[i].note = 'value was formatted or changed by the page; read it if exact text matters';
+          } else throw new FieldError('unsupported field kind; use browser_act');
+          rows[i].status = 'set';
+        } catch (error) {
+          rows[i].status = 'failed';
+          // Playwright call logs can contain passwords, card numbers or arbitrary
+          // page text. After attempted input report uncertainty without that log.
+          rows[i].reason = sent ? 'field may have changed; read the page before retrying' : error instanceof FieldError ? String(error.message).slice(0, 200) : 'field unavailable; read the page before retrying';
+          stopped ||= 'field failed';
+        }
+      }
+      if (submit !== undefined && !stopped && rows.every(row => row.status === 'set')) {
+        try {
+          const result = await runSteps(tab, [{ do: 'click', ref: submit }], ctx);
+          submitted = { ...result, status: actionFailed(result) ? 'failed' : tab.state.submitUnconfirmed ? 'unconfirmed' : 'done' };
+        } catch (error) { submitted = { status: 'failed', reason: /^[A-Z_]+$/.test(error.message) ? error.message : 'submit stopped; read the page before retrying' }; }
+      }
+      return { rows, submitted, ...(stopped ? { stopped } : {}) };
+    } finally { for (const [name, fn] of Object.entries(handlers)) page.off(name, fn); }
+  };
+}
+
+// Parallel lanes own these siblings. Loading them only at the entry keeps the
+// field strategies testable against the fixed interfaces before the join lands.
+export async function fillFields(tab, fields, options, ctx) {
+  const [{ check, inspectElement }, { runSteps }] = await Promise.all([import('./rules.mjs'), import('./act.mjs')]);
+  return createFillFields({ check, runSteps, inspectElement })(tab, fields, options, ctx);
+}
