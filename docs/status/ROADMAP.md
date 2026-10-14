@@ -66,6 +66,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    The astra report (2026-10-13) disproved one extension queue across sessions. The owner lifted the code freeze for AS-1 (bind discovery
    to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. MIT and Apache-2.0 code may be adapted (Apache with its notice). Closed code gives notes only.
 4. Release 1.3.0, the claim post, then the video.
+After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
+the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
+the release: keep only what turbo loads, with its notices.
 Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
 streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
 small tool arguments. Less code per action (higher-level helpers, a small fixed set of verbs) is the lever, to measure first.

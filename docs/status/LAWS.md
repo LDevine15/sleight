@@ -85,7 +85,7 @@ belong in [STATE.md](STATE.md).
   profile, never a copy. Apps stay on the normal path until each is qualified live, and app packages are never patched.
 - Turbo includes `playwright-core` 1.64.0 whole inside the plugin, pinned by hash, with its LICENSE and NOTICE in
   `THIRD-PARTY-NOTICES`, and loads it only when turbo is on (owner, 2026-10-14, for its mature actionability and accessibility
-  snapshots on the form cases the engine path lost). The plugin grows from 1.9 MB to about 15 MB. Slimming waits until after 1.3.0.
+  snapshots on the form cases the engine path lost). The plugin grows from 1.9 MB to about 15 MB. Slimming it is a first priority right after 1.3.0 (ROADMAP).
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,
