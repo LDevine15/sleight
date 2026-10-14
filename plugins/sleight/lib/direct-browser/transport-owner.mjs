@@ -38,11 +38,11 @@ export function createTransportOwner({ session, checkLease, resourceTimeoutMs = 
       if (entries.size >= 128) throw Error('TRANSPORT_LIMIT');
       entry = { lease, readers: new Map() };
       const bridge = Object.freeze({ sessionId: session.sessionId, on: session.on.bind(session), off: session.off.bind(session),
-        send(method, params, route) {
+        send(method, params, route, window) {
           if (!entry.active) throw Error('TRANSPORT_INACTIVE');
           // The broker-provided terminal transport owns the coherent final
           // authority check for this operation. Raw root sends never act/read.
-          return entry.active.session.send(method, params, route);
+          return entry.active.session.send(method, params, route, window);
         } });
       entry.adapter = createScopedAdapter({ ...options, session: bridge, resources,
         checkLease: value => !closed && !entry.retired && !entry.active?.signal?.aborted && checkLease(value) === true });

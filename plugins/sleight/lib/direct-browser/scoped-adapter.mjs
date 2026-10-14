@@ -1,13 +1,30 @@
 import { createHash } from 'node:crypto';
 import { immutableJSON } from './ipc.mjs';
-import { isFileAuthority } from './host-files.mjs';
+import { isFileAuthority, consumeStagedFilePayloads } from './host-files.mjs';
 import { isRemoteResources } from './remote-resources.mjs';
+import { canonical } from './authority.mjs';
 
 const allowed = new Set(['Page.enable', 'DOM.enable', 'Accessibility.enable', 'Runtime.enable']);
 const playwrightHash = '852e40f938e72e6129b6c9a8bde3f4cc6cfe5cecb5ac734b6b06c8ad1fde42bf';
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const states = ['visible', 'hidden', 'enabled', 'disabled', 'editable', 'checked', 'unchecked', 'stable'];
 const string = (value, max = 65536) => typeof value === 'string' && Buffer.byteLength(value) <= max;
+// Fixed, private byte actuator. Files own their bytes before stage cleanup;
+// no browser path read, page callback or arbitrary function crosses this entry.
+const fileTransfer = function(payloads) {
+  if (!(this instanceof HTMLInputElement) || this.type !== 'file' || this.disabled ||
+      !this.multiple && payloads.length !== 1) return { transferred: false, count: 0 };
+  const transfer = new DataTransfer();
+  for (const payload of payloads) {
+    const raw = atob(payload.base64), bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    transfer.items.add(new File([bytes], payload.name, { type: payload.mimeType }));
+  }
+  this.files = transfer.files;
+  this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  return { transferred: true, count: payloads.length };
+}.toString();
 const fields = (value, names) => {
   if (!value || Array.isArray(value) || Object.keys(value).some(k => !names.includes(k))) throw Error('SCOPED_COMMAND_DENIED');
 };
@@ -107,16 +124,16 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
       // The session supplied by the broker is its branded terminal transport.
       // All asynchronous preparation precedes this call, so each physical send
       // passes that same coherent authority fence without a root-session escape.
-      const enter = (method, params) => { check(); return session.send(method, params, lease.cdpSessionId); };
-      const reply = async (method, params, acquire = false) => {
-        const started = generation, result = await enter(method, params);
+      const enter = (method, params, window) => { check(); return session.send(method, params, lease.cdpSessionId, window); };
+      const reply = async (method, params, acquire = false, window) => {
+        const started = generation, result = await enter(method, params, window);
         const id = acquire ? result?.[method === 'DOM.resolveNode' ? 'object' : 'result']?.objectId : undefined;
         if (id && resources) resources.admit(lease, id);
         try { check(); if (started !== generation) throw Error('WORLD_LOST'); }
         catch (error) { if (id && resources) resources.release(lease, id); throw error; }
         return result;
       };
-      return Object.freeze({ sessionId: lease.cdpSessionId,
+      const api = Object.freeze({ sessionId: lease.cdpSessionId,
         on(event, fn) { check(); if (typeof fn !== 'function') throw Error('INVALID_ARGUMENT'); if (!listeners.has(event)) listeners.set(event, new Set()); listeners.get(event).add(fn); },
         off(event, fn) { listeners.get(event)?.delete(fn); },
         async send(method, input = {}) {
@@ -308,6 +325,47 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
           node(p.backendNodeId); check();
           return reply('DOM.setFileInputFiles', { backendNodeId: p.backendNodeId, files });
         },
+        async setFilePayloads(input, stage) {
+          check(); const p = immutableJSON(input); fields(p, ['backendNodeId', 'operation', 'executionContextId']);
+          node(p.backendNodeId);
+          if (context(p.executionContextId) !== 'isolated') throw Error('WORLD_LOST');
+          const binding = () => {
+            if (!isFileAuthority(fileAuthority) || typeof fileBinding !== 'function') throw Error('FILE_AUTHORITY_REQUIRED');
+            const value = immutableJSON(fileBinding(lease, p.backendNodeId));
+            if (!value || value.target !== lease.target || value.frame !== lease.frame || value.document !== lease.document ||
+                value.origin !== lease.origin || value.leaseGeneration !== lease.epoch || value.operation !== p.operation ||
+                ['clientSession', 'turn', 'browserIncarnation', 'brokerEpoch'].some(k => !Object.hasOwn(lease, k) || value[k] !== lease[k]))
+              throw Error('FILE_AUTHORITY_REQUIRED');
+            return value;
+          };
+          const expected = binding();
+          // Node acquisition is independently authorized preparation, not the
+          // upload. It cannot consume the upload's once grant or transmission.
+          const resolved = await api.send('DOM.resolveNode', { backendNodeId: p.backendNodeId, executionContextId: p.executionContextId });
+          const objectId = resolved.object.objectId;
+          let transfer, cleanup, attempted = false;
+          try {
+            if (canonical(binding()) !== canonical(expected)) throw Error('FILE_AUTHORITY_REQUIRED');
+            const { payloads, window } = consumeStagedFilePayloads(fileAuthority, stage, expected);
+            node(p.backendNodeId); context(p.executionContextId); check();
+            if (canonical(binding()) !== canonical(expected)) throw Error('FILE_AUTHORITY_REQUIRED');
+            attempted = true;
+            const result = await reply('Runtime.callFunctionOn', { objectId, functionDeclaration: fileTransfer,
+              arguments: [{ value: payloads }], returnByValue: true, awaitPromise: false }, false, window);
+            node(p.backendNodeId); context(p.executionContextId); check();
+            const value = result?.result?.value;
+            transfer = !result.exceptionDetails && value && Object.keys(value).length === 2 &&
+              value.transferred === true && value.count === payloads.length ?
+              { effect: 'transferred', count: value.count } : { effect: 'unknown', count: 0 };
+          } catch (error) {
+            if (!attempted) throw error;
+            transfer = { effect: 'unknown', count: 0 };
+          } finally {
+            try { await api.send('Runtime.releaseObject', { objectId }); cleanup = { retained: false }; }
+            catch { cleanup = { retained: true, objectId }; }
+          }
+          return { transfer, cleanup: { stage: stage.receipt(), object: cleanup } };
+        },
         async answerDialog(input) {
           check(); const p = immutableJSON(input); fields(p, ['dialogId', 'operation', 'accept', 'promptText']);
           if (!dialog || p.dialogId !== dialog.id || typeof p.accept !== 'boolean' || !string(p.operation, 128) || !p.operation ||
@@ -358,6 +416,7 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
           return reply(method, params);
         },
       });
+      return api;
     },
     disconnect() { connected = false; session.off('event', events); for (const view of views) view.dispose(); views.clear(); },
   });

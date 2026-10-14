@@ -1,6 +1,6 @@
 # Closed browser host interface
 
-Source contract: BP2-P1I2, protocol 1, authority contract 2. These are private host
+Source contract: BP2-P1F, protocol 1, authority contract 2. These are private host
 interfaces for P2 and P3. They are inactive until the installed loader, semantic
 adapter and live gates qualify. No model endpoint exposes the scoped view, root
 connection, user controls, file authority or resource owner.
@@ -233,3 +233,88 @@ No root CDP, connectOverCDP, raw evaluate, model callback or callback allow flag
 is added. Authentic installed UI/peer identity, branded-browser world/frame
 behavior, protected form classes, focus, cleanup and model gates remain live
 qualification work for sleight-arch.
+
+## 10. Ordered field authority
+
+The trusted prepare provider may return `orderedOperations` with 1 to 50 closed
+authority operations. Each entry specifies its exact id, kind, scope, args,
+classified consequence and any transmission data/destination. The trusted
+provider derives these entries without adding a batch permission. The semantic resolver
+must compare each physical command with the exact approved operation, including
+its node/ref, value, intent and destination. Missing or changed classification
+refuses before transport.
+
+The broker initializes this list before authorization. The authority fixes one
+deadline for the list; its existing broker timer also bounds preparation,
+queueing, dispatch and readback. Every step retains only its own capability
+across physical commands. Each command repeats the coherent final scope/time
+fence. A once site grant or exact confirmation consumed by one step cannot
+authorize another step. A new once grant may authorize the next exact step.
+
+After independent effect proof, trusted dispatch code calls
+`context.session.completeStep(index, effect)`, where index starts at zero and
+effect is verified, protected or unchanged. Only the current step with settled
+physical sends can complete. Reordering, skipping, repeating, completing an
+unsent step or advancing after an unknown send refuses. The next field cannot
+start until this completion. Receipt storage and quarantine remain active.
+
+Optional `preparationOperations` names at most 100 distinct read, screenshot,
+network, console or scroll operations. All ids across both lists are unique.
+These entries use their own authority and exclude field writes. Reads,
+world/object acquisition, actionability inspection and cleanup must resolve to
+these independent operations, rather than consume a field's once grant.
+Call `context.session.completePreparation(id, effect)` after their own effect
+proof. They cannot complete a field. Unproved dispatched operations retain
+unknown receipts at request end. A completed preparation id cannot be reused.
+
+The broker derives completed and untouched counts from this bank, including on
+timeout, disconnect or cancellation. unknownStep is either the zero-based
+index of the dispatched but unproved field, or null. untouched excludes that
+unknown field. A three-field request interrupted during the second field has
+completed:1, unknownStep:1 and untouched:1. Adapter counters cannot enlarge
+the completed prefix. Existing plans without orderedOperations retain their
+single logical operation contract.
+
+## 11. Staged byte transfer
+
+`fileAuthority.stage(token, binding)` consumes the original approval and returns
+an opaque owned stage. Its private transfer record keeps the approved bytes,
+names, binding and original expiry. Changing the exposed buffers, stage paths
+or original files cannot change those bytes. A copied stage object or the
+consumed issue token cannot authorize transfer. `stage.cleanup()` returns
+`{retained:boolean}`. Failed removal retains ownership and may be retried.
+`stage.receipt()` reports retained and spent. Cleanup before transfer refuses
+transfer, and consumption cannot be replayed after uncertainty.
+
+Prepare an owned isolated world, then call
+`view.setFilePayloads({backendNodeId, operation, executionContextId}, stage)`.
+The complete fileBinding must match the original approval and current lease.
+It also binds the operation and proves the ref belongs to that exact backend node. Node resolution
+uses independently authorized preparation. The byte actuator repeats binding,
+node, world and lease checks before entering the broker's terminal transport.
+Only an isolated world is accepted; MAIN, foreign nodes, arbitrary payloads,
+paths, functions and extra arguments refuse.
+
+The fixed actuator decodes the private byte payloads and constructs browser-owned
+Files through DataTransfer on that file input, then dispatches input and change.
+It never asks the browser to read a temporary path. Non-file or disabled controls
+and a multiple-file selection on a single-file control refuse transfer. The
+branded transport also checks the stage's original issued/expires window at
+the final coherent snapshot. This private fourth send argument only narrows
+authority. It is bound across sends and never reaches CDP. File authority and
+the terminal snapshot must share the trusted host clock.
+
+The result is `{transfer:{effect,count}, cleanup:{stage,object}}`. A confirmed
+transfer has effect transferred. This does not verify form submission.
+P2 still needs independent control/form readback. Exceptions, malformed replies
+or lease loss after dispatch report effect unknown and cannot replay the stage.
+The temporary stage remains owned until explicit cleanup. The resolved remote
+object is released through independent preparation authority; failed release
+keeps its exact objectId in the private cleanup receipt and persistent resource
+owner. No local cleanup or pending remote release proves browser transfer.
+
+The existing setFiles path entry remains available. Raw send cannot invoke this
+byte actuator. Both forms require the user's exact upload and transmission
+authority through the branded broker, including the original files and exact
+destination. P2's form strategies, installed activation and live qualification
+remain separate work.

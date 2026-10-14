@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { authenticate, immutableJSON, FRAME_LIMIT } from './ipc.mjs';
-import { isTransportAuthority, completeTransport } from './authority.mjs';
+import { isTransportAuthority, completeTransport, completeTransportStep, initializeTransport, completeTransportPreparation } from './authority.mjs';
 
 const operations = new Set(['browser_open', 'browser_read', 'browser_act', 'browser_fill']);
 const effects = new Set(['verified', 'unchanged', 'protected', 'unverifiable', 'unknown', 'none']);
@@ -71,7 +71,18 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
   function finish(task, response) {
     if (task.finished) return;
     task.finished = true; clearTimeout(task.timer); active--; task.client.pending--;
-    if (task.plan) completeTransport(transportAuthority, task.plan, response.effect);
+    if (task.plan) {
+      const prefix = completeTransport(transportAuthority, task.plan, response.effect);
+      if (prefix) {
+        response = { ...response, ...prefix };
+        if (prefix.unknownStep !== null || response.effect === 'verified' && prefix.untouched) {
+          response.effect = 'unknown'; response.phase = 'unknown'; quarantined.add(task.target);
+          response.error = { ...failure(response.error?.code ?? 'EFFECT_UNKNOWN', 'unknown', 'unknown', prefix.completed).error };
+        }
+        if (response.results?.length !== prefix.completed) delete response.results;
+        if (response.error) response.error = { ...response.error, ...prefix };
+      }
+    }
     if (task.running && task.target) occupied.delete(task.target);
     task.record.receipt = immutableJSON({ operation: task.frame.id, ...response });
     task.record.resolve(task.record.receipt);
@@ -94,9 +105,17 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
       if (authority !== true || dispatchFence(task.plan, task.scope) !== true) return finish(task, failure('PERMISSION_REQUIRED'));
       if (!live(task)) return stopped(task, 'LEASE_LOST');
       const guardedSession = Object.freeze({ sessionId: socket.sessionId,
-        send(method, params, route) {
+        completeStep(index, effect) {
           if (!live(task)) throw Error('LEASE_LOST');
-          const command = immutableJSON({ method, params, route: route ?? null });
+          return completeTransportStep(transportAuthority, task.plan, index, effect);
+        },
+        completePreparation(id, effect) {
+          if (!live(task)) throw Error('LEASE_LOST');
+          return completeTransportPreparation(transportAuthority, task.plan, id, effect);
+        },
+        send(method, params, route, window) {
+          if (!live(task)) throw Error('LEASE_LOST');
+          const command = immutableJSON({ method, params, route: route ?? null, ...(window === undefined ? {} : { window }) });
           let entered = false;
           return transportAuthority(task.plan, task.scope, command, () => {
             if (entered) throw Error('TRANSPORT_SPENT');
@@ -256,7 +275,8 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
           Promise.resolve().then(() => prepare(frame.args, scope, frame.operation)).then(plan => {
             if (task.finished) return;
             if (!plan || typeof plan.target !== 'string' || !plan.target) return stopped(task, 'PERMISSION_REQUIRED');
-            task.plan = immutableJSON({ ...plan, ...scope, args: frame.args, operationName: frame.operation });
+            const prepared = immutableJSON({ ...plan, ...scope, args: frame.args, operationName: frame.operation });
+            initializeTransport(transportAuthority, prepared); task.plan = prepared;
             task.target = browserIncarnation + ':' + task.plan.target; pump();
           }).catch(() => { if (!task.finished) stopped(task, 'PERMISSION_REQUIRED'); });
           return record.promise.then(copy);

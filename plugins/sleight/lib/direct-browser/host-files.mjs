@@ -7,7 +7,14 @@ import { immutableJSON } from './ipc.mjs';
 
 // Port of sleight's reviewed BP2-7 file authority. No third-party source copied.
 const authorities = new WeakSet();
+const transfers = new WeakMap();
 export const isFileAuthority = value => !!value && authorities.has(value);
+// Private typed actuator entry. A stage is an opaque identity, never JSON, a
+// copied payload list, a new path approval or the already-consumed issue token.
+export function consumeStagedFilePayloads(authority, stage, binding) {
+  if (!authorities.has(authority)) throw Error('FILE_AUTHORITY_REQUIRED');
+  return transfers.get(authority)(stage, binding);
+}
 
 const keys = ['browserIncarnation', 'brokerEpoch', 'clientSession', 'turn', 'leaseGeneration',
   'target', 'frame', 'document', 'origin', 'operation', 'ref'];
@@ -62,7 +69,7 @@ export function createFileAuthority({ approve, now = Date.now, ttlMs = 30_000 } 
     if (!Number.isFinite(cap.expires) || time < cap.issued || time >= cap.expires)
       throw new Error('Invalid file capability freshness');
   };
-  const capabilities = new WeakMap();
+  const capabilities = new WeakMap(), stages = new WeakMap();
   const authority = Object.freeze({
     async issue(paths, binding) {
       clock();
@@ -100,7 +107,12 @@ export function createFileAuthority({ approve, now = Date.now, ttlMs = 30_000 } 
       });
       fresh(cap);
       const directory = mkdtempSync(join(realpathSync(tmpdir()), 'bp2-7-upload-'));
-      const cleanup = () => rmSync(directory, { recursive: true, force: true });
+      let retained = true, spent = false;
+      const cleanup = () => {
+        try { rmSync(directory, { recursive: true, force: true }); retained = false; }
+        catch { return { retained: true }; }
+        return { retained: false };
+      };
       try {
         const paths = files.map((file, index) => {
           const parent = join(directory, String(index)); mkdirSync(parent, { mode: 0o700 });
@@ -112,12 +124,25 @@ export function createFileAuthority({ approve, now = Date.now, ttlMs = 30_000 } 
         fresh(cap);
         // Private adapter data, never a model-visible capability or receipt.
         // Empty MIME lets the qualified upload adapter infer it from the name.
-        const payloads = files.map(file => Object.freeze({ name: basename(file.path), mimeType: '', buffer: file.data }));
-        return { paths, payloads, snapshot: staged, cleanup };
+        const payloads = files.map(file => Object.freeze({ name: basename(file.path), mimeType: '', buffer: Buffer.from(file.data) }));
+        const owned = files.map(file => ({ name: basename(file.path), mimeType: '', base64: file.data.toString('base64') }));
+        const stage = Object.freeze({ paths, payloads, snapshot: staged, cleanup,
+          receipt: () => ({ retained, spent }) });
+        stages.set(stage, { cap, owned, take(binding) {
+          if (!retained || spent || cap.key !== bindingKey(binding)) throw Error('Invalid staged file capability');
+          spent = true; fresh(cap);
+          return { payloads: structuredClone(owned), window: { issued: cap.issued, expires: cap.expires } };
+        } });
+        return stage;
       } catch (error) { cleanup(); throw error; }
     },
     checkPaths(paths) { return paths.map(snapshot); },
     unchanged(before) { return before.every(f => snapshot(f.path).signature === f.signature); },
+  });
+  transfers.set(authority, (stage, binding) => {
+    const record = stage && stages.get(stage);
+    if (!record) throw Error('Invalid staged file capability');
+    return record.take(binding);
   });
   authorities.add(authority); return authority;
 }
