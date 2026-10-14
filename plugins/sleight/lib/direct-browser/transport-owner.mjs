@@ -83,6 +83,12 @@ export function createTransportOwner({ session, checkLease, resourceTimeoutMs = 
       for (const entry of entries.values()) if (entry.lease.clientSession === id) dispose(entry);
       return true;
     },
+    // Closed host inventory, not a permission or transport entry. Revocation
+    // leaves active contexts here until their actual dispatch promises settle.
+    pendingOperations(id) {
+      return [...entries.values()].filter(entry => entry.active && entry.lease.clientSession === id)
+        .map(entry => ({ lease: immutableJSON(entry.lease), operation: entry.active.operation }));
+    },
     cleanup: cleanupReceipt,
     cleanupSession: id => cleanupReceipt(id),
     close() {

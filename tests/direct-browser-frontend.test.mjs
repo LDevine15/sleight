@@ -7,6 +7,22 @@ const read = { name: 'browser_read', arguments: { tab: 't1' } };
 const good = (count = 1) => ({ phase: 'verified', effect: 'verified', completed: count,
   results: Array.from({ length: count }, () => ({ effect: 'verified', observation: { complete: true } })),
   observation: { complete: true }, untouched: 0 });
+test('ending retains a settled broker input before frontend delivery and host collection', async () => {
+  const events = [];
+  const f = await fixture({ onUnknown: value => { events.push(['unknown', value.tab, value.operation]); },
+    endSession: () => { events.push(['end']); return { revoked: true, cleanup: [] }; } });
+  const action = f.frontend.call(click);
+  // The fake broker has synchronously returned its verified receipt, but the
+  // frontend promise continuation has not published it yet.
+  const ending = f.frontend.end();
+  assert.equal(events[0]?.[0], 'unknown');
+  assert.equal(events[0]?.[1], 't1');
+  assert.deepEqual(events[1], ['end']);
+  const result = await action; await ending;
+  assert.equal(result.receipt.effect, 'unknown');
+  assert.equal(result.receipt.operation, events[0][2]);
+  assert.deepEqual(f.frontend.receipt(result.receipt.operation), result.receipt);
+});
 async function fixture(options = {}) {
   const proof = Object.freeze({}), calls = [], ended = [];
   let state = 'connected', current = true;

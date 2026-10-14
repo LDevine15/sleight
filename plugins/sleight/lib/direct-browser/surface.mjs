@@ -87,6 +87,7 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
   if (!accepted) throw Error('TRUSTED_ROUTE_REQUIRED');
   let generation = 0, ended = false, ending, detached = false, lastState;
   const history = new Map();
+  const pendingCalls = new Map();
   let deliveries = new WeakMap();
   const current = () => { try { return packageCurrent() === true; } catch { return false; } };
   const connection = () => {
@@ -213,6 +214,7 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
       const operation = randomUUID().replaceAll('-', '');
       let timer, response;
       try {
+        pendingCalls.set(operation, request);
         // No await after the package/session fence and before broker entry.
         const pending = client.request({ id: operation, operation: request.name, args: request.arguments });
         const raw = await Promise.race([pending, new Promise((_, reject) => {
@@ -234,11 +236,17 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
       } catch {
         return remember(request, { ...errorResult('EFFECT_UNKNOWN', tab, request.name === 'browser_read' ? 'none' : 'unknown'),
           untouched: 0 }, operation);
-      } finally { clearTimeout(timer); }
+      } finally { pendingCalls.delete(operation); clearTimeout(timer); }
     },
     end() {
       if (ending) return ending;
       ended = true; generation++; deliveries = new WeakMap();
+      // A broker reply may have settled while frontend delivery still waits.
+      // Retain those exact operations before synchronous host revocation, too.
+      for (const [operation, request] of pendingCalls) if (request.name !== 'browser_read') try {
+        const result = onUnknown(observationJSON({ operation, name: request.name, tab: request.arguments.tab ?? null }));
+        if (result?.then) Promise.resolve(result).catch(() => {});
+      } catch {}
       let timer, cleanup;
       try { cleanup = endSession(); } catch { cleanup = Promise.reject(Error('CLEANUP_UNPROVED')); }
       ending = Promise.race([Promise.resolve(cleanup), new Promise((_, reject) => {

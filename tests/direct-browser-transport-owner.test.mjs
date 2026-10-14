@@ -124,3 +124,18 @@ test('an aborted broker request releases its late object instead of publishing i
   assert.equal((await f.owner.close()).closed, true);
   assert.equal(f.calls.filter(c => c.cleanup).length, 1);
 });
+test('closed operation inventory preserves exact revoked lease ownership until settlement', async t => {
+  let finish;
+  const f = await fixture(t, { send() { return new Promise(resolve => { finish = resolve; }); } });
+  const pending = f.owner.run(lease, f.context('held'), view => view.input('Input.insertText', { text: 'private' }));
+  assert.deepEqual(f.owner.pendingOperations('foreign'), []);
+  const expected = [{ lease, operation: 'held' }];
+  assert.deepEqual(f.owner.pendingOperations('client'), expected);
+  const snapshot = f.owner.pendingOperations('client');
+  assert.throws(() => { snapshot[0].lease.target = 'forged'; }, TypeError);
+  f.owner.revokeSession('client');
+  assert.deepEqual(f.owner.pendingOperations('client'), expected);
+  assert.doesNotMatch(JSON.stringify(expected), /private/);
+  finish({}); await assert.rejects(pending, /LEASE_LOST/);
+  assert.deepEqual(f.owner.pendingOperations('client'), []);
+});

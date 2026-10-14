@@ -105,13 +105,19 @@ export function bindSemanticAdapter({ session, adapter, transportOwner, lifecycl
       !(lifecycle instanceof Lifecycle) || typeof leaseFor !== 'function' ||
       ['delivered', 'cleanupSession'].some(key => typeof adapter?.[key] !== 'function')) throw Error('TRUSTED_ROUTE_REQUIRED');
   let revoked = false, ending = false, collecting;
-  const held = new Set();
+  const held = new Map();
+  const retain = lease => {
+    if (lease.clientSession !== session || lease.turn !== hook.turn || lease.brokerEpoch !== hook.brokerEpoch)
+      throw Error('IDENTITY_MISMATCH');
+    held.set(lease.target, lease);
+    if (ending) lifecycle.retainTarget(hook, lease.target, lease);
+  };
   return Object.freeze({ session,
     uncertain(value) {
-      if (ending || typeof value?.tab !== 'string') return;
+      if (typeof value?.tab !== 'string') return;
       try {
         const lease = immutableJSON(leaseFor(value.tab, { session, turn: hook.turn, brokerEpoch: hook.brokerEpoch }));
-        if (lease.clientSession === session && lease.turn === hook.turn && lease.brokerEpoch === hook.brokerEpoch) held.add(lease.target);
+        retain(lease);
       } catch {}
     },
     delivered(value) {
@@ -127,7 +133,10 @@ export function bindSemanticAdapter({ session, adapter, transportOwner, lifecycl
       ending = true;
       try {
         const ownerRevoked = transportOwner.revokeSession(session) === true;
-        for (const target of held) lifecycle.retainTarget(hook, target);
+        // Capture before the first collection await. Broker revocation can
+        // deliver unknown replies before their raw transport promises settle.
+        for (const row of transportOwner.pendingOperations(session)) retain(immutableJSON(row.lease));
+        for (const [target, lease] of held) lifecycle.retainTarget(hook, target, lease);
         revoked = lifecycle.fenceTurn(hook) === true && ownerRevoked;
       }
       catch { revoked = false; }
@@ -138,14 +147,16 @@ export function bindSemanticAdapter({ session, adapter, transportOwner, lifecycl
       const retained = count => ({ session, resource: 'semantic-journals', status: 'retained',
         code: 'SEMANTIC_CLEANUP_UNPROVED', ...(count === undefined ? {} : { count }) });
       if (!revoked) return Promise.resolve({ cleanup: [retained()] });
-      collecting = Promise.all([
-        Promise.resolve().then(() => adapter.cleanupSession(session)).then(value => {
+      collecting = Promise.resolve().then(() => adapter.cleanupSession(session)).then(value => {
           const receipt = immutableJSON(value);
           if (typeof receipt.closed !== 'boolean' || !Array.isArray(receipt.cleanup) || !Number.isSafeInteger(receipt.retained) || receipt.retained < 0) throw Error();
           return [...receipt.cleanup, ...(receipt.closed && receipt.retained === 0 ? [] : [retained(receipt.retained)])];
-        }).catch(() => [retained()]),
-        lifecycle.endTurn(hook).catch(() => [{ session, resource: 'owned-targets', status: 'retained', code: 'TARGET_CLEANUP_UNPROVED' }]),
-      ]).then(rows => ({ cleanup: rows.flat() })).finally(() => { collecting = undefined; });
+        }).catch(() => [retained()]).then(async rows => {
+          // Preserve semantic evidence before collecting exact targets.
+          const targets = await lifecycle.endTurn(hook).catch(() => [{ session, resource: 'owned-targets',
+            status: 'retained', code: 'TARGET_CLEANUP_UNPROVED' }]);
+          return { cleanup: [...rows, ...targets] };
+        }).finally(() => { collecting = undefined; });
       return collecting;
     },
   });
@@ -555,11 +566,17 @@ export class Lifecycle {
     return true;
   }
 
-  retainTarget(hook, targetId) {
+  retainTarget(hook, targetId, lease) {
     const turn = this.#turnForHook(hook);
     const record = [...this.#records.values()].find(r => r.identity.session === turn.session &&
       r.identity.turn === turn.turn && r.identity.targetId === targetId);
     if (!record) throw Error('IDENTITY_MISMATCH');
+    if (lease !== undefined && !same(record.identity, {
+      incarnation: lease.browserIncarnation, brokerEpoch: lease.brokerEpoch,
+      session: lease.clientSession, turn: lease.turn, targetId: lease.target,
+      leaseGeneration: lease.epoch, frame: lease.frame, document: lease.document, origin: lease.origin,
+    }, ['incarnation', 'brokerEpoch', 'session', 'turn', 'targetId', 'leaseGeneration', 'frame', 'document', 'origin']))
+      throw Error('IDENTITY_MISMATCH');
     record.kept = true;
     this.#cancelRecord(record, 'EFFECT_UNKNOWN');
     record.parkReason = 'EFFECT_UNKNOWN';
