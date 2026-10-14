@@ -4,6 +4,7 @@ class FieldError extends Error {}
 const actionFailed = result => result?.lines?.some(line => /: not run:|effect unconfirmed;/.test(line));
 const refPattern = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const options = { timeout: 1500 };
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function order(el) {
   const label = node => {
@@ -32,6 +33,7 @@ function inspect(el, expected) {
   const submit = !!(type === 'submit' || button && form && attr('type') !== 'button' && attr('type') !== 'reset' || button && payment);
   const rect = el.getBoundingClientRect?.(), style = el.ownerDocument?.defaultView?.getComputedStyle(el);
   return { kind, type, tag, role, editableText: !el.readOnly && (tag === 'input' || tag === 'textarea' || el.isContentEditable), submit, payment, form: !!form, formPayment: payment, enabled: !el.disabled && attr('aria-disabled') !== 'true',
+    hiddenLabel: ['checkbox', 'radio'].includes(type) && !!el.labels?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
     visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: el.isConnected, readonly: !!el.readOnly, disabled: !!el.disabled || attr('aria-disabled') === 'true',
     controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!el.multiple,
     matched: text === String(expected),
@@ -58,7 +60,7 @@ function refusal(result) {
   throw new FieldError(message || 'rules refused input; use the engine browser path');
 }
 
-export function createFillFields({ check, runSteps, inspectElement = inspect } = {}) {
+export function createFillFields({ check, runSteps, inspectElement = inspect, now = Date.now, sleep = pause } = {}) {
   if (typeof check !== 'function' || typeof runSteps !== 'function') throw new FieldError('fill requires rules and actions');
   return async function fillFields(tab, fields, { submit } = {}, ctx) {
     validate(fields, submit);
@@ -83,7 +85,16 @@ export function createFillFields({ check, runSteps, inspectElement = inspect } =
             if (actionFailed(result)) throw new FieldError('closed-root field stopped; read the page');
             rows[i].status = 'set'; continue;
           }
-          const loc = typeof page.getByRef === 'function' ? page.getByRef(ref) : page.locator('aria-ref=' + ref), state = await loc.evaluate(inspect, value, options);
+          const loc = typeof page.getByRef === 'function' ? page.getByRef(ref) : page.locator('aria-ref=' + ref);
+          let state = await loc.evaluate(inspect, value, options);
+          if (state.kind === 'select' && state.disabled) {
+            const until = now() + 1500;
+            while (state.disabled && !stopped && now() < until) {
+              await sleep(Math.min(25, until - now()));
+              state = await loc.evaluate(inspect, value, options);
+            }
+            if (state.disabled) throw new FieldError('dependent select stayed disabled; read the form');
+          }
           if (!state.connected) throw new FieldError('stale ref; read the page');
           if (state.readonly && state.kind !== 'combo') throw new FieldError('readonly picker; use browser_act on its choices');
           const prior = await loc.evaluate(inspectElement, value, options);
@@ -103,7 +114,18 @@ export function createFillFields({ check, runSteps, inspectElement = inspect } =
             if (actionFailed(result)) throw new FieldError('upload stopped; read the page');
           } else if (state.kind === 'check' || state.kind === 'custom' && typeof value === 'boolean' && state.checked !== null) {
             if (typeof value !== 'boolean' || state.checked === null) throw new FieldError('checkable fields need boolean values and a known checked state');
-            if (state.checked !== value) await send(() => state.kind === 'custom' || state.type === '' ? loc.click(options) : loc.setChecked(value, options), state.kind === 'custom' || state.type === '' ? 'click' : value ? 'check' : 'uncheck');
+            if (state.checked !== value) {
+              if (state.type === 'radio' && value === false) throw new FieldError('choose another radio instead of unchecking this one');
+              if (state.hiddenLabel) {
+                const handle = await loc.evaluateHandle(el => el.labels[0], undefined, options);
+                try {
+                  const label = handle.asElement();
+                  if (!label) throw new FieldError('associated label unavailable; read the form');
+                  await send(() => label.click(options), 'click', label);
+                } finally { await handle.dispose(); }
+              } else await send(() => state.kind === 'custom' || state.type === '' ? loc.click(options) : loc.setChecked(value, options),
+                state.kind === 'custom' || state.type === '' ? 'click' : value ? 'check' : 'uncheck');
+            }
             if (!stopped && (await loc.evaluate(inspect, value, options)).checked !== value) throw new FieldError('checked state did not match; read the page');
           } else if (state.kind === 'select') {
             const wanted = Array.isArray(value) ? value : [value];
