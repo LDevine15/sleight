@@ -178,7 +178,7 @@ test('long values cannot trap a continuation on a single oversized row', async (
   assert.match((await module.snapshot(page, { ref, maxChars: 1000 })).text, /"End"/);
 });
 
-function closedFixture() {
+function closedFixture({ emptyHostQuery = false } = {}) {
   const base = fixture([{ role: 'main', ref: 'e1' }]);
   let nodes = [{ nodeId: 'switch', backendDOMNodeId: 30, role: { value: 'switch' }, name: { value: 'Secure mode' },
     properties: [{ name: 'checked', value: { value: true } }] },
@@ -193,7 +193,8 @@ function closedFixture() {
     send: async (method, params) => {
       if (method === 'DOM.getDocument') return { root };
       if (method === 'DOMSnapshot.captureSnapshot') return nativeSnapshot(['closed-secret']);
-      if (method === 'Accessibility.queryAXTree') return { nodes: structuredClone(nodes) };
+      if (method === 'Accessibility.queryAXTree') return { nodes: emptyHostQuery ? [] : structuredClone(nodes) };
+      if (method === 'Accessibility.getPartialAXTree') return { nodes: structuredClone(nodes.filter(node => node.backendDOMNodeId === params.backendNodeId)) };
       if (method === 'DOM.resolveNode') return { object: { objectId: String(params.backendNodeId) } };
       if (method === 'Runtime.callFunctionOn') return { result: { value: 'closed-secret' } };
       if (method === 'Runtime.releaseObject') return {};
@@ -215,6 +216,13 @@ test('closed-root controls get stable refs, flags and redacted values', async ()
   const second = await module.snapshot(page);
   assert.match(second.text, new RegExp('switch.*ref=' + ref));
   assert.match((await module.snapshot(page, { ref })).text, /Secure mode/);
+});
+
+test('an ignored closed-root host cannot hide its native actionable descendants', async () => {
+  const { page } = closedFixture({ emptyHostQuery: true });
+  const result = await module.snapshot(page);
+  assert.match(result.text, /switch "Secure mode" \[checked\] \[ref=s\d+\]/);
+  assert.doesNotMatch(result.text, /closed-secret/);
 });
 
 test('closed refs disappear on node removal and are never reused after navigation', async () => {

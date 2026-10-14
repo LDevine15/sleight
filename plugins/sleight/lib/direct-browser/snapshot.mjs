@@ -5,6 +5,7 @@ const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const MORE = /^more\d+_\d+$/;
 const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|expiry|expiration|cvv|cvc|security.?code/i;
 const TIMEOUT = 3000;
+const CONTROL_ROLE = /^(textbox|searchbox|button|link|checkbox|radio|combobox|menuitem|tab|switch|slider|option)$/;
 
 async function bounded(action) {
   let timer;
@@ -103,12 +104,16 @@ async function closedRoots(page, state) {
   for await (const { frame, send } of sessionsOf(page)) {
     secrets.push(...sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] })));
     const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
-    const hosts = [], inside = new Set();
+    const hosts = [], inside = new Set(), candidates = new Set();
     let count = 0;
     const walk = (node, closed = false) => {
       if (++count > 50000) throw Error('DOM acquisition budget exceeded');
       if (closed && node.backendNodeId) {
         inside.add(node.backendNodeId);
+        const attributes = node.attributes ?? [];
+        const role = attributes.indexOf('role');
+        if (node.nodeType === 1 && (['button', 'input', 'textarea', 'select', 'option', 'a', 'summary'].includes(node.localName)
+          || role >= 0 && attributes[role + 1].split(/\s+/).some(value => CONTROL_ROLE.test(value)))) candidates.add(node.backendNodeId);
       }
       for (const shadow of node.shadowRoots ?? []) {
         const hidden = shadow.shadowRootType === 'closed';
@@ -122,25 +127,36 @@ async function closedRoots(page, state) {
     walk(root);
     let refs = state.closed.get(frame);
     if (!refs) state.closed.set(frame, refs = new Map());
-    const children = [];
+    const children = [], acquired = [];
     for (const backendNodeId of hosts) {
       const { nodes } = await send('Accessibility.queryAXTree', { backendNodeId });
-      for (const node of nodes) {
-        const id = node.backendDOMNodeId;
-        if (node.ignored || !inside.has(id) || !/^(textbox|searchbox|button|link|checkbox|radio|combobox|menuitem|tab|switch|slider|option)$/.test(node.role?.value)) continue;
-        let ref = refs.get(id);
-        if (!ref) refs.set(id, ref = 's' + (++state.shadowNumber));
-        if (observed.has(ref)) continue;
-        observed.add(ref);
-        const props = Object.fromEntries((node.properties ?? []).map(prop => [prop.name, prop.value?.value]));
-        const row = { role: node.role.value, name: node.name?.value ?? '', ref,
-          protected: /^(textbox|searchbox|combobox)$/.test(node.role.value) };
-        for (const flag of ['checked', 'disabled', 'expanded', 'pressed', 'selected']) {
-          if (props[flag] === true || props[flag] === 'true') row[flag] = true;
-          else if (props[flag] === 'mixed') row[flag] = 'mixed';
-        }
-        children.push(row);
+      acquired.push(...nodes);
+    }
+    // An ignored custom-element host can have an empty queryAXTree subtree,
+    // even while native AX exposes its closed-root button. Probe only control
+    // candidates from the pierced DOM, using their own backend IDs.
+    const present = new Set(acquired.filter(node => !node.ignored && CONTROL_ROLE.test(node.role?.value)).map(node => node.backendDOMNodeId));
+    const missing = [...candidates].filter(id => !present.has(id));
+    if (missing.length > 512) throw Error('Closed-root acquisition budget exceeded');
+    for (const backendNodeId of missing) {
+      const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
+      acquired.push(...nodes.filter(node => node.backendDOMNodeId === backendNodeId));
+    }
+    for (const node of acquired) {
+      const id = node.backendDOMNodeId;
+      if (node.ignored || !inside.has(id) || !CONTROL_ROLE.test(node.role?.value)) continue;
+      let ref = refs.get(id);
+      if (!ref) refs.set(id, ref = 's' + (++state.shadowNumber));
+      if (observed.has(ref)) continue;
+      observed.add(ref);
+      const props = Object.fromEntries((node.properties ?? []).map(prop => [prop.name, prop.value?.value]));
+      const row = { role: node.role.value, name: node.name?.value ?? '', ref,
+        protected: /^(textbox|searchbox|combobox)$/.test(node.role.value) };
+      for (const flag of ['checked', 'disabled', 'expanded', 'pressed', 'selected']) {
+        if (props[flag] === true || props[flag] === 'true') row[flag] = true;
+        else if (props[flag] === 'mixed') row[flag] = 'mixed';
       }
+      children.push(row);
     }
     if (children.length) sections.push({ role: 'group', name: 'Inside closed shadow roots', children });
   }
