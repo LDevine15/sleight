@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 23:15 UTC, re-hydrated after the owner's clear)
+## Banner (2026-10-15 00:35 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -24,11 +24,15 @@ and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and
 (`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R and V2R DONE and
 reviewed; V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
 no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
-(bench arm) waits for V7. V8 removal goes last. Speed-up (owner, 23:25 UTC: the load holds up their other projects): lanes no longer run the full check (LEDGER NOTICE 3,
-lane template step 6); they run focused tests, and sleight-arch runs one full check per merge. Sonnet-high Claude reviews take
-release-critical items (CS3 first). `private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r, v2r, v4r, v5r2
-and v6r2, merged clean, 1169/1169 direct-browser tests. V2R is reviewed. Lane `codex-v3-v9b` builds V9 now against V7's partial
-interface. Next: V3, V10, V7, V9 and V1R2 merge into v3-integration as they pass review, then one full check. Then V9's arm runs the
+(bench arm) waits for V7. V8 removal goes last. Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
+template step 6). sleight-arch runs one full check per merge. Sonnet-high Claude reviewers take the critical reviews.
+`private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r, v2r, v4r, v5r2 and v6r2 merged, 1169/1169
+direct-browser tests. Reviews at 00:35 UTC 2026-10-15: V2R, V4R, V5R2 pass. V10 (trust join, `codex/v10` 4644b32d) is DONE and
+with a Claude reviewer, and its lane goes on to finish V7. V9 (arm on V7's interface) review says FIX: the census misses soft
+failures, queued as V9R. V3 review says FIX with six findings (a password leak through Playwright's whitespace normalization, a
+FowlBrowser adaptation credited as independent work without the MIT notice), queued as V3R. A Claude audit checks every v3
+module's notice against FowlBrowser's source. Next: V3R, V9R, V1R2, V7 and V10 merge into v3-integration as they pass, then one
+full check, then the gate round. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
   beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:
@@ -37,9 +41,10 @@ gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at mo
   `bench/turbo/setup.mjs` from `c0caa5c9` (memory `lessons-2026-10-14-day`). Never kill a running round (unpriced spend marker).
 
 Release readiness: CI1 merged (public CI). OL1 and OL1R merged (preflights). RL1 release notes DONE and reviewed on `codex/rl1`
-(apply at release). CS3 (claim-suite runner gaps) is in progress. The owner chose to drop the codex-cu and devtools bridge
-arms and say so in the published coverage. RP2 (release-pass runner) is DONE on `codex/rp2`; its review V-RP2 says FIX (unknown spend
-admission, unsanitized publication paths), queued as RP2R. Post-release on branches, merge after the tag: EP-2, EP-6, Q1-1, Q1-2 DONE;
+(apply at release). CS3 (claim-suite runner gaps) is DONE. The owner chose to drop the codex-cu and devtools bridge
+arms and say so in the published coverage. RP2R fixed RP2's spend and file-name findings; its Claude review says FIX for owner-name variants in manifest, contents and logs
+and unpinned Opus funding, queued as RP2R2. CS3R (claim-suite fixes for Codex coverage on local fixtures and fixture answers kept off
+HTTP) passed sleight-arch's review, 42/42. It merges with RP2R2. Post-release on branches, merge after the tag: EP-2, EP-6, Q1-1, Q1-2 DONE;
 Q1-3 to Q1-17 have pushed branches and are finishing. EP-4 and EP-5 wait for v3's design to settle.
 
 Owner steps at the Mac: reload FowlBrowser's extension in Helium (Helium isn't on the benchmark allowlist, so sleight-arch can't).
