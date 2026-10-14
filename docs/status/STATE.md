@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 00:35 UTC)
+## Banner (2026-10-15 01:05 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -26,13 +26,14 @@ reviewed; V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the 
 no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
 (bench arm) waits for V7. V8 removal goes last. Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
 template step 6). sleight-arch runs one full check per merge. Sonnet-high Claude reviewers take the critical reviews.
-`private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r, v2r, v4r, v5r2 and v6r2 merged, 1169/1169
-direct-browser tests. Reviews at 00:35 UTC 2026-10-15: V2R, V4R, V5R2 pass. V10 (trust join, `codex/v10` 4644b32d) is DONE and
-with a Claude reviewer, and its lane goes on to finish V7. V9 (arm on V7's interface) review says FIX: the census misses soft
-failures, queued as V9R. V3 review says FIX with six findings (a password leak through Playwright's whitespace normalization, a
-FowlBrowser adaptation credited as independent work without the MIT notice), queued as V3R. A Claude audit checks every v3
-module's notice against FowlBrowser's source. Next: V3R, V9R, V1R2, V7 and V10 merge into v3-integration as they pass, then one
-full check, then the gate round. Then V9's arm runs the
+`private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r2, v2r, v4r, v5r2 and v6r2, 1177/1177
+direct-browser tests, plus `9721c126` crediting page.mjs's popup code as adapted from FowlBrowser with the MIT text (a Claude audit of
+all 51 v3 sources found only that file and snapshot.mjs). Reviews at 01:05 UTC 2026-10-15: V1R2, V2R, V4R, V5R2 pass. The FIX items
+each have a lane. V10R (in the trust join, Enter or Space could reach a payment button through unverified focus, reload after a payment,
+reusable upload offers, a dialog grant that never expires) is on `codex-v3-v10r`. V3R (snapshot password leak, stalled continuation,
+stale refs, MIT notice) and V9R (census soft failures) are claimed. V7 is on `codex-v3-v7b`, which wires V10's join into the
+installed worker. The load average fell from about 49 to 2.7 within the hour after the switch. Next: V3R, V7, V9R and V10R merge into
+v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
   beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:
