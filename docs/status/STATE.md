@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 16:29 UTC, owner away since 12:59 UTC, reachable by phone)
+## Banner (2026-10-14 17:29 UTC, owner away since 12:59 UTC, reachable by phone)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then release 1.3.0, the claim
 post and the video (ROADMAP 0b). Engine facts are in docs/engine-notes.md, and process is sleight-arch's judgment (memory `slim-laws`).
@@ -16,11 +16,12 @@ Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging c
 - Merged, inactive until wired: the P1 chain, BP2-P1B, BP2-P1S plus its two review fixes (P1SR, P1SR2: an uncertain submit stays
   fenced until a newer read). Owner decisions (LAWS): `playwright-core` 1.64.0 pinned, helpers compiled on first use, background only,
   four safety rules.
-- P2 (`2e40c1f2`, review running), P3 (`25ab60a0`, review said FIX: P3R) and P4 (`45ae97c3` on `codex/bp2-p4`: owned background
-  tabs and the installed loader, real-page acceptance passed, 5218 tests) are DONE. An Opus security review of turbo
-  (`ledger/opus-turbo-safety-review.md`) found 1 critical and 3 high findings. In the critical one, page wording alone decides whether a
-  click is a payment. The high ones are in TS1's brief. codex-hdldj does P3R,
-  then TS1 (those fixes), on P4's branch, and codex-hdldl reviews P4. Turbo merges once TS1 passes.
+- Turbo is merged into `pane/auto-mode` (`2e0375a7`, opt-in and off by default): P2 and P2R (ported), P3 and P3R, P4, TS1 and
+  TS1R, each reviewed MERGE. TS1 and TS1R fixed the Opus safety review's 1 critical and 3 high findings plus a second critical (Enter
+  classified from a stale inspection). Full check 5454 pass, 0 fail, mod 49/49. Real-page and real-suite tests at the stack's exact
+  commit: 403 of 403 ran and passed. Payments stay refused on the installed path until a payment-terms provider is qualified. The plugin is
+  16 MB with Playwright bundled. TB2 (codex-hdlds) builds a bench arm for production turbo in a disposable headless Chromium.
+  Live qualification needs the owner: accept the opt-in in sleight's prompt, then click Allow on Chrome's prompt once per launch.
 - Lanes start with `~/Projects/sleight-wt/ledger/start-lane.sh <lane> "<START WITH line>"` (template `ledger/lane-prompt-codex.md`,
   prompts and logs in `ledger/lane-runs/`, kept across reboots). The real-page runner serves from `~/Projects/sleight` (restarted
   13:12 UTC after clearing the dead runner's lock; log `ledger/lane-runs-runner.log`).
@@ -31,8 +32,9 @@ Speed (SR1; the owner chose to make A, B and C one guard mode with one final rea
   49.9 s, guard reads 5.7 s against 17.3 s, no renumber stops, $0.34. Design A's probe before it: 10/10 against 0/10
   (docs/benchmarks/2026-10-14-bind-probe.json). GD1 made the three modes the default (merged), and `careful` stays.
   An Opus review of the new default (`ledger/opus-guard-default-review.md`) found six sequences it now lets through. The worst
-  two are a plain confirming button that opens a sheet, and a click that swaps the window. GD2 (codex-hdldk) fixes them and a
-  menu-label bug that caused 4 of 14 native A/B errors.
+  two are a plain confirming button that opens a sheet, and a click that swaps the window. GD2, GD2R, GD2R2 and GD2R3 (merged) fixed
+  five and a menu-label bug, and the sixth (a look-alike document swap) is a documented limit. A Haiku pass after them: 14/14, wall
+  191.1 s against the old default's 208.6 s.
 - C is parked (sleight-arch, 2026-10-14). Its probe ran live on macOS 27 after two fixes: a sharing-indicator window ("Window",
   one WindowSharingSessionButton child) appears while the engine captures an app, and TextEdit's Open panel is a standard window
   served by `com.apple.appkit.xpc.openAndSavePanelService`. After Cmd+O the app's focused element has no AXWindow (AX error
