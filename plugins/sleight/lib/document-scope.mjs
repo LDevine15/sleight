@@ -170,6 +170,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.nativeDenied = update?.nativeDenied;
     state.timing = !!update?.timing;
     state.careful = !!update?.careful;
+    state.firstOff = !!update?.firstOff && !state.careful && !state.fileOnly && !state.cancelOnly;
     // The previous call's read, when the relay judged it reusable for this call's first action.
     state.prior = update?.prior;
     // Whether this call has acted, and the handle it started on. A call that took no action after the
@@ -358,6 +359,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (...args) => {
           checkNative();
+          const firstAction = !state.acted;
           state.acted = true;
           await checkLease();
           if (state.fileOnly && name === 'pressKey' && isCancel(name, args)) {
@@ -367,10 +369,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           }
           const cached = state.reads.get(proxy);
           let text = cached?.text, modalOpened = cached?.modalOpened ?? false;
+          const treeFree = ['pressKey', 'typeText', 'paste'].includes(name) ||
+            (['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]));
+          const skipFirst = firstAction && state.firstOff && treeFree &&
+            typeof args[0] !== 'number' && !(args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]));
+          if (skipFirst) state.prior = undefined;
           // The acquisition just before this call read the whole tree. A launching app can take 15 s
           // per read under load (2026-10-09), so reuse it when the app's windows, as the inventory
           // lists them, are exactly what they were then.
-          if (text === undefined && state.prior) {
+          if (text === undefined && !skipFirst && state.prior) {
             const prior = state.prior; state.prior = undefined;
             const start = clock();
             // A read Claude made in the call just before, less than 10 s ago (the relay checks), is
@@ -391,8 +398,6 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // after the call's first action go ahead on the header that action was checked against.
           // Numbered and named actions still read, since that is what catches renumbering, and
           // SLEIGHT_GUARD=careful reads before every action.
-          const treeFree = ['pressKey', 'typeText', 'paste'].includes(name) ||
-            (['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]));
           // The read also waits for the UI to settle. After a click, a shortcut, Return, Escape, Tab or
           // Space, which can open a panel or sheet, the next action needs that wait: Cmd+O, then
           // Cmd+Shift+G, then typing a path outran the Open panel without it (textedit-drag, 2026-10-09).
@@ -403,8 +408,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
             typeof before.key === 'string' && !before.key.includes('+') && !/^(?:return|enter|escape|esc|tab|space)$/i.test(before.key)));
           let observed;
-          if (text === undefined && treeFree && quiet && !state.careful && state.callHeaders.has(proxy)) {
-            observed = state.callHeaders.get(proxy);
+          if (text === undefined && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
+            observed = skipFirst ? state.expected : state.callHeaders.get(proxy);
             if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false }) + '\\n');
           } else {
             text ??= await timedRead(raw, 'before-action');
@@ -464,7 +469,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             }
           }
           else if (!state.callElements.has(proxy)) {
-            state.callElements.set(proxy, elements(text ?? ''));
+            if (text !== undefined || !state.firstOff) state.callElements.set(proxy, elements(text ?? ''));
             // The window can renumber between Claude's read and this call: TextEdit gave a saved
             // document a URL and 14 became File (textedit-save, 2026-10-09). When the line Claude saw
             // is now on exactly one element, act there, as the relay's remap does between calls: a

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { removeTemp } from '../scripts/temp-leftovers.mjs';
+import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement } from '../plugins/sleight/lib/document-scope.mjs';
@@ -10,7 +10,7 @@ import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement } from
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
   `Window: ${JSON.stringify(window.title)}, App: ${window.app}.\n0 standard window${window.url ? `, URL: ${window.url}` : ''}\n${rows}`;
-function fixture({ current = () => tree(), action = () => {}, screenshotState } = {}) {
+function fixture({ current = () => tree(), action = () => {}, screenshotState, strict = false } = {}) {
   const calls = [], output = [];
   const raw = {
     async getAXState(options) { calls.push(['read', options]); return current(); },
@@ -25,7 +25,11 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState } 
   for (const name of ['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'paste', 'pressKey', 'typeText']) {
     raw[name] = async (...args) => { calls.push([name, ...args]); return action(name, args); };
   }
-  const context = { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
+  const engine = strict ? new Proxy(raw, { get(object, key) {
+    if (key in object || typeof key === 'symbol' || key === 'then') return object[key];
+    throw Error('unsupported engine method ' + key);
+  } }) : raw;
+  const context = { app: engine, cua: { getApp: async () => engine }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
   const run = (code, options = {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, options)} })()`, context);
   return { run, raw, calls, output, context };
 }
@@ -143,6 +147,73 @@ test('keys, text, paste and coordinates go ahead without a read only after typin
   const first = fixture();
   await first.run('await app.typeText("x"); await app.click(1);');
   assert.deepEqual(first.calls.map(c => c[0]), ['read', 'typeText', 'read', 'click', 'read']);
+});
+
+for (const action of ['app.pressKey("a")', 'app.pressKey("Return")', 'app.typeText("x")', 'app.paste("x")',
+  'app.click([5,5])', 'app.drag([1,1],[2,2])', 'app.scroll([5,5], "down", 1)'])
+  test('first-off skips only the first guard read for ' + action, async () => {
+    for (const [options, reads] of [[{}, 2], [{ firstOff: true }, 1], [{ firstOff: true, careful: true }, 2],
+      [{ firstOff: true, fileOnly: true }, 2]]) {
+      const f = fixture({ strict: true }); await f.run('await ' + action + ';', options);
+      assert.equal(f.calls.filter(c => c[0] === 'read').length, reads, JSON.stringify(options));
+      assert.equal(f.output.at(-1), GUARD_MARK + tree() + GUARD_END);
+    }
+  });
+
+for (const action of ['app.click(1)', 'app.click({id:"Save"})', 'app.click({label:"Save"})',
+  'app.setValue(1,"x")', 'app.selectText(1,"x")', 'app.performSecondaryAction(1)'])
+  test('first-off retains a fresh lookup for ' + action, async () => {
+    const f = fixture({ strict: true }); await f.run('await ' + action + ';', { firstOff: true });
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', action.match(/app\.(\w+)/)[1], 'read']);
+  });
+
+for (const action of ['app.click([5,5])', 'app.pressKey("super+o")', 'app.pressKey("Return")',
+  'app.pressKey("Escape")', 'app.pressKey("Tab")', 'app.pressKey("Space")'])
+  test('first-off keeps the next settle read after ' + action, async () => {
+    const f = fixture({ strict: true }); await f.run('await ' + action + '; await app.typeText("x");', { firstOff: true });
+    assert.deepEqual(f.calls.map(c => c[0]), [action.match(/app\.(\w+)/)[1], 'read', 'typeText', 'read']);
+  });
+
+test('first-off leaves the first numbered baseline unset until its fresh lookup', async () => {
+  const f = fixture({ strict: true });
+  await f.run('await app.typeText("x"); await app.click(1);', { firstOff: true, literals: [1], seenLines: { 1: 'button Save, ID: Save' } });
+  assert.deepEqual(f.calls.map(c => c[0]), ['typeText', 'read', 'click', 'read']);
+});
+
+test('first-off uses an explicit in-call read and still refuses its changed window', async () => {
+  const f = fixture({ strict: true, current: () => tree({ ...expected, title: 'other.txt' }) });
+  await assert.rejects(f.run('await app.getAXState(); await app.typeText("x");', { firstOff: true }), /changed window/);
+  assert.equal(f.calls.some(c => c[0] === 'typeText'), false);
+});
+
+test('first-off resets each call and does not use the prior inventory for its skipped read', async () => {
+  const f = fixture({ strict: true });
+  f.context.cua.listApps = () => { assert.fail('first-off must not inventory to reuse the skipped first read'); };
+  const prior = { text: tree(), id: 'fixture.app', title: 'a.txt', windows: [{ title: 'a.txt' }] };
+  for (let i = 0; i < 2; i++) {
+    f.calls.length = 0;
+    await f.run('await app.typeText("x"); await app.pressKey("a");', { firstOff: true, prior });
+    assert.deepEqual(f.calls.map(c => c[0]), ['typeText', 'pressKey', 'read']);
+  }
+  f.calls.length = 0; await f.run('await app.typeText("x");');
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'typeText', 'read']);
+});
+
+test('first-off still refuses input after lease expiry or replacement, before any read or write', async t => {
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-first-off-lease-')));
+  t.after(() => removeTemp(dir)); const path = join(dir, 'lease.json');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  for (const record of [{ token: 'owner', expires: 0 }, { token: 'successor', expires: Date.now() + 30000 }]) {
+    writeFileSync(path, JSON.stringify(record)); let reads = 0, writes = 0;
+    const raw = new Proxy({ getAXState: async () => { reads++; return tree(); }, typeText: async () => { writes++; } }, {
+      get(object, key) { if (key in object || typeof key === 'symbol' || key === 'then') return object[key]; throw Error('unsupported fake ' + key); },
+    });
+    const code = guardedCode('await app.typeText("x");', expected, 'changed window', { path, token: 'owner' }, { firstOff: true });
+    try {
+      await assert.rejects(new AsyncFunction('app', 'cua', 'nodeRepl', code)(raw, { getApp: async () => raw }, { write() {} }), /ownership lost or expired/);
+      assert.equal(reads, 0); assert.equal(writes, 0);
+    } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
+  }
 });
 
 test('a window change mid-batch stops the next numbered action, and careful mode stops keys too', async () => {

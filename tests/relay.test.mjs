@@ -2281,6 +2281,23 @@ test('SLEIGHT_GUARD=careful reaches the guard sent to the engine; the default sk
   }
 });
 
+test('first-off reaches only the ordinary native guard and leaves strict review and default unchanged', async () => {
+  for (const [guardMode, changeReview, enabled] of [
+    ['first-off', false, true], ['first-off', true, false],
+    [undefined, false, false], ['careful', false, false], ['unrecognized', false, false],
+  ]) {
+    const h = harness({ guardMode, changeReview, inputLease: new InputLease({ directory: leaseDir('sleight-first-off-'), holder: 'A' }) });
+    helperRead(h, 1, 'let app = await cua.getApp("TextEdit")');
+    h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: `Window: "a.txt", App: TextEdit, URL: ${fixtureURL}\n0 standard window a.txt` }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } });
+    await tick();
+    h.fromClient({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.typeText("x")' } } });
+    await tick(); const sent = h.toServer.find(m => m.id === 2)?.params.arguments.code ?? '';
+    assert.equal(/"firstOff":true/.test(sent), enabled, String(guardMode) + ' changeReview=' + changeReview);
+    if (guardMode !== 'first-off') assert.equal(/"firstOff":/.test(sent), false);
+  }
+});
+
 test('the guard reuses a passed read only while the app\'s windows are unchanged', async () => {
   const windows = [{ id: 5, app: 'TextEdit', title: 'a.txt' }];
   const state = 'Window: "a.txt", App: TextEdit\n0 standard window a.txt\n1 text entry area Value: hi';

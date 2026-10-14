@@ -2101,6 +2101,7 @@ export function createRelay({
             msg.params.arguments.code = guardedCode(swipeCode, target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, timing: guardTiming, careful: guardMode === 'careful' || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+                ...(guardMode === 'first-off' ? { firstOff: !documentMode && !changeReview } : {}),
                 adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
