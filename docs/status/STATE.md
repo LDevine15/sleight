@@ -3,87 +3,57 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 00:30 UTC)
+## Banner (2026-10-14 03:30 UTC, flushed before the owner's clear)
 
-Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
-1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4298 pass, 0 fail, 41 skipped, mod 33/33.
-`~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
+Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then release 1.3.0, the claim
+post and the video (ROADMAP 0b). LAWS was cut to 4.7 KB on 2026-10-14 (owner's decisions plus Mac protections). Engine facts are in
+docs/engine-notes.md, and process is sleight-arch's judgment (memory `slim-laws`).
+Pushed: `pane/auto-mode` at the commit holding this banner (private sleight-dev), full check 4649 pass, 0 fail, mod 33/33.
+`~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and public CI is green on 1.2.5.
 
-The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
-FowlBrowser's 26/26 at about twice its time. Every miss was a form (form runs 17/40, non-form 36/36,
-`docs/benchmarks/2026-10-13-gate.md`), and every form failure traced to the engine's browser path. The owner then decided
-(LAWS) that sleight gets a direct browser path as an opt-in turbo through Chrome's built-in remote debugging consent. The engine
-path remains the zero-setup default. Design v2 (`~/Projects/sleight-wt/ledger/browser-path-design-v2.md`) and the native-app
-design (`native-path-design.md`) are approved. The Electron design (`electron-path-design.md`) waits on four owner decisions.
-Engine-browser fixes (AS-3, AS-4, FM2, FM3, QT1) are parked: their checks are in the gate doc.
-
-Merged on 2026-10-13, all peer-reviewed by Codex lanes: AS-1R and AS-2R, FS2R, W8R2, FM1, TB1, M3R, T2R7, W3R5, R1, W4R6, AS-5,
-Q1, RS5-1R, RS6-1R, and the turbo and native prototypes under `bench/` (not wired into the plugin yet): BP2-1, BP2-2, BP2-3,
-BP2-4R4, BP2-5 (with BP2-5T), BP2-6R3, BP2-7, BP2-9, BP2-10, BP2-11R, NP-1, NP-2, NP-3R3, NP-4R, NP-5R2, NP-6R, NP-7. After the clear: AM1R (`bench/app-speed-map.mjs`, which times app reads without a model.
-Every app it names is on the LAWS allowlist, and account apps need `--owner-present`).
-
-Real-page tests: FowlBrowser's playwright-core 1.64 needs Chromium build 1248, which wasn't installed, so `SLEIGHT_LIVE_DOM_TEST=1`
-runs skipped or failed to launch before 2026-10-14 ("the installed playwright-core Chromium build is unavailable"). Installed on
-the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and 1 skips. Read the TAP skip reasons at every merge.
-
-Past the cap (owner, 2026-10-13 and 14): BP2-1 ended at R4, BP2-4 at R4 and BP2-8 at R3 with the test-only BP2-8T, all merged, so
-every turbo prototype module is in. BP2-12's plan merged (`bench/direct-browser2/promotion-plan.md`). It proposed three large wiring items. BP2-P1 is the authenticated
-broker and a native helper for the trusted UI, and it ends with the bundling inventory (runtime, signing, dependencies) for the owner
-to accept. sleight-arch dispatched it at 00:35 UTC. Review found three defects (unconfirmed teardown admits a second socket, no rebind
-after Connect, a once grant spent on half a click), and BP2-P1R (codex-hdlbn) fixes them. The owner chose to compile its helpers on
-the user's Mac (LAWS), which BP2-P1B does after P1 merges. BP2-P2 moves the semantic modules into the plugin. It waited for
-BP2-8R3, and sleight-arch dispatched it at 00:55 UTC. It blocked on bundling Playwright, the owner chose to include
-playwright-core 1.64.0 pinned (LAWS), and codex-hdlbi took it over. BP2-P3 adds the four tools and the relay and skill hooks after P1 and P2.
-
-AM1's speed map, live with the owner away (2026-10-14). The first run failed every read on the relay's native lease. AM1R2
-(merged 00:45 UTC) fixes that. With it, TextEdit completed every phase, with a 54 ms first read and a 937 ms scroll
-(evidence below). Finder still fails on its several scroll areas and an unprovable folder-window cleanup (AM1F). A wider run
-crashed when `bench/preapproved-process.mjs` threw `kill EPERM` out of an abort listener, and PP1 (merged) fixed it. Since then
-TextEdit completes 3/3 (first read 52 ms median, scroll 918 ms). VS Code and Word fail setup with AX error -25204 on the first
-window read after launch, and Word kept the fixture open until sleight-arch quit it. AM1E built a bounded retry and a cleanup fix, but
-live on its branch VS Code still fails at the retain stage and Word kept running, so its review has that evidence. With AM1F merged, Finder measures every phase (first read 67 ms, scroll 1067 ms). Its cleanup proof still fails, on
-a second window whose element is already invalid (AX -25201). AM1FR, queued after AM1E, treats such a window as gone.
-Evidence is in `ledger/claims/_evidence-AM1-live/`. No run left a window open, and sleight-arch cleared their banks and lock.
-
-Keychain prompts (owner's complaint, 2026-10-14) had two sources. Lanes on branches older than `scripts/claude-isolated.sh` ran
-bare `claude plugin validate`. Lanes now start with a throwaway `CLAUDE_CONFIG_DIR`, and LEDGER.md and the lane prompt require it.
-The second was Vibe Island, whose 13 Claude Code hooks ran a bridge that read the Claude login with `/usr/bin/security`. On the
-owner's order its hooks are out of `~/.claude/settings.json` (backup `settings.json.before-vibe-island-removal-20261014`), and its
-bridge is renamed `~/.vibe-island/bin/vibe-island-bridge.disabled-20261014`. The app is still installed, because another project benchmarks it.
-
-Lanes (headless `codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`; logs and prompts in `/private/tmp/claude-501/lanes/`;
-report only through `~/Projects/sleight-wt/ledger/claims/`): codex-hdlax, hdlba (BP2-12), hdlbb and hdlbc (AM1R2) at 00:20 UTC. Waiting in
-`queue/next/`: NP-8, EP-1 to EP-7 (after 1.3.0), the Q1, IN, AA1 and RS proposals. B1 and Q2-1 are plugin changes held until
-after the 1.3.0 freeze.
-
-Merging a prototype item: squash `private/codex/<id>`, run `SLEIGHT_LIVE_DOM_TEST=1 node --test` on its test files (real-page
-tests are sleight-arch's), then the bare `npm run check`, push, and `touch claims/<ID>/MERGED`. Keep about 12 lanes at most:
-16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
+Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging consent) is the path to the gate.
+- Merged into the plugin, inactive until wired: the P1 chain with the broker and the closed host interface (`9a98f6d0`) and
+  BP2-P1B (helpers compile on the user's Mac at first use, `7c3b3d77`). All `bench/direct-browser2` prototype modules are merged.
+- Owner decisions on 2026-10-14 (all in LAWS): `playwright-core` 1.64.0 bundled and pinned; helpers compiled on first use;
+  background only (the gate fails on any Space switch); and four safety rules (payments, page content never authorizes, no blind
+  resend of a submit, background). Fills check the target element alone. There are no per-field tokens and no per-site prompts.
+  Turbo becomes the default once its benchmark proves it.
+- In flight (headless `codex exec` lanes keep running through the clear and report only through
+  `~/Projects/sleight-wt/ledger/claims/`; logs in `/private/tmp/claude-501/lanes/`):
+  - BP2-P1S (codex-hdlcj): builds the four-rule contract and staged file transfer on `codex/bp2-p1f` (`1d9f2ec8`, which built
+    the superseded ordered-permission design). Its branch is `codex/bp2-p1s` once pushed.
+  - BP2-P2 (`codex/bp2-p2`, `e8c380df`) and BP2-P3 (`codex/bp2-p3`, `e9b193f4`) are BLOCKED on purpose until P1S is DONE. Then clear
+    their BLOCKED markers and start a lane each, with a takeover line (their ARCH-NOTE.md files say what to do). P3 must advertise
+    every tool schema without a top-level oneOf (Claude Code drops such tools), and P2 must make the demo forms fill and submit.
+  - GR1 (codex-hdlcg): `SLEIGHT_GUARD=first-off`, an A/B switch for the guard's first-action read. sleight-arch runs the A/B.
+  - LD1 (codex-hdlci): a host-side runner so lanes can request real-page test runs. sleight-arch starts it outside any sandbox.
+  - SR1, the read after a click (the largest tool-time cost): `ledger/sr1-astra-report.md` (gpt-6-astra) is written. The Opus
+    subagent's `ledger/sr1-opus-report.md` was finishing at the clear. Compare both and propose the live experiment.
+- Done, to apply: RP1 (`ledger/claims/RP1/`: CHANGELOG-1.3.0.md, README-diff.md, release-checklist.md) for the release. CS1
+  (`ledger/claims/CS1/REPORT.md`) found only the Codex native arm ready for the claim suite, out of 18. Its table gives each
+  other arm's install command, and claude-cu needs the owner's login.
+- The prototype arm (TP1, `codex/tp1r2` at `0eaa14bf`, never merged) stopped after its last round. The rounds are in
+  docs/benchmarks/2026-10-14-turbo-prototype.md: 4/9, with 53 s on four non-form tasks against FowlBrowser's 63 s and the engine
+  path's 103 s, and forms 0/4 on validation bugs, which are now in P2's brief.
+- AM1, the speed map, is parked until after 1.3.0 (owner).
 
 Next steps, in order:
-1. Turbo's wiring, as of 03:45 UTC. Merged into the plugin, inactive until wired: the P1 chain (broker, native helper sources,
-   closed host interface, `9a98f6d0`) and BP2-P1B (helpers compile on first use, `7c3b3d77`). The owner cut turbo's safety to four
-   rules (LAWS, `373efe8d`): payments, page content never authorizes, no blind resend of a submit, background only. Fills check the
-   target element alone, with no per-field tokens or per-site prompts. BP2-P1F (codex-hdlcg) builds that, plus staged file transfer.
-   P2 and P3 resume on it. AM1 is parked until after 1.3.0.
-   The prototype (TP1) ran its last round, 4/9, and stops (ROADMAP). In the four non-form tasks that passed, it took 53 s against
-   FowlBrowser's 63 s and the engine path's 103 s from 2026-10-13. All four forms failed in fill validation, so turbo's accuracy is
-   unmeasured (docs/benchmarks/2026-10-14-turbo-prototype.md). Production inherits its bugs. BP2-9's `browser_act` schema has a top-level
-   `oneOf`, which Claude Code drops (in P3's notes), and the shared form modules refuse ordinary demo forms (in P2's notes). Rounds run headless, or only while the owner is away.
-2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
-   the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
-3. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
-4. The claim suite with the W8 runner. The Claude in Chrome arm is signed in (Max plan, 2026-10-13); Cua and Peekaboo are installed (2026-10-14),
-   and the owner granted their permissions.
-5. Release 1.3.0 on the owner's call once all of it is done (CHANGELOG draft in `ledger/claims/R2R/`), then the claim post
-   and the video.
+1. Merge P1S, then restart P2 and P3 on it. Merge GR1 and LD1 as they pass, and start LD1's runner.
+2. Once P2 is merged, run the four form tasks headless (TP-style, about $0.20) for an early read on forms.
+3. P3 wires turbo into the plugin. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium. The owner
+   clicks Allow on Chrome's prompt once per launch. The gate counts Space switches and focus changes.
+4. The turbo gate round (Haiku 5.5, both arms, both orders), only while the owner is away or headless. Then one Opus head-to-head on
+   the owner's account.
+5. Install the claim-suite arms per CS1 and run the suite with the W8 runner.
+6. Apply RP1's CHANGELOG and README proposals, and release 1.3.0 on the owner's call.
+After 1.3.0 come Electron (EP-1 to EP-7), slimming the plugin, AM1, and the SR1 and GR1 results.
 
-Owner, 2026-10-14: the Electron design's six decisions are approved (LAWS), and EP-1 to EP-7 build after 1.3.0. The away window is
-open whenever sleight-arch asks: one sitting, once BP2-12 has merged and turbo passed its live qualification with the owner present.
-The two iCloud TextEdit leftovers went to the Trash on the owner's order (renamed "... (sleight 2026-10-12).txt"). "Untitled 6.rtfd"
-(2026-10-13 10:59) is still in TextEdit's iCloud folder, unnamed so far. Still theirs: an unused keychain entry
-`Claude Code-credentials-…` from a mistyped arm path. API spend for October: $156.76 of $200.
+Owner items: OpenUsage.app relocked the "Claude Code-credentials" keychain item to its own binary today (17:05 local). Every new
+Claude Code session then prompts for the keychain password. The owner was given the one-line fix
+(`security set-generic-password-partition-list -S "apple-tool:,apple:,teamid:Q6L2SF6YDW" -s "Claude Code-credentials" -a
+owner`) and the option to quit OpenUsage. Vibe Island's Claude Code hooks were removed from `~/.claude/settings.json` on the
+owner's order (backup `settings.json.before-vibe-island-removal-20261014`), and its bridge renamed `.disabled-20261014`. An old
+Chrome for Testing (build 1234, started 15:46 local, not this session's) was left running. API spend for October is $157.17 of $200.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -133,6 +103,8 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
 
 ## Machine state outside the repo
 
+- The FowlBrowser world arm's pinned Claude Code 2.1.289 is at `~/.config/sleight-bench/world/arms/fowlbrowser` (installed
+  2026-10-14 for the prototype rounds, `node bench/world/arms/install.mjs fowlbrowser claude-only @anthropic-ai/claude-code@2.1.289`).
 - Benchmark arms installed 2026-10-14 (owner's 2026-10-12 OK, pinned with checksums). Cua 0.34.0 is at
   `~/Library/Caches/sleight-bench/mcp-cua-arm` (the grants are on CuaDriver.app itself). Peekaboo
   4.9.2 is at `mcp-peekaboo-arm`, and its grants go to Terminal.app (owner's pick), so Peekaboo passes run from a Terminal window. Runtime
