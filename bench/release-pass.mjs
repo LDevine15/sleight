@@ -18,11 +18,16 @@ const kind = id => IDS.includes(id) ? id : /^gate-(normal|swap)-r[12]-(sleight-t
   ? id.startsWith('gate-normal') ? 'gate-normal' : 'gate-swap'
   : /^opus-(normal|swap)-r1-(sleight-turbo|fowlbrowser)$/.test(id) ? 'opus' : undefined;
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function ownerAliases(home, names) {
+  const patterns = [...names, basename(home)].filter(Boolean).flatMap(name =>
+    ['NFC', 'NFD'].map(form => name.normalize(form).split(/[\s._-]+/u).filter(Boolean).map(escape).join('[\\s._-]*')));
+  const aliases = [...new Set(patterns.filter(Boolean))].sort((a, b) => b.length - a.length);
+  return aliases.length ? new RegExp(`<user>|(?<![\\p{L}\\p{M}])(?:${aliases.join('|')})(?![\\p{L}\\p{M}])`, 'giu') : undefined;
+}
 export function scrubText(text, home = homedir(), names = []) {
   text = String(text).replace(new RegExp(escape(home), 'giu'), '~');
-  for (const name of [...new Set(names.filter(Boolean))].sort((a, b) => b.length - a.length)) {
-    text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}_])${escape(name)}(?![\\p{L}\\p{N}_])`, 'giu'), '<user>');
-  }
+  const aliases = ownerAliases(home, names);
+  if (aliases) text = text.replace(aliases, '<user>');
   // Logs can contain another spelling of a home or credentials from a failed runner.
   return text.replace(/\/(?:Users|home)\/[^/\s"\\]+/g, '~')
     .replace(/sk-ant-[A-Za-z0-9_-]+/g, '<redacted>')
@@ -166,11 +171,6 @@ function inventory(root, paths) {
   return files;
 }
 function publicationPaths(folder, home, names) {
-  const aliases = [...names, basename(home)].filter(Boolean).flatMap(name => {
-    const text = name.normalize('NFC');
-    return [text, text.replace(/\s+/g, '-'), text.replace(/\s+/g, '_')];
-  });
-  const pattern = new RegExp([...new Set(aliases)].sort((a, b) => b.length - a.length).map(escape).join('|'), 'giu');
   const key = path => path.normalize('NFC').toLowerCase();
   const used = new Set(['command.txt', 'stdout.log', 'stderr.log'].map(name => key(join(folder, name))));
   const mapped = new Map();
@@ -179,7 +179,7 @@ function publicationPaths(folder, home, names) {
     for (let i = 0; i < parts.length; i++) {
       const source = JSON.stringify([index, ...parts.slice(0, i + 1)]);
       if (mapped.has(source)) { parent = mapped.get(source); continue; }
-      const name = scrubText(parts[i].normalize('NFC'), home).replace(pattern, '<user>');
+      const name = scrubText(parts[i].normalize('NFC'), home, names);
       if (!name || name === '.' || name === '..' || name.includes(sep) || name.includes('\0')) throw new Error('Artifact destination escaped stage');
       const extension = i === parts.length - 1 ? extname(name) : '';
       const stem = extension ? name.slice(0, -extension.length) : name;
@@ -189,6 +189,26 @@ function publicationPaths(folder, home, names) {
     }
     return parent;
   };
+}
+function accountFunding(stage, root) {
+  if (kind(stage.id) !== 'opus') return;
+  for (const flag of ['--tasks', '--surface']) if (stage.args.filter(arg => arg === flag).length > 1)
+    throw new Error('Opus account funding needs unambiguous task and surface choices');
+  const surface = option(stage.args, '--surface') ?? 'fowlbrowser';
+  let surfaces = [surface];
+  if (stage.args.includes('--tasks')) {
+    const path = option(stage.args, '--tasks');
+    if (!path || path.startsWith('--')) throw new Error('Opus account funding needs a tasks file');
+    const tasks = JSON.parse(readFileSync(safePath(resolve(root, path)), 'utf8'));
+    if (!Array.isArray(tasks) || !tasks.length || tasks.some(task => !task || typeof task !== 'object' || Array.isArray(task)))
+      throw new Error('Opus account funding needs a nonempty task list');
+    surfaces = tasks.map(task => task.surface ?? surface);
+  }
+  if (surfaces.some(value => typeof value !== 'string' || !value || /[\s\0]/u.test(value)))
+    throw new Error('Opus account funding needs valid surface names');
+  // rounds.sh chooses the API key if any effective surface is browser-use,
+  // even on Opus. Refuse that vector before the runner can read a credential.
+  if (surfaces.includes('browser-use')) throw new Error('Opus must use the owner account; browser-use requires API funding');
 }
 const quote = text => `'${text.replaceAll("'", "'\\''")}'`;
 function summary(rows) {
@@ -250,7 +270,7 @@ export async function executePass(plan, { root = plan.root, date = new Date().to
     if (row.issues.length) { save(); continue; }
     validateStage(stage);
     let before;
-    try { before = inventory(root, stage.artifacts); }
+    try { accountFunding(stage, root); before = inventory(root, stage.artifacts); }
     catch (error) { row.issues.push(error.message); save(); continue; }
     if (stage.runner === 'fowl' && [...stage.artifacts, option(stage.args, '--out')].some(p => existsSync(safePath(resolve(root, p))))) {
       row.issues.push('browser round bank already exists; refusing overwrite'); save(); continue;
@@ -264,7 +284,7 @@ export async function executePass(plan, { root = plan.root, date = new Date().to
     let result;
     try { result = await run(stage, { root }); }
     catch (error) { result = { code: 1, stderr: error.message }; }
-    interrupted = result.interrupted === true || ['SIGINT', 'SIGTERM'].includes(result.signal);
+    interrupted = result.interrupted === true || ['SIGINT', 'SIGTERM'].includes(result.signal) || [130, 143].includes(result.code);
     row.code = result.code;
     writeFileSync(join(folder, 'stdout.log'), clean(result.stdout ?? ''));
     writeFileSync(join(folder, 'stderr.log'), clean(result.stderr ?? ''));
@@ -275,15 +295,16 @@ export async function executePass(plan, { root = plan.root, date = new Date().to
     try {
       for (const [file, identity] of inventory(root, stage.artifacts)) {
         if (before.get(file) === identity) continue;
-        // Publish all new result text; images/binaries cannot be scrubbed and are explicitly recorded.
-        if (!/\.(?:json|jsonl|md|txt|log|csv|html)$/.test(file)) { row.issues.push(`non-text artifact requires owner review: ${relative(root, file)}`); continue; }
-        const text = readFileSync(file, 'utf8');
-        if (text.includes('\0')) { row.issues.push('binary artifact requires owner review'); continue; }
         const rel = stage.artifacts.map(p => safePath(resolve(root, p))).find(p => file === p || file.startsWith(p + sep));
         const index = stage.artifacts.findIndex(p => safePath(resolve(root, p)) === rel);
         const dest = destination(index, [stage.artifacts.length === 1 ? basename(rel) : `artifacts-${index}`,
           ...(file === rel ? [basename(file)] : relative(rel, file).split(sep))]);
         if (!dest.startsWith(folder + sep)) throw new Error('Artifact destination escaped stage');
+        const published = relative(out, dest);
+        // Publish all new result text; images/binaries cannot be scrubbed and are explicitly recorded.
+        if (!/\.(?:json|jsonl|md|txt|log|csv|html)$/.test(file)) { row.issues.push(`non-text artifact not published, requires owner review: ${published}`); continue; }
+        const text = readFileSync(file, 'utf8');
+        if (text.includes('\0')) { row.issues.push('binary artifact requires owner review'); continue; }
         mkdirSync(dirname(dest), { recursive: true });
         writeFileSync(dest, clean(text), { flag: 'wx' }); row.files.push(relative(out, dest));
         if (file.endsWith('.jsonl')) {
@@ -297,7 +318,7 @@ export async function executePass(plan, { root = plan.root, date = new Date().to
             const results = Array.isArray(data) ? data : data.results;
             if (Array.isArray(results)) { runs.push(...results); row.total += results.length; row.passed += results.filter(r => r.passed === true || r.outcome?.ok === true || r.outcome?.cell === 'ok').length; }
             if (data.passCleanupErrors?.length) row.issues.push('native runner reported incomplete pass cleanup');
-          } catch { row.issues.push(`malformed result retained: ${relative(root, file)}`); }
+          } catch { row.issues.push(`malformed result retained: ${published}`); }
         }
       }
     } catch (error) { row.issues.push(error.message); }
