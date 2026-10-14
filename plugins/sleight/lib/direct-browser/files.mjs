@@ -3,6 +3,15 @@ import { createFileAuthority } from './host-files.mjs';
 import { sameAuthority } from './protected-proof.mjs';
 import { canonical } from './authority.mjs';
 
+// V3 actions consume the existing private-channel provider's single-use bytes.
+// Neither a tool's paths nor the inspected page can supply event or binding.
+export async function stageUserUploads(files, paths, ref) {
+  if (!files?.event || files.binding?.ref !== ref || typeof files.provider?.offer !== 'function' ||
+      typeof files.provider?.stage !== 'function') throw Error('user-named file provider required; use the engine browser path');
+  const handle = files.provider.offer(files.event, paths, ref);
+  return files.provider.stage([handle], files.binding);
+}
+
 // readUserMessage is the private authenticated user channel, never an IPC field
 // or page string. It returns the user's exact message and owning session.
 export function createUserFileProvider({ readUserMessage, resolveInput, current, now = Date.now } = {}) {
