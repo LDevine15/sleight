@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { restartChess } from './chess-launch.mjs';
+import { archiveChessRuns } from './run-archive.mjs';
 import { realTasks } from './tasks-real.mjs';
 import { webBrowsers } from './tasks-web.mjs';
 import { acquireFixture } from './real-run.mjs';
@@ -358,7 +359,8 @@ export const tasks = [
     // Each run starts from a fresh Chess with one window: left running, games
     // and windows pile up between runs, and Chess hung once (2026-10-03). The
     // launch ignores saved windows, and the run quits Chess cleanly after.
-    setup: () => {
+    setup: ({ dir }) => {
+      archiveChessRuns(dir);
       restartChess({ quit: quitChess });
       execFileSync('sleep', ['3']);
     },
