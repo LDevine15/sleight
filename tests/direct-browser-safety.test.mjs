@@ -1,267 +1,144 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAuthority, createTransportAuthority, completeTransport } from '../plugins/sleight/lib/direct-browser/authority.mjs';
-import { createConsentUi } from '../plugins/sleight/lib/direct-browser/consent-ui.mjs';
-const scope = ref => ({ browser: 'browser', broker: 1, session: 'client', turn: 'turn', target: 'target',
-  lease: 1, frame: 'frame', document: 1, ref, origin: 'https://fixture.invalid' });
-const operation = (extra = {}) => ({ id: 'op', kind: 'fill', args: { value: 'fixture' }, scope: scope('rfirst'), consequence: 'ordinary', ...extra });
-function fixture(options = {}) {
-  let current = scope('rfirst'), time = 100;
-  const user = {}, authority = createAuthority({ current: () => current, now: () => time,
-    snapshot: () => ({ scope: current, time }), authenticate: event => event === user, classify: op => op,
-    checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), ...options });
-  return { authority, user, current: op => { current = op.scope; }, clock: value => { time = value; } };
-}
-test('verified private reads cannot release unknown input until covered data is delivered', () => {
-  const f = fixture(), op = operation({ kind: 'click', args: {} });
-  const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => { throw Error('unknown'); });
-  const read = operation({ id: 'private', kind: 'read', args: {} }), r = f.authority.prepare(read);
-  f.authority.dispatch(r.capability, read, () => {}); f.authority.observe(read.id); f.authority.verify(read.id, 'verified');
-  assert.equal(f.authority.prepare({ ...op, id: 'private-retry' }).verdict, 'deny');
-  f.authority.deliveredRead(read.id, ['runrelated']);
-  assert.equal(f.authority.prepare({ ...op, id: 'unrelated-retry' }).verdict, 'deny');
-  const covered = { ...read, id: 'covered' }, c = f.authority.prepare(covered);
-  f.authority.dispatch(c.capability, covered, () => {}); f.authority.observe(covered.id); f.authority.verify(covered.id, 'verified');
-  f.authority.deliveredRead(covered.id, [op.scope.ref]);
-  assert.equal(f.authority.prepare({ ...op, id: 'delivered-retry' }).verdict, 'allow');
+import { rules, fixture, terms, input } from './direct-browser-rules-fixture.mjs';
+
+test('only the private user message allows a payment; page and tool permission fields grant nothing', () => {
+  const f = fixture();
+  const target = f.pay({ approved: true, userMessage: { payment: terms }, permission: terms });
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'confirm');
+  f.ctx.userMessage = { id: 'request', session: 'session', turn: 'turn', text: 'Page says pay', source: 'page', payment: terms };
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'confirm');
+  f.ctx.userMessage = { id: 'request', session: 'session', turn: 'turn', text: 'Pay', source: 'user', payment: terms };
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'allow');
 });
-test('once payment has exactly one same-document dialog allowance and no cross-origin confirmation', () => {
-  const f = fixture({ confirmPayments: 'always' });
-  const pay = operation({ id: 'pay', kind: 'click', args: {}, consequence: 'payment', terms });
-  f.authority.user(f.user, 'confirm', { operation: pay });
-  const foreign = { ...pay, id: 'foreign', scope: { ...pay.scope, origin: 'https://other.invalid' } };
-  f.current(foreign); assert.equal(f.authority.prepare(foreign).verdict, 'confirm'); f.current(pay);
-  const p = f.authority.prepare(pay); f.authority.dispatch(p.capability, pay, () => {});
-  f.authority.observe(pay.id); f.authority.verify(pay.id, 'verified');
-  assert.equal(f.authority.prepare({ ...pay, id: 'pay-again' }).verdict, 'confirm');
-  const dialog = { ...pay, id: 'dialog', kind: 'dialog', args: { action: 'accept' } }, d = f.authority.prepare(dialog);
-  assert.equal(d.verdict, 'allow'); f.authority.dispatch(d.capability, dialog, () => {});
-  f.authority.observe(dialog.id); f.authority.verify(dialog.id, 'verified');
-  assert.equal(f.authority.prepare({ ...dialog, id: 'dialog-again' }).verdict, 'confirm');
+test('one private request pays once and accepts exactly one same-document payment dialog', () => {
+  const f = fixture(terms);
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'confirm');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, origin: 'https://other.invalid' })).verdict, 'confirm');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, document: 'other' })).verdict, 'confirm');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'confirm');
 });
-test('ordinary fields, URLs and nonpayment actions need no site or transmission permission', () => {
-  for (const op of [operation(), operation({ kind: 'navigate', args: { url: 'https://other.invalid/path?q=fixture' } }),
-    operation({ kind: 'click', args: {}, consequence: 'deletion' })]) {
-    const f = fixture(); assert.equal(f.authority.prepare(op).verdict, 'allow');
+test('the approved payment dialog completes its own in-flight submit, but a second click stays refused', () => {
+  const f = fixture(terms);
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'allow');
+  rules.beginSubmit(f.state, 100);
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'refuse');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, terms: { page: { ...terms, amount: '19.00' }, method: terms.method } })).verdict, 'confirm');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'refuse');
+});
+test('a submit without its document state refuses instead of losing the retry fence', () => {
+  const f = fixture(); assert.equal(rules.check(f.ctx, 'click', f.submit({ state: undefined })).verdict, 'refuse');
+});
+test('strict payments require native consent and changed terms ask again', () => {
+  const f = fixture(terms); f.ctx.confirmPayments = 'always';
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'confirm');
+  let once = true;
+  f.ctx.consent = { consume: () => { const allow = once; once = false; return allow; } };
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, terms: { page: { ...terms, amount: '19.00' }, method: terms.method } })).verdict, 'confirm');
+  assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'confirm');
+});
+for (const key of ['item', 'method', 'amount', 'payee', 'currency']) test(`a changed payment ${key} asks again`, () => {
+  const f = fixture(terms), altered = { ...terms, [key]: 'different' };
+  assert.equal(rules.check(f.ctx, 'click', f.pay({ terms: { page: altered, method: altered.method } })).verdict, 'confirm');
+});
+test('missing page terms and a provider echo cannot authorize a payment', () => {
+  const f = fixture(terms);
+  for (const value of [undefined, terms, { page: { item: terms.item }, method: terms.method }])
+    assert.equal(rules.check(f.ctx, 'click', f.pay({ terms: value })).verdict, 'confirm');
+});
+test('a request from a past turn or another session cannot pay', () => {
+  const f = fixture(terms);
+  for (const patch of [{ session: 'other' }, { turn: 'old' }])
+    assert.equal(rules.check(f.ctx, 'click', f.pay(patch)).verdict, 'confirm');
+});
+test('a delayed pre-submit read and a private read cannot release an unconfirmed submit', () => {
+  const f = fixture(), old = rules.captureSnapshot(f.state, 100);
+  const submit = rules.beginSubmit(f.state, 200); rules.finishSubmit(f.state, submit, {}, 5200);
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'refuse');
+  assert.equal(rules.deliverSnapshot(f.state, old), false);
+  const fresh = rules.captureSnapshot(f.state, 5300);
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'refuse', 'capturing alone is private');
+  assert.equal(rules.deliverSnapshot(f.state, fresh), true);
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'allow');
+});
+test('an action snapshot counts only after settle and at least one second after submit', () => {
+  const f = fixture(), submit = rules.beginSubmit(f.state, 100), early = rules.captureSnapshot(f.state, 300);
+  rules.finishSubmit(f.state, submit, {}, 400);
+  assert.equal(rules.deliverSnapshot(f.state, early), false);
+  assert.equal(rules.deliverSnapshot(f.state, rules.captureSnapshot(f.state, 1099)), false);
+  assert.equal(rules.deliverSnapshot(f.state, rules.captureSnapshot(f.state, 1100)), true);
+});
+test('an unordered or malformed snapshot never clears document uncertainty', () => {
+  const f = fixture(), submit = rules.beginSubmit(f.state, 100); rules.finishSubmit(f.state, submit, {}, 5100);
+  for (const capturedAt of [undefined, NaN, Infinity, -1])
+    assert.equal(rules.deliverSnapshot(f.state, { state: f.state, number: 1, capturedAt }), false);
+  for (const number of [undefined, NaN, 0, 1.5])
+    assert.equal(rules.deliverSnapshot(f.state, { state: f.state, number, capturedAt: 5200 }), false);
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'refuse');
+});
+test('a private snapshot never advances the delivered baseline used by later diffs', () => {
+  const f = fixture(), privateRead = rules.captureSnapshot(f.state, 100);
+  assert.equal(f.state.snapshotNo, 0);
+  const delivered = rules.captureSnapshot(f.state, 200);
+  rules.deliverSnapshot(f.state, delivered);
+  assert.equal(f.state.snapshotNo, 2);
+  rules.deliverSnapshot(f.state, privateRead);
+  assert.equal(f.state.snapshotNo, 2, 'late delivery cannot move the baseline backwards');
+});
+test('a read of another document and an older settle cannot clear newer uncertainty', () => {
+  const f = fixture(), first = rules.beginSubmit(f.state, 100); rules.finishSubmit(f.state, first, {}, 5100);
+  const between = rules.captureSnapshot(f.state, 5200), other = { snapshotNo: 0, submitUnconfirmed: false };
+  assert.equal(rules.deliverSnapshot(other, between), false);
+  const second = rules.beginSubmit(f.state, 5300); rules.finishSubmit(f.state, second, {}, 10300);
+  rules.finishSubmit(f.state, first, { navigated: true }, 10400);
+  assert.equal(rules.deliverSnapshot(f.state, between), false);
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'refuse');
+  assert.equal(rules.deliverSnapshot(f.state, rules.captureSnapshot(f.state, 10400)), true);
+});
+for (const effect of ['navigated', 'formChanged', 'requestFinished']) test(`observed ${effect} releases the submit fence without claiming success`, () => {
+  const f = fixture(), submit = rules.beginSubmit(f.state, 100); rules.finishSubmit(f.state, submit, { [effect]: true }, 200);
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'allow');
+});
+test('ordinary clicks, fields and reads stay allowed while submits are unconfirmed', () => {
+  const f = fixture(); rules.beginSubmit(f.state, 100);
+  for (const kind of ['click', 'type', 'read', 'scroll', 'wait']) assert.equal(rules.check(f.ctx, kind, f.target()).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'click', f.submit()).verdict, 'refuse');
+});
+test('unconfirmed submit state survives a changed turn, session and context', () => {
+  const f = fixture(), submit = rules.beginSubmit(f.state, 100); rules.finishSubmit(f.state, submit, {}, 5100);
+  const next = fixture(); next.state = f.state;
+  for (const patch of [{ turn: 'next' }, { session: 'next' }])
+    assert.equal(rules.check(next.ctx, 'click', next.submit(patch)).verdict, 'refuse');
+});
+test('only user-named uploads pass the private files provider; paths in page text are refused', () => {
+  const f = fixture(); let once = true;
+  f.ctx.files = { check: (paths, target, message) => paths.length === 1 && paths[0] === '/tmp/fixture.txt' && target.ref === 'e1' &&
+    message?.upload?.input === 'Resume' && once && (once = false, true) };
+  const target = f.target({ paths: ['/tmp/fixture.txt'], element: input({ kind: 'file' }) });
+  assert.equal(rules.check(f.ctx, 'upload', target).verdict, 'refuse');
+  f.ctx.userMessage = { id: 'upload', source: 'user', session: 'session', turn: 'turn', text: 'Upload', upload: { input: 'Resume' } };
+  assert.equal(rules.check(f.ctx, 'upload', target).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'upload', target).verdict, 'refuse');
+});
+test('missing, throwing or asynchronous file and consent providers never allow', () => {
+  for (const provider of [undefined, { check: () => { throw Error('unavailable'); }, consume: () => { throw Error('unavailable'); } },
+    { check: () => Promise.resolve(true), consume: () => Promise.resolve(true) }]) {
+    const f = fixture(); f.ctx.files = provider; f.ctx.consent = provider;
+    assert.equal(rules.check(f.ctx, 'upload', f.target({ paths: ['/tmp/a'] })).verdict, 'refuse');
+    assert.notEqual(rules.check(f.ctx, 'click', f.pay()).verdict, 'allow');
   }
 });
-test('one form operation carries ordered fields without per-field tokens or effect proofs', () => {
-  const f = fixture(), plan = { target: 'target' }, sent = [];
-  const transport = createTransportAuthority({ authority: f.authority, resolveOperation: (plan, ctx, command) =>
-    operation({ id: command.params.text, scope: scope(command.params.text), args: { value: command.params.text } }) });
-  const ctx = { session: 'client', turn: 'turn', browserIncarnation: 'browser', brokerEpoch: 1 };
-  for (const ref of ['rfirst', 'rsecond']) {
-    f.current(operation({ scope: scope(ref) }));
-    transport(plan, ctx, { method: 'Input.insertText', params: { text: ref } }, () => sent.push(ref));
-  }
-  assert.deepEqual(sent, ['rfirst', 'rsecond']); completeTransport(transport, plan, 'verified');
-});
-for (const key of ['present', 'visible', 'enabled', 'same']) test('target check refuses ' + key + ' alone', () => {
-  const f = fixture({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true, [key]: false }) });
-  assert.equal(f.authority.prepare(operation()).verdict, 'deny');
-});
-test('an incomplete page does not block a checked target, but dispatch repeats the target check', () => {
-  let same = true;
-  const f = fixture({ checkTarget: () => ({ present: true, visible: true, enabled: true, same }),
-    classify: op => ({ ...op, pageComplete: false }) });
-  const op = operation(), prepared = f.authority.prepare(op); assert.equal(prepared.verdict, 'allow');
-  same = false; assert.throws(() => f.authority.dispatch(prepared.capability, op, () => assert.fail('sent')));
-});
-const terms = { item: 'fixture', method: 'user card', payee: 'shop', amount: '12', currency: 'USD' };
-for (const always of [false, true]) test('only authenticated user payment intent allows payment and its own dialog; always=' + always, () => {
-  const f = fixture({ confirmPayments: always ? 'always' : undefined });
-  assert.throws(() => f.authority.user({ approved: true }, 'request', { session: 'client', consequence: 'payment', terms }));
-  f.authority.user(f.user, 'request', { session: 'client', consequence: 'payment', terms });
-  for (const kind of ['click', 'dialog']) {
-    const op = operation({ id: kind, kind, args: kind === 'dialog' ? { action: 'accept' } : {}, consequence: 'payment', terms });
-    assert.equal(f.authority.prepare(op).verdict, always ? 'confirm' : 'allow');
-  }
-  assert.equal(f.authority.prepare(operation({ consequence: 'payment', terms: { ...terms, amount: '13' } })).verdict, 'confirm');
-});
-test('one payment confirmation covers the same payment dialog, without site grants', () => {
-  const f = fixture(), op = operation({ kind: 'click', args: {}, consequence: 'payment', terms });
-  assert.equal(f.authority.prepare(op).verdict, 'confirm'); f.authority.user(f.user, 'confirm', { operation: op });
-  const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => {});
-  assert.equal(f.authority.prepare(operation({ id: 'dialog', kind: 'dialog', args: { action: 'accept' }, consequence: 'payment', terms })).verdict, 'allow');
-});
-for (const submit of [false, true]) test('every unknown input needs a delivered element read; submit=' + submit, () => {
-  const f = fixture(), op = operation({ kind: 'click', args: {}, submit });
-  const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => { throw Error('uncertain'); });
-  assert.equal(f.authority.prepare({ ...op, id: 'retry' }).verdict, 'deny');
-  const read = operation({ id: 'read', kind: 'read', args: {} }), r = f.authority.prepare(read);
-  assert.equal(r.verdict, 'allow'); f.authority.dispatch(r.capability, read, () => {});
-  f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.authority.deliveredRead(read.id, [read.scope.ref]);
-  assert.equal(f.authority.prepare({ ...op, id: 'after-read' }).verdict, 'allow');
-});
-test('Disconnect revokes even an ordinary request prepared without site grants', () => {
-  const f = fixture(), op = operation(), p = f.authority.prepare(op);
-  f.authority.user(f.user, 'disconnect', {});
-  assert.throws(() => f.authority.dispatch(p.capability, op, () => assert.fail('sent')));
-});
-test('consent UI refuses site prompts and nonpayment action prompts', () => {
-  const ui = createConsentUi({ authenticate: () => true, present: () => {}, checkCurrent: () => true });
-  assert.throws(() => ui.request({}, { kind: 'site' }));
-  assert.throws(() => ui.request({}, { kind: 'action' }));
-});
-
-test('missing or asynchronous target evidence refuses input', () => {
-  for (const checkTarget of [undefined, () => Promise.resolve({ present: true, visible: true, enabled: true, same: true })])
-    assert.equal(fixture({ checkTarget }).authority.prepare(operation()).verdict, 'deny');
-});
-test('a failed read or a read of another frame cannot release an uncertain submit', () => {
-  const f = fixture(), op = operation({ kind: 'click', args: {}, submit: true });
-  const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => { throw Error('unknown'); });
-  const read = operation({ id: 'read', kind: 'read', args: {}, scope: { ...op.scope, frame: 'other' } }); f.current(read);
-  const r = f.authority.prepare(read); f.authority.dispatch(r.capability, read, () => {});
-  f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.authority.deliveredRead(read.id, [read.scope.ref]); f.current(op);
-  assert.equal(f.authority.prepare({ ...op, id: 'retry' }).verdict, 'deny');
-  const failed = operation({ id: 'failed-read', kind: 'read', args: {} }), q = f.authority.prepare(failed);
-  f.authority.dispatch(q.capability, failed, () => { throw Error('no state'); });
-  assert.equal(f.authority.prepare({ ...op, id: 'again' }).verdict, 'deny');
-  const recovered = fixture({ recovery: f.authority.recovery() });
-  assert.equal(recovered.authority.prepare({ ...op, id: 'after-restart' }).verdict, 'deny');
-});
-test('the closed adapter refuses foreground commands and target activation', async () => {
-  const { createScopedAdapter } = await import('../plugins/sleight/lib/direct-browser/scoped-adapter.mjs');
-  const adapter = createScopedAdapter({ helpers: {}, checkLease: () => true,
-    session: { sessionId: 'root', on() {}, off() {}, send() { assert.fail('foreground command reached transport'); } } });
-  try {
-    const view = adapter.forLease({ target: 'target', cdpSessionId: 'page', frame: 'frame', origin: 'https://fixture.invalid', document: 1, epoch: 1 });
-    for (const method of ['Page.bringToFront', 'Target.activateTarget', 'Target.createTarget'])
-      await assert.rejects(view.send(method, { targetId: 'target' }), /SCOPED_COMMAND_DENIED/);
-  } finally { adapter.disconnect(); }
-});
-
-test('a request journal cannot survive Disconnect and Resume even with the same scope', () => {
-  const f = fixture(), plan = { target: 'target' }, ctx = { session: 'client', turn: 'turn', browserIncarnation: 'browser', brokerEpoch: 1 };
-  const transport = createTransportAuthority({ authority: f.authority, resolveOperation: (plan, ctx, command) => operation({ id: command.params.text }) });
-  let sends = 0;
-  transport(plan, ctx, { method: 'Input.insertText', params: { text: 'fixture' } }, () => { sends++; });
-  f.authority.user(f.user, 'disconnect', {}); f.authority.user(f.user, 'resume', {});
-  assert.throws(() => transport(plan, ctx, { method: 'Input.insertText', params: { text: 'second' } }, () => { sends++; }));
-  assert.equal(sends, 1);
-});
-
-function dispatch(f, op, send = () => {}) {
-  f.current(op);
-  const prepared = f.authority.prepare(op);
-  assert.equal(prepared.verdict, 'allow');
-  f.authority.dispatch(prepared.capability, op, send);
-}
-const submitOperation = id => operation({ id, kind: 'click', args: {}, submit: true });
-const readOperation = id => operation({ id, kind: 'read', args: {} });
-function verifyRead(f, read) { f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.authority.deliveredRead(read.id, [read.scope.ref]); }
-
-test('a delayed read captured before a submit cannot release its retry fence', () => {
-  const f = fixture(), read = readOperation('old-read'), submit = submitOperation('submit');
-  dispatch(f, read);
-  dispatch(f, submit, () => { throw Error('lost submit reply'); });
-  assert.equal(f.authority.prepare(submitOperation('before-old-read')).verdict, 'deny');
-  verifyRead(f, read);
-  assert.equal(f.authority.prepare(submitOperation('after-old-read')).verdict, 'deny');
-});
-
-test('freshness is determined at read dispatch rather than preparation', () => {
-  const f = fixture(), read = readOperation('fresh-read'), prepared = f.authority.prepare(read);
-  assert.equal(prepared.verdict, 'allow');
-  dispatch(f, submitOperation('submit'), () => { throw Error('lost submit reply'); });
-  f.authority.dispatch(prepared.capability, read, () => {}); verifyRead(f, read);
-  assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'allow');
-});
-
-for (const boundary of ['turn', 'broker', 'session', 'lease'])
-  test('document uncertainty survives changed ' + boundary + ' until a fresh read', () => {
-    let f = fixture(), submit = submitOperation('submit');
-    dispatch(f, submit, () => { throw Error('lost submit reply'); });
-    const next = { ...submit.scope, [boundary]: ['broker', 'lease'].includes(boundary) ? 2 : 'next' };
-    if (boundary === 'broker') f = fixture({ recovery: f.authority.recovery() });
-    const retry = { ...submitOperation('retry'), scope: next }; f.current(retry);
-    assert.equal(f.authority.prepare(retry).verdict, 'deny');
-    const read = { ...readOperation('fresh-read'), scope: next }; dispatch(f, read); verifyRead(f, read);
-    f.current(retry); assert.equal(f.authority.prepare(retry).verdict, 'allow');
+for (const kind of ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds', 'focus', 'activate', 'fullscreen'])
+  test(`foreground command ${kind} is refused`, () => {
+    const f = fixture(); assert.equal(rules.check(f.ctx, kind, f.target()).verdict, 'refuse');
   });
-
-test('a read between two dispatched submits cannot clear the later uncertainty', () => {
-  const f = fixture(), first = submitOperation('first'), second = submitOperation('second'), old = readOperation('between');
-  dispatch(f, first); dispatch(f, old); dispatch(f, second);
-  f.authority.timeout(second.id); f.authority.timeout(first.id); verifyRead(f, old);
-  assert.equal(f.authority.prepare(submitOperation('too-early')).verdict, 'deny');
-  const fresh = readOperation('fresh'); dispatch(f, fresh); verifyRead(f, fresh);
-  assert.equal(f.authority.prepare(submitOperation('after-both')).verdict, 'allow');
-});
-
-test('recovery preserves a verified fresh read without reviving its cleared uncertainty', () => {
-  const f = fixture(); dispatch(f, submitOperation('submit'), () => { throw Error('lost reply'); });
-  const read = readOperation('fresh'); dispatch(f, read); verifyRead(f, read);
-  const recovered = fixture({ recovery: f.authority.recovery() });
-  assert.equal(recovered.authority.prepare(submitOperation('retry')).verdict, 'allow');
-});
-
-test('a fresh read cannot clear uncertainty for another document or browser incarnation', () => {
-  for (const key of ['browser', 'target', 'frame', 'document', 'origin']) {
-    const f = fixture(), submit = submitOperation('submit'); dispatch(f, submit, () => { throw Error('lost reply'); });
-    const read = readOperation('foreign'); read.scope = { ...read.scope, [key]: key === 'origin' ? 'https://other.invalid' : 'other' };
-    dispatch(f, read); verifyRead(f, read); f.current(submit);
-    assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny', key);
-  }
-});
-
-test('late physical cleanup cannot make an earlier semantic read fresh', () => {
-  const f = fixture(), read = readOperation('old-read'), submit = submitOperation('submit'), plan = { target: 'target' };
-  const ctx = { session: 'client', turn: 'turn', browserIncarnation: 'browser', brokerEpoch: 1 };
-  const transport = createTransportAuthority({ authority: f.authority,
-    resolveOperation: (plan, ctx, command) => command.method === 'Input.dispatchMouseEvent' ? submit : read });
-  transport(plan, ctx, { method: 'Accessibility.getPartialAXTree' }, () => ({}));
-  assert.throws(() => transport(plan, ctx, { method: 'Input.dispatchMouseEvent' }, () => { throw Error('lost reply'); }));
-  transport(plan, ctx, { method: 'Runtime.releaseObject' }, () => ({}));
-  completeTransport(transport, plan, 'verified');
-  assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny');
-});
-
-function retained(id, kind, phase, sequence) {
-  const op = kind === 'read' ? readOperation(id) : submitOperation(id);
-  return { ...op, phase, ...(sequence === undefined ? {} : { sequence }) };
-}
-
-for (const sequence of [undefined, 0]) for (const reversed of [false, true])
-  test('unordered recovery survives retained reads and another recovery, sequence=' + sequence + ', reversed=' + reversed, () => {
-    const receipts = [retained('legacy-submit', 'click', 'unknown', sequence),
-      retained('ordered-submit', 'click', 'unknown', 8), retained('retained-read', 'read', 'verified', 10)];
-    if (reversed) receipts.reverse();
-    let f = fixture({ recovery: receipts });
-    assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny');
-    assert.equal(f.authority.receipt('legacy-submit').needsNewRead, true);
-    const journal = f.authority.recovery();
-    journal.push(retained('another-retained-read', 'read', 'verified', 20));
-    f = fixture({ recovery: journal.reverse() });
-    assert.equal(f.authority.prepare(submitOperation('retry-again')).verdict, 'deny');
-    const fresh = readOperation('new-authority-read'); dispatch(f, fresh); verifyRead(f, fresh);
-    assert.equal(f.authority.prepare(submitOperation('after-new-read')).verdict, 'allow');
-    assert.equal(f.authority.receipt('legacy-submit').needsNewRead, false);
-    assert.equal(f.authority.receipt('legacy-submit').phase, 'unknown', 'retry readiness cannot prove the submit effect');
-    const resolved = fixture({ recovery: JSON.parse(JSON.stringify(f.authority.recovery().reverse())) });
-    assert.equal(resolved.authority.prepare(submitOperation('after-second-recovery')).verdict, 'allow');
-  });
-
-test('unordered submit resolution does not erase a later ordered uncertainty on second recovery', () => {
-  const f = fixture({ recovery: [retained('legacy', 'click', 'unknown'), retained('old-read', 'read', 'verified', 10)] });
-  const read = readOperation('fresh'); dispatch(f, read); verifyRead(f, read);
-  dispatch(f, submitOperation('later-submit'), () => { throw Error('lost later reply'); });
-  const recovered = fixture({ recovery: f.authority.recovery().reverse() });
-  assert.equal(recovered.authority.prepare(submitOperation('too-early')).verdict, 'deny');
-  const newer = readOperation('newer'); dispatch(recovered, newer); verifyRead(recovered, newer);
-  assert.equal(recovered.authority.prepare(submitOperation('after-newer')).verdict, 'allow');
-});
-
-test('unordered uncertainty survives failed and foreign new reads, including recovered reads without sequence', () => {
-  const f = fixture({ recovery: [retained('legacy', 'click', 'unknown', 0), retained('unordered-read', 'read', 'verified')] });
-  const failed = readOperation('failed'); dispatch(f, failed, () => { throw Error('read failed'); });
-  assert.equal(f.authority.prepare(submitOperation('after-failed')).verdict, 'deny');
-  const foreign = readOperation('foreign'); foreign.scope = { ...foreign.scope, frame: 'other' };
-  dispatch(f, foreign); verifyRead(f, foreign); f.current(submitOperation('target'));
-  assert.equal(f.authority.prepare(submitOperation('after-foreign')).verdict, 'deny');
-  const unresolved = fixture({ recovery: f.authority.recovery().reverse() });
-  assert.equal(unresolved.authority.prepare(submitOperation('after-recovery')).verdict, 'deny');
-  const fresh = readOperation('fresh'); dispatch(unresolved, fresh); verifyRead(unresolved, fresh);
-  assert.equal(unresolved.authority.prepare(submitOperation('after-fresh')).verdict, 'allow');
+test('new targets must explicitly open in the background', () => {
+  const f = fixture();
+  for (const background of [undefined, false]) assert.equal(rules.check(f.ctx, 'Target.createTarget', { background }).verdict, 'refuse');
+  assert.equal(rules.check(f.ctx, 'Target.createTarget', { background: true }).verdict, 'allow');
 });

@@ -46,3 +46,10 @@ The v3 `lib/direct-browser/snapshot.mjs` is independently authored sleight code.
 Its compact snapshot and closed-root discovery design was informed by FowlBrowser
 8b689249ba4e33d2626487aad930605c62e2c6a7 (MIT). It uses the unchanged bundled
 Playwright API and carries the design credit in its source header.
+
+## Turbo v3 background popups
+
+`lib/direct-browser/page.mjs` uses the background disposition and hidden modifier ideas
+studied in FowlBrowser's `mcp/src/popups.mjs`, at
+`8b689249ba4e33d2626487aad930605c62e2c6a7` (MIT, copyright FowlBrowser contributors).
+The sleight authors wrote this code from the design study.
