@@ -17,6 +17,15 @@ async function fixture(t, options = {}) {
   const command = async (file, args, opts) => {
     calls.push({ file, args, opts });
     if (file === '/usr/bin/git') {
+      const phase = args.includes('--git-common-dir') ? 'common' : args.includes('rev-parse') ? 'resolve'
+        : args.includes('merge-base') ? 'reachability' : args.includes('add') ? 'checkout' : 'remove';
+      if (options.gitFault === phase && !calls.some(c => c.fault)) {
+        calls.at(-1).fault = true;
+        throw Object.assign(Error('synthetic owned Git group collection unconfirmed'), { cleanupUnconfirmed: true, groupPid: 12345 });
+      }
+      if (args.includes('merge-base') && options.remoteUnreachable && args.at(-1).startsWith('refs/remotes/')) {
+        return { exitCode: 1, stdout: '', stderr: 'remote ref not reachable' };
+      }
       if (args.includes('--git-common-dir')) return { exitCode: 0, stdout: join(root, 'repository', '.git') + '\n', stderr: '' };
       if (args.includes('rev-parse')) return { exitCode: 0, stdout: (options.wrongCommit ? 'b'.repeat(40) : commit) + '\n', stderr: '' };
       if (args.includes('merge-base') && options.wrongBranch) return { exitCode: 1, stdout: '', stderr: 'not reachable' };
@@ -147,6 +156,37 @@ test('unconfirmed checkout cleanup keeps the runner lock and stops the queue', a
   assert.ok(result.exitCode !== 0);
   await assert.rejects(f.runner.poll(), /cleanup/i);
   await assert.rejects(f.runner.close(), /cleanup/i);
+});
+
+for (const phase of ['resolve', 'reachability', 'checkout', 'common', 'remove'])
+  test('unproved Git group collection stops the queue at ' + phase, async t => {
+    const f = await fixture(t, { gitFault: phase });
+    await f.runner.initialize();
+    await writeFile(join(f.folder, 'requests', 'fault.json'), JSON.stringify(request));
+    const result = await f.runner.poll();
+    assert.equal(result.exitCode, 1); assert.equal(result.groupCollected, false); assert.equal(result.cleanedUp, false);
+    assert.equal(result.groupPid, 12345);
+    const fault = f.calls.findIndex(c => c.fault);
+    assert.equal(f.calls.length, fault + 1, 'nothing runs after collection is unproved');
+    const hasBank = ['checkout', 'common', 'remove'].includes(phase);
+    assert.equal(typeof result.worktree === 'string', hasBank);
+    assert.equal(typeof result.bank === 'string', hasBank);
+    assert.equal((await readdir(f.root)).some(name => name.startsWith('sleight-live-dom-')), hasBank);
+    assert.deepEqual(JSON.parse(await readFile(join(f.folder, 'results', 'fault.json'))), result);
+    await access(join(f.folder, '.runner-lock'));
+    await assert.rejects(f.runner.poll(), /cleanup/); await assert.rejects(f.runner.close(), /cleanup/);
+    assert.equal(f.calls.length, fault + 1, 'poll and close cannot start another owned command');
+  });
+
+test('an ordinary unreachable remote ref falls back to the reachable local branch', async t => {
+  const f = await fixture(t, { remoteUnreachable: true });
+  await f.runner.initialize();
+  await writeFile(join(f.folder, 'requests', 'local.json'), JSON.stringify(request));
+  const result = await f.runner.poll();
+  assert.equal(result.exitCode, 0); assert.equal(result.cleanedUp, true); assert.equal(result.groupCollected, true);
+  assert.deepEqual(f.calls.filter(c => c.args.includes('merge-base')).map(c => c.args.at(-1)),
+    ['refs/remotes/private/codex/forms', 'refs/heads/codex/forms']);
+  await f.runner.close();
 });
 
 for (const [name, options, message] of [

@@ -168,6 +168,13 @@ export function createRunner({
   const execute = async id => {
     let request, bank, worktree, attemptedCheckout = false;
     const result = { id, exitCode: 1, summary: {}, skipReasons: [], lastLines: [], timedOut: false, cleanedUp: true };
+    const retainOwnership = error => {
+      result.exitCode = 1; result.groupCollected = false; result.cleanedUp = false; broken = true;
+      result.cleanupError = scrub(error.message);
+      if (Number.isSafeInteger(error.groupPid)) result.groupPid = error.groupPid;
+      if (worktree) result.worktree = scrub(worktree);
+      if (bank) result.bank = scrub(bank);
+    };
     try {
       request = await readRequest(join(requests, `${id}.json`));
       Object.assign(result, request);
@@ -176,7 +183,7 @@ export function createRunner({
       let reachable = false;
       for (const ref of [`refs/remotes/private/${request.branch}`, `refs/heads/${request.branch}`]) {
         try { await git(['merge-base', '--is-ancestor', request.commit, ref], controller.signal); reachable = true; break; }
-        catch (error) { if (controller.signal.aborted) throw error; }
+        catch (error) { if (error.cleanupUnconfirmed || controller.signal.aborted) throw error; }
       }
       if (!reachable) throw new Error('commit is not on the requested branch; owner must fetch private first');
       bank = await mkdtemp(join(temporaryRoot, 'sleight-live-dom-'));
@@ -209,18 +216,13 @@ export function createRunner({
       Object.assign(result, tapReport(scrub(`${run.stdout}\n${run.stderr}`)));
     } catch (error) {
       result.error = scrub(error.message);
-      if (error.cleanupUnconfirmed) {
-        result.groupCollected = false; result.cleanedUp = false; broken = true;
-        result.cleanupError = result.error;
-        if (Number.isSafeInteger(error.groupPid)) result.groupPid = error.groupPid;
-        if (worktree) result.worktree = scrub(worktree);
-        if (bank) result.bank = scrub(bank);
-      }
+      if (error.cleanupUnconfirmed) retainOwnership(error);
     }
     finally {
       if (attemptedCheckout && result.cleanedUp) {
         try { await git(['worktree', 'remove', '--force', worktree]); }
         catch (error) {
+          if (error.cleanupUnconfirmed) retainOwnership(error);
           result.cleanedUp = false; result.cleanupError = scrub(error.message);
           result.worktree = scrub(worktree); result.exitCode = 1; broken = true;
         }
