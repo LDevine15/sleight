@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
+import { getEventListeners } from 'node:events';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // Dynamic imports keep each missing-feature assertion independent on the old tree.
@@ -727,4 +728,34 @@ test('a failed baseline snapshot never closes an existing app or adopts its wind
   assert.equal(result.terminations, 0);
   assert.equal(result.confirmed, false);
   assert.equal(result.now, 0);
+});
+
+for (const lateConfirmed of [false, true]) test(`a safety abort during startup-error recovery stays unconfirmed with cleanup receipt ${lateConfirmed}`, async t => {
+  const { startHost } = await load('runtime'), dir = bank(t), safety = new AbortController();
+  const response = Promise.withResolvers(); let receive, hostSignal, afterAbort;
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/osascript') {
+      receive = options.onStdout; hostSignal = options.signal;
+      receive('{"stage":"armed","wasRunning":false}\n');
+      return response.promise;
+    }
+    assert.equal(executable, '/usr/bin/open');
+    receive('{"stage":"error","error":{"message":"WINDOWS_READ_FAILED","stage":"retain","axStatus":-25204,"windowCount":null}}\n');
+    setImmediate(() => {
+      safety.abort();
+      afterAbort = { command: JSON.parse(readFileSync(join(dir, 'host-control.json'), 'utf8')).command,
+        hostAborted: hostSignal.aborted };
+      receive(JSON.stringify({ stage: 'cleanup', confirmed: lateConfirmed, details: { reasons: [], windows: [] } }) + '\n');
+      response.resolve({ exit: { code: 0 }, groupClean: true });
+    });
+    return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+  };
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: fixturePath }, safety.signal, runProcess), error => {
+    assert.equal(error.message, 'WINDOWS_READ_FAILED');
+    assert.equal(error.hostCleanup.details.startError.axStatus, -25204);
+    assert.equal(error.hostCleanup.confirmed, false);
+    return true;
+  });
+  assert.deepEqual(afterAbort, { command: 'abort', hostAborted: true });
+  assert.equal(getEventListeners(safety.signal, 'abort').length, 0);
 });

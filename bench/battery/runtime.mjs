@@ -98,20 +98,25 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
     await wait('ready');
     return { finish, abort: () => command('abort') };
   } catch (error) {
-    let cleanupTimer;
+    let cleanupTimer, recoveryAborted = signal.aborted;
+    const abortRecovery = () => { recoveryAborted = true; command('abort'); hostController.abort(); };
     if (preflightRefused || signal.aborted) { command('abort'); hostController.abort(); }
     else {
-      command('finish');
-      // Let the native host close the fixture before collecting it, even after readiness failed.
-      cleanupTimer = setTimeout(() => hostController.abort(), 65000);
+      signal.addEventListener('abort', abortRecovery, { once: true });
+      if (signal.aborted) abortRecovery();
+      else {
+        command('finish');
+        // Let the native host close the fixture before collecting it, even after readiness failed.
+        cleanupTimer = setTimeout(() => hostController.abort(), 65000);
+      }
     }
     let result;
     try { result = await response.catch(() => null); }
-    finally { clearTimeout(cleanupTimer); }
+    finally { clearTimeout(cleanupTimer); signal.removeEventListener('abort', abortRecovery); }
     if (!stages.has('cleanup')) details = { reasons: ['HOST_NOT_STARTED'], windows: [] };
     details.startError = scrub(error.hostStart ?? { message: String(error.message || error).slice(0, 500), stage: startStage, windowCount });
     if (!result?.groupClean || result.exit.code !== 0) details.reasons.push('HOST_PROCESS_UNCONFIRMED');
-    error.hostCleanup = { confirmed: (confirmed || preflightRefused) && result?.groupClean === true && result.exit.code === 0, details, samples };
+    error.hostCleanup = { confirmed: !recoveryAborted && (confirmed || preflightRefused) && result?.groupClean === true && result.exit.code === 0, details, samples };
     throw error;
   }
 }
