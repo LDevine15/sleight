@@ -68,12 +68,10 @@ Next steps, in order:
    passed (4572). P1I2's review
    needs a lane, and P1I2R (codex-hdlbw) closes as satisfied by that commit. Then P2 and P3 resume on it, and BP2-P1B follows.
    AM1 is parked until after 1.3.0.
-   In parallel (owner, 01:40 UTC): TP1 built a prototype turbo arm, scoped by sleight-arch to the gate's nine local tasks for both
-   arms (mobile, takeover, Wikipedia and MDN excluded, because the four tools have no viewport, takeover or open-web search). Its real-page test never ran in the lane's
-   sandbox. On the Mac, Chromium refused the launch flag (fixed, `7c640f77`), and a submit click returns EFFECT_UNKNOWN without
-   dispatching, which TP1R fixed. The first Haiku round (02:22 UTC) scored 1/9. Every read on the demo pages comes back
-   incomplete, which makes the arm refuse every fill, and its first read omits the page. TP1R2 (codex-hdlbz) fixes the arm. sleight-arch stopped
-   the FowlBrowser round when the owner, at the Mac, saw headed browsers switching Spaces. Rounds run only while the owner is away.
+   The prototype (TP1) ran its last round, 4/9, and stops (ROADMAP). In the four non-form tasks that passed, it took 53 s against
+   FowlBrowser's 63 s and the engine path's 103 s from 2026-10-13. All four forms failed in fill validation, so turbo's accuracy is
+   unmeasured (docs/benchmarks/2026-10-14-turbo-prototype.md). Production inherits its bugs. BP2-9's `browser_act` schema has a top-level
+   `oneOf`, which Claude Code drops (in P3's notes), and the shared form modules refuse ordinary demo forms (in P2's notes). Rounds run headless, or only while the owner is away.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
