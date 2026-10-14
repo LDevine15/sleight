@@ -311,3 +311,68 @@ test('deep continuation context always leaves space to advance to the next row',
     result = await module.snapshot(page, { ref, maxChars: 1000 });
   }
 });
+
+test('V3R: an oversized child advances past retained ancestor context', async () => {
+  const {page}=fixture([{role:'main',ref:'e1',children:[{role:'paragraph',ref:'e2',text:'x'.repeat(1000)},{role:'button',ref:'e3',name:'End'}]}]);
+  let result=await module.snapshot(page,{maxChars:1000});
+  for(let n=0; !result.text.includes('"End"');n++) {
+    assert.ok(n<5,'ancestor rows must not stall continuation');
+    const ref=/Continue with ref="([^"]+)"/.exec(result.text)?.[1]; assert.ok(ref);
+    result=await module.snapshot(page,{ref,maxChars:1000});
+  }
+});
+
+for (const raw of [' alpha  beta ', ' alpha\u200B  be\u00ADta ', '\talpha\n\nbeta\t'])
+  test('V3R: normalized native password never reaches a snapshot', async () => {
+    const {page}=fixture([{role:'textbox',name:'PIN',ref:'e1',text:'alpha beta'},{role:'text',text:'echo alpha beta'}],[raw]);
+    const result=await module.snapshot(page); assert.doesNotMatch(result.text,/alpha beta/); assert.match(result.text,/redacted/);
+  });
+
+test('V3R: native password type masks a neutral named textbox even with blank or overridden text', async () => {
+  const {page}=fixture([{role:'textbox',name:'PIN',ref:'e1',text:'page-decoy'}],['']);
+  const context=page.context();
+  page.context=()=>({newCDPSession:async frame=>{const session=await context.newCDPSession(frame),send=session.send;
+    session.send=(method,params)=> {if(method!=='DOMSnapshot.captureSnapshot')return send(method,params);
+      const data=nativeSnapshot(['']);data.strings.push('aria-label','PIN');data.documents[0].nodes.attributes[1].push(9,10);return data;};return session;}});
+  const result=await module.snapshot(page);assert.doesNotMatch(result.text,/page-decoy/);assert.match(result.text,/redacted/);
+});
+
+test('V3R: overlapping native secrets redact longest first and deduplicate', async () => {
+  const {page}=fixture([{role:'text',text:'hunter2xyz and hunter2'}],['hunter2','hunter2xyz','hunter2']);
+  const result=await module.snapshot(page);assert.doesNotMatch(result.text,/xyz|hunter2/);
+});
+
+for(const name of ['Discard changes?','Scorecard','Postcard']) test('V3R: a nonscalar sensitive-looking name keeps its subtree: '+name,async()=>{
+  const {page}=fixture([{role:'dialog',name,ref:'e1',children:[{role:'button',name:'Keep editing',ref:'e2'},{role:'button',name:'Discard',ref:'e3'}]}]);
+  const result=await module.snapshot(page);assert.match(result.text,/Keep editing/);assert.match(result.text,/Discard/);
+});
+
+test('V3R: navigation cannot retarget a delivered ref, even after the next snapshot',async()=>{
+  assert.equal(typeof module.snapshotRefBinding,'function');assert.equal(typeof module.acknowledgeSnapshot,'function');
+  const {page,set}=fixture([{role:'button',ref:'e2',name:'Buy'}]);page.locator=selector=>({selector});
+  const first=await module.snapshot(page);
+  assert.equal(typeof page.getByRef,'function','the snapshot installs the action-path resolver');
+  assert.throws(()=>page.getByRef('e2'),/delivered|read/i);
+  module.acknowledgeSnapshot(page,first.number);
+  assert.equal(module.snapshotRefBinding(page,'e2').selector,'aria-ref=e2');
+  page.emit('framenavigated',page.mainFrame());set([{role:'button',ref:'e2',name:'Delete account'}]);
+  assert.throws(()=>module.snapshotRefBinding(page,'e2'),/snapshot|read/i);
+  assert.throws(()=>page.getByRef('e2'),/snapshot|read/i);
+  const second=await module.snapshot(page);const ref=/\[ref=([^\]]+)\]/.exec(second.text)[1];assert.notEqual(ref,'e2');
+  assert.throws(()=>module.snapshotRefBinding(page,ref),/delivered|snapshot|read/i);
+  assert.equal(module.acknowledgeSnapshot(page,first.number),false);
+  assert.equal(module.acknowledgeSnapshot(page,second.number),true);
+  assert.equal(module.snapshotRefBinding(page,ref).selector,'aria-ref=e2');
+  assert.throws(()=>module.snapshotRefBinding(page,'e2'),/snapshot|read/i);
+});
+
+test('V3R: adapted closed-root code ships the pinned full MIT license', async()=>{
+  const {readFileSync}=await import('node:fs'); const {createHash}=await import('node:crypto');
+  const source=readFileSync(new URL('../plugins/sleight/lib/direct-browser/snapshot.mjs',import.meta.url),'utf8');
+  assert.match(source,/adapted from\s*\/\/ FowlBrowser mcp\/src\/closedShadow\.mjs/);
+  const notice=readFileSync(new URL('../plugins/sleight/THIRD-PARTY-NOTICES.md',import.meta.url),'utf8');
+  assert.match(notice,/Copyright \(c\) 2026 Fowl Labs/);
+  const license=/## Turbo v3 snapshot adaptation[\s\S]*?```text\n([\s\S]*?)```/.exec(notice)?.[1];
+  assert.ok(license,'the complete pinned license is required');
+  assert.equal(createHash('sha256').update(license).digest('hex'),'e384db36e8cc3024ce7e44168e7c345aa6cf58a95f30a7cef729a259363ce667');
+});

@@ -42,14 +42,40 @@ The new form and user-file providers are original sleight code. They call the
 unchanged pinned Playwright module through the host's closed node interface.
 No additional dependency or native binary is distributed by this semantic join.
 
-The v3 `lib/direct-browser/snapshot.mjs` is independently authored sleight code.
-Its compact snapshot and closed-root discovery design was informed by FowlBrowser
-8b689249ba4e33d2626487aad930605c62e2c6a7 (MIT). It uses the unchanged bundled
-Playwright API and carries the design credit in its source header.
-
 ## Turbo v3 background popups
 
 `lib/direct-browser/page.mjs` uses the background disposition and hidden modifier ideas
 studied in FowlBrowser's `mcp/src/popups.mjs`, at
 `8b689249ba4e33d2626487aad930605c62e2c6a7` (MIT, copyright FowlBrowser contributors).
 The sleight authors wrote this code from the design study.
+
+## Turbo v3 snapshot adaptation
+
+`lib/direct-browser/snapshot.mjs` adapts closed-root discovery from FowlBrowser
+`mcp/src/closedShadow.mjs`, pinned at
+`8b689249ba4e33d2626487aad930605c62e2c6a7`. Sleight changed the frame sessions,
+native redaction, acquisition bounds and ref delivery checks.
+
+```text
+MIT License
+
+Copyright (c) 2026 Fowl Labs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

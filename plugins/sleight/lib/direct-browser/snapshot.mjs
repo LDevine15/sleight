@@ -1,10 +1,14 @@
-// Original implementation. Compact snapshots and CDP closed-root discovery were
-// informed by FowlBrowser (MIT), 8b689249ba4e33d2626487aad930605c62e2c6a7.
+// Compact snapshot code by sleight. Closed-root discovery adapted from
+// FowlBrowser mcp/src/closedShadow.mjs (MIT), Copyright (c) 2026 Fowl Labs,
+// 8b689249ba4e33d2626487aad930605c62e2c6a7. Changed for owned frame sessions,
+// native redaction, bounded acquisition and delivered-ref resolution.
 const pages = new WeakMap();
 const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const MORE = /^more\d+_\d+$/;
 const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|expiry|expiration|cvv|cvc|security.?code/i;
 const TIMEOUT = 3000;
+const scalarRole = role => /^(textbox|searchbox|combobox)$/.test(role);
+const normalized = value => String(value ?? '').replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
 const CONTROL_ROLE = /^(textbox|searchbox|button|link|checkbox|radio|combobox|menuitem|tab|switch|slider|option)$/;
 
 async function bounded(action) {
@@ -20,10 +24,22 @@ function stateOf(page) {
   let state = pages.get(page);
   if (!state) {
     state = { number: 0, generation: 0, busy: false, history: new Map(), continuations: new Map(),
-      closed: new Map(), shadowNumber: 0, deliveredClosed: new Set() };
+      closed: new Map(), shadowNumber: 0, deliveredClosed: new Set(), rawRefs: new Map(), usedRefs: new Set(),
+      refBank: new Map(), deliveredRefs: new Set(), pending: new Map(), nextRef: 0 };
     pages.set(page, state);
+    if (typeof page.locator === 'function') {
+      const closedResolver = typeof page.getByRef === 'function' ? page.getByRef.bind(page) : undefined;
+      Object.defineProperty(page, 'getByRef', { configurable: true, value(ref) {
+        if (/^s\d+$/.test(ref)) {
+          closedRefBinding(page, ref);
+          if (!closedResolver) throw Error('Closed-root action provider is unavailable; use the engine browser path.');
+          return closedResolver(ref);
+        }
+        return snapshotRefBinding(page, ref);
+      } });
+    }
     page.on('framenavigated', () => {
-      state.generation++; state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
+      state.generation++; state.rawRefs.clear(); state.deliveredRefs.clear(); state.pending.clear(); state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
     });
   }
   return state;
@@ -31,7 +47,7 @@ function stateOf(page) {
 
 // Native CDP values and attributes cannot be hidden by MAIN-world getters.
 function sensitiveValues({ strings, documents }) {
-  const values = [];
+  const values = []; values.names = new Set(); values.unnamed = false;
   for (const { nodes } of documents) {
     const count = nodes.nodeName.length;
     if (count > 50000) throw Error('DOM acquisition budget exceeded');
@@ -52,18 +68,30 @@ function sensitiveValues({ strings, documents }) {
     }
     for (const [index, text] of labels) if (attrs(index).for) labelFor.set(attrs(index).for, text);
     const shadows = new Map((nodes.shadowRootType?.index ?? []).map((index, i) => [index, strings[nodes.shadowRootType.value[i]]]));
+    const protectedNodes = new Set();
+    for (let index = 0; index < count; index++) {
+      const attributes = attrs(index), hints = [attributes.type, attributes.name, attributes.id, attributes.autocomplete,
+        attributes['aria-label'], attributes['aria-labelledby'], attributes.placeholder, labelFor.get(attributes.id)];
+      let closed = false, parent = index;
+      const ownLabels = [];
+      while (parent >= 0) {
+        closed ||= shadows.get(parent) === 'closed';
+        if (labels.has(parent)) { hints.push(labels.get(parent)); ownLabels.push(labels.get(parent)); }
+        parent = nodes.parentIndex[parent];
+      }
+      if (closed || SENSITIVE.test(hints.join(' '))) protectedNodes.add(index);
+      if (strings[nodes.nodeName[index]] !== 'INPUT' && strings[nodes.nodeName[index]] !== 'TEXTAREA') continue;
+      if (!protectedNodes.has(index)) continue;
+      // Native attributes/label text mark password fields even with neutral
+      // accessible names and blank values. Ambiguous unnamed fields mask scalars.
+      const names = [attributes['aria-label'], labelFor.get(attributes.id), ...ownLabels, attributes.placeholder].map(normalized).filter(Boolean);
+      for (const name of names) values.names.add(name);
+      if (!names.length) values.unnamed = true;
+    }
     for (const column of [nodes.inputValue, nodes.textValue]) {
       for (const [i, index] of (column?.index ?? []).entries()) {
-        const attributes = attrs(index), hints = [attributes.type, attributes.name, attributes.id, attributes.autocomplete,
-          attributes['aria-label'], attributes['aria-labelledby'], attributes.placeholder, labelFor.get(attributes.id)];
-        let closed = false, parent = index;
-        while (parent >= 0) {
-          closed ||= shadows.get(parent) === 'closed';
-          if (labels.has(parent)) hints.push(labels.get(parent));
-          parent = nodes.parentIndex[parent];
-        }
         const value = strings[column.value[i]];
-        if (value && (closed || SENSITIVE.test(hints.join(' ')))) values.push(value);
+        if (value && protectedNodes.has(index)) values.push(value);
       }
     }
   }
@@ -72,7 +100,8 @@ function sensitiveValues({ strings, documents }) {
 
 function scrub(value, secrets) {
   let text = String(value ?? '');
-  for (const secret of secrets) if (secret) text = text.split(secret).join('[redacted]');
+  const forms = [...new Set(secrets.flatMap(secret => [secret, normalized(secret)]).filter(Boolean))].sort((a, b) => b.length - a.length);
+  for (const secret of forms) text = text.split(secret).join('[redacted]');
   return text.replace(/(?:\d[ -]?){12,19}/g, '[redacted]');
 }
 
@@ -92,17 +121,20 @@ async function* sessionsOf(page) {
 }
 
 async function nativeSecrets(page) {
-  const secrets = [];
+  const secrets = []; secrets.names = new Set(); secrets.unnamed = false;
   for await (const { send } of sessionsOf(page)) {
-    secrets.push(...sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] })));
+    const native = sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] }));
+    secrets.push(...native); for (const name of native.names) secrets.names.add(name); secrets.unnamed ||= native.unnamed;
   }
   return secrets;
 }
 
 async function closedRoots(page, state) {
   const sections = [], secrets = [], observed = new Set();
+  secrets.names = new Set(); secrets.unnamed = false;
   for await (const { frame, send } of sessionsOf(page)) {
-    secrets.push(...sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] })));
+    const native = sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] }));
+    secrets.push(...native); for (const name of native.names) secrets.names.add(name); secrets.unnamed ||= native.unnamed;
     const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
     const hosts = [], inside = new Set(), candidates = new Set();
     let count = 0;
@@ -177,6 +209,43 @@ export function closedRefBinding(page, ref) {
   throw Error('Closed-root ref is stale or unavailable; take a new snapshot.');
 }
 
+// Public refs remain distinct across document generations. Playwright may reuse
+// eN after navigation; the private map retains its actual aria-ref for resolution.
+function publicRefs(nodes, state) {
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    const raw = node.ref;
+    if (REF.test(raw) && !/^s\d+$/.test(raw)) {
+      let ref = state.rawRefs.get(raw);
+      if (!ref) {
+        ref = raw;
+        const match = /e(\d+)$/.exec(raw); state.nextRef = Math.max(state.nextRef, Number(match[1]));
+        while (state.usedRefs.has(ref)) ref = 'e' + (++state.nextRef);
+        state.usedRefs.add(ref); state.rawRefs.set(raw, ref);
+        state.refBank.set(ref, { raw, generation: state.generation });
+      }
+      node.ref = ref;
+    }
+    if (node.children) publicRefs(node.children, state);
+  }
+}
+
+// The worker calls this only after the exact snapshot text reaches the client.
+// A private read or an observation suppressed by observe:none does not qualify.
+export function acknowledgeSnapshot(page, number) {
+  const state = pages.get(page), record = state?.pending.get(number);
+  if (!record || record.generation !== state.generation) return false;
+  state.pending.delete(number);
+  for (const ref of record.refs) if (!/^s\d+$/.test(ref)) state.deliveredRefs.add(ref);
+  return true;
+}
+export function snapshotRefBinding(page, ref) {
+  const state = pages.get(page), record = state?.refBank.get(ref);
+  if (!record || record.generation !== state.generation || !state.deliveredRefs.has(ref))
+    throw Error('Ref is stale or its snapshot was not delivered; use browser_read again.');
+  return page.locator('aria-ref=' + record.raw);
+}
+
 function rowsOf(tree, secrets) {
   const rows = [];
   const visit = (nodes, parent = null, depth = 0) => {
@@ -185,7 +254,8 @@ function rowsOf(tree, secrets) {
       const node = typeof raw === 'string' ? { role: 'text', text: raw } : raw;
       const ref = REF.test(node.ref) ? node.ref : null;
       const role = /^[a-zA-Z][\w-]*$/.test(node.role) ? node.role : 'group';
-      const protectedValue = node.protected === true || SENSITIVE.test([node.name, node.placeholder].join(' '));
+      const protectedValue = scalarRole(role) && (node.protected === true || secrets.unnamed ||
+        secrets.names?.has(normalized(node.name)) || SENSITIVE.test([node.name, node.placeholder].join(' ')));
       let line = '- ' + role;
       if (node.name) line += ' ' + JSON.stringify(scrub(node.name, secrets));
       for (const flag of ['checked', 'disabled', 'expanded', 'active', 'pressed', 'selected', 'invalid', 'level']) {
@@ -264,7 +334,7 @@ function cap(rows, offset, header, maxChars, continuation) {
     let line = prefix + row.line, shortened = false;
     const available = maxChars - size - footer.length - 2;
     if (line.length > available) {
-      if (delivered.length) break;
+      if (next > offset) break;
       // Keep valid YAML and any usable ref, rather than slicing a quoted name.
       const role = /^- ([\w-]+)/.exec(row.line)?.[1] ?? 'text';
       line = prefix + `- ${role}${row.ref ? ' [ref=' + row.ref + ']' : ''}: `
@@ -294,6 +364,8 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
     const tree = await bounded(() => page.ariaSnapshotJSON({ mode: 'ai', timeout: TIMEOUT }));
     const closed = await closedRoots(page, state);
     secrets.push(...closed.secrets);
+    for (const name of closed.secrets.names) secrets.names.add(name); secrets.unnamed ||= closed.secrets.unnamed;
+    publicRefs(tree, state);
     const rows = rowsOf([...tree, ...closed.sections], secrets);
     if (generation !== state.generation || url !== page.url()) throw Error('Page changed; try browser_read again.');
     const continuation = MORE.test(ref) ? state.continuations.get(ref) : null;
@@ -315,11 +387,12 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
       if (/^s\d+$/.test(row.ref)) state.deliveredClosed.add(row.ref);
     }
     const history = { scope, rows: [...delivered.values()] };
+    state.pending.set(number, { generation, refs: result.delivered.filter(row => row.ref && !row.removed).map(row => row.ref) });
     state.history.set(number, history);
     if (result.next < candidates.length) state.continuations.set(token, { source: JSON.stringify(rows), scope, selected,
       candidates, baseline: history, delta, since: continuation?.since ?? since, offset: result.next });
     if (continuation) state.continuations.delete(ref);
-    for (const map of [state.history, state.continuations]) while (map.size > 8) map.delete(map.keys().next().value);
+    for (const map of [state.history, state.continuations, state.pending]) while (map.size > 8) map.delete(map.keys().next().value);
     return { text: result.text, number };
   } catch {
     state.deliveredClosed.clear();

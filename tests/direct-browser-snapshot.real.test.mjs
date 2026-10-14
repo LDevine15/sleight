@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from '../plugins/sleight/vendor/playwright-core/index.mjs';
-import { snapshot, closedRefBinding } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
+import { snapshot, closedRefBinding, acknowledgeSnapshot, snapshotRefBinding } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
 import { createFormsFixtureHandler } from './fixtures/direct-browser-forms-fixture.mjs';
 
 const live = process.env.SLEIGHT_LIVE_DOM_TEST === '1';
@@ -175,4 +175,39 @@ for (const route of ['travel', 'settings', 'checkout']) test(`real ${route} fixt
   console.log('V3 ' + route + ' fixture census ' + JSON.stringify(chars));
   assert.ok(first.text.length <= 8000 && action.text.length <= 8000 && found.text.length <= 8000);
   assert.ok(chars.total <= 15000, 'fixture open + action diff + find target is 15K');
+});
+
+
+for (const value of [' alpha  beta ', ' alpha\u200B  be\u00ADta ', '\talpha\n\nbeta\t'])
+  test('V3R real normalized password with neutral name is masked', {skip}, async t=>{
+    const page=await fixture(t,'<main><label>PIN<input type="password"></label><p id="echo"></p><input aria-label="City" value="Portland"></main>');
+    await page.locator('input[type=password]').fill(value);
+    await page.locator('#echo').evaluate((el,text)=>{el.textContent=text;},'alpha beta');
+    const result=await snapshot(page);assert.doesNotMatch(result.text,/alpha beta/);assert.match(result.text,/Portland/);
+  });
+
+test('V3R real overlapping secrets cannot leave a suffix', {skip},async t=>{
+  const page=await fixture(t,'<main><input type="password" aria-label="One" value="hunter2"><input type="password" aria-label="Two" value="hunter2xyz"><p>hunter2xyz and hunter2</p></main>');
+  const result=await snapshot(page);assert.doesNotMatch(result.text,/hunter2|xyz/);
+});
+
+test('V3R real Discard dialog keeps its buttons and oversized continuation reaches End', {skip},async t=>{
+  const page=await fixture(t,'<main><div role="dialog" aria-label="Discard changes?"><button>Keep editing</button><button>Discard</button></div><p>'+ 'x'.repeat(1300) + '</p><button>End</button></main>');
+  let result=await snapshot(page,{maxChars:1000});assert.match(result.text,/Keep editing/);
+  for(let n=0;!result.text.includes('"End"');n++){
+    assert.ok(n<8,'continuation must advance'); const ref=/Continue with ref="([^"]+)"/.exec(result.text)?.[1];assert.ok(ref);
+    result=await snapshot(page,{ref,maxChars:1000});
+  }
+});
+
+test('V3R real document navigation never retargets the old public Buy ref', {skip},async t=>{
+  const page=await fixture(t,'<main><button>Buy</button></main>',{'/next':'<main><button onclick="window.deleted=(window.deleted||0)+1">Delete account</button></main>'});
+  const first=await snapshot(page), ref=/button "Buy" \[ref=([^\]]+)\]/.exec(first.text)[1];
+  assert.equal(acknowledgeSnapshot(page,first.number),true);assert.equal(await snapshotRefBinding(page,ref).count(),1);
+  await page.goto(new URL('/next',page.url()).href);
+  assert.throws(()=>snapshotRefBinding(page,ref),/stale|read/i);
+  const next=await snapshot(page), current=/button "Delete account" \[ref=([^\]]+)\]/.exec(next.text)[1];
+  assert.notEqual(current,ref);assert.throws(()=>snapshotRefBinding(page,current),/delivered|read/i);
+  assert.equal(acknowledgeSnapshot(page,next.number),true);assert.throws(()=>snapshotRefBinding(page,ref),/stale|read/i);
+  await snapshotRefBinding(page,current).click();assert.equal(await page.evaluate(()=>window.deleted),1);
 });
