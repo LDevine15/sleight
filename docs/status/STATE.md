@@ -62,12 +62,11 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Turbo's wiring, as of 02:30 UTC. P1R2 parked at the cap with two Medium findings, and P1I2 (the rest of the closed host
-   interface, with INTERFACE.md) missed them, so sleight-arch fixed both under the small-fix rule (`e61700bb`, the tip of
-   `codex/bp2-p1i2`). Its test, tests/direct-browser-teardown.test.mjs, was red 0/2 before and is green after, and the full check
-   passed (4572). P1I2's review
-   needs a lane, and P1I2R (codex-hdlbw) closes as satisfied by that commit. Then P2 and P3 resume on it, and BP2-P1B follows.
-   AM1 is parked until after 1.3.0.
+1. Turbo's wiring, as of 03:45 UTC. Merged into the plugin, inactive until wired: the P1 chain (broker, native helper sources,
+   closed host interface, `9a98f6d0`) and BP2-P1B (helpers compile on first use, `7c3b3d77`). The owner cut turbo's safety to four
+   rules (LAWS, `373efe8d`): payments, page content never authorizes, no blind resend of a submit, background only. Fills check the
+   target element alone, with no per-field tokens or per-site prompts. BP2-P1F (codex-hdlcg) builds that, plus staged file transfer.
+   P2 and P3 resume on it. AM1 is parked until after 1.3.0.
    The prototype (TP1) ran its last round, 4/9, and stops (ROADMAP). In the four non-form tasks that passed, it took 53 s against
    FowlBrowser's 63 s and the engine path's 103 s from 2026-10-13. All four forms failed in fill validation, so turbo's accuracy is
    unmeasured (docs/benchmarks/2026-10-14-turbo-prototype.md). Production inherits its bugs. BP2-9's `browser_act` schema has a top-level
