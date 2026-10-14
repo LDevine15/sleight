@@ -21,6 +21,7 @@ import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs'
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
 import { isFrontend } from './direct-browser/surface.mjs';
+import { createTurnHookChannel } from './direct-browser/lifecycle.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
@@ -640,8 +641,30 @@ export function directBrowserServer(server, frontend) {
   return { ...server, env: { ...server.env, CUA_REPL_ENABLED_SURFACES: 'computer' } };
 }
 
+// Preserve native guidance verbatim. Only an authenticated direct route selects
+// the compact browser section; default and lean engine skills stay unchanged.
+export function directBrowserRules(rules, frontend) {
+  if (frontend === undefined) return rules;
+  if (!isFrontend(frontend) || !/^b[A-Za-z0-9_-]{1,63}$/.test(frontend.browser ?? '') || typeof rules !== 'string') throw Error('TRUSTED_ROUTE_REQUIRED');
+  const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
+  if (!section.test(rules)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  const compact = readFileSync(join(LIB, '../skills/drive-mac-apps/BROWSERS.turbo.md'), 'utf8').trimEnd()
+    .replace('{browser}', frontend.browser);
+  return rules.replace(section, compact + '\n');
+}
+
+// Only the fixed installed host supplies these dedicated inherited pipes. They
+// are not environment settings, MCP arguments or the model's input stream.
+export function directBrowserTurnHook(frontend, pipes) {
+  if (frontend === undefined && pipes === undefined) return undefined;
+  if (!isFrontend(frontend) || !pipes) throw Error('TRUSTED_ROUTE_REQUIRED');
+  return createTurnHookChannel({ ...pipes, frontend });
+}
+
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser } = {}) {
+  directBrowser, directTurnHook } = {}) {
+  const turnHook = directBrowserTurnHook(directBrowser, directTurnHook);
+  process.once('exit', () => { turnHook?.close(); });
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   const { trace, grantAudit } = approvalLogging(preapproved);
@@ -751,7 +774,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',
     // SLEIGHT_SKILL=none leaves the skill out, for A/Bs. The app-agnostic skill replaced the old one after
     // matching or beating it: 14.5 s against 15.6 s a run, and 38.9 s against 44.7 s on textedit-save (2026-10-11).
-    firstCallRules: process.env.SLEIGHT_SKILL === 'none' ? undefined : skillRules(),
+    firstCallRules: process.env.SLEIGHT_SKILL === 'none' ? undefined : directBrowserRules(skillRules(), directBrowser),
     keyboardTaps: () => appHealth.keyboardTaps(),
     windowIdentity: window => appHealth.windowIdentity(window),
     beginStop: () => { stoppingForReceipt = true; },

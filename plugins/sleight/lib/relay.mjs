@@ -1764,10 +1764,17 @@ export function createRelay({
   function handleClient(msg) {
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
+      if (closing || disposed) { leaseStop(msg, 'this session is closing.'); return; }
+      running.add(msg.id);
+      callDetails.set(msg.id, msg.params.name);
       directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
+        finishedCall(msg.id);
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: !!result.error,
           content: [{ type: 'text', text: JSON.stringify(result) }] } });
-      }).catch(() => toClient({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Direct browser route unavailable.' } }));
+      }).catch(() => {
+        finishedCall(msg.id);
+        toClient({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Direct browser route unavailable.' } });
+      });
       return;
     }
     if (replWarmup.hold(msg)) return;
@@ -2935,6 +2942,9 @@ export function createRelay({
 
   async function interruptTurn(msg) {
     let tabNote;
+    // Revocation enters synchronously. Collecting the owned engine does not
+    // cancel a separate broker operation or prove its resource cleanup.
+    const directEnd = directBrowser?.end();
     closing = true;
     replWarmup.cancel();
     stopFinished = false;
@@ -3005,9 +3015,15 @@ export function createRelay({
       },
       inspect: inspectInput ?? (async () => ({ ok: false, error: 'Input inspection unavailable' })),
     });
+    if (directEnd) {
+      report.directBrowser = await directEnd;
+      if (report.directBrowser.revoked !== true || report.directBrowser.cleanup.some(row =>
+        !['closed', 'released'].includes(row.status))) report.resources = 'unconfirmed';
+    }
     trace('stop-receipt', report);
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: report.resources !== 'clear' || report.leases !== 'released and checked',
-      content: [{ type: 'text', text: stopText(report) }, ...(tabNote ? [{ type: 'text', text: tabNote }] : [])], _meta: { 'sleight/stop': report } } });
+      content: [{ type: 'text', text: stopText(report) }, ...(report.directBrowser ? [{ type: 'text',
+        text: JSON.stringify({ directBrowser: report.directBrowser }) }] : []), ...(tabNote ? [{ type: 'text', text: tabNote }] : [])], _meta: { 'sleight/stop': report } } });
     onStopReported(report);
     stopUnconfirmed = report.engine === 'unconfirmed'; stopFinished = true;
     resumeAfterStop();
@@ -3049,6 +3065,7 @@ export function createRelay({
   }
   async function shutdown() {
     closing = true;
+    directBrowser?.end();
     replWarmup.cancel();
     if (await endOpenTurn() === false) return false;
     await close();

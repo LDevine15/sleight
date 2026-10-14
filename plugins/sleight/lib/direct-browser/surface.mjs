@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { browserTools, validateCall } from './schemas.mjs';
 import { browserError, BrowserFailure } from './errors.mjs';
+import { immutableJSON, FRAME_LIMIT } from './ipc.mjs';
+import { createBrokerSessionHost } from './session-host.mjs';
 function compressSchema(schema) {
   const fragments = new Map();
   const visit = value => {
@@ -36,25 +38,10 @@ export function expandSchema(schema) {
 export function compactTools() {
   return browserTools().map(tool => ({ ...tool, inputSchema: compressSchema(tool.inputSchema) }));
 }
-function observationJSON(value, depth = 0) {
-  if (depth > 8) throw Error('Invalid observation');
-  if (value === null || ['string', 'boolean'].includes(typeof value)) return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (!value || typeof value !== 'object' || !Array.isArray(value) &&
-      ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw Error('Invalid observation');
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !('value' in descriptors[key])))
-    throw Error('Invalid observation');
-  if (Array.isArray(value)) {
-    if (value.length > 100 || Object.keys(descriptors).length !== value.length + 1) throw Error('Invalid observation');
-    return Object.freeze(Array.from({ length: value.length }, (_, i) => observationJSON(descriptors[i]?.value, depth + 1)));
-  }
-  return Object.freeze(Object.fromEntries(Object.entries(descriptors).map(([key, item]) =>
-    [key, observationJSON(item.value, depth + 1)])));
-}
-function boundedObservation(value, budget) {
-  const safe = observationJSON(value);
-  return Buffer.byteLength(JSON.stringify(safe)) > budget ? omittedObservation() : safe;
+function observationJSON(value) {
+  const safe = immutableJSON(value);
+  if (Buffer.byteLength(JSON.stringify(safe)) > FRAME_LIMIT) throw Error('Invalid observation');
+  return safe;
 }
 function completeObservation(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -87,10 +74,11 @@ const errorResult = (code, tab, effect = 'none', completed = 0) => ({ error: bro
 // P2 supplies semantic/protected proof behind that broker boundary. No socket,
 // authority, helper, arbitrary JS or CDP entry is returned to the model.
 export async function createFrontend({ proof, verifyOptIn, packageCurrent, status, client, redact,
-  endSession, verifyResume = () => false, timeoutMs = 30000 } = {}) {
+  endSession, verifyResume = () => false, timeoutMs = 30000, selectedBrowser } = {}) {
   if ([verifyOptIn, packageCurrent, status, redact, endSession, verifyResume].some(f => typeof f !== 'function') ||
       typeof client?.request !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (selectedBrowser !== undefined && !/^b[A-Za-z0-9_-]{1,63}$/.test(selectedBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   let accepted = false;
   try { accepted = await verifyOptIn(proof) === true && packageCurrent() === true; } catch {}
   if (!accepted) throw Error('TRUSTED_ROUTE_REQUIRED');
@@ -172,12 +160,19 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     }
     if (completed !== total || !['verified', 'unchanged', 'protected'].includes(response.effect) ||
         !Object.hasOwn(response, 'observation')) throw Error('INVALID_RECEIPT');
-    return { completed, effect: response.effect, results: rows, observation: safe(response.observation), untouched: 0 };
+    return { completed, effect: response.effect, results: rows, observation: safe(response.observation), untouched: 0,
+      ...(request.name === 'browser_open' ? { tab: response.tab } : {}) };
   };
   const frontend = Object.freeze({
-    tools: compactTools,
+    browser: selectedBrowser,
+    tools() {
+      const tools = compactTools();
+      if (selectedBrowser) tools.find(tool => tool.name === 'browser_open').inputSchema.properties.browser = { type: 'string', const: selectedBrowser };
+      return tools;
+    },
     receipt: operation => history.has(operation) ? structuredClone(history.get(operation)) : null,
     async resume(authority) {
+      if (ended || !current() || connection() !== 'connected') return false;
       const epoch = generation;
       let allowed = false; try { allowed = await verifyResume(authority) === true; } catch {}
       if (!allowed || ended || !current() || connection() !== 'connected' || epoch !== generation) return false;
@@ -189,6 +184,7 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
       const tab = request.arguments.tab, at = sequence, state = connection(), epoch = generation;
       const refused = code => remember(request, errorResult(code, tab), at);
       if (ended) return refused('LEASE_LOST');
+      if (request.name === 'browser_open' && selectedBrowser && request.arguments.browser !== selectedBrowser) return refused('FOREIGN_REF');
       if (!current()) return refused('VERSION_MISMATCH');
       if (states[state]) return refused(states[state]);
       if (detached && request.name !== 'browser_read') return refused('USER_TAKEOVER');
@@ -206,8 +202,13 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
         if (ended || !current() || connection() !== 'connected' || epoch !== generation) {
           const completed = response.error?.completed ?? response.completed ?? 0;
           const effect = request.name === 'browser_read' ? 'none' : 'unknown';
+          const omitted = { omitted: true, reason: 'connection_changed', next: 'browser_read' };
           response = { ...response, ...errorResult(!current() ? 'VERSION_MISMATCH' : 'LEASE_LOST', tab, effect, completed),
+            effect, observation: omitted, results: response.results?.map(row => ({ ...row, observation: omitted })),
             untouched: response.untouched ?? 0 };
+          // The handle belongs to the lost session/connection, even when opening
+          // completed. Retain proof counts, never advertise a reusable old handle.
+          delete response.tab;
         }
         return remember(request, response, at, operation);
       } catch {
@@ -223,13 +224,73 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
       ending = Promise.race([Promise.resolve(cleanup), new Promise((_, reject) => {
         timer = setTimeout(() => reject(Error('CLEANUP_UNPROVED')), timeoutMs);
       })]).then(value => {
-        if (value?.revoked !== true || !Array.isArray(value.cleanup)) throw Error('CLEANUP_UNPROVED');
+        if (typeof value?.revoked !== 'boolean' || !Array.isArray(value.cleanup)) throw Error('CLEANUP_UNPROVED');
         return observationJSON(value);
       }).catch(() => ({ revoked: false, cleanup: [{ status: 'retained', code: 'CLEANUP_UNPROVED' }] }))
-        .finally(() => clearTimeout(timer));
+        .finally(() => { clearTimeout(timer); ending = undefined; });
       return ending;
     },
   });
   frontends.add(frontend);
   return frontend;
+}
+
+// Private installed-loader entry. Build the concrete P1 host before offering its
+// own session-bound UI. No argument from the model supplies an enable/resume
+// decision. The returned controller is never advertised as an MCP endpoint.
+export function createBrokerFrontendSession(options) {
+  if (typeof options?.selectedBrowser !== 'string' || !/^b[A-Za-z0-9_-]{1,63}$/.test(options.selectedBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  const semantic = options.semanticLifecycle;
+  if (semantic !== undefined && (semantic.session !== options.identity?.session ||
+      typeof semantic.revoke !== 'function' || typeof semantic.cleanup !== 'function')) throw Error('TRUSTED_ROUTE_REQUIRED');
+  const host = createBrokerSessionHost(options);
+  let frontend, enabling, ended = false, ending, semanticRevoked = false;
+  function endSession() {
+    const hostEnd = host.endSession(); // Fence P1 authority/transport synchronously.
+    if (!semanticRevoked && semantic) try {
+      const result = semantic.revoke();
+      if (result?.then) Promise.resolve(result).catch(() => {});
+      else semanticRevoked = result === true;
+    } catch {}
+    if (ending) return ending;
+    let timer;
+    const collect = semanticRevoked ? Promise.race([Promise.resolve().then(() => semantic.cleanup()),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('CLEANUP_UNPROVED')), options.timeoutMs ?? 30000); })])
+      : Promise.reject(Error('SEMANTIC_LIFECYCLE_UNJOINED'));
+    ending = Promise.all([hostEnd, collect.then(value => {
+      const safe = observationJSON(value);
+      if (!Array.isArray(safe?.cleanup)) throw Error('CLEANUP_UNPROVED');
+      return safe.cleanup;
+    }).catch(() => [{ resource: 'semantic-journals', status: 'retained',
+      code: !semantic ? 'SEMANTIC_LIFECYCLE_UNJOINED' : semanticRevoked ? 'CLEANUP_UNPROVED' : 'SEMANTIC_REVOCATION_UNPROVED' }])])
+      .then(([hostReceipt, cleanup]) => ({ revoked: hostReceipt.revoked === true && semanticRevoked,
+        cleanup: [...hostReceipt.cleanup, ...cleanup] }))
+      .finally(() => { clearTimeout(timer); ending = undefined; });
+    return ending;
+  }
+  return Object.freeze({
+    enable() {
+      if (ended) return Promise.reject(Error('LEASE_LOST'));
+      if (frontend) return Promise.resolve(frontend);
+      if (enabling) return enabling;
+      enabling = (async () => {
+        const proof = await host.requestOptIn();
+        if (!proof || ended) return null;
+        const prepared = await createFrontend({ ...host, endSession, proof, timeoutMs: options.timeoutMs, selectedBrowser: options.selectedBrowser });
+        if (ended) { await prepared.end(); return null; }
+        frontend = prepared;
+        return frontend;
+      })().finally(() => { enabling = undefined; });
+      return enabling;
+    },
+    async resume() {
+      if (ended || !frontend) return false;
+      const proof = await host.requestResume();
+      return !!proof && !ended && frontend.resume(proof);
+    },
+    end() {
+      ended = true;
+      return frontend ? frontend.end() : endSession();
+    },
+  });
 }

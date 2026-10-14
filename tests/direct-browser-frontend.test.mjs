@@ -132,3 +132,59 @@ test('session revoke enters synchronously before any pending broker microtask', 
   assert.equal(revoked, true);
   await pending;
 });
+
+test('opened handle remains at the top level for the next compact tool', async () => {
+  const f = await fixture({ reply: () => ({ ...good(), tab: 'topened' }) });
+  const opened = await f.frontend.call({ name: 'browser_open', arguments: { browser: 'b1', url: 'https://fixture.invalid' } });
+  assert.equal(opened.tab, 'topened');
+});
+test('P2 bounded observations with over 100 rows remain deliverable', async () => {
+  const data = Array.from({ length: 120 }, (_, i) => ({ ref: 'r' + i, role: 'button', name: 'x' }));
+  const f = await fixture({ reply: () => ({ ...good(), observation: { complete: true, data } }) });
+  const result = await f.frontend.call(read);
+  assert.equal(result.completed, 1);
+  assert.equal(result.observation.data.length, 120);
+});
+test('connection loss preserves prefix proof while withholding all late observations', async () => {
+  let finish;
+  const f = await fixture({ reply: () => new Promise(resolve => { finish = resolve; }) });
+  const pending = f.frontend.call(click);
+  f.state('disconnected');
+  finish({ ...good(), observation: { value: 'late-private' }, results: [{ effect: 'verified', observation: { value: 'late-private' } }] });
+  const result = await pending;
+  assert.equal(result.receipt.completed, 1);
+  assert.equal(result.receipt.effect, 'unknown');
+  assert.doesNotMatch(JSON.stringify(result), /late-private/);
+  assert.equal(result.results[0].observation.omitted, true);
+});
+test('known broker pre-dispatch timeout remains effect none', async () => {
+  const f = await fixture({ reply: () => ({ phase: 'prepared', effect: 'none', completed: 0,
+    error: { code: 'TIMEOUT', phase: 'prepared', effect: 'none', completed: 0 } }) });
+  const result = await f.frontend.call(click);
+  assert.equal(result.error.code, 'TIMEOUT');
+  assert.equal(result.receipt.effect, 'none');
+  assert.equal(result.receipt.untouched, 1);
+});
+test('explicit end retries only the host retained cleanup after collection settles', async () => {
+  let calls = 0;
+  const f = await fixture({ endSession: () => ({ revoked: true, cleanup: [{ target: 'owned', status: ++calls === 1 ? 'retained' : 'closed' }] }) });
+  assert.equal((await f.frontend.end()).cleanup[0].status, 'retained');
+  assert.equal((await f.frontend.end()).cleanup[0].status, 'closed');
+  assert.equal(calls, 2);
+  assert.equal((await f.frontend.call(click)).error.code, 'LEASE_LOST');
+});
+
+test('one authentic resume handles a recovered connection without an intervening read', async () => {
+  const proof = Object.freeze({}), f = await fixture({ verifyResume: value => value === proof });
+  await f.frontend.call(read); f.state('paused'); await f.frontend.call(click); f.state('connected');
+  assert.equal(await f.frontend.resume(proof), true);
+});
+
+test('trusted selected browser is advertised and a different handle never dispatches', async () => {
+  const f = await fixture({ selectedBrowser: 'bselected' });
+  const open = f.frontend.tools().find(tool => tool.name === 'browser_open');
+  assert.equal(open.inputSchema.properties.browser.const, 'bselected');
+  assert.equal(f.frontend.browser, 'bselected');
+  const result = await f.frontend.call({ name: 'browser_open', arguments: { browser: 'bforeign', url: 'https://fixture.invalid' } });
+  assert.equal(result.error.code, 'FOREIGN_REF'); assert.equal(f.calls.length, 0);
+});

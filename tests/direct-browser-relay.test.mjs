@@ -5,17 +5,17 @@ import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { createFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
 import { directBrowserServer } from '../plugins/sleight/lib/launch.mjs';
 
-async function route() {
+async function route(options = {}) {
   return createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true, status: () => 'connected',
     redact: value => value, endSession: () => ({ revoked: true, cleanup: [] }),
     client: { request: () => ({ phase: 'verified', effect: 'verified', completed: 1, untouched: 0,
-      observation: { complete: true }, results: [{ effect: 'verified', observation: { complete: true } }] }) } });
+      observation: { complete: true }, results: [{ effect: 'verified', observation: { complete: true } }] }) }, ...options });
 }
-function harness(t, directBrowser) {
+function harness(t, directBrowser, options = {}) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const sent = [], received = [];
   for (const [stream, records] of [[serverIn, sent], [clientOut, received]]) stream.on('data', b => records.push(...b.toString().trim().split('\n').map(JSON.parse)));
-  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, directBrowser, changeReview: false });
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, directBrowser, changeReview: false, ...options });
   t.after(() => relay.close());
   return { relay, sent, received,
     send: message => clientIn.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n'),
@@ -48,4 +48,67 @@ test('relay advertises four verbs and handles them without engine native leases'
 });
 test('an unbranded project object cannot install a direct route', t => {
   assert.throws(() => harness(t, { approved: true }), /TRUSTED_ROUTE_REQUIRED/);
+});
+
+test('Stop synchronously revokes direct work and reports retained browser resources', async t => {
+  let finish, revoked = false, reported;
+  const frontend = await route({ client: { request: () => new Promise(resolve => { finish = resolve; }) },
+    endSession: () => { revoked = true; return { revoked: true, cleanup: [{ resource: 'owned-target', target: 'target', status: 'retained' }] }; } });
+  t.after(() => finish?.({ completed: 1, effect: 'verified', observation: { complete: true } }));
+  const h = harness(t, frontend, { stopGraceMs: 2, stopEngine: async () => ({ collected: true }),
+    inspectInput: async () => ({ ok: true }), onStopReported: value => { reported = value; } });
+  h.send({ id: 1, method: 'tools/call', params: { name: 'browser_act', arguments: { tab: 't1', op: 'click', ref: 'r1' } } });
+  h.send({ id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } });
+  assert.equal(revoked, true, 'engine collection alone cannot stop direct input');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(reported.inFlight.some(detail => detail.includes('browser_act')));
+  assert.equal(reported.directBrowser.cleanup[0].status, 'retained');
+  assert.equal(h.received.find(row => row.id === 2).result.isError, true);
+  finish({ phase: 'verified', effect: 'verified', completed: 1, observation: { value: 'late-private' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.doesNotMatch(JSON.stringify(h.received), /late-private/);
+});
+test('engine resume parameters cannot resume a stopped direct frontend', async t => {
+  let calls = 0;
+  const frontend = await route({ client: { request() { calls++; return { completed: 1, effect: 'verified', observation: { complete: true } }; } } });
+  const h = harness(t, frontend);
+  await h.relay.close();
+  h.send({ id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_resume: true } } });
+  h.send({ id: 2, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 0);
+  assert.equal(h.received.find(row => row.id === 2).result.isError, true);
+});
+
+test('the fixed launcher binds its private turn pipe to the branded frontend', async t => {
+  const launch = await import('../plugins/sleight/lib/launch.mjs');
+  assert.equal(typeof launch.directBrowserTurnHook, 'function', 'fixed launcher hook is absent');
+  const read = new PassThrough(), write = new PassThrough(), frames = []; let ended = false;
+  write.on('data', bytes => frames.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const frontend = await route({ endSession: () => { ended = true; return { revoked: true, cleanup: [] }; } });
+  const hook = launch.directBrowserTurnHook(frontend, { read, write, session: 'session', turn: 'turn', brokerEpoch: 1 });
+  t.after(() => hook.close());
+  read.write(JSON.stringify({ ...frames[0], event: 'end' }) + '\n');
+  assert.equal(ended, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(frames.at(-1).revoked, true);
+  assert.throws(() => launch.directBrowserTurnHook({ approved: true }, { read, write, session: 'session', turn: 'turn', brokerEpoch: 1 }), /TRUSTED_ROUTE_REQUIRED/);
+});
+
+test('trusted turbo rules replace browser JS guidance and keep every native rule', async () => {
+  const launch = await import('../plugins/sleight/lib/launch.mjs');
+  assert.equal(typeof launch.directBrowserRules, 'function', 'coherent compact guidance is absent');
+  const native = launch.skillRules(), frontend = await route({ selectedBrowser: 'bselected' });
+  assert.equal(launch.directBrowserRules(native), native);
+  const rules = launch.directBrowserRules(native, frontend);
+  assert.ok(rules.includes('bselected'));
+  assert.match(rules, /browser_open/); assert.match(rules, /browser_fill/);
+  assert.doesNotMatch(rules, /cua\.listBrowsers|cua\.createBrowserTab|sleight\.fillForm|tab\.playwright/);
+  const [before, browserAndAfter] = native.split('## Browsers\n');
+  const after = browserAndAfter.slice(browserAndAfter.indexOf('\n## '));
+  assert.ok(rules.startsWith(before)); assert.ok(rules.endsWith(after));
+  assert.match(rules, /Never try to unmask/);
+  assert.match(rules, /user asked/); assert.match(rules, /confirmation/);
+  assert.ok(rules.trim().split(/\s+/).length <= 930);
+  assert.throws(() => launch.directBrowserRules(native, { approved: true }), /TRUSTED_ROUTE_REQUIRED/);
 });

@@ -1,4 +1,6 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
+import { immutableJSON } from './ipc.mjs';
+import { isFrontend } from './surface.mjs';
 
 // Lifecycle ideas: FowlBrowser 8b689249ba4e33d2626487aad930605c62e2c6a7
 // mcp/src/turns.mjs and takeover.mjs (MIT). New implementation, no copied code.
@@ -461,4 +463,47 @@ export class Lifecycle {
     } catch { return finish({ code: receipt.closeRequested ? 'EFFECT_UNKNOWN' : 'IDENTITY_UNAVAILABLE' }); }
     finally { record.closing = false; }
   }
+}
+
+// Fixed loader supplies inherited private pipes, never the MCP input stream.
+// Its hook peer receives this one-use envelope only on the private write pipe.
+// This parser authenticates framing/ownership; installed peer provenance is a
+// separate host qualification gate. No hook can resume or create action grants.
+export function createTurnHookChannel({ frontend, read, write, session, turn, brokerEpoch }) {
+  if (!isFrontend(frontend) || ![session, turn].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value)) ||
+      !Number.isSafeInteger(brokerEpoch) || brokerEpoch < 1 || typeof read?.on !== 'function' ||
+      typeof read?.off !== 'function' || typeof write?.write !== 'function' || typeof write?.on !== 'function' ||
+      typeof write?.off !== 'function') throw Error('TRUSTED_ROUTE_REQUIRED');
+  const envelope = Object.freeze({ version: 1, session, turn, brokerEpoch, nonce: randomBytes(32).toString('hex') });
+  let buffer = '', ended = false, collection;
+  function end() {
+    if (ended) return collection;
+    ended = true;
+    read.off('data', receive); read.off('end', end); read.off('close', end);
+    // A late pipe error can arrive while the fixed loader collects descriptors.
+    // Retain the idempotent error listeners until those streams are collected.
+    collection = frontend.end().then(value => {
+      try { write.write(JSON.stringify(immutableJSON(value)) + '\n'); } catch {}
+      return value;
+    });
+    return collection;
+  }
+  function receive(chunk) {
+    if (ended) return;
+    buffer += chunk.toString('utf8');
+    if (Buffer.byteLength(buffer) > 4096) { buffer = ''; return; }
+    let at;
+    while ((at = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
+      try {
+        const frame = immutableJSON(JSON.parse(line));
+        if (!frame || Array.isArray(frame) || Object.keys(frame).length !== 6 || frame.event !== 'end' ||
+            !same(frame, envelope, ['version', 'session', 'turn', 'brokerEpoch']) || !secretEqual(frame.nonce, envelope.nonce)) continue;
+        end(); return;
+      } catch {} // Never echo malformed or forged data, including its nonce.
+    }
+  }
+  read.on('data', receive); read.on('end', end); read.on('close', end); read.on('error', end); write.on('error', end);
+  try { write.write(JSON.stringify(envelope) + '\n'); } catch { end(); }
+  return Object.freeze({ close: end });
 }
