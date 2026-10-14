@@ -96,6 +96,7 @@ import { simulatorScreenshotNote } from './simulator-focus.mjs';
 import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
+import { leanCallDescription } from './lean-calls.mjs';
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
@@ -423,6 +424,7 @@ export function createRelay({
   // Under A/B (SLEIGHT_RESULT_TRIM=1): leaves out a split acquisition's tree when its call returns a
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
+  leanCalls = process.env.SLEIGHT_LEAN_CALLS === '1',
   firstCallRules,
   confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,
@@ -468,7 +470,7 @@ export function createRelay({
       });
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
-  let compactor = createReadCompactor();
+  let compactor = createReadCompactor({ leanCalls });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -619,7 +621,7 @@ export function createRelay({
         toServer({ jsonrpc: '2.0', method: 'notifications/initialized' });
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
-      clipboard = newClipboard(); compactor = createReadCompactor(); resultCalls.clear(); docsShown = backend; priorRead = undefined;
+      clipboard = newClipboard(); compactor = createReadCompactor({ leanCalls }); resultCalls.clear(); docsShown = backend; priorRead = undefined;
       selectorWindows.clear(); helperStates.clear(); helperHandles.clear(); helperAliases.clear();
       screenshots.clear();
       if (!backend) turnId = randomUUID();
@@ -2902,6 +2904,7 @@ export function createRelay({
         .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
         .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t) : t))
         .map(t => (firstCallBatch && t.name === 'js' ? { ...t, description: batchingDescription(t.description, firstCallBatch, prompt) } : t))
+        .map(t => (leanCalls && t.name === 'js' ? { ...t, description: leanCallDescription(t.description) } : t))
         .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], directBrowser?.tools() ?? [])
         // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
         // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions

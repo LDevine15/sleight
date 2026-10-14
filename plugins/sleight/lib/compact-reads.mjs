@@ -335,7 +335,7 @@ function trimSiblingRows(text) {
   return { text: out.join('\n'), hidden };
 }
 
-export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1' } = {}) {
+export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map();
@@ -352,7 +352,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     return observation;
   }
 
-  function compact(tree, prefix) {
+  function compact(tree, prefix, action) {
     const window = windowFromText(tree);
     const lines = tree.replace(/\n+$/, '').split('\n');
     if (!window) {
@@ -434,7 +434,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       : '';
     const degradedNote = fewerAttributes ? `\nsleight: ${fewerAttributes} button lines returned fewer attributes. Their unique IDs still match; missing descriptions and help are unavailable in this read.` : '';
     const text = `${header}\n${body}${note}${degradedNote}`;
-    if (text.length > tree.length * MAX_SHARE) return tree;
+    if (!(leanCalls && action) && text.length > tree.length * MAX_SHARE) return tree;
     const allValid = [...current.keys()].every(num => valid.has(num));
     seen.set(key, { lines, observation, valid: allValid ? undefined : valid, believed: allValid ? undefined : believed });
     return text;
@@ -484,11 +484,11 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             pos = end + GUARD_END.length;
             continue;
           }
-          let sent = forceFull ? tree : compact(tree, seenText);
+          let sent = forceFull ? tree : compact(tree, seenText, action);
           // A call that acted and ended on exactly the tree Claude saw before it gets that tree whole:
           // "no change" read as if the actions hadn't run, and Claude read again in 2 of 9 traced
           // calculator-click runs (2026-10-10). Claude's own full read earlier in this result is enough.
-          if (action && !forceFull && sent !== tree && /sleight: no change since/.test(sent) && !/^Window: /m.test(seenText)) sent = tree;
+          if (!leanCalls && action && !forceFull && sent !== tree && /sleight: no change since/.test(sent) && !/^Window: /m.test(seenText)) sent = tree;
           if (forceFull) remember(tree);
           if (end < 0 && observedInResult && !observedInResult.invalid) observedInResult.incomplete = true;
           add(sent); seenText += '\n' + sent;

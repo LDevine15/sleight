@@ -20,6 +20,39 @@ const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json',
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
+test('lean calls teach persistent handles and action endings only under the experiment flag', () => {
+  for (const prompt of [undefined, 'lean']) {
+    const normal = skillRules(skillPath, { SLEIGHT_PROMPT: prompt });
+    const selected = skillRules(skillPath, { SLEIGHT_PROMPT: prompt, SLEIGHT_LEAN_CALLS: '1' });
+    if (prompt !== 'lean') {
+      assert.match(selected, /Keep the app handle across calls/);
+      assert.match(selected, /End on the action/);
+    } else assert.equal(selected, normal, 'the lean skill has no native call guidance to replace');
+    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 430 : 930));
+    assert.equal(skillRules(skillPath, { SLEIGHT_PROMPT: prompt, SLEIGHT_LEAN_CALLS: '0' }), normal);
+  }
+});
+
+test('lean calls change only the js description in both prompt variants', t => {
+  function tools(leanCalls, prompt) {
+    const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+    let result;
+    clientOut.on('data', data => { result = JSON.parse(data.toString()); });
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, leanCalls, prompt });
+    t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
+    clientIn.write(JSON.stringify({ id: 1, method: 'tools/list' }) + '\n');
+    serverOut.write(JSON.stringify({ id: 1, result: { tools: [{ name: 'js', description: firstRule }, { name: 'js_reset', description: 'Reset' }] } }) + '\n');
+    return result.result.tools;
+  }
+  for (const prompt of [undefined, 'lean']) {
+    const normal = tools(false, prompt), selected = tools(true, prompt);
+    assert.match(selected[0].description, /keep the app handle across calls/);
+    assert.match(selected[0].description, /End on the action/);
+    assert.ok(selected[0].description.startsWith(normal[0].description));
+    assert.deepEqual(selected[1], normal[1]);
+  }
+});
+
 test('the default skill explains masked field reads without claiming a fill succeeded', () => {
   const skill = skillRules(skillPath, {});
   assert.match(skill, /engine masks protected field reads as `<redacted>`/);

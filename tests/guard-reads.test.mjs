@@ -9,6 +9,7 @@ import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement } from '../plugins/sleight/lib/document-scope.mjs';
+import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
@@ -57,6 +58,69 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
   const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context);
   return { run, raw, calls, output, context };
 }
+
+test('lean calls keep a strict native handle across calls and report an unchanged action compactly', async () => {
+  const f = fixture({ strict: true });
+  await f.run('globalThis.saved = await cua.getApp("fixture.app");');
+  await f.run('await saved.click(1);');
+  await f.run('await saved.pressKey("a");');
+  assert.equal(f.calls.filter(c => c[0] === 'click').length, 1);
+  assert.equal(f.calls.filter(c => c[0] === 'pressKey').length, 1);
+  const compactor = createReadCompactor({ leanCalls: true });
+  compactor.process([{ type: 'text', text: tree() }]);
+  const content = compactor.process([{ type: 'text', text: f.output.at(-1) }], { action: compactor.beginAction('await app.pressKey("a");') });
+  assert.match(content[0].text, /^Window: /);
+  assert.match(content[0].text, /no change since/);
+  assert.doesNotMatch(content[0].text, /1 button Save/);
+});
+
+test('lean action results retain changed rows, explicit full reads and stale-number refusals', () => {
+  const compactor = createReadCompactor({ leanCalls: true });
+  compactor.process([{ type: 'text', text: tree() }]);
+  const next = tree(expected, '\t2 button Save, ID: Save');
+  const marked = [{ type: 'text', text: GUARD_MARK + next + GUARD_END }];
+  const action = compactor.beginAction('await app.click(1);');
+  const content = compactor.process(marked, { action });
+  assert.match(content[0].text, /other elements have new numbers/);
+  assert.ok(compactor.staleIndex(expected, 'await app.click(1);'));
+  assert.equal(compactor.process(marked, { forceFull: true })[0].text, next);
+  const changed = tree(expected, '\t2 button Done, ID: Done');
+  const changedContent = compactor.process([{ type: 'text', text: GUARD_MARK + changed + GUARD_END }],
+    { action: compactor.beginAction('await app.click(2);') });
+  assert.match(changedContent[0].text, /\+ \t2 button Done, ID: Done/);
+  assert.match(changedContent[0].text, /- \tbutton Save, ID: Save/);
+  const defaultCompactor = createReadCompactor({ leanCalls: false });
+  defaultCompactor.process([{ type: 'text', text: tree() }]);
+  assert.equal(defaultCompactor.process([{ type: 'text', text: GUARD_MARK + tree() + GUARD_END }],
+    { action: defaultCompactor.beginAction('await app.click(1);') })[0].text, tree());
+});
+
+test('the relay selects compact native results only for lean calls and honors explicit full reads', async t => {
+  const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r)); };
+  for (const leanCalls of [false, true]) {
+    const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+    const sent = [], received = [];
+    serverIn.on('data', data => sent.push(JSON.parse(data.toString())));
+    clientOut.on('data', data => received.push(JSON.parse(data.toString())));
+    const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-lean-calls-')));
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, leanCalls, changeReview: false,
+      inputLease: new InputLease({ directory, holder: 'lean-test' }) });
+    t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); removeTemp(directory); });
+    const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+    const reply = (id, text) => serverOut.write(JSON.stringify({ id, result: { content: [{ type: 'text', text }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+    call(1, 'let app = await cua.getApp("fixture.app");'); await settle(); reply(1, tree()); await settle();
+    call(2, 'await app.click(1);'); await settle();
+    assert.ok(sent.some(message => message.id === 2), 'the saved app handle can act without acquisition');
+    reply(2, GUARD_MARK + tree() + GUARD_END); await settle();
+    const result = received.find(message => message.id === 2).result.content[0].text;
+    if (leanCalls) { assert.match(result, /no change since/); assert.doesNotMatch(result, /1 button Save/); }
+    else assert.equal(result, tree());
+    call(3, 'await app.getAXState({ disableDiffing: true });'); await settle();
+    reply(3, GUARD_MARK + tree() + GUARD_END); await settle();
+    assert.equal(received.find(message => message.id === 3).result.content[0].text, tree());
+  }
+});
 
 test('a combined observation supplies the first action and a full post-call header', async () => {
   const f = fixture();
