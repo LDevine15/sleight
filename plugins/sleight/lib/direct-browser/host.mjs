@@ -253,9 +253,9 @@ export function createRecoverableUi({ createUi, onLoss, onReady, schedule = setT
   trustedUi.add(ui); return ui;
 }
 
-export function createNativeConsent({ ui, checkCurrent, writeAllowlist, onDecision }) {
+export function createNativeConsent({ ui, checkCurrent, onDecision }) {
   if (!ui || typeof checkCurrent !== 'function' || typeof onDecision !== 'function') throw Error('TRUSTED_CONTRACT_REQUIRED');
-  const consent = createConsentUi({ authenticate: event => ui.authenticate(event), checkCurrent, writeAllowlist,
+  const consent = createConsentUi({ authenticate: event => ui.authenticate(event), checkCurrent,
     present(view, operation) {
       ui.present(view.id, { view, operation }, view.choices, event => {
         const ticket = consent.respond(event);
@@ -267,7 +267,7 @@ export function createNativeConsent({ ui, checkCurrent, writeAllowlist, onDecisi
         }
       });
     } });
-  return Object.freeze({ request: consent.request, hasSiteGrant: consent.hasSiteGrant,
+  return Object.freeze({ request: consent.request,
     revoke() { consent.revoke(); ui.revoke(); } });
 }
 

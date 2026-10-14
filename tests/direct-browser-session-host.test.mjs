@@ -96,12 +96,12 @@ test('concrete session join rejects unbranded broker and semantic owner lookalik
   const f = await fixture(t);
   const scope = { browser: 'browser', broker: 1, session: 'client', turn: 'turn', target: 'target', lease: 1,
     frame: 'frame', document: 1, ref: 'ref', origin: 'https://fixture.invalid' };
-  const authority = createAuthority({ current: () => scope, classify: value => value, authenticate: () => false });
+  const authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => scope, classify: value => value, authenticate: () => false });
   assert.throws(() => createBrokerSessionHost({ authority, ui: f.ui, packageInventory: f.inventory, redact: value => value,
     identity: { session: 'client' }, broker: { attach: () => ({ request() {}, disconnect() {} }), status: () => ({ state: 'connected' }) },
     transportOwner: { revokeSession: () => true, cleanupSession: () => ({ cleanup: [] }) } }), /TRUSTED_ROUTE_REQUIRED/);
 });
-test('actual broker session host joins wheel once authority, read baselines, redaction and synchronous revoke', async t => {
+test('actual broker session host joins wheel target authority, read baselines, redaction and synchronous revoke', async t => {
   const { createBrokerSessionHost } = await import('../plugins/sleight/lib/direct-browser/session-host.mjs');
   const f = await fixture(t), secret = 'a'.repeat(64), uid = process.getuid?.() ?? 1000, user = {};
   const scope = { browser: 'browser', broker: 1, session: 'client', turn: 'turn', target: 'target', lease: 1,
@@ -109,7 +109,7 @@ test('actual broker session host joins wheel once authority, read baselines, red
   const lease = { target: scope.target, cdpSessionId: 'page', frame: scope.frame, document: 1, epoch: 1, origin: scope.origin,
     browserIncarnation: scope.browser, brokerEpoch: 1, clientSession: scope.session, turn: scope.turn };
   let snapshots = 0, revokeAt = Infinity; const calls = [], listeners = new Set();
-  const authority = createAuthority({ current: () => scope, now: () => 100, authenticate: event => event === user,
+  const authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => scope, now: () => 100, authenticate: event => event === user,
     classify: value => value, snapshot() {
       if (++snapshots === revokeAt) authority.user(user, 'revoke', { session: scope.session });
       return { scope, time: 100 };
@@ -141,18 +141,16 @@ test('actual broker session host joins wheel once authority, read baselines, red
   t.after(() => broker.shutdown()); await broker.connect({ userInitiated: true });
   const host = createBrokerSessionHost({ broker, identity: { version: 1, uid, secret, session: scope.session, incarnation: 'p1-v1' },
     authority, transportOwner: owner, ui: f.ui, packageInventory: f.inventory, redact: value => ({ ...value, value: '[redacted]' }) });
-  const grant = () => authority.user(user, 'grant', { session: scope.session, origin: scope.origin, mode: 'once' });
   const act = id => ({ id, operation: 'browser_act', args: { tab: 't1', op: 'scroll', ref: 'r1', dy: 120 } });
-  grant(); assert.equal((await host.client.request(act('wheel'))).effect, 'verified'); assert.equal(snapshots, 1);
-  assert.equal((await host.client.request(act('ungranted'))).effect, 'none'); assert.equal(calls.length, 1);
-  grant(); const read = await host.client.request({ id: 'read', operation: 'browser_read', args: { tab: 't1' } });
+  assert.equal((await host.client.request(act('wheel'))).effect, 'verified'); assert.equal(snapshots, 1);
+  const read = await host.client.request({ id: 'read', operation: 'browser_read', args: { tab: 't1' } });
   assert.equal(read.observation.value, '[redacted]'); assert.equal(read.observation.reads, 1);
   const later = await host.client.request({ id: 'baseline', operation: 'browser_read', args: { tab: 't1' } });
   assert.equal(later.observation.reads, 2); assert.equal(calls.length, 2);
-  grant(); revokeAt = snapshots + 1;
+  revokeAt = snapshots + 1;
   assert.equal((await host.client.request(act('revoked'))).effect, 'none'); assert.equal(calls.length, 2);
   const ending = host.endSession();
-  assert.notEqual(authority.prepare({ id: 'after-end', kind: 'read', args: {}, scope, consequence: 'ordinary' }).verdict, 'allow');
+  await assert.rejects(host.client.request(act('after-end')), /LEASE_LOST/);
   assert.equal((await ending).revoked, true);
   assert.equal(broker.status().state, 'connected'); assert.equal(broker.status().clients, 0);
 });

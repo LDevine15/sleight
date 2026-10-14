@@ -63,10 +63,6 @@ function operationKey(operation) {
   if (!['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password) fail('INVALID_DESTINATION');
   return key;
 }
-function siteScope(operation) {
-  return { browserIncarnation: operation.browserIncarnation, brokerEpoch: operation.brokerEpoch,
-    clientSession: operation.clientSession, origin: operation.origin };
-}
 
 export function selectedBrowser(browser) {
   canonical(browser);
@@ -76,15 +72,15 @@ export function selectedBrowser(browser) {
   return { application: browser.application, name: browser.name, userDataRoot: browser.userDataRoot, incarnation: browser.incarnation };
 }
 
-export function createConsentUi({ authenticate, present, checkCurrent = () => false, writeAllowlist, now = Date.now, ttlMs = 30000 } = {}) {
+export function createConsentUi({ authenticate, present, checkCurrent = () => false, now = Date.now, ttlMs = 30000 } = {}) {
   if (!Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > 300000) fail('INVALID_EXPIRY');
-  const pending = new Map(), grants = new Set();
+  const pending = new Map();
   let tickets = new WeakMap();
   let epoch = 1;
   return {
     request(operation, { kind = 'action', label = '' } = {}) {
       if (typeof authenticate !== 'function' || typeof present !== 'function') fail('TRUSTED_UI_UNAVAILABLE');
-      if (!['site', 'action'].includes(kind)) fail('INVALID_CONFIRMATION');
+      if (kind !== 'action' || !operation?.payment) fail('INVALID_CONFIRMATION');
       for (const [id, record] of pending) if (now() >= record.expires) pending.delete(id);
       if (pending.size >= 32) fail('CONFIRMATION_BACKPRESSURE');
       const key = operationKey(operation), id = randomUUID();
@@ -97,7 +93,7 @@ export function createConsentUi({ authenticate, present, checkCurrent = () => fa
         present(Object.freeze({ id, kind, operation: snapshot.sequence, clientSession: escapeLabel(snapshot.clientSession),
           origin: escapeLabel(snapshot.origin), destinationOrigin: escapeLabel(new URL(snapshot.destination).origin),
           action: snapshot.action, pageLabel: escapeLabel(label), data: 'protected', payment: snapshot.payment ? 'protected' : null,
-          choices: kind === 'site' ? ['once', 'session', 'always', 'cancel'] : ['once', 'cancel'] }), JSON.parse(key));
+          choices: ['once', 'cancel'] }), JSON.parse(key));
       } catch { pending.delete(id); fail('TRUSTED_UI_UNAVAILABLE'); }
       return id;
     },
@@ -107,8 +103,7 @@ export function createConsentUi({ authenticate, present, checkCurrent = () => fa
       pending.delete(event.id);
       if (!record || record.epoch !== epoch || now() >= record.expires) fail('STALE_CONFIRMATION');
       if (['cancel', 'close'].includes(event.choice)) return null;
-      if (event.choice !== 'once' && (record.kind !== 'site' || !['session', 'always'].includes(event.choice))) fail('INVALID_CHOICE');
-      if (event.choice === 'always' && typeof writeAllowlist !== 'function') fail('ALLOWLIST_UNAVAILABLE');
+      if (event.choice !== 'once') fail('INVALID_CHOICE');
       const ticket = Object.freeze({});
       tickets.set(ticket, { ...record, choice: event.choice });
       return ticket;
@@ -120,17 +115,8 @@ export function createConsentUi({ authenticate, present, checkCurrent = () => fa
       try { key = operationKey(operation); } catch { fail('STALE_CONFIRMATION'); }
       if (!record || record.epoch !== epoch || now() >= record.expires || record.key !== key) fail('STALE_CONFIRMATION');
       if (checkCurrent(JSON.parse(record.key)) !== true) fail('CURRENT_AUTHORITY_REQUIRED');
-      if (record.kind === 'site' && record.choice !== 'once') {
-        const scope = siteScope(record.snapshot);
-        if (record.choice === 'always') {
-          // Must be a synchronous trusted host writer, not a model-callable file API.
-          if (writeAllowlist(Object.freeze(scope)) !== true) fail('ALLOWLIST_WRITE_UNCONFIRMED');
-        }
-        grants.add(canonical(scope));
-      }
       return { phase: 'prepared', effect: 'none', completed: [], next: 'broker authorization and dispatch fence' };
     },
-    hasSiteGrant(operation) { operationKey(operation); return grants.has(canonical(siteScope(operation))); },
-    revoke() { epoch++; pending.clear(); grants.clear(); tickets = new WeakMap(); },
+    revoke() { epoch++; pending.clear(); tickets = new WeakMap(); },
   };
 }

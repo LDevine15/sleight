@@ -15,15 +15,13 @@ const hello = (session = 'one', incarnation = 'p1-v1') => ({ version: 1, secret,
 const request = (id, operation = 'browser_act') => ({ id, operation, args: { tab: 't1' } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const { createHostLifecycle, createBrokerControls, createUiChannel, createRecoverableUi } = hostModule;
-function fixture({ close = () => true, mode = 'once', beforePart = () => {}, connect, verify = () => true,
+function fixture({ close = () => true, beforePart = () => {}, connect, verify = () => true,
   snapshot, now = () => 100, dispatch, resolve, afterSend = () => {}, ...changes } = {}) {
   const calls = [], opened = [], user = {};
   let scope = { browser: 'browser1', broker: 1, session: 'one', turn: 'turn1', target: 't1',
     lease: 1, frame: 'frame1', document: 1, ref: 'ref1', origin: 'https://fixture.test' };
-  const authority = createAuthority({ current: () => scope, snapshot: () => snapshot ? snapshot(scope, { authority, user }) : { scope, time: now() },
+  const authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => scope, snapshot: () => snapshot ? snapshot(scope, { authority, user }) : { scope, time: now() },
     now, authenticate: event => event === user, classify: operation => operation });
-  const grant = session => authority.user(user, 'grant', { session, origin: scope.origin, mode });
-  grant('one');
   const transportAuthority = createTransportAuthority({ authority, resolveOperation(plan, context, command) {
     scope = { ...scope, session: context.session, broker: context.brokerEpoch, target: plan.target };
     const operation = { id: context.session + '-' + context.operation, kind: plan.operationName === 'browser_read' ? 'read' : 'click',
@@ -55,7 +53,7 @@ function fixture({ close = () => true, mode = 'once', beforePart = () => {}, con
       }
       return { effect: 'verified', observation: {} };
     }, ...changes });
-  return { broker, calls, opened, authority, grant };
+  return { broker, calls, opened, authority };
 }
 
 test('a closure provider is mandatory before any connection can be owned', () => {
@@ -111,16 +109,16 @@ test('shutdown retains uncertain socket and never admits a new Connect', async (
   await assert.rejects(f.broker.connect({ userInitiated: true }), /HOST_CLOSED/);
   assert.equal(f.calls.length, 0);
 });
-test('attach before Connect requires explicit authenticated rebind and fresh consent', async () => {
+test('attach before Connect requires explicit authenticated rebind', async () => {
   const f = fixture(), old = f.broker.attach(hello()); await f.broker.connect({ userInitiated: true });
   assert.equal((await old.request(request('early'))).error.code, 'LEASE_LOST');
   assert.throws(() => old.rebind(hello('other')), /IPC_AUTH/);
   assert.throws(() => old.rebind(hello('one', 'p2-v1')), /IPC_AUTH/);
   const fresh = old.rebind(hello());
   assert.equal((await old.request(request('old'))).error.code, 'CLIENT_DISCONNECTED');
-  assert.equal((await fresh.request(request('no-consent'))).effect, 'none');
-  f.grant('one'); assert.equal((await fresh.request(request('new'))).effect, 'verified');
-  assert.equal(f.calls.length, 2);
+  assert.equal((await fresh.request(request('no-consent'))).effect, 'verified');
+  assert.equal((await fresh.request(request('new'))).effect, 'verified');
+  assert.equal(f.calls.length, 4);
   assert.throws(() => f.broker.attach(hello()), /SESSION_IN_USE/);
 });
 test('reconnect rebind preserves receipts while refusing process replacement and duplicate clients', async () => {
@@ -135,13 +133,13 @@ test('reconnect rebind preserves receipts while refusing process replacement and
   assert.throws(() => f.broker.attach(hello('one', 'p2-v1')), /SESSION_IN_USE/);
   assert.doesNotThrow(() => f.broker.attach(hello()));
 });
-for (const operation of ['browser_act', 'browser_read']) test('once consent covers one complete logical ' + operation, async () => {
+for (const operation of ['browser_act', 'browser_read']) test('ordinary commands continue without site consent: ' + operation, async () => {
   const f = fixture(); await f.broker.connect({ userInitiated: true });
   const client = f.broker.attach(hello()), receipt = await client.request(request('first', operation));
   assert.equal(receipt.effect, 'verified'); assert.equal(f.calls.length, 2);
   assert.equal(f.authority.receipt('one-first').phase, 'verified');
-  assert.equal((await client.request(request('second', operation))).effect, 'none');
-  assert.equal(f.calls.length, 2); assert.deepEqual(await client.request(request('first', operation)), receipt);
+  assert.equal((await client.request(request('second', operation))).effect, 'verified');
+  assert.equal(f.calls.length, 4); assert.deepEqual(await client.request(request('first', operation)), receipt);
 });
 for (const reason of ['revoke', 'expiry', 'frame', 'document', 'lease', 'origin', 'terms']) {
   test('mid-operation ' + reason + ' fences the release without replay', async () => {
@@ -155,11 +153,11 @@ for (const reason of ['revoke', 'expiry', 'frame', 'document', 'lease', 'origin'
     await f.broker.connect({ userInitiated: true }); const client = f.broker.attach(hello());
     const receipt = await client.request(request('first'));
     assert.equal(receipt.effect, 'unknown'); assert.equal(f.calls.length, 1);
-    f.grant('one'); assert.equal((await client.request(request('again'))).error.code, 'STATE_UNVERIFIABLE');
+    assert.deepEqual(await client.request(request('first')), receipt);
     assert.equal(f.calls.length, 1); await tick(); assert.equal(f.calls.length, 1);
   });
 }
-test('unknown logical effect quarantines authority and broker target after complete transport', async () => {
+test('unknown read keeps its receipt and allows a fresh read', async () => {
   const f = fixture({ mode: 'session', async dispatch(plan, context) {
     await context.session.send('DOM.getDocument', {}, 'owned-session');
     return { effect: 'unknown', observation: {} };
@@ -167,18 +165,18 @@ test('unknown logical effect quarantines authority and broker target after compl
   await f.broker.connect({ userInitiated: true }); const client = f.broker.attach(hello());
   assert.equal((await client.request(request('unknown', 'browser_read'))).effect, 'unknown');
   assert.equal(f.authority.receipt('one-unknown').phase, 'unknown');
-  assert.equal((await client.request(request('retry', 'browser_read'))).error.code, 'STATE_UNVERIFIABLE');
-  assert.equal(f.calls.length, 1);
+  assert.equal((await client.request(request('retry', 'browser_read'))).effect, 'unknown');
+  assert.equal(f.calls.length, 2);
 });
-test('revoking another session does not spend or fence this session once operation', async () => {
+test('revoking another session does not fence this session operation', async () => {
   const f = fixture({ beforePart(i, { authority, user }) {
     if (i) authority.user(user, 'revoke', { session: 'two' });
   } });
-  f.grant('two'); await f.broker.connect({ userInitiated: true });
+  await f.broker.connect({ userInitiated: true });
   const one = f.broker.attach(hello()), two = f.broker.attach(hello('two'));
   assert.equal((await one.request(request('one'))).effect, 'verified');
-  assert.equal((await two.request(request('two'))).effect, 'none');
-  assert.equal(f.calls.length, 2);
+  assert.equal((await two.request(request('two'))).effect, 'unknown');
+  assert.equal(f.calls.length, 3);
 });
 test('coherent terminal snapshot revocation fences a continuation even after first command', async () => {
   let f, snapshots = 0;
@@ -200,7 +198,7 @@ test('IPC rebind authenticates the same OS peer and replaces only its stale hand
   await f.broker.connect({ userInitiated: true });
   assert.equal((await client.request(request('early'))).error.code, 'LEASE_LOST');
   assert.equal(typeof client.rebind, 'function');
-  assert.equal((await client.rebind()).rebound, true); f.grant('one');
+  assert.equal((await client.rebind()).rebound, true);
   assert.equal((await client.request(request('new'))).effect, 'verified');
   await f.broker.loseConnection(); await f.broker.connect({ userInitiated: true });
   peer = { ...peer, incarnation: 'p100-v2' };
@@ -396,7 +394,7 @@ test('completed logical operation fences delayed transport even with new consent
   } });
   await f.broker.connect({ userInitiated: true });
   assert.equal((await f.broker.attach(hello()).request(request('done', 'browser_read'))).effect, 'verified');
-  f.grant('one'); assert.throws(late, /LEASE_LOST|TRANSPORT_SPENT/); assert.equal(f.calls.length, 1);
+  assert.throws(late, /LEASE_LOST|TRANSPORT_SPENT/); assert.equal(f.calls.length, 1);
 });
 test('broker never invokes a turn provider between coherent snapshot and physical transport', async () => {
   let terminal = false, callbacks = 0;

@@ -1,33 +1,43 @@
 import test from 'node:test';
+
 import assert from 'node:assert/strict';
+
 import { mkdtempSync, writeFileSync, rmSync, realpathSync, readFileSync } from 'node:fs';
+
 import { tmpdir } from 'node:os';
+
 import { join } from 'node:path';
+
 import { runInNewContext } from 'node:vm';
+
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+
 import * as authorityHost from '../plugins/sleight/lib/direct-browser/authority.mjs';
+
 import { createBroker } from '../plugins/sleight/lib/direct-browser/broker.mjs';
+
 import { createFileAuthority } from '../plugins/sleight/lib/direct-browser/host-files.mjs';
+
 import { createScopedAdapter } from '../plugins/sleight/lib/direct-browser/scoped-adapter.mjs';
+
 import { createTransportOwner } from '../plugins/sleight/lib/direct-browser/transport-owner.mjs';
+
 const { createAuthority, createTransportAuthority, completeTransport, completeTransportStep } = authorityHost;
 
-// BP2-P2's FORM-HOST-PREFLIGHT, joined to this worktree's host contract.
-// All data and transports are synthetic. Unknown fake methods throw.
 const origin = 'https://fixture.invalid';
+
 const scope = ref => ({ browser: 'browser', broker: 1, session: 'client', turn: 'turn',
   target: 'target', lease: 1, frame: 'frame', document: 1, ref, origin });
+
 const context = { session: 'client', turn: 'turn', browserIncarnation: 'browser', brokerEpoch: 1, operation: 'form' };
+
 const operations = ['rfirst', 'rsecond'].map((ref, i) => ({ id: 'field-' + i, kind: 'fill',
-  scope: scope(ref), args: { value: 'fixture-' + i }, consequence: 'ordinary',
-  transmission: { data: 'fixture-' + i, destination: origin } }));
-function policy({ once = false, confirm = true, ttl = 5000, ops = operations, resolve } = {}) {
+  scope: scope(ref), args: { value: 'fixture-' + i }, consequence: 'ordinary' }));
+
+function policy({ ttl = 5000, ops = operations, resolve } = {}) {
   let current = ops[0].scope, time = 100, terminal;
-  const user = {}, authority = createAuthority({ current: () => current, now: () => time, ttl,
+  const user = {}, authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => current, now: () => time, ttl,
     snapshot: () => { terminal?.(); return { scope: current, time }; }, classify: op => op, authenticate: event => event === user });
-  const grant = () => authority.user(user, 'grant', { session: 'client', origin, mode: once ? 'once' : 'session' });
-  grant();
-  if (confirm) for (const operation of ops) authority.user(user, 'confirm', { operation });
   const transport = createTransportAuthority({ authority, resolveOperation(plan, ctx, command) {
     if (command.method === 'DOM.enable') return plan.preparationOperations[0];
     assert.equal(command.method, 'Input.insertText');
@@ -35,9 +45,10 @@ function policy({ once = false, confirm = true, ttl = 5000, ops = operations, re
     const operation = ops.find(op => op.args.value === command.params.text);
     assert.ok(operation); return operation;
   } });
-  return { authority, transport, grant, user, current(op) { current = op.scope; },
+  return { authority, transport, user, current(op) { current = op.scope; },
     clock(value) { time = value; }, terminal(fn) { terminal = fn; } };
 }
+
 function form(t, options = {}) {
   const ops = options.ops ?? operations, p = policy(options), sent = [], errors = [];
   const socket = { sessionId: 'root', on() {}, off() {}, send(method, params, route) {
@@ -72,6 +83,7 @@ function form(t, options = {}) {
   };
   return { ...p, broker, request, sent, errors };
 }
+
 test('preflight control: separate plans dispatch both exact approved fields', () => {
   const p = policy(), sent = [];
   for (const op of operations) {
@@ -80,6 +92,7 @@ test('preflight control: separate plans dispatch both exact approved fields', ()
   }
   assert.deepEqual(sent, ['field-0', 'field-1']);
 });
+
 test('preflight: one browser_fill request dispatches two exact approved ordered fields', async t => {
   const f = form(t), receipt = await f.request();
   assert.deepEqual(f.errors, []); assert.deepEqual(f.sent, ['fixture-0', 'fixture-1']);
@@ -88,34 +101,7 @@ test('preflight: one browser_fill request dispatches two exact approved ordered 
   assert.equal(f.authority.receipt('field-0').phase, 'verified');
   assert.equal(f.authority.receipt('field-1').phase, 'verified');
 });
-test('ordered fields require separate once site grants and preserve the completed prefix', async t => {
-  const f = form(t, { once: true }), receipt = await f.request();
-  assert.deepEqual(f.sent, ['fixture-0']); assert.equal(receipt.completed, 1);
-  assert.equal(receipt.unknownStep, null); assert.equal(receipt.untouched, 1);
-  assert.equal(f.authority.receipt('field-0').phase, 'verified');
-});
-test('a fresh once grant covers the next exact step, not the whole form', async t => {
-  const f = form(t, { once: true, async dispatch(plan, ctx, p) {
-    for (const [index, op] of operations.entries()) {
-      if (index) p.grant(); p.current(op);
-      await ctx.session.send('Input.insertText', { text: op.args.value }, 'page');
-      ctx.session.completeStep(index, 'verified');
-    }
-    return { effect: 'verified', completed: 2, observation: null, untouched: 0 };
-  } });
-  assert.equal((await f.request()).completed, 2); assert.equal(f.sent.length, 2);
-});
-test('preparation uses independent authority and does not complete or approve a field', async t => {
-  const read = { id: 'read', kind: 'read', scope: scope('rread'), args: {}, consequence: 'ordinary' };
-  const f = form(t, { preparation: read, confirm: false, async dispatch(plan, ctx, p) {
-    p.current(read); await ctx.session.send('DOM.enable', {}, 'page'); ctx.session.completePreparation(read.id, 'verified');
-    p.current(operations[0]);
-    await assert.rejects(async () => ctx.session.send('Input.insertText', { text: 'fixture-0' }, 'page'), /TRANSPORT_AUTHORITY_REQUIRED/);
-    return { effect: 'none', completed: 0, observation: null, untouched: 2 };
-  } });
-  const receipt = await f.request(); assert.deepEqual(f.sent, ['read']);
-  assert.equal(receipt.completed, 0); assert.equal(receipt.untouched, 2);
-});
+
 test('ordered operations share one authority deadline across steps', async t => {
   const f = form(t, { ttl: 10, async dispatch(plan, ctx, p) {
     p.current(operations[0]); await ctx.session.send('Input.insertText', { text: 'fixture-0' }, 'page');
@@ -125,6 +111,7 @@ test('ordered operations share one authority deadline across steps', async t => 
   } });
   const receipt = await f.request(); assert.equal(receipt.completed, 1); assert.deepEqual(f.sent, ['fixture-0']);
 });
+
 test('unknown second field reports the prefix, unknown step and untouched suffix on timeout', async t => {
   const f = form(t, { timeoutMs: 20, send(method, params) { if (params.text === 'fixture-1') return new Promise(() => {}); },
     async dispatch(plan, ctx, p) {
@@ -136,13 +123,13 @@ test('unknown second field reports the prefix, unknown step and untouched suffix
   assert.equal(receipt.unknownStep, 1); assert.equal(receipt.untouched, 0); assert.equal(receipt.effect, 'unknown');
   assert.equal(f.authority.receipt('field-0').phase, 'verified'); assert.equal(f.authority.receipt('field-1').phase, 'unknown');
 });
-for (const mode of ['out-of-order', 'repeat', 'unfinished', 'unlisted', 'changed-ref', 'changed-value', 'revoked'])
+
+for (const mode of ['out-of-order', 'repeat', 'unlisted', 'changed-ref', 'changed-value', 'revoked'])
   test('ordered transport refuses ' + mode, async t => {
     const f = form(t, { resolve(command) {
       const op = operations.find(op => op.args.value === command.params.text) ?? operations[1];
       if (mode === 'changed-value' || mode === 'unlisted') return { ...op,
-        ...(mode === 'unlisted' ? { id: 'unlisted' } : {}), args: { value: 'unapproved' },
-        transmission: { data: 'unapproved', destination: origin } };
+        ...(mode === 'unlisted' ? { id: 'unlisted' } : {}), args: { value: 'unapproved' } };
       if (mode === 'changed-ref') return { ...op, scope: scope('rchanged') };
       return op;
     }, async dispatch(plan, ctx, p) {
@@ -160,15 +147,17 @@ for (const mode of ['out-of-order', 'repeat', 'unfinished', 'unlisted', 'changed
     } });
     const receipt = await f.request(); assert.ok(f.sent.length <= 1); assert.notEqual(receipt.completed, 2);
   });
+
 test('three-field timeout retains the unknown middle step and untouched final step', async t => {
   const ops = [...operations, { id: 'field-2', kind: 'fill', scope: scope('rthird'), args: { value: 'fixture-2' },
-    consequence: 'ordinary', transmission: { data: 'fixture-2', destination: origin } }];
+    consequence: 'ordinary' }];
   const f = form(t, { ops, timeoutMs: 20, send(method, params) { if (params.text === 'fixture-1') return new Promise(() => {}); } });
   const receipt = await f.request();
   assert.equal(receipt.completed, 1); assert.equal(receipt.unknownStep, 1); assert.equal(receipt.untouched, 1);
   assert.equal(receipt.error.code, 'TIMEOUT'); assert.equal(receipt.error.completed, 1);
   assert.deepEqual(f.sent, ['fixture-0', 'fixture-1']); assert.equal(f.authority.receipt('field-2'), null);
 });
+
 test('revocation at the second coherent snapshot prevents the second physical field', async t => {
   let count = 0;
   const f = form(t); f.terminal(() => { if (++count === 2) f.authority.user(f.user, 'revoke', { session: 'client' }); });
@@ -176,16 +165,13 @@ test('revocation at the second coherent snapshot prevents the second physical fi
   assert.equal(receipt.completed, 1); assert.equal(receipt.unknownStep, null); assert.equal(receipt.untouched, 1);
   assert.deepEqual(f.sent, ['fixture-0']);
 });
-test('the first exact field confirmation cannot authorize the second transmission', async t => {
-  const f = form(t); f.authority.user(f.user, 'decline', { operation: operations[1] });
-  const receipt = await f.request(); assert.equal(receipt.completed, 1); assert.equal(receipt.untouched, 1);
-  assert.deepEqual(f.sent, ['fixture-0']);
-});
 
 const lease = { target: 'target', cdpSessionId: 'page', frame: 'frame', origin, document: 1, epoch: 1,
   browserIncarnation: 'browser', brokerEpoch: 1, clientSession: 'client', turn: 'turn' };
+
 const binding = { browserIncarnation: 'browser', brokerEpoch: 1, clientSession: 'client', turn: 'turn',
   leaseGeneration: 1, target: 'target', frame: 'frame', origin, document: 1, operation: 'upload', ref: 'rfile' };
+
 async function upload(t, options = {}) {
   const dir = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-form-host-')); trackTemp(dir);
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -212,6 +198,7 @@ async function upload(t, options = {}) {
   return { files, token, stage, view, sent, path, bytes, input: { backendNodeId: 42, operation: 'upload', executionContextId: 9 },
     clock(value) { time = value; }, revoke() { alive = false; }, binding(value) { currentBinding = value; } };
 }
+
 test('preflight: consumed approval stages bytes and transfers once through the closed file entry', async t => {
   const f = await upload(t);
   assert.deepEqual(readFileSync(f.stage.paths[0]), f.bytes);
@@ -223,6 +210,7 @@ test('preflight: consumed approval stages bytes and transfers once through the c
   await assert.rejects(f.view.setFilePayloads(f.input, f.stage));
   assert.equal(f.stage.cleanup().retained, false);
 });
+
 test('file transfer uses the original approved bytes despite exposed stage or original path mutation', async t => {
   const f = await upload(t); writeFileSync(f.path, 'replacement'); f.stage.payloads[0].buffer.fill(1);
   writeFileSync(f.stage.paths[0], 'staging replacement');
@@ -231,6 +219,7 @@ test('file transfer uses the original approved bytes despite exposed stage or or
   assert.deepEqual(Buffer.from(command.params.arguments[0].value[0].base64, 'base64'), f.bytes);
   assert.equal(command.params.objectId, 'file-node');
 });
+
 for (const mode of ['forged', 'token', 'expired', 'changed-ref', 'changed-destination', 'changed-operation', 'lost-lease', 'extra-keys', 'foreign-world', 'cleaned'])
   test('staged transfer refuses ' + mode + ' before the byte actuator', async t => {
     const f = await upload(t); let stage = f.stage, input = f.input;
@@ -247,6 +236,7 @@ for (const mode of ['forged', 'token', 'expired', 'changed-ref', 'changed-destin
     await assert.rejects(f.view.setFilePayloads(input, stage));
     assert.equal(f.sent.filter(c => c.method === 'Runtime.callFunctionOn').length, 0);
   });
+
 test('byte actuator constructs browser-owned Files and keeps staged cleanup separate', async t => {
   const f = await upload(t); await f.view.setFilePayloads(f.input, f.stage);
   const command = f.sent.find(c => c.method === 'Runtime.callFunctionOn'), events = [];
@@ -260,6 +250,7 @@ test('byte actuator constructs browser-owned Files and keeps staged cleanup sepa
   assert.deepEqual(events, ['input', 'change']); assert.equal(node.files[0].name, 'fixture.txt');
   assert.equal(fn.call({ type: 'file' }, command.params.arguments[0].value).transferred, false);
 });
+
 test('an unsettled physical send cannot complete a step or start the next', async t => {
   let resolve;
   const p = policy(), plan = { target: 'target', orderedOperations: operations };
@@ -271,12 +262,14 @@ test('an unsettled physical send cannot complete a step or start the next', asyn
   resolve({}); await Promise.resolve(); completeTransportStep(p.transport, plan, 0, 'verified');
   assert.deepEqual(completeTransport(p.transport, plan, 'unknown'), { completed: 1, unknownStep: null, untouched: 1 });
 });
+
 test('a field hidden in preparationOperations cannot bypass the ordered field list', () => {
   const p = policy(), plan = { target: 'target', orderedOperations: [operations[0]], preparationOperations: [operations[1]] };
   p.current(operations[1]); let sent = false;
   assert.throws(() => p.transport(plan, context, { method: 'Input.insertText', params: { text: 'fixture-1' } }, () => { sent = true; }), /TRANSPORT_ORDER_REQUIRED/);
   assert.equal(sent, false);
 });
+
 test('unknown byte transfer returns retained cleanup and cannot replay the stage', async t => {
   const f = await upload(t), ordinary = f.view;
   // A separate strict view shares the owned stage but rejects the byte command.
@@ -298,6 +291,7 @@ test('unknown byte transfer returns retained cleanup and cannot replay the stage
   await assert.rejects(ordinary.setFilePayloads(f.input, f.stage), /Invalid staged file capability/);
   assert.equal(sent.filter(method => method === 'Runtime.callFunctionOn').length, 1);
 });
+
 test('lease loss after byte dispatch cannot publish transferred proof', async t => {
   const f = await upload(t); let resolve, alive = true;
   const adapter = createScopedAdapter({ helpers: {}, checkLease: () => alive,
@@ -316,18 +310,18 @@ test('lease loss after byte dispatch cannot publish transferred proof', async t 
   const receipt = await pending; assert.equal(receipt.transfer.effect, 'unknown');
   assert.equal(receipt.cleanup.object.retained, true); assert.equal(receipt.cleanup.stage.retained, true);
 });
+
 for (const expired of [false, true]) test('staged bytes use the branded broker fence, terminal expiry=' + expired, async t => {
   const f = await upload(t), user = {}, uid = process.getuid?.() ?? 1000, secret = 'a'.repeat(64), sent = [];
-  const op = { id: 'upload', kind: 'upload', scope: scope('rfile'), args: { files: [f.path] }, consequence: 'upload',
-    transmission: { data: 'exact synthetic file selection', files: [f.path], destination: origin } };
+  const op = { id: 'upload', kind: 'upload', scope: scope('rfile'), args: { files: [f.path] }, consequence: 'upload' };
   const read = { id: 'prepare-upload', kind: 'read', scope: scope('rread'), args: {}, consequence: 'ordinary' };
   let current = read.scope, time = 100;
-  const authority = createAuthority({ current: () => current, now: () => time, snapshot: () => {
+  const authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => current, now: () => time, snapshot: () => {
     if (expired && current.ref === 'rfile') time = 110;
     return { scope: current, time };
   },
     classify: value => value, authenticate: event => event === user });
-  authority.user(user, 'grant', { session: 'client', origin, mode: 'session' }); authority.user(user, 'confirm', { operation: op });
+
   const transportAuthority = createTransportAuthority({ authority, resolveOperation(plan, ctx, command) {
     current = command.method === 'Runtime.callFunctionOn' ? op.scope : read.scope;
     if (command.method === 'Runtime.callFunctionOn') {
@@ -371,4 +365,15 @@ for (const expired of [false, true]) test('staged bytes use the branded broker f
   assert.equal(authority.receipt(op.id).effect, expired ? 'untouched' : 'verified');
   assert.equal(authority.receipt(read.id).effect, 'verified');
   assert.deepEqual(sent, ['Page.createIsolatedWorld', 'DOM.resolveNode', ...(expired ? [] : ['Runtime.callFunctionOn']), 'Runtime.releaseObject']);
+});
+
+test('ordinary form fields continue without per-field proof and use the final form readback', async t => {
+  const f = form(t, { async dispatch(plan, ctx, p) {
+    for (const op of operations) {
+      p.current(op); await ctx.session.send('Input.insertText', { text: op.args.value }, 'page');
+    }
+    return { effect: 'verified', completed: 2, untouched: 0, observation: { fields: ['fixture-0', 'fixture-1'] } };
+  } });
+  const receipt = await f.request();
+  assert.deepEqual(f.sent, ['fixture-0', 'fixture-1']); assert.equal(receipt.completed, 2); assert.equal(receipt.effect, 'verified');
 });

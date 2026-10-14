@@ -39,7 +39,7 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
   authenticate({ version: 1, secret, uid, session: 'validation', incarnation: 'validation' }, { uid, secret });
   for (const [value, ceiling] of [[timeoutMs, 30000], [maxSession, 32], [maxBroker, 128], [maxReceipts, 4096]])
     if (!Number.isInteger(value) || value < 1 || value > ceiling) throw Error('BROKER_LIMIT');
-  const clients = new Map(), receipts = new Map(), occupied = new Set(), quarantined = new Set();
+  const clients = new Map(), receipts = new Map(), occupied = new Set();
   const owned = new Map();
   let state = 'disconnected', epoch = 0, socket, connecting, active = 0, paused = false, cursor = 0, revocationFault = false, closed = false;
   const cleanupStatus = () => ({ pending: [...owned.values()].filter(r => r.socket !== socket).length,
@@ -76,7 +76,7 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
       if (prefix) {
         response = { ...response, ...prefix };
         if (prefix.unknownStep !== null || response.effect === 'verified' && prefix.untouched) {
-          response.effect = 'unknown'; response.phase = 'unknown'; quarantined.add(task.target);
+          response.effect = 'unknown'; response.phase = 'unknown';
           response.error = { ...failure(response.error?.code ?? 'EFFECT_UNKNOWN', 'unknown', 'unknown', prefix.completed).error };
         }
         if (response.results?.length !== prefix.completed) delete response.results;
@@ -89,19 +89,17 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
     pump();
   }
   function stopped(task, code) {
-    if (task.dispatched && task.target) quarantined.add(task.target);
     task.controller.abort();
     finish(task, failure(code, task.dispatched ? 'unknown' : 'none', task.dispatched ? 'unknown' : 'prepared'));
   }
   async function execute(task) {
     try {
       if (!live(task)) return stopped(task, 'LEASE_LOST');
-      if (quarantined.has(task.target)) return stopped(task, 'STATE_UNVERIFIABLE');
       const authority = await authorize(task.plan, task.scope);
       if (!live(task)) return stopped(task, 'LEASE_LOST');
       // A fence must be synchronous so no user callback/await interposes before
-      // the internal adapter entry. One-operation capability consumption belongs
-      // here in the injected trusted BP2-1 policy, never in frontend arguments.
+      // the internal adapter entry. Payment authority and target checks belong
+      // to the trusted semantic host, never frontend arguments.
       if (authority !== true || dispatchFence(task.plan, task.scope) !== true) return finish(task, failure('PERMISSION_REQUIRED'));
       if (!live(task)) return stopped(task, 'LEASE_LOST');
       const guardedSession = Object.freeze({ sessionId: socket.sessionId,
@@ -154,7 +152,6 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
         if (typeof result.tab !== 'string' || !/^t[A-Za-z0-9_-]{1,63}$/.test(result.tab)) return stopped(task, 'EFFECT_UNKNOWN');
         response.tab = result.tab;
       }
-      if (result.effect === 'unknown') quarantined.add(task.target);
       if (Buffer.byteLength(JSON.stringify(response)) > 12000) {
         const omitted = { omitted: true, reason: 'output_budget' };
         response = { ...response, observation: omitted,

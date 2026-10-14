@@ -243,7 +243,7 @@ test('parameterized reads and whole clicks use the actual coherent broker fence'
   const scope = { browser: 'browser', broker: 1, session: 'client', turn: 'turn', target: lease.target,
     lease: 1, frame: lease.frame, document: 1, ref: 'ref', origin: lease.origin };
   let snapshots = 0, revokeAt = Infinity;
-  const authority = createAuthority({ current: () => scope, now: () => 100,
+  const authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => scope, now: () => 100,
     authenticate: event => event === user, classify: operation => operation,
     snapshot() {
       snapshots++;
@@ -285,13 +285,11 @@ test('parameterized reads and whole clicks use the actual coherent broker fence'
   await broker.connect({ userInitiated: true });
   const client = broker.attach({ version: 1, uid, secret, session: scope.session, incarnation: 'p1-v1' });
   const request = (id, operation) => ({ id, operation, args: {} });
-  const grant = () => authority.user(user, 'grant', { session: scope.session, origin: scope.origin, mode: 'once' });
-  grant(); assert.equal((await client.request(request('read', 'browser_read'))).effect, 'verified');
+  assert.equal((await client.request(request('read', 'browser_read'))).effect, 'verified');
   assert.equal(snapshots, 4); assert.equal(root.calls.length, 4);
-  assert.equal((await client.request(request('ungranted', 'browser_act'))).effect, 'none');
-  grant(); assert.equal((await client.request(request('click', 'browser_act'))).effect, 'verified');
+  assert.equal((await client.request(request('click', 'browser_act'))).effect, 'verified');
   assert.equal(root.calls.length, 6); assert.equal(snapshots, 6);
-  grant(); revokeAt = snapshots + 2;
+  revokeAt = snapshots + 2;
   assert.equal((await client.request(request('revoked', 'browser_act'))).effect, 'unknown');
   assert.equal(root.calls.length, 7); assert.equal(snapshots, 8);
   assert.ok(root.calls.every(command => command.route === lease.cdpSessionId));

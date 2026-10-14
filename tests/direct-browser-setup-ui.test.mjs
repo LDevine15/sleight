@@ -1,26 +1,34 @@
 import test from 'node:test';
+
 import assert from 'node:assert/strict';
+
 import { createConsentUi, escapeLabel, selectedBrowser } from '../plugins/sleight/lib/direct-browser/consent-ui.mjs';
+
 import { createSetupUi, SETUP_COPY } from '../plugins/sleight/lib/direct-browser/setup-ui.mjs';
+
 import { createIndicator } from '../plugins/sleight/lib/direct-browser/indicator.mjs';
 
 const browser = { application: 'com.example.browser', name: 'Chrome', userDataRoot: '/fixture/browser', incarnation: 'pid-start-1' };
+
 const operation = () => ({ browserIncarnation: 'pid-start-1', brokerEpoch: 1, clientSession: 's1', turn: 'turn1', leaseGeneration: 1,
   target: 't1', frame: 'f1', document: 'd1', sequence: 1, origin: 'https://shop.test',
   action: 'fill', args: { value: 'fixture' }, destination: 'https://shop.test/order',
   payment: { item: 'book', payee: 'shop', amount: '20.00', currency: 'USD', method: 'fixture-card' } });
+
 function host() {
   const events = new WeakSet();
   const cards = [];
   return { cards, emit: fields => { const event = { ...fields }; events.add(event); return event; },
     authenticate: event => events.delete(event), present: card => cards.push(card) };
 }
+
 function consent() {
   const native = host();
   let now = 0;
   const ui = createConsentUi({ ...native, checkCurrent: () => true, now: () => now, ttlMs: 100 });
   return { native, ui, advance: ms => { now += ms; } };
 }
+
 function setup() {
   const native = host();
   const attempts = [], effects = [];
@@ -41,6 +49,7 @@ function setup() {
   };
   return { ui, native, attempts, effects, indicator, event, connection, advance: ms => { now += ms; } };
 }
+
 async function connected(f) {
   const pending = f.ui.control(f.event('connect'));
   f.attempts[0].resolve(f.connection());
@@ -53,21 +62,25 @@ test('first-run copy preserves the exact checkbox and Chrome prompt, with explic
   assert.equal(f.ui.view().selection.userDataRoot, browser.userDataRoot);
   assert.match(SETUP_COPY.before, /Connect sleight to \{browser\}/);
   assert.match(f.ui.view().text, /Connect sleight to Chrome/);
-  assert.match(SETUP_COPY.before, /site permissions and action confirmations still apply/);
+  assert.match(SETUP_COPY.before, /asks before payments you have not requested/);
   assert.deepEqual(f.ui.view().buttons, ['Connect', 'Use existing browser control', 'Not now']);
 });
+
 test('selection requires application, root and process incarnation; label is not identity', () => {
   for (const key of ['application', 'userDataRoot', 'incarnation']) assert.throws(() => selectedBrowser({ ...browser, [key]: '' }));
   assert.throws(() => selectedBrowser({ ...browser, userDataRoot: '/fixture/../owner' }));
   assert.notDeepEqual(selectedBrowser(browser), selectedBrowser({ ...browser, incarnation: 'restarted' }));
 });
+
 test('page markup, control characters and bidirectional labels are escaped', () => {
   assert.equal(escapeLabel('<img onerror="approve()">\u202e\n&'), '&lt;img onerror=&quot;approve()&quot;&gt;\\u202e\\u000a&amp;');
 });
+
 test('missing trusted UI cannot create authority', () => {
   const ui = createConsentUi();
   assert.throws(() => ui.request(operation()), /TRUSTED_UI_UNAVAILABLE/);
 });
+
 test('raw model or page approval booleans and copied native events are rejected', () => {
   const f = consent(), op = operation(), id = f.ui.request(op, { label: 'Approve all sites' });
   assert.throws(() => f.ui.respond({ id, choice: 'once', approved: true }), /UNAUTHENTICATED/);
@@ -77,6 +90,7 @@ test('raw model or page approval booleans and copied native events are rejected'
   assert.equal(f.ui.consume(ticket, op).phase, 'prepared');
   assert.throws(() => f.ui.consume(ticket, op), /STALE_CONFIRMATION/);
 });
+
 test('confirmation presents escaped page labels and redacted values; exact arguments stay private', () => {
   const f = consent(), op = operation();
   op.args = { password: 'private-fixture', value: 'private-fixture' };
@@ -86,6 +100,7 @@ test('confirmation presents escaped page labels and redacted values; exact argum
   assert.ok(!card.includes('private-fixture'));
   assert.match(card, /protected/);
 });
+
 test('operation changes invalidate affirmative choice before dispatch', () => {
   for (const key of ['browserIncarnation', 'brokerEpoch', 'clientSession', 'turn', 'leaseGeneration', 'target', 'frame', 'document', 'sequence', 'origin', 'action', 'args', 'destination', 'payment']) {
     const f = consent(), op = operation(), id = f.ui.request(op);
@@ -94,6 +109,7 @@ test('operation changes invalidate affirmative choice before dispatch', () => {
     assert.throws(() => f.ui.consume(ticket, changed), /STALE_CONFIRMATION/, key);
   }
 });
+
 test('every changed payment term needs a fresh confirmation, including method and plan', () => {
   for (const key of ['item', 'payee', 'amount', 'currency', 'method', 'plan']) {
     const f = consent(), op = operation(), id = f.ui.request(op);
@@ -102,6 +118,7 @@ test('every changed payment term needs a fresh confirmation, including method an
     assert.throws(() => f.ui.consume(ticket, op), /STALE_CONFIRMATION/, key);
   }
 });
+
 test('expiry, pause and revoked confirmations cannot dispatch', () => {
   for (const cause of ['expiry', 'revoke']) {
     const f = consent(), op = operation(), id = f.ui.request(op);
@@ -110,16 +127,7 @@ test('expiry, pause and revoked confirmations cannot dispatch', () => {
     assert.throws(() => f.ui.consume(ticket, op), /STALE_CONFIRMATION/);
   }
 });
-test('two sessions on one origin do not share site permission; once is one operation', () => {
-  const f = consent(), op = operation(), id = f.ui.request(op, { kind: 'site' });
-  const ticket = f.ui.respond(f.native.emit({ id, choice: 'session' }));
-  f.ui.consume(ticket, op);
-  assert.equal(f.ui.hasSiteGrant(op), true);
-  assert.equal(f.ui.hasSiteGrant({ ...op, clientSession: 's2' }), false);
-  assert.equal(f.ui.hasSiteGrant({ ...op, brokerEpoch: 2 }), false);
-  assert.equal(f.ui.hasSiteGrant({ ...op, origin: 'https://other.test' }), false);
-  f.ui.revoke(); assert.equal(f.ui.hasSiteGrant(op), false);
-});
+
 test('Cancel and close store no decline; the next request is shown', () => {
   for (const choice of ['cancel', 'close']) {
     const f = consent(), op = operation(), id = f.ui.request(op);
@@ -128,24 +136,13 @@ test('Cancel and close store no decline; the next request is shown', () => {
     assert.equal(f.native.cards.length, 2);
   }
 });
-test('always allow requires a host-owned allowlist writer and cannot make action authority permanent', () => {
-  const f = consent(), id = f.ui.request(operation(), { kind: 'site' });
-  assert.throws(() => f.ui.respond(f.native.emit({ id, choice: 'always' })), /ALLOWLIST_UNAVAILABLE/);
-  const writes = [], native = host();
-  const ui = createConsentUi({ ...native, checkCurrent: () => true, writeAllowlist: scope => { writes.push(scope); return true; } });
-  const op = operation(), actionId = ui.request(op);
-  assert.throws(() => ui.respond(native.emit({ id: actionId, choice: 'always' })), /INVALID_CHOICE/);
-  const siteId = ui.request(op, { kind: 'site' });
-  const ticket = ui.respond(native.emit({ id: siteId, choice: 'always' }));
-  assert.equal(writes.length, 0);
-  ui.consume(ticket, op);
-  assert.equal(writes.length, 1); assert.equal(writes[0].origin, op.origin);
-});
+
 test('malformed operation identity and non-web origins cannot request consent', () => {
   const f = consent();
   for (const key of Object.keys(operation())) assert.throws(() => f.ui.request({ ...operation(), [key]: undefined }), undefined, key);
   for (const origin of ['file:///owner', 'chrome://settings', 'https://shop.test/path']) assert.throws(() => f.ui.request({ ...operation(), origin }));
 });
+
 test('connection requires authenticated native intent, exact selected instance and a fresh event', async () => {
   const f = setup();
   await assert.rejects(f.ui.control({ action: 'connect', approved: true }), /UNAUTHENTICATED/);
@@ -155,6 +152,7 @@ test('connection requires authenticated native intent, exact selected instance a
   await assert.rejects(f.ui.control(event), /UNAUTHENTICATED/);
   f.attempts[0].resolve(f.connection()); await pending;
 });
+
 test('approval-pending is asynchronous and never queues hidden work', async () => {
   const f = setup(), pending = f.ui.control(f.event('connect'));
   assert.equal(f.ui.view().state, 'approval-pending');
@@ -164,6 +162,7 @@ test('approval-pending is asynchronous and never queues hidden work', async () =
   f.attempts[0].resolve(f.connection()); await pending;
   assert.equal(f.ui.assertDispatch().phase, 'prepared');
 });
+
 test('cancellation aborts and closes a late socket with no reconnect loop or decline cache', async () => {
   const f = setup(), pending = f.ui.control(f.event('connect'));
   await f.ui.control(f.event('cancel'));
@@ -174,6 +173,7 @@ test('cancellation aborts and closes a late socket with no reconnect loop or dec
   assert.equal(f.attempts.length, 1);
   const next = f.ui.control(f.event('connect')); f.attempts[1].resolve(f.connection()); await next;
 });
+
 test('decline, disabled setting, policy-blocked, unsupported and stale instance stay distinct', async () => {
   for (const code of ['CONNECTION_DECLINED', 'SETTING_OFF', 'SETTING_BLOCKED', 'UNSUPPORTED_BROWSER', 'STALE_INSTANCE']) {
     const f = setup(), pending = f.ui.control(f.event('connect'));
@@ -184,12 +184,14 @@ test('decline, disabled setting, policy-blocked, unsupported and stale instance 
     assert.throws(() => f.ui.assertDispatch());
   }
 });
+
 test('connection with different identity is closed before status or dispatch becomes connected', async () => {
   const f = setup(), pending = f.ui.control(f.event('connect')), connection = f.connection();
   connection.selected.incarnation = 'restarted'; f.attempts[0].resolve(connection); await pending;
   assert.equal(f.ui.view().code, 'STALE_INSTANCE'); assert.throws(() => f.ui.assertDispatch());
   assert.ok(f.effects.some(([effect]) => effect === 'close'));
 });
+
 test('hookup animation runs alongside authorized work; counts and idle persist', async () => {
   const f = setup(); await connected(f);
   f.ui.addSession('s1'); assert.equal(f.indicator.view().text, 'sleight is connected to Chrome.');
@@ -200,6 +202,7 @@ test('hookup animation runs alongside authorized work; counts and idle persist',
   assert.equal(f.indicator.view().text, 'Chrome connected · idle');
   assert.equal(f.attempts.length, 1);
 });
+
 test('Pause fences and cancels before resume; Disconnect invalidates and closes, leaving tabs and toggle alone', async () => {
   const f = setup(); await connected(f);
   await f.ui.control(f.event('pause'));
@@ -213,6 +216,7 @@ test('Pause fences and cancels before resume; Disconnect invalidates and closes,
   assert.equal(f.attempts.length, 1);
   assert.match(SETUP_COPY.off, /turn off Allow remote debugging for this browser instance/);
 });
+
 test('socket loss, browser restart and setting-off revoke without reattaching', async () => {
   for (const reason of ['socket-loss', 'browser-restart', 'setting-off']) {
     const f = setup(); await connected(f);
@@ -223,6 +227,7 @@ test('socket loss, browser restart and setting-off revoke without reattaching', 
     assert.ok(f.effects.some(([effect]) => effect === 'invalidate'));
   }
 });
+
 test('a disconnected in-flight effect remains unknown on reconnect, with no automatic replay', async () => {
   const f = setup(); await connected(f); f.ui.dispatched('op1'); f.ui.lost('socket-loss');
   assert.equal(f.ui.receipt('op1').phase, 'dispatched'); assert.equal(f.ui.receipt('op1').effect, 'unknown');
@@ -231,27 +236,33 @@ test('a disconnected in-flight effect remains unknown on reconnect, with no auto
   assert.equal(f.ui.receipt('op1').effect, 'unknown');
   assert.throws(() => f.ui.dispatched('op1'), /EFFECT_UNKNOWN/);
 });
+
 async function connectedAgain(f) { const pending = f.ui.control(f.event('connect')); f.attempts.at(-1).resolve(f.connection()); await pending; }
+
 test('completed actions do not claim to be undone after disconnect', async () => {
   const f = setup(); await connected(f); f.ui.dispatched('op1'); f.ui.verified('op1'); f.ui.lost('socket-loss');
   assert.equal(f.ui.receipt('op1').phase, 'verified');
   assert.ok(!f.ui.view().text.includes('unfinished'));
 });
+
 test('decorative page badge cannot grant, pause, disconnect or resume anything', async () => {
   const f = setup(); await connected(f);
   for (const action of ['pause', 'disconnect', 'resume']) await assert.rejects(f.ui.control({ action, source: 'page', isTrusted: true }), /UNAUTHENTICATED/);
   assert.doesNotThrow(() => f.ui.assertDispatch());
 });
+
 test('late proof from the old connection cannot mark an unknown action verified after reconnect', async () => {
   const f = setup(); await connected(f); f.ui.dispatched('op1'); f.ui.lost('socket-loss');
   await connectedAgain(f);
   assert.throws(() => f.ui.verified('op1'), /EFFECT_UNKNOWN/);
 });
+
 test('trusted confirmation still requires the broker to check current authority', () => {
   const native = host(), ui = createConsentUi(native), op = operation();
   const id = ui.request(op), ticket = ui.respond(native.emit({ id, choice: 'once' }));
   assert.throws(() => ui.consume(ticket, op), /CURRENT_AUTHORITY_REQUIRED/);
 });
+
 test('native host receives the exact private data and destination, separately from escaped presentation', () => {
   const native = host(), op = operation();
   let details;
@@ -263,6 +274,7 @@ test('native host receives the exact private data and destination, separately fr
   details.args.value = 'mutated by host';
   assert.equal(op.args.value, 'fixture');
 });
+
 test('a late loss event from an old socket cannot disconnect the new connection', async () => {
   const f = setup(), pending = f.ui.control(f.event('connect')), old = f.connection();
   f.attempts[0].resolve(old); await pending;

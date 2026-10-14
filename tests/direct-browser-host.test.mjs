@@ -15,10 +15,9 @@ function fixture(changes = {}) {
   let scope = { browser: 'browser1', broker: 1, session: 'one', turn: 'turn1', target: 't1',
     lease: 1, frame: 'frame1', document: 1, ref: 'ref1', origin: 'https://fixture.test' };
   const user = {};
-  const authority = createAuthority({ current: () => scope, snapshot: () => ({ scope, time: Date.now() }),
+  const authority = createAuthority({ checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), current: () => scope, snapshot: () => ({ scope, time: Date.now() }),
     authenticate: event => event === user, classify: operation => operation });
-  for (const session of ['one', 'a', 'b']) authority.user(user, 'grant', { session, origin: scope.origin, mode: 'session' });
-  const transportAuthority = createTransportAuthority({ authority,
+    const transportAuthority = createTransportAuthority({ authority,
     resolveOperation(plan, brokerScope, command) {
       if (!live) throw Error('REVOKED');
       scope = { ...scope, session: brokerScope.session, broker: brokerScope.brokerEpoch, target: plan.target };

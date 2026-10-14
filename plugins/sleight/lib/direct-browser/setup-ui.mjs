@@ -4,7 +4,7 @@ import { createIndicator } from './indicator.mjs';
 // Original sleight protocol based on v2 section 6. Chromium is behavior evidence
 // only (C151 782af9cb / C155 3ff7ac5a); no Chromium implementation is copied.
 export const SETUP_COPY = Object.freeze({
-  before: 'Connect sleight to {browser} for fast browser control. No extension needed.\n\nIn {browser}, open its remote debugging settings and turn on Allow remote debugging for this browser instance. Then choose Connect here.\n\n{browser} will ask Allow remote debugging? Choose Allow for the connection you just started. This gives sleight a browser connection; your site permissions and action confirmations still apply.',
+  before: 'Connect sleight to {browser} for fast browser control. No extension needed.\n\nIn {browser}, open its remote debugging settings and turn on Allow remote debugging for this browser instance. Then choose Connect here.\n\n{browser} will ask Allow remote debugging? Choose Allow for the connection you just started. This gives sleight a browser connection; sleight asks before payments you have not requested.',
   waiting: 'Waiting for {browser}. Review Allow remote debugging? in {browser} and choose Allow to connect.',
   disconnected: "{browser} disconnected. Reconnect when you're ready; {browser} will ask for permission again.",
   unfinished: 'The last action may be unfinished. sleight will check its state before continuing.',
@@ -120,7 +120,7 @@ export function createSetupUi({ browser, authenticate = () => false, connect, fe
     assertDispatch() {
       if (pendingClose.size) throw Error('SOCKET_CLOSE_UNCONFIRMED');
       if (state !== 'connected' || !socket) throw Error(code);
-      return { phase: 'prepared', effect: 'none', completed: [], next: 'site/action authority and broker dispatch fence' };
+      return { phase: 'prepared', effect: 'none', completed: [], next: 'payment authority, target check and broker dispatch fence' };
     },
     dispatched(id) {
       this.assertDispatch();

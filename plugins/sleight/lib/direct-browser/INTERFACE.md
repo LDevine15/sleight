@@ -1,320 +1,161 @@
-# Closed browser host interface
+# Browser host interface
 
-Source contract: BP2-P1F, protocol 1, authority contract 2. These are private host
-interfaces for P2 and P3. They are inactive until the installed loader, semantic
-adapter and live gates qualify. No model endpoint exposes the scoped view, root
-connection, user controls, file authority or resource owner.
+BP2-P1S uses protocol 1 and authority contract 3. P2 and P3 join this private
+host to the opt-in turbo path. The engine path stays the default. The model
+receives four browser verbs and redacted observations. The host keeps the root
+connection, native controls, file authority and resource journals private.
 
-Every acting or reading command uses the current broker operation's branded
-terminal transport. Its coherent scope/time snapshot is the final authority
-check before the physical send. A once grant is consumed for the exact logical
-operation, whose capability is retained across physical commands with a complete
-fence at each entry. Failed commands require fresh effect proof before recovery.
+## Safety and target checks
 
-The leased view has target, cdpSessionId, frame, origin, document and epoch.
-Persistent owners and file transfers also require browserIncarnation,
-brokerEpoch, clientSession and turn. Node and context binding providers return
-current identity data for that entire lease, never a boolean permission flag.
-P2 supplies those trusted metadata providers and the classified operation to the
-existing branded authority. Missing or ambiguous evidence refuses.
+Payments use authenticated user intent. A user message naming the item and
+payment method allows that payment and its own page confirmation dialog.
+Changed terms need confirmation. Other payments ask once through sleight's
+native consent UI. `SLEIGHT_CONFIRM_PAYMENTS=always` requires confirmation even
+when the user requested the payment. Dismissing a dialog does not require payment
+confirmation. Page observations cannot create permission or instructions.
 
-## 1. Typed Playwright instance
+The host presents browser connection and payment controls. It has no site
+prompt, persistent site allowlist or per-field transmission tokens. Ordinary
+form fields and navigation do not require additional permission. Redaction and
+injection handling still apply to every observation.
 
-Prepare `view.send('Page.createIsolatedWorld', {frameId, worldName:'sleight-state'})`.
-Only the leased frame is accepted. Universal access is false. Install the
-registered injected module with `view.installFixed(name, executionContextId)`.
-Its SHA-256 must be
+`createAuthority` requires trusted current, classify, authenticate and snapshot
+providers. Before typing or clicking, `checkTarget(operation)` supplies plain
+synchronous data with present, visible, enabled and same all true. Missing
+checks refuse input. The semantic adapter checks that the current element is
+the one the model saw, after asynchronous preparation and before physical input.
+An incomplete read elsewhere on the page does not block a checked target.
+Each field gets its own target check. The host repeats document, frame, lease,
+turn, session and browser identity checks at the transport boundary.
+
+Trusted classification sets `submit:true` for a submit and consequence payment
+for a payment. An uncertain submit retains an unknown receipt and blocks a
+new submit on that document until a successful fresh read. A failed read or
+one from another frame cannot clear it. A read does not prove the earlier
+submit succeeded. Ordinary clicks and links can continue after unknown effects.
+The broker caches receipts by request id and never automatically resends input.
+
+Turbo requires background targets. `Page.bringToFront` and
+`Target.activateTarget` are outside the closed command set. P2 creates tabs and
+popups in the background and qualifies that behavior against the selected
+browser. Disconnect fences new commands synchronously.
+
+## Requests and receipts
+
+P3 sends exactly `{id, operation, args}`. `validateHostRequest` accepts
+browser_open, browser_read, browser_act and browser_fill. Each uses its existing
+closed argument schema. IDs have 1 to 128 letters, digits, _ characters or
+hyphens. The timeout is 1 to 30,000 ms. Tabs, refs, dialogs and files use opaque
+handles. File handles do not contain paths.
+
+A form fill is one ordered operation. The trusted resolver maps each physical
+command to its field and closed arguments. The transport shares one request
+deadline and revocation generation across the fields. It does not issue field
+permission tokens. A second field can proceed after the first physical send
+settles, without separate effect proof. A final form readback can verify the
+whole operation.
+
+Optional orderedOperations metadata bounds field order and receipt accounting.
+Optional preparationOperations metadata lists reads, scrolls and object/world
+preparation. Both contain closed semantic operations, with unique IDs.
+`context.session.completeStep(index, effect)` records a verified field prefix
+when the adapter has that evidence. `completePreparation(id, effect)` records
+preparation separately. These calls record progress.
+An unfinished submit needs a fresh read before another submit.
+
+Receipts keep completed, unknownStep and untouched separate. A timeout during
+field two of three can report `{completed:1, unknownStep:1, untouched:1}`.
+The adapter cannot enlarge a verified prefix. Per-result and error observations
+pass through the synchronous redactor before storage or delivery. Protected
+values, equality checks and digests remain inside the host. Lease loss or session end
+prevents late publication.
+
+## Scoped transport
+
+The leased view binds target, cdpSessionId, frame, origin, document and epoch.
+Persistent resources also bind browserIncarnation, brokerEpoch, clientSession
+and turn. Trusted node and context providers return that current identity.
+Foreign nodes, contexts, handles and retired documents refuse.
+
+The adapter allows shallow DOM reads, bounded accessibility reads, fixed helper
+calls and typed input. It excludes raw evaluate, arbitrary functions, custom
+selectors, MAIN writes and root CDP access. Wheel input accepts only finite
+coordinates and deltas bounded to 100,000. The branded broker transport repeats
+its coherent scope/time fence immediately before each physical send.
+
+P2 prepares `Page.createIsolatedWorld` on the leased frame with worldName
+sleight-state and universal access false. `installFixed(name, context)` admits
+only registered source with its exact hash. The Playwright module hash is
 `852e40f938e72e6129b6c9a8bde3f4cc6cfe5cecb5ac734b6b06c8ad1fde42bf`.
-This is the only exception to the 65,536-byte source ceiling.
+It is the only source larger than 65,536 bytes admitted by the adapter.
 
-`view.createPlaywright({constructor:objectId})` returns `{objectId}` for a typed
-instance of that constructor in the same owned isolated world. Constructor
-options are fixed: JavaScript, Chromium backend, two stable animation frames,
-data-testid, an empty custom-engine list and disabled testing mode. MAIN is refused.
+`createPlaywright({constructor})` uses fixed Chromium constructor options in
+that isolated world. `callPlaywright({instance,node,method,args})` permits
+checkElementStates, elementState, expectHitTarget, ariaSnapshot, fill,
+selectOptions and check with their closed argument shapes. Node and instance
+must share the owned world. P2 interprets the returned strategy and readback;
+a CDP response alone is not action proof.
 
-Resolve a leased backend node into that same world with
-`view.send('DOM.resolveNode', {backendNodeId, executionContextId})`. Then call
-`view.callPlaywright({instance:objectId, node:objectId, method, args})`.
+`answerDialog({dialogId,operation,accept,promptText?})` binds a private dialog
+record to trusted semantic metadata and the current operation. Payment dialogs
+use the same payment intent rule. The record retires before dispatch, so an
+uncertain answer cannot be replayed. Raw dialog events never grant permission.
 
-| Method | Exact args | Meaning |
-| --- | --- | --- |
-| checkElementStates | states: unique nonempty array of visible, hidden, enabled, disabled, editable, checked, unchecked or stable | Playwright actionability checks; success returns null |
-| elementState | state: one state above, except stable | Playwright state inspection |
-| expectHitTarget | x and y: finite numbers from 0 to 100,000 | Playwright obstruction check for the resolved node |
-| ariaSnapshot | depth: integer from 1 to 10 | ARIA snapshot in ai mode; 262,144-byte response ceiling |
-| fill | value: string, at most 65,536 UTF-8 bytes | Playwright fill preparation or native control fill; honor its returned strategy |
-| selectOptions | options: 1 to 100 records with only value, label and index | Native select strategy; value/label strings at most 4,096 bytes, index from 0 to 100,000 |
-| check | checked: boolean | Checked-state inspection; P2 uses fenced pointer input to change state and then checks again |
+## User-named files and staged transfer
 
-No selector source, custom engine, force option, arbitrary function, remote
-argument or constructor option is accepted. Instance and node objects must share
-the same leased isolated world. Each reply repeats node/context/lease validation.
-Unknown methods or extra keys refuse with SCOPED_COMMAND_DENIED. Foreign or
-retired handles refuse with OBJECT_LOST or WORLD_LOST. Context/document loss or
-abort prevents publication. CDP exceptions and fill strategy results are private
-semantic evidence, not verified action receipts.
+The trusted file provider checks the user's own message for the exact paths and
+the task's named file input. It supplies `createFileAuthority`'s approve callback;
+page content and model arguments cannot issue file handles. `issue(paths,binding)`
+checks 1 to 16 canonical ordinary files with no symlinks, at most 64 MiB each.
+It retains descriptor identity, timestamps, size and a private content hash.
 
-## 2. File input actuator
-
-`createFileAuthority({approve, now, ttlMs})` ports the reviewed BP2-7 capability.
-The trusted approve provider obtains exact user file intent outside model/page
-input. `issue(paths, binding)` validates canonical ordinary files and parents,
-rejects symlinks, reads bytes through a no-follow descriptor and binds size,
-inode, timestamps and hash. Files are at most 64 MiB; lists contain 1 to 16 unique
-paths. Approval repeats file checks. Opaque tokens expire within 30 seconds and
-are consumed once, including on failure. Stage retains the reviewed byte-backed
-private staging interface and explicit cleanup.
-
-Binding contains exactly browserIncarnation, brokerEpoch, clientSession, turn,
+Binding contains browserIncarnation, brokerEpoch, clientSession, turn,
 leaseGeneration, target, frame, document, origin, operation and ref.
-The view's trusted fileBinding provider resolves that complete current binding
-from the backend node. Its identity must match the leased view.
+`stage(token,binding)` reads and privately retains the exact approved bytes.
+The opaque stage expires within 30 seconds and permits one transfer. Changing
+original paths, exposed buffers or staging paths cannot change those bytes.
+Cleanup before transfer prevents transfer. A copied stage cannot authorize it.
 
-`view.setFiles({backendNodeId, operation}, capability)` consumes only a branded
-file authority token. It sends DOM.setFileInputFiles with the checked canonical
-paths through the current operation's terminal fence. Model paths are never an
-argument to this entry. The resolver must classify upload intent and bind the
-same file list and destination before transmission. P2 retains staging until
-its qualified file strategy proves byte transfer and cleanup.
+`setFilePayloads({backendNodeId,operation,executionContextId},stage)` resolves
+the file input identified by the task in the owned isolated world, repeats the binding and target
+checks and enters the branded terminal fence. A fixed actuator builds Files
+from the retained bytes through DataTransfer, then dispatches input and change.
+The browser retains a copy of the bytes before local cleanup. A disabled or non-file input,
+or multiple files on a single-file input, refuses transfer.
 
-Unknown keys, incomplete identity, changed files, foreign nodes, stale tokens or
-different operation/destination refuse before dispatch. Direct send/input of
-DOM.setFileInputFiles stays refused. The local trusted-process boundary does not
-claim protection against unrelated same-user software rewriting paths during a
-browser's delayed read. Use the byte-backed stage for that strategy.
+The receipt is `{transfer:{effect,count},cleanup:{stage,object}}`. Effect
+transferred confirms byte transfer, not form submission. Uncertain replies
+report unknown and cannot replay the stage. `stage.cleanup()` separately
+reports retained ownership. Failed remote-object release retains the exact
+object ID for cleanup. P2 keeps its file journal until cleanup is proven.
+The existing setFiles path entry still accepts only a branded exact file
+capability. Raw `DOM.setFileInputFiles` remains refused.
 
-## 3. JavaScript dialog actuator
+## Persistent ownership, activation and cleanup
 
-Page.javascriptDialogOpening creates a private monotonic dialog-N record on the
-leased target; closing, navigation, detach and document loss retire it. A
-foreign frame or origin is refused. P2 observes the event and maps its dialog
-handle to this private record. The trusted dialogBinding provider receives
-the private id and lease and returns the complete lease plus dialogId,
-operation, accept and optional promptText for the exact authorized operation.
+One `createTransportOwner` belongs to each approved browser connection.
+`owner.run(lease,brokerContext,dispatch)` gives trusted semantic code a scoped
+view. `owner.reader(lease,name,factory)` retains P2's reader and delivered
+baseline across requests on that lease. Abort and document loss retire it.
+Views and objects cannot cross client, turn or document ownership.
 
-`view.answerDialog({dialogId, operation, accept, promptText?})` sends the closed
-Page.handleJavaScriptDialog actuator. accept is boolean. promptText is accepted
-only for an accepted prompt and is at most 65,536 bytes. The complete decision
-must match current trusted metadata; the terminal authority independently checks
-the user's exact action/payment authority. The record is retired before send,
-so an uncertain answer cannot be replayed. Missing dialog/decision, changed
-choice/text/operation or a foreign lease gives DIALOG_AUTHORITY_REQUIRED.
-Direct send and generic input of the dialog command remain refused.
+Late acquisitions retain their source connection, route and lease. A separate
+cleanup route can only release those exact objects. Failed or pending releases
+remain owned. Pending cleanup never launches another physical release.
+`revokeSession` fences synchronously. cleanupSession, cleanup and close return
+retained resource receipts. Browser socket closure is the broker's own receipt.
 
-Raw events do not establish a user decision. When CDP lacks a frame identifier,
-the trusted semantic provider must prove the leased frame and operation;
-ambiguous subframe dialogs must refuse. Branded-browser qualification still
-needs this evidence, including same-origin subframes and beforeunload behavior.
+The installed loader verifies the accepted package inventory and source hashes.
+Native helpers compile from source on the user's Mac at first use. Opt-in and
+resume decisions come from the private authenticated native UI, bound to the
+session, nonce and broker epoch. Copied JSON, expired decisions and changed
+packages cannot enable turbo. The approved browser connection remains visible
+as connected-idle when no Claude session is open, until Disconnect, browser
+exit or logout.
 
-## 4. Wheel input
-
-`view.input('Input.dispatchMouseEvent', {type:'mouseWheel', x, y, deltaX, deltaY})`
-accepts only those fields. Points are finite and nonnegative; deltas are finite
-and bounded to 100,000 in magnitude. Deltas are exclusive to wheel events.
-Wheel events exclude button, buttons and clickCount. The authority's closed scroll
-intent has exactly deltaX and deltaY. The whole wheel is one logical operation
-and one physical send. Extra fields, nonfinite data or lost authority refuse.
-
-## 5. Persistent transport and late cleanup
-
-Create one `createTransportOwner({session, checkLease, helpers, nodeBinding,
-contextBinding, fileAuthority, fileBinding, dialogBinding})` per accepted browser
-connection. Keep it for the connection's lifetime. P2 dispatch calls
-`owner.run(lease, brokerContext, view => semanticDispatch(view))`. The callback
-is trusted semantic code, never a permission predicate or model function.
-brokerContext contains clientSession, turn, browserIncarnation, brokerEpoch,
-operation, signal and the broker's branded session transport.
-
-`owner.reader(lease, name, factory)` inside run retains the same P2 reader and
-its baseline across requests for that complete lease. Factories return an
-object with dispose. Views, worlds, remote objects and readers never cross
-client/turn/document ownership. Concurrent replacement of an active lease
-transport refuses with TRANSPORT_BUSY. Inactive sends refuse. Lifecycle loss
-disposes readers, and abort prevents late publication. A changed identity needs
-new preparation. The owner has a 128-lease ceiling.
-
-Acquired remote objects are privately recorded with their exact source
-connection, CDP route and lease. Late acquisition after loss or cancellation
-uses a separate cleanup-only Runtime.releaseObject route. It cannot read or
-act, choose an unknown object, target a new socket or grant action authority.
-Failed/pending releases retain ownership. Explicit cleanup retries only those
-records. Pending release never starts another physical release.
-
-`revokeSession(id)` retires session readers and fences future runs synchronously.
-`cleanupSession(id)`, `cleanup()` and `close()` return `{closed, cleanup}` with
-retained target/frame/document/resource receipts. close fences first and also
-retains every in-flight acquisition until its late object is collected. Exact
-socket closure remains the broker's separate cleanup responsibility.
-
-## 6. Closed client requests and receipts
-
-P3's client sends exactly `{id, operation, args}`. id matches
-`[A-Za-z0-9_-]{1,128}`. operation is browser_open, browser_read, browser_act or
-browser_fill. `validateHostRequest(frame)` returns that same immutable frame or
-throws INVALID_ARGUMENT. Supply it as the broker's validateRequest provider.
-
-| Operation | Closed args |
-| --- | --- |
-| browser_open | browser: b handle, url: http(s) URL without credentials, timeout_ms? |
-| browser_read | tab: t handle, scope: r handle?, max_bytes: 1,024 to 64,000?, timeout_ms? |
-| browser_act | tab, one op or steps: 1 to 16 closed actions, timeout_ms? |
-| browser_fill | tab, fields: 1 to 50 unique {ref:r handle, value}, timeout_ms? |
-
-Handles start with their prefix plus 1 to 63 letters, numbers, _ characters or
-hyphens. timeout_ms is an integer from 1 to 30,000. Actions are click/hover(ref),
-key(ref,key), select(ref,value), scroll(ref,dx?/dy?), drag(ref,to), wait(ref,state)
-or dialog(dialog:d handle,action:accept/dismiss,value?). At least one scroll
-delta is required. Each action may include expect:{ref,state}; states are
-visible, hidden, enabled, disabled or changed, with changed excluded for wait.
-Values are bounded text, boolean, finite number, unique string array, a valid
-{date:YYYY-MM-DD}, or {files:[f handles]}. File handles are never filesystem paths.
-All unlisted keys and non-data/accessor inputs refuse.
-
-The broker preserves completed, results, observation, effect, untouched and an
-opened t tab handle. Per-result observations pass the redactor too. Its existing
-bounded receipt cache and unknown-effect quarantine remain active. P3 must not
-equate a completed prefix with an unattempted or unknown suffix.
-
-## 7. Opt-in, package state, connection state and resume
-
-`createPackageInventory({root, receipt})` is selected by the fixed loader from
-trusted accepted configuration outside model/project input. The receipt contains
-accepted:true, protocol:1, the exact Node version, helperMode:source and a full
-list of {path,bytes,sha256}. Paths are normalized package-relative files. The
-inventory includes the original native helper sources, host source and accepted
-Playwright file inventory. The verifier checks the complete directory, canonical
-root identity, ownership/write bits, symlinks, extra/missing files and every hash
-synchronously. User acceptance comes from trusted configuration, and the separate
-source-helper loader owns first-use compilation and its cache.
-
-`createSessionHost` exposes verifyOptIn, packageCurrent, status and verifyResume
-to P3. The concrete `createBrokerSessionHost({broker, identity, authority,
-transportOwner, ui, packageInventory, redact})` attaches the authenticated broker
-identity and supplies its real state, branded revocation and resource receipts.
-The lower-level factory accepts private providers for separate IPC clients;
-those providers must preserve this same host contract.
-
-The trusted loader calls requestOptIn or requestResume. Only a branded private
-native UI channel can return enable/resume decisions. They bind the exact session,
-request nonce and broker epoch; each opaque proof can be verified once and only
-for its own kind. A forged JSON object, decline, expiry, package change or epoch
-change cannot enable or resume. status returns the broker's connection state;
-connected-idle is the native status presentation when clients is zero. Status
-changes never create resume authority. The native helper adds deliberate review
-controls, without launching a browser, activating an app or answering a prompt.
-
-## 8. Observation redaction
-
-The session host runs its synchronous redact hook on top-level, per-result and
-error observations before delivery. Input/output must be immutable JSON data;
-an asynchronous or throwing redactor refuses delivery. The broker also redacts
-before storing/providing receipts. Protected comparison, equality capabilities,
-values, lengths and digests stay inside P2. No redactor is an approval or proof
-provider. Session end or package change during a pending request prevents its
-observation from reaching the model.
-
-## 9. Synchronous session end and cleanup receipts
-
-`host.endSession()` fences new requests and enters revocation before returning a
-promise. The concrete broker join cancels the branded authority's session
-capabilities, retires the persistent owner and disconnects that exact client.
-The connected-idle browser connection remains owned and visible. Cleanup returns
-`{revoked:boolean, cleanup:[exact resource receipts]}`. Revocation must return
-true synchronously: false, throws or promises never become revoked:true.
-
-Resource uncertainty remains in receipts. Thrown, malformed or timed-out cleanup
-returns a retained CLEANUP_UNPROVED receipt. Repeated calls may explicitly retry
-retained cleanup. Concurrent callers share the same pending collection. In-flight
-remote acquisition and unclosed broker connections remain retained. P2 must add
-its exact tab/file/download journals at its semantic lifecycle join; an empty
-remote-object list is not proof those other resources closed.
-
-No root CDP, connectOverCDP, raw evaluate, model callback or callback allow flag
-is added. Authentic installed UI/peer identity, branded-browser world/frame
-behavior, protected form classes, focus, cleanup and model gates remain live
-qualification work for sleight-arch.
-
-## 10. Ordered field authority
-
-The trusted prepare provider may return `orderedOperations` with 1 to 50 closed
-authority operations. Each entry specifies its exact id, kind, scope, args,
-classified consequence and any transmission data/destination. The trusted
-provider derives these entries without adding a batch permission. The semantic resolver
-must compare each physical command with the exact approved operation, including
-its node/ref, value, intent and destination. Missing or changed classification
-refuses before transport.
-
-The broker initializes this list before authorization. The authority fixes one
-deadline for the list; its existing broker timer also bounds preparation,
-queueing, dispatch and readback. Every step retains only its own capability
-across physical commands. Each command repeats the coherent final scope/time
-fence. A once site grant or exact confirmation consumed by one step cannot
-authorize another step. A new once grant may authorize the next exact step.
-
-After independent effect proof, trusted dispatch code calls
-`context.session.completeStep(index, effect)`, where index starts at zero and
-effect is verified, protected or unchanged. Only the current step with settled
-physical sends can complete. Reordering, skipping, repeating, completing an
-unsent step or advancing after an unknown send refuses. The next field cannot
-start until this completion. Receipt storage and quarantine remain active.
-
-Optional `preparationOperations` names at most 100 distinct read, screenshot,
-network, console or scroll operations. All ids across both lists are unique.
-These entries use their own authority and exclude field writes. Reads,
-world/object acquisition, actionability inspection and cleanup must resolve to
-these independent operations, rather than consume a field's once grant.
-Call `context.session.completePreparation(id, effect)` after their own effect
-proof. They cannot complete a field. Unproved dispatched operations retain
-unknown receipts at request end. A completed preparation id cannot be reused.
-
-The broker derives completed and untouched counts from this bank, including on
-timeout, disconnect or cancellation. unknownStep is either the zero-based
-index of the dispatched but unproved field, or null. untouched excludes that
-unknown field. A three-field request interrupted during the second field has
-completed:1, unknownStep:1 and untouched:1. Adapter counters cannot enlarge
-the completed prefix. Existing plans without orderedOperations retain their
-single logical operation contract.
-
-## 11. Staged byte transfer
-
-`fileAuthority.stage(token, binding)` consumes the original approval and returns
-an opaque owned stage. Its private transfer record keeps the approved bytes,
-names, binding and original expiry. Changing the exposed buffers, stage paths
-or original files cannot change those bytes. A copied stage object or the
-consumed issue token cannot authorize transfer. `stage.cleanup()` returns
-`{retained:boolean}`. Failed removal retains ownership and may be retried.
-`stage.receipt()` reports retained and spent. Cleanup before transfer refuses
-transfer, and consumption cannot be replayed after uncertainty.
-
-Prepare an owned isolated world, then call
-`view.setFilePayloads({backendNodeId, operation, executionContextId}, stage)`.
-The complete fileBinding must match the original approval and current lease.
-It also binds the operation and proves the ref belongs to that exact backend node. Node resolution
-uses independently authorized preparation. The byte actuator repeats binding,
-node, world and lease checks before entering the broker's terminal transport.
-Only an isolated world is accepted; MAIN, foreign nodes, arbitrary payloads,
-paths, functions and extra arguments refuse.
-
-The fixed actuator decodes the private byte payloads and constructs browser-owned
-Files through DataTransfer on that file input, then dispatches input and change.
-It never asks the browser to read a temporary path. Non-file or disabled controls
-and a multiple-file selection on a single-file control refuse transfer. The
-branded transport also checks the stage's original issued/expires window at
-the final coherent snapshot. This private fourth send argument only narrows
-authority. It is bound across sends and never reaches CDP. File authority and
-the terminal snapshot must share the trusted host clock.
-
-The result is `{transfer:{effect,count}, cleanup:{stage,object}}`. A confirmed
-transfer has effect transferred. This does not verify form submission.
-P2 still needs independent control/form readback. Exceptions, malformed replies
-or lease loss after dispatch report effect unknown and cannot replay the stage.
-The temporary stage remains owned until explicit cleanup. The resolved remote
-object is released through independent preparation authority; failed release
-keeps its exact objectId in the private cleanup receipt and persistent resource
-owner. No local cleanup or pending remote release proves browser transfer.
-
-The existing setFiles path entry remains available. Raw send cannot invoke this
-byte actuator. Both forms require the user's exact upload and transmission
-authority through the branded broker, including the original files and exact
-destination. P2's form strategies, installed activation and live qualification
-remain separate work.
+`host.endSession()` fences before returning a cleanup promise. It revokes the
+session authority, retires readers and disconnects the exact client. Unproved
+cleanup retains an exact receipt and may be retried explicitly. An empty object
+list does not prove tabs, files or downloads closed. Native UI/peer identity,
+background behavior, form strategies and cleanup still need sleight-arch's live
+qualification.
