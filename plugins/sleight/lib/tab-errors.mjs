@@ -5,7 +5,7 @@
 import { rewriteLocatorFailure } from './locator-errors.mjs';
 
 const READ = 'await tab.getAXState({ disableDiffing: true })';
-const DIALOG = 'const dialog = await tab.getJsDialog(); if (dialog) { await dialog.dismiss(); }';
+const DIALOG = 'nodeRepl.write((await tab.getJsDialog()) ?? "No page dialog")';
 const CONFIRM = /^(?:Error: )?Browser action "([^"]+)" interrupted by JavaScript (confirm|alert|prompt|beforeunload): (.*)$/;
 const LEGACY = /^(?:The action may already have taken effect; do not retry it\.(?: Inspect or dismiss the dialog before continuing\.)?|Inspect or dismiss the dialog before continuing\.)$/;
 export const EVALUATE_ACTION = Object.freeze({
@@ -55,7 +55,7 @@ export function rewriteTabError(text, { read = false } = {}) {
       const accept = confirm[2] === 'prompt' ? 'await dialog.accept(text) or await dialog.dismiss()' :
         confirm[2] === 'confirm' ? 'await dialog.accept() or await dialog.dismiss()' : 'await dialog.dismiss()';
       out.push(`Browser action "${confirm[1]}" interrupted by JavaScript ${confirm[2]}: ${message} Input may already have been sent; do not retry the ${confirm[1]}. Next: const dialog = await tab.getJsDialog(); if (dialog) { ${accept}; }`);
-    } else out.push(rewriteLine(lines[i], read));
+    } else out.push(rewriteLine(lines[i], read, i === 0));
   }
   const write = evaluateWriteAdvice(text);
   if (write) out.push(write);
@@ -84,7 +84,11 @@ export function isTabBinding(code = '') {
   return !/\b(?:click|dblclick|fill|type|press|pressSequentially|pressKey|setValue|typeText|paste|scroll|selectText|selectOption|setChecked|check|uncheck|drag|dragTo|performSecondaryAction|goto|reload|downloadMedia|dispatchEvent|clear|htmlDrag|back|forward|scrollIntoViewIfNeeded|fillForm|pickFromList|reorder|accept|dismiss|close)\s*(?:\?\.)?\s*\(/.test(source);
 }
 
-function rewriteLine(text, read) {
+function rewriteLine(text, read, firstLine) {
+  const reset = firstLine && /^(?:Error: )?(?:js|JavaScript) execution timed out(?: after (\d+)ms)?;\s*kernel reset\b/i.exec(text);
+  if (reset) {
+    return `${text}. JavaScript execution timed out ${reset[1] ? 'after ' + reset[1] + 'ms' : '(duration not reported)'}. The input outcome is unknown after the reported kernel reset. Do not rerun the failed action. Next: await cua.listTabs(); rebind only a previously observed session tab with await cua.getTab(tabId, { browser: browserId }) and read it before input.`;
+  }
   const covered = /Accessibility element (\d+) is covered by (\S+) or otherwise not hittable/.exec(text);
   if (covered) {
     return `Accessibility element ${covered[1]} is covered by ${covered[2]}; this action sent no input. Next: ${READ} and click the covering control, or dismiss it.`;
@@ -97,16 +101,17 @@ function rewriteLine(text, read) {
   if (cdp) {
     const command = cdp[2].replace(/\.$/, '');
     if (/^Input\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. Next: ${DIALOG} Read the page before retrying input: ${READ}.`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. A dialog is not confirmed by this timeout. Inspect with ${DIALOG}. Read the page before retrying input: ${READ}.`;
     }
     const input = /^Emulation\./.test(command) ? 'this command sent no input' : 'whether this command sent input is unknown';
     if (/^Emulation\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG} An open page dialog may be blocking the command. ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG}. An open page dialog may be blocking the command. ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
     }
     return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${READ} (do not retry the timed-out call).`;
   }
   if (/^(?:Error: )?(?:CDP operation exceeded its deadline\b|Timed out after \d+ms waiting for selector .+: CDP operation exceeded its deadline\b)/.test(text)) {
-    return `${text}; this action sent no input. Next: ${READ}.`;
+    const beforeDispatch = /before command dispatch\b/.test(text);
+    return `${text}; ${beforeDispatch ? 'this action sent no input' : 'the input outcome is unknown'}${/\d+ms/.test(text) ? '' : '; duration not reported'}. Next: ${READ}.${beforeDispatch ? '' : ' Do not retry the timed-out action before reading the page.'}`;
   }
   const download = /^(?:Error: )?Timed out after (\d+)ms (?:downloading media|waiting for download)\.?$/.exec(text.trim());
   if (download) {
