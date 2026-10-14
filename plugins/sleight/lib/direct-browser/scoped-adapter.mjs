@@ -34,8 +34,20 @@ export const reorderListSource = function(values) {
       !Array.isArray(values) || !values.length || values.length > 100 || new Set(values).size !== values.length)
     return { effect: 'none' };
   const children = () => Array.from(Object.getOwnPropertyDescriptor(Element.prototype, 'children').get.call(list));
-  const name = node => (Element.prototype.getAttribute.call(node, 'aria-label') ||
-    Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get.call(node) || '').trim();
+  const label = node => {
+    const explicit = Element.prototype.getAttribute.call(node, 'aria-label');
+    if (explicit) return explicit.trim();
+    let budget = 1000;
+    const content = (node, depth = 0) => {
+      if (--budget < 0 || depth > 32) throw Error('label budget');
+      if (node.nodeType === 3) return Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get.call(node) || '';
+      if (!(node instanceof Element) || Element.prototype.getAttribute.call(node, 'aria-hidden') === 'true' ||
+          Element.prototype.getAttribute.call(node, 'hidden') !== null) return '';
+      return Array.from(Object.getOwnPropertyDescriptor(Node.prototype, 'childNodes').get.call(node)).map(n => content(n, depth + 1)).join('');
+    };
+    return content(node).trim();
+  };
+  const name = label;
   const members = () => {
     const nodes = children(), names = nodes.map(name);
     if (nodes.length !== values.length || new Set(names).size !== names.length ||

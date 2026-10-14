@@ -32,8 +32,8 @@ function listFixture(options = {}) {
   assert.equal(typeof reorderListSource, 'string', 'missing closed node-scoped reorder actuator');
   const events = [], order = ['Billing', 'Security', 'Product updates', 'Mentions', 'Reminders'];
   class Element {
-    localName = 'ol'; isConnected = true;
-    getAttribute(name) { return name === 'aria-label' ? this.label : name === 'draggable' ? 'true' : null; }
+    localName = 'ol'; isConnected = true; nodeType = 1;
+    getAttribute(name) { return name === 'aria-label' && !options.hiddenGrip ? this.label : name === 'draggable' ? 'true' : name === 'aria-hidden' && this.grip ? 'true' : null; }
     getBoundingClientRect() { return { x: 0, y: 0, width: 100, height: 20 }; }
     matches() { return false; }
     contains(node) { return node === this || this.children?.includes(node) === true; }
@@ -59,6 +59,10 @@ function listFixture(options = {}) {
   Element.prototype.getBoundingClientRect = function() { hit = this; return rect.call(this); };
   Object.defineProperty(Element.prototype, 'children', { get() { return this.items; } });
   Object.defineProperty(Element.prototype, 'textContent', { get() { return this.label; } });
+  Object.defineProperty(Element.prototype, 'childNodes', { get() {
+    if (this.items) return this.items;
+    return options.hiddenGrip && !this.grip ? [Object.assign(new Element(), { grip: true, label: '⋮⋮' }), { nodeType: 3, label: this.label }] : [{ nodeType: 3, label: this.label }];
+  } });
   class Transfer { data = new Map(); setData(k, v) { this.data.set(k, v); } getData(k) { return this.data.get(k); } }
   class Drag { constructor(type, init) { this.type = type; Object.assign(this, init); } }
   const fn = runInNewContext('(' + reorderListSource + ')', { Element, Node: Element, HTMLLIElement: Element,
@@ -120,4 +124,23 @@ test('reorder reaches the real broker authority as one exact select operation', 
   assert.equal(result.effect, 'verified', JSON.stringify({ result, errors: f.errors })); assert.equal(result.completed, 1);
   const command = f.calls.find(c => c.params.functionDeclaration === reorderListSource);
   assert.equal(authority.receipt(command.operation.id).phase, 'verified');
+});
+
+test('priority labels exclude an aria-hidden drag grip', () => {
+  const f = listFixture({ hiddenGrip: true });
+  assert.equal(f.fn.call(f.list, wanted).effect, 'verified'); assert.deepEqual(f.order, wanted);
+});
+
+test('wheel proof waits for the checked container compositor effect without retrying input', async t => {
+  let inspections = 0;
+  const f = formFixture(t, [{ scrollTop: 0 }], { beforeSend(method, params, { states }) {
+    if (method === 'Runtime.callFunctionOn' && params.functionDeclaration === fixedFormInspectors['form-state'].source && ++inspections === 4)
+      states.get(2).scrollTop = 120;
+    if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseWheel') {
+      // The existing strict fake applies its immediate change after this hook.
+      states.get(2).scrollTop = -120;
+    }
+  } });
+  const result = await f.form.act({ op: 'scroll', ref: f.handles[0], dy: 120 }, { operation: 'wheel', timeoutMs: 500 });
+  assert.equal(result.effect, 'verified'); assert.equal(f.calls.filter(c => c.method === 'Input.dispatchMouseEvent').length, 1);
 });

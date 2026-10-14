@@ -68,8 +68,20 @@ function formState(expected) {
     if (children.length && children.length <= 100 && children.every(n => n.localName === 'li' &&
         Element.prototype.getAttribute.call(n, 'draggable') === 'true')) {
       state.kind = 'reorder';
-      state.items = children.map(n => (Element.prototype.getAttribute.call(n, 'aria-label') ||
-        Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get.call(n) || '').trim());
+      const label = node => {
+          const explicit = Element.prototype.getAttribute.call(node, 'aria-label');
+          if (explicit) return explicit.trim();
+          let budget = 1000;
+          const content = (node, depth = 0) => {
+            if (--budget < 0 || depth > 32) throw Error('label budget');
+            if (node.nodeType === 3) return Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get.call(node) || '';
+            if (!(node instanceof Element) || Element.prototype.getAttribute.call(node, 'aria-hidden') === 'true' ||
+                Element.prototype.getAttribute.call(node, 'hidden') !== null) return '';
+            return Array.from(Object.getOwnPropertyDescriptor(Node.prototype, 'childNodes').get.call(node)).map(n => content(n, depth + 1)).join('');
+          };
+          return content(node).trim();
+        };
+      state.items = children.map(label);
       if (state.items.some(v => v.length > 512)) { state.kind = 'custom'; delete state.items; }
       else state.value = state.items;
     }
@@ -552,10 +564,18 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
         if (![dx, dy].every(v => Number.isFinite(v) && Math.abs(v) <= 100000)) throw Error('INVALID_FIELD');
         sent = true; await physical(id, step.ref, 'scroll', { deltaX: dx, deltaY: dy }, { ...prepared.state, submit: false, payment: false },
           'Input.dispatchMouseEvent', { type: 'mouseWheel', ...prepared.point, deltaX: dx, deltaY: dy }, deadline);
-        const after = await inspect(step.ref, prepared.node, '', deadline);
-        if (after.connected && (after.scrollTop !== prepared.state.scrollTop || after.scrollLeft !== prepared.state.scrollLeft)) {
-          const receipt = { effect: 'verified', completed: 1, untouched: 0, observation: { target: true, source: 'native' } };
-          receipts.set(key, { fingerprint: hash, receipt }); return structuredClone(receipt);
+        // A wheel acknowledgement can precede the compositor scroll. Sense
+        // only this checked container, never retry input or infer viewport work.
+        const until = Math.min(deadline.ends, deadline.now() + 150), pulse = eventPulse();
+        for (;;) {
+          const after = await inspect(step.ref, prepared.node, '', deadline);
+          if (!after.connected || shape(after) !== shape(prepared.state)) throw Error('STALE_REF');
+          if (after.scrollTop !== prepared.state.scrollTop || after.scrollLeft !== prepared.state.scrollLeft) {
+            const receipt = { effect: 'verified', completed: 1, untouched: 0, observation: { target: true, source: 'native' } };
+            receipts.set(key, { fingerprint: hash, receipt }); return structuredClone(receipt);
+          }
+          if (deadline.now() >= until) break;
+          await pulse.wait(deadline, pulse.version, Math.min(25, until - deadline.now()));
         }
       } else if (step.op === 'hover') {
         sent = true; await physical(id, step.ref, 'click', {}, { ...prepared.state, submit: false, payment: false },
