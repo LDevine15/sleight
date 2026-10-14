@@ -688,9 +688,22 @@ export async function prepareInstalledBrowser(runtime) {
   return { directBrowser: await runtime.ready(), turnHook: { close: () => runtime.close() } };
 }
 
+// v2 remains available until V8 retires its installed factory. Only typed
+// unavailability falls back; unsafe package/configuration evidence still stops.
+export async function createInstalledBrowserBridge(factories, unavailable = () => {}) {
+  const v3 = factories?.v3 ?? (await import('./direct-browser/worker.mjs')).createV3Bridge;
+  try { return await v3(); }
+  catch (error) {
+    if (!['V3_RUNTIME_UNAVAILABLE', 'V3_WORKER_UNAVAILABLE'].includes(error.message)) throw error;
+    unavailable(error.message);
+    const v2 = factories?.v2 ?? (await import('./direct-browser/installed-bridge.mjs')).createInstalledBridge;
+    return v2();
+  }
+}
+
 export async function prepareInstalledStartup(factory, unavailable = code => process.stderr.write(`sleight: turbo unavailable (${code}); using the engine.\n`)) {
   let bridge;
-  try { bridge = await (factory ?? (await import('./direct-browser/installed-bridge.mjs')).createInstalledBridge)(); }
+  try { bridge = await (factory ?? (() => createInstalledBrowserBridge(undefined, unavailable)))(); }
   catch (error) {
     if (!['NATIVE_HELPERS_UNAVAILABLE', 'HOST_BUILD_BUSY', 'HOST_CACHE_UNSAFE', 'SELECTED_PATH_UNSAFE',
       'SELECTED_PROCESS_UNPROVED', 'SELECTED_ENDPOINT_UNPROVED', 'SELECTED_LISTENER_UNPROVED',

@@ -123,6 +123,7 @@ export async function createV3TurnRuntime({ binding, browser, pages, snapshot, u
     deliverSnapshot(state, capture) {
       if (capture.state !== state || !Number.isSafeInteger(capture.number) || capture.number < 1 ||
           !Number.isFinite(capture.capturedAt) || capture.capturedAt < 0) return false;
+      if (dependencies.acknowledgeSnapshot && dependencies.acknowledgeSnapshot(capture.page, capture.number) !== true) return false;
       deliverSnapshot(state, capture);
       // V6's boolean means a submit fence was released, rather than whether
       // an ordinary snapshot was accepted. Both count as delivered text here.
@@ -191,18 +192,137 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
     work = operation.catch(() => {});
     operation.then(respond, () => respond({ resultId: frame.id, result: failure() })).finally(() => { queued--; });
   });
-  return Object.freeze({ ready: () => send({ version: 3, session, nonce, browser }) });
+  return Object.freeze({ ready: () => send({ version: 3, session, nonce, browser }), end: fence });
 }
 
-async function installedMain() {
-  const config = readInstalledConfig();
-  if (!config) throw Error('SETTING_OFF');
-  const accepted = acceptedInstalledPackage(config);
-  if (!accepted.current()) throw Error('HOST_PACKAGE_MISMATCH');
-  // V10 supplies the private turn context. V7 still owns the approved selected
-  // connection, CDP filter, page and snapshot join before installed activation.
-  throw Error('V3_INSTALLED_JOIN_UNAVAILABLE');
+// The fixed installed entry owns native UI and the approved upstream connection.
+// Dependency injection is a module-only test seam; IPC cannot choose a provider,
+// endpoint, package, loader, authority or executable.
+export async function startInstalledV3Worker({ channel }, dependencies = {}) {
+  let parentLost = channel.connected === false, stopped = false, selected, ui, protocol, timer, unsubscribe;
+  let accepted, connected = false, sequence = 0, closing;
+  const resources = new Set();
+  const current = () => {
+    try { return !parentLost && !stopped && accepted.current() === true; } catch { return false; }
+  };
+  const startupCurrent = () => { if (parentLost || channel.connected === false) throw Error('PARENT_GONE');
+    if (!accepted.current()) throw Error('HOST_PACKAGE_MISMATCH'); };
+  const loss = () => { parentLost = true; protocol?.end().catch(() => {}); };
+  channel.on('disconnect', loss);
+  const clean = receipt => receipt?.revoked === true && Array.isArray(receipt.cleanup) && !receipt.cleanup.some(row => row.status === 'retained');
+  const retained = resource => ({ resource, status: 'retained', code: 'CLEANUP_UNPROVED' });
+  async function collect(resource) {
+    if (resource.collecting) return resource.collecting;
+    resource.collecting = (async () => {
+      if (resource.runtime) {
+        const turn = await resource.runtime.end().catch(unproved);
+        if (!clean(turn) && turn.cleanup.some(row => row.resource !== 'owned-tabs')) return turn;
+      }
+      let tabs = true;
+      try { if (resource.pages) tabs = (await resource.pages.endTurn()).cleanedUp === true; } catch { tabs = false; }
+      if (!tabs) return { revoked: true, cleanup: [retained('owned-tabs')] };
+      let detached = true;
+      try { if (resource.filter) detached = await resource.filter.dispose() === true; } catch { detached = false; }
+      if (!detached) return { revoked: true, cleanup: [retained('cdp-filter')] };
+      try { await resource.browser?.close(); await resource.listener?.close(); }
+      catch { return { revoked: true, cleanup: [retained('playwright-connection')] }; }
+      resources.delete(resource); return { revoked: true, cleanup: [] };
+    })().finally(() => { resource.collecting = undefined; });
+    return resource.collecting;
+  }
+  async function close() {
+    stopped = true;
+    if (closing) return closing;
+    closing = (async () => {
+      const turn = await protocol?.end().catch(unproved);
+      const receipts = await Promise.all([...resources].map(collect));
+      const cleanup = receipts.flatMap(receipt => receipt.cleanup);
+      if (turn && !clean(turn)) cleanup.push(...turn.cleanup);
+      if (!cleanup.length) {
+        let disconnected = !selected;
+        try { if (selected) disconnected = await selected.disconnect(selected.session) === true; } catch {}
+        if (!disconnected) cleanup.push(retained('browser-connection'));
+      }
+      if (!cleanup.length) {
+        unsubscribe?.(); clearInterval(timer); ui?.close();
+      }
+      return { revoked: true, cleanup };
+    })().finally(() => { closing = undefined; });
+    return closing;
+  }
+  function status() {
+    if (!ui) return;
+    const state = resources.size && (parentLost || stopped) ? 'cleanup-required' : stopped ? 'paused'
+      : connected ? parentLost ? 'connected-idle' : 'connected' : 'disconnected';
+    ui.present('v3-control-' + (++sequence), { status: state }, state === 'cleanup-required' ? ['cleanup'] : ['pause','disconnect'], async event => {
+      if (ui.authenticate(event) !== true) return;
+      if (['disconnect','cleanup'].includes(event.action)) await close();
+      else if (event.action === 'pause') { stopped = true; await protocol?.end(); status(); }
+    });
+  }
+  try {
+    const config = (dependencies.readConfig ?? readInstalledConfig)();
+    if (!config) throw Error('SETTING_OFF');
+    accepted = (dependencies.acceptPackage ?? acceptedInstalledPackage)(config); startupCurrent();
+    const host = await import('./host.mjs'); startupCurrent();
+    const built = await (dependencies.prepareHelpers ?? host.prepareNativeHelpers)({ inventory: config.receipt }); startupCurrent();
+    if (built.status !== 'ready') throw Error(built.code);
+    const { createSelectedConnection } = await import('./selected-connection.mjs'); startupCurrent();
+    selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt }); startupCurrent();
+    ui = (dependencies.createUi ?? host.createNativeUi)(built.receipt, () => { stopped = true; protocol?.end().catch(() => {}); });
+    startupCurrent();
+    unsubscribe = selected.onConnectionLoss(() => { stopped = true; connected = false; protocol?.end().catch(() => {}); });
+    protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
+      async begin(_message, binding) {
+        if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
+        const resource = {}; resources.add(resource);
+        try {
+          if (!connected) { if (await selected.connect() !== selected.session) throw Error('STALE_INSTANCE'); connected = true; }
+          if (!current() || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
+          const { loadPlaywrightCore } = await import('./worlds.mjs');
+          const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true });
+          resource.filter = selected.createFilter();
+          resource.listener = await resource.filter.listen();
+          resource.browser = await playwright.chromium.connectOverCDP(resource.listener.endpoint, { noDefaults: true, timeout: 10000 });
+          if (!current()) throw Error('TRUSTED_TURN_REQUIRED');
+          const [{ createPageRegistry }, snapshots] = await Promise.all([import('./page.mjs'),
+            dependencies.snapshot ? Promise.resolve({ snapshot: dependencies.snapshot }) : import('./snapshot.mjs')]);
+          const session = await resource.browser.newBrowserCDPSession();
+          resource.pages = (dependencies.createPages ?? createPageRegistry)({ browser: resource.browser, session,
+            upstream: selected.session, ownTarget: resource.filter.own, releaseTarget: resource.filter.release });
+          const runtime = await createV3TurnRuntime({ binding, browser: selected.selectedBrowser, pages: resource.pages,
+            snapshot: snapshots.snapshot, ui, dependencies: {
+              // Acknowledgment is coupled to the exact output identity in the
+              // fork protocol. Merely taking a snapshot never admits its refs.
+              acknowledgeSnapshot: snapshots.acknowledgeSnapshot,
+            } });
+          resource.runtime = runtime;
+          let ending;
+          return Object.freeze({
+            async call(request) {
+              if (!current() || !await selected.verifyConnection(selected.session)) { stopped = true; throw Error('STALE_INSTANCE'); }
+              return runtime.call(request);
+            }, delivered: runtime.delivered,
+            end() {
+              if (!ending) ending = (async () => {
+                return collect(resource);
+              })();
+              return ending;
+            },
+          });
+        } catch (error) { await collect(resource); throw error; }
+      }, close });
+    timer = (dependencies.schedule ?? setInterval)(() => {
+      try { status(); } catch { stopped = true; protocol.end().catch(() => {}); }
+    }, 60000);
+    status(); protocol.ready();
+    return Object.freeze({ close });
+  } catch (error) {
+    await close(); channel.off('disconnect', loss); throw error;
+  }
 }
+async function installedMain() { return startInstalledV3Worker({ channel: process }); }
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.send) {
   installedMain().catch(() => { if (process.connected) { process.send({ version: 3, status: 'unavailable' }); process.disconnect(); } });
 }

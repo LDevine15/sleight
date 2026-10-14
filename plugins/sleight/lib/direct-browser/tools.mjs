@@ -93,7 +93,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
   const finish = (text, entry, observed) => {
     const result = textResult(text);
     if (!ended && observed && Number.isSafeInteger(observed.number)) deliveries.set(result, { state: entry.state,
-      capture: { state: entry.state, number: observed.number, capturedAt: observed.capturedAt }, text });
+      capture: { page: entry.page, state: entry.state, number: observed.number, capturedAt: observed.capturedAt }, text });
     return result;
   };
   return Object.freeze({ tools: () => browserTools(browser),

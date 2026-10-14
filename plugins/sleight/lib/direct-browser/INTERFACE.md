@@ -171,3 +171,15 @@ cleanup retains an exact receipt and may be retried explicitly. An empty object
 list does not prove tabs, files or downloads closed. Native UI/peer identity,
 background behavior, form strategies and cleanup still need sleight-arch's live
 qualification.
+
+## V3 snapshot ref ownership
+
+The snapshot module assigns public eN refs per document generation. Public refs
+never repeat across navigation, even when Playwright restarts its own counter.
+The worker calls `acknowledgeSnapshot(page, number)` only after the exact
+returned text reaches the client.
+Snapshots install `page.getByRef` for the V4/V5 action path. It resolves ordinary refs with `snapshotRefBinding(page, ref)`, which
+returns the locator for the underlying Playwright aria-ref. It refuses stale
+refs and refs from an undelivered snapshot with a browser_read hint. Closed
+sN refs continue through `closedRefBinding`. A raw aria-ref selector bypasses
+this generation check and is only for tests of the Playwright read itself.
