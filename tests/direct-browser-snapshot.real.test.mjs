@@ -30,6 +30,7 @@ async function fixture(t, html, routes = {}) {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
   const page = await browser.newPage();
+  page.on('pageerror', error => console.log('V3 fixture page error ' + error.message));
   await page.goto('http://127.0.0.1:' + server.address().port);
   return page;
 }
@@ -64,6 +65,32 @@ test('real closed-root refs expose checked state and redact current native value
     root.querySelector('input').value = 'fixture-closed-password';
   </script>`);
   const result = await snapshot(page);
+  if (!result.text.includes('Secure mode')) {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const { root } = await session.send('DOM.getDocument', { depth: -1, pierce: true });
+      const hosts = [], controls = [];
+      const walk = (node, closed = false) => {
+        if (closed && node.localName === 'button') controls.push(node.backendNodeId);
+        for (const shadow of node.shadowRoots ?? []) {
+          hosts.push({ host: node.backendNodeId, tag: node.localName, type: shadow.shadowRootType,
+            children: (shadow.children ?? []).map(child => ({ tag: child.localName, backend: child.backendNodeId })) });
+          walk(shadow, closed || shadow.shadowRootType === 'closed');
+        }
+        for (const child of node.children ?? []) walk(child, closed);
+      };
+      walk(root);
+      console.log('V3 closed-root DOM diagnostic ' + JSON.stringify(hosts));
+      const summarize = nodes => nodes.map(node => ({ backend: node.backendDOMNodeId,
+        role: node.role?.value, name: node.name?.value, ignored: node.ignored }));
+      for (const { host } of hosts) console.log('V3 closed-root query diagnostic ' + JSON.stringify(summarize(
+        (await session.send('Accessibility.queryAXTree', { backendNodeId: host })).nodes)));
+      console.log('V3 closed-root full diagnostic ' + JSON.stringify(summarize(
+        (await session.send('Accessibility.getFullAXTree')).nodes)));
+      for (const backendNodeId of controls) console.log('V3 closed-root partial diagnostic ' + JSON.stringify(summarize(
+        (await session.send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false })).nodes)));
+    } finally { await session.detach(); }
+  }
   assert.match(result.text, /switch "Secure mode" \[checked\] \[ref=s\d+\]/);
   assert.doesNotMatch(result.text, /fixture-closed-password/);
   const ref = /switch.*\[ref=(s\d+)\]/.exec(result.text)[1];
