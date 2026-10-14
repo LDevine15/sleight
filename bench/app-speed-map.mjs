@@ -49,19 +49,34 @@ export function speedScope(plan, task) {
   return plan.ownerPresent === true ? 'owner-present-read-only' : 'owned-fixture';
 }
 
-export async function readMetrics(handle, { marker, requiredText } = {}) {
+export async function readMetrics(handle, { marker, requiredText, scrollMarker } = {}) {
   const tree = await handle.getAXState({ disableDiffing: true, emit: false });
-  return treeMetrics(tree, { marker, requiredText });
+  return treeMetrics(tree, { marker, requiredText, scrollMarker });
 }
 
 // Serialized into the engine. Receives text, never a native handle.
-function treeMetrics(tree, { marker, requiredText } = {}) {
+function treeMetrics(tree, { marker, requiredText, scrollMarker } = {}) {
   if (typeof tree !== 'string') throw Error('TREE_UNAVAILABLE');
   if (marker && !tree.split('\n')[0].includes(marker) || requiredText && !tree.includes(requiredText)) throw Error('FIXTURE_IDENTITY');
   const numbered = [...tree.matchAll(/^\t*\d+ /gm)].length;
   const dom = [...tree.matchAll(/\bnode_id=/g)].length;
   const scrolls = [...tree.matchAll(/^\t*(\d+) (?:scroll area|scroll view|AXScrollArea)\b/gmi)];
   const targets = scrolls.length ? scrolls : [...tree.matchAll(/^\t*(\d+) (?:text area|text view|outline|list)\b/gmi)];
+  if (scrollMarker) {
+    const targetIds = new Set(targets.map(row => Number(row[1]))), matches = new Set(), ancestors = [];
+    for (const line of tree.split('\n')) {
+      const row = /^(\t*)(\d+) (.+)$/.exec(line);
+      if (!row) continue;
+      const depth = row[1].length, id = Number(row[2]);
+      while (ancestors.length && ancestors.at(-1).depth >= depth) ancestors.pop();
+      if (row[3].includes(scrollMarker)) {
+        const parent = ancestors.findLast(item => targetIds.has(item.id));
+        if (parent) matches.add(parent.id);
+      }
+      ancestors.push({ depth, id });
+    }
+    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: matches.size === 1 ? [...matches][0] : null };
+  }
   return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? Number(targets[0][1]) : null };
 }
 
@@ -129,7 +144,7 @@ export async function runSpeedMap(plan, runtime) {
           // concurrent read-only sessions avoid taking an action lease.
           await timed(key, read);
           boundary();
-          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText })})));`));
+          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker })})));`));
         }
         const first = await measuredRead('firstReadMs');
         row.chars = first.chars; row.nodes = first.nodes;

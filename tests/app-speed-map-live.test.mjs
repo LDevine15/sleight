@@ -7,18 +7,19 @@ import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { liveSpeedRuntime, speedOutput } from '../bench/app-speed-map-live.mjs';
 import { speedPlan } from '../bench/app-speed-map.mjs';
 
-async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details } = {}) {
+async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'sleight-am1-test-'));
   t.after(() => removeTemp(root));
   const bank = join(root, 'bank'), calls = []; let unlocks = 0, approver;
-  const runtime = await liveSpeedRuntime(speedPlan({ids:['textedit'],runs:1}), {}, {
+  const plan = speedPlan({ ids: [id], runs: 1 });
+  const runtime = await liveSpeedRuntime(plan, {}, {
     platform:'darwin', repositoryRoot:root,
     takeLock:async()=>{calls.push('lock');return async()=>{unlocks++;};},
     makeBank:()=>{mkdirSync(bank);return bank;},
     startFixtureHost:async(task, fixture)=>{
-      assert.equal(task.bundle,'com.apple.TextEdit'); assert.ok(fixture.target.startsWith(bank));
-      assert.ok(existsSync(fixture.target)); assert.equal(fixture.path,fixture.target);
-      assert.match(readFileSync(fixture.target,'utf8'),/^AM1-/);
+      assert.equal(task.bundle, plan.apps[0].bundle); assert.ok(fixture.target.startsWith(bank));
+      assert.ok(existsSync(fixture.target));
+      if (id === 'textedit') { assert.equal(fixture.path,fixture.target); assert.match(readFileSync(fixture.target,'utf8'),/^AM1-/); }
       calls.push('host'); fixture.onSample({focusChanged,targetOverOwner:false});
       return {finish:async()=>({confirmed,details,samples:[{focusChanged}]})};
     },
@@ -43,6 +44,17 @@ test('real runtime composes private document setup, launcher client and retained
   assert.equal(h.unlocks,1); assert.equal(existsSync(h.bank),false);
   const output=join(h.root,'bench/results'); assert.ok(existsSync(output));
   assert.deepEqual(h.calls,['lock','host','client','1','client-close']);
+});
+test('a folder fixture gives the host its window marker and the read its unique row name', async t => {
+  const h = await setup(t, { id: 'finder' });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['finder'], runs: 1 }).apps[0]);
+  assert.equal(fixture.windowMarker, fixture.marker);
+  assert.equal(fixture.scrollMarker, fixture.marker + '-row');
+  assert.equal(fixture.requiredText, fixture.scrollMarker);
+  assert.equal(readFileSync(join(fixture.target, fixture.scrollMarker), 'utf8').split('\n')[0], fixture.marker);
+  assert.equal((await h.runtime.closeFixture(fixture)).confirmed, true);
+  await h.runtime.close();
+  assert.equal(h.unlocks, 1);
 });
 test('cleanup failure retains the owned bank and live-lock receipt', async t=>{
   const h=await setup(t,{confirmed:false});

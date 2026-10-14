@@ -93,7 +93,8 @@ export async function liveSpeedRuntime(plan, options, {
         } else if (task.fixture === 'workspace' || task.fixture === 'folder') {
           fixture.target = join(dir, name); mkdirSync(fixture.target);
           fixture.marker = fixture.windowMarker = name;
-          writeFileSync(join(fixture.target, 'fixture.txt'), name + '\n'.repeat(100), { mode: 0o600 });
+          if (task.fixture === 'folder') fixture.requiredText = fixture.scrollMarker = name + '-row';
+          writeFileSync(join(fixture.target, fixture.scrollMarker ?? 'fixture.txt'), name + '\n'.repeat(100), { mode: 0o600 });
         } else if (task.fixture === 'browser') {
           fixture.marker = name;
           const server = createServer((req, res) => {

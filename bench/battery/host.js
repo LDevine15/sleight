@@ -31,7 +31,8 @@ function run(argv) {
   }
   function same(a, b) { return !!$.CFEqual(a, b); }
   function markerMatches(w, doc) {
-    if (!request.windowMarker || doc.value || [0, -25205, -25212].indexOf(doc.code) < 0) return false;
+    var document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : '';
+    if (!request.windowMarker || document || [0, -25205, -25212].indexOf(doc.code) < 0) return false;
     var title = readAttribute(w, 'AXTitle');
     return title.code === 0 && title.value && String(ObjC.unwrap(ObjC.castRefToObject(title.value))).indexOf(request.windowMarker) >= 0;
   }
@@ -101,12 +102,13 @@ function run(argv) {
       row.documentReads.push({ document: row.document, status: doc.code });
       row.matched = !!expected && doc.code === 0 && row.document === expected || !!markerMatches(w, doc);
       var sheets = readAttribute(w, 'AXSheets');
+      var sheetsReadable = [0, -25205, -25212].indexOf(sheets.code) >= 0;
       row.sheetStatus = sheets.code;
       row.sheet = !!sheets.value && ObjC.castRefToObject(sheets.value).count > 0;
       if (expected && !row.matched) reason(row, 'DOCUMENT_NOT_MATCHED');
       if (row.sheet) reason(row, 'SHEET_PRESENT');
-      if (sheets.code !== 0 && sheets.code !== -25205) reason(row, 'SHEETS_READ_FAILED');
-      return (!expected || row.matched) && !row.sheet && (sheets.code === 0 || sheets.code === -25205);
+      if (!sheetsReadable) reason(row, 'SHEETS_READ_FAILED');
+      return (!expected || row.matched) && !row.sheet && sheetsReadable;
     }
     function ownFixture() {
       var path = request.fixturePath, root = request.fixtureRoot;

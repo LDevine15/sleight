@@ -279,7 +279,8 @@ function cleanupHost(options = {}) {
       }
       if (name === 'AXTitle') { out[0] = options.windowTitle ?? ''; return 0; }
       if (name === 'AXCloseButton' && !options.closeMissing) { out[0] = close; return 0; }
-      if (name === 'AXSheets') { out[0] = list(options.sheet || (options.lateSheet && now >= 10000) ? [{}] : []); return 0; }
+      if (name === 'AXSheets') { if (options.sheetStatus) return options.sheetStatus;
+        out[0] = list(options.sheet || (options.lateSheet && now >= 10000) ? [{}] : []); return 0; }
       return -25205;
     },
     AXUIElementPerformAction(element, action) {
@@ -604,6 +605,24 @@ test('owned workspace marker can retain a fresh window without AXDocument, but n
   assert.equal(accepted.confirmed, true); assert.equal(accepted.presses.length, 1);
   const refused = cleanupHost({ document: 'file:///private/tmp/owner.txt', windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
   assert.equal(refused.confirmed, false); assert.equal(refused.presses.length, 0);
+});
+test('a folder window with an empty document CFString and no sheets closes without quitting its running app', () => {
+  const result = cleanupHost({ document: { value: '' }, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique',
+    sheetStatus: -25212, wasRunning: true, axCloses: true });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.present, false);
+  assert.equal(result.terminations, 0);
+  assert.deepEqual(result.scripts, []);
+});
+test('a marker never overrides a document mismatch, sheet timeout or ambiguous folder window', () => {
+  for (const options of [{ document: 'file:///private/tmp/owner.txt' }, { sheetStatus: -25204 }, { multipleWindows: true }]) {
+    const result = cleanupHost({ document: { value: '' }, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique',
+      wasRunning: true, axCloses: true, ...options });
+    assert.equal(result.confirmed, false);
+    assert.equal(result.presses.length, 0);
+    assert.equal(result.terminations, 0);
+  }
 });
 test('duplicate workspace markers refuse before retaining or closing a window', () => {
   const result = cleanupHost({ documentMissing: true, multipleWindows: true, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });

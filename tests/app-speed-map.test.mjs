@@ -18,19 +18,20 @@ function closed(values) {
     return t[key];
   } });
 }
-function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false, relayTest } = {}) {
+function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false, relayTest, folder = false } = {}) {
   const calls = [], outputs = []; let time = 0, active = 0, peak = 0;
   const directory = relayTest && mkdtempSync(join(tmpdir(), 'sleight-am1-relay-'));
   if (directory) relayTest.after(() => removeTemp(directory));
   return { calls, outputs, get peak() { return peak; }, held: () => held, now: () => time += 5,
-    async prepare(task, cohort) { calls.push(['prepare', task.id, cohort]); return { marker: 'AM1-fixture', url:'http://127.0.0.1:45123/fixture', browserId:'bench-id', profileName:'benchmark', requiredText: ownerPresent ? undefined : 'AM1-fixture' }; },
+    async prepare(task, cohort) { calls.push(['prepare', task.id, cohort]); return { marker: 'AM1-fixture', url:'http://127.0.0.1:45123/fixture', browserId:'bench-id', profileName:'benchmark', requiredText: ownerPresent ? undefined : 'AM1-fixture', ...(folder && { scrollMarker: 'AM1-row.txt' }) }; },
     async openSession(task) {
       const outputs = [];
       active++; peak = Math.max(peak, active); calls.push(['session', task.id]);
       const app = closed({ getAXState: async options => {
         assert.deepEqual(JSON.parse(JSON.stringify(options)), { disableDiffing: true, emit: false });
         if (badRead) throw Error('private account content must not be published');
-        return 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 static text AM1-fixture';
+        return folder ? 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 outline Sidebar\n\t3 scroll area\n\t\t4 row\n\t\t\t5 text Value: AM1-row.txt' :
+          'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 static text AM1-fixture';
       }, scroll: async (...args) => { calls.push(['scroll', ...args]); } });
       const tab = closed({ getAXState:app.getAXState, cua:closed({scroll:async options=>calls.push(['browser-scroll',JSON.parse(JSON.stringify(options))])}), close:async()=>calls.push(['tab-close']) });
       const ctx = { cua: closed({ getApp: async () => app, listBrowsers:async()=>[{id:'owner-id',name:'Helium',profileName:'owner'},{id:'bench-id',name:'Helium',profileName:'benchmark'}], createBrowserTab:async(id,url,options)=>{assert.equal(id,'bench-id');assert.equal(url,'http://127.0.0.1:45123/fixture');assert.equal(options.visible,false);return tab;} }), nodeRepl: { write: value => outputs.push(value) } };
@@ -120,6 +121,21 @@ test('ambiguous scroll areas refuse input; a mismatched fixture refuses the read
   const app = closed({ getAXState: async () => 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t2 scroll area' });
   assert.equal((await readMetrics(app, { marker: 'AM1-fixture' })).scrollTarget, null);
   await assert.rejects(readMetrics(app, { marker: 'other-window' }), /FIXTURE_IDENTITY/);
+});
+test('the folder row selects its enclosing scroll area through the real relay', async t => {
+  const r = runtime({ folder: true, relayTest: t });
+  const report = await runSpeedMap(speedPlan({ ids: ['finder'], runs: 1 }), r);
+  assert.ok(report.rows.every(row => row.status === 'complete'), JSON.stringify(report.rows));
+  assert.deepEqual(r.calls.filter(call => call[0] === 'scroll'), [['scroll', 3, 'down', 1]]);
+});
+test('fixture scroll selection refuses missing rows and rows in different scroll areas', async () => {
+  for (const rows of ['\t\t2 text other.txt\n\t3 scroll area\n\t\t4 text other.txt',
+    '\t\t2 text AM1-row.txt\n\t3 scroll area\n\t\t4 text AM1-row.txt']) {
+    const app = closed({ getAXState: async () => 'Window: "fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n' + rows });
+    assert.equal((await readMetrics(app, { scrollMarker: 'AM1-row.txt' })).scrollTarget, null);
+  }
+  const nested = closed({ getAXState: async () => 'Window: "fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 scroll area\n\t\t\t3 text AM1-row.txt' });
+  assert.equal((await readMetrics(nested, { scrollMarker: 'AM1-row.txt' })).scrollTarget, 2);
 });
 test('sequential samples measure acquisition, first/warm reads, literal scroll and readback', async () => {
   const r = runtime();
