@@ -101,9 +101,11 @@ import { leanCallDescription } from './lean-calls.mjs';
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
 // Strings are blanked first, so typed text that mentions an action doesn't count.
-export function unawaitedAction(code) {
+export function unawaitedAction(code) { return unawaitedCall(code)?.method; }
+
+function unawaitedCall(code) {
   code = withoutPageCallbacks(code);
-  const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
+  const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, literal => literal.replace(/[^\r\n]/g, ' '));
   for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText)\()/g)) {
     let end = m.index + m[0].length - 1, chained = false;
     for (;;) {
@@ -117,7 +119,10 @@ export function unawaitedAction(code) {
       chained = true;
       end += chain[0].length;
     }
-    if (m[1] ? chained : bare.slice(end + 1).replace(/^\s*;?/, '').trim()) return m[2];
+    if (m[1] ? chained : bare.slice(end + 1).replace(/^\s*;?/, '').trim()) {
+      const start = m.index + m[0].lastIndexOf(m[2]);
+      return { method: m[2], line: bare.slice(0, start).split('\n').length };
+    }
   }
 }
 
@@ -2017,10 +2022,10 @@ export function createRelay({
     // A failed action without await, with more code after it, can end the engine's session and
     // every handle (3/3, 2026-10-07), so it never reaches the engine.
     const unawaited = msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined &&
-      typeof originalCode === 'string' && unawaitedAction(originalCode);
+      typeof originalCode === 'string' && unawaitedCall(originalCode);
     if (unawaited) {
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text:
-        promptNotice(`sleight stopped this call before it ran: \u0060${unawaited}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await and send it again.`, prompt) }] } });
+        promptNotice(`sleight stopped this call before it ran: \u0060${unawaited.method}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await and send it again. Source line ${unawaited.line}: use \u0060await ${unawaited.method}…)\u0060, preserving the original arguments and chain.`, prompt) }] } });
       return;
     }
     if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
