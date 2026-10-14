@@ -91,3 +91,78 @@ test('a results-only task remains visible with unavailable transcript counts, in
   assert.equal(round.tasks.__proto__.focusEvents, 0);
   assert.match(renderCensus([round]), /__proto__ \| unavailable/);
 });
+
+test('soft outcomes count once per result while is_error stays comparable between arms', async () => {
+  const { censusEvents } = await load();
+  const row = censusEvents([
+    use('a', 'browser_act'), result('a', 'Input outcome is unconfirmed. Read state before retrying.'),
+    result('a', 'Input outcome is unconfirmed. Read state before retrying.'),
+    use('f', 'browser_fill'), result('f', 'e1: done\ne2: failed: field stopped\nsubmit: not reached'),
+    use('e', 'browser_act'), result('e', 'Input outcome is unconfirmed.', true),
+    result('orphan', 'Operation outcome is unconfirmed.'),
+  ]);
+  assert.equal(row.errors, 1);
+  assert.equal(row.softFailures, 2);
+  assert.equal(row.gateFailures, 3);
+  assert.equal(row.tools.browser_act.errors, 1);
+  assert.equal(row.tools.browser_act.softFailures, 1);
+  assert.equal(row.tools.browser_fill.softFailures, 1);
+  assert.equal(row.duplicateResults, 1);
+  assert.equal(row.orphanResults, 1);
+});
+
+for (const [name, text, want] of [
+  ['browser_tabs', 'Operation outcome is unconfirmed. Read current state before deciding what remains.', 1],
+  ['browser_fill', 'f2e3: not reached\nsubmit: unconfirmed', 1],
+  ['browser_fill', 's1: failed: unavailable\nsubmit: failed', 1],
+  ['browser_act', '1 click e1: not run: rule refused\n2 type e2: not reached', 1],
+  ['browser_act', '1 click e1: effect unconfirmed; read before retrying.', 1],
+  ['browser_act', '1 click e1: submit unconfirmed after 5 s; read before resubmitting', 1],
+  ['browser_act', '1 click e1: failed: input stopped', 1],
+  ['browser_act', '1 click e1: no visible change', 0],
+  ['browser_act', '1 click e1: dialog opened', 0],
+  ['browser_fill', 'e1: done\nsubmit: not requested', 0],
+  ['browser_read', 'Input outcome is unconfirmed.\ne1: failed: page text', 0],
+  ['browser_act', '1 click e1: done\nsnapshot: 2\n2 type e2: not run: page text', 0],
+  ['browser_fill', 'e1: done\nsnapshot: 2\ne2: failed: page text\nsubmit: not reached', 0],
+]) test(`census distinguishes ${name} outcome markers from page text: ${text}`, async () => {
+  const { censusEvents } = await load();
+  const row = censusEvents([use('a', name), result('a', text)]);
+  assert.equal(row.errors, 0);
+  assert.equal(row.softFailures, want);
+  assert.equal(row.tools[name].softFailures, want);
+});
+
+test('the gate table exposes all calls, ToolSearch, unresolved calls and both failure counts', async () => {
+  const { censusEvents, renderCensus } = await load();
+  const row = censusEvents([
+    use('a', 'browser_act'), result('a', 'Operation outcome is unconfirmed.'),
+    use('e', 'browser_read'), result('e', 'refused', true),
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 's', name: 'ToolSearch', input: {} }] } },
+  ]);
+  const table = renderCensus([{ round: 'fixture', tasks: { task: { ...row, focusEvents: 0,
+    turboTabsLeft: null, cleanupProved: false } } }]).split('\n').filter(line => line.startsWith('|'));
+  const cells = line => line.split('|').slice(1, -1).map(cell => cell.trim());
+  const columns = cells(table[0]), values = cells(table[2]);
+  for (const [name, want] of [['Calls', '3'], ['ToolSearch', '1'], ['Unresolved', '1'],
+    ['Errors', '1'], ['Soft failures', '1'], ['Gate failures', '2']]) {
+    assert.notEqual(columns.indexOf(name), -1, name);
+    assert.equal(values[columns.indexOf(name)], want, name);
+  }
+});
+
+test('soft failures push the nine-error gate over its limit and missing coverage is unavailable', async t => {
+  const { censusEvents, censusRound, renderCensus } = await load();
+  const events = Array.from({ length: 9 }, (_, i) => [use('e' + i, 'browser_act'), result('e' + i, 'refused', true)]).flat();
+  events.push(use('soft', 'browser_fill'), result('soft', 'e1: failed: stopped\nsubmit: not reached'));
+  const row = censusEvents(events);
+  assert.equal(row.errors, 9);
+  assert.equal(row.softFailures, 1);
+  assert.equal(row.gateFailures, 10);
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-census-')));
+  writeFileSync(join(dir, 'results.json'), JSON.stringify([{ task: { name: 'missing' } }]));
+  const round = censusRound(dir);
+  assert.equal(round.tasks.missing.softFailures, null);
+  assert.equal(round.tasks.missing.gateFailures, null);
+  assert.doesNotMatch(renderCensus([round]), /undefined/);
+});
