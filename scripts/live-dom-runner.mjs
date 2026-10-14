@@ -1,6 +1,7 @@
 // Host-side, reviewed-test runner. Start this outside lane sandboxes; never from a lane.
 // Requests are data, not commands. Test code at the requested commit remains trusted code.
 import { spawn } from 'node:child_process';
+import { collectOwnedGroup } from '../plugins/sleight/lib/owned-group.mjs';
 import { constants } from 'node:fs';
 import { open, mkdir, mkdtemp, lstat, stat, readFile, writeFile, readdir, rename, rm, rmdir, symlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -63,38 +64,53 @@ export function tapReport(text) {
   return { summary, skipReasons, lastLines: lines.slice(-200).map(line => line.slice(0, 2000)) };
 }
 
-// Own only the process group started here. Keep the escalation timer after leader exit:
-// a timed-out test's browser descendants must be collected too.
-export function runCommand(file, args, { cwd, env, timeoutMs = 30_000, signal } = {}) {
+// Own only the detached group started here. Begin collection on leader exit,
+// before pipe closure, because descendants can retain stdout or stderr.
+export function runCommand(file, args, { cwd, env, timeoutMs = 30_000, signal,
+  collect = collectOwnedGroup } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { cwd, env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '', timedOut = false, aborted = false, escalation;
+    let stdout = '', stderr = '', timedOut = false, aborted = false, collection, spawnError, settled = false;
     const append = (previous, data) => (previous + data.toString()).slice(-MAX_OUTPUT);
     child.stdout.on('data', data => { stdout = append(stdout, data); });
     child.stderr.on('data', data => { stderr = append(stderr, data); });
-    const send = name => {
-      if (!child.pid) return;
-      try {
-        if (process.platform === 'win32') child.kill(name);
-        else process.kill(-child.pid, name);
-      } catch (error) { if (error.code !== 'ESRCH') stderr = append(stderr, error.message); }
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); signal?.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve(result);
     };
-    const stop = () => {
-      if (escalation) return;
-      send('SIGTERM');
-      escalation = setTimeout(() => send('SIGKILL'), 250);
+    const beginCollection = () => {
+      collection ??= Promise.resolve().then(async () => {
+        if (process.platform === 'win32') {
+          if (child.pid) child.kill('SIGTERM');
+          throw new Error('POSIX group collection requires a supported host');
+        }
+        if (await collect(child.pid, { graceMs: 250 }) === false) throw new Error('collection refused');
+      });
+      // Collection failure settles the caller even if inherited pipes remain
+      // open. The queue retains the checkout and excludes another request.
+      collection.catch(error => finish(Object.assign(new Error(`owned group cleanup unconfirmed: ${error?.message ?? 'collection refused'}`),
+        { cleanupUnconfirmed: true, groupPid: child.pid })));
+      return collection;
     };
-    const abort = () => { aborted = true; stop(); };
-    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    const abort = () => { aborted = true; beginCollection(); };
+    const timer = setTimeout(() => { timedOut = true; beginCollection(); }, timeoutMs);
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     child.once('error', error => {
-      clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(error);
+      spawnError = error;
+      beginCollection().then(() => finish(error), () => {});
     });
-    child.once('close', async (code, exitSignal) => {
+    child.once('exit', () => {
       clearTimeout(timer); signal?.removeEventListener('abort', abort);
-      if (escalation) await sleep(275);
-      resolve({ exitCode: timedOut ? 124 : aborted ? 130 : (code ?? 1), signal: exitSignal, timedOut, aborted, stdout, stderr });
+      beginCollection();
+    });
+    child.once('close', (code, exitSignal) => {
+      clearTimeout(timer); signal?.removeEventListener('abort', abort);
+      beginCollection().then(() => finish(spawnError, {
+        exitCode: timedOut ? 124 : aborted ? 130 : (code ?? 1), signal: exitSignal,
+        timedOut, aborted, groupCollected: true, stdout, stderr,
+      }), () => {});
     });
   });
 }
@@ -186,12 +202,23 @@ export function createRunner({
       const run = await command(process.execPath, ['--test', '--test-reporter=tap', ...request.tests], {
         cwd: worktree, env: testEnvironment(environment, config), timeoutMs: request.timeoutMs, signal: controller.signal,
       });
+      if (run.groupCollected !== true) throw Object.assign(new Error('owned test group collection unconfirmed'), { cleanupUnconfirmed: true });
+      result.groupCollected = true;
       result.exitCode = run.exitCode;
       result.timedOut = Boolean(run.timedOut);
       Object.assign(result, tapReport(scrub(`${run.stdout}\n${run.stderr}`)));
-    } catch (error) { result.error = scrub(error.message); }
+    } catch (error) {
+      result.error = scrub(error.message);
+      if (error.cleanupUnconfirmed) {
+        result.groupCollected = false; result.cleanedUp = false; broken = true;
+        result.cleanupError = result.error;
+        if (Number.isSafeInteger(error.groupPid)) result.groupPid = error.groupPid;
+        if (worktree) result.worktree = scrub(worktree);
+        if (bank) result.bank = scrub(bank);
+      }
+    }
     finally {
-      if (attemptedCheckout) {
+      if (attemptedCheckout && result.cleanedUp) {
         try { await git(['worktree', 'remove', '--force', worktree]); }
         catch (error) {
           result.cleanedUp = false; result.cleanupError = scrub(error.message);

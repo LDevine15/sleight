@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -38,7 +38,8 @@ async function fixture(t, options = {}) {
     await new Promise(resolve => setTimeout(resolve, 10));
     active--;
     if (options.testThrows) throw new Error('test spawn failed');
-    return { exitCode: options.exitCode ?? 0, stdout: 'TAP version 13\nok 1 - fixture\nok 2 - optional # SKIP missing playwright\n1..2\n# tests 2\n# pass 1\n# fail 0\n# skipped 1\n', stderr: '', timedOut: options.timedOut ?? false };
+    if (options.collectionThrows) throw Object.assign(Error('owned group cleanup unconfirmed'), { cleanupUnconfirmed: true });
+    return { groupCollected: !options.collectionFalse, exitCode: options.exitCode ?? 0, stdout: 'TAP version 13\nok 1 - fixture\nok 2 - optional # SKIP missing playwright\n1..2\n# tests 2\n# pass 1\n# fail 0\n# skipped 1\n', stderr: '', timedOut: options.timedOut ?? false };
   };
   const folder = join(root, 'queue');
   const runner = createRunner({ folder, repository: join(root, 'repository'), temporaryRoot: root, command, environment: { PATH: '/usr/bin', HOME: root }, waitForHold: options.hold ?? (async () => {}) });
@@ -189,3 +190,43 @@ test('owned fake test process is capped and its TAP output is collected before r
   assert.equal(result.exitCode, 124);
   assert.match(result.stdout, /TAP version 13/);
 });
+
+
+for (const mode of ['ordinary', 'ignores TERM', 'inherits pipes']) {
+  test(`natural test exit collects its same-group descendant: ${mode}`, { skip: process.platform === 'win32' ? 'POSIX process groups required' : false, timeout: 5000 }, async t => {
+    const root = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-dom-runner-child-')));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const marker = join(root, 'descendant-ran-after-return');
+    const source = (mode === 'ignores TERM' ? "process.on('SIGTERM', () => {});" : '') +
+      `console.log('ready'); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'synthetic'); }, 800);`;
+    const parent = `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(source)}],
+      {stdio:['ignore','pipe',${JSON.stringify(mode === 'inherits pipes' ? 'inherit' : 'ignore')}]});
+      child.stdout.once('data', () => { child.stdout.destroy(); child.unref(); process.exit(0); });`;
+    const result = await runCommand(process.execPath, ['-e', parent], { timeoutMs: 2000, env: { PATH: process.env.PATH } });
+    assert.equal(result.exitCode, 0); assert.equal(result.timedOut, false);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    await assert.rejects(access(marker), { code: 'ENOENT' });
+  });
+}
+
+for (const cause of ['collectionThrows', 'collectionFalse']) {
+  test(`unproved test-group collection retains the checkout, bank and queue lock: ${cause}`, async t => {
+    const f = await fixture(t, { [cause]: true });
+    await f.runner.initialize();
+    await writeFile(join(f.folder, 'requests', 'retained.json'), JSON.stringify(request));
+    const result = await f.runner.poll();
+    assert.equal(result.cleanedUp, false); assert.equal(result.exitCode, 1);
+    assert.ok(!f.calls.some(c => c.args.includes('remove')));
+    assert.ok((await readdir(f.root)).some(name => name.startsWith('sleight-live-dom-')));
+    await assert.rejects(f.runner.poll(), /cleanup/); await assert.rejects(f.runner.close(), /cleanup/);
+    await access(join(f.folder, '.runner-lock'));
+  });
+}
+
+for (const cause of ['throw', 'false']) {
+  test(`command collection refusal cannot become a success receipt: ${cause}`, async () => {
+    await assert.rejects(runCommand(process.execPath, ['-e', 'process.exit(0)'], { timeoutMs: 2000,
+      collect: async () => { if (cause === 'throw') throw Error('synthetic collection refusal'); return false; },
+    }), error => error.cleanupUnconfirmed === true && Number.isSafeInteger(error.groupPid));
+  });
+}
