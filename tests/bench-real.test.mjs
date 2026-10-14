@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as benchmark from '../bench/tasks.mjs';
 import { webTasks } from '../bench/tasks-web.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
 const getTask = id => {
   const task = benchmark.getTasks?.('real').find(t => t.id === id);
@@ -71,7 +72,7 @@ for (const id of ['safari-form', 'helium-form', 'firefox-form']) {
   });
 }
 
-test('preview-pdf checks the saved second page rotation and preserves page one', async t => {
+test('preview-pdf checks the saved second page rotation and preserves page one', { skip: macCommandSkip('xcrun') }, async t => {
   const task = getTask('preview-pdf'), ctx = context(t);
   await task.prepare(ctx);
   assert.notEqual(await task.check({ ...ctx, answer: 'Rotated and saved' }), true);

@@ -21,11 +21,34 @@ test('unconfirmed collection keeps leases, and failed inspection never claims in
   assert.match(stopText(scanned), /cut off and collected.*tap scan failed/);
   assert.doesNotMatch(stopText(scanned), /Checked:/);
 });
-test('a real owned engine that ignores EOF and SIGTERM is force-collected before reporting', async () => {
+test('owned engine collection sends TERM then KILL at the exact deadlines', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finish, ended = false;
+  const sent = [], closed = new Promise(resolve => { finish = resolve; });
+  const child = { stdin: { end() { ended = true; } }, kill(signal) {
+    sent.push(signal);
+    if (signal === 'SIGKILL') finish({ code: null, signal });
+  } };
+  const pending = collectOwnedEngine({ child, closed, graceMs: 30, forceMs: 30 });
+  assert.equal(ended, true);
+  t.mock.timers.tick(29); assert.deepEqual(sent, []);
+  t.mock.timers.tick(1); assert.deepEqual(sent, ['SIGTERM']);
+  t.mock.timers.tick(29); assert.deepEqual(sent, ['SIGTERM']);
+  t.mock.timers.tick(1);
+  const report = await pending;
+  assert.equal(report.collected, true); assert.equal(report.cutOff, true);
+  assert.equal(report.signal, 'SIGKILL'); assert.deepEqual(sent, ['SIGTERM', 'SIGKILL']);
+  t.mock.timers.tick(1000); assert.deepEqual(sent, ['SIGTERM', 'SIGKILL']);
+});
+test('a real owned engine that ignores EOF and SIGTERM is force-collected before reporting', { timeout: 10000 }, async t => {
   const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});process.stdout.write("ready\\n");setInterval(()=>{},1000)'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const closed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await closed;
+  });
   await new Promise(resolve => child.stdout.once('data', resolve));
-  const report = await collectOwnedEngine({ child, closed, graceMs: 30, forceMs: 30 });
+  const report = await collectOwnedEngine({ child, closed, graceMs: 30, forceMs: 2000 });
   assert.equal(report.collected, true); assert.equal(report.cutOff, true);
   assert.equal(report.signal, 'SIGKILL'); assert.deepEqual(report.signals, ['SIGTERM', 'SIGKILL']);
 });

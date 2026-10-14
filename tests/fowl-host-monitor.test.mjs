@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 import { swiftModuleCache } from '../bench/swift-cache.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
 async function moduleUnderTest() {
   const module = await import('../bench/fowl/host-monitor.mjs').catch(error => {
@@ -116,7 +117,7 @@ test('observer launch failure leaves unqualified evidence instead of passing a q
   assert.equal(gradeHostMonitor(monitor.log, { name: 'run', started: 2, finished: 3 }).ok, false);
 });
 
-test('read-only host observer compiles on macOS without starting observation', { skip: process.platform !== 'darwin' && 'macOS AppKit helper' }, t => {
+test('read-only host observer compiles on macOS without starting observation', { skip: macCommandSkip('swiftc') }, t => {
   const compiler = '/usr/bin/swiftc';
   if (!existsSync(compiler)) return t.skip('Swift compiler unavailable');
   const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-host-monitor-')));

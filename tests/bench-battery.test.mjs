@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { packageSkip } from './requirements.mjs';
 
 // Dynamic imports keep each missing-feature assertion independent on the old tree.
 const load = name => import(`../bench/battery/${name}.mjs`);
@@ -45,7 +46,7 @@ test('dry plan alternates arm order and shares a marker and prompt for each pair
   assert.throws(() => plan({ runs: 0 }), /runs/);
   assert.throws(() => plan({ wanted: ['unknown'] }), /unknown/);
 });
-test('battery dry-run never starts an executable, writes outside stdout, or takes a live lock', t => {
+test('battery dry-run never starts an executable, writes outside stdout, or takes a live lock', { skip: packageSkip('typescript') }, t => {
   const dir = bank(t), guard = join(dir, 'guard.cjs');
   writeFileSync(guard, `const cp = require('node:child_process'), fs = require('node:fs');
     for (const name of ['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork']) cp[name] = () => { throw Error('child forbidden'); };

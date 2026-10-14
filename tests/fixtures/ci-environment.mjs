@@ -1,9 +1,10 @@
 // Run the suite without optional host tools or package dependencies.
-import { mkdtempSync, mkdirSync, existsSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { trackTemp } from '../../scripts/temp-leftovers.mjs';
+import { ciTestFiles } from './ci-suite.mjs';
 
 if (existsSync('node_modules')) throw new Error('remove the worktree node_modules link before the CI audit');
 const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ci-path-'))), bin = join(root, 'bin'), home = join(root, 'home');
@@ -18,7 +19,7 @@ try {
     if (source) symlinkSync(source, join(bin, name));
   }
   symlinkSync(process.execPath, join(bin, 'node'));
-  const files = readdirSync('tests').filter(file => file.endsWith('.test.mjs')).sort().map(file => `tests/${file}`);
+  const files = ciTestFiles();
   const child = spawn(process.execPath, ['--test', '--test-concurrency=4', '--test-reporter=./tests/fixtures/ci-reporter.mjs', ...files], {
     env: { ...process.env, PATH: bin, HOME: home }, stdio: 'inherit',
   });

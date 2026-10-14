@@ -14,7 +14,9 @@ import { webBrowsers } from '../bench/tasks-web.mjs';
 import { WORLD_APPS } from '../bench/world/tasks.mjs';
 import { isNativeArm, nativeArmPlan } from '../bench/world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/world/native-world.mjs';
-import { dragMethodAudit } from '../bench/world/method-check.mjs';
+import { packageSkip } from './requirements.mjs';
+const parserSkip = packageSkip('typescript');
+const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
@@ -167,7 +169,7 @@ for (const cause of ['interactive task timeout', 'session exited before confirme
   });
 }
 
-test('claude-cu provides executed drag receipts to the retained method grader', async () => {
+test('claude-cu provides executed drag receipts to the retained method grader', { skip: parserSkip }, async () => {
   const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true,
     tasks: [{ id: 'textedit-window-drag', app: 'TextEdit', prompt: () => 'drag', timeoutMs: 17000 }] });
   assert.equal(result.error, undefined);
@@ -221,7 +223,7 @@ test('only world runs widen the Claude environment filter', async () => {
   assert.ok(world.envs.every(env => !('CLAUDE_CUSTOM_FEATURE' in env)));
 });
 
-test('world paired-window drag requests the method audit for both drivers', async () => {
+test('world paired-window drag requests the method audit for both drivers', { skip: parserSkip }, async () => {
   const result = await runner({ suite: 'world', arm: 'sleight,codex', drive: true, extraArgs: ['--owner-away'],
     tasks: [{ id: 'textedit-window-drag', app: 'TextEdit', prompt: () => 'drag', timeoutMs: 17000 }] });
   assert.equal(result.error, undefined);
