@@ -31,8 +31,15 @@ turn, session and browser identity checks at the transport boundary.
 Trusted classification sets `submit:true` for a submit and consequence payment
 for a payment. An uncertain submit retains an unknown receipt and blocks a
 new submit on that document until a successful fresh read. A failed read or
-one from another frame cannot clear it. A read does not prove the earlier
-submit succeeded. Ordinary clicks and links can continue after unknown effects.
+one from another frame cannot clear it. Dispatch sequence numbers bind read
+freshness to the latest uncertain submit, even when results arrive late. Reads
+use their first physical command and submits their last, excluding late cleanup
+as evidence of a newer capture.
+Uncertainty follows the browser incarnation, target, frame, document and origin
+across turn, session, lease and broker changes. Recovery preserves that order;
+older receipts without order require a new read. Command authority still checks
+the full current scope. A read does not prove the earlier submit succeeded.
+Ordinary clicks and links can continue after unknown effects.
 The broker caches receipts by request id and never automatically resends input.
 
 Turbo requires background targets. `Page.bringToFront` and

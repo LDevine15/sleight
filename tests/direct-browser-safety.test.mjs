@@ -114,3 +114,79 @@ test('a request journal cannot survive Disconnect and Resume even with the same 
   assert.throws(() => transport(plan, ctx, { method: 'Input.insertText', params: { text: 'second' } }, () => { sends++; }));
   assert.equal(sends, 1);
 });
+
+function dispatch(f, op, send = () => {}) {
+  f.current(op);
+  const prepared = f.authority.prepare(op);
+  assert.equal(prepared.verdict, 'allow');
+  f.authority.dispatch(prepared.capability, op, send);
+}
+const submitOperation = id => operation({ id, kind: 'click', args: {}, submit: true });
+const readOperation = id => operation({ id, kind: 'read', args: {} });
+function verifyRead(f, read) { f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); }
+
+test('a delayed read captured before a submit cannot release its retry fence', () => {
+  const f = fixture(), read = readOperation('old-read'), submit = submitOperation('submit');
+  dispatch(f, read);
+  dispatch(f, submit, () => { throw Error('lost submit reply'); });
+  assert.equal(f.authority.prepare(submitOperation('before-old-read')).verdict, 'deny');
+  verifyRead(f, read);
+  assert.equal(f.authority.prepare(submitOperation('after-old-read')).verdict, 'deny');
+});
+
+test('freshness is determined at read dispatch rather than preparation', () => {
+  const f = fixture(), read = readOperation('fresh-read'), prepared = f.authority.prepare(read);
+  assert.equal(prepared.verdict, 'allow');
+  dispatch(f, submitOperation('submit'), () => { throw Error('lost submit reply'); });
+  f.authority.dispatch(prepared.capability, read, () => {}); verifyRead(f, read);
+  assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'allow');
+});
+
+for (const boundary of ['turn', 'broker', 'session', 'lease'])
+  test('document uncertainty survives changed ' + boundary + ' until a fresh read', () => {
+    let f = fixture(), submit = submitOperation('submit');
+    dispatch(f, submit, () => { throw Error('lost submit reply'); });
+    const next = { ...submit.scope, [boundary]: ['broker', 'lease'].includes(boundary) ? 2 : 'next' };
+    if (boundary === 'broker') f = fixture({ recovery: f.authority.recovery() });
+    const retry = { ...submitOperation('retry'), scope: next }; f.current(retry);
+    assert.equal(f.authority.prepare(retry).verdict, 'deny');
+    const read = { ...readOperation('fresh-read'), scope: next }; dispatch(f, read); verifyRead(f, read);
+    f.current(retry); assert.equal(f.authority.prepare(retry).verdict, 'allow');
+  });
+
+test('a read between two dispatched submits cannot clear the later uncertainty', () => {
+  const f = fixture(), first = submitOperation('first'), second = submitOperation('second'), old = readOperation('between');
+  dispatch(f, first); dispatch(f, old); dispatch(f, second);
+  f.authority.timeout(second.id); f.authority.timeout(first.id); verifyRead(f, old);
+  assert.equal(f.authority.prepare(submitOperation('too-early')).verdict, 'deny');
+  const fresh = readOperation('fresh'); dispatch(f, fresh); verifyRead(f, fresh);
+  assert.equal(f.authority.prepare(submitOperation('after-both')).verdict, 'allow');
+});
+
+test('recovery preserves a verified fresh read without reviving its cleared uncertainty', () => {
+  const f = fixture(); dispatch(f, submitOperation('submit'), () => { throw Error('lost reply'); });
+  const read = readOperation('fresh'); dispatch(f, read); verifyRead(f, read);
+  const recovered = fixture({ recovery: f.authority.recovery() });
+  assert.equal(recovered.authority.prepare(submitOperation('retry')).verdict, 'allow');
+});
+
+test('a fresh read cannot clear uncertainty for another document or browser incarnation', () => {
+  for (const key of ['browser', 'target', 'frame', 'document', 'origin']) {
+    const f = fixture(), submit = submitOperation('submit'); dispatch(f, submit, () => { throw Error('lost reply'); });
+    const read = readOperation('foreign'); read.scope = { ...read.scope, [key]: key === 'origin' ? 'https://other.invalid' : 'other' };
+    dispatch(f, read); verifyRead(f, read); f.current(submit);
+    assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny', key);
+  }
+});
+
+test('late physical cleanup cannot make an earlier semantic read fresh', () => {
+  const f = fixture(), read = readOperation('old-read'), submit = submitOperation('submit'), plan = { target: 'target' };
+  const ctx = { session: 'client', turn: 'turn', browserIncarnation: 'browser', brokerEpoch: 1 };
+  const transport = createTransportAuthority({ authority: f.authority,
+    resolveOperation: (plan, ctx, command) => command.method === 'Input.dispatchMouseEvent' ? submit : read });
+  transport(plan, ctx, { method: 'Accessibility.getPartialAXTree' }, () => ({}));
+  assert.throws(() => transport(plan, ctx, { method: 'Input.dispatchMouseEvent' }, () => { throw Error('lost reply'); }));
+  transport(plan, ctx, { method: 'Runtime.releaseObject' }, () => ({}));
+  completeTransport(transport, plan, 'verified');
+  assert.equal(f.authority.prepare(submitOperation('retry')).verdict, 'deny');
+});

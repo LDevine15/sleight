@@ -88,15 +88,17 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
   if (![current, classify, authenticate].every(f => typeof f === 'function') || !Number.isFinite(ttl) || ttl <= 0 || ttl > 30000)
     throw new Error('trusted boundaries required');
   const secret = randomBytes(32), confirmations = new Map(), requests = new Map(), revocationsBySession = new Map();
-  const capabilities = new Map(), records = new Map(), quarantined = new Set();
-  let fence = 0, active = true;
+  const capabilities = new Map(), records = new Map(), quarantined = new Map();
+  let fence = 0, active = true, sequence = 0;
   const clock = () => {
     const value = now();
     if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) throw new Error('capability clock invalid');
     return value;
   };
   const digest = value => createHmac('sha256', secret).update(canonical(value)).digest('hex');
-  const targetKey = scope => canonical(SCOPE_KEYS.filter(key => key !== 'ref').map(key => scope[key]));
+  // Effect uncertainty belongs to the document, not the current command owner.
+  // Dispatch still checks every SCOPE_KEY, including broker, session and lease.
+  const targetKey = scope => canonical(['browser', 'target', 'frame', 'document', 'origin'].map(key => scope[key]));
   const exactTerms = (op, req) => op.terms && req?.terms &&
     ['item', 'method'].every(k => typeof op.terms[k] === 'string' && op.terms[k]) && digest(op.terms) === digest(req.terms);
   const paymentKey = op => digest(op.terms ? [op.scope.session, op.terms] : [op.id, op.kind, op.args, op.scope]);
@@ -110,23 +112,38 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     canonical(state);
     return state && ['present', 'visible', 'enabled', 'same'].every(k => state[k] === true);
   };
-  const record = (op, phase) => ({ id: op.id, scope: clone(op.scope), kind: op.kind, phase, effect: 'untouched', submit: submit(op) });
+  const record = (op, phase) => ({ id: op.id, scope: clone(op.scope), kind: op.kind, phase, effect: 'untouched', submit: submit(op), sequence: op.sequence ?? 0 });
+  const quarantine = r => {
+    if (r.submit) {
+      const key = targetKey(r.scope);
+      quarantined.set(key, Math.max(quarantined.get(key) ?? 0, r.sequence));
+    }
+  };
+  const clearRead = r => {
+    if (r.phase === 'verified' && r.kind === 'read' && r.sequence > (quarantined.get(targetKey(r.scope)) ?? Infinity))
+      quarantined.delete(targetKey(r.scope));
+  };
   const unknown = r => {
     // Independent effect proof is stronger than a late transport failure.
     if (r.phase === 'verified') return;
     r.phase = 'unknown'; r.effect = 'unknown'; delete r.result;
-    if (r.submit) quarantined.add(targetKey(r.scope));
+    quarantine(r);
   };
   if (!Array.isArray(recovery) || recovery.length > 1024) throw new Error('recovery size');
   for (const r of recovery) {
     validateScope(r.scope);
     if (!identifier(r.id) || !Object.hasOwn(OPERATIONS, r.kind) ||
-      !['prepared', 'dispatched', 'observed', 'verified', 'unknown'].includes(r.phase)) throw new Error('recovery');
+      !['prepared', 'dispatched', 'observed', 'verified', 'unknown'].includes(r.phase) ||
+      r.sequence !== undefined && (!Number.isSafeInteger(r.sequence) || r.sequence < 0)) throw new Error('recovery');
     const retained = record(r, r.phase);
+    sequence = Math.max(sequence, retained.sequence);
     if (['unknown', 'dispatched', 'observed'].includes(r.phase)) unknown(retained);
     else if (r.phase === 'verified') { retained.effect = 'verified'; retained.result = 'verified'; }
     records.set(r.id, retained);
   }
+  // Older receipts have no capture order. They retain uncertainty until a new
+  // read; only ordered verified reads can discharge a recovered submit fence.
+  for (const r of records.values()) clearRead(r);
   const cancel = session => {
     if (!session) { fence++; capabilities.clear(); }
     else for (const [token, cap] of capabilities) if (cap.op.scope.session === session) capabilities.delete(token);
@@ -226,7 +243,12 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
       window !== undefined && (terminal.time < window.issued || terminal.time >= window.expires) ||
       decide(cap.op).verdict !== 'allow') throw new Error('dispatch fence');
     if (!retained) capabilities.delete(capability);
+    if (!Number.isSafeInteger(sequence + 1)) throw Error('receipt sequence full');
     const r = records.get(cap.op.id); r.phase = 'dispatched'; r.effect = 'unknown';
+    sequence++;
+    // A read starts at its first command; releasing its objects later cannot
+    // turn an earlier capture into a fresh one. Submits retain their last send.
+    if (r.kind !== 'read' || r.sequence === 0) r.sequence = sequence;
     // No await or preparation between the final check and transport dispatch.
     // A promise represents a sent request, never evidence it took effect.
     try { const pending = send(clone(cap.op));
@@ -245,8 +267,8 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     if (!r || r.phase !== 'observed') throw new Error('receipt phase');
     r.phase = proof === 'unverifiable' ? 'unknown' : 'verified';
     r.effect = r.phase === 'verified' ? 'verified' : 'unknown'; r.result = proof;
-    if (r.phase === 'unknown' && r.submit) quarantined.add(targetKey(r.scope));
-    if (r.phase === 'verified' && r.kind === 'read') quarantined.delete(targetKey(r.scope));
+    if (r.phase === 'unknown') quarantine(r);
+    clearRead(r);
     return clone(r);
   }
   function timeout(id) { const r = records.get(id); if (r && ['dispatched', 'observed'].includes(r.phase)) unknown(r); }
