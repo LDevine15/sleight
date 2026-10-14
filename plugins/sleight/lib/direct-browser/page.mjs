@@ -1,0 +1,301 @@
+// Background disposition and hidden modifier idea: FowlBrowser (MIT),
+// 8b689249ba4e33d2626487aad930605c62e2c6a7, mcp/src/popups.mjs.
+// Independently written for Playwright over CDP; no extension or source copied.
+import { randomUUID } from 'node:crypto';
+
+function deadline(task, ms, message = 'background preparation timed out') {
+  let timer;
+  return Promise.race([Promise.resolve().then(task), new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Error(message)), ms);
+  })]).finally(() => clearTimeout(timer));
+}
+
+// MAIN world, before page scripts. Every name stays inside this function so it
+// can be serialized. The hook controls disposition, never grants authority.
+export function popupHook() {
+  const key = Symbol.for('sleight.popup3');
+  if (window[key]) return true;
+  const apply = Reflect.apply, originalOpen = window.open;
+  const listen = EventTarget.prototype.addEventListener, unlisten = EventTarget.prototype.removeEventListener;
+  const path = Event.prototype.composedPath, stop = Event.prototype.stopImmediatePropagation;
+  const mouse = MouseEvent.prototype;
+  const descriptors = ['ctrlKey', 'metaKey'].map(name => [name, Object.getOwnPropertyDescriptor(mouse, name)]);
+  const modifierState = mouse.getModifierState;
+  const decided = new WeakMap(), retired = new Set();
+  let armed, timer;
+  const finish = token => {
+    if (token) retired.add(token);
+    if (armed && token && armed.token !== token) return;
+    armed = undefined; clearTimeout(timer);
+  };
+  const masked = event => {
+    if (!decided.has(event)) decided.set(event, !!(event.isTrusted && armed?.active &&
+      Date.now() < armed.until && apply(path, event, []).includes(armed.element)));
+    return decided.get(event);
+  };
+  const getters = descriptors.map(([name, descriptor]) => {
+    const getter = function () { return apply(descriptor.get, this, []) && !masked(this); };
+    Object.defineProperty(mouse, name, { ...descriptor, get: getter });
+    return [name, descriptor, getter];
+  });
+  const getModifierState = function (name) {
+    return apply(modifierState, this, [name]) && !(['Meta', 'Control'].includes(name) && masked(this));
+  };
+  mouse.getModifierState = getModifierState;
+  const keyboard = event => {
+    if (!armed || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
+    if (event.type === 'keydown') { armed.active = true; armed.until = Date.now() + 1000; }
+    if (armed.active) apply(stop, event, []);
+  };
+  for (const type of ['keydown', 'keyup']) apply(listen, window, [type, keyboard, true]);
+  const open = function (url, name, features) {
+    // Same browsing context navigation keeps native semantics. New windows must
+    // consume the background click's trusted activation; never create a window.
+    if (/^_(?:self|parent|top)$/i.test(String(name))) return apply(originalOpen, this, arguments);
+    if (!armed?.active || Date.now() >= armed.until || !navigator.userActivation?.isActive) return null;
+    // Keep security features, discard popup sizing and window-position features.
+    const safeFeatures = String(features ?? '').split(',').filter(value => /^\s*(?:noopener|noreferrer)(?:\s*=|\s*$)/i.test(value)).join(',');
+    return apply(originalOpen, this, [url, name, safeFeatures]);
+  };
+  window.open = open;
+  window[key] = {
+    prepare(element, token, capMs) {
+      if (retired.has(token) || !element.isConnected) return false;
+      let node = element, link;
+      const handlers = [];
+      while (node instanceof Element) {
+        if (['a', 'area'].includes(node.localName)) link = node;
+        if (typeof node.onclick === 'function') handlers.push(Function.prototype.toString.call(node.onclick));
+        if (node.isContentEditable || ['textarea', 'select', 'option', 'label'].includes(node.localName) ||
+          node.localName === 'input' && node.type !== 'button' ||
+          /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio)$/.test(node.getAttribute('role') ?? '')) return false;
+        node = node.parentElement ?? node.getRootNode().host;
+      }
+      const handlerSource = handlers.join('\n');
+      const source = handlerSource + '\n' + Array.from(document.scripts, script => script.textContent).join('\n');
+      const target = link?.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+      const opens = /\b(?:window\s*\.\s*open|open\s*\()/.test(source);
+      if (link && (!target || /^_(?:self|top|parent)$/i.test(target)) && !/\bwindow\s*\.\s*open\s*\(/.test(handlerSource)) return false;
+      if (!opens && !target && !Array.from(document.scripts).some(script => script.src)) return false;
+      if (/^(iframe|frame|fencedframe|object|embed)$/.test(document.activeElement?.localName ?? ''))
+        throw Error('background popup preparation needs focus outside a frame');
+      finish(); armed = { element, token, active: false, until: 0 };
+      timer = setTimeout(() => finish(token), capMs);
+      return true;
+    },
+    finish,
+    off() {
+      finish();
+      if (window.open === open) window.open = originalOpen;
+      for (const [name, descriptor, getter] of getters)
+        if (Object.getOwnPropertyDescriptor(mouse, name)?.get === getter) Object.defineProperty(mouse, name, descriptor);
+      if (mouse.getModifierState === getModifierState) mouse.getModifierState = modifierState;
+      for (const type of ['keydown', 'keyup']) apply(unlisten, window, [type, keyboard, true]);
+      delete window[key]; return true;
+    },
+  };
+  return true;
+}
+
+export async function backgroundClick(tab, locator, click = options => locator.click(options), { timeoutMs = 1000 } = {}) {
+  const token = randomUUID(), page = tab.page;
+  const before = tab.popupCheckpoint?.();
+  const disarm = () => deadline(() => page.evaluate(token => {
+    window[Symbol.for('sleight.popup3')]?.finish(token); return true;
+  }, token), timeoutMs);
+  let prepared;
+  try {
+    prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
+      const hook = window[Symbol.for('sleight.popup3')];
+      if (!hook) throw Error('background popup hook is missing');
+      return hook.prepare(element, token, capMs);
+    }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+  } catch {
+    await disarm().catch(() => {});
+    throw Error('background popup preparation failed; use the engine browser path');
+  }
+  if (prepared !== true) {
+    const result = await click({}); await tab.settlePopups?.(before); return result;
+  }
+  let result;
+  try { result = await click({ modifiers: ['ControlOrMeta'] }); }
+  finally {
+    // A failed click may leave Playwright's modifier held. Never replay input.
+    await deadline(() => page.keyboard.up('ControlOrMeta'), timeoutMs).catch(() => {});
+    await disarm().catch(() => {});
+  }
+  await tab.settlePopups?.(before);
+  return result;
+}
+
+// browser is the Playwright connection through V1's CDP filter; session is the
+// approved root CDP {send,on,off,sessionId}. Existing pages are never acquired.
+export function createPageRegistry({ browser, session, context = browser?.contexts()[0], timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
+  if (!context || typeof session?.send !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
+    throw Error('approved browser connection required');
+  const records = new Map(), targets = new Map(), metadata = new WeakMap(), seen = new Map(), allocations = new Map(), tasks = new Set();
+  let ended = false, cleanup;
+  const track = promise => {
+    tasks.add(promise); promise.then(() => tasks.delete(promise), () => tasks.delete(promise)); return promise;
+  };
+  const identify = page => {
+    if (!metadata.has(page)) metadata.set(page, (async () => {
+      const cdp = await context.newCDPSession(page);
+      try {
+        const { targetInfo } = await cdp.send('Target.getTargetInfo');
+        if (targetInfo?.type !== 'page' || !targetInfo.targetId) throw Error('owned page identity unavailable');
+        return { cdp, targetInfo };
+      } catch (error) { await cdp.detach().catch(() => {}); throw error; }
+    })());
+    return metadata.get(page);
+  };
+  const install = async entry => {
+    entry.cdp.on('Page.windowOpen', () => { entry.windowOpenNo++; });
+    await entry.cdp.send('Page.enable');
+    await entry.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    const { identifier } = await entry.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${popupHook})()` });
+    if (!identifier) throw Error('background popup hook installation failed');
+    entry.script = identifier;
+    const result = await entry.cdp.send('Runtime.evaluate', { expression: `(${popupHook})()`, returnByValue: true });
+    if (result.exceptionDetails || result.result?.value !== true) throw Error('background popup hook installation failed');
+  };
+  const removeHook = async entry => {
+    if (entry.script) {
+      await entry.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.script }); entry.script = null;
+    }
+    if (!entry.page.isClosed()) for (const frame of entry.page.frames()) await frame.evaluate(() => {
+      return window[Symbol.for('sleight.popup3')]?.off() ?? true;
+    });
+  };
+  const adopt = (page, info, opener) => {
+    if (targets.has(info.targetInfo.targetId)) return targets.get(info.targetInfo.targetId);
+    const entry = { tab: 't' + randomUUID().replaceAll('-', ''), targetId: info.targetInfo.targetId, page, cdp: info.cdp,
+      state: { snapshotNo: 0, submitUnconfirmed: false }, opener: opener?.tab, popups: [], popupWaitMs,
+      closed: page.isClosed(), released: false, queue: Promise.resolve() };
+    entry.windowOpenNo = 0;
+    entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length });
+    entry.settlePopups = async before => {
+      if (!before || entry.windowOpenNo === before.windows && entry.popups.length === before.popups) return;
+      const until = Date.now() + popupWaitMs;
+      while (!ended && entry.popups.length === before.popups && Date.now() < until)
+        await new Promise(resolve => setTimeout(resolve, Math.min(10, popupWaitMs)));
+      for (const notice of entry.popups.slice(before.popups)) {
+        const child = records.get(notice.tab);
+        if (child) await deadline(() => child.ready, timeoutMs).catch(() => {});
+      }
+    };
+    records.set(entry.tab, entry); targets.set(entry.targetId, entry);
+    allocations.delete(entry.targetId);
+    const notice = opener && { tab: entry.tab, opener: opener.tab, closed: entry.closed };
+    if (notice) opener.popups.push(notice);
+    page.once('close', () => { entry.closed = true; if (notice) notice.closed = true; });
+    entry.ready = track((async () => {
+      if (!entry.closed && !ended) await deadline(() => install(entry), timeoutMs);
+      if (ended && !entry.closed) await deadline(() => page.close({ runBeforeUnload: false }), timeoutMs);
+    })());
+    return entry;
+  };
+  const heard = page => track((async () => {
+    // A discovery handle must not detach the persistent handle an open is using.
+    const probe = await context.newCDPSession(page);
+    let targetInfo;
+    try { ({ targetInfo } = await probe.send('Target.getTargetInfo')); }
+    finally { await probe.detach(); }
+    if (targetInfo?.type === 'page') seen.set(targetInfo.targetId, page);
+    const parent = targets.get(targetInfo?.openerId);
+    if (parent && !parent.released && !parent.closed) adopt(page, await identify(page), parent);
+  })()).catch(() => {});
+  context.on('page', heard);
+  const idle = async () => { while (tasks.size) await Promise.allSettled([...tasks]); };
+  const closeAllocation = targetId => {
+    const allocation = allocations.get(targetId);
+    if (!allocation) return Promise.resolve();
+    if (!allocation.closing) allocation.closing = deadline(async () => {
+      const result = await session.send('Target.closeTarget', { targetId });
+      if (result?.success !== true) throw Error('background target cleanup unconfirmed');
+      allocations.delete(targetId);
+    }, timeoutMs).finally(() => { allocation.closing = null; });
+    return allocation.closing;
+  };
+  const tab = id => {
+    const entry = records.get(id);
+    if (!entry || entry.released) throw Error('unknown owned tab');
+    if (entry.closed || entry.page.isClosed()) throw Error('owned tab closed; read its opener');
+    if (ended) throw Error('turn ended');
+    return entry;
+  };
+  const release = async (id, kind) => {
+    const entry = tab(id);
+    await deadline(() => entry.ready, timeoutMs);
+    await deadline(() => removeHook(entry), timeoutMs);
+    await entry.cdp.detach(); entry.released = true; entry.release = kind;
+    return { tab: id, kept: true, handoff: kind === 'handoff' };
+  };
+  const api = {
+    tab, idle,
+    async openTab({ url }) {
+      if (ended) throw Error('turn ended');
+      let parsed;
+      try { parsed = new URL(url); } catch { throw Error('invalid browser URL'); }
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw Error('invalid browser URL');
+      const opening = track((async () => {
+        const { targetId } = await session.send('Target.createTarget', { url: 'about:blank', background: true });
+        if (!targetId) throw Error('background target allocation unavailable');
+        allocations.set(targetId, {});
+        const until = Date.now() + timeoutMs;
+        while (!seen.has(targetId) && !ended && Date.now() < until) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        if (ended || !seen.has(targetId)) {
+          await closeAllocation(targetId);
+          throw Error(ended ? 'turn ended' : 'background page attachment timed out');
+        }
+        const page = seen.get(targetId);
+        const info = await identify(page), entry = adopt(page, info);
+        await entry.ready;
+        if (ended) throw Error('turn ended');
+        await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+        return { tab: entry.tab };
+      })());
+      return deadline(() => opening, timeoutMs, 'background open pending; do not retry before cleanup');
+    },
+    async list() {
+      await deadline(idle, timeoutMs);
+      return [...records.values()].filter(r => !r.closed && !r.released).map(r => ({ tab: r.tab, targetId: r.targetId,
+        opener: r.opener, url: r.page.url() }));
+    },
+    enqueue(id, run) {
+      const entry = tab(id), task = entry.queue.then(() => { tab(id); return run(entry); });
+      entry.queue = task.catch(() => {}); return track(task);
+    },
+    async close(id) {
+      const entry = tab(id); await deadline(() => entry.page.close({ runBeforeUnload: false }), timeoutMs);
+      return { tab: id, closed: entry.page.isClosed() };
+    },
+    keep: id => release(id, 'keep'), handoff: id => release(id, 'handoff'),
+    endTurn() {
+      ended = true;
+      if (!cleanup) cleanup = (async () => {
+        let settled = true;
+        try { await deadline(idle, timeoutMs); } catch { settled = false; }
+        const rows = [];
+        for (const targetId of allocations.keys()) {
+          try { await closeAllocation(targetId); rows.push({ targetId, closed: true }); }
+          catch { rows.push({ targetId, closed: false, cleanupRequired: true }); }
+        }
+        for (const entry of records.values()) {
+          if (entry.released || entry.page.isClosed()) { rows.push({ tab: entry.tab, kept: entry.released, closed: entry.page.isClosed() }); continue; }
+          try {
+            await deadline(() => entry.page.close({ runBeforeUnload: false }), timeoutMs);
+            rows.push({ tab: entry.tab, closed: entry.page.isClosed() });
+          } catch { rows.push({ tab: entry.tab, closed: entry.page.isClosed(), cleanupRequired: true }); }
+        }
+        const cleanedUp = settled && rows.every(row => row.kept || row.closed);
+        if (cleanedUp) context.off('page', heard);
+        return { cleanedUp, rows };
+      })().finally(() => { cleanup = null; });
+      return cleanup;
+    },
+  };
+  return Object.freeze(api);
+}
