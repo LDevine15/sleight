@@ -14,6 +14,30 @@ function temp(t) {
   return dir;
 }
 
+test('handoff rounds carry model effort world routing and repetitions through the CLI plan', async t => {
+  const { runHandoffs, handoffOptions } = await import('../bench/fowl/handoff-runner.mjs');
+  assert.equal(typeof handoffOptions, 'function');
+  const dir = temp(t), out = join(dir, 'absent');
+  const options = handoffOptions(['--model', 'haiku', '--effort', 'high', '--world', '--runs', '5', '--out', out, '--dry-run']);
+  const plan = await runHandoffs({ ...options, run: () => { throw Error('ran'); }, running: () => { throw Error('inspected apps'); } });
+  assert.equal(plan.length, 45);
+  assert.equal(existsSync(out), false);
+  for (const row of plan) {
+    assert.ok(row.args.includes('--world'));
+    assert.equal(row.args[row.args.indexOf('--model') + 1], 'claude-haiku-5-5');
+    assert.equal(row.args[row.args.indexOf('--effort') + 1], 'high');
+  }
+  const seen = [];
+  await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'matrix',
+    model: 'haiku', effort: 'high', world: true, runs: 2, running: () => new Set(), quit: () => { throw Error('quit'); },
+    run: async ({ args }) => { seen.push(args); return 0; } });
+  assert.equal(seen.length, 18);
+  assert.ok(seen.every(args => args.includes('--world') && args.includes('claude-haiku-5-5') && args.includes('high')));
+  assert.throws(() => handoffOptions(['--runs', '0']), /Runs/);
+  assert.throws(() => handoffOptions(['--model']), /value/);
+  assert.throws(() => handoffOptions(['--effort', 'invented']), /effort/);
+});
+
 test('download cleanup compares names and times and preserves other files and symlinks', async (t) => {
   const { snapshotDownloads, cleanupDownloads } = await import('../bench/fowl/handoff-runner.mjs');
   const dir = temp(t);

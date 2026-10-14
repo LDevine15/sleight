@@ -9,6 +9,32 @@ import { modelId, tokenCost, roundPlan } from '../bench/fowl/accounting.mjs';
 import { roundCost, addRoundSpend } from '../bench/fowl/add-spend.mjs';
 
 const recorded = JSON.parse(readFileSync(new URL('fixtures/fowl-haiku-5-5-result.json', import.meta.url)));
+test('Chrome uses isolated account auth at Haiku high and mixed funding must split rounds', async () => {
+  const { roundAuth } = await import('../bench/fowl/accounting.mjs');
+  assert.equal(typeof roundAuth, 'function');
+  assert.equal(roundAuth('haiku', ['claude-in-chrome']), 'account');
+  assert.equal(roundAuth('haiku', []), 'account', 'an unsupported-only cohort needs no Claude funding');
+  assert.equal(roundAuth('haiku', ['']), 'account', 'empty CLI funding output needs no Claude funding');
+  assert.equal(roundAuth('haiku', ['claude-cu', 'claude-in-chrome']), 'account');
+  assert.equal(roundAuth('haiku', ['playwright-mcp']), 'api');
+  assert.equal(roundAuth('opus', ['browser-use']), 'api');
+  assert.throws(() => roundAuth('haiku', ['sleight', 'claude-in-chrome']), /separate rounds/);
+  assert.equal(roundPlan(['--plan', '--surface', 'claude-in-chrome', '--model', 'haiku']).auth, 'account');
+});
+test('the actual wrapper auth block admits a Haiku Chrome round without reading an API key', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'sleight-fowl-chrome-auth-')); t.after(() => removeTemp(dir));
+  const wrapper = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
+  const block = wrapper.slice(wrapper.indexOf('SPEND='), wrapper.indexOf('[ "$AUTH" = account ] || [ -n "$OUT" ]'));
+  const tasks = join(dir, 'tasks.json');
+  writeFileSync(tasks, JSON.stringify([{ name: 'fixture', browser: 'chrome' }]));
+  const result = spawnSync('/bin/sh', ['-eu', '-c', block + '\nprintf "%s" "$AUTH"', 'auth-fixture',
+    '--tasks', tasks, '--surface', 'claude-in-chrome'], {
+    encoding: 'utf8', env: { HOME: dir, REPO: new URL('..', import.meta.url).pathname, PATH: process.env.PATH,
+      MODEL: 'claude-haiku-5-5', SURFACE: 'claude-in-chrome', TASKS: '' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'account');
+});
 test('model aliases select explicit 5.5 IDs and the last option wins in the round plan', () => {
   for (const alias of ['haiku', 'sonnet', 'opus']) {
     assert.equal(modelId(alias), `claude-${alias}-5-5`);

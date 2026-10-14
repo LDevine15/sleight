@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assertLogin, assertSpend, assertFowlSocket, assertEngineSockets, quote } from '../preflight.mjs';
-import { modelId } from './accounting.mjs';
+import { roundAuth } from './accounting.mjs';
 import { runnableTasks } from './support.mjs';
 
 export function selectedTasks(tasks, args) {
@@ -16,9 +16,8 @@ export async function fowlPreflight({ tasks, model = 'opus', world = false, remo
   spend = assertSpend, login = assertLogin, fowlSocket = assertFowlSocket, engineSockets = assertEngineSockets,
 } = {}) {
   tasks = runnableTasks(tasks, { world, remote });
-  const api = tasks.some(task => task.surface === 'browser-use') ||
-    (!modelId(model).includes('opus') && tasks.some(task => task.surface !== 'claude-cu'));
-  const account = task => task.surface === 'claude-cu' || (!api && task.surface !== 'browser-use');
+  const api = roundAuth(model, tasks.map(task => task.surface)) === 'api';
+  const account = task => ['claude-cu', 'claude-in-chrome'].includes(task.surface) || (!api && task.surface !== 'browser-use');
   if (tasks.some(task => task.surface !== 'codex-agent' && !account(task))) {
     spend({ file: join(home, 'Library/Logs/sleight/bench-api-spend.json'), capUsd: 190 });
   }

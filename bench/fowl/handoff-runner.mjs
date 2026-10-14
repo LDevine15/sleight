@@ -4,8 +4,11 @@ import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, u
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fixtureGradeDescriptor } from '../world/fowl-fixture-grade.mjs';
 import { cleanupNative } from './grade.mjs';
 import { INVOICE_ID, INVOICE_TOTAL, NOTE, ROSTER } from './data.mjs';
+import { modelId } from './accounting.mjs';
+import { matrixOptions, roundArguments } from '../world/fowl-options.mjs';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const ARMS = ['fowlbrowser', 'sleight', 'fowl+sleight'];
@@ -60,10 +63,15 @@ export function findUntitled({ dir, before, started, ended }) {
   return found.sort();
 }
 
-function runRound({ out, args }) {
+export function runRound({ out, args, fixture }) {
   return new Promise((resolve, reject) => {
     const fd = openSync(out + '.log', 'wx');
-    const child = spawn(join(DIR, 'rounds.sh'), args, { stdio: ['ignore', fd, fd] });
+    let child, gradeFd;
+    try {
+      gradeFd = fixture ? fixtureGradeDescriptor(fixture) : undefined;
+      child = spawn(join(DIR, 'rounds.sh'), args, { stdio: ['ignore', fd, fd, ...(gradeFd === undefined ? [] : [gradeFd])] });
+    } catch (error) { closeSync(fd); throw error; }
+    finally { if (gradeFd !== undefined) closeSync(gradeFd); }
     const interrupt = () => child.kill('SIGINT');
     process.once('SIGINT', interrupt);
     process.once('SIGTERM', interrupt);
@@ -93,12 +101,20 @@ export async function runHandoffs({
   outRoot = '/tmp/fb-rounds', downloads = join(homedir(), 'Downloads'),
   icloud = join(homedir(), 'Library/Mobile Documents/com~apple~TextEdit/Documents'), cleanup = cleanupNative,
   stamp = new Date().toISOString().replace(/[:.]/g, '-'), run = runRound, running = appsRunning, quit = quitApp,
+  model = 'opus', effort = 'medium', world = false, runs = 1, dryRun = false, swap = false,
 } = {}) {
+  const options = matrixOptions({ model, effort, runs, dryRun, swap, world });
   const tasks = JSON.parse(readFileSync(join(DIR, 'handoff.json'), 'utf8'));
   const results = [];
+  if (dryRun) return Array.from({ length: options.runs }, (_, index) => ARMS.flatMap(arm => tasks.map(task => {
+    const out = join(outRoot, `handoff-${stamp}-${index + 1}-${arm}`, 'r-' + task.name);
+    return { arm, run: index + 1, out, dryRun: true,
+      args: roundArguments(options, ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--only', task.name,
+        '--serve', 'node ' + quote(join(DIR, 'site/server.mjs')) + ' --download-name invoice-PLAN.pdf', '--codex-browsers', IDS, '--out', out]) };
+  }))).flat();
   mkdirSync(outRoot, { recursive: true });
-  for (const arm of ARMS) {
-    const out = join(outRoot, 'handoff-' + stamp + '-' + arm);
+  for (let repetition = 1; repetition <= options.runs; repetition++) for (const arm of ARMS) {
+    const out = join(outRoot, 'handoff-' + stamp + (options.runs === 1 ? '' : '-' + repetition) + '-' + arm);
     mkdirSync(out);
     const downloadName = 'invoice-' + randomUUID() + '.pdf';
     const before = snapshotDownloads(downloads);
@@ -116,8 +132,8 @@ export async function runHandoffs({
     let untitled = [];
     try {
       for (const task of tasks) {
-        const args = ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--only', task.name, '--serve', serve,
-          '--codex-browsers', IDS, '--out', join(out, 'r-' + task.name)];
+        const args = roundArguments(options, ['--surface', arm, '--tasks', join(DIR, 'handoff.json'), '--only', task.name, '--serve', serve,
+          '--codex-browsers', IDS, '--out', join(out, 'r-' + task.name)]);
         const was = running();
         let one;
         try { one = await run({ arm, out: join(out, 'r-' + task.name), downloadName, args }); }
@@ -142,13 +158,27 @@ export async function runHandoffs({
     }
     results.push({ arm, out, code: cleanupErrors.length && code === 0 ? 1 : code, untitled,
       ...(error ? { error } : {}), ...(cleanupErrors.length ? { cleanupErrors } : {}) });
-    if (code === 130) break;
+    if (code === 130) return results;
   }
   return results;
 }
 
+export function handoffOptions(args) {
+  const result = { world: false };
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (['--world', '--dry-run', '--swap'].includes(flag)) result[flag === '--dry-run' ? 'dryRun' : flag.slice(2)] = true;
+    else if (['--out', '--model', '--effort', '--runs'].includes(flag)) {
+      if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`${flag} needs a value`);
+      result[flag === '--out' ? 'outRoot' : flag.slice(2)] = args[++i];
+    } else throw new Error(`Unknown handoff option ${flag}`);
+  }
+  return { ...result, ...matrixOptions({ model: modelId(result.model ?? 'opus'), effort: result.effort ?? 'medium', runs: result.runs ?? 1,
+    world: result.world, dryRun: result.dryRun, swap: result.swap }) };
+}
+
 if (import.meta.main) {
-  const results = await runHandoffs();
+  const results = await runHandoffs(handoffOptions(process.argv.slice(2)));
   for (const result of results) console.log(JSON.stringify(result));
-  process.exitCode = results.some((r) => r.code !== 0) ? 1 : 0;
+  process.exitCode = results.some((r) => r.code !== undefined && r.code !== 0) ? 1 : 0;
 }

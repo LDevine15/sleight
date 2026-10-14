@@ -213,7 +213,7 @@ test('fowl+sleight setup loads FowlBrowser for tabs and computer-only sleight fo
   assert.equal(setup.pluginDir, join(root, 'plugins/sleight'));
 });
 
-test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+sleight', (t) => {
+test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+sleight', async (t) => {
   const cache = join(process.env.HOME, 'Library/Caches/sleight-bench/fowlbrowser');
   if (!existsSync(join(cache, '.git'))) return t.skip('pinned FowlBrowser cache is absent');
   const dir = temp('sleight-handoff-patch-');
@@ -238,8 +238,18 @@ test('the surface patch applies on the pinned FowlBrowser commit and adds fowl+s
   assert.match(patched, /gradeNative/);
   assert.match(patched, /bench\/fowl\/surface\.mjs/);
   assert.doesNotMatch(patched, /async function agentSetup/);
+  assert.match(patched, /gradeFixture/);
   const probe = spawnSync(process.execPath, ['--input-type=module', '-e',
     "import { agentSetup } from './tools/rounds.mjs'; for (const surface of ['fowlbrowser', 'sleight', 'fowl+sleight']) { const s = agentSetup({ task: { name: 'test', browser: 'chrome', prompt: 'save {out}', result: 'done' }, surface, dir: '/tmp/test', mcpRoot: '/fowl', settings: '/tmp/settings', model: 'opus', effort: 'medium' }); if (s instanceof Promise || !s.mcpConfig || !s.prompt.includes('/tmp/test')) throw Error(surface); } const bu = agentSetup({ task: { name: 'test', browser: 'chrome', prompt: 'save {out} in {browser} at {repo}', result: 'done', budgetSeconds: 90 }, surface: 'browser-use', dir: '/tmp/test', mcpRoot: '/fowl', settings: '/tmp/settings', model: 'haiku', effort: 'high' }); if (bu.command !== 'uv' || bu.mcpConfig || !bu.args.includes('--budget-seconds') || !bu.args.includes('--frozen') || !bu.prompt.includes('/tmp/test') || !bu.prompt.includes('Chrome')) throw Error('browser-use');"],
     { cwd: dir, encoding: 'utf8', env: { ...process.env, SLEIGHT_REPO: root } });
   assert.equal(probe.status, 0, probe.stderr);
+  const { fixtureGradeDescriptor } = await import('../bench/world/fowl-fixture-grade.mjs');
+  const { closeSync } = await import('node:fs');
+  const gradeFd = fixtureGradeDescriptor({ kind: 'local-mdn', expected: { code: 729 } });
+  let fixtureProbe;
+  try { fixtureProbe = spawnSync(process.execPath, ['--input-type=module', '-e',
+    "import { gradeOutcome } from './tools/rounds.mjs'; const task = { worldFixture: 'local-mdn', grade: 'fixture' }; const site = { kind: 'local-mdn', views: [''] }; const run = { exitCode: 0, result: { result: 'RESULT: {\"code\":729}' } }; const grade = () => gradeOutcome({ task, run, grade: site }); if (!grade().ok) throw Error('correct fixture failed'); site.views = []; if (grade().ok) throw Error('unread fixture passed'); site.views = ['']; run.result.result = 'RESULT: {\"code\":730}'; if (grade().ok) throw Error('wrong fixture passed');"],
+    { cwd: dir, encoding: 'utf8', env: { ...process.env, SLEIGHT_REPO: root }, stdio: ['ignore', 'pipe', 'pipe', gradeFd] });
+  } finally { closeSync(gradeFd); }
+  assert.equal(fixtureProbe.status, 0, fixtureProbe.stderr);
 });

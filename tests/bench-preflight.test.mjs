@@ -11,6 +11,17 @@ import { fowlPreflight, selectedTasks } from '../bench/fowl/preflight.mjs';
 import { turboSetup } from '../bench/turbo/setup.mjs';
 
 const config = join(tmpdir(), 'bench-isolated-config');
+test('Haiku Chrome checks its isolated account login without API spend admission', async () => {
+  const calls = [];
+  await fowlPreflight({ tasks: [{ name: 'fixture', browser: 'chrome', surface: 'claude-in-chrome' }],
+    model: 'haiku', world: true, home: '/fixture', env: {} }, {
+    spend() { assert.fail('Chrome uses its account, not API funding'); },
+    fowlSocket(browser) { calls.push(browser); }, engineSockets() { assert.fail('no engine task'); },
+    login(plan) { calls.push([plan.command, plan.env.CLAUDE_CONFIG_DIR]); },
+  });
+  assert.deepEqual(calls, ['chrome', ['/fixture/.config/sleight-bench/world/arms/claude-in-chrome/node_modules/.bin/claude',
+    '/fixture/.config/sleight-bench/world/arms/claude-in-chrome/claude-config']]);
+});
 for (const world of [false, true]) test(`turbo login preflight checks the actual launcher and config, world=${world}`, async t => {
   const home = mkdtempSync(join(tmpdir(), 'sleight-preflight-')); t.after(() => removeTemp(home));
   const previous = process.env.HOME; process.env.HOME = home;

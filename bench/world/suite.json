@@ -24,7 +24,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -47,7 +47,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -70,7 +70,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -93,7 +93,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -116,7 +116,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -139,7 +139,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -162,7 +162,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -185,7 +185,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -208,7 +208,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -233,7 +233,7 @@
       "claim": false,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -257,7 +257,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -280,7 +280,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -303,7 +303,7 @@
       "claim": false,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -327,7 +327,7 @@
       "claim": false,
       "support": {
         "sleight": true,
-        "codex": true,
+        "codex": false,
         "cua": false,
         "peekaboo": false,
         "claude-cu": false,
@@ -358,11 +358,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     },
     {
       "id": "browser/local-mdn",
@@ -385,11 +386,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     },
     {
       "id": "browser/table-scrape",
@@ -412,11 +414,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     },
     {
       "id": "browser/file-upload",
@@ -439,11 +442,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     },
     {
       "id": "browser/tab-switching",
@@ -466,11 +470,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     },
     {
       "id": "browser/multi-page-search",
@@ -493,11 +498,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     },
     {
       "id": "browser/form-controls",
@@ -520,11 +526,12 @@
         "codex": true,
         "cua": true,
         "peekaboo": true,
-        "claude-cu": false,
+        "claude-cu": true,
         "playwright-mcp": true,
         "chrome-devtools-mcp": true,
-        "claude-in-chrome": false
-      }
+        "claude-in-chrome": true
+      },
+      "browserRunner": "bench/world/fowl-fixtures.mjs"
     }
   ],
   "native": [
@@ -1151,5 +1158,15 @@
         "fowl+sleight": true
       }
     }
-  ]
+  ],
+  "notRun": {
+    "codex-cu": {
+      "status": "not run",
+      "reason": "Bridge code is not in the repository (owner decision, 2026-10-14)"
+    },
+    "devtools": {
+      "status": "not run",
+      "reason": "Bridge code is not in the repository (owner decision, 2026-10-14)"
+    }
+  }
 }

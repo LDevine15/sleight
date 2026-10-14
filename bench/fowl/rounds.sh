@@ -35,15 +35,11 @@ fi
 SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
 # Task overrides determine whether any arm needs the API key. Computer use always uses its login.
 SURFACES="$(node "$REPO/bench/fowl/preflight.mjs" --funding-surfaces "$@")"
-if [ -z "$SURFACES" ] || [ "$SURFACES" = claude-cu ]; then
-  AUTH=account; KEY=""
-elif echo "$SURFACES" | grep -qx browser-use; then
-  AUTH=api
-  KEY="$(node --input-type=module -e "import { pathToFileURL } from 'node:url'; const { readKey } = await import(pathToFileURL(process.argv[1]).href); const k = readKey(); if (!k) process.exit(1); process.stdout.write(k);" "$REPO/bench/api-auth.mjs")"
-elif echo "$MODEL" | grep -q opus; then
-  AUTH=account; KEY=""
+AUTH=$(node "$REPO/bench/fowl/accounting.mjs" --auth-mode "$MODEL" "$SURFACES")
+if [ "$AUTH" = account ]; then
+  KEY=""
 else
-  AUTH=api; KEY="$(cat "$HOME/.config/sleight-bench/anthropic-api-key")"
+  KEY="$(node --input-type=module -e "import { pathToFileURL } from 'node:url'; const { readKey } = await import(pathToFileURL(process.argv[1]).href); const k = readKey(); if (!k) process.exit(1); process.stdout.write(k);" "$REPO/bench/api-auth.mjs")"
 fi
 [ "$AUTH" = account ] || [ -n "$OUT" ] || { echo "rounds.sh: API rounds require --out so token spend can be recorded" >&2; exit 1; }
 [ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit((j.unpriced||j.month===m&&j.usd>=190)?1:0)' "$SPEND" || { echo "rounds.sh: API spend is at or over 190 USD, or a round's token cost needs reconciliation" >&2; exit 1; }
