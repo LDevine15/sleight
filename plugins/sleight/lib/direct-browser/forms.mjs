@@ -102,6 +102,10 @@ function formState(expected) {
   }
   for (const root of roots) if (hit === root.host && typeof root.elementFromPoint === 'function')
     hit = root.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  // A parent-owned host (or an ancestor aimed at it) does not qualify input
+  // inside the embedded document. Keep its metadata available to readers.
+  state.frameInput = ['iframe', 'frame', 'object', 'embed'].includes(state.tag) ||
+    ['iframe', 'frame', 'object', 'embed'].includes(hit?.localName);
   for (let node = hit; node; node = node.parentNode ?? node.getRootNode()?.host) if (node === el) { state.hit = true; break; }
   // Page text can raise payment risk, never authorize a payment.
   const words = node => [Element.prototype.getAttribute.call(node, 'aria-label'), node.textContent,
@@ -146,10 +150,13 @@ export const fixedFormInspectors = Object.freeze({
     parameters: [{ type: 'string', maxBytes: 65536 }] }),
 });
 const equals = (a, b) => Array.isArray(b) ? Array.isArray(a) && a.length === b.length && new Set(a).size === a.length && b.every(v => a.includes(v)) : a === b;
-const shape = s => canonical(Object.fromEntries(['kind', 'tag', 'role', 'readonly', 'multiple', 'min', 'max', 'step', 'options', 'items', 'protected']
+const shape = s => canonical(Object.fromEntries(['kind', 'tag', 'role', 'readonly', 'multiple', 'min', 'max', 'step', 'options', 'items', 'protected', 'frameLocal', 'frameInput']
   .filter(k => s[k] !== undefined).map(k => [k, k === 'options' ? s.options.map(({ selected, ...o }) => o) : k === 'items' ? [...s.items].sort() : s[k]])));
 const safe = error => ['HIDDEN', 'DISABLED', 'COVERED', 'STALE_REF', 'READONLY_PICKER', 'UNKNOWN_CHECKED_STATE', 'OPTIONS_CHANGED',
   'INVALID_FIELD', 'FRAME_UNQUALIFIED', 'RECOVERY_READ_REQUIRED', 'UNSTABLE', 'BACKGROUND_UNAVAILABLE', 'FILE_AUTHORITY_REQUIRED'].includes(error?.message) ? error.message : 'STATE_UNVERIFIABLE';
+const checkInputFrame = (state, semanticReorder = false) => {
+  if (state.frameLocal || state.frameInput && !semanticReorder || ['iframe', 'frame', 'object', 'embed'].includes(state.tag)) throw Error('FRAME_UNQUALIFIED');
+};
 
 // Internal trusted session. None of its provider methods is a model endpoint.
 // onOperation publishes only to the branded transport resolver. Input JSON
@@ -200,6 +207,7 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
   };
   const activate = (id, ref, kind = 'read', args = {}, state) => {
     fence(ref);
+    if (state && kind !== 'read') checkInputFrame(state, kind === 'select' && state.kind === 'reorder');
     const payment = state?.payment && (kind === 'dialog' || state.submit === true && ['click', 'key'].includes(kind));
     const terms = payment ? paymentOf(state, scope(ref)) : undefined;
     active = { id, kind, args, scope: scope(ref), consequence: payment ? 'payment' : 'ordinary',
@@ -271,6 +279,7 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
     let node = await object(ref, deadline);
     try {
       let before = await inspect(ref, node, expected, deadline);
+      checkInputFrame(before, before.kind === 'reorder' && Array.isArray(expected));
       if (before.kind === 'custom' && typeof expected === 'boolean') {
         const tree = await deadline.run(() => readCommand(ref, 'DOM.describeNode', { backendNodeId: resolved.backendNodeId, depth: 2, pierce: false }));
         const candidates = [], visited = new Set(); let descriptions = 0;
@@ -302,13 +311,14 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
         before = await inspect(ref, node, expected, deadline);
       }
       if (!before.connected) throw Error('STALE_REF'); if (!before.visible) throw Error('HIDDEN'); if (!before.enabled) throw Error('DISABLED');
-      if (before.frameLocal) throw Error('FRAME_UNQUALIFIED');
+      checkInputFrame(before, before.kind === 'reorder' && Array.isArray(expected));
       const result = await pw(ref, node, 'checkElementStates', { states: ['visible', 'enabled', 'stable'] }, deadline);
       if (result) throw Error('UNSTABLE');
       const rect = before.rect, x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
       if (await pw(ref, node, 'expectHitTarget', { x, y }, deadline) !== 'done') throw Error('COVERED');
       await validateSemantic();
       const after = await inspect(ref, node, expected, deadline);
+      checkInputFrame(after, after.kind === 'reorder' && Array.isArray(expected));
       if (shape(before) !== shape(after) || ['x', 'y', 'width', 'height'].some(k => Math.abs(rect[k] - after.rect[k]) >= .25)) throw Error('OPTIONS_CHANGED');
       if (!after.connected || !after.visible || !after.enabled) throw Error('STALE_REF');
       if (after.hit !== true) throw Error('COVERED');
