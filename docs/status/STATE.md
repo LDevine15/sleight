@@ -62,7 +62,9 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge as items pass: BP2-P1R, then BP2-P1B, BP2-P2 and BP2-P3, all three building in parallel. AM1 is parked until after 1.3.0.
+1. Merge as items pass: BP2-P1R (in review), BP2-P1I (the closed command set and pinned helper P2 needs, sleight-arch's call at
+   02:00 UTC), then P2 on top of it, BP2-P1B and BP2-P3. P2 has the pinned playwright-core and its reference and world modules
+   banked. AM1 is parked until after 1.3.0.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
