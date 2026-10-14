@@ -52,7 +52,7 @@ export function hasIdentifier(line, id) {
 export function hasLabel(line, label) {
   const ends = at => at === line.length || line[at] === ',';
   // A menu bar item's line is its name alone ("Edit"), with no role (finder-files, 2026-10-09).
-  if (line === label) return true;
+  if (line.startsWith(label) && ends(label.length)) return true;
   const described = line.indexOf('Description: ' + label);
   if (described >= 0 && ends(described + 13 + label.length)) return true;
   // The role is one or more lowercase words, so try each space in that run. States in parentheses
@@ -170,7 +170,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.nativeDenied = update?.nativeDenied;
     state.timing = !!update?.timing;
     state.careful = !!update?.careful;
-    state.firstOff = !!update?.firstOff && !state.careful && !state.fileOnly && !state.cancelOnly;
+    state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
     state.quietEdits = !!update?.quietEdits && !state.careful;
     state.bind = !!update?.bind && !state.careful && !state.fileOnly && !state.cancelOnly;
     state.binding = undefined;
@@ -212,6 +212,20 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.callHeaders = new WeakMap();
     // Each handle's previous action in this call, which decides whether the next may skip its read.
     state.previous = new WeakMap();
+    // Window inventories are metadata only. A missing or empty list cannot preserve a capture.
+    const inventory = async text => {
+      const start = clock();
+      let windows;
+      try {
+        const app = parse(text);
+        const apps = await cua.listApps({ emit: false });
+        const matches = apps.filter(a => state.expected?.appId ? a.id === state.expected.appId : (a.displayName ?? a.name) === app?.app);
+        if (matches.length === 1 && matches[0].windows?.length) windows = JSON.stringify(matches[0].windows);
+      } catch { /* Read again when the inventory is unavailable. */ }
+      if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'bound-windows',
+        ms: clock() - start, chars: 0, failed: windows === undefined }) + '\\n');
+      return windows;
+    };
     const hasModal = text => /^\\s*\\d+ (?:sheet|dialog)\\b/m.test(text ?? '');
     const clickOpenedModal = (proxy, text) => {
       const before = state.previous.get(proxy);
@@ -379,7 +393,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           let text = cached?.text, modalOpened = cached?.modalOpened ?? false;
           const treeFree = ['pressKey', 'typeText', 'paste'].includes(name) ||
             (['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]));
-          const skipFirst = firstAction && state.firstOff && treeFree &&
+          const skipFirst = firstAction && state.firstOff && proxy === state.startApp && treeFree &&
             typeof args[0] !== 'number' && !(args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]));
           if (skipFirst) state.prior = undefined;
           // The acquisition just before this call read the whole tree. A launching app can take 15 s
@@ -432,8 +446,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // Keep the engine's capture until an opener or the caller's own read replaces it. Unknown
           // selectors still read; unique selectors use the numbers of the last capture we took.
           const firstTree = state.callElements.get(proxy);
-          const bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
+          let bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
             (byId ? findTarget(firstTree).length === 1 : literal !== undefined && firstTree.has(literal));
+          if (bind) {
+            const windows = await inventory(state.binding.text);
+            bind = windows !== undefined && windows === state.binding.windows;
+          }
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
@@ -576,14 +594,18 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const editable = typeof line === 'string' && /^(?:text field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line);
           const keys = name === 'pressKey' && typeof args[0] === 'string' ? args[0].toLowerCase().split('+') : [];
           const key = keys.pop(), modifiers = keys.every(k => ['super', 'cmd', 'command', 'meta', 'shift', 'alt', 'option', 'ctrl', 'control'].includes(k));
-          const editKey = modifiers && (/^(?:arrow)?(?:left|right|up|down)$/.test(key ?? '') ||
-            keys.length === 1 && ['super', 'cmd', 'command', 'meta'].includes(keys[0]) && ['a', 'c', 'x', 'z', 'b', 'i', 'u'].includes(key) ||
+          const textEditing = editable || before?.textEditing || ['typeText', 'paste'].includes(name);
+          const command = keys.some(k => ['super', 'cmd', 'command', 'meta', 'ctrl', 'control'].includes(k));
+          const editKey = modifiers && (/^(?:arrow)?(?:left|right|up|down)$/.test(key ?? '') && (!command || textEditing) ||
+            keys.length === 1 && ['super', 'cmd', 'command', 'meta'].includes(keys[0]) && (['a', 'c', 'x', 'z'].includes(key) || textEditing && ['b', 'i', 'u'].includes(key)) ||
             keys.length === 2 && keys.includes('shift') && keys.some(k => ['super', 'cmd', 'command', 'meta'].includes(k)) && key === 'z');
           const opens = name === 'click' && (line === undefined || /^(?:menu button|pop up button|menu bar item|menu item|link|tab|disclosure triangle)(?: |$)/i.test(line) ||
-            /(?:…|\\.\\.\\.)(?:,|$)/.test(line)) || name === 'pressKey' &&
+            /(?:…|\\.\\.\\.)(?:,|$)/.test(line) || /^button(?: \\([^)]*\\))* (?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(line)) ||
+            ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
-          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, opens, modal: text === undefined ? undefined : hasModal(text) });
-          if (text !== undefined) state.binding = { proxy, text };
+          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey,
+            textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text) });
+          if (text !== undefined && !bind) state.binding = { proxy, text, windows: state.bind ? await inventory(text) : undefined };
           else if (state.binding?.proxy !== proxy) state.binding = undefined;
           const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? args[0] : undefined;
           if (typeof typed === 'string') state.typed.push(typed);
@@ -618,7 +640,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
   ${/* A call that declares app itself (let app = await cua.getApp(…)) has it in its temporal dead zone
      here, and even typeof throws: "Cannot access 'app' before initialization" cost turns in h2h-3
      (2026-10-10). That app comes from cua.getApp, which is already wrapped, so skip it. */
-    update && !update.skipAppWrap ? "const state = globalThis.__sleightDocumentGuard; try { if (typeof app !== 'undefined' && app && typeof app.getAXState === 'function' && !state.proxies.has(app)) { app = state.wrap(app); state.activeApp ||= app; } } catch (error) { if (!(error instanceof ReferenceError)) throw error; }" : ''}
+    update && !update.skipAppWrap ? "const state = globalThis.__sleightDocumentGuard; try { if (typeof app !== 'undefined' && app && typeof app.getAXState === 'function' && !state.proxies.has(app)) { app = state.wrap(app); state.activeApp ||= app; state.startApp ||= app; } } catch (error) { if (!(error instanceof ReferenceError)) throw error; }" : ''}
   ${acknowledge && !reuseSetup ? `nodeRepl.write(${JSON.stringify(GUARD_READY + '\n')});` : ''}
 }`;
 }

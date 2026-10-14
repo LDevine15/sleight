@@ -535,6 +535,7 @@ export function createRelay({
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
   const nativeChecked = new Set();
+  const focusedChecked = new Set();
   const callDetails = new Map();
   const pendingClients = new Map();
   const stoppedClients = new Set();
@@ -1836,20 +1837,30 @@ export function createRelay({
     }
     if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
         !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
-        leaseWindow?.identityRequired && !nativeChecked.delete(msg.id)) {
+        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return; }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return; }
-      if (!leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
+      if (leaseWindow.identityRequired && !leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
       const expected = leaseWindow;
       const generation = stopGeneration;
       running.add(msg.id);
       callDetails.set(msg.id, 'native window admission');
+      const started = performance.now();
       Promise.resolve().then(() => windowIdentity(expected)).then(observed => {
         const identity = nativeIdentity(expected, observed);
         if (generation !== stopGeneration || leaseWindow !== expected || closing || disposed) throw new Error('Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
+        else focusedChecked.add(msg.id);
+        trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
         running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
-      }).catch(error => { if (stopCollected || generation !== stopGeneration) return; finishedCall(msg.id); leaseStop(msg, error.message); });
+      }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
+        // An optional focus probe that is unavailable leaves the full first read in place.
+        // Existing identity requirements and confirmed mismatches still stop admission.
+        if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
+          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
+        }
+        finishedCall(msg.id); leaseStop(msg, error.message);
+      });
       return;
     }
     if (msg.method === 'tools/call') {
@@ -2097,12 +2108,13 @@ export function createRelay({
             // A first action that sends keys, text or coordinates reuses it whatever the read took
             // (owner, 2026-10-10, for about 0.35 s a run): a window switch between calls isn't caught
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
-            const prior = !documentMode && !changeReview && !careful && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
+            const prior = !documentMode && !changeReview && !careful && (!treeFreeFirstAction(originalCode) || focusedChecked.has(msg.id)) && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
               target?.app === priorRead.app ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
             msg.params.arguments.code = guardedCode(swipeCode, target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, timing: guardTiming, careful: careful || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
+                focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
                 bind: !careful && !documentMode && !changeReview,
                 adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
@@ -2305,7 +2317,7 @@ export function createRelay({
         if (!closing && !serverIn.writableEnded && !serverIn.destroyed) scheduleHelperRead(health);
       }
       documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); browserCalls.delete(msg.id);
-      spaceChecks.delete(msg.id); preHealth.delete(msg.id); nativeChecked.delete(msg.id); restartRetries.delete(msg.id);
+      spaceChecks.delete(msg.id); preHealth.delete(msg.id); nativeChecked.delete(msg.id); focusedChecked.delete(msg.id); restartRetries.delete(msg.id);
       flowCalls.delete(msg.id); helperReads.delete(msg.id); remapNotes.delete(msg.id); preapprovalNotes.delete(msg.id);
       callSeqs.delete(msg.id); callStarts.delete(msg.id); resultCalls.delete(msg.id); guardCalls.delete(msg.id);
       finishedCall(msg.id);
@@ -2969,7 +2981,7 @@ export function createRelay({
         for (const state of helperStates.values()) clearTimeout(state.timer);
         helperStates.clear(); helperHandles.clear(); helperAliases.clear();
         leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); browserCalls.clear();
-        spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
+        spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
         // The stopped turn's receipt keeps its unanswered calls as unknown; nothing carries into the next engine.
         resultCalls.clear(); guardCalls.clear(); finishReceipt();
         // A collected engine can't take an old turn's cleanup; the next engine starts its own turns.

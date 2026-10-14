@@ -30,7 +30,7 @@ function defaultOptions() {
     call(2, 'await app.typeText("x");');
     const code = sent.find(message => message.id === 2)?.params.arguments.code ?? '';
     const update = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)?.[1] ?? '{}');
-    return Object.fromEntries(['firstOff', 'quietEdits', 'bind'].map(key => [key, update[key]]));
+    return Object.fromEntries(['firstOff', 'focused', 'quietEdits', 'bind'].map(key => [key, update[key]]));
   } finally { relay.dispose(); }
 }
 
@@ -53,8 +53,8 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
     if (key in object || typeof key === 'symbol' || key === 'then') return object[key];
     throw Error('unsupported engine method ' + key);
   } }) : raw;
-  const context = { app: engine, cua: { getApp: async () => engine }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
-  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, options)} })()`, context);
+  const context = { app: engine, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
+  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context);
   return { run, raw, calls, output, context };
 }
 
@@ -251,6 +251,70 @@ test('bind sends seven clicks from one capture and retains the final read', asyn
   }
 });
 
+test('bound Calculator-style clicks pay one inventory per capture and per later action, not AX reads', async () => {
+  const rows = Array.from({ length: 7 }, (_, i) => `\t${i + 1} button Description: ${i + 1}, ID: key-${i + 1}`).join('\n');
+  const f = fixture({ strict: true, current: () => tree(expected, rows) });
+  let inventories = 0, clock = 0;
+  f.context.performance = { now: () => clock };
+  f.context.cua.listApps = async options => {
+    assert.equal(options.emit, false); inventories++; clock += 11;
+    return [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }];
+  };
+  await f.run(Array.from({ length: 7 }, (_, i) => `await app.click(${i + 1});`).join('\n'), { bind: true, timing: true });
+  assert.equal(inventories, 7);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  const metrics = f.output.filter(line => line.startsWith('[sleight:guard-timing]')).map(line => JSON.parse(line.slice(22)));
+  assert.deepEqual(metrics.filter(m => m.phase === 'bound-windows').map(m => m.ms), Array(7).fill(11));
+});
+
+test('binding reads again when windows change, vanish or cannot be listed', async () => {
+  for (const windows of [[], [{ id: 2, title: expected.title }], null]) {
+    let acted = false;
+    const f = fixture({ current: () => tree(expected, acted ? '\t1 button Other\n\t2 button Different' : '\t1 button First\n\t2 button Second'),
+      action: () => { acted = true; } });
+    f.context.cua.listApps = async () => {
+      if (acted && windows === null) throw Error('unavailable');
+      return [{ id: 'fixture.app', displayName: expected.app, windows: acted ? windows : [{ id: 1, title: expected.title }] }];
+    };
+    await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true }), /changed what element 2 is/);
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
+  }
+});
+
+test('macOS listApps without windows cannot qualify a bound capture', async () => {
+  const f = fixture({ strict: true, current: () => tree(expected, '\t1 button First\n\t2 button Second') });
+  // Installed Mac adapter: id, displayName, isRunning, lastUsedDate and useCount; no windows.
+  f.context.cua.listApps = async () => [{ id: 'fixture.app', displayName: expected.app, isRunning: true }];
+  await f.run('await app.click(1); await app.click(2);', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+});
+
+for (const title of ['Delete', 'Remove Group', 'Revert', 'Discard', 'Erase', 'Empty Trash', 'Close', 'Quit', 'Exit',
+  'Sign Out', 'Log Out', 'Reset', 'Clear', 'Replace', "Don't Save", 'Do Not Save', 'Save', 'OK', 'Done', 'Apply',
+  'Continue', 'Proceed', 'Next', 'Back', 'Finish', 'Confirm', 'Accept', 'Cancel', 'Dismiss'])
+  test('binding reads after a plain confirming button: ' + title, async () => {
+    const f = fixture({ current: () => tree(expected, '\t1 button ' + title + '\n\t2 button Second') });
+    await f.run('await app.click(1); await app.click(2);', { bind: true });
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 3);
+  });
+
+test('setValue invalidates binding before the next element action', async () => {
+  let changed = false;
+  const f = fixture({ current: () => tree(expected, changed ? '\t1 text field Editor\n\t2 button Other' : '\t1 text field Editor\n\t2 button Second'),
+    action: () => { changed = true; } });
+  await assert.rejects(f.run('await app.setValue(1,"x"); await app.click(2);', { bind: true }), /changed what element 2 is/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'setValue', 'read']);
+});
+
+test('first-off checks another window handle in the same app even with a focus confirmation', async () => {
+  const f = fixture();
+  let keys = 0;
+  f.context.otherRaw = { getAXState: async () => tree({ ...expected, title: 'other.txt' }), pressKey: async () => { keys++; } };
+  await assert.rejects(f.run('const other = globalThis.__sleightDocumentGuard.wrap(globalThis.otherRaw); await other.pressKey("super+a");',
+    { firstOff: true, focused: true }), /changed window/);
+  assert.equal(keys, 0);
+});
+
 for (const target of ['2', '{ id: "second" }', '{ label: "Second" }', '{ line: "button Second, ID: second" }', '"Second"'])
   test('bind keeps the capture number for ' + target + ' until a read occurs', async () => {
     let acted = false;
@@ -307,7 +371,7 @@ test('bind compares literal numbers against explicit reads the call actually too
 test('the default combines capture binding and quiet edits and resets on the next call', async () => {
   const f = fixture({ ordinary: true, strict: true, current: () => tree(expected, '\t1 text field Editor\n\t2 button Next') });
   await f.run('await app.pressKey("super+a"); await app.typeText("x"); await app.click(1); await app.typeText("y"); await app.click(2);');
-  assert.deepEqual(f.calls.map(c => c[0]), ['pressKey', 'typeText', 'read', 'click', 'typeText', 'click', 'read']);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'pressKey', 'typeText', 'click', 'typeText', 'click', 'read']);
   f.calls.length = 0;
   await f.run('await app.click(2);');
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
@@ -337,9 +401,9 @@ const editKeys = ['super+a', 'cmd+c', 'command+x', 'meta+z', 'super+shift+z', 'c
     [key, 'super+' + key, 'alt+shift+' + key, 'ctrl+' + key])];
 for (const key of editKeys) test('quiet-edits skips the next read after ' + key, async () => {
   for (const [options, reads] of [[{}, key.includes('+') ? 3 : 2], [{ quietEdits: true }, 2],
-    [{ quietEdits: true, careful: true }, 3]]) {
+    [{ quietEdits: true, careful: true }, 4]]) {
     const f = fixture({ strict: true });
-    await f.run(`await app.pressKey(${JSON.stringify(key)}); await app.typeText("x");`, options);
+    await f.run(`await app.typeText("a"); await app.pressKey(${JSON.stringify(key)}); await app.typeText("x");`, options);
     assert.equal(f.calls.filter(c => c[0] === 'read').length, reads, JSON.stringify(options));
   }
 });
@@ -373,7 +437,7 @@ test('quiet-edits field clicks skip only typing or paste and keep element lookup
 });
 
 test('the default skips reads between edit shortcuts and typing, and careful reads every time', async () => {
-  for (const [options, reads] of [[undefined, 1], [{ careful: true }, 3], [{ careful: true, fileOnly: true }, 3]]) {
+  for (const [options, reads] of [[undefined, 2], [{ careful: true }, 3], [{ careful: true, fileOnly: true }, 3]]) {
     const f = fixture({ ordinary: true, strict: true });
     await f.run('await app.pressKey("super+a"); await app.typeText("x");', options);
     assert.equal(f.calls.filter(c => c[0] === 'read').length, reads);

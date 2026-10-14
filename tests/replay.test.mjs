@@ -18,7 +18,7 @@ const TREE = 'Window: "Calculator", App: Calculator.\n0 standard window Calculat
 
 test('an element number becomes a unique ID, then a unique label, then its whole line', () => {
   assert.deepEqual(elementSpec(elementLine([TREE], 13)), { id: 'Seven' });
-  assert.deepEqual(elementSpec(elementLine([TREE], 3)), { line: 'Scientific, ID: menuAction:' });
+  assert.deepEqual(elementSpec(elementLine([TREE], 3)), { label: 'Scientific' });
   assert.deepEqual(elementSpec(elementLine([TREE], 12)), { label: 'All Clear' });
   // A menu bar item named alone is its own label (hasLabel, 2026-10-09); older scripts' { line } still resolve.
   assert.deepEqual(elementSpec(elementLine([TREE], 67)), { label: 'View' });

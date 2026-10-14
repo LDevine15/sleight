@@ -2088,7 +2088,7 @@ test('an acquisition\'s read stands in for the guard\'s first read in the next c
   // The default mode: change review off, an input lease on. Change review keeps every read.
   const { InputLease } = await import('../plugins/sleight/lib/input-lease.mjs');
   const { mkdtempSync } = await import('node:fs');
-  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-prior-'), holder: 'A' }) });
+  const h = harness({ changeReview: false, windowIdentity: async window => ({ ...window, status: 'ok', matches: 1, epoch: 'fixture', window: 1, pid: 1, processStart: 1 }), inputLease: new InputLease({ directory: leaseDir('sleight-prior-'), holder: 'A' }) });
   const inventory = [{ id: 'com.apple.TextEdit', windows: [{ id: 5, app: 'TextEdit', title: 'a.txt' }] }];
   const state = 'Window: "a.txt", App: TextEdit\n0 standard window a.txt\n1 text entry area Value: hi';
   flowCall(h, 1, 'let app = await cua.getApp("TextEdit")'); await tick();
@@ -2133,7 +2133,7 @@ test('a first action with keys, text or coordinates reuses a fast read too; a nu
   t.mock.timers.enable({ apis: ['Date'], now: 1000 });
   const { InputLease } = await import('../plugins/sleight/lib/input-lease.mjs');
   const { mkdtempSync } = await import('node:fs');
-  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-prior-'), holder: 'A' }) });
+  const h = harness({ changeReview: false, windowIdentity: async window => ({ ...window, status: 'ok', matches: 1, epoch: 'fixture', window: 1, pid: 1, processStart: 1 }), inputLease: new InputLease({ directory: leaseDir('sleight-prior-'), holder: 'A' }) });
   const state = 'Window: "Calculator", App: Calculator\n0 standard window Calculator\n\t1 button Description: 1, ID: One';
   flowCall(h, 1, 'let app = await cua.getApp("Calculator")'); await tick();
   h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: state }], _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.calculator' } } } } }); await tick();

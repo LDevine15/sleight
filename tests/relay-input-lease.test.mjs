@@ -335,7 +335,7 @@ test('launching an app uses the final health result to detect restored equal-tit
   await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
   assert.equal(probes, 2); assert.equal(identities, 1);
 });
-test('single native windows and the recorded TextEdit Save sheet never need helper trust', async t => {
+test('single native windows and the recorded TextEdit Save sheet fall back when focus checking is unavailable', async t => {
   const trace = JSON.parse(readFileSync(new URL('../docs/benchmarks/2026-10-04-hover-discovery-2/results.json', import.meta.url), 'utf8'));
   const strings = [];
   const visit = value => { if (typeof value === 'string') strings.push(value); else if (value && typeof value === 'object') Object.values(value).forEach(visit); };
@@ -349,10 +349,11 @@ test('single native windows and the recorded TextEdit Save sheet never need help
     h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("TextEdit");' })); h.reply(result('read', tree));
     await new Promise(resolve => setImmediate(resolve));
     h.send(rpc('act', 'js', { code: 'await app.pressKey("Return")' }));
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(h.forwarded.at(-1).id, 'act'); h.reply(result('act', tree));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(h.received.at(-1).result.isError, undefined);
-    assert.equal(checks, 0);
+    assert.equal(checks, 1);
   }
 });
 test('untrusted helper falls back for duplicate candidates and warns once per session', async t => {
@@ -362,6 +363,7 @@ test('untrusted helper falls back for duplicate candidates and warns once per se
     h.send(rpc(id, 'js', { code: 'let app = await cua.getApp("TextEdit");' })); h.reply(result(id, duplicateTree));
     await new Promise(resolve => setImmediate(resolve));
     h.send(rpc(id + '-act', 'js', { code: 'await app.typeText("x")' }));
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(h.forwarded.at(-1).id, id + '-act'); h.reply(result(id + '-act', 'Window: "Untitled", App: TextEdit.'));
   }
   assert.equal(h.received.flatMap(msg => msg.result.content).filter(c => /sleight-warning:.*Accessibility/.test(c.text)).length, 1);
@@ -376,6 +378,7 @@ test('Esc ends the turn without collecting the engine and keeps session approval
   h.send(rpc('esc', 'turn_ended', { hook_event_name: 'Interrupt' }));
   assert.equal(h.forwarded.at(-1).id, 'esc'); h.reply(result('esc', 'ended'));
   h.send(rpc('act', 'js', { code: 'await app.typeText("x")' }));
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.forwarded.at(-1).id, 'act'); h.reply(approval('approved-again'));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(asks, 1); assert.equal(collected, 0);
@@ -392,6 +395,7 @@ test('the next user message clears closing after an unconfirmed engine exit', as
   h.send(rpc('new-message', 'turn_ended', { sleight_resume: true }));
   h.send(rpc('read-again', 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result('read-again'));
   h.send(rpc('act', 'js', { code: 'await app.typeText("x")' }));
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.forwarded.at(-1).id, 'act'); h.reply(result('act'));
 });
 test('confirmed stop waits for a new message, restarts once and retains session approval', async t => {
@@ -664,7 +668,7 @@ test('new-message recovery never revives pre-stop local input waiting for its ta
   assert.equal(actions, 0); assert.equal(h.inputLease.owned.size, 0);
   assert.equal(h.received.find(m => m.id === 'old').result.isError, true);
 });
-test('two differently titled windows do not check the unique target, even without engine inventory', async t => {
+test('tree-free input checks focus for a unique target even without engine inventory', async t => {
   const { harness } = setup(t); let checks = 0;
   const h = harness('unique candidate', { fresh: true, changeReview: false,
     spaceProbe: async () => ({ status: 'responding', windows: 2, windowTitles: ['Unique', 'Other'] }),
@@ -672,7 +676,37 @@ test('two differently titled windows do not check the unique target, even withou
   h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result('read', 'Window: "Unique", App: TextEdit.'));
   await new Promise(resolve => setImmediate(resolve));
   h.send(rpc('act', 'js', { code: 'await app.typeText("x")' }));
-  assert.equal(h.forwarded.at(-1).id, 'act'); assert.equal(checks, 0); h.reply(result('act', 'Window: "Unique", App: TextEdit.'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.forwarded.at(-1).id, 'act'); assert.equal(checks, 1); h.reply(result('act', 'Window: "Unique", App: TextEdit.'));
+});
+
+test('first-off requires fresh focused-window confirmation on saved unique windows', async t => {
+  for (const status of ['ok', 'unknown', 'mismatch', 'throw', 'absent']) {
+    const { harness } = setup(t); let checks = 0;
+    const h = harness('focus-' + status, { fresh: true, changeReview: false, ...(status === 'absent' ? {} : {
+      windowIdentity: async window => {
+        checks++;
+        if (status === 'throw') throw Error('helper unavailable');
+        return { ...window, status, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+      }
+    }) });
+    h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result('read'));
+    await new Promise(resolve => setImmediate(resolve));
+    h.send(rpc('act', 'js', { code: 'await app.pressKey("super+a"); await app.typeText("x");' }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(checks, status === 'absent' ? 0 : 1);
+    if (status === 'mismatch') {
+      assert.equal(h.forwarded.at(-1).id, 'read');
+      assert.equal(h.received.at(-1).result.isError, true);
+    } else {
+      assert.equal(h.forwarded.at(-1).id, 'act');
+      const code = h.forwarded.at(-1).params.arguments.code;
+      const update = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)[1]);
+      assert.equal(update.focused, status === 'ok');
+      if (status !== 'ok') assert.equal(update.prior, undefined, 'unconfirmed focus cannot reuse the old tree');
+      h.reply(result('act'));
+    }
+  }
 });
 test('normal action results and app acquisitions have no window note', t => {
   const { a } = setup(t);
