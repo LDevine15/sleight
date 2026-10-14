@@ -7,6 +7,7 @@ import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // The runner starts one round per task (--only), so each fake run handles one task.
 const taskOf = (args) => args[args.indexOf('--only') + 1];
+const offlineApps = Object.freeze({ running: () => new Set(), quit: () => { throw Error('unexpected offline app quit'); } });
 
 function temp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-handoff-runner-')));
@@ -19,7 +20,7 @@ test('handoff rounds carry model effort world routing and repetitions through th
   assert.equal(typeof handoffOptions, 'function');
   const dir = temp(t), out = join(dir, 'absent');
   const options = handoffOptions(['--model', 'haiku', '--effort', 'high', '--world', '--runs', '5', '--out', out, '--dry-run']);
-  const plan = await runHandoffs({ ...options, run: () => { throw Error('ran'); }, running: () => { throw Error('inspected apps'); } });
+  const plan = await runHandoffs({ ...offlineApps, ...options, run: () => { throw Error('ran'); }, running: () => { throw Error('inspected apps'); } });
   assert.equal(plan.length, 45);
   assert.equal(existsSync(out), false);
   for (const row of plan) {
@@ -28,7 +29,7 @@ test('handoff rounds carry model effort world routing and repetitions through th
     assert.equal(row.args[row.args.indexOf('--effort') + 1], 'high');
   }
   const seen = [];
-  await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'matrix',
+  await runHandoffs({ ...offlineApps, outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'matrix',
     model: 'haiku', effort: 'high', world: true, runs: 2, running: () => new Set(), quit: () => { throw Error('quit'); },
     run: async ({ args }) => { seen.push(args); return 0; } });
   assert.equal(seen.length, 18);
@@ -69,7 +70,7 @@ test('every arm cleans artifacts and its download when the round fails or throws
   const downloads = join(dir, 'downloads');
   mkdirSync(downloads);
   const seen = [];
-  const result = await runHandoffs({ outRoot: dir, downloads, icloud: join(dir, 'icloud'), stamp: 'test', run: async ({ arm, out, downloadName, args }) => {
+  const result = await runHandoffs({ ...offlineApps, outRoot: dir, downloads, icloud: join(dir, 'icloud'), stamp: 'test', run: async ({ arm, out, downloadName, args }) => {
     seen.push(arm);
     assert.ok(args[args.indexOf('--serve') + 1].includes(downloadName));
     const task = taskOf(args);
@@ -95,7 +96,7 @@ test('cleanup exceptions are reported and every other task and arm still runs', 
   const dir = temp(t);
   const seen = [];
   const cleaned = [];
-  const results = await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'cleanup',
+  const results = await runHandoffs({ ...offlineApps, outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'cleanup',
     cleanup: (path) => { cleaned.push(path); if (path.endsWith('invoice-preview')) throw new Error('cleanup refused'); },
     run: async ({ arm }) => { seen.push(arm); return 0; } });
   assert.equal(seen.length, 9);
@@ -115,7 +116,7 @@ test('each arm reports only new Untitled files with exact task content and leave
   mkdirSync(icloud);
   const content = NOTE.title + '\n' + NOTE.body + '\n';
   writeFileSync(join(icloud, 'Untitled.txt'), content);
-  const results = await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud, stamp: 'untitled',
+  const results = await runHandoffs({ ...offlineApps, outRoot: dir, downloads: join(dir, 'downloads'), icloud, stamp: 'untitled',
     run: async ({ arm, args }) => {
       if (taskOf(args) !== 'invoice-preview') return 0;
       const n = ['fowlbrowser', 'sleight', 'fowl+sleight'].indexOf(arm) + 1;
@@ -136,7 +137,7 @@ test('a real unlink failure still cleans the other tasks and the owned download 
   const dir = temp(t);
   const downloads = join(dir, 'downloads');
   mkdirSync(downloads);
-  const results = await runHandoffs({ outRoot: dir, downloads, icloud: join(dir, 'icloud'), stamp: 'unlink',
+  const results = await runHandoffs({ ...offlineApps, outRoot: dir, downloads, icloud: join(dir, 'icloud'), stamp: 'unlink',
     run: async ({ out, downloadName, args }) => {
       const task = taskOf(args);
       if (task === 'invoice-preview') mkdirSync(join(out, task, 'invoice.pdf'), { recursive: true });
@@ -158,7 +159,7 @@ test('an app a round launched is quit after that round, and one already running 
   const dir = temp(t);
   let open = new Set(['Preview']);
   const quit = [];
-  await runHandoffs({ outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'apps',
+  await runHandoffs({ ...offlineApps, outRoot: dir, downloads: join(dir, 'downloads'), icloud: join(dir, 'icloud'), stamp: 'apps',
     running: () => new Set(open), quit: (name) => { quit.push(name); open.delete(name); },
     run: async () => { open.add('TextEdit'); return 0; } });
   assert.equal(quit.filter((n) => n === 'TextEdit').length, 9, 'TextEdit quit after each of 9 rounds');
