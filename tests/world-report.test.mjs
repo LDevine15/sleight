@@ -10,6 +10,14 @@ import { buildReport, loadSources, loadSuite, parseFowlReport, renderMarkdown, s
 const haiku = 'claude-haiku-5-5';
 const run = (extra) => ({ model: haiku, arm: 'sleight', task: 'calculator-click', run: 1, passed: true, seconds: 10, turns: 4, tokens: 1000, costUsd: 0.1, ...extra });
 
+test('published claim coverage names the two removed bridge arms as not run with their reason', () => {
+  const report = buildReport([run({})]);
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /codex-cu.*not run.*Bridge code is not in the repository/);
+  assert.match(markdown, /devtools.*not run.*Bridge code is not in the repository/);
+  assert.ok(!report.models[0].arms.some(arm => ['codex-cu', 'devtools'].includes(arm.arm)));
+});
+
 test('pass rate counts every run; median and p90 wall time use passing runs only', () => {
   const report = buildReport([
     run({ run: 1, seconds: 10, turns: 3, tokens: 100, costUsd: 0.1 }),

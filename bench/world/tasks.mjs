@@ -180,7 +180,7 @@ function previewTask(open) {
   return preview;
 }
 
-const browserInstructions = {
+export const browserInstructions = {
   'local-wikipedia': 'Read the elevation of Station Cedar. Return only JSON with the numeric metres field.',
   'local-mdn': 'Read the code for a ceramic request. Return only JSON with the numeric code field.',
   'table-scrape': 'Read the complete work log. Return only JSON with rows, an array of objects with name and numeric hours.',

@@ -258,6 +258,7 @@ export function buildReport(rows, { warn = console.error } = {}) {
   const models = [...new Set(counted.map(r => r.model))];
   return {
     warnings,
+    notRun: Object.entries(SUITE.suite?.notRun ?? {}).map(([arm, row]) => ({ arm, ...row })),
     models: models.map(model => {
       const ofModel = counted.filter(r => r.model === model);
       const arms = [...new Set(ofModel.map(r => r.arm))];
@@ -329,6 +330,11 @@ const p90Cell = (cell) => {
 
 export function renderMarkdown(report) {
   const out = [];
+  if (report.notRun?.length) {
+    out.push('| Arm | Coverage | Reason |', '| --- | --- | --- |');
+    for (const row of report.notRun) out.push(`| ${row.arm} | ${row.status} | ${row.reason} |`);
+    out.push('');
+  }
   if (report.warnings?.length) {
     for (const msg of report.warnings) out.push(msg);
     out.push('');

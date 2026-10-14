@@ -18,6 +18,29 @@ import { packageSkip } from './requirements.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
+test('the full world dry run prints one complete JSON document for every arm', async () => {
+  const arms = ['sleight', 'lcu', 'cua', 'peekaboo', 'claude-cu', 'codex'];
+  const result = await runner({ suite: 'world', arm: arms.join(','), dryRun: true,
+    tasks: [{ id: 'first' }, { id: 'second' }] });
+  assert.equal(result.error, undefined);
+  const documents = result.logs.filter(text => typeof text === 'string' && text.startsWith('{'));
+  assert.equal(documents.length, 1, 'dry runs must print the final plan once, not every growing prefix');
+  const plan = JSON.parse(documents[0]);
+  assert.deepEqual(Array.from(plan.arms), arms);
+  assert.equal(plan.results.length, 36);
+  assert.equal(result.commands.length, 0);
+  assert.equal(result.directories.length, 0);
+  assert.equal(result.saved.length, 0);
+});
+
+test('a refused dry run prints one JSON document with its configuration errors', async () => {
+  const result = await runner({ suite: 'world', arm: 'mcp:rival', dryRun: true, preparationError: 'fixture refusal' });
+  assert.equal(result.exitCode, 1);
+  const documents = result.logs.filter(text => typeof text === 'string' && text.startsWith('{'));
+  assert.equal(documents.length, 1);
+  assert.equal(JSON.parse(documents[0]).results[0].reason, 'fixture refusal');
+});
+
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
 async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {

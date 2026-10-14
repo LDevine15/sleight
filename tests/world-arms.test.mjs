@@ -186,9 +186,11 @@ fail(args, SystemExit('missing key'))
   assert.match(String(result.result), /missing key/);
 });
 
-test('rounds.sh stops at $190 and always uses the API key for browser-use', () => {
+test('rounds.sh stops at $190 and always uses the API key for browser-use', async () => {
   const sh = readFileSync(join(ROOT, 'bench/fowl/rounds.sh'), 'utf8');
-  assert.match(sh, /SURFACES" \| grep -qx browser-use/);
+  assert.match(sh, /AUTH=\$\(node.*--auth-mode "\$MODEL" "\$SURFACES"\)/);
+  const { roundAuth } = await import('../bench/fowl/accounting.mjs');
+  assert.equal(roundAuth('opus', ['browser-use']), 'api');
   assert.match(sh, /usd>=190/);
   assert.match(sh, /add-spend\.mjs/);
   assert.match(sh, /api-auth\.mjs/);

@@ -446,9 +446,9 @@ const resultsDir = join(ROOT, 'bench', 'results');
 if (!isDryRun) mkdirSync(resultsDir, { recursive: true });
 const file = join(resultsDir, `${stamp}${isDryRun ? '-dry' : isSetupOnly ? '-setup' : ''}.json`);
 // Written after every run, so a run cut short keeps what it finished.
-const save = () => {
+const save = (final = false) => {
   if (isDryRun) {
-    console.log(JSON.stringify({ dryRun: true, world, arms: armNames, results }, null, 2));
+    if (final) console.log(JSON.stringify({ dryRun: true, world, arms: armNames, results }, null, 2));
     return;
   }
   if (privatePass) {
@@ -699,7 +699,7 @@ pass: for (let run = 1; run <= runs; run++) {
         : cleanup === closeBenchTextEdit ? { quit: true } : undefined); }
       catch (error) { console.error(privatePass ? 'Pass cleanup failed: PRIVATE_MAIL_CLEANUP_UNCONFIRMED' : `Pass cleanup failed: ${error.message}`); process.exitCode = 1; }
     }
-    save();
+    save(true);
   } finally { await unlock?.(); unlock = undefined; }
 }
 if (controller.signal.aborted && !process.exitCode) process.exitCode = 130;

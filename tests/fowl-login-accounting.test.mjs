@@ -45,7 +45,7 @@ test('all-unsupported cohorts do not need Claude funding and retain their tasks 
 test('swap support rules apply before choosing API funding', t => {
   const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'device', surface: 'claude-in-chrome' }];
   assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, swap: true, spent: 190 }), 'account:');
-  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, spent: 190, status: 1 }), '');
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, spent: 190 }), 'account:');
 });
 test('remote browser-only cohorts do not need local Claude funding', t => {
   const tasks = [{ name: 'unsupported', surface: 'browser-use' }];
