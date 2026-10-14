@@ -4,7 +4,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { KEY_FILE, LEDGER_FILE, readKey } from './api-auth.mjs';
 
@@ -109,8 +109,12 @@ export function inspectConditions({ ownerAway = false, receipt, keyFile = KEY_FI
   let apiReady = false;
   try {
     const ledger = JSON.parse(readFileSync(ledgerFile, 'utf8'));
-    const spent = ledger.month === now.toISOString().slice(0, 7) ? ledger.usd : 0;
-    apiReady = !ledger.unpriced && Number.isFinite(spent) && spent >= 0 && spent < 190 && !!readKey(keyFile);
+    const month = now.toISOString().slice(0, 7);
+    if (ledger && !Array.isArray(ledger) && typeof ledger.month === 'string' && /^\d{4}-(?:0[1-9]|1[0-2])$/.test(ledger.month) &&
+        ledger.month <= month && Number.isFinite(ledger.usd) && ledger.usd >= 0) {
+      const spent = ledger.month === month ? ledger.usd : 0;
+      apiReady = !ledger.unpriced && spent < 190 && !!readKey(keyFile);
+    }
   } catch {}
   let socketsReady = false;
   try { socketsReady = receipt?.sockets?.length > 0 && receipt.sockets.every(p => lstatSync(p).isSocket()); } catch {}
@@ -161,6 +165,31 @@ function inventory(root, paths) {
   }
   return files;
 }
+function publicationPaths(folder, home, names) {
+  const aliases = [...names, basename(home)].filter(Boolean).flatMap(name => {
+    const text = name.normalize('NFC');
+    return [text, text.replace(/\s+/g, '-'), text.replace(/\s+/g, '_')];
+  });
+  const pattern = new RegExp([...new Set(aliases)].sort((a, b) => b.length - a.length).map(escape).join('|'), 'giu');
+  const key = path => path.normalize('NFC').toLowerCase();
+  const used = new Set(['command.txt', 'stdout.log', 'stderr.log'].map(name => key(join(folder, name))));
+  const mapped = new Map();
+  return (index, parts) => {
+    let parent = folder;
+    for (let i = 0; i < parts.length; i++) {
+      const source = JSON.stringify([index, ...parts.slice(0, i + 1)]);
+      if (mapped.has(source)) { parent = mapped.get(source); continue; }
+      const name = scrubText(parts[i].normalize('NFC'), home).replace(pattern, '<user>');
+      if (!name || name === '.' || name === '..' || name.includes(sep) || name.includes('\0')) throw new Error('Artifact destination escaped stage');
+      const extension = i === parts.length - 1 ? extname(name) : '';
+      const stem = extension ? name.slice(0, -extension.length) : name;
+      let dest = join(parent, name);
+      for (let n = 2; used.has(key(dest)); n++) dest = join(parent, stem + '-' + n + extension);
+      used.add(key(dest)); mapped.set(source, dest); parent = dest;
+    }
+    return parent;
+  };
+}
 const quote = text => `'${text.replaceAll("'", "'\\''")}'`;
 function summary(rows) {
   const cell = text => String(text ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
@@ -203,13 +232,18 @@ export async function executePass(plan, { root = plan.root, date = new Date().to
   let interrupted = false;
   const clean = text => scrubText(text, home, names);
   const save = () => {
-    writeFileSync(join(out, 'manifest.json'), clean(JSON.stringify({ stages: rows, coverage: DROPPED }, null, 2)) + '\n');
+    const manifest = JSON.parse(clean(JSON.stringify({ stages: rows, coverage: DROPPED })));
+    // These paths already identify scrubbed destinations. Scrubbing them again
+    // could change a literal placeholder or collision suffix in a file name.
+    for (const [i, row] of manifest.stages.entries()) row.files = rows[i].files;
+    writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
     writeFileSync(join(out, 'summary.md'), clean(summary(rows)));
     writeFileSync(page, clean(summary(rows).replace(/\]\(([^)]+)\)/g, `](../benchmarks/${date}-release-pass/$1)`)));
   };
   for (const stage of plan.stages) {
     const folder = join(out, stage.id);
     mkdirSync(folder);
+    const destination = publicationPaths(folder, home, names);
     const row = { id: stage.id, status: 'blocked', issues: problems(stage, await conditions(stage)), files: [] };
     rows.push(row);
     if (interrupted) row.issues.push('release pass interrupted; later stages were not run');
@@ -247,11 +281,11 @@ export async function executePass(plan, { root = plan.root, date = new Date().to
         if (text.includes('\0')) { row.issues.push('binary artifact requires owner review'); continue; }
         const rel = stage.artifacts.map(p => safePath(resolve(root, p))).find(p => file === p || file.startsWith(p + sep));
         const index = stage.artifacts.findIndex(p => safePath(resolve(root, p)) === rel);
-        const dest = join(folder, stage.artifacts.length === 1 ? basename(rel) : `artifacts-${index}`,
-          file === rel ? basename(file) : relative(rel, file));
+        const dest = destination(index, [stage.artifacts.length === 1 ? basename(rel) : `artifacts-${index}`,
+          ...(file === rel ? [basename(file)] : relative(rel, file).split(sep))]);
         if (!dest.startsWith(folder + sep)) throw new Error('Artifact destination escaped stage');
         mkdirSync(dirname(dest), { recursive: true });
-        writeFileSync(dest, clean(text)); row.files.push(relative(out, dest));
+        writeFileSync(dest, clean(text), { flag: 'wx' }); row.files.push(relative(out, dest));
         if (file.endsWith('.jsonl')) {
           eventTexts.push(text);
           const check = verifyModels([text], stage.expectedModels);
