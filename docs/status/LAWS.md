@@ -83,6 +83,9 @@ belong in [STATE.md](STATE.md).
   user quits the app or disconnects, and revoking stops commands without closing the pipe. Windows are matched from read-only metadata,
   and ambiguity stops. Benchmarks use temporary profiles that fail on any touch of the owner's state, while users keep their real
   profile, never a copy. Apps stay on the normal path until each is qualified live, and app packages are never patched.
+- Turbo includes `playwright-core` 1.64.0 whole inside the plugin, pinned by hash, with its LICENSE and NOTICE in
+  `THIRD-PARTY-NOTICES`, and loads it only when turbo is on (owner, 2026-10-14, for its mature actionability and accessibility
+  snapshots on the form cases the engine path lost). The plugin grows from 1.9 MB to about 15 MB. Slimming waits until after 1.3.0.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,
