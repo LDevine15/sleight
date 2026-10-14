@@ -30,7 +30,9 @@ the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and
 Past the cap (owner, 2026-10-13 and 14): BP2-1 ended at R4, BP2-4 at R4 and BP2-8 at R3 with the test-only BP2-8T, all merged, so
 every turbo prototype module is in. BP2-12's plan merged (`bench/direct-browser2/promotion-plan.md`). It proposed three large wiring items. BP2-P1 is the authenticated
 broker and a native helper for the trusted UI, and it ends with the bundling inventory (runtime, signing, dependencies) for the owner
-to accept. sleight-arch dispatched it at 00:35 UTC (codex-hdlbf). BP2-P2 moves the semantic modules into the plugin. It waited for
+to accept. sleight-arch dispatched it at 00:35 UTC. Review found three defects (unconfirmed teardown admits a second socket, no rebind
+after Connect, a once grant spent on half a click), and BP2-P1R (codex-hdlbn) fixes them. The owner chose to compile its helpers on
+the user's Mac (LAWS), which BP2-P1B does after P1 merges. BP2-P2 moves the semantic modules into the plugin. It waited for
 BP2-8R3, and sleight-arch dispatched it at 00:55 UTC. It blocked on bundling Playwright, the owner chose to include
 playwright-core 1.64.0 pinned (LAWS), and codex-hdlbi took it over. BP2-P3 adds the four tools and the relay and skill hooks after P1 and P2.
 
@@ -39,8 +41,8 @@ AM1's speed map, live with the owner away (2026-10-14). The first run failed eve
 (evidence below). Finder still fails on its several scroll areas and an unprovable folder-window cleanup (AM1F). A wider run
 crashed when `bench/preapproved-process.mjs` threw `kill EPERM` out of an abort listener, and PP1 (merged) fixed it. Since then
 TextEdit completes 3/3 (first read 52 ms median, scroll 918 ms). VS Code and Word fail setup with AX error -25204 on the first
-window read after launch, and Word kept the fixture open until sleight-arch quit it. AM1E (codex-hdlbk) builds a generic bounded retry and a
-cleanup fix. With AM1F merged, Finder measures every phase (first read 67 ms, scroll 1067 ms). Its cleanup proof still fails, on
+window read after launch, and Word kept the fixture open until sleight-arch quit it. AM1E built a bounded retry and a cleanup fix, but
+live on its branch VS Code still fails at the retain stage and Word kept running, so its review has that evidence. With AM1F merged, Finder measures every phase (first read 67 ms, scroll 1067 ms). Its cleanup proof still fails, on
 a second window whose element is already invalid (AX -25201). AM1FR, queued after AM1E, treats such a window as gone.
 Evidence is in `ledger/claims/_evidence-AM1-live/`. No run left a window open, and sleight-arch cleared their banks and lock.
 
