@@ -62,13 +62,16 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Turbo's wiring, as of 03:00 UTC. P1I passed review, and P1R2 (in review) fixes P1R's last finding, and the
-   two merge together. sleight-arch merged them as `codex/bp2-p1-int` (289 direct-browser tests pass). P2 found more absent host
-   interfaces: a typed Playwright instance, file upload, dialogs, wheel input and a persistent transport owner. BP2-P1I2
-   (codex-hdlbv) builds all of them plus P3's assumed contracts in one item, with an INTERFACE.md. Then P2 and P3 resume on it,
-   and BP2-P1B follows. AM1 is parked until after 1.3.0.
-   In parallel (owner, 03:30 UTC): TP1 (codex-hdlbw) builds a prototype turbo arm from the bench modules with fixture trust, so
-   sleight-arch can run the Haiku gate round against FowlBrowser before the production wiring is merged. Measurement only, never a claim.
+1. Turbo's wiring, as of 02:30 UTC. P1R2 parked at the cap with two Medium findings, and P1I2 (the rest of the closed host
+   interface, with INTERFACE.md) missed them, so sleight-arch fixed both under the small-fix rule (`e61700bb`, the tip of
+   `codex/bp2-p1i2`). Its test, tests/direct-browser-teardown.test.mjs, was red 0/2 before and is green after, and the full check
+   passed (4572). P1I2's review
+   needs a lane, and P1I2R (codex-hdlbw) closes as satisfied by that commit. Then P2 and P3 resume on it, and BP2-P1B follows.
+   AM1 is parked until after 1.3.0.
+   In parallel (owner, 01:40 UTC): TP1 built a prototype turbo arm, scoped by sleight-arch to the gate's nine local tasks for both
+   arms (mobile, takeover, Wikipedia and MDN excluded, because the four tools have no viewport, takeover or open-web search). Its real-page test never ran in the lane's
+   sandbox. On the Mac, Chromium refused the launch flag (fixed, `7c640f77`), and a submit click returns EFFECT_UNKNOWN without
+   dispatching, which TP1R (codex-hdlby) fixes. Then sleight-arch runs the four round commands in TP1's report. Measurement only.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
