@@ -135,6 +135,13 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       throw error;
     }
   };
+  const backgroundInput = async () => {
+    try { return await clickOnce({ modifiers: ['ControlOrMeta'] }); }
+    finally {
+      // A failed click may leave Playwright's modifier held. Never replay input.
+      await deadline(() => page.keyboard.up('ControlOrMeta'), timeoutMs).catch(() => {});
+    }
+  };
   try {
     prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
       const hook = window[Symbol.for('sleight.popup3')];
@@ -147,12 +154,15 @@ export async function backgroundClick(tab, locator, click = options => locator.c
   }
   if (prepared?.kind === 'link') {
     try {
-      const result = await clickOnce({});
+      // The page can stop propagation before consumeLink. Keep the native
+      // default background-only too; the hook hides this modifier from handlers.
+      const result = await backgroundInput();
       const request = await page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token), token);
       if (request) {
         if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
         await tab.openChild(request.url);
       }
+      await tab.settlePopups?.(before);
       return result;
     } finally { await disarm().catch(() => {}); }
   }
@@ -160,12 +170,8 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     const result = await clickOnce({}); await tab.settlePopups?.(before); return result;
   }
   let result;
-  try { result = await clickOnce({ modifiers: ['ControlOrMeta'] }); }
-  finally {
-    // A failed click may leave Playwright's modifier held. Never replay input.
-    await deadline(() => page.keyboard.up('ControlOrMeta'), timeoutMs).catch(() => {});
-    await disarm().catch(() => {});
-  }
+  try { result = await backgroundInput(); }
+  finally { await disarm().catch(() => {}); }
   await tab.settlePopups?.(before);
   return result;
 }
@@ -296,15 +302,20 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   const release = async (id, kind) => {
     const entry = tab(id);
     entry.releasing = true;
-    try {
-      await deadline(() => entry.queue, timeoutMs);
-      await deadline(() => entry.ready, timeoutMs);
-      await deadline(() => removeHook(entry), timeoutMs);
-      await entry.cdp.detach();
-      await releaseTarget?.(entry.targetId);
-      entry.released = true; entry.release = kind;
-      return { tab: id, kept: true, handoff: kind === 'handoff' };
-    } finally { entry.releasing = false; }
+    const releasing = track((async () => {
+      try {
+        await deadline(() => entry.queue, timeoutMs);
+        await deadline(() => entry.ready, timeoutMs);
+        await deadline(() => removeHook(entry), timeoutMs);
+        await entry.cdp.detach();
+        await releaseTarget?.(entry.targetId);
+        if (entry.page.isClosed()) throw Error('owned tab closed during release');
+        entry.released = true; entry.release = kind;
+        return { tab: id, kept: true, handoff: kind === 'handoff' };
+      } finally { entry.releasing = false; }
+    })());
+    // A delayed detach/ownership reply remains tracked after the caller's cap.
+    return deadline(() => releasing, timeoutMs, 'tab release pending; wait for cleanup before retrying');
   };
   async function openOwned(url, opener) {
       if (ended) throw Error('turn ended');
@@ -360,6 +371,9 @@ export function createPageRegistry({ browser, session, context = browser?.contex
           catch { rows.push({ targetId, closed: false, cleanupRequired: true }); }
         }
         for (const entry of records.values()) {
+          if (entry.releasing) {
+            rows.push({ tab: entry.tab, closed: entry.page.isClosed(), cleanupRequired: true }); continue;
+          }
           if (entry.released || entry.page.isClosed()) { rows.push({ tab: entry.tab, kept: entry.released, closed: entry.page.isClosed() }); continue; }
           try {
             await deadline(() => entry.page.close({ runBeforeUnload: false }), timeoutMs);

@@ -274,8 +274,17 @@ test('a noopener link dispatches once and opens its captured default destination
   f.entry.openChild = async url => f.calls.push(['openChild', url]);
   await backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options]));
   assert.deepEqual(f.calls.filter(c => ['click', 'openChild'].includes(c[0])), [
-    ['click', {}], ['openChild', 'https://fixture.invalid/shipping'],
+    ['click', { modifiers: ['ControlOrMeta'] }], ['openChild', 'https://fixture.invalid/shipping'],
   ]);
+});
+
+test('a prepared new-tab link carries background disposition even if page handlers stop bubbling', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.page.evaluate = async () => undefined;
+  await backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options]));
+  assert.deepEqual(f.calls.find(call => call[0] === 'click'), ['click', { modifiers: ['ControlOrMeta'] }]);
+  assert.equal(f.calls.filter(call => call[0] === 'click').length, 1);
+  assert.ok(f.calls.some(call => call[0] === 'up'));
 });
 
 test('a popup closing during its click returns the observed closure and its living opener', async () => {
@@ -321,4 +330,69 @@ test('keep waits for queued input, fences new input, then releases filter owners
   assert.deepEqual(released, ['target-1']);
   assert.equal(f.pages[0].isClosed(), false);
   await f.registry.endTurn();
+});
+
+for (const kind of ['keep', 'handoff']) test(`${kind} accepted before turn end preserves the page during hook removal`, async t => {
+  const f = fixture(), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const page = f.registry.tab(tab).page, send = page.cdp.send.bind(page.cdp);
+  let releaseHook, entered;
+  const begun = new Promise(resolve => { entered = resolve; });
+  page.cdp.send = (method, params) => {
+    if (method === 'Page.removeScriptToEvaluateOnNewDocument') {
+      entered(); return new Promise(resolve => { releaseHook = resolve; });
+    }
+    return send(method, params);
+  };
+  const releasing = f.registry[kind](tab);
+  await begun;
+  const ending = f.registry.endTurn();
+  await new Promise(resolve => setImmediate(resolve));
+  const closedDuringRelease = page.isClosed();
+  releaseHook({});
+  assert.equal((await releasing).kept, true);
+  const result = await ending;
+  assert.equal(closedDuringRelease, false);
+  assert.equal(result.cleanedUp, true);
+  assert.equal(result.rows.find(row => row.tab === tab).kept, true);
+  assert.equal(page.isClosed(), false);
+});
+
+for (const kind of ['keep', 'handoff']) test(`${kind} pending detach has bounded cleanup and can settle without closing the page`, async t => {
+  const f = fixture({ timeoutMs: 1000 }), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const page = f.registry.tab(tab).page;
+  let detach, entered;
+  const begun = new Promise(resolve => { entered = resolve; });
+  page.cdp.detach = () => { entered(); return new Promise(resolve => { detach = resolve; }); };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const releasing = f.registry[kind](tab);
+  let rejection;
+  releasing.catch(error => { rejection = error; });
+  t.after(async () => { detach?.(); await releasing.catch(() => {}); await f.registry.endTurn(); });
+  await begun;
+  t.mock.timers.tick(1000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(rejection?.message ?? 'no rejection', /pending|timed out/i);
+  assert.throws(() => f.registry.enqueue(tab, async () => {}), /owned|releas/i);
+  const ending = f.registry.endTurn();
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(1000);
+  const result = await ending;
+  assert.equal(result.cleanedUp, false);
+  assert.equal(page.isClosed(), false);
+  assert.equal(result.rows.find(row => row.tab === tab).cleanupRequired, true);
+  detach(); await f.registry.idle();
+  const retried = await f.registry.endTurn();
+  assert.equal(retried.cleanedUp, true);
+  assert.equal(retried.rows.find(row => row.tab === tab).kept, true);
+  assert.equal(page.isClosed(), false);
+});
+
+test('a page closing during release is refused instead of acknowledged as kept', async () => {
+  const f = fixture({ releaseTarget: () => f.pages[0].close() });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  await assert.rejects(f.registry.keep(tab), /closed during release/);
+  const result = await f.registry.endTurn();
+  assert.equal(result.cleanedUp, true);
+  assert.equal(result.rows.find(row => row.tab === tab).kept, false);
 });
