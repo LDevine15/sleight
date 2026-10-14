@@ -3,13 +3,13 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 03:45 UTC, after the reboot)
+## Banner (2026-10-14 03:50 UTC, after the reboot)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then release 1.3.0, the claim
 post and the video (ROADMAP 0b). LAWS was cut to 4.7 KB on 2026-10-14 (owner's decisions plus Mac protections). Engine facts are in
 docs/engine-notes.md, and process is sleight-arch's judgment (memory `slim-laws`).
-Pushed: `pane/auto-mode` at the commit holding this banner (private sleight-dev), with P1S and GR1 cherry-picked on top of
-`501aa82b`. Full check 4639 pass, 0 fail, 45 skipped, mod 33/33. `~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and public CI is green on 1.2.5.
+Pushed: `pane/auto-mode` at the commit holding this banner (private sleight-dev), with P1S, GR1, LD1 and LD1R cherry-picked
+on top of `501aa82b`. Full check 4661 pass, 0 fail, 45 skipped, mod 33/33. `~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and public CI is green on 1.2.5.
 
 Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging consent) is the path to the gate.
 - Merged into the plugin, inactive until wired: the P1 chain with the broker and the closed host interface (`9a98f6d0`),
@@ -27,9 +27,10 @@ Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging c
     `codex/bp2-p3` (`e9b193f4`) onto `pane/auto-mode`. P2 supplies the target check, submit and payment classification, fresh-read
     evidence and the file provider, and must make the demo forms fill and submit. P3 wires turbo into the plugin and advertises
     every tool schema without a top-level oneOf (Claude Code drops such tools).
-  - LD1 (`codex/ld1`, `49ed9b0a`): a host-side runner so lanes can request real-page test runs. Its review said FIX (a natural
-    leader exit leaves its process group running); LD1R (codex-hdlcj, `codex/ld1r`) is fixing that. Merge both together, then
-    sleight-arch starts the runner outside any sandbox.
+  - LD1 and LD1R are merged (`d999b498`, `5a1b54e5`). The real-page runner serves lanes from `~/Projects/sleight`
+    (`node scripts/live-dom-runner.mjs`, started 03:49 UTC, log `/private/tmp/claude-501/lanes/live-dom-runner.log`, queue
+    `~/Projects/sleight-wt/ledger/live-dom/`). Qualified on `tests/fill-form.test.mjs`: 18/18, no skips, group collected,
+    worktree removed. P2 and P3 were told how to use it in their ARCH-NOTE.md files.
   - SR1, the read after an action, decided 2026-10-14 from both reports (`ledger/sr1-opus-report.md`, `ledger/sr1-astra-report.md`).
     Both found the 262 s against 110 s gap was all browser-path calls. Of 915 mid-call native reads (about 430 s, 16% of native
     tool time), 80 follow a sheet or panel opener and 673 sit between two clicks. Opus's design A goes first (bind numbers to the
@@ -47,7 +48,7 @@ Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging c
 - AM1, the speed map, is parked until after 1.3.0 (owner).
 
 Next steps, in order:
-1. Review and merge P2 and P3 as they finish. Merge LD1 with LD1R, and start LD1's runner.
+1. Review and merge P2 and P3 as they finish, then SR1B after P3 (it touches relay.mjs).
 2. Once P2 is merged, run the four form tasks headless (TP-style, about $0.20) for an early read on forms.
 3. P3 wires turbo into the plugin. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium. The owner
    clicks Allow on Chrome's prompt once per launch. The gate counts Space switches and focus changes.
