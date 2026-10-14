@@ -1,7 +1,7 @@
 const recovery = {
   CONNECTION_UNSUPPORTED: ['Choose supported browser control through trusted setup.', 'connect'],
   VERSION_MISMATCH: ['Package changed; reconnect through trusted setup.', 'connect'],
-  RECOVERY_READ_REQUIRED: ['Read complete fresh state before requesting more input.', 'read'],
+  RECOVERY_READ_REQUIRED: ['Read fresh state before retrying an uncertain submit.', 'read'],
   HISTORY_FULL: ['Resolve retained unknown operations through trusted control.', 'authorize'],
   CLIENT_DISCONNECTED: ['The session has ended.', 'connect'],
   TIMEOUT: ['The broker deadline expired; read fresh state before more input.', 'read'],
@@ -18,7 +18,7 @@ const recovery = {
   STATE_UNVERIFIABLE: ['Read the state before deciding what to do.', 'read'],
   DIALOG_OPEN: ['Review the dialog and its required confirmation.', 'review_dialog'],
   EFFECT_UNKNOWN: ['Read the expected effect before deciding whether to retry.', 'read'],
-  PERMISSION_REQUIRED: ['Review the exact action in the trusted permission UI.', 'authorize'],
+  PERMISSION_REQUIRED: ['Check the target and any required payment confirmation through trusted setup.', 'authorize'],
   USER_TAKEOVER: ['Resume through the trusted user control, then read fresh state.', 'resume'],
   LEASE_LOST: ['Rebind through the trusted user control, then read fresh state.', 'rebind'],
   BACKGROUND_UNAVAILABLE: ['Use the supported handoff through the trusted user control.', 'handoff'],

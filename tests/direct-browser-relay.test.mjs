@@ -17,7 +17,7 @@ function harness(t, directBrowser, options = {}) {
   for (const [stream, records] of [[serverIn, sent], [clientOut, received]]) stream.on('data', b => records.push(...b.toString().trim().split('\n').map(JSON.parse)));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, directBrowser, changeReview: false, ...options });
   t.after(() => relay.close());
-  return { relay, sent, received,
+  return { relay, sent, received, clientOut,
     send: message => clientIn.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n'),
     reply: message => serverOut.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n') };
 }
@@ -36,6 +36,10 @@ test('relay advertises four verbs and handles them without engine native leases'
   h.reply({ id: 1, result: { tools: [{ name: 'js', description: 'native engine JS' }, { name: 'turn_ended' }] } });
   assert.deepEqual(h.received.at(-1).result.tools.filter(t => t.name.startsWith('browser_')).map(t => t.name),
     ['browser_open', 'browser_read', 'browser_act', 'browser_fill']);
+  for (const tool of h.received.at(-1).result.tools.filter(tool => tool.name.startsWith('browser_'))) {
+    assert.equal(tool.inputSchema.type, 'object');
+    for (const key of ['oneOf', 'anyOf', 'allOf']) assert.equal(Object.hasOwn(tool.inputSchema, key), false, tool.name);
+  }
   const before = h.sent.length;
   h.send({ id: 2, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' } } });
   await new Promise(r => setImmediate(r));
@@ -111,4 +115,41 @@ test('trusted turbo rules replace browser JS guidance and keep every native rule
   assert.match(rules, /user asked/); assert.match(rules, /confirmation/);
   assert.ok(rules.trim().split(/\s+/).length <= 930);
   assert.throws(() => launch.directBrowserRules(native, { approved: true }), /TRUSTED_ROUTE_REQUIRED/);
+});
+test('direct read delivers compact rules once and acknowledges only after its output write', async t => {
+  let delivered = 0;
+  const frontend = await route({ onDelivered: () => { assert.match(JSON.stringify(h.received.find(row => row.id === 10)), /fresh refs/); delivered++; return true; } });
+  const h = harness(t, frontend, { firstCallRules: 'turbo uses fresh refs' });
+  // Capture actual client output rather than the broker's preparation reply.
+  h.send({ id: 10, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(JSON.stringify(h.received.find(row => row.id === 10)), /fresh refs/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(delivered, 1);
+  h.send({ id: 11, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.doesNotMatch(JSON.stringify(h.received.find(row => row.id === 11)), /fresh refs/);
+});
+test('normal fixed turn completion fences turbo before engine dispatch and reports semantic cleanup', async t => {
+  let revoked = false;
+  const h = harness(t, await route({ endSession: () => { revoked = true; return { revoked: true,
+    cleanup: [{ target: 'owned', status: 'retained', resource: 'file-stage' }] }; } }));
+  h.send({ id: 20, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: 'Stop' } } });
+  assert.equal(revoked, true, 'normal completion left turbo live');
+  assert.equal(h.sent.at(-1).params.name, 'turn_ended');
+  h.reply({ id: 20, result: { content: [] } });
+  await new Promise(resolve => setImmediate(resolve));
+  const result = h.received.find(row => row.id === 20).result;
+  assert.equal(result.isError, true);
+  assert.equal(result._meta['sleight/directBrowser'].cleanup[0].resource, 'file-stage');
+});
+test('client output loss revokes an in-flight turbo operation before engine fault handling', async t => {
+  let revoked = false, finish, faultSawRevocation;
+  const frontend = await route({ client: { request: () => new Promise(resolve => { finish = resolve; }) },
+    endSession: () => { revoked = true; return { revoked: true, cleanup: [] }; } });
+  t.after(() => finish?.({ completed: 1, effect: 'verified', observation: { complete: true } }));
+  const h = harness(t, frontend, { onLeaseFault: () => { faultSawRevocation = revoked; } });
+  h.send({ id: 30, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' } } });
+  h.clientOut.emit('error', Error('synthetic output loss'));
+  assert.equal(faultSawRevocation, true);
 });

@@ -25,15 +25,16 @@ const actionShapes = [
   op === 'scroll' ? { anyOf: [{ required: ['dx'] }, { required: ['dy'] }] } : {}));
 const action = { oneOf: actionShapes };
 const definitions = [
-  { name: 'browser_open', description: 'Open in the selected browser, with site policy and automatic proof. Returns a session tab handle; no focus change or silent transport fallback.',
+  { name: 'browser_open', description: 'Open in the selected browser in the background. Returns a session tab handle and automatic proof; no silent transport fallback.',
     inputSchema: object({ browser: handle('b'), url: { type: 'string', format: 'uri', pattern: '^https?://' }, timeout_ms: timeout }, ['browser', 'url']) },
   { name: 'browser_read', description: 'Read this session tab, optionally at an observed scope ref. Returns bounded untrusted state and fresh refs; protected values stay redacted.',
     inputSchema: object({ tab: handle('t'), scope: handle('r'), max_bytes: { type: 'integer', minimum: 1024, maximum: 64000 }, timeout_ms: timeout }, ['tab']) },
-  { name: 'browser_act', description: 'Act on observed refs: one op or up to 16 sequential steps. Automatic proof; stops at stale state, policy, dialog or unknown effect. Never blindly retry.',
-    inputSchema: { oneOf: [...actionShapes.map(shape => object({ tab: handle('t'), ...shape.properties, timeout_ms: timeout }, ['tab', ...shape.required], shape.anyOf ? { anyOf: shape.anyOf } : {})),
-      object({ tab: handle('t'), steps: { type: 'array', minItems: 1, maxItems: 16, items: action }, timeout_ms: timeout }, ['tab', 'steps'])],
-      type: 'object', additionalProperties: false,
-      properties: Object.fromEntries(['tab', 'timeout_ms', ...new Set(actionShapes.flatMap(shape => Object.keys(shape.properties))), 'steps'].map(key => [key, {}])) } },
+  { name: 'browser_act', description: 'Act on fresh refs: one op, or op batch with up to 16 sequential steps. Automatic proof; stops at stale state, payment confirmation, dialog or unknown effect. Read before retrying an uncertain submit.',
+    // Messages API accepts one object at the top level. Exact per-op rules stay
+    // in validateCall; a batch is normalized to P1/P2's closed steps grammar.
+    inputSchema: object({ tab: handle('t'), ...Object.assign({}, ...actionShapes.map(shape => shape.properties)),
+      op: { type: 'string', enum: [...actionShapes.map(shape => shape.properties.op.const), 'batch'] },
+      value: { oneOf: [text, strings] }, steps: { type: 'array', minItems: 1, maxItems: 16, items: action }, timeout_ms: timeout }, ['tab', 'op']) },
   { name: 'browser_fill', description: 'Fill 1 to 50 observed fields in order, without submit. Values: text, boolean, number, string array, {date:YYYY-MM-DD}, {files:[handle]}. Per-field proof; stops before the untouched suffix.',
     inputSchema: object({ tab: handle('t'), fields: { type: 'array', minItems: 1, maxItems: 50,
       items: object({ ref: handle('r'), value }) }, timeout_ms: timeout }, ['tab', 'fields']) },
@@ -127,7 +128,8 @@ export function validateCall(request) {
       for (const field of args.fields) { keys(field, ['ref', 'value']); checkHandle(field.ref, 'r'); checkValue(field.value); }
       if (new Set(args.fields.map(field => field.ref)).size !== args.fields.length) invalid();
     } else if (Object.hasOwn(args, 'steps')) {
-      keys(args, ['tab', 'steps', 'timeout_ms'], ['tab', 'steps']);
+      keys(args, ['tab', 'op', 'steps', 'timeout_ms'], ['tab', 'steps']);
+      if (Object.hasOwn(args, 'op') && args.op !== 'batch') invalid();
       if (!Array.isArray(args.steps) || !args.steps.length || args.steps.length > 16) invalid();
       args.steps.forEach(checkAction);
     } else {
@@ -136,5 +138,9 @@ export function validateCall(request) {
     }
   }
   if (Object.hasOwn(args, 'timeout_ms') && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1 || args.timeout_ms > 30000)) invalid();
+  if (data.name === 'browser_act' && Object.hasOwn(args, 'steps') && Object.hasOwn(args, 'op')) {
+    const { op, ...closed } = args;
+    return Object.freeze({ ...data, arguments: Object.freeze(closed) });
+  }
   return data;
 }

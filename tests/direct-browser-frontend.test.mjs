@@ -47,17 +47,19 @@ for (const [state, code] of Object.entries({ unsupported: 'CONNECTION_UNSUPPORTE
     assert.equal(f.calls.length, 1);
   });
 }
-test('unknown input requires a later complete delivered read and retains the old receipt', async () => {
+test('host submit recovery refusal and later read retain the old unknown receipt', async () => {
   let mode = 'unknown';
-  const f = await fixture({ reply: () => mode === 'unknown' ? { phase: 'unknown', effect: 'unknown', completed: 0,
+  const f = await fixture({ reply: frame => mode === 'unknown' ? { phase: 'unknown', effect: 'unknown', completed: 0,
     untouched: 0, error: { code: 'EFFECT_UNKNOWN', phase: 'unknown', effect: 'unknown', completed: 0 } }
+    : mode === 'incomplete' && frame.operation === 'browser_act' ? { effect: 'none', completed: 0,
+      error: { code: 'RECOVERY_READ_REQUIRED', effect: 'none', completed: 0 } }
     : { ...good(), observation: mode === 'incomplete' ? { complete: false } : { complete: true } } });
   const failed = await f.frontend.call(click);
   assert.equal(failed.receipt.stage, 'unknown');
   mode = 'incomplete'; await f.frontend.call(read);
   assert.equal((await f.frontend.call(click)).error.code, 'RECOVERY_READ_REQUIRED');
   mode = 'complete'; await f.frontend.call(read); await f.frontend.call(click);
-  assert.equal(f.calls.length, 4);
+  assert.equal(f.calls.length, 5);
   assert.equal(f.frontend.receipt(failed.receipt.operation).stage, 'unknown');
 });
 test('package replacement fences input and late proof preserves prefix and suffix', async () => {
@@ -96,16 +98,17 @@ test('partial form keeps the proved prefix and exactly untouched suffix', async 
   assert.equal(result.receipt.completed, 1); assert.equal(result.receipt.untouched, 1);
   assert.equal(result.results.length, 1); assert.equal(f.calls.length, 1);
 });
-test('an omitted read cannot clear unknown input and budget preserves receipts', async () => {
+test('an omitted read preserves the unknown receipt without inferring a target policy', async () => {
   let unknown = true;
   const f = await fixture({ reply: () => unknown ? { phase: 'unknown', effect: 'unknown', completed: 0, untouched: 0,
     error: { code: 'EFFECT_UNKNOWN', effect: 'unknown', completed: 0 } }
     : { ...good(), observation: { complete: true, text: 'x'.repeat(20000) } } });
-  await f.frontend.call(click); unknown = false;
+  const failed = await f.frontend.call(click); unknown = false;
   const result = await f.frontend.call({ ...read, arguments: { tab: 't1', max_bytes: 1024 } });
   assert.equal(result.observation.omitted, true);
   assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 1024);
-  assert.equal((await f.frontend.call(click)).error.code, 'RECOVERY_READ_REQUIRED');
+  assert.equal(f.frontend.receipt(failed.receipt.operation).effect, 'unknown');
+  assert.equal((await f.frontend.call(click)).completed, 1);
 });
 test('two authenticated sessions keep their unknown gates and cleanup separate', async () => {
   const first = await fixture({ reply: () => { throw Error('lost reply'); } }), second = await fixture();

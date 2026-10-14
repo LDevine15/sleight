@@ -20,7 +20,7 @@ import { discoverExtensions, createBrowserSelection } from './browser-discovery.
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
-import { isFrontend } from './direct-browser/surface.mjs';
+import { isFrontend, isFrontendSession } from './direct-browser/surface.mjs';
 import { createTurnHookChannel } from './direct-browser/lifecycle.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
@@ -661,9 +661,28 @@ export function directBrowserTurnHook(frontend, pipes) {
   return createTurnHookChannel({ ...pipes, frontend });
 }
 
+// Private loader join. A controller is branded by the concrete broker host;
+// settings, environment and MCP input cannot provide one. Validate inherited
+// hook ownership before offering opt-in, and fence partial startup on failure.
+export async function prepareDirectBrowser({ directSession, directBrowser, directTurnHook } = {}) {
+  if (directSession === undefined) return { directBrowser, turnHook: directBrowserTurnHook(directBrowser, directTurnHook) };
+  if (!isFrontendSession(directSession) || directBrowser !== undefined) throw Error('TRUSTED_ROUTE_REQUIRED');
+  try {
+    const ownership = directSession.ownership;
+    if (!directTurnHook || ['session', 'turn', 'brokerEpoch'].some(key => directTurnHook[key] !== ownership[key]) ||
+        ['read', 'write'].some(key => typeof directTurnHook[key]?.on !== 'function' || typeof directTurnHook[key]?.off !== 'function') ||
+        typeof directTurnHook.write.write !== 'function') throw Error('TRUSTED_ROUTE_REQUIRED');
+    const frontend = await directSession.enable();
+    if (!frontend) { await directSession.end(); return { directBrowser: undefined, turnHook: undefined }; }
+    return { directBrowser: frontend, turnHook: directBrowserTurnHook(frontend, directTurnHook) };
+  } catch (error) { await directSession.end(); throw error; }
+}
+
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser, directTurnHook } = {}) {
-  const turnHook = directBrowserTurnHook(directBrowser, directTurnHook);
+  directSession, directBrowser, directTurnHook } = {}) {
+  const prepared = await prepareDirectBrowser({ directSession, directBrowser, directTurnHook });
+  directBrowser = prepared.directBrowser;
+  const turnHook = prepared.turnHook;
   process.once('exit', () => { turnHook?.close(); });
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
@@ -688,6 +707,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     firstCallObserver = firstClientCallRefresh(surfaceCache);
     current.on('close', async code => {
       if (current !== child || stoppingForReceipt) return;
+      directBrowser?.end();
       firstCallObserver.dispose(); await surfaceCache?.close();
       await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(code ?? 0);
     });

@@ -3,6 +3,7 @@ import { browserTools, validateCall } from './schemas.mjs';
 import { browserError, BrowserFailure } from './errors.mjs';
 import { immutableJSON, FRAME_LIMIT } from './ipc.mjs';
 import { createBrokerSessionHost } from './session-host.mjs';
+import { bindSemanticAdapter } from './lifecycle.mjs';
 function compressSchema(schema) {
   const fragments = new Map();
   const visit = value => {
@@ -43,23 +44,11 @@ function observationJSON(value) {
   if (Buffer.byteLength(JSON.stringify(safe)) > FRAME_LIMIT) throw Error('Invalid observation');
   return safe;
 }
-function completeObservation(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  if (value.complete !== true) return false;
-  const complete = metadata =>
-    (!Object.hasOwn(metadata, 'complete') || metadata.complete === true) &&
-    ['pending', 'omitted', 'truncated'].every(key => !Object.hasOwn(metadata, key) ||
-      metadata[key] === false || metadata[key] === 0);
-  if (!complete(value)) return false;
-  if (!Object.hasOwn(value, 'coverage')) return true; // Legacy complete reads have no metadata.
-  const coverage = value.coverage;
-  if (typeof coverage === 'string') return ['full', 'complete', 'rendered-complete'].includes(coverage);
-  return coverage !== null && typeof coverage === 'object' && !Array.isArray(coverage) &&
-    complete(coverage) && (!Object.hasOwn(coverage, 'sensing') || coverage.sensing === 'complete');
-}
 
 const frontends = new WeakSet();
 export const isFrontend = value => !!value && frontends.has(value);
+const sessions = new WeakSet();
+export const isFrontendSession = value => !!value && sessions.has(value);
 const states = { connected: null, unsupported: 'CONNECTION_UNSUPPORTED', 'setting-off': 'SETTING_OFF',
   'approval-pending': 'CONNECTION_APPROVAL_PENDING', declined: 'CONNECTION_DECLINED',
   'stale-instance': 'STALE_INSTANCE', disconnected: 'DISCONNECTED', paused: 'USER_TAKEOVER' };
@@ -74,16 +63,22 @@ const errorResult = (code, tab, effect = 'none', completed = 0) => ({ error: bro
 // P2 supplies semantic/protected proof behind that broker boundary. No socket,
 // authority, helper, arbitrary JS or CDP entry is returned to the model.
 export async function createFrontend({ proof, verifyOptIn, packageCurrent, status, client, redact,
-  endSession, verifyResume = () => false, timeoutMs = 30000, selectedBrowser } = {}) {
-  if ([verifyOptIn, packageCurrent, status, redact, endSession, verifyResume].some(f => typeof f !== 'function') ||
+  endSession, verifyResume = () => false, timeoutMs = 30000, selectedBrowser, ownership,
+  onDelivered = () => false, onUnknown = () => {} } = {}) {
+  if ([verifyOptIn, packageCurrent, status, redact, endSession, verifyResume, onDelivered, onUnknown].some(f => typeof f !== 'function') ||
       typeof client?.request !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('TRUSTED_ROUTE_REQUIRED');
   if (selectedBrowser !== undefined && !/^b[A-Za-z0-9_-]{1,63}$/.test(selectedBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (ownership !== undefined && (!ownership || !['session', 'turn'].every(key =>
+    typeof ownership[key] === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(ownership[key])) ||
+    !Number.isSafeInteger(ownership.brokerEpoch) || ownership.brokerEpoch < 1 ||
+    Object.keys(ownership).some(key => !['session', 'turn', 'brokerEpoch'].includes(key)))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let accepted = false;
   try { accepted = await verifyOptIn(proof) === true && packageCurrent() === true; } catch {}
   if (!accepted) throw Error('TRUSTED_ROUTE_REQUIRED');
-  let generation = 0, sequence = 0, ended = false, ending, detached = false, lastState;
-  const history = new Map(), recovery = new Map();
+  let generation = 0, ended = false, ending, detached = false, lastState;
+  const history = new Map();
+  let deliveries = new WeakMap();
   const current = () => { try { return packageCurrent() === true; } catch { return false; } };
   const connection = () => {
     let value; try { value = status(); } catch {}
@@ -97,7 +92,7 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     return value;
   };
   const safe = value => observationJSON(redact(value ?? null));
-  const remember = (request, response, at, operation = randomUUID().replaceAll('-', '')) => {
+  const remember = (request, response, operation = randomUUID().replaceAll('-', '')) => {
     const completed = response.error?.completed ?? response.completed ?? 0;
     const effect = response.error?.effect ?? response.effect ?? 'verified';
     const stage = response.error ? effect === 'none' ? completed ? 'observed' : 'prepared' : 'unknown' : 'verified';
@@ -105,7 +100,12 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     const maximum = Math.max(0, total - completed - (unknown && completed < total ? 1 : 0));
     const untouched = response.untouched ?? (unknown ? 0 : maximum);
     if (!Number.isInteger(untouched) || untouched < 0 || untouched > maximum) throw Error('INVALID_RECEIPT');
-    const receipt = { operation, stage, effect, completed, untouched, connectionGeneration: generation };
+    const receipt = { operation, stage, effect, completed, untouched, connectionGeneration: generation,
+      ...(response.unknownStep === undefined ? {} : { unknownStep: response.unknownStep }) };
+    if (unknown && request.name !== 'browser_read') try {
+      const pending = onUnknown(observationJSON({ ...receipt, name: request.name, tab: request.arguments.tab ?? null }));
+      if (pending?.then) Promise.resolve(pending).catch(() => {});
+    } catch {} // Retain the receipt even if the ownership provider is unavailable.
     const result = { route: 'direct', ...response, receipt };
     const budget = request.arguments.max_bytes ?? 12000;
     if (Buffer.byteLength(JSON.stringify(result)) > budget) {
@@ -115,25 +115,18 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
       if (result.results) result.results = result.results.map(row => ({ ...row, observation: omitted }));
     }
     if (Buffer.byteLength(JSON.stringify(result)) > budget) throw Error('INVALID_RECEIPT');
-    const target = request.arguments.tab ?? null;
-    if (unknown && request.name !== 'browser_read') {
-      if (!recovery.has(target)) recovery.set(target, new Map());
-      recovery.get(target).set(operation, ++sequence);
-    }
-    // The broker remains responsible for policy/quarantine reconciliation. This
-    // delivery gate only proves that the model received a later relevant read.
-    if (!result.error && request.name === 'browser_read' && !request.arguments.scope && completed === 1 &&
-        completeObservation(result.observation) && result.observation !== null) {
-      const pending = recovery.get(target);
-      if (pending) {
-        for (const [id, started] of pending) if (started <= at) pending.delete(id);
-        if (!pending.size) recovery.delete(target);
-      }
-    }
+    // Contract 3 fences uncertain submits inside trusted host classification.
+    // The frontend cannot infer submit intent from model refs or page text, and
+    // incomplete page sensing must not block a checked ordinary field.
     history.set(operation, structuredClone(receipt));
     if (history.size > 128) {
       const removable = [...history].find(([, entry]) => entry.stage !== 'unknown');
       if (removable) history.delete(removable[0]);
+    }
+    if (!result.error && result.observation && result.observation.omitted !== true) {
+      deliveries.set(result, { generation, serialized: JSON.stringify(result),
+        data: observationJSON({ operation, name: request.name, tab: result.tab ?? request.arguments.tab,
+          observation: result.observation }) });
     }
     return result;
   };
@@ -142,7 +135,9 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     const completed = response.completed ?? response.error?.completed ?? 0;
     if (!Number.isInteger(completed) || completed < 0 || completed > total) throw Error('INVALID_RECEIPT');
     const prefix = response.results ?? (completed === 1 && !response.error ?
-      [{ effect: response.effect, observation: response.observation }] : []);
+      [{ effect: response.effect, observation: response.observation }] : response.error ?
+        Array.from({ length: completed }, () => ({ effect: 'verified',
+          observation: { omitted: true, reason: 'host_prefix_observations_withheld', next: 'browser_read' } })) : []);
     if (!Array.isArray(prefix) || prefix.length !== completed ||
         prefix.some(row => !['verified', 'unchanged', 'protected'].includes(row.effect))) throw Error('INVALID_RECEIPT');
     const rows = prefix.map(row => ({ effect: row.effect, observation: safe(row.observation) }));
@@ -153,10 +148,16 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     if (response.error) {
       if (response.error.completed !== undefined && response.error.completed !== completed ||
           response.error.effect !== response.effect) throw Error('INVALID_RECEIPT');
+      const unknownStep = response.unknownStep ?? response.error.unknownStep;
+      if (unknownStep !== undefined && unknownStep !== null &&
+          (!Number.isInteger(unknownStep) || unknownStep !== completed || unknownStep >= total || response.effect !== 'unknown'))
+        throw Error('INVALID_RECEIPT');
+      const untouched = response.untouched ?? response.error.untouched;
       const failure = new BrowserFailure(response.error.code, { phase: response.error.phase, effect: response.effect });
       if (failure.code !== response.error.code) failure.effect = 'unknown';
       return { error: browserError(failure, { tab: request.arguments.tab, completed, observation: safe(response.observation) }),
-        results: rows, ...(response.untouched === undefined ? {} : { untouched: response.untouched }) };
+        results: rows, ...(untouched === undefined ? {} : { untouched }),
+        ...(unknownStep === undefined ? {} : { unknownStep }) };
     }
     if (completed !== total || !['verified', 'unchanged', 'protected'].includes(response.effect) ||
         !Object.hasOwn(response, 'observation')) throw Error('INVALID_RECEIPT');
@@ -165,12 +166,23 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
   };
   const frontend = Object.freeze({
     browser: selectedBrowser,
+    ownership: ownership === undefined ? undefined : observationJSON(ownership),
     tools() {
       const tools = compactTools();
       if (selectedBrowser) tools.find(tool => tool.name === 'browser_open').inputSchema.properties.browser = { type: 'string', const: selectedBrowser };
       return tools;
     },
     receipt: operation => history.has(operation) ? structuredClone(history.get(operation)) : null,
+    delivered(result) {
+      const record = deliveries.get(result); deliveries.delete(result);
+      if (!record || ended || !current() || connection() !== 'connected' || record.generation !== generation ||
+          record.serialized !== JSON.stringify(result)) return false;
+      try {
+        const acknowledged = onDelivered(record.data);
+        if (acknowledged?.then) { Promise.resolve(acknowledged).catch(() => {}); return false; }
+        return acknowledged === true;
+      } catch { return false; }
+    },
     async resume(authority) {
       if (ended || !current() || connection() !== 'connected') return false;
       const epoch = generation;
@@ -181,15 +193,14 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     async call(input) {
       let request;
       try { request = validateCall(input); } catch { return errorResult('INVALID_ARGUMENT'); }
-      const tab = request.arguments.tab, at = sequence, state = connection(), epoch = generation;
-      const refused = code => remember(request, errorResult(code, tab), at);
+      const tab = request.arguments.tab, state = connection(), epoch = generation;
+      const refused = code => remember(request, errorResult(code, tab));
       if (ended) return refused('LEASE_LOST');
       if (request.name === 'browser_open' && selectedBrowser && request.arguments.browser !== selectedBrowser) return refused('FOREIGN_REF');
       if (!current()) return refused('VERSION_MISMATCH');
       if (states[state]) return refused(states[state]);
       if (detached && request.name !== 'browser_read') return refused('USER_TAKEOVER');
       if ([...history.values()].filter(row => row.stage === 'unknown').length >= 128) return refused('HISTORY_FULL');
-      if (request.name !== 'browser_read' && (recovery.has(null) || recovery.has(tab))) return refused('RECOVERY_READ_REQUIRED');
       const operation = randomUUID().replaceAll('-', '');
       let timer, response;
       try {
@@ -210,15 +221,15 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
           // completed. Retain proof counts, never advertise a reusable old handle.
           delete response.tab;
         }
-        return remember(request, response, at, operation);
+        return remember(request, response, operation);
       } catch {
         return remember(request, { ...errorResult('EFFECT_UNKNOWN', tab, request.name === 'browser_read' ? 'none' : 'unknown'),
-          untouched: 0 }, at, operation);
+          untouched: 0 }, operation);
       } finally { clearTimeout(timer); }
     },
     end() {
       if (ending) return ending;
-      ended = true; generation++;
+      ended = true; generation++; deliveries = new WeakMap();
       let timer, cleanup;
       try { cleanup = endSession(); } catch { cleanup = Promise.reject(Error('CLEANUP_UNPROVED')); }
       ending = Promise.race([Promise.resolve(cleanup), new Promise((_, reject) => {
@@ -240,10 +251,15 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
 // decision. The returned controller is never advertised as an MCP endpoint.
 export function createBrokerFrontendSession(options) {
   if (typeof options?.selectedBrowser !== 'string' || !/^b[A-Za-z0-9_-]{1,63}$/.test(options.selectedBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  const semantic = options.semanticLifecycle;
+  if (typeof options.turn !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(options.turn)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (options.semanticLifecycle !== undefined && options.semanticAdapter !== undefined) throw Error('TRUSTED_ROUTE_REQUIRED');
+  const semantic = options.semanticAdapter === undefined ? options.semanticLifecycle : bindSemanticAdapter({
+    session: options.identity?.session, adapter: options.semanticAdapter, transportOwner: options.transportOwner,
+    lifecycle: options.lifecycle, hook: options.lifecycleHook, leaseFor: options.leaseFor });
   if (semantic !== undefined && (semantic.session !== options.identity?.session ||
       typeof semantic.revoke !== 'function' || typeof semantic.cleanup !== 'function')) throw Error('TRUSTED_ROUTE_REQUIRED');
   const host = createBrokerSessionHost(options);
+  const ownership = Object.freeze({ session: options.identity.session, turn: options.turn, brokerEpoch: options.broker.status().epoch });
   let frontend, enabling, ended = false, ending, semanticRevoked = false;
   function endSession() {
     const hostEnd = host.endSession(); // Fence P1 authority/transport synchronously.
@@ -258,7 +274,7 @@ export function createBrokerFrontendSession(options) {
       new Promise((_, reject) => { timer = setTimeout(() => reject(Error('CLEANUP_UNPROVED')), options.timeoutMs ?? 30000); })])
       : Promise.reject(Error('SEMANTIC_LIFECYCLE_UNJOINED'));
     ending = Promise.all([hostEnd, collect.then(value => {
-      const safe = observationJSON(value);
+      const safe = observationJSON(options.redact(value));
       if (!Array.isArray(safe?.cleanup)) throw Error('CLEANUP_UNPROVED');
       return safe.cleanup;
     }).catch(() => [{ resource: 'semantic-journals', status: 'retained',
@@ -268,7 +284,8 @@ export function createBrokerFrontendSession(options) {
       .finally(() => { clearTimeout(timer); ending = undefined; });
     return ending;
   }
-  return Object.freeze({
+  const controller = Object.freeze({
+    ownership,
     enable() {
       if (ended) return Promise.reject(Error('LEASE_LOST'));
       if (frontend) return Promise.resolve(frontend);
@@ -276,7 +293,11 @@ export function createBrokerFrontendSession(options) {
       enabling = (async () => {
         const proof = await host.requestOptIn();
         if (!proof || ended) return null;
-        const prepared = await createFrontend({ ...host, endSession, proof, timeoutMs: options.timeoutMs, selectedBrowser: options.selectedBrowser });
+        if (options.broker.status().epoch !== ownership.brokerEpoch) { ended = true; await endSession(); return null; }
+        const prepared = await createFrontend({ ...host, endSession, proof, timeoutMs: options.timeoutMs,
+          selectedBrowser: options.selectedBrowser, ownership,
+          onDelivered: delivery => semantic?.delivered?.(delivery) ?? false,
+          onUnknown: receipt => semantic?.uncertain?.(receipt) });
         if (ended) { await prepared.end(); return null; }
         frontend = prepared;
         return frontend;
@@ -293,4 +314,6 @@ export function createBrokerFrontendSession(options) {
       return frontend ? frontend.end() : endSession();
     },
   });
+  sessions.add(controller);
+  return controller;
 }

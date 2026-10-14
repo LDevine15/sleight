@@ -448,6 +448,21 @@ export function createRelay({
 }) {
   if (directBrowser !== undefined && !isFrontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ?? []);
+  const directTurnEnds = new Map();
+  function collectDirectEnd(id) {
+    if (!directBrowser) return;
+    const pending = directBrowser.end(); // Revoke before forwarding the engine turn end.
+    if (id === undefined) return;
+    const state = { pending: true, replies: [] };
+    directTurnEnds.set(id, state);
+    let timer;
+    const unproved = () => ({ revoked: false, cleanup: [{ status: 'retained', resource: 'semantic-journals', code: 'CLEANUP_UNPROVED' }] });
+    Promise.race([pending, new Promise(resolve => { timer = setTimeout(() => resolve(unproved()), stopGraceMs); })])
+      .catch(unproved).then(receipt => {
+        clearTimeout(timer); state.pending = false; state.receipt = receipt;
+        for (const reply of state.replies) toClient(reply);
+      });
+  }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   let compactor = createReadCompactor();
   const browserStale = createBrowserStaleGuard();
@@ -1016,6 +1031,7 @@ export function createRelay({
   function stopHeartbeat() { clearInterval(leaseTimer); leaseTimer = undefined; }
 
   function failLease(error) {
+    directBrowser?.end();
     leaseFault = error.message;
     trace('input-lease-error', { error: leaseFault });
     closing = true;
@@ -1292,8 +1308,20 @@ export function createRelay({
     if (!hasFullTree(after) || later?.app !== window.app || later.title !== window.title || size(after) <= count) return;
     msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content), ...reply.result.content];
   }
-  const toClient = msg => {
+  const toClient = (msg, afterWrite) => {
     if (msg.method === undefined && stoppedClients.has(msg.id)) return;
+    const directEnding = msg.method === undefined && directTurnEnds.get(msg.id);
+    if (directEnding?.pending) { directEnding.replies.push(msg); return; }
+    if (directEnding) {
+      directTurnEnds.delete(msg.id);
+      if (msg.result) {
+        const receipt = directEnding.receipt;
+        const retained = receipt.revoked !== true || receipt.cleanup.some(row => !['closed', 'released', 'already-gone'].includes(row.status));
+        msg = { ...msg, result: { ...msg.result, isError: !!msg.result.isError || retained,
+          _meta: { ...msg.result._meta, 'sleight/directBrowser': receipt },
+          content: [...(msg.result.content ?? []), { type: 'text', text: JSON.stringify({ directBrowser: receipt }) }] } };
+      }
+    }
     if (msg.method === undefined && msg.id !== undefined && Array.isArray(msg.result?.content) && takeNotices) {
       const notices = takeNotices();
       if (notices?.length) msg = { ...msg, result: { ...msg.result, content: [...msg.result.content, ...notices.map(text => ({ type: 'text', text }))] } };
@@ -1357,7 +1385,9 @@ export function createRelay({
     journal?.reply(msg);
     trace('to-client', msg);
     if (msg.method === undefined && msg.id !== undefined) onClientReply(msg);
-    clientOut.write(JSON.stringify(msg) + '\n');
+    clientOut.write(JSON.stringify(msg) + '\n', afterWrite ? error => {
+      if (!error && !disposed && !closing) afterWrite(msg);
+    } : undefined);
   };
   const inputError = err => { trace('stream-error', { stream: 'server-input', error: err.message }); failLease(err); };
   clientOut.on('error', err => { trace('stream-error', { stream: 'client-output', error: err.message }); failLease(err); });
@@ -1769,8 +1799,15 @@ export function createRelay({
       callDetails.set(msg.id, msg.params.name);
       directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
         finishedCall(msg.id);
+        const content = [{ type: 'text', text: JSON.stringify(result) }];
+        if (firstCallRules && !rulesShown) { rulesShown = true; content.push({ type: 'text', text: firstCallRules }); }
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: !!result.error,
-          content: [{ type: 'text', text: JSON.stringify(result) }] } });
+          content } }, delivered => {
+          // Baselines and submit fences advance only after the exact projection
+          // reached this client stream, never on a private preparation read.
+          if (!delivered.result?.isError && delivered.result?.content?.some(item => item.type === 'text' &&
+              item.text === JSON.stringify(result))) directBrowser.delivered(result);
+        });
       }).catch(() => {
         finishedCall(msg.id);
         toClient({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Direct browser route unavailable.' } });
@@ -2032,6 +2069,7 @@ export function createRelay({
       const { name } = msg.params;
       if (clipboard && name === 'js_reset') clipboardResets.add(msg.id);
       if (name === TURN_END_TOOL) {
+        collectDirectEnd(msg.id);
         const generation = stopGeneration;
         const end = note => {
           if (generation !== stopGeneration || disposed) return;

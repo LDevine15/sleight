@@ -598,4 +598,29 @@ describe('sleight mod', () => {
     const refused = await $.tool.call({ tool: TURN_END_TOOL } as never)
     expect(String(refused.deny)).toMatch(/internal to sleight/)
   })
+  for (const name of ['browser_open', 'browser_read', 'browser_act', 'browser_fill']) {
+    test(`${name} marks a browser-only turn for the fixed completion hook`, async ($, on) => {
+      const calls: string[] = []
+      const tool = `mcp__plugin_sleight_computer__${name}`
+      on('tool.call', { tool: tool as never }, async () => ({ result: { content: [] } }) as never)
+      on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+      on('mcp.call', async (_$, e) => { calls.push(e.tool); return { value: { content: [] } } as never })
+      on('turn.start', async (_$, e) => ({ turnId: e.turnId }) as never)
+      on('turn.complete', async () => ({ text: '' }) as never)
+      await $.turn.start({ turnId: 'turbo-turn' } as never)
+      await $.tool.call({ tool, tab: 't1', fields: [{ ref: 'r1', value: 'private fixture' }] } as never)
+      await $.turn.complete({ turnId: 'turbo-turn', answer: '', durationMs: 1, isAborted: false, reason: 'answer' } as never)
+      expect(calls).toEqual(['turn_ended'])
+    })
+  }
+  test('/sleight stop also refuses every compact browser tool', async ($, on) => {
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async () => ({ value: { content: [] } }) as never)
+    on('tool.call', async () => ({ result: { content: [] } }) as never)
+    await $.command.run({ command: 'sleight', args: 'stop' } as never)
+    for (const name of ['browser_open', 'browser_read', 'browser_act', 'browser_fill']) {
+      const result = await $.tool.call({ tool: `mcp__plugin_sleight_computer__${name}`, tab: 't1' } as never)
+      expect(String(result.deny)).toMatch(/stopped sleight/)
+    }
+  })
 })

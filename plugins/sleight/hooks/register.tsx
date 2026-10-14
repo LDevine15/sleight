@@ -13,6 +13,7 @@ const SERVER = 'computer'
 const JS_TOOL = 'mcp__plugin_sleight_computer__js'
 const TURN_END_TOOL = 'mcp__plugin_sleight_computer__turn_ended'
 const REPLAY_TOOL = 'mcp__plugin_sleight_computer__replay'
+const BROWSER_TOOLS = ['browser_open', 'browser_read', 'browser_act', 'browser_fill']
 const PANE = 'sleight'
 const LOG_LIMIT = 200
 
@@ -329,6 +330,24 @@ export const register: Register = on => {
     if (replayActive) return { deny: 'A replay is running. Wait for it to stop before sending another tool call.' }
     usedThisTurn = true
     return next(e)
+  })
+
+  // Compact browser verbs are session work too. The fixed completion hook must
+  // fence turbo even when the turn never called native JS. Log only the verb,
+  // keeping field values and page content out of the pane's action history.
+  for (const name of BROWSER_TOOLS) on('tool.call', { tool: `mcp__plugin_sleight_computer__${name}` as never }, async ($, e, next) => {
+    if (next.origin?.plugin === 'sleight') return next(e)
+    if (await read($, stopped)) return { deny: 'The user stopped sleight with /sleight stop. Do not use it again until they ask.' }
+    if (replayActive) return { deny: 'A replay is running. Wait for it to stop before sending another tool call.' }
+    usedThisTurn = true
+    const entry: LogEntry = { id: e.tool_use_id, title: name, status: 'running', at: now() }
+    await update($, log, list => [...list, entry].slice(-LOG_LIMIT))
+    const ran = await next(e)
+    actions++
+    const status: LogEntry['status'] = ran.deny !== undefined ? 'refused' : ran.isError ? 'error' : 'done'
+    await update($, log, list => list.map(one => one.id === entry.id ? { ...one, status } : one))
+    setStatus($)
+    return ran
   })
 
   // turn_ended stays listed so this mod can call it; Claude may not.

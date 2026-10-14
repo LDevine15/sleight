@@ -61,6 +61,16 @@ test('unconfirmed socket teardown fences a replacement until explicit cleanup pr
   assert.equal((await lane.disconnect()).connectionClosed, true);
   await lane.connect(cdp, browser, grant);
 });
+test('an explicit repeat turn-end retries retained exact target cleanup after the prior collection settles', async () => {
+  const { lane, cdp, hook } = await setup();
+  cdp.closeAccepted = false;
+  const first = await lane.endTurn(hook);
+  assert.equal(first[0].status, 'retained');
+  cdp.closeAccepted = true;
+  const second = await lane.endTurn(hook);
+  assert.equal(second[0].status, 'closed'); assert.equal(second[0].absenceVerified, true);
+  assert.equal(cdp.calls.filter(call => call.method === 'Target.closeTarget').length, 2);
+});
 
 test('default connection and authority adapters refuse, never infer browser consent', async () => {
   const lane = new Lifecycle();

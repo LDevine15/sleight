@@ -1,6 +1,7 @@
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { immutableJSON } from './ipc.mjs';
 import { isFrontend } from './surface.mjs';
+import { isTransportOwner } from './transport-owner.mjs';
 
 // Lifecycle ideas: FowlBrowser 8b689249ba4e33d2626487aad930605c62e2c6a7
 // mcp/src/turns.mjs and takeover.mjs (MIT). New implementation, no copied code.
@@ -18,6 +19,137 @@ const freeze = (value) => {
   if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
   return value;
 };
+
+// Bind P2's published reader and form methods to one private host session. The
+// registry is populated by the installed semantic dispatcher, never an MCP
+// request. Disposal fences refs/input; owned-target/file/download collection
+// remains a separate exact provider receipt, including every retained journal.
+export function createSemanticLifecycle({ session } = {}) {
+  if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(session)) throw Error('SEMANTIC_BINDING_REQUIRED');
+  const scopeKeys = ['browserIncarnation', 'brokerEpoch', 'clientSession', 'turn', 'leaseGeneration',
+    'target', 'frame', 'document', 'origin'];
+  const entries = new Map();
+  let ended = false, collecting;
+  const retained = (entry, resource, code) => ({ session,
+    ...(entry ? { tab: entry.tab, target: entry.identity.target } : {}), resource, status: 'retained', code });
+  const current = entry => {
+    try { return !ended && same(entry.identity, immutableJSON(entry.current()), scopeKeys); } catch { return false; }
+  };
+  const api = Object.freeze({ session,
+    register({ tab, identity, current, reader, form, cleanup } = {}) {
+      const scope = immutableJSON(identity);
+      if (ended || typeof tab !== 'string' || !/^t[A-Za-z0-9_-]{1,63}$/.test(tab) || entries.has(tab) ||
+          scope?.clientSession !== session || scopeKeys.some(key => scope[key] === undefined) ||
+          typeof current !== 'function' || ['acknowledge', 'dispose'].some(key => typeof reader?.[key] !== 'function') ||
+          ['pendingRead', 'deliveredRead', 'dispose', 'cleanup'].some(key => typeof form?.[key] !== 'function') ||
+          cleanup !== undefined && typeof cleanup !== 'function') throw Error('SEMANTIC_BINDING_REQUIRED');
+      entries.set(tab, { tab, identity: scope, current, reader, form, cleanup, disposed: new Set() });
+    },
+    delivered(delivery) {
+      const entry = entries.get(delivery?.tab), observation = delivery?.observation?.observation;
+      if (!entry || !current(entry) || delivery?.observation?.omitted === true || typeof observation !== 'string') return false;
+      try {
+        if (entry.reader.acknowledge(observation) !== true) return false;
+        if (!current(entry)) return false;
+        if (delivery.name === 'browser_read') {
+          entry.form.pendingRead(observation, entry.identity);
+          return entry.form.deliveredRead(observation, entry.identity) === true;
+        }
+        return true;
+      } catch { return false; }
+    },
+    revoke() {
+      ended = true;
+      for (const entry of entries.values()) for (const key of ['reader', 'form']) {
+        if (entry.disposed.has(key)) continue;
+        try {
+          const result = entry[key].dispose();
+          if (result?.then) Promise.resolve(result).catch(() => {});
+          else if (result !== false) entry.disposed.add(key);
+        } catch {}
+      }
+      return [...entries.values()].every(entry => entry.disposed.size === 2);
+    },
+    cleanup() {
+      if (collecting) return collecting;
+      if (!ended || [...entries.values()].some(entry => entry.disposed.size !== 2))
+        return Promise.resolve({ cleanup: [retained(undefined, 'semantic-journals', 'SEMANTIC_REVOCATION_UNPROVED')] });
+      collecting = Promise.all([...entries.values()].map(async entry => {
+        const rows = [];
+        try {
+          const journal = immutableJSON(entry.form.cleanup());
+          if (!Number.isSafeInteger(journal.retained) || journal.retained < 0) throw Error();
+          if (journal.retained) rows.push({ ...retained(entry, 'form-journal', 'FORM_CLEANUP_REQUIRED'), count: journal.retained });
+        } catch { rows.push(retained(entry, 'form-journal', 'FORM_CLEANUP_UNPROVED')); }
+        try {
+          if (!entry.cleanup) throw Error();
+          const result = immutableJSON(await entry.cleanup(entry.identity));
+          if (!Array.isArray(result?.cleanup) || !result.cleanup.length || result.cleanup.some(row => !row ||
+              !['closed', 'already-gone', 'released', 'retained', 'parked'].includes(row.status) ||
+              row.target !== entry.identity.target || ['closed', 'already-gone'].includes(row.status) && row.absenceVerified !== true)) throw Error();
+          rows.push(...result.cleanup);
+        } catch { rows.push(retained(entry, 'owned-resources', 'SEMANTIC_CLEANUP_UNPROVED')); }
+        return rows;
+      })).then(rows => ({ cleanup: rows.flat() })).finally(() => { collecting = undefined; });
+      return collecting;
+    },
+  });
+  return api;
+}
+
+// Concrete P2 adapter join: its delivered(lease,id) and cleanupSession(id) APIs
+// stay private. P1 owns reader/form disposal; this lane owns the exact target
+// turn. Every invocation is bound to the same authenticated host session.
+export function bindSemanticAdapter({ session, adapter, transportOwner, lifecycle, hook, leaseFor } = {}) {
+  if (typeof session !== 'string' || hook?.session !== session || !isTransportOwner(transportOwner) ||
+      !(lifecycle instanceof Lifecycle) || typeof leaseFor !== 'function' ||
+      ['delivered', 'cleanupSession'].some(key => typeof adapter?.[key] !== 'function')) throw Error('TRUSTED_ROUTE_REQUIRED');
+  let revoked = false, ending = false, collecting;
+  const held = new Set();
+  return Object.freeze({ session,
+    uncertain(value) {
+      if (ending || typeof value?.tab !== 'string') return;
+      try {
+        const lease = immutableJSON(leaseFor(value.tab, { session, turn: hook.turn, brokerEpoch: hook.brokerEpoch }));
+        if (lease.clientSession === session && lease.turn === hook.turn && lease.brokerEpoch === hook.brokerEpoch) held.add(lease.target);
+      } catch {}
+    },
+    delivered(value) {
+      if (ending || value?.name !== 'browser_read' || value.observation?.omitted === true ||
+          typeof value.observation?.observation !== 'string') return false;
+      try {
+        const lease = immutableJSON(leaseFor(value.tab, { session, turn: hook.turn, brokerEpoch: hook.brokerEpoch }));
+        if (lease.clientSession !== session || lease.turn !== hook.turn || lease.brokerEpoch !== hook.brokerEpoch) return false;
+        return adapter.delivered(lease, value.observation.observation) === true;
+      } catch { return false; }
+    },
+    revoke() {
+      ending = true;
+      try {
+        const ownerRevoked = transportOwner.revokeSession(session) === true;
+        for (const target of held) lifecycle.retainTarget(hook, target);
+        revoked = lifecycle.fenceTurn(hook) === true && ownerRevoked;
+      }
+      catch { revoked = false; }
+      return revoked;
+    },
+    cleanup() {
+      if (collecting) return collecting;
+      const retained = count => ({ session, resource: 'semantic-journals', status: 'retained',
+        code: 'SEMANTIC_CLEANUP_UNPROVED', ...(count === undefined ? {} : { count }) });
+      if (!revoked) return Promise.resolve({ cleanup: [retained()] });
+      collecting = Promise.all([
+        Promise.resolve().then(() => adapter.cleanupSession(session)).then(value => {
+          const receipt = immutableJSON(value);
+          if (typeof receipt.closed !== 'boolean' || !Array.isArray(receipt.cleanup) || !Number.isSafeInteger(receipt.retained) || receipt.retained < 0) throw Error();
+          return [...receipt.cleanup, ...(receipt.closed && receipt.retained === 0 ? [] : [retained(receipt.retained)])];
+        }).catch(() => [retained()]),
+        lifecycle.endTurn(hook).catch(() => [{ session, resource: 'owned-targets', status: 'retained', code: 'TARGET_CLEANUP_UNPROVED' }]),
+      ]).then(rows => ({ cleanup: rows.flat() })).finally(() => { collecting = undefined; });
+      return collecting;
+    },
+  });
+}
 
 export async function bounded(work, timeoutMs) {
   let timer;
@@ -404,18 +536,43 @@ export class Lifecycle {
     return { lease: null, status: 'cleanup-required' };
   }
 
-  async endTurn(hook) {
+  #turnForHook(hook) {
+    try { hook = immutableJSON(hook); } catch { throw Error('STALE_HOOK'); }
     const turn = this.#turns.get(hook?.session);
     if (!turn?.valid || !same(hook, turn.hook, ['version', 'session', 'turn', 'brokerEpoch', 'channelGeneration']) ||
       Object.keys(hook).length !== Object.keys(turn.hook).length || !secretEqual(hook.nonce, turn.hook.nonce)) throw new Error('STALE_HOOK');
-    if (turn.cleanup) return turn.cleanup;
+    return turn;
+  }
+
+  fenceTurn(hook) {
+    const turn = this.#turnForHook(hook);
     turn.ending = true;
     const records = [...this.#records.values()].filter((r) => r.identity.session === turn.session && r.identity.turn === turn.turn);
     for (const record of records) {
       // Fence queued work, but preserve whether this tab was already parked.
       if (record.status === 'active') { this.#cancelRecord(record, 'TURN_ENDED'); record.status = 'ending'; }
     }
-    turn.cleanup = Promise.all(records.map((r) => this.#cleanup(r)));
+    return true;
+  }
+
+  retainTarget(hook, targetId) {
+    const turn = this.#turnForHook(hook);
+    const record = [...this.#records.values()].find(r => r.identity.session === turn.session &&
+      r.identity.turn === turn.turn && r.identity.targetId === targetId);
+    if (!record) throw Error('IDENTITY_MISMATCH');
+    record.kept = true;
+    this.#cancelRecord(record, 'EFFECT_UNKNOWN');
+    record.parkReason = 'EFFECT_UNKNOWN';
+    if (!this.#persist()) throw Error('JOURNAL_UNAVAILABLE');
+    return true;
+  }
+
+  async endTurn(hook) {
+    const turn = this.#turnForHook(hook);
+    if (turn.cleanup) return turn.cleanup;
+    this.fenceTurn(hook);
+    const records = [...this.#records.values()].filter((r) => r.identity.session === turn.session && r.identity.turn === turn.turn);
+    turn.cleanup = Promise.all(records.map((r) => this.#cleanup(r))).finally(() => { turn.cleanup = null; });
     return turn.cleanup;
   }
 
@@ -423,7 +580,7 @@ export class Lifecycle {
     const identity = record.identity;
     const receipt = { ...copy(identity), status: 'retained', phase: 'prepared', effect: 'none', closeRequested: false, absenceVerified: false };
     const finish = (changes) => { Object.assign(receipt, changes); record.cleanup = copy(receipt); this.#persist(); return receipt; };
-    if (record.status === 'parked') return finish({ status: 'parked', code: 'PARKED_LEASE' });
+    if (record.status === 'parked') return finish({ status: 'parked', code: record.parkReason ?? 'PARKED_LEASE' });
     if (!record.owned || record.kept || !record.ephemeral) {
       record.status = 'released';
       return finish({ status: 'released', code: 'USER_OR_KEPT_TARGET' });
@@ -474,6 +631,8 @@ export function createTurnHookChannel({ frontend, read, write, session, turn, br
       !Number.isSafeInteger(brokerEpoch) || brokerEpoch < 1 || typeof read?.on !== 'function' ||
       typeof read?.off !== 'function' || typeof write?.write !== 'function' || typeof write?.on !== 'function' ||
       typeof write?.off !== 'function') throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (frontend.ownership && !same({ session, turn, brokerEpoch }, frontend.ownership,
+    ['session', 'turn', 'brokerEpoch'])) throw Error('TRUSTED_ROUTE_REQUIRED');
   const envelope = Object.freeze({ version: 1, session, turn, brokerEpoch, nonce: randomBytes(32).toString('hex') });
   let buffer = '', ended = false, collection;
   function end() {

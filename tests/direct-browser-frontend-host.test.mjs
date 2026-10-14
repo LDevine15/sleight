@@ -12,6 +12,7 @@ import { createBroker } from '../plugins/sleight/lib/direct-browser/broker.mjs';
 import { createAuthority, createTransportAuthority } from '../plugins/sleight/lib/direct-browser/authority.mjs';
 import { createTransportOwner } from '../plugins/sleight/lib/direct-browser/transport-owner.mjs';
 import * as surface from '../plugins/sleight/lib/direct-browser/surface.mjs';
+import * as launch from '../plugins/sleight/lib/launch.mjs';
 
 // No native helper or socket is launched. These streams exercise the real
 // nonce/authentication protocol with synthetic data; they are not user consent.
@@ -33,7 +34,7 @@ function uiFixture(t) {
     const frame = frames.at(-1); read.write(JSON.stringify({ id: frame.id, nonce: frame.nonce, choice }) + '\n');
   } };
 }
-async function fixture(t) {
+async function fixture(t, options = {}) {
   assert.equal(typeof surface.createBrokerFrontendSession, 'function', 'closed host frontend entry is absent');
   const packageState = packageFixture(t), user = {}, calls = [], scopes = new Map(), ui = uiFixture(t);
   const scopeFor = id => scopes.get(id);
@@ -65,6 +66,7 @@ async function fixture(t) {
         frame: scope.frame, document: 1, epoch: 1, origin: scope.origin, browserIncarnation: 'browser',
         brokerEpoch: 1, clientSession: scope.session, turn: scope.turn };
       return owner.run(lease, context, async view => {
+        if (options.forbidden) await view.send(options.forbidden, {});
         if (plan.operationName === 'browser_read') await view.send('Page.createIsolatedWorld', { frameId: scope.frame, worldName: 'sleight-state' });
         else await view.input('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 1, y: 2, deltaX: 0, deltaY: 120 });
         return { effect: 'verified', observation: { complete: true, value: 'private', session: scope.session } };
@@ -76,12 +78,10 @@ async function fixture(t) {
       lease: 1, frame: 'frame-' + id, document: 1, ref: 'ref', origin: 'https://fixture.invalid' };
     scopes.set(id, scope);
     return surface.createBrokerFrontendSession({ broker, authority, transportOwner: owner, ui: ui.ui,
-      packageInventory: packageState.inventory, selectedBrowser: 'b1', semanticLifecycle, identity: { version: 1, uid, secret, session: id, incarnation: 'p1-v1' },
+      packageInventory: packageState.inventory, selectedBrowser: 'b1', turn: 'turn', semanticLifecycle, identity: { version: 1, uid, secret, session: id, incarnation: 'p1-v1' },
       redact: value => value === null ? null : { ...value, value: '[redacted]' } });
   }
-  return { session, broker, calls, ui, packageState, grant(id) {
-    authority.user(user, 'grant', { session: id, origin: 'https://fixture.invalid', mode: 'once' });
-  } };
+  return { session, broker, calls, ui, packageState };
 }
 const wheel = { name: 'browser_act', arguments: { tab: 't1', op: 'scroll', ref: 'r1', dy: 120 } };
 const read = { name: 'browser_read', arguments: { tab: 't1' } };
@@ -90,9 +90,9 @@ test('real host creates compact frontend only after a distinct authenticated opt
   const pending = session.enable();
   assert.equal(f.calls.length, 0); f.ui.answer('enable'); const frontend = await pending;
   assert.equal(surface.isFrontend(frontend), true);
-  f.grant('first'); const receipt = await frontend.call(wheel);
+  const receipt = await frontend.call(wheel);
   assert.equal(receipt.effect, 'verified', JSON.stringify(receipt)); assert.equal(receipt.observation.value, '[redacted]');
-  assert.equal(f.calls.length, 1); assert.equal((await frontend.call(wheel)).error.effect, 'none');
+  assert.equal(f.calls.length, 1); assert.equal((await frontend.call(wheel)).completed, 1);
   await session.end(); assert.equal(f.broker.status().state, 'connected'); assert.equal(f.broker.status().clients, 0);
 });
 test('declined opt-in never constructs a route or queues future input', async t => {
@@ -104,12 +104,11 @@ test('two real host sessions revoke only their own reads and authority', async t
   const f = await fixture(t), first = f.session('first'), second = f.session('second');
   const a = first.enable(); f.ui.answer('enable'); const frontA = await a;
   const b = second.enable(); f.ui.answer('enable'); const frontB = await b;
-  f.grant('first'); f.grant('second');
   const r = await frontA.call(read); assert.equal(r.completed, 1, JSON.stringify(r)); assert.equal((await frontB.call(read)).completed, 1);
   const ending = first.end();
   assert.equal(f.broker.status().clients, 1); await ending;
   assert.equal((await frontA.call(wheel)).error.code, 'LEASE_LOST');
-  f.grant('second'); assert.equal((await frontB.call(wheel)).completed, 1); await second.end();
+  assert.equal((await frontB.call(wheel)).completed, 1); await second.end();
 });
 test('package update during private opt-in cannot advertise direct tools', async t => {
   const f = await fixture(t), session = f.session('first'), pending = session.enable();
@@ -153,3 +152,43 @@ test('asynchronous semantic revocation cannot prove revocation or authorize clea
   assert.equal(receipt.revoked, false); assert.equal(cleaned, false);
   assert.equal(receipt.cleanup[0].code, 'SEMANTIC_REVOCATION_UNPROVED');
 });
+test('installed launcher consumes the branded host opt-in with an exact private turn channel', async t => {
+  const f = await fixture(t), session = f.session('first', { session: 'first', revoke: () => true, cleanup: () => ({ cleanup: [] }) });
+  assert.equal(typeof launch.prepareDirectBrowser, 'function', 'installed opt-in join is absent');
+  const read = new PassThrough(), write = new PassThrough(), frames = [];
+  write.on('data', bytes => frames.push(JSON.parse(bytes)));
+  const pending = launch.prepareDirectBrowser({ directSession: session,
+    directTurnHook: { read, write, session: 'first', turn: 'turn', brokerEpoch: 1 } });
+  assert.equal(f.calls.length, 0); f.ui.answer('enable'); const prepared = await pending;
+  assert.equal(surface.isFrontend(prepared.directBrowser), true);
+  read.write(JSON.stringify({ ...frames[0], event: 'end' }) + '\n');
+  const receipt = await prepared.turnHook.close(); assert.equal(receipt.revoked, true);
+  assert.equal(f.broker.status().clients, 0); assert.equal(f.broker.status().state, 'connected');
+});
+test('installed launcher refuses a forged session and never invokes its callback', async () => {
+  let invoked = false;
+  assert.equal(typeof launch.prepareDirectBrowser, 'function', 'installed opt-in join is absent');
+  await assert.rejects(launch.prepareDirectBrowser({ directSession: { enable() { invoked = true; } } }), /TRUSTED_ROUTE_REQUIRED/);
+  assert.equal(invoked, false);
+});
+test('private turn descriptors cannot be borrowed from another authenticated host session', async t => {
+  const f = await fixture(t), session = f.session('first'), enabling = session.enable();
+  f.ui.answer('enable'); const frontend = await enabling;
+  assert.throws(() => launch.directBrowserTurnHook(frontend, { read: new PassThrough(), write: new PassThrough(),
+    session: 'second', turn: 'turn', brokerEpoch: 1 }), /TRUSTED_ROUTE_REQUIRED/);
+  assert.throws(() => launch.directBrowserTurnHook(frontend, { read: new PassThrough(), write: new PassThrough(),
+    session: 'first', turn: 'old', brokerEpoch: 1 }), /TRUSTED_ROUTE_REQUIRED/);
+  assert.throws(() => launch.directBrowserTurnHook(frontend, { read: new PassThrough(), write: new PassThrough(),
+    session: 'first', turn: 'turn', brokerEpoch: 2 }), /TRUSTED_ROUTE_REQUIRED/);
+  await session.end();
+});
+for (const forbidden of ['Page.bringToFront', 'Target.activateTarget']) {
+  test('background frontend never sends ' + forbidden + ' even from a mistaken semantic dispatcher', async t => {
+    const f = await fixture(t, { forbidden }), session = f.session('first'), enabling = session.enable();
+    f.ui.answer('enable'); const frontend = await enabling;
+    const result = await frontend.call(read);
+    assert.equal(result.error.effect, 'none'); assert.equal(f.calls.length, 0);
+    assert.ok(!f.calls.some(call => ['Page.bringToFront', 'Target.activateTarget'].includes(call.method)));
+    await session.end();
+  });
+}
