@@ -65,6 +65,40 @@ test('tool calls wait for the live handshake and tool-list verification', t => {
   h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) });
   assert.equal(h.server.at(-1).id, 12);
 });
+for (const initial of [false, true]) test(`changing lean calls from ${initial} uses the live description and admits queued calls`, t => {
+  const { connect } = fixture(t);
+  const previous = warm(connect({ leanCalls: initial }));
+  const h = connect({ leanCalls: !initial });
+  h.send(initialization(10));
+  h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) });
+  h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) });
+  assert.equal(h.client.some(msg => msg.id === 12 && msg.error), false,
+    JSON.stringify(h.client.find(msg => msg.id === 12)));
+  assert.ok(h.server.some(msg => msg.id === 12), 'the live tool list admits the queued call');
+  const description = h.client.find(msg => msg.id === 11).result.tools.find(tool => tool.name === 'js').description;
+  assert.equal(description.includes('Native calls: keep the app handle across calls.'), !initial);
+  assert.notEqual(description, previous.find(msg => msg.id === 2).result.tools.find(tool => tool.name === 'js').description);
+});
+for (const leanCalls of [false, true]) test(`lean calls ${leanCalls} reuses its selected cached description before the engine replies`, t => {
+  const { connect } = fixture(t);
+  const fresh = warm(connect({ leanCalls }));
+  const h = connect({ leanCalls });
+  h.send(initialization(10));
+  h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  assert.deepEqual(h.client, fresh.map((msg, index) => ({ ...msg, id: index ? 11 : 10 })));
+  const description = h.client.find(msg => msg.id === 11).result.tools.find(tool => tool.name === 'js').description;
+  assert.equal(description.includes('Native calls: keep the app handle across calls.'), leanCalls);
+  h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  assert.equal(h.server.some(msg => msg.id === 12), false, 'cached replies still wait for live verification');
+  h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) });
+  h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) });
+  assert.ok(h.server.some(msg => msg.id === 12));
+  assert.equal(h.client.some(msg => msg.id === 12 && msg.error), false);
+});
 for (const [label, options, identity, params] of [
   ['engine version', {}, { engine: '2', sleight: '1' }],
   ['sleight version', {}, { engine: '1', sleight: '2' }],

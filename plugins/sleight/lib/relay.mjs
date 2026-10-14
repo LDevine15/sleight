@@ -475,7 +475,7 @@ export function createRelay({
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
   const startup = startupCache?.bind({
-    context: { approvalScope, firstCallBatch, prompt, changeReview, flowRules: !!flowRules, tools: localTools?.tools },
+    context: { approvalScope, firstCallBatch, prompt, changeReview, leanCalls, flowRules: !!flowRules, tools: localTools?.tools },
     send: msg => toClient(msg), forward: msg => clientLine(JSON.stringify(msg), true),
   });
   const clickResults = new TabClickResults();
