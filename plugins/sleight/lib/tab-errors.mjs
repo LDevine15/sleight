@@ -38,6 +38,8 @@ export const EVALUATE_WRITE = [
 
 export function rewriteTabError(text, { read = false } = {}) {
   if (typeof text !== 'string') return text;
+  const blocked = browserBlockedAdvice(text);
+  if (blocked) return text + ' ' + blocked;
   text = rewriteLocatorFailure(text);
   const lines = text.split('\n'), out = [];
   for (let i = 0; i < lines.length; i++) {
@@ -64,6 +66,16 @@ export function rewriteTabError(text, { read = false } = {}) {
     out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties.');
   }
   return out.join('\n');
+}
+
+function browserBlockedAdvice(text) {
+  const first = text.split('\n')[0];
+  const extension = /^(?:Error: )?Automation is blocking automation because another extension UI is open\.$/.test(first);
+  const client = /^(?:Error: )?(?:page\.goto: )?net::ERR_BLOCKED_BY_CLIENT(?: at \S+)?$/.test(first);
+  if (!extension && !client) return;
+  const reason = extension ? 'An extension UI is blocking browser automation. The owner must clear that UI before continuing.'
+    : 'Navigation was blocked by the client. Its cause is unconfirmed. The owner must review the block before continuing.';
+  return `${reason} Next read, if available: await cua.listTabs(). Do not retry the refused call or change another session.`;
 }
 
 export function evaluateWriteAdvice(text) {
