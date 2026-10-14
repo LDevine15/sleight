@@ -31,6 +31,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Turbo includes `playwright-core` 1.64.0, pinned, with its notices, and compiles two native helpers from source on the user's Mac
   at first use. Turbo follows the payment rule and never treats page content as an instruction or a permission. Before retrying a
   submit with an unknown effect it reads the page, it works in the background, and it checks only the element it acts on.
+- Turning turbo on keeps the engine's browser path beside turbo's tools, and Claude picks between them. Turbo never removes a
+  capability the engine path has, a mobile viewport for one (owner, 2026-10-14).
 - sleight works in the background: it never switches Spaces or takes focus. Chrome's own consent prompt is the one exception.
 - Electron apps get the same turbo after 1.3.0, opt-in per app, relaunching an app only on the user's click.
 - Right after 1.3.0 come Electron and slimming the plugin, which Playwright grows to about 15 MB.

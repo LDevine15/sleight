@@ -71,6 +71,7 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    cleanly, it stops and the work goes to the production wiring (owner, 2026-10-14).
    Turbo's safety is four rules from here on (owner, 2026-10-14, LAWS): the payment rule, page content never authorizes, no blind
    resend of a submit, background only. Fills check the target element alone. Per-field tokens and per-site prompts are gone.
+   With turbo on, the engine's browser path stays as a fallback for what turbo lacks (owner, 2026-10-14).
    Speed follow-ups (owner, 2026-10-14): turbo becomes the browser default once it is proven. The guard's first-action read gets
    an A/B against no read (GR1). The read after a click, shortcut, Return, Escape, Tab or Space goes to an open-ended investigation
    by gpt-6-astra and an Opus subagent working independently (SR1), because it is the largest remaining tool-time cost. Lanes get a
