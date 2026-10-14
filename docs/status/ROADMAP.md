@@ -65,6 +65,8 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    app, with an Always allow that only the user's click writes. EP-1 to EP-7 build after 1.3.0.
    The astra report (2026-10-13) disproved one extension queue across sessions. The owner lifted the code freeze for AS-1 (bind discovery
    to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. MIT and Apache-2.0 code may be adapted (Apache with its notice). Closed code gives notes only.
+   Owner, 2026-10-14: a prototype turbo arm (TP1) runs the Haiku gate round early, as a measurement before the production wiring
+   finishes. It is never published as the claim.
 4. Release 1.3.0, the claim post, then the video.
 After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
 the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after

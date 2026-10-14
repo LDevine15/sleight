@@ -67,6 +67,8 @@ Next steps, in order:
    interfaces: a typed Playwright instance, file upload, dialogs, wheel input and a persistent transport owner. BP2-P1I2
    (codex-hdlbv) builds all of them plus P3's assumed contracts in one item, with an INTERFACE.md. Then P2 and P3 resume on it,
    and BP2-P1B follows. AM1 is parked until after 1.3.0.
+   In parallel (owner, 03:30 UTC): TP1 (codex-hdlbw) builds a prototype turbo arm from the bench modules with fixture trust, so
+   sleight-arch can run the Haiku gate round against FowlBrowser before the production wiring is merged. Measurement only, never a claim.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
