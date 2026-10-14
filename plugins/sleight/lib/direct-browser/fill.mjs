@@ -77,6 +77,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
       for (let i = 0; i < fields.length && !stopped; i++) {
         const { ref, value } = fields[i]; sent = false;
         try {
+          if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
           if (/^s\d+$/.test(ref)) {
             const step = typeof value === 'boolean' ? { do: value ? 'check' : 'uncheck', ref } :
               Array.isArray(value) ? { do: 'select', ref, values: value } : { do: 'type', ref, text: String(value) };
@@ -100,12 +101,30 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
           const prior = await loc.evaluate(inspectElement, value, options);
           const send = async (action, kind = 'type', locator = loc) => {
             if (stopped) throw new FieldError(stopped);
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
             const element = await locator.evaluate(inspectElement, value, options);
             const target = { ...element, element, prior, tab, page, ref, locator, state: tab.state, do: kind };
-            refusal(await check(ctx, kind, target));
-            if (kind === 'click' && element.submit) refusal(await check(ctx, 'submit', target));
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+            if (kind === 'click' && (element.submit || prior.submit)) {
+              if (locator !== loc) throw new FieldError('submit-capable choice needs its own browser_act ref');
+              // V4 classifies, consumes consent once, journals the submit and
+              // retains pending input through its settle. Never pre-consume here.
+              sent = true;
+              const result = await runSteps(tab, [{ do: 'click', ref }], ctx);
+              if (!Array.isArray(result?.lines)) throw new FieldError('guarded submit result unavailable');
+              sent = !result.lines.some(line => /: not run:/.test(line));
+              if (actionFailed(result)) throw new FieldError('submit stopped; read the page before retrying');
+              return result;
+            }
+            // The real check is synchronous. No await may separate its one-use
+            // authority consumption from the physical operation it permits.
+            refusal(check(ctx, kind, target));
             if (stopped) throw new FieldError(stopped);
-            sent = true; return action();
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+            const pending = {};
+            tab.state.actionPending = pending;
+            try { sent = true; return await action(); }
+            finally { if (tab.state.actionPending === pending) tab.state.actionPending = false; }
           };
           if (state.kind === 'file') {
             if (!Array.isArray(value) || !value.length) throw new FieldError('file fields need browser_act upload with user-named paths');

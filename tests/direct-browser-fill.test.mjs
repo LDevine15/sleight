@@ -334,3 +334,40 @@ test('ordinary nonsubmit fields remain usable while a submit only needs a delive
   const r = await h.fill([{ ref: 'e1', value: 'ordinary' }]);
   assert.equal(r.rows[0].status, 'set'); assert.equal(node.value, 'ordinary'); assert.ok(h.tab.state.submitUnconfirmed);
 });
+
+test('a direct fill holds its input gate until its exact promise settles', async () => {
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const h = harness({ e1: element() }, { mutate: () => held });
+  const first = h.fill([{ ref: 'e1', value: 'first' }]);
+  while (!h.input.length) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(h.tab.state.actionPending);
+  const second = await h.fill([{ ref: 'e1', value: 'second' }]);
+  assert.equal(second.rows[0].status, 'failed'); assert.equal(h.input.length, 1);
+  release(); const result = await first;
+  assert.equal(result.rows[0].status, 'set'); assert.equal(h.tab.state.actionPending, false);
+});
+test('a settled direct fill cannot clear a replacement pending owner', async () => {
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const h = harness({ e1: element() }, { mutate: () => held });
+  const pending = h.fill([{ ref: 'e1', value: 'first' }]);
+  while (!h.input.length) await new Promise(resolve => setImmediate(resolve));
+  const replacement = {}; h.tab.state.actionPending = replacement;
+  release(); await pending; assert.equal(h.tab.state.actionPending, replacement);
+});
+
+test('a payment submit consumes confirmation only in the delegated physical operation', async () => {
+  const node = element('BUTTON', { role: 'checkbox', type: 'submit' }); node.closest = () => ({});
+  let consumed = 0, clicks = 0;
+  const consume = () => ++consumed === 1 ? { verdict: 'allow' } : { verdict: 'confirm' };
+  const loc = { evaluate: async (fn, arg) => fn(node, arg), click: async () => { clicks++; node.checked = true; } };
+  const page = { on() {}, off() {}, getByRef: () => loc };
+  const fill = createFillFields({ inspectElement: () => ({ tag: 'button', kind: 'button', connected: true,
+    visible: true, enabled: true, submit: true, payment: true, formPayment: true, form: true }),
+    check: consume, runSteps: async (tab, steps) => {
+      assert.deepEqual(steps, [{ do: 'click', ref: 'e1' }]);
+      if (consume().verdict !== 'allow') return { lines: ['1 click e1: not run: payment confirmation required'], stoppedAt: 1 };
+      await loc.click(); return { lines: ['1 click e1: done'], stoppedAt: null };
+    } });
+  const r = await fill({ page, state: { snapshotNo: 1 } }, [{ ref: 'e1', value: true }], {}, {});
+  assert.equal(r.rows[0].status, 'set'); assert.equal(clicks, 1); assert.equal(consumed, 1);
+});
