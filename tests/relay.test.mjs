@@ -2298,6 +2298,29 @@ test('first-off reaches only the ordinary native guard and leaves strict review 
   }
 });
 
+test('comma-separated guard modes combine quiet-edits with first-off and careful wins', async () => {
+  for (const [guardMode, firstOff, quietEdits, careful] of [
+    ['quiet-edits', false, true, false], ['first-off,quiet-edits', true, true, false],
+    [' quiet-edits , first-off ', true, true, false], ['first-off,quiet-edits,careful', false, false, true],
+    ['careful,quiet-edits', false, false, true], ['quiet-edits-extra', false, false, false],
+  ]) {
+    const h = harness({ guardMode, changeReview: false,
+      inputLease: new InputLease({ directory: leaseDir('sleight-quiet-edits-'), holder: 'A' }) });
+    helperRead(h, 1, 'let app = await cua.getApp("TextEdit")');
+    h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text:
+      `Window: "a.txt", App: TextEdit, URL: ${fixtureURL}\n0 standard window a.txt` }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } });
+    await tick();
+    h.fromClient({ id: 2, method: 'tools/call', params: { name: 'js', arguments: {
+      code: 'await app.pressKey("super+a"); await app.typeText("x")' } } });
+    await tick();
+    const sent = h.toServer.find(m => m.id === 2)?.params.arguments.code ?? '';
+    assert.equal(/"firstOff":true/.test(sent), firstOff, guardMode);
+    assert.equal(/"quietEdits":true/.test(sent), quietEdits, guardMode);
+    assert.match(sent, new RegExp(`"careful":${careful}`));
+  }
+});
+
 test('the guard reuses a passed read only while the app\'s windows are unchanged', async () => {
   const windows = [{ id: 5, app: 'TextEdit', title: 'a.txt' }];
   const state = 'Window: "a.txt", App: TextEdit\n0 standard window a.txt\n1 text entry area Value: hi';

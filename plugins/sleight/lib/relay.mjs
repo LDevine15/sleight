@@ -2064,6 +2064,7 @@ export function createRelay({
           observe: !browser && (!read || (!isInventoryRead(originalCode) && /cua\.getApp\(|\.(?:getAXState|getAXStateAndScreenshot)\(/.test(originalCode))) });
         if (typeof originalCode === 'string') {
           const setup = { reuseSetup: guardReady, acknowledge: true };
+          const modes = guardMode?.split(',').map(mode => mode.trim()) ?? [], careful = modes.includes('careful');
           const target = documentMode ? observedDocument : inputLease ? leaseWindow : lastWindow;
           const reason = documentMode ? undefined : selectedWindow ? `Selected window changed. ${selectionRecovery()}` : inputLease
             ? 'Input lease stopped this action: window or URL changed. Read the intended window again before acting.'
@@ -2071,7 +2072,7 @@ export function createRelay({
           if (browser) {
             msg.params.arguments.code = guardedCode(selectedBrowserCode(browserRecovery.code(originalCode), browserChoice, `${sessionId}:${turnId}`), target, reason,
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
-              { ...setup, timing: guardTiming, careful: guardMode === 'careful', fileOnly: changeReview, browserCandidate: true,
+              { ...setup, timing: guardTiming, careful, fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
                 nativeDenied: nativeDenied ?? 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.' });
           } else if (read) {
@@ -2096,12 +2097,13 @@ export function createRelay({
             // A first action that sends keys, text or coordinates reuses it whatever the read took
             // (owner, 2026-10-10, for about 0.35 s a run): a window switch between calls isn't caught
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
-            const prior = !documentMode && !changeReview && guardMode !== 'careful' && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
+            const prior = !documentMode && !changeReview && !careful && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
               target?.app === priorRead.app ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
             msg.params.arguments.code = guardedCode(swipeCode, target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, timing: guardTiming, careful: guardMode === 'careful' || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
-                ...(guardMode === 'first-off' ? { firstOff: !documentMode && !changeReview } : {}),
+              { ...setup, timing: guardTiming, careful: careful || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+                ...(modes.includes('first-off') ? { firstOff: !careful && !documentMode && !changeReview } : {}),
+                ...(modes.includes('quiet-edits') ? { quietEdits: !careful && !documentMode } : {}),
                 adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.

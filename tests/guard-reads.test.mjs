@@ -216,6 +216,55 @@ test('first-off still refuses input after lease expiry or replacement, before an
   }
 });
 
+const editKeys = ['super+a', 'cmd+c', 'command+x', 'meta+z', 'super+shift+z', 'cmd+b', 'cmd+i', 'cmd+u',
+  ...['Left', 'Right', 'Up', 'Down', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].flatMap(key =>
+    [key, 'super+' + key, 'alt+shift+' + key, 'ctrl+' + key])];
+for (const key of editKeys) test('quiet-edits skips the next read after ' + key, async () => {
+  for (const [options, reads] of [[{}, key.includes('+') ? 3 : 2], [{ quietEdits: true }, 2],
+    [{ quietEdits: true, careful: true }, 3]]) {
+    const f = fixture({ strict: true });
+    await f.run(`await app.pressKey(${JSON.stringify(key)}); await app.typeText("x");`, options);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, reads, JSON.stringify(options));
+  }
+});
+
+for (const role of ['text field', 'text area', 'text entry area', 'search field', 'search text field', 'combo box'])
+  for (const target of ['1', '{ id: "editor" }', '{ label: "Editor" }'])
+    test('quiet-edits recognizes ' + role + ' clicked by ' + target, async () => {
+      for (const next of ['typeText("x")', 'paste("x")']) for (const [options, reads] of
+        [[{}, 3], [{ quietEdits: true }, 2], [{ quietEdits: true, careful: true }, 3]]) {
+        const f = fixture({ strict: true, current: () => tree(expected, '\t1 ' + role + ' Description: Editor, ID: editor') });
+        await f.run(`await app.click(${target}); await app.${next};`, options);
+        assert.equal(f.calls.filter(c => c[0] === 'read').length, reads, JSON.stringify(options));
+        assert.deepEqual(f.calls.find(c => c[0] === 'click'), ['click', 1]);
+      }
+    });
+
+for (const action of ['click(1)', 'click([5,5])', ...['super+o', 'super+s', 'super+n', 'super+p', 'super+shift+g',
+  'Return', 'Escape', 'Tab', 'Space', 'super+shift+a', 'ctrl+a', 'super+alt+z'].map(key => `pressKey("${key}")`)])
+  test('quiet-edits retains the settle read after ' + action, async () => {
+    const f = fixture({ strict: true, current: () => tree(expected, '\t1 button Description: text field, ID: editor') });
+    await f.run(`await app.${action}; await app.typeText("x");`, { quietEdits: true });
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 3);
+  });
+
+test('quiet-edits field clicks skip only typing or paste and keep element lookups fresh', async () => {
+  for (const next of ['pressKey("super+a")', 'click([5,5])', 'click(1)', 'click({id:"editor"})', 'click({label:"Editor"})']) {
+    const f = fixture({ strict: true, current: () => tree(expected, '\t1 text field Description: Editor, ID: editor') });
+    await f.run(`await app.click(1); await app.${next};`, { quietEdits: true });
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 3);
+  }
+});
+
+test('quiet-edits combines with first-off and careful overrides both', async () => {
+  for (const [options, reads] of [[{ firstOff: true, quietEdits: true }, 1],
+    [{ firstOff: true, quietEdits: true, careful: true }, 3]]) {
+    const f = fixture({ strict: true });
+    await f.run('await app.pressKey("super+a"); await app.typeText("x");', options);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, reads);
+  }
+});
+
 test('a window change mid-batch stops the next numbered action, and careful mode stops keys too', async () => {
   for (const [code, options, stopped] of [['await app.typeText("a"); await app.typeText("x");', {}, false],
     ['await app.typeText("a"); await app.typeText("x");', { careful: true }, true], ['await app.click(1); await app.typeText("x");', {}, true],

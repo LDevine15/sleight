@@ -171,6 +171,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.timing = !!update?.timing;
     state.careful = !!update?.careful;
     state.firstOff = !!update?.firstOff && !state.careful && !state.fileOnly && !state.cancelOnly;
+    state.quietEdits = !!update?.quietEdits && !state.careful;
     // The previous call's read, when the relay judged it reusable for this call's first action.
     state.prior = update?.prior;
     // Whether this call has acted, and the handle it started on. A call that took no action after the
@@ -406,7 +407,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
-            typeof before.key === 'string' && !before.key.includes('+') && !/^(?:return|enter|escape|esc|tab|space)$/i.test(before.key)));
+            typeof before.key === 'string' && !before.key.includes('+') && !/^(?:return|enter|escape|esc|tab|space)$/i.test(before.key)) ||
+            state.quietEdits && (before.editKey || before.editable && ['typeText', 'paste'].includes(name)));
           let observed;
           if (text === undefined && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
             observed = skipFirst ? state.expected : state.callHeaders.get(proxy);
@@ -539,7 +541,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           }
           await checkLease();
           state.activeApp = proxy;
-          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, modal: text === undefined ? undefined : hasModal(text) });
+          // Only the resolved target's role makes a field click quiet; coordinates and words in a
+          // button's description say nothing about whether it takes text input.
+          const line = name === 'click' && typeof args[0] === 'number' ? elements(text ?? '').get(args[0]) : undefined;
+          const editable = typeof line === 'string' && /^(?:text field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line);
+          const keys = name === 'pressKey' && typeof args[0] === 'string' ? args[0].toLowerCase().split('+') : [];
+          const key = keys.pop(), modifiers = keys.every(k => ['super', 'cmd', 'command', 'meta', 'shift', 'alt', 'option', 'ctrl', 'control'].includes(k));
+          const editKey = modifiers && (/^(?:arrow)?(?:left|right|up|down)$/.test(key ?? '') ||
+            keys.length === 1 && ['super', 'cmd', 'command', 'meta'].includes(keys[0]) && ['a', 'c', 'x', 'z', 'b', 'i', 'u'].includes(key) ||
+            keys.length === 2 && keys.includes('shift') && keys.some(k => ['super', 'cmd', 'command', 'meta'].includes(k)) && key === 'z');
+          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, modal: text === undefined ? undefined : hasModal(text) });
           const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? args[0] : undefined;
           if (typeof typed === 'string') state.typed.push(typed);
           // A second handle may refer to this same app/window. Every input
