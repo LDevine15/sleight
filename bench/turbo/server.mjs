@@ -78,7 +78,8 @@ export function createProtocol({ output = process.stdout, start } = {}) {
     if (message.method === 'tools/list') return send({ id, result: { tools: compactTools() } });
     if (message.method !== 'tools/call') return send({ id, error: { code: -32601, message: 'Method not found' } });
     let request;
-    try { request = validateCall(message.params); }
+    // Only the call itself, as the relay passes it: Claude Code adds _meta to every tools/call.
+    try { request = validateCall({ name: message.params?.name, arguments: message.params?.arguments }); }
     catch { return send({ id, error: { code: -32602, message: 'Invalid turbo tool request' } }); }
     try {
       starting ??= Promise.resolve().then(start); session = await starting;

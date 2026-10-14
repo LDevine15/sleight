@@ -123,6 +123,18 @@ test('invalid tool calls and protocol EOF never start a browser', async () => {
   assert.equal(starts, 0); assert.ok(messages.every(message => message.error.code === -32602)); await protocol.close();
 });
 
+// Claude Code adds _meta to every tools/call; the first live round refused all four tools on it (2026-10-14).
+test('a tool call carrying the client\'s _meta reaches the session', async () => {
+  const { createProtocol } = await load('server.mjs'); const calls = [];
+  const output = new PassThrough(), messages = []; output.on('data', data => messages.push(JSON.parse(data)));
+  const protocol = createProtocol({ output, start: async () => ({ call: async request => { calls.push(request); return { tab: 't1' }; },
+    delivered() {}, close: async () => {} }) });
+  await protocol.message({ id: 1, method: 'tools/call', params: { name: 'browser_open',
+    arguments: { browser: 'bbench', url: origin + '/checkout' }, _meta: { 'claudecode/toolUseId': 'toolu_1' } } });
+  assert.equal(messages[0].error, undefined); assert.deepEqual(calls.map(call => call.name), ['browser_open']);
+  await protocol.close();
+});
+
 test('a failed module revocation cannot become a clean browser receipt', async t => {
   const { createSession } = await load('server.mjs');
   const parent = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-revoke-')));
