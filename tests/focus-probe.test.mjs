@@ -62,8 +62,12 @@ function ports({ badPath = false, changed = false, arm = 'focus', axError = fals
   return { events, options: { arm, path: '/owned/path', index: 1, ...clock(),
     call: async code => { events.push(code); if (code.includes('typeText')) typed = true; return { content: [] }; },
     observe: async () => axError ? { status: 'unknown' } : states.shift(),
-    fixture: async op => op === 'field' ? { value: badPath ? 'path' : '/owned/path', documentUnchanged: !changed } :
-      { documentUnchanged: !typed || !changed, clean: !typed },
+    fixture: async op => {
+      if (op === 'open') return { openBound: true };
+      if (op === 'field') return { value: badPath ? 'path' : '/owned/path', documentUnchanged: !changed };
+      if (op === 'document') return { documentUnchanged: !typed || !changed, clean: !typed };
+      throw new Error('Unsupported fixture operation ' + op);
+    },
   } };
 }
 
@@ -148,6 +152,65 @@ test('read arm reads after each opener, and focus AX errors invoke the same fall
     assert.equal(p.events.filter(code => code.includes('getAXState')).length, 3);
     if (setup.axError) assert.ok(trial.waits.every(wait => wait.reason === 'baseline-error'));
   }
+});
+
+function fixtureReplies({ nested = true, extraField = false, search = false, foreign = false, close = false } = {}) {
+  const path = '/private/tmp/sleight-exact-AbCd12/exact.txt', array = values => ({ count: values.length, objectAtIndex: i => values[i] });
+  const area = { AXRole: 'AXTextArea', AXValue: 'SR1 owned fixture\n' };
+  const root = { AXRole: 'AXWindow', AXDocument: 'file://' + path, AXChildren: array([area]) };
+  const open = { AXRole: 'AXWindow', AXSubrole: 'AXDialog' };
+  const sheet = { AXRole: 'AXSheet', AXParent: foreign ? root : open };
+  const field = { AXRole: 'AXTextField', AXSubrole: search ? 'AXSearchField' : null,
+    AXWindow: open, AXParent: nested ? sheet : open, AXValue: '/owned/path' };
+  sheet.AXChildren = array(extraField ? [field, { AXRole: 'AXTextField' }] : [field]);
+  open.AXChildren = array([sheet]);
+  let phase = -1, closed = false;
+  const ax = { get AXWindows() { return array(phase < 2 ? [root] : [root, open]); },
+    get AXFocusedUIElement() { return phase < 3 ? { AXRole: 'AXTextField', AXWindow: open, AXParent: open } : field; } };
+  const frames = ['{"id":0,"op":"preflight"}\n', '{"id":1,"op":"attach"}\n', '{"id":2,"op":"open"}\n',
+    '{"id":3,"op":"field"}\n', ...(close ? ['{"id":4,"op":"close"}\n'] : []), ''], replies = [];
+  const dollar = value => ({ value, dataUsingEncoding: () => value });
+  Object.assign(dollar, {
+    NSURL: { fileURLWithPath: value => ({ absoluteString: 'file://' + value }) },
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => array([{ processIdentifier: 12, launchDate: { timeIntervalSince1970: 123 } }]) },
+    NSWorkspace: { sharedWorkspace: { frontmostApplication: { processIdentifier: 17, bundleIdentifier: 'org.fixture.foreground' } } },
+    AXIsProcessTrusted: () => true, AXUIElementCreateApplication: () => ax, AXUIElementSetMessagingTimeout: () => 0,
+    AXUIElementCopyAttributeValue: (element, name, ref) => { if (!(name.value in element)) return -25212; ref[0] = element[name.value]; return 0; },
+    CFEqual: (a, b) => a === b,
+    NSFileHandle: { fileHandleWithStandardInput: { get availableData() { phase++; return frames.shift(); } },
+      fileHandleWithStandardOutput: { writeData: value => replies.push(JSON.parse(value)) } },
+    NSString: { alloc: { initWithDataEncoding: value => value } }, NSUTF8StringEncoding: 4,
+  });
+  const doc = { path: () => path, close() { closed = true; } };
+  vm.runInNewContext(readFileSync(new URL('../bench/focus-probe-fixture.js', import.meta.url), 'utf8') + `\nrun(${JSON.stringify([path])});`, {
+    $: dollar, ObjC: { import() {}, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value },
+    Ref: () => [], Application: () => ({ running: () => false, documents: () => [doc] }),
+  });
+  return { replies, closed };
+}
+
+test('fixture binds the Open modal and accepts only its new nested path sheet', () => {
+  const { replies } = fixtureReplies();
+  assert.equal(replies[1].attached, true); assert.equal(replies[2].openBound, true);
+  assert.equal(replies[3].ok, true); assert.equal(replies[3].value, '/owned/path');
+});
+
+for (const options of [{ nested: false }, { extraField: true }, { search: true }, { foreign: true }])
+  test('fixture refuses an unrelated or ambiguous path field: ' + JSON.stringify(options), () => {
+    const { replies } = fixtureReplies(options);
+    assert.equal(replies[3].ok, false);
+  });
+
+test('fixture refuses document close while the ambiguous panel remains', () => {
+  const { replies, closed } = fixtureReplies({ extraField: true, close: true });
+  assert.equal(replies.at(-1).ok, false); assert.equal(closed, false);
+});
+
+test('trial stops before the Go shortcut if the Open modal cannot be bound', async () => {
+  const p = ports(), fixture = p.options.fixture;
+  p.options.fixture = async op => { if (op === 'open') throw new Error('Open modal unproved'); return fixture(op); };
+  const trial = await runTrial(p.options);
+  assert.equal(trial.correct, false); assert.equal(p.events.includes('await app.pressKey("super+shift+g")'), false);
 });
 
 test('cut path or document input is recorded as incorrect and aborts before Return', async () => {

@@ -16,7 +16,7 @@ function run(argv) {
   if (!/^\/private\/tmp\/sleight-exact-[A-Za-z0-9]+\/exact\.txt$/.test(path ?? '')) throw new Error('Owned probe path required');
   const url = ObjC.unwrap($.NSURL.fileURLWithPath(path).absoluteString), app = Application('TextEdit');
   const front = () => Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier);
-  let ax, root, area, doc, pid, processStart, originalFront, initiallyRunning, buffer = '';
+  let ax, root, area, doc, openPanel, pid, processStart, originalFront, initiallyRunning, buffer = '';
   const running = () => $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.TextEdit');
   const documents = () => app.documents();
   function verify() {
@@ -46,6 +46,31 @@ function run(argv) {
     if (!$.CFEqual(root, focusWindow) && !dialog(scalar(attribute(focusWindow, 'AXRole')),
       scalar(attribute(focusWindow, 'AXSubrole', true)))) throw new Error('Input focus belongs to another window');
     return { clean: panels === 0, owned: true };
+  }
+  function modalChain(element) {
+    const result = [], seen = [];
+    for (let node = element; node; node = attribute(node, 'AXParent', true)) {
+      if (seen.length >= 24 || seen.some(other => $.CFEqual(other, node))) throw new Error('Ambiguous modal ancestry');
+      seen.push(node);
+      if (dialog(scalar(attribute(node, 'AXRole')), scalar(attribute(node, 'AXSubrole', true)))) result.push(node);
+    }
+    // An app-level Open panel may only be named by AXWindow, rather than AXParent.
+    const window = attribute(element, 'AXWindow');
+    if (!result.length && dialog(scalar(attribute(window, 'AXRole')), scalar(attribute(window, 'AXSubrole', true)))) result.push(window);
+    return { modals: result, ancestors: seen };
+  }
+  function pathControl(surface) {
+    const fields = []; let count = 0;
+    const walk = (node, depth) => {
+      if (++count > 400 || depth > 16) throw new Error('Path sheet tree budget exceeded');
+      const role = scalar(attribute(node, 'AXRole'));
+      if (['AXTextField', 'AXTextArea', 'AXComboBox'].includes(role)) { fields.push(node); return; }
+      const children = attribute(node, 'AXChildren', true);
+      for (let i = 0; i < Number(children?.count ?? 0); i++) walk(children.objectAtIndex(i), depth + 1);
+    };
+    walk(surface, 0);
+    if (fields.length !== 1) throw new Error('Ambiguous path field');
+    return fields[0];
   }
   function answer(request) {
     if (!$.AXIsProcessTrusted()) throw new Error('Accessibility unavailable; no permission prompt requested');
@@ -80,11 +105,27 @@ function run(argv) {
       verify(); return { attached: true };
     }
     if (request.op === 'inventory') return inventory();
-    if (request.op === 'document') return { ...inventory(), text: scalar(attribute(area, 'AXValue')) };
+    if (request.op === 'document') {
+      const state = inventory(); if (state.clean) openPanel = undefined;
+      return { ...state, text: scalar(attribute(area, 'AXValue')) };
+    }
+    if (request.op === 'open') {
+      if (inventory().clean) throw new Error('No owned Open modal');
+      const chain = modalChain(attribute(ax, 'AXFocusedUIElement'));
+      if (chain.modals.length !== 1) throw new Error('Open modal identity ambiguous');
+      openPanel = chain.modals[0]; return { openBound: true };
+    }
     if (request.op === 'field') {
       const state = inventory(); if (state.clean) throw new Error('No owned Go to Folder sheet');
       const focus = attribute(ax, 'AXFocusedUIElement');
       if (!['AXTextField', 'AXTextArea', 'AXComboBox'].includes(scalar(attribute(focus, 'AXRole'))) || $.CFEqual(focus, area)) throw new Error('Focus is not on the owned path field');
+      const chain = modalChain(focus);
+      if (!openPanel || chain.modals.length !== 2 || $.CFEqual(chain.modals[0], openPanel) ||
+        !$.CFEqual(chain.modals[1], openPanel) || scalar(attribute(focus, 'AXSubrole', true)) === 'AXSearchField') {
+        throw new Error('Focus is not in a new sheet of the bound Open modal');
+      }
+      const control = pathControl(chain.modals[0]);
+      if (!chain.ancestors.some(node => $.CFEqual(node, control))) throw new Error('Focus is not the unique path control');
       return { value: scalar(attribute(focus, 'AXValue')), text: scalar(attribute(area, 'AXValue')) };
     }
     if (request.op === 'close') {

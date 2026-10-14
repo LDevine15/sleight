@@ -71,6 +71,7 @@ export async function runTrial({ arm, index, path, call, observe, fixture, now =
       const wait = arm === 'focus' ? await waitForFocus({ baseline, observe, now, sleep: pause }) : { reason: null, polls: 0 };
       if (arm === 'read' || wait.reason) await checked('await app.getAXState({ disableDiffing: true })');
       entry.waits.push({ opener: key, ...wait, waitMs: now() - waitStart, fallback: arm === 'focus' && !!wait.reason });
+      if (key === 'super+o') assert.equal((await fixture('open')).openBound, true, 'Open modal unproved');
     }
     await checked(`await app.typeText(${JSON.stringify(path)})`);
     const field = await fixture('field');
