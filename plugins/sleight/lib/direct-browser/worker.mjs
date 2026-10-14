@@ -258,7 +258,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
       if (ui.authenticate(event) !== true) return;
       if (['disconnect','cleanup'].includes(event.action)) await close();
       else if (event.action === 'pause') { stopped = true; await protocol?.end(); status(); }
-    });
+    }, { deadline: Date.now() + 300000 });
   }
   try {
     const config = (dependencies.readConfig ?? readInstalledConfig)();

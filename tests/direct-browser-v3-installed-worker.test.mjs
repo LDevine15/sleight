@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { createUiChannel } from '../plugins/sleight/lib/direct-browser/host.mjs';
 import { startInstalledV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 
 function fixture() {
@@ -73,4 +75,79 @@ test('installed launcher selects v3 first and keeps v2 as a typed fallback', asy
     v2:async()=>{events.push('v2');return null;} },code=>events.push(code)),null);
   assert.deepEqual(events,['V3_RUNTIME_UNAVAILABLE','v2']);
   await assert.rejects(createInstalledBrowserBridge({v3:async()=>{throw Error('HOST_PACKAGE_MISMATCH');},v2:async()=>assert.fail('unsafe fallback') }),/HOST_PACKAGE_MISMATCH/);
+});
+
+async function controls(t) {
+  const f = fixture(), read = new PassThrough(), write = new PassThrough(), views = [];
+  let clock = 1000, lost = false, refresh, interval;
+  t.mock.method(Date, 'now', () => clock);
+  write.on('data', data => views.push(JSON.parse(data.toString())));
+  f.dependencies.createUi = (_receipt, onLoss) => createUiChannel({ read, write,
+    onLoss() { lost = true; onLoss(); } });
+  f.dependencies.schedule = (callback, ms) => { refresh = callback; interval = ms; return undefined; };
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  t.after(() => host.close());
+  return { ...f, views, interval, refresh: () => refresh(), lost: () => lost,
+    advance: ms => { clock += ms; },
+    async choose(view, choice, nonce = view.nonce) {
+      read.write(JSON.stringify({ id: view.id, nonce, choice }) + '\n'); await settle();
+    } };
+}
+for (const choice of ['pause', 'disconnect']) {
+  test(`installed ${choice} remains authenticated between status refreshes`, async t => {
+    const f = await controls(t), control = f.views[0];
+    assert.equal(f.interval, 60000);
+    f.advance(35000); await f.choose(control, choice);
+    if (choice === 'disconnect') assert.ok(f.events.includes('disconnect'));
+    else {
+      assert.equal(f.lost(), false);
+      assert.equal(f.views.at(-1).data.status, 'paused');
+      f.channel.emit('message', { version: 3, id: 'paused', method: 'begin', params: { turn: 'one', text: 'read' } });
+      await settle(); assert.equal(f.frames.find(frame => frame.id === 'paused').result.available, false);
+      assert.ok(!f.events.includes('connect'));
+    }
+  });
+}
+test('installed delayed cleanup retains ownership until collection succeeds', async t => {
+  const f = await controls(t); let cleanedUp = false;
+  f.dependencies.createPages = () => ({ endTurn: async () => ({ cleanedUp }), list: async () => [] });
+  f.channel.emit('message', { version: 3, id: 'begin', method: 'begin', params: { turn: 'one', text: 'read' } });
+  await settle(); assert.equal(f.frames.find(frame => frame.id === 'begin').result.available, true);
+  f.advance(35000); await f.choose(f.views[0], 'pause');
+  assert.equal(f.lost(), false);
+  const control = f.views.at(-1);
+  assert.equal(control.data.status, 'cleanup-required'); assert.deepEqual(control.choices, ['cleanup']);
+  assert.ok(!f.events.includes('disconnect'));
+  cleanedUp = true; f.advance(35000); await f.choose(control, 'cleanup');
+  assert.ok(f.events.includes('disconnect'));
+});
+test('installed refreshed control replaces its previous authenticated envelope', async t => {
+  const f = await controls(t), old = f.views[0];
+  f.advance(60000); f.refresh(); const current = f.views.at(-1);
+  assert.notEqual(current.id, old.id);
+  assert.equal(current.nonce, old.nonce);
+  await f.choose(old, 'disconnect');
+  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+});
+test('installed current control accepts delayed disconnect after replacement', async t => {
+  const f = await controls(t); f.advance(60000); f.refresh();
+  f.advance(35000); await f.choose(f.views.at(-1), 'disconnect');
+  assert.ok(f.events.includes('disconnect'));
+});
+test('installed controls retain finite expiry', async t => {
+  const f = await controls(t), control = f.views[0];
+  f.advance(300000); await f.choose(control, 'disconnect');
+  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+});
+test('installed controls reject a wrong nonce before expiry', async t => {
+  const f = await controls(t);
+  await f.choose(f.views[0], 'disconnect', 'wrong');
+  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+});
+
+test('installed controls reject a consumed envelope replay', async t => {
+  const f = await controls(t), control = f.views[0];
+  await f.choose(control, 'pause'); assert.equal(f.views.at(-1).data.status, 'paused');
+  await f.choose(control, 'disconnect');
+  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
 });
