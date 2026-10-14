@@ -149,10 +149,14 @@ export function popupDestination() {
   const scripts = Array.from(document.scripts);
   const handlers = Array.from(document.querySelectorAll('*')).flatMap(node =>
     Element.prototype.getAttributeNames.call(node).filter(name => /^on/i.test(name))
-      .map(name => Element.prototype.getAttribute.call(node, name) ?? ''));
+      .map(name => ({ name, text: Element.prototype.getAttribute.call(node, name) ?? '' })));
+  // The static self-close click has no opener or returned-window dependency.
+  // Every other nonempty event body remains uncertain, including lifecycle events.
+  const independent = handlers.every(({ name, text }) => !text.trim() || /^onclick$/i.test(name) &&
+    /^\s*window\s*\.\s*close\s*\(\s*\)\s*;?\s*$/.test(text));
   const source = scripts.map(s => s.textContent ?? '').join('\n');
   return { ready: document.readyState !== 'loading', url: window.location.href, title: document.title.slice(0, 512),
-    independent: !handlers.some(text => text.trim()) && !scripts.some(s => s.src) &&
+    independent: independent && !scripts.some(s => s.src) &&
       !/\b(?:opener|postMessage|eval|Function|import|createElement|innerHTML|write|Reflect|Proxy)\b|\b[A-Za-z_$][\w$]*\s*\[/.test(source) };
 }
 

@@ -51,3 +51,11 @@ test('external scripts and inline opener source still refuse independently of at
 test('element property overrides cannot hide destination event attributes', () => {
   assert.equal(destination({ attrs: { onload: 'finishHandshake()' }, shadow: true }).independent, false);
 });
+
+test('a literal click handler that only closes its own window remains independent', () => {
+  for (const onclick of ['window.close()', ' window . close ( ) ; '])
+    assert.equal(destination({ attrs: { onclick } }).independent, true);
+  for (const onclick of ['window.close(other)', 'window.close(); finishHandshake()', 'return window.close()', 'close()'])
+    assert.equal(destination({ attrs: { onclick } }).independent, false);
+  assert.equal(destination({ attrs: { onload: 'window.close()' } }).independent, false);
+});
