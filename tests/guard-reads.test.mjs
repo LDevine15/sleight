@@ -251,42 +251,41 @@ test('bind sends seven clicks from one capture and retains the final read', asyn
   }
 });
 
-test('bound Calculator-style clicks pay one inventory per capture and per later action, not AX reads', async () => {
+test('bound Calculator-style clicks take no inventory or AX read between clicks', async () => {
   const rows = Array.from({ length: 7 }, (_, i) => `\t${i + 1} button Description: ${i + 1}, ID: key-${i + 1}`).join('\n');
   const f = fixture({ strict: true, current: () => tree(expected, rows) });
   let inventories = 0, clock = 0;
   f.context.performance = { now: () => clock };
   f.context.cua.listApps = async options => {
     assert.equal(options.emit, false); inventories++; clock += 11;
-    return [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }];
+    return [{ id: 'fixture.app', displayName: expected.app, isRunning: true }];
   };
   await f.run(Array.from({ length: 7 }, (_, i) => `await app.click(${i + 1});`).join('\n'), { bind: true, timing: true });
-  assert.equal(inventories, 7);
+  assert.equal(inventories, 0);
   assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', ...Array(7).fill('click'), 'read']);
   const metrics = f.output.filter(line => line.startsWith('[sleight:guard-timing]')).map(line => JSON.parse(line.slice(22)));
-  assert.deepEqual(metrics.filter(m => m.phase === 'bound-windows').map(m => m.ms), Array(7).fill(11));
+  assert.deepEqual(metrics.filter(m => m.phase === 'bound-windows'), []);
 });
 
-test('binding reads again when windows change, vanish or cannot be listed', async () => {
-  for (const windows of [[], [{ id: 2, title: expected.title }], null]) {
-    let acted = false;
-    const f = fixture({ current: () => tree(expected, acted ? '\t1 button Other\n\t2 button Different' : '\t1 button First\n\t2 button Second'),
-      action: () => { acted = true; } });
-    f.context.cua.listApps = async () => {
-      if (acted && windows === null) throw Error('unavailable');
-      return [{ id: 'fixture.app', displayName: expected.app, windows: acted ? windows : [{ id: 1, title: expected.title }] }];
-    };
-    await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true }), /changed what element 2 is/);
-    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
-  }
+test('a plain button swapping to a look-alike document stays bound until the final read', async () => {
+  let replaced = false;
+  const replacement = { ...expected, url: 'file:///tmp/look-alike/a.txt' };
+  const rows = '\t1 button First\n\t2 button Second';
+  const f = fixture({ strict: true, current: () => tree(replaced ? replacement : expected, rows),
+    action: () => { replaced = true; } });
+  f.context.cua.listApps = () => { assert.fail('bound actions must not request a window inventory'); };
+  await f.run('await app.click(1); await app.click(2);', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+  assert.equal(f.output.at(-1), GUARD_MARK + tree(replacement, rows) + GUARD_END);
 });
 
-test('macOS listApps without windows cannot qualify a bound capture', async () => {
+test('macOS listApps without windows does not disable a bound capture', async () => {
   const f = fixture({ strict: true, current: () => tree(expected, '\t1 button First\n\t2 button Second') });
   // Installed Mac adapter: id, displayName, isRunning, lastUsedDate and useCount; no windows.
   f.context.cua.listApps = async () => [{ id: 'fixture.app', displayName: expected.app, isRunning: true }];
   await f.run('await app.click(1); await app.click(2);', { bind: true });
-  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
 });
 
 for (const title of ['Delete', 'Remove Group', 'Revert', 'Discard', 'Erase', 'Empty Trash', 'Close', 'Quit', 'Exit',

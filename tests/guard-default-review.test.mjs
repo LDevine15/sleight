@@ -81,16 +81,20 @@ test('bind stops numbers and identifiers after a document closes', async () => {
   }
 });
 
-// 2b. bind: a toolbar pane button switches a settings pane.
-test('bind rechecks a toolbar pane that retitles the window', async () => {
+// 2b. A plain pane button is not a known opener: GD2R accepts this binding limitation.
+test('a plain toolbar pane stays bound; careful mode rechecks its retitled window', async () => {
   const general = header('General', 'Mail') + '\n\t1 button General\n\t2 button Junk Mail\n\t3 checkbox Enable junk mail filtering';
   const junk = header('Junk Mail', 'Mail') + '\n\t1 button General\n\t2 button Junk Mail\n\t3 checkbox Trust junk mail headers';
   const code = 'await app.click(3); await app.click(2); await app.click(3);'; // toggle, switch pane, "toggle back"
   const old = await run(code, { screens: [general, general, junk], expected: win('General', 'Mail'), mode: 'old' });
   const now = await run(code, { screens: [general, general, junk], expected: win('General', 'Mail'), mode: 'new' });
+  const careful = await run(code, { screens: [general, general, junk], expected: win('General', 'Mail'), mode: 'new', overrides: { careful: true } });
   assert.match(old.error, /changed what element 3 is/);
-  assert.equal(now.inputs.length, 2);
-  assert.match(now.error, /changed window|changed what element 3 is/);
+  assert.deepEqual(now.inputs, [['click', 3], ['click', 2], ['click', 3]]);
+  assert.equal(now.error, undefined);
+  assert.equal(now.reads, 2, 'one capture and one final read');
+  assert.equal(careful.inputs.length, 2);
+  assert.match(careful.error, /changed window|changed what element 3 is/);
 });
 
 // 3. first-off: the app's key window changed between calls. Cmd+A then typing replaces another document.

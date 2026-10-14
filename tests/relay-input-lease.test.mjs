@@ -683,7 +683,10 @@ test('tree-free input checks focus for a unique target even without engine inven
 test('first-off requires fresh focused-window confirmation on saved unique windows', async t => {
   for (const status of ['ok', 'unknown', 'mismatch', 'throw', 'absent']) {
     const { harness } = setup(t); let checks = 0;
-    const h = harness('focus-' + status, { fresh: true, changeReview: false, ...(status === 'absent' ? {} : {
+    const admissions = [];
+    const h = harness('focus-' + status, { fresh: true, changeReview: false,
+      trace: (direction, data) => { if (direction === 'native-window-admission') admissions.push(data); },
+      ...(status === 'absent' ? {} : {
       windowIdentity: async window => {
         checks++;
         if (status === 'throw') throw Error('helper unavailable');
@@ -695,6 +698,12 @@ test('first-off requires fresh focused-window confirmation on saved unique windo
     h.send(rpc('act', 'js', { code: 'await app.pressKey("super+a"); await app.typeText("x");' }));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(checks, status === 'absent' ? 0 : 1);
+    assert.equal(admissions.length, ['ok', 'unknown'].includes(status) ? 1 : 0);
+    if (admissions.length) {
+      assert.equal(admissions[0].confirmed, status === 'ok');
+      assert.ok(Number.isFinite(admissions[0].ms) && admissions[0].ms >= 0);
+      t.diagnostic('native-window-admission ' + JSON.stringify({ status, ...admissions[0] }));
+    }
     if (status === 'mismatch') {
       assert.equal(h.forwarded.at(-1).id, 'read');
       assert.equal(h.received.at(-1).result.isError, true);

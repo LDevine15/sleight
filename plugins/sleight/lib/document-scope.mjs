@@ -212,20 +212,6 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.callHeaders = new WeakMap();
     // Each handle's previous action in this call, which decides whether the next may skip its read.
     state.previous = new WeakMap();
-    // Window inventories are metadata only. A missing or empty list cannot preserve a capture.
-    const inventory = async text => {
-      const start = clock();
-      let windows;
-      try {
-        const app = parse(text);
-        const apps = await cua.listApps({ emit: false });
-        const matches = apps.filter(a => state.expected?.appId ? a.id === state.expected.appId : (a.displayName ?? a.name) === app?.app);
-        if (matches.length === 1 && matches[0].windows?.length) windows = JSON.stringify(matches[0].windows);
-      } catch { /* Read again when the inventory is unavailable. */ }
-      if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'bound-windows',
-        ms: clock() - start, chars: 0, failed: windows === undefined }) + '\\n');
-      return windows;
-    };
     const hasModal = text => /^\\s*\\d+ (?:sheet|dialog)\\b/m.test(text ?? '');
     const clickOpenedModal = (proxy, text) => {
       const before = state.previous.get(proxy);
@@ -446,12 +432,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // Keep the engine's capture until an opener or the caller's own read replaces it. Unknown
           // selectors still read; unique selectors use the numbers of the last capture we took.
           const firstTree = state.callElements.get(proxy);
-          let bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
+          const bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
             (byId ? findTarget(firstTree).length === 1 : literal !== undefined && firstTree.has(literal));
-          if (bind) {
-            const windows = await inventory(state.binding.text);
-            bind = windows !== undefined && windows === state.binding.windows;
-          }
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
@@ -605,7 +587,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
           state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey,
             textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text) });
-          if (text !== undefined && !bind) state.binding = { proxy, text, windows: state.bind ? await inventory(text) : undefined };
+          if (text !== undefined && !bind) state.binding = { proxy, text };
           else if (state.binding?.proxy !== proxy) state.binding = undefined;
           const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? args[0] : undefined;
           if (typeof typed === 'string') state.typed.push(typed);
