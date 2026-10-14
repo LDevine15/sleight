@@ -102,7 +102,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
   return async function runSteps(tab, steps, ctx = {}) {
     validate(steps);
     const { page, state } = tab, since = state.snapshotNo > 0 ? state.snapshotNo : undefined, lines = []; let stoppedAt = null;
-    let observed, observeError, confirmation;
+    let observed, observeError, confirmation, blocker;
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
@@ -213,7 +213,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             const cover = await locator.evaluate(coverDetails, undefined, { timeout: 250 });
             if (cover) {
               detail = `covered by ${clean(cover.name)}; buttons: ${cover.buttons.map(clean).join(', ')}; dismiss the cover first`;
-              await read({ find: cover.buttons[0] || cover.name, maxChars: 2000 });
+              blocker = await read({ find: cover.buttons[0] || cover.name, maxChars: 2000 });
             }
           } catch {}
         }
@@ -228,6 +228,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     // Never turn a delivered input into a tool error because its observation
     // failed. The caller delivers this snapshot and records its number.
     if (!state.dialog) try { await read({ since, maxChars: 8000 }); } catch (error) { observeError = clean(error.message); }
+    if (blocker && observed && observed !== blocker && !observed.text.includes(blocker.text)) observed.text += '\nBlocker controls (untrusted page content):\n' + blocker.text;
     if (observed) {
       const changed = observed.text.split('\n').filter(line => /^[+~-]\s/.test(line)).length;
       const detail = changed ? changed + ' lines changed (batch observation below)'

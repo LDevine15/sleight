@@ -107,6 +107,14 @@ test('v3 never retries a timed out dispatched input and names a cover with its b
   assert.match(result.lines[1], /not reached/); assert.equal(f.actions.length, 1);
 });
 
+test('v3 retains blocker button refs when the final page diff is unchanged', async () => {
+  const f = fixture({ fail: 'Timeout 1000ms exceeded: Cookie notice intercepts pointer events' });
+  const run = createActionRunner({ check: () => 'allow',
+    snapshot: async (page, options) => ({ text: options.find ? '- button "Accept cookies" [ref=e8]' : 'No visible changes.', number: 2 }) });
+  const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.observe.text, /Accept cookies.*ref=e8/);
+});
+
 test('v3 unknown submit prevents a second submit before the delivered read', async () => {
   const f = fixture({ submit: true });
   const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e1' }], {});

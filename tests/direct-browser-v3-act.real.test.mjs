@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
@@ -117,7 +117,7 @@ test('real v3 scroll until finds a newly rendered virtual-list row', { skip }, a
 test('real v3 upload consumes exact user-file bytes and unknown submit never repeats', { skip }, async t => {
   const f = await fixture(t, `<label>Resume<input type="file" id="file"></label><form onsubmit="event.preventDefault();window.sends=(window.sends||0)+1">
     <button>Submit</button></form>`);
-  const dir = mkdtempSync(join(tmpdir(), 'v4-file-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), 'v4-file-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'resume.txt'); writeFileSync(path, 'user-owned example bytes');
   const fileRef = await f.ref('Resume'), event = {};
   const identity = { browserIncarnation: 'fixture', brokerEpoch: 1, clientSession: 'fixture', turn: 'turn', leaseGeneration: 1,
