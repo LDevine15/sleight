@@ -507,13 +507,17 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
         if (['Enter', 'Space'].includes(key) && mask) throw Error('BACKGROUND_UNAVAILABLE');
         const named = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'Space', 'Home', 'End', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
         if (!named.includes(key) && !/^[a-zA-Z0-9]$/.test(key)) throw Error('INVALID_FIELD');
-        const state = { ...prepared.state, submit: (key === 'Enter' || key === 'Space' && prepared.state.kind === 'button') && (prepared.state.submit || prepared.state.form &&
-          (prepared.state.tag !== 'textarea' || mask & 6)) };
-        state.payment = state.submit && (state.payment || state.formPayment === true);
-        if (!state.focused) { sent = true; await click(id + ':focus', step.ref, prepared, deadline); }
+        const intent = target => {
+          const submit = (key === 'Enter' || key === 'Space' && target.kind === 'button') && (target.submit || target.form &&
+            (target.tag !== 'textarea' || mask & 6));
+          return { submit: !!submit, payment: !!submit && (target.payment === true || target.formPayment === true) };
+        };
+        const prior = intent(prepared.state);
+        if (!prepared.state.focused) { sent = true; await click(id + ':focus', step.ref, prepared, deadline); }
         const fresh = await inspect(step.ref, prepared.node, '', deadline);
         if (!fresh.connected || !fresh.visible || !fresh.enabled || shape(fresh) !== shape(prepared.state)) throw Error('STALE_REF');
-        prepared.state = { ...fresh, submit: state.submit, payment: state.payment }; sent = true;
+        const final = intent(fresh);
+        prepared.state = { ...fresh, submit: prior.submit || final.submit, payment: prior.payment || final.payment }; sent = true;
         const code = /^[a-zA-Z]$/.test(key) ? 'Key' + key.toUpperCase() : /^\d$/.test(key) ? 'Digit' + key : key;
         for (const type of ['rawKeyDown', 'keyUp']) await physical(id, step.ref, 'key', { key: step.key }, prepared.state,
           'Input.dispatchKeyEvent', { type, key: key === 'Space' ? ' ' : key, code, modifiers: mask }, deadline);
