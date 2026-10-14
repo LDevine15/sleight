@@ -89,6 +89,9 @@ belong in [STATE.md](STATE.md).
 - Turbo's native helpers (the peer checker and the menu and approval window) come as source and are compiled on the user's
   Mac with Apple's command-line tools the first time turbo turns on, as `demonstration.swift` already is. No prebuilt binaries,
   Developer ID or notarization (owner, 2026-10-14). Without the tools, turbo says so and the engine path keeps working.
+- Turbo works in the background like the engine path (owner, 2026-10-14, after test browsers pulled the owner across Spaces): it
+  never activates the browser or switches Spaces, opens tabs and handles popups in the background, and never brings a page to the
+  front. Chrome's own remote-debugging prompt is the only allowed activation. Its live gate fails on any Space switch or focus change.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,
