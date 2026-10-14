@@ -36,7 +36,7 @@ export const EVALUATE_WRITE = [
   [/Cannot add property (on\w+)\b/, 'assigning $1'],
 ];
 
-export function rewriteTabError(text, { read = false } = {}) {
+export function rewriteTabError(text, { read = false, code = '' } = {}) {
   if (typeof text !== 'string') return text;
   text = rewriteLocatorFailure(text);
   const lines = text.split('\n'), out = [];
@@ -63,7 +63,19 @@ export function rewriteTabError(text, { read = false } = {}) {
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
     out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties.');
   }
-  return out.join('\n');
+  const rewritten = out.join('\n'), shape = inputShapeAdvice(text, code, rewritten);
+  return shape ? rewritten + ' ' + shape : rewritten;
+}
+
+function inputShapeAdvice(text, code, rewritten) {
+  const first = text.split('\n')[0];
+  const selectors = 'App selectors use cua.getApp(bundleId). Tab selectors use cua.getTab(tabId, { browser: browserId }) with a string tabId.';
+  if (/^(?:(?:Type)?Error: )?Cannot use 'in' operator to search for 'mention' in /.test(first) && /\bcua\s*\.\s*getTab\s*\(/.test(code)) {
+    return `${selectors} Next: await cua.listTabs(); bind an explicitly chosen or previously observed tab before reading its indices.`;
+  }
+  if (!/^(?:Error: )?(?:Browser input requires an element index|Accessibility action requires an element index or point|Accessibility element \d+ is stale or missing|Accessibility capture belongs to a previous page)/.test(first)) return;
+  const read = rewritten.includes('.getAXState(') ? '' : ' Next: await tab.getAXState({ disableDiffing: true }).';
+  return `Use a current numeric element index (a nonnegative integer) for indexed tab input. Click and scroll also accept documented [x, y] points; null is only the focus form for tab text and key input. App text and key calls omit the tab index. ${selectors}${read} Do not guess an index or retry the refused input automatically.`;
 }
 
 export function evaluateWriteAdvice(text) {
