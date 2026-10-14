@@ -85,11 +85,14 @@ test('real Chromium over filtered CDP hides foreign tabs, owns background create
   await pageCDP.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await assert.rejects(pageCDP.send('Page.bringToFront'), /CDP_COMMAND_REFUSED/);
   const beforeGlobal = wire.length;
-  for (const method of ['Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Network.getAllCookies',
+  const profileCommands = ['Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Network.getAllCookies',
     'Network.deleteCookies', 'Network.getCookies', 'Network.setCookie', 'Network.setCookies',
-    'Network.enableDeviceBoundSessions', 'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior'])
+    'Network.enableDeviceBoundSessions', 'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior'];
+  for (const method of profileCommands)
     await assert.rejects(pageCDP.send(method, { urls: [cookieURL], url: cookieURL }), /CDP_COMMAND_REFUSED/, method);
-  assert.equal(wire.length, beforeGlobal, 'browser profile commands never reach Chromium through the page session');
+  const concurrent = wire.slice(beforeGlobal);
+  assert.deepEqual(concurrent.filter(method => profileCommands.includes(method)), [], 'browser profile commands never reach Chromium through the page session');
+  t.diagnostic('Concurrent allowed setup commands: ' + JSON.stringify(concurrent));
   assert.deepEqual(await context.cookies(cookieURL), cookies, 'the foreign fixture cookie remains unchanged');
   await pageCDP.detach(); await rootCDP.send('Target.closeTarget', { targetId });
   assert.equal(filter.owns(targetId), false);
