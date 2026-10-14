@@ -19,9 +19,10 @@ const sameDocument = (a, b) => ['session', 'turn', 'document', 'origin'].every(k
 // can only increase risk. Read visible text, aria-label and input value together.
 export function inspectElement(el) {
   const get = (node, key) => Element.prototype.getAttribute.call(node, key) ?? '';
-  const words = node => [get(node, 'aria-label'), node.textContent, get(node, 'value')].join(' ');
+  const inputType = node => node instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(node).toLowerCase() : '';
+  const words = node => [get(node, 'aria-label'), node.textContent, get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
   const payment = value => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(value);
-  const type = el instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(el) : '';
+  const type = inputType(el);
   const tag = el.localName, role = get(el, 'role'), form = el.closest('form'), rect = el.getBoundingClientRect(), style = getComputedStyle(el);
   const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
   const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
@@ -33,7 +34,7 @@ export function inspectElement(el) {
     const attrs = ['name', 'id', 'autocomplete', 'title', 'aria-label'].map(key => get(node, key)).join(' ');
     if (/\bcc-|card|cvv|cvc/i.test(attrs)) return true;
     if (node.localName === 'iframe') { try { return new URL(get(node, 'src'), location.href).origin !== location.origin; } catch { return true; } }
-    return (node.localName === 'button' || ['submit', 'image'].includes(get(node, 'type'))) && payment(words(node));
+    return (node.localName === 'button' || ['submit', 'image'].includes(inputType(node))) && payment(words(node));
   });
   if ((button || state.kind === 'link') && state.payment) state.submit = true;
   if (state.submit && state.formPayment) state.payment = true;

@@ -126,3 +126,48 @@ for (const control of ['file', 'color', 'select']) test(`native ${control} remai
   for (const [kind, key] of [['click', undefined], ['press', 'Space']])
     assert.equal(rules.check(f.ctx, kind, f.target({ element, key })).verdict, 'refuse');
 });
+
+for (const type of ['image', 'IMAGE']) for (const aria of ['', 'Continue']) {
+  const image = () => classify(({ Element, HTMLInputElement }) =>
+    new HTMLInputElement('input', { type, alt: 'Pay $18 now', 'aria-label': aria }, '', new Element('form')));
+  test(`image ${type} payment alt raises direct activation risk despite aria=${JSON.stringify(aria)}`, () => {
+    const element = image();
+    assert.equal(element.payment, true);
+    for (const key of [undefined, 'Enter', 'Space']) {
+      const f = fixture(), target = f.target({ element, key });
+      assert.equal(rules.check(f.ctx, key ? 'press' : 'click', target).verdict, 'confirm');
+      rules.beginSubmit(f.state, 100);
+      assert.equal(rules.check(f.ctx, key ? 'press' : 'click', target).verdict, 'refuse');
+    }
+  });
+  test(`image ${type} payment alt raises owning-form Enter risk despite aria=${JSON.stringify(aria)}`, () => {
+    const element = classify(({ Element, HTMLInputElement }) => {
+      const form = new Element('form');
+      new HTMLInputElement('input', { type, alt: 'Pay $18 now', 'aria-label': aria }, '', form);
+      return new HTMLInputElement('input', {}, '', form);
+    });
+    assert.equal(element.formPayment, true);
+    const f = fixture();
+    assert.equal(rules.check(f.ctx, 'press', f.target({ element, key: 'Enter' })).verdict, 'confirm');
+    for (const kind of ['click', 'type']) assert.equal(rules.check(f.ctx, kind, f.target({ element })).verdict, 'allow');
+  });
+  test(`image ${type} alt payment consumes one private request despite aria=${JSON.stringify(aria)}`, () => {
+    const f = fixture(terms), target = f.target({ element: image() });
+    assert.equal(rules.check(f.ctx, 'click', target).verdict, 'allow');
+    assert.equal(rules.check(f.ctx, 'click', target).verdict, 'confirm');
+    const submit = rules.beginSubmit(f.state, 100); rules.finishSubmit(f.state, submit, {}, 5100);
+    assert.equal(rules.check(f.ctx, 'click', target).verdict, 'refuse');
+    rules.deliverSnapshot(f.state, rules.captureSnapshot(f.state, 5200));
+    assert.equal(rules.check(f.ctx, 'click', target).verdict, 'confirm', 'read recovery cannot renew payment authority');
+  });
+}
+
+test('neutral image submits retain ordinary activation and uncertain-submit recovery', () => {
+  const element = classify(({ Element, HTMLInputElement }) =>
+    new HTMLInputElement('input', { type: 'image', alt: 'Continue' }, '', new Element('form')));
+  assert.equal(element.payment, false); assert.equal(element.formPayment, false);
+  const f = fixture(), target = f.target({ element });
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'allow');
+  rules.beginSubmit(f.state, 100);
+  assert.equal(rules.check(f.ctx, 'click', target).verdict, 'refuse');
+});

@@ -147,3 +147,31 @@ test('real native picker controls refuse activation keys before any actuator and
   }
   assert.deepEqual(dispatched, [], 'qualification never invokes a native-picker actuator');
 });
+
+for (const type of ['image', 'IMAGE']) test(`real ${type} payment alt without a value requires one private request`, { skip }, async t => {
+  const f = await fixture(t, `<form onsubmit="event.preventDefault();window.paid=(window.paid||0)+1">
+    <label>Note<input id="field"></label><input id="pay" type="${type}" alt="Pay $18 now" ${type === 'IMAGE' ? 'aria-label="Continue"' : ''}>
+    </form><form><input id="neutral" type="image" alt="Continue"></form>`);
+  assert.equal(await f.page.locator('#pay').getAttribute('value'), null);
+  const target = await f.target('#pay'), field = await f.target('#field'), neutral = await f.target('#neutral');
+  assert.equal(target.element.payment, true);
+  assert.equal(field.element.formPayment, true);
+  assert.equal(check(f.ctx, 'click', target).verdict, 'confirm');
+  assert.equal(check(f.ctx, 'press', { ...target, key: 'Enter' }).verdict, 'confirm');
+  assert.equal(check(f.ctx, 'press', { ...field, key: 'Enter' }).verdict, 'confirm');
+  assert.equal(check(f.ctx, 'click', field).verdict, 'allow');
+  assert.equal(check(f.ctx, 'type', field).verdict, 'allow');
+  assert.equal(check(f.ctx, 'click', neutral).verdict, 'allow');
+  assert.equal(await f.page.evaluate(() => window.paid || 0), 0, 'refused paths never invoke an actuator');
+  f.ctx.userMessage = { source: 'user', id: 'request', session: 'session', turn: 'turn',
+    text: 'Pay for Fixture item with Fixture card', payment: terms };
+  assert.equal(check(f.ctx, 'click', target).verdict, 'allow');
+  const submit = beginSubmit(f.state, 100);
+  await f.page.locator('#pay').click();
+  assert.equal(await f.page.evaluate(() => window.paid), 1);
+  finishSubmit(f.state, submit, {}, 5100);
+  assert.equal(check(f.ctx, 'click', target).verdict, 'refuse');
+  assert.equal(deliverSnapshot(f.state, captureSnapshot(f.state, 5200)), true);
+  assert.equal(check(f.ctx, 'click', target).verdict, 'confirm', 'a read cannot renew the consumed payment request');
+  assert.equal(await f.page.evaluate(() => window.paid), 1);
+});
