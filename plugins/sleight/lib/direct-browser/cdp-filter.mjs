@@ -21,12 +21,17 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       !Array.isArray(ownedTargets) || !ownedTargets.every(id)) throw Error('CDP_CONNECTION_REQUIRED');
   const owned = new Set(ownedTargets), routes = new Map(), listeners = new Set(), attaching = new Map(), bridges = new Set(), browserRoutes = new Set(), attachmentParents = new Map();
   const attachments = new Map(), outstanding = new Set(), collectedSessions = new Set();
-  let closed = false, autoAttach = false, disposal;
+  let closed = false, autoAttach = false, disposal, listening = true;
   const root = upstream.sessionId;
   const live = () => { if (closed) throw Error('CDP_FILTER_CLOSED'); };
   const owns = target => owned.has(target) || [...routes.values()].some(route => route.target === target);
   const checkTarget = target => { if (!id(target) || !owns(target)) throw Error('CDP_TARGET_NOT_OWNED'); };
   function emit(event) { for (const listener of listeners) try { listener(event); } catch {} }
+  function finishEvents() {
+    if (closed && listening && !attachments.size && !outstanding.size) {
+      upstream.off('event', event); listening = false;
+    }
+  }
   function removeRoute(name) {
     for (const [child, route] of routes) if (route.parent === name) removeRoute(child);
     routes.delete(name);
@@ -41,6 +46,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
   function collected(name) {
     for (const [child, attachment] of attachments) if (attachment.parent === name) collected(child);
     attachments.delete(name); collectedSessions.add(name); removeRoute(name);
+    finishEvents();
   }
   async function detach(name) {
     const attachment = attachments.get(name);
@@ -59,17 +65,33 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
     for (const [name, route] of routes) if (route.target === target || route.owner === target) removeRoute(name);
   }
   function event(frame) {
-    if (closed || !object(frame) || !object(frame.params)) return;
-    const params = frame.params, parent = frame.sessionId === undefined ? undefined : routes.get(frame.sessionId);
+    if (!object(frame) || typeof frame.method !== 'string' || !object(frame.params) ||
+        frame.sessionId !== undefined && !id(frame.sessionId)) return;
+    const params = frame.params;
+    // Collection proof uses the physical attachment bank even after routes are
+    // revoked. Only its exact upstream parent can report this session detached.
+    if (frame.method === 'Target.detachedFromTarget') {
+      const detached = id(params.sessionId) && attachments.get(params.sessionId);
+      if (!detached || (frame.sessionId ?? root) !== detached.parent ||
+          params.targetId !== undefined && params.targetId !== detached.target) return;
+      const virtualParent = detached.virtualParent;
+      collected(params.sessionId);
+      if (!closed) emit({ ...frame, ...(virtualParent ? { sessionId: virtualParent } : {}),
+        params: { ...params, targetId: detached.target } });
+      return;
+    }
+    if (closed && frame.method !== 'Target.attachedToTarget') return;
+    const parent = frame.sessionId === undefined ? undefined : (closed ? attachments : routes).get(frame.sessionId);
     if (frame.sessionId !== undefined && !parent) return;
     if (frame.method === 'Target.attachedToTarget') {
       const info = params.targetInfo;
       if (!object(info) || !id(info.targetId) || !id(params.sessionId)) return;
-      const allowed = parent ? ['iframe', 'worker'].includes(info.type) : owned.has(info.targetId) && info.type === 'page';
+      const allowed = parent ? ['iframe', 'worker'].includes(info.type) :
+        (closed ? attachmentParents.has(info.targetId) : owned.has(info.targetId)) && info.type === 'page';
       if (!allowed) {
         // A shared service worker is not owned by a page. Undo its automatic
         // attachment without exposing any of its metadata to Playwright.
-        if (parent) {
+        if (parent && !closed) {
           if (params.waitingForDebugger) upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId).catch(() => {});
           upstream.send('Target.detachFromTarget', { sessionId: params.sessionId }, frame.sessionId).catch(() => {});
         }
@@ -78,15 +100,9 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       if (routes.has(params.sessionId)) return;
       const virtualParent = parent ? frame.sessionId : attachmentParents.get(info.targetId);
       if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
+      if (closed) return; // Late attachments stay private and grant no input route.
       routes.set(params.sessionId, { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent });
       if (virtualParent && !parent) frame = { ...frame, sessionId: virtualParent };
-    } else if (frame.method === 'Target.detachedFromTarget') {
-      const detached = routes.get(params.sessionId) ?? attachments.get(params.sessionId);
-      if (!detached) return;
-      const target = detached.target;
-      if (browserRoutes.has(detached.parent)) frame = { ...frame, sessionId: detached.parent };
-      collected(params.sessionId);
-      frame = { ...frame, params: { ...params, targetId: target } };
     } else if (frame.method.startsWith('Target.')) {
       const target = params.targetInfo?.targetId ?? params.targetId;
       if (!owns(target)) return;
@@ -124,7 +140,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       } catch (error) {
         if (name) await detach(name);
         throw error;
-      } finally { attachmentParents.delete(target); }
+      } finally { attachmentParents.delete(target); finishEvents(); }
     })();
     attaching.set(target, pending);
     try { return await pending; } finally { if (attaching.get(target) === pending) attaching.delete(target); }
@@ -262,8 +278,9 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
   function dispose() {
     if (disposal) return disposal;
     if (!closed) {
-      closed = true; upstream.off('event', event); listeners.clear();
+      closed = true; listeners.clear();
       routes.clear(); owned.clear(); browserRoutes.clear();
+      finishEvents();
     }
     const detaching = [...attachments].filter(([, attachment]) => !attachments.has(attachment.parent))
       .map(([name]) => detach(name));
