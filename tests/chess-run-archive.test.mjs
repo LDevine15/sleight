@@ -7,6 +7,8 @@ import { runInNewContext } from 'node:vm';
 import * as archive from '../bench/run-archive.mjs';
 import { webBrowsers } from '../bench/tasks-web.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
+import { genericTask } from '../bench/generic-task.mjs';
+import { tasks } from '../bench/tasks.mjs';
 
 function fixture(t) {
   const root = registerTemp(t, realpathSync(mkdtempSync(join(tmpdir(), 'bench-chess-archive-'))));
@@ -108,4 +110,45 @@ test('an archive failure prevents Chess from starting', () => {
   const task = chessTask(() => { throw new Error('archive denied'); }, calls);
   assert.throws(() => task.setup({ dir: 'unused' }), /archive denied/);
   assert.deepEqual(calls, []);
+});
+
+for (const arm of ['mcp:rival_one', 'plugin:rival_one']) test('Chess archive preserves the current prefixed arm and earlier evidence for ' + arm, t => {
+  const f = fixture(t), current = f.make(arm + '-chess-drag-2');
+  const earlier = f.make(arm + '-chess-drag-1');
+  const unrelated = f.make(arm.split(':')[0] + ':_invalid-chess-drag-1');
+  const outside = join(f.root, 'outside'); mkdirSync(outside);
+  symlinkSync(outside, join(f.benchDir, f.stamp, arm + '-chess-drag-3'));
+  const moved = archive.archiveChessRuns(current, f);
+  assert.equal(existsSync(earlier), false);
+  assert.equal(readFileSync(join(moved.find(r => r.from === earlier).to, 'trace.jsonl'), 'utf8'), arm + '-chess-drag-1\n');
+  assert.equal(readFileSync(join(current, 'trace.jsonl'), 'utf8'), arm + '-chess-drag-2\n');
+  assert.ok(existsSync(unrelated)); assert.ok(existsSync(outside));
+  assert.ok(existsSync(join(f.benchDir, f.stamp, arm + '-chess-drag-3')));
+});
+
+test('retained Chess fixture archives earlier folders before opening without legacy setup', async t => {
+  const f = fixture(t), earlier = f.make('sleight-chess-drag-1'), calls = [];
+  const original = tasks.find(task => task.id === 'chess-drag');
+  const task = genericTask({ ...original, setup: () => assert.fail('legacy restart must not run') }, {
+    archiveChess: dir => { calls.push('archive'); return archive.archiveChessRuns(dir, f); },
+    open: async () => { assert.equal(existsSync(earlier), false, 'earlier save folder remains at app opening'); calls.push('open'); return {}; },
+  });
+  await task.setup({ dir: f.current, nonce: 'fixture', ownerAway: true, signal: new AbortController().signal,
+    beforeFixtureCleanup: () => calls.push('gate') });
+  assert.deepEqual(calls, ['gate', 'archive', 'open']);
+  assert.equal(readFileSync(join(f.current, 'trace.jsonl'), 'utf8'), 'codex-chess-drag-2\n');
+});
+
+test('retained Chess fixture never opens after archive failure or cancellation', async t => {
+  const f = fixture(t), original = tasks.find(task => task.id === 'chess-drag');
+  let archives = 0;
+  const task = genericTask(original, { archiveChess: () => { archives++; throw Error('archive denied'); },
+    open: () => assert.fail('archive refusal must prevent app opening') });
+  await assert.rejects(task.setup({ dir: f.current, ownerAway: true, signal: new AbortController().signal }), /archive denied/);
+  assert.equal(archives, 1);
+  const signal = AbortSignal.abort(Error('stopped'));
+  await assert.rejects(task.setup({ dir: f.current, ownerAway: true, signal }), /stopped/);
+  await assert.rejects(task.setup({ dir: f.current, ownerAway: false }), /owner-away/);
+  await assert.rejects(task.setup({ dir: f.current, ownerAway: true, beforeFixtureCleanup: () => { throw Error('permission stop'); } }), /permission stop/);
+  assert.equal(archives, 1, 'permission, owner-away and cancellation gates precede archiving');
 });

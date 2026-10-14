@@ -5,8 +5,9 @@ import { basename, join } from 'node:path';
 import { bootedIPhone, serveForm, closeForm, simctl } from './tasks.mjs';
 import { acquireFixture } from './real-run.mjs';
 import { openFixture, closeFixtures } from './real-fixture.mjs';
+import { archiveChessRuns } from './run-archive.mjs';
 
-export function genericTask(task, { open = openFixture } = {}) {
+export function genericTask(task, { open = openFixture, archiveChess = archiveChessRuns } = {}) {
   const bundles = { Calculator: 'com.apple.calculator', TextEdit: 'com.apple.TextEdit', Chess: 'com.apple.Chess' };
   const prepare = ctx => {
     if (['textedit-edit', 'textedit-drag'].includes(task.id)) {
@@ -21,6 +22,10 @@ export function genericTask(task, { open = openFixture } = {}) {
       prepare(ctx);
       await ctx.beforeFixtureCleanup?.();
       ctx.signal?.throwIfAborted();
+      if (task.id === 'chess-drag') {
+        await archiveChess(ctx.dir);
+        ctx.signal?.throwIfAborted();
+      }
       if (task.id === 'simulator-form') {
         const modern = existsSync('/Applications/Xcode.app/Contents/Applications/DeviceHub.app');
         await acquireFixture(ctx, 'simViewer', () => open(ctx, { app: modern ? 'DeviceHub' : 'Simulator',

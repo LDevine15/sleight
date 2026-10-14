@@ -18,6 +18,7 @@ test('generic default setup preserves prompts and checks and only acquires track
     const ctx = { ...context(t), ownerAway: true };
     const acquired = [];
     const task = genericTask({ ...original, setup: () => assert.fail('legacy setup'), cleanup: () => assert.fail('legacy cleanup') }, {
+      archiveChess: () => {}, // This fixture tests app retention; archive behavior has its own temporary bank.
       open: async (_ctx, request) => { acquired.push(request); return {}; },
     });
     assert.equal(task.prompt, original.prompt); assert.equal(task.check, original.check);

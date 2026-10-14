@@ -28,7 +28,7 @@ export function archiveChessRuns(currentDir, {
   archiveDir = join(homedir(), 'Library', 'Caches', 'sleight-bench', 'runs-archive'),
 } = {}) {
   const stampPattern = /^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z$/;
-  const taskPattern = /^[a-z][a-z0-9-]*-chess-drag-[1-9]\d*$/;
+  const taskPattern = /^(?:[a-z][a-z0-9-]*|(?:mcp|plugin):[a-z0-9][a-z0-9_-]*)-chess-drag-[1-9]\d*$/;
   const root = realpathSync(benchDir), current = realpathSync(currentDir);
   if (dirname(dirname(current)) !== root || !stampPattern.test(basename(dirname(current))) || !taskPattern.test(basename(current))) {
     throw new Error('Current Chess target is not a benchmark run folder');
