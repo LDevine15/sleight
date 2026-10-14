@@ -12,6 +12,12 @@ import { benchmarkDecision } from './approve.mjs';
 import { acquireLiveLock } from './live-lock.mjs';
 import { speedMarkdown, speedScope } from './app-speed-map.mjs';
 
+const cleanupCodes = new Set(['FIXTURE_WINDOW_AMBIGUOUS', 'FOREIGN_WINDOW_ON_START', 'DOCUMENT_NOT_MATCHED', 'WINDOW_NOT_RETAINED',
+  'SHEET_PRESENT', 'SHEETS_READ_FAILED', 'FIXTURE_WINDOW_NOT_RETAINED', 'CLOSE_BUTTON_MISSING', 'AXPRESS_FAILED',
+  'WINDOW_STILL_PRESENT_AFTER_10S', 'SCRIPTING_NOT_OWN_FIXTURE', 'SCRIPTING_FAILED', 'WINDOW_STILL_PRESENT_AFTER_SCRIPTING',
+  'APP_IDENTITY_UNCONFIRMED', 'APP_HAS_WINDOWS', 'APP_NOT_TERMINATED', 'WINDOWS_READ_FAILED', 'HOST_ABORTED', 'HOST_TIMEOUT',
+  'HOST_PROCESS_UNCONFIRMED', 'HOST_RECEIPT_MISSING', 'HOST_DETAILS_MISSING', 'CLEANUP_FAILED', 'SERVER_CLEANUP_FAILED']);
+
 export function validateSpeedReceipt(task, receipt) {
   if (task.fixture === 'browser') {
     if (receipt?.ownerApproved !== true || typeof receipt.browserId !== 'string' || !receipt.browserId.trim() ||
@@ -160,11 +166,13 @@ export async function liveSpeedRuntime(plan, options, {
     async closeFixture(fixture) {
       let cleanup;
       try { cleanup = await fixture.host.finish(); }
-      catch { cleanup = { confirmed: false, samples: [] }; }
-      try { await fixture.closeServer?.(); } catch { cleanup.confirmed = false; }
+      catch { cleanup = { confirmed: false, samples: [], details: { reasons: ['CLEANUP_FAILED'] } }; }
+      const reasons = [...new Set([...(cleanup.details?.reasons ?? []), ...(cleanup.details?.windows ?? []).flatMap(row => row.reasons ?? [])]
+        .filter(reason => cleanupCodes.has(reason)))];
+      try { await fixture.closeServer?.(); } catch { cleanup.confirmed = false; reasons.push('SERVER_CLEANUP_FAILED'); }
       const confirmed = cleanup.confirmed === true;
       if (confirmed) resources.delete(fixture); else cleanupFault = true;
-      return { confirmed, focusChanged: (cleanup.samples ?? []).some(sample => sample.focusChanged || sample.targetOverOwner) };
+      return { confirmed, reasons, focusChanged: (cleanup.samples ?? []).some(sample => sample.focusChanged || sample.targetOverOwner) };
     },
     async publish(report) {
       report.approvalStopped = approvalStopped;

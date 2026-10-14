@@ -1,8 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runInNewContext } from 'node:vm';
+import { runInNewContext, constants } from 'node:vm';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
+import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { speedPlan, readMetrics, runSpeedMap, summarizeSpeedMap, speedMarkdown } from '../bench/app-speed-map.mjs';
 
 function closed(values) {
@@ -12,11 +18,14 @@ function closed(values) {
     return t[key];
   } });
 }
-function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false } = {}) {
+function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false, relayTest } = {}) {
   const calls = [], outputs = []; let time = 0, active = 0, peak = 0;
+  const directory = relayTest && mkdtempSync(join(tmpdir(), 'sleight-am1-relay-'));
+  if (directory) relayTest.after(() => removeTemp(directory));
   return { calls, outputs, get peak() { return peak; }, held: () => held, now: () => time += 5,
     async prepare(task, cohort) { calls.push(['prepare', task.id, cohort]); return { marker: 'AM1-fixture', url:'http://127.0.0.1:45123/fixture', browserId:'bench-id', profileName:'benchmark', requiredText: ownerPresent ? undefined : 'AM1-fixture' }; },
     async openSession(task) {
+      const outputs = [];
       active++; peak = Math.max(peak, active); calls.push(['session', task.id]);
       const app = closed({ getAXState: async options => {
         assert.deepEqual(JSON.parse(JSON.stringify(options)), { disableDiffing: true, emit: false });
@@ -25,16 +34,61 @@ function runtime({ badCleanup = false, badRead = false, held = false, ownerPrese
       }, scroll: async (...args) => { calls.push(['scroll', ...args]); } });
       const tab = closed({ getAXState:app.getAXState, cua:closed({scroll:async options=>calls.push(['browser-scroll',JSON.parse(JSON.stringify(options))])}), close:async()=>calls.push(['tab-close']) });
       const ctx = { cua: closed({ getApp: async () => app, listBrowsers:async()=>[{id:'owner-id',name:'Helium',profileName:'owner'},{id:'bench-id',name:'Helium',profileName:'benchmark'}], createBrowserTab:async(id,url,options)=>{assert.equal(id,'bench-id');assert.equal(url,'http://127.0.0.1:45123/fixture');assert.equal(options.visible,false);return tab;} }), nodeRepl: { write: value => outputs.push(value) } };
+      const sent = [], received = [], codes = [];
+      let relay, id = 0;
+      const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+      if (relayTest) {
+        for (const name of ['getTab', 'getBrowser', 'listTabs', 'listApps', 'getState']) ctx.cua[name] = async () => { throw Error('unexpected engine call: ' + name); };
+        const lease = new InputLease({ directory });
+        for (const [stream, messages] of [[serverIn, sent], [clientOut, received]]) {
+          stream.on('data', data => data.toString().trim().split('\n').forEach(line => messages.push(JSON.parse(line))));
+        }
+        relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: lease, changeReview: false });
+        relayTest.after(() => relay.close());
+      }
       return { async js(code) {
+        codes.push(code);
+        if (relay) {
+          const current = ++id;
+          clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: current, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+          await new Promise(resolve => setImmediate(resolve));
+          const refusal = received.find(message => message.id === current);
+          if (refusal) return refusal.result;
+          const forwarded = sent.find(message => message.id === current);
+          assert.ok(forwarded, 'real relay forwarded the request');
+          code = forwarded.params.arguments.code;
+        }
         outputs.length = 0;
-        await runInNewContext('(async () => {' + code + (/var am1App =/.test(code) ? ';globalThis.am1App = am1App;' : /var am1Tab =/.test(code) ? ';globalThis.am1Tab = am1Tab;' : '') + '})()', ctx);
-        return { content: outputs.map(text => ({ type: 'text', text })) };
-      }, async close() { if(ctx.am1Tab) await ctx.am1Tab.close(); active--; calls.push(['session-close']); } };
+        let result;
+        try {
+          const saved = ['am1App', 'am1Tab', 'am1Tree'].filter(name => code.includes('var ' + name + ' ='));
+          await runInNewContext('(async () => {' + code + saved.map(name => ';globalThis.' + name + ' = ' + name + ';').join('') + '})()', ctx,
+            { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
+          result = { content: outputs.map(text => ({ type: 'text', text })), _meta: { 'codex/toolSurface': { app: { appId: task.bundle } } } };
+        } catch (error) {
+          if (!relay) throw error;
+          calls.push(['engine-error', error.message]);
+          result = { isError: true, content: [{ type: 'text', text: error.message }] };
+        }
+        if (!relay) return result;
+        serverOut.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+        await new Promise(resolve => setImmediate(resolve));
+        return received.find(message => message.id === id).result;
+      }, async close() { if(ctx.am1Tab) await ctx.am1Tab.close(); relay?.close(); active--; calls.push(['session-close']); } };
     },
     async closeFixture() { calls.push(['fixture-close']); return { confirmed: !badCleanup, focusChanged: false }; },
     async publish(report) { calls.push(['publish']); assert.doesNotMatch(JSON.stringify(report), /private account|AM1-fixture/); },
   };
 }
+
+test('speed samples pass the real relay native lease rule with direct handle reads', async t => {
+  const r = runtime({ relayTest: t });
+  const plan = speedPlan({ ids: ['textedit'], runs: 1 });
+  const report = await runSpeedMap(plan, r);
+  assert.ok(report.rows.every(row => row.status === 'complete'), JSON.stringify({ rows: report.rows, errors: r.calls.filter(c => c[0] === 'engine-error') }));
+  assert.equal(report.rows[0].nodes, 3);
+  assert.deepEqual(r.calls.filter(c => c[0] === 'scroll'), [['scroll', 1, 'down', 1]]);
+});
 
 test('plan defaults to ten repetitions and four concurrent read-only sessions on one app', () => {
   const plan = speedPlan();
@@ -58,8 +112,7 @@ test('CLI dry-run returns before importing live runtime, spawning children or wr
 });
 test('read metrics use supported engine methods and return only numbers, not tree content', async () => {
   const app = closed({ getAXState: async () => 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t2 static text private account' });
-  const fn = readMetrics.toString();
-  const result = await runInNewContext('(' + fn + ')(app, {marker:"AM1-fixture"})', { app });
+  const result = await readMetrics(app, { marker: 'AM1-fixture' });
   assert.equal(result.nodes, 3); assert.equal(result.scrollTarget, 1);
   assert.equal(result.chars, 100); assert.doesNotMatch(JSON.stringify(result), /private|AM1-fixture/);
 });
@@ -106,6 +159,14 @@ test('hold and unconfirmed cleanup stop before the next fixture', async () => {
   const bad = runtime({ badCleanup: true });
   await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 2 }), bad), /CLEANUP/);
   assert.equal(bad.calls.filter(c => c[0] === 'prepare').length, 1);
+});
+test('cleanup reason codes survive in the failed sample report', async () => {
+  const r = runtime(); let published;
+  r.closeFixture = async () => ({ confirmed: false, reasons: ['FIXTURE_WINDOW_NOT_RETAINED'] });
+  r.publish = async report => { published = JSON.parse(JSON.stringify(report)); };
+  await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r), /CLEANUP_UNCONFIRMED/);
+  assert.deepEqual(published.rows[0].cleanupReasons, ['FIXTURE_WINDOW_NOT_RETAINED']);
+  assert.equal(published.rows[0].cleanupConfirmed, false);
 });
 test('aggregate uses nearest-rank p90, explicit coverage and excludes failed rows', () => {
   const rows = Array.from({ length: 10 }, (_, i) => ({ app: 'fixture', class: 'Office', mode: 'sequential', status: 'complete', firstReadMs: i + 1, chars: 100, nodes: 5 }));

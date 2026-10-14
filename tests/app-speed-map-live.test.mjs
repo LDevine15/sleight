@@ -7,7 +7,7 @@ import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { liveSpeedRuntime, speedOutput } from '../bench/app-speed-map-live.mjs';
 import { speedPlan } from '../bench/app-speed-map.mjs';
 
-async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false } = {}) {
+async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'sleight-am1-test-'));
   t.after(() => removeTemp(root));
   const bank = join(root, 'bank'), calls = []; let unlocks = 0, approver;
@@ -20,7 +20,7 @@ async function setup(t, { confirmed = true, focusChanged = false, startupFailure
       assert.ok(existsSync(fixture.target)); assert.equal(fixture.path,fixture.target);
       assert.match(readFileSync(fixture.target,'utf8'),/^AM1-/);
       calls.push('host'); fixture.onSample({focusChanged,targetOverOwner:false});
-      return {finish:async()=>({confirmed,samples:[{focusChanged}]})};
+      return {finish:async()=>({confirmed,details,samples:[{focusChanged}]})};
     },
     makeClient:async(server, options)=>{
       if (startupFailure) throw Error('private startup detail');
@@ -50,6 +50,16 @@ test('cleanup failure retains the owned bank and live-lock receipt', async t=>{
   assert.equal((await h.runtime.closeFixture(fixture)).confirmed,false);
   await assert.rejects(h.runtime.close(),/CLEANUP_UNCONFIRMED/);
   assert.equal(h.unlocks,0); assert.equal(existsSync(h.bank),true);
+});
+test('unconfirmed cleanup retains fixed host reasons without document paths or arbitrary text', async t => {
+  const h = await setup(t, { confirmed: false, details: { reasons: ['CLEANUP_FAILED', 'PRIVATE_ACCOUNT_TOKEN'], error: 'private account',
+    windows: [{ document: 'file:///private/private.txt', reasons: ['DOCUMENT_NOT_MATCHED', 'WINDOW_NOT_RETAINED'] }] } });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['textedit'], runs: 1 }).apps[0]);
+  const cleanup = await h.runtime.closeFixture(fixture);
+  assert.deepEqual(cleanup.reasons, ['CLEANUP_FAILED', 'DOCUMENT_NOT_MATCHED', 'WINDOW_NOT_RETAINED']);
+  assert.doesNotMatch(JSON.stringify(cleanup), /PRIVATE|private/);
+  await assert.rejects(h.runtime.close(), /CLEANUP_UNCONFIRMED/);
+  assert.equal(h.unlocks, 0);
 });
 test('an observed focus change latches the boundary before session creation', async t=>{
   const h=await setup(t,{focusChanged:true});

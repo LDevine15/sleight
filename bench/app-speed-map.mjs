@@ -49,9 +49,13 @@ export function speedScope(plan, task) {
   return plan.ownerPresent === true ? 'owner-present-read-only' : 'owned-fixture';
 }
 
-// Serialized into the engine. Return counts only, never the tree or labels.
 export async function readMetrics(handle, { marker, requiredText } = {}) {
   const tree = await handle.getAXState({ disableDiffing: true, emit: false });
+  return treeMetrics(tree, { marker, requiredText });
+}
+
+// Serialized into the engine. Receives text, never a native handle.
+function treeMetrics(tree, { marker, requiredText } = {}) {
   if (typeof tree !== 'string') throw Error('TREE_UNAVAILABLE');
   if (marker && !tree.split('\n')[0].includes(marker) || requiredText && !tree.includes(requiredText)) throw Error('FIXTURE_IDENTITY');
   const numbered = [...tree.matchAll(/^\t*\d+ /gm)].length;
@@ -106,12 +110,11 @@ export async function runSpeedMap(plan, runtime) {
         scope, mode, trial, sessionIndex, status: 'failed',
         acquireMs: null, firstReadMs: null, warmReadMs: null, actionMs: null, afterReadMs: null,
         chars: null, nodes: null, cleanupConfirmed: true };
-      async function timed(key, code, read = false) {
+      async function timed(key, code) {
         boundary(); const start = runtime.now();
         const reply = await session.js(code);
         if (reply?.isError) throw Error('ENGINE_CALL_FAILED');
-        const value = read ? metrics(reply) : undefined;
-        row[key] = runtime.now() - start; return value;
+        row[key] = runtime.now() - start;
       }
       try {
         boundary(); session = await runtime.openSession(task, fixture);
@@ -120,15 +123,22 @@ export async function runSpeedMap(plan, runtime) {
         const acquire = browser ? `var am1Choices = (await cua.listBrowsers({emit:false})).filter(b => b.name === ${JSON.stringify(task.app)} && b.id === ${JSON.stringify(fixture.browserId)} && b.profileName === ${JSON.stringify(fixture.profileName)}); if(am1Choices.length !== 1) throw Error('BROWSER_IDENTITY'); var am1Tab = await cua.createBrowserTab(am1Choices[0].id, ${JSON.stringify(fixture.url)}, {visible:false});` :
           `var am1App = await cua.getApp(${JSON.stringify(task.bundle)});`;
         await timed('acquireMs', acquire);
-        const read = `nodeRepl.write('AM1METRICS:' + JSON.stringify(await (${readMetrics.toString()})(${handle}, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText })})));`;
-        const first = await timed('firstReadMs', read, true);
+        const read = `var am1Tree = await ${handle}.getAXState({ disableDiffing: true, emit: false }); am1Tree;`;
+        async function measuredRead(key) {
+          // A bound standalone read follows the native lease rule and lets
+          // concurrent read-only sessions avoid taking an action lease.
+          await timed(key, read);
+          boundary();
+          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText })})));`));
+        }
+        const first = await measuredRead('firstReadMs');
         row.chars = first.chars; row.nodes = first.nodes;
-        const warm = await timed('warmReadMs', read, true);
+        const warm = await measuredRead('warmReadMs');
         if (mode === 'sequential' && !plan.ownerPresent && !task.readOnly) {
           if (!browser && warm.scrollTarget === null) throw Error('NO_UNIQUE_SCROLL_AREA');
           await timed('actionMs', browser ? 'await am1Tab.cua.scroll({x:120,y:200,scrollX:0,scrollY:400});' :
             `await am1App.scroll(${warm.scrollTarget}, 'down', 1);`);
-          const after = await timed('afterReadMs', read, true);
+          const after = await measuredRead('afterReadMs');
           row.afterChars = after.chars; row.afterNodes = after.nodes;
         }
         row.status = 'complete';
@@ -145,6 +155,7 @@ export async function runSpeedMap(plan, runtime) {
     try { cleanup = await runtime.closeFixture(fixture); } catch { cleanup = { confirmed: false }; }
     for (const row of rows) {
       row.cleanupConfirmed &&= cleanup?.confirmed === true;
+      row.cleanupReasons = cleanup?.reasons ?? [];
       if (cleanup?.focusChanged) { row.status = 'unsafe'; row.failure = 'FOCUS_CHANGED'; }
     }
     report.rows.push(...rows);
