@@ -26,6 +26,32 @@ const recorded = [
   { t: 250, kind: 'host-stopped', exitCode: 0 },
 ];
 
+test('a partial initial window subscription cannot pass through a front-only ready record', async () => {
+  const { gradeHostMonitor } = await moduleUnderTest();
+  const log = [recorded[0], { t: 95, kind: 'host-window-watch', pid: 20, covered: false, pending: false }, recorded.at(-1)];
+  const grade = gradeHostMonitor(log, { name: 'partial', started: 100, finished: 150 });
+  assert.equal(grade.ok, false);
+  assert.equal(grade.cell, 'unqualified');
+});
+
+test('a background launch with pending window registration leaves the interval unqualified', async () => {
+  const { gradeHostMonitor } = await moduleUnderTest();
+  const log = [recorded[0], { t: 110, kind: 'host-window-watch', pid: 30, covered: false, pending: true },
+    { t: 160, kind: 'host-window-watch', pid: 30, covered: true, pending: false }, recorded.at(-1)];
+  assert.equal(gradeHostMonitor(log, { name: 'launch', started: 100, finished: 150 }).cell, 'unqualified');
+  assert.equal(gradeHostMonitor(log, { name: 'later', started: 170, finished: 190 }).cell, 'ok');
+});
+
+test('a registered background app window change is attributed without a front-app activation', async () => {
+  const { gradeHostMonitor } = await moduleUnderTest();
+  const log = [{ t: 70, kind: 'host-window-watch', pid: 30, covered: false, pending: true },
+    { t: 80, kind: 'host-window-watch', pid: 30, covered: true, pending: false }, recorded[0],
+    { t: 120, kind: 'host-window', pid: 30, windowId: 31 }, recorded.at(-1)];
+  const grade = gradeHostMonitor(log, { name: 'background', started: 100, finished: 150 });
+  assert.equal(grade.cell, 'FAIL: 1');
+  assert.deepEqual(grade.events[0].runs, ['background']);
+});
+
 test('recorded host changes fail turbo focus and Space gates within each run, including headed runs', async () => {
   const { gradeHostMonitor } = await moduleUnderTest();
   for (const headless of [true, false]) {
@@ -68,12 +94,14 @@ test('collector persists recorded observer lines, rejects malformed data and col
   child.stdin = new PassThrough(); child.stdin.on('finish', () => child.emit('close', 0));
   const file = join(dir, 'monitor.jsonl');
   const monitor = await startHostMonitor(file, { launch: async () => child, now: () => 500 });
-  const lines = recorded.slice(0, 5).map(event => JSON.stringify(event)).join('\n') + '\n';
+  const lines = [...recorded.slice(0, 5), { t: 96, kind: 'host-window-watch', pid: 20, covered: false, pending: false }]
+    .map(event => JSON.stringify(event)).join('\n') + '\n';
   child.stdout.write(lines.slice(0, 29)); child.stdout.write(lines.slice(29));
   child.stdout.write('not json\n');
   await monitor.stop();
   const log = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(log.filter(event => event.kind === 'host-space').length, 1);
+  assert.ok(log.some(event => event.kind === 'host-window-watch' && event.covered === false));
   assert.ok(log.some(event => event.kind === 'host-error'));
   assert.deepEqual(log.at(-1), { t: 500, kind: 'host-stopped', exitCode: 0 });
   assert.equal(monitor.log.length, log.length);
@@ -94,6 +122,13 @@ test('read-only host observer compiles on macOS without starting observation', {
   const source = new URL('../bench/fowl/host-monitor.swift', import.meta.url).pathname;
   const result = spawnSync(compiler, ['-module-cache-path', join(dir, 'cache'), source, '-o', join(dir, 'observer')], { encoding: 'utf8', timeout: 120000 });
   assert.equal(result.status, 0, result.stderr);
+  // This mode exits before NSWorkspace, AX or window metadata access.
+  const checked = spawnSync(join(dir, 'observer'), ['--self-test'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(checked.status, 0, checked.stderr);
+  const report = JSON.parse(checked.stdout);
+  assert.equal(report.kind, 'subscription-self-test');
+  for (const key of ['partial', 'recovered', 'backgroundLaunch', 'failedLaunch', 'terminated', 'pendingBeforeSubscribe'])
+    assert.equal(report[key], true, key);
 });
 
 test('patched rounds grade turbo host events even though extension tab checks remain unobserved', async t => {

@@ -46,7 +46,9 @@ export async function startHostMonitor(file, { launch = launchObserver, now = Da
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);
-        if (!['host-ready', 'host-front', 'host-space', 'host-window', 'host-error'].includes(entry.kind) || !Number.isFinite(entry.t)) throw Error();
+        if (!['host-ready', 'host-front', 'host-space', 'host-window', 'host-window-watch', 'host-error'].includes(entry.kind) || !Number.isFinite(entry.t)) throw Error();
+        if (entry.kind === 'host-window-watch' && (!Number.isSafeInteger(entry.pid) || entry.pid <= 0 ||
+            typeof entry.covered !== 'boolean' || typeof entry.pending !== 'boolean')) throw Error();
         write(entry);
         if (entry.kind === 'host-ready' || entry.kind === 'host-error') ready();
       } catch { write({ kind: 'host-error', message: 'malformed host observer record' }); ready(); }
@@ -79,8 +81,16 @@ export function gradeHostMonitor(log, run, runs = [run]) {
   const end = run.finished;
   const ready = log.find(event => event.kind === 'host-ready' && event.t <= run.started);
   const stopped = log.find(event => event.kind === 'host-stopped');
+  const windows = new Map();
+  let windowGap = false;
+  for (const event of [...log].sort((a, b) => a.t - b.t)) {
+    if (event.kind !== 'host-window-watch' || event.t > end) continue;
+    if (event.t <= run.started) windows.set(event.pid, event.covered === true && event.pending === false);
+    else if (event.covered !== true || event.pending !== false) windowGap = true;
+  }
   const coverage = Number.isFinite(run.started) && Number.isFinite(end) && end >= run.started &&
     ready?.app === true && ready?.space === true && ready?.window === true && stopped?.t >= end && stopped.exitCode === 0 &&
+    !windowGap && [...windows.values()].every(Boolean) &&
     !log.some(event => event.kind === 'host-error' && event.t <= end);
   const events = log.filter(event => ['host-front', 'host-space', 'host-window'].includes(event.kind) &&
     !event.initial && event.t >= run.started && event.t <= end).map(event => ({ ...event,
