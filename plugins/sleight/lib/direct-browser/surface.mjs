@@ -152,7 +152,10 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
         prefix.some(row => !['verified', 'unchanged', 'protected'].includes(row.effect))) throw Error('INVALID_RECEIPT');
     const rows = prefix.map(row => {
       if (row.tab !== undefined) validateCall({ name: 'browser_read', arguments: { tab: row.tab } });
-      return { effect: row.effect, observation: safe(row.observation), ...(row.tab ? { tab: row.tab } : {}) };
+      // A read has one observation. Repeating its page in the prefix doubles
+      // the serialized result and can discard an otherwise bounded page.
+      return { effect: row.effect, observation: request.name === 'browser_read' && !response.error
+        ? { source: 'observation' } : safe(row.observation), ...(row.tab ? { tab: row.tab } : {}) };
     });
     if (response.tab !== undefined && completed === 1) {
       validateCall({ name: 'browser_read', arguments: { tab: response.tab } });

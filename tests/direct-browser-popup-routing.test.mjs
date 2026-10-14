@@ -8,10 +8,11 @@ import { createAuthority, createTransportAuthority } from '../plugins/sleight/li
 import { createBroker } from '../plugins/sleight/lib/direct-browser/broker.mjs';
 import { validateHostRequest } from '../plugins/sleight/lib/direct-browser/request-schema.mjs';
 import * as popups from '../plugins/sleight/lib/direct-browser/popups.mjs';
+import { createModuleSession } from '../bench/turbo/session.mjs';
 
 async function fixture(t, intent, options = {}) {
   const calls = [], targets = new Map(), objects = new Map(), listeners = new Set(); let serial = 0, opened = false, roots;
-  const origin = 'https://fixture.invalid';
+  const origin = options.bench ? 'http://127.0.0.1:5431' : 'https://fixture.invalid';
   const binding = { session: 'client', turn: 'turn', browserIncarnation: 'browser', brokerEpoch: 1 };
   const raw = { sessionId: 'root', on(name, fn) { assert.equal(name, 'event'); listeners.add(fn); },
     off(name, fn) { assert.equal(name, 'event'); listeners.delete(fn); },
@@ -63,8 +64,18 @@ async function fixture(t, intent, options = {}) {
         case 'Input.dispatchKeyEvent': if (params.type === 'keyUp') opened = true; return {};
         default: assert.fail('unexpected CDP method ' + method);
       }
-      roots.observeNodes(route, method, result); return result;
+      roots?.observeNodes(route, method, result); return result;
     } };
+  if (options.bench) {
+    const session = await createModuleSession({ raw, origins: [origin], taskMessage: 'Read the fixture popup.' });
+    t.after(() => session.close());
+    const opened = await session.call({ name: 'browser_open', arguments: { browser: 'bbench', url: origin + '/shop' } });
+    assert.equal(opened.effect, 'verified', JSON.stringify(opened));
+    const read = await session.call({ name: 'browser_read', arguments: { tab: opened.tab } });
+    assert.equal(session.delivered(read), true);
+    return { calls, targets, tab: opened.tab, act: () => session.call({ name: 'browser_act',
+      arguments: { tab: opened.tab, op: 'click', ref: read.observation.data.find(row => row.role === 'button').ref } }) };
+  }
   roots = createRootTargets({ session: raw, current: () => binding });
   const owner = createTransportOwner({ session: raw, checkLease: roots.checkLease, nodeBinding: roots.nodeBinding,
     helpers: { ...formInspectors(), ...fixedReadInspectors } });
@@ -91,6 +102,14 @@ async function fixture(t, intent, options = {}) {
   return { roots, binding, calls, targets, tab: open.tab, emit: event => { for (const fn of listeners) fn(event); },
     act: id => client.request({ id, operation: 'browser_act', args: { tab: open.tab, op: 'click', ref } }) };
 }
+for (const kind of ['link', 'window']) test('benchmark route returns the checked ' + kind + ' tab and title', async t => {
+  const f = await fixture(t, { kind, url: 'http://127.0.0.1:5431/size', name: kind === 'window' ? 'guide' : '', nullReturned: kind === 'window' }, { bench: true });
+  const result = await f.act();
+  assert.equal(result.effect, 'verified', JSON.stringify(result));
+  assert.match(result.tab ?? '', /^t/); assert.notEqual(result.tab, f.tab);
+  assert.equal(result.observation.title, 'Size guide');
+  assert.equal(f.calls.some(c => ['Page.bringToFront', 'Target.activateTarget'].includes(c.method)), false);
+});
 
 for (const kind of ['link', 'window']) test('checked ' + kind + ' opens a leased background tab and returns its title', async t => {
   const f = await fixture(t, { kind, url: 'https://fixture.invalid/size', name: kind === 'window' ? 'sizeguide' : '', nullReturned: kind === 'window' });

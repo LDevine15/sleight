@@ -25,7 +25,8 @@ export async function createModuleSession({ raw, origins, taskMessage, readPayme
   const wire = Object.freeze({ sessionId: raw.sessionId, on: raw.on.bind(raw), off: raw.off.bind(raw),
     async send(method, params, route) {
       if (['Page.bringToFront', 'Target.activateTarget'].includes(method) ||
-          ['Target.createTarget', 'Page.navigate'].includes(method) && !permits(params.url)) throw Error('FIXTURE_COMMAND_DENIED');
+          ['Target.createTarget', 'Page.navigate'].includes(method) && !permits(params.url) &&
+          !(method === 'Target.createTarget' && params.url === 'about:blank' && params.background === true)) throw Error('FIXTURE_COMMAND_DENIED');
       const fence = roots?.captureObservation(route);
       const value = await raw.send(method, params, route); roots?.observeNodes(route, method, value, fence); return value;
     } });

@@ -363,7 +363,7 @@ export class BrowserReads {
       const result = { observation, from: delta ? from : null, to: observation, frame: frame.alias, document: frame.generation,
         mode: delta ? 'delta' : 'full', resync, complete: false, omitted: candidates.length - offset, pending: !acquired.complete,
         coverage: { acquired: acquired.rows.length, matched: selected.length, delivered: 0, offset, sensing: acquired.complete ? 'complete' : 'incomplete' },
-        cursor: nextCursor, data: [] };
+        cursor: nextCursor, note: 'Page truncated; more with scope or max_bytes.', data: [] };
       const formatStarted = performance.now();
       for (const row of candidates.slice(offset)) {
         const { kind, ...plain } = row;
@@ -373,7 +373,7 @@ export class BrowserReads {
         if (byteLength(result) > maxBytes) { result.data.pop(); result.omitted++; result.coverage.delivered--; break; }
       }
       result.complete = acquired.complete && result.omitted === 0;
-      if (result.omitted === 0) result.cursor = null;
+      if (result.omitted === 0) { result.cursor = null; delete result.note; }
       if (result.omitted > 0 && result.data.length === 0) { result.cursor = null; result.resync = 'budget-too-small'; }
       // Acknowledged delta state includes only changes that actually fit in this envelope.
       const delivered = delta || page ? new Map(baseline?.rows) : new Map();

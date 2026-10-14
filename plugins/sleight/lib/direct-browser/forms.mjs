@@ -768,7 +768,8 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
               const continuation = cursors.get(plan.args.scope);
               if (continuation && !continuation.delivered) return { effect: 'none', completed: 0, observation: { code: 'STALE_REF' } };
               const observation = await reader.read({ ...(continuation ? { cursor: continuation.cursor } : { ref: plan.args.scope }),
-                maxBytes: Math.min(plan.args.max_bytes ?? 12000, 11000) - 80 });
+                // Reserve the broker/frontend receipt and public cursor handle.
+                maxBytes: Math.max(700, Math.min(plan.args.max_bytes ?? 10000, 11000) - 768) });
               const refs = observation.data.filter(row => row.kind !== 'removed').map(row => row.ref);
               deliveries.set(observation.observation, { operation: activeFor().operation.id, refs });
               form.pendingRead(observation.observation, identity, refs);

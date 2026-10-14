@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { fixture } from './fixtures/direct-browser-open.mjs';
 import { createFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
 
-async function joined(t) {
-  const f = await fixture(t);
+async function joined(t, options) {
+  const f = await fixture(t, options);
   const frontend = await createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true,
     selectedBrowser: 'bfixture', status: () => 'connected', redact: v => v, client: f.client,
     onDelivered: value => value.name === 'browser_read' && f.adapter.delivered(f.root.leaseFor(value.tab,
@@ -12,6 +12,20 @@ async function joined(t) {
     endSession: async () => { f.root.revokeSession('client'); return { revoked: true, cleanup: (await f.root.cleanupSession('client')).cleanup }; } });
   t.after(() => frontend.end()); return { ...f, frontend };
 }
+for (const max_bytes of [undefined, 4096, 64000]) test('a bounded page remains useful through the frontend: ' + (max_bytes ?? 'default'), async t => {
+  const f = await joined(t, { manyRows: 100 });
+  const opened = await f.frontend.call({ name: 'browser_open', arguments: { browser: 'bfixture', url: 'https://fixture.invalid' } });
+  const read = await f.frontend.call({ name: 'browser_read', arguments: { tab: opened.tab, ...(max_bytes ? { max_bytes } : {}) } });
+  assert.equal(read.effect, 'verified', JSON.stringify(read));
+  assert.ok(read.observation.data?.length > 1, 'page rows and actionable refs must survive the receipt budget');
+  assert.ok(Buffer.byteLength(JSON.stringify(read)) <= (max_bytes ?? 12000));
+  assert.equal(read.observation.complete, false);
+  assert.match(read.observation.note, /more with scope or max_bytes/);
+  assert.equal(f.frontend.delivered(read), true);
+  const row = read.observation.data.find(row => row.role === 'textbox');
+  const fill = await f.frontend.call({ name: 'browser_fill', arguments: { tab: opened.tab, fields: [{ ref: row.ref, value: 'Delivered' }] } });
+  assert.equal(fill.effect, 'verified', JSON.stringify(fill));
+});
 test('production four-tool flow must open an owned background tab before reading it', async t => {
   const f = await joined(t);
   const result = await f.frontend.call({ name: 'browser_open', arguments: { browser: 'bfixture', url: 'https://fixture.invalid' } });
