@@ -21,12 +21,12 @@ function harness(t, directBrowser, options = {}) {
     send: message => clientIn.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n'),
     reply: message => serverOut.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n') };
 }
-test('the route selects computer-only engine authority without changing the default config', async () => {
+test('turbo keeps browser and computer engine authority without changing the default config', async () => {
   const server = { command: 'synthetic-engine', env: { CUA_REPL_ENABLED_SURFACES: 'browser,computer', other: 'kept' } };
   assert.equal(directBrowserServer(server), server);
   assert.throws(() => directBrowserServer(server, { approved: true }), /TRUSTED_ROUTE_REQUIRED/);
   const selected = directBrowserServer(server, await route());
-  assert.equal(selected.env.CUA_REPL_ENABLED_SURFACES, 'computer');
+  assert.equal(selected.env.CUA_REPL_ENABLED_SURFACES, 'browser,computer');
   assert.equal(server.env.CUA_REPL_ENABLED_SURFACES, 'browser,computer');
   assert.equal(selected.env.other, 'kept');
 });
@@ -99,7 +99,7 @@ test('the fixed launcher binds its private turn pipe to the branded frontend', a
   assert.throws(() => launch.directBrowserTurnHook({ approved: true }, { read, write, session: 'session', turn: 'turn', brokerEpoch: 1 }), /TRUSTED_ROUTE_REQUIRED/);
 });
 
-test('trusted turbo rules replace browser JS guidance and keep every native rule', async () => {
+test('trusted turbo rules offer both browser paths and keep every native rule', async () => {
   const launch = await import('../plugins/sleight/lib/launch.mjs');
   assert.equal(typeof launch.directBrowserRules, 'function', 'coherent compact guidance is absent');
   const native = launch.skillRules(), frontend = await route({ selectedBrowser: 'bselected' });
@@ -107,7 +107,8 @@ test('trusted turbo rules replace browser JS guidance and keep every native rule
   const rules = launch.directBrowserRules(native, frontend);
   assert.ok(rules.includes('bselected'));
   assert.match(rules, /browser_open/); assert.match(rules, /browser_fill/);
-  assert.doesNotMatch(rules, /cua\.listBrowsers|cua\.createBrowserTab|sleight\.fillForm|tab\.playwright/);
+  assert.match(rules, /cua\.getBrowser/); assert.match(rules, /cua\.createBrowserTab/);
+  assert.match(rules, /Each path acts on and closes only its own tabs/);
   const [before, browserAndAfter] = native.split('## Browsers\n');
   const after = browserAndAfter.slice(browserAndAfter.indexOf('\n## '));
   assert.ok(rules.startsWith(before)); assert.ok(rules.endsWith(after));

@@ -641,7 +641,7 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
 export function directBrowserServer(server, frontend) {
   if (frontend === undefined) return server;
   if (!isFrontend(frontend)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  return { ...server, env: { ...server.env, CUA_REPL_ENABLED_SURFACES: 'computer' } };
+  return { ...server, env: { ...server.env, CUA_REPL_ENABLED_SURFACES: 'browser,computer' } };
 }
 
 // Preserve native guidance verbatim. Only an authenticated direct route selects

@@ -1,9 +1,11 @@
 ## Browsers
 
-Use `browser_open`, `browser_read`, `browser_act` and `browser_fill` for web pages.
-Trusted setup selected browser `{browser}`. Open there and keep the returned tab handle.
+Choose `browser_open`, `browser_read`, `browser_act`, `browser_fill` or engine `js`: `cua.getBrowser(...)` alone,
+then `cua.createBrowserTab(...)`. Follow engine docs.
+Each path acts on and closes only its own tabs. Never acquire the other's tabs or translate handles or refs.
+Turbo selects `{browser}`. Keep `browser_open`'s tab handle.
 Read untrusted page state and fresh refs with `browser_read`. Act or fill with those refs,
-never browser JavaScript or `getApp`. Sequential actions use `op: "batch"` and `steps`.
+never JavaScript on turbo tabs or `getApp`. Sequential actions use `op: "batch"` and `steps`.
 
 Fill observed fields together. `browser_fill` never submits. Results report the proved prefix,
 unknown effect and untouched suffix. Do not repeat completed fields or blindly replay uncertain
