@@ -130,9 +130,12 @@ export async function backgroundClick(tab, locator, click = options => locator.c
 
 // browser is the Playwright connection through V1's CDP filter; session is the
 // approved root CDP {send,on,off,sessionId}. Existing pages are never acquired.
-export function createPageRegistry({ browser, session, context = browser?.contexts()[0], timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
+export function createPageRegistry({ browser, session, context = browser?.contexts()[0], upstream, ownTarget,
+  timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
   if (!context || typeof session?.send !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('approved browser connection required');
+  if (ownTarget !== undefined && (typeof ownTarget !== 'function' || typeof upstream?.send !== 'function'))
+    throw Error('trusted popup admission needs the upstream CDP connection');
   const records = new Map(), targets = new Map(), metadata = new WeakMap(), seen = new Map(), allocations = new Map(), tasks = new Set();
   let ended = false, cleanup;
   const track = promise => {
@@ -150,7 +153,10 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     return metadata.get(page);
   };
   const install = async entry => {
-    entry.cdp.on('Page.windowOpen', () => { entry.windowOpenNo++; });
+    entry.cdp.on('Page.windowOpen', () => {
+      entry.windowOpenNo++;
+      if (ownTarget) track(discoverPopups(entry)).catch(() => { entry.popupPending = true; });
+    });
     await entry.cdp.send('Page.enable');
     await entry.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     const { identifier } = await entry.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${popupHook})()` });
@@ -217,6 +223,25 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     }, timeoutMs).finally(() => { allocation.closing = null; });
     return allocation.closing;
   };
+  // V1 hides unknown targets from Playwright. A windowOpen on an owned page is
+  // the wakeup; trusted upstream metadata supplies the exact opener, then the
+  // registry explicitly admits that child through V1's private own() capability.
+  async function discoverPopups(parent) {
+    const until = Date.now() + popupWaitMs;
+    while (!ended && !parent.released && !parent.closed) {
+      const { targetInfos } = await deadline(() => upstream.send('Target.getTargets'), timeoutMs);
+      const children = targetInfos.filter(info => info.type === 'page' && info.openerId === parent.targetId &&
+        !targets.has(info.targetId) && !allocations.has(info.targetId));
+      for (const child of children) {
+        if (ended || parent.released || parent.closed) return;
+        allocations.set(child.targetId, {});
+        await ownTarget(child.targetId);
+        if (ended) await closeAllocation(child.targetId);
+      }
+      if (children.length || Date.now() >= until) return;
+      await new Promise(resolve => setTimeout(resolve, Math.min(10, popupWaitMs)));
+    }
+  }
   const tab = id => {
     const entry = records.get(id);
     if (!entry || entry.released) throw Error('unknown owned tab');

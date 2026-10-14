@@ -67,18 +67,26 @@ async function fixture(t) {
   origin = 'http://127.0.0.1:' + server.address().port;
   launched = await inprocess.playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath: executable,
     viewport: { width: 1200, height: 900 }, args: ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1'] });
-  const [port, path] = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').trim().split('\n');
-  browser = await inprocess.playwright.chromium.connectOverCDP('ws://127.0.0.1:' + port + path);
+  // One Playwright driver owns this disposable browser. A second driver can
+  // compete over popup auto-attachment and leave the new target paused.
+  browser = launched.browser();
   const session = await browser.newBrowserCDPSession(), send = session.send.bind(session);
   session.send = (method, params) => { calls.push({ method, params }); return send(method, params); };
   const context = browser.contexts()[0], user = context.pages()[0];
+  context.on('page', page => page.on('pageerror', error => t.diagnostic('fixture page error: ' + error.message)));
   await user.goto(origin + '/sentinel');
   const focusBefore = await user.evaluate(() => ({ count: window.focusCount, visibility: document.visibilityState }));
   registry = createPageRegistry({ browser, session, timeoutMs: 10000 });
   const open = route => registry.openTab({ url: origin + route });
   async function click(tab, name) {
     const entry = registry.tab(tab), before = entry.popups.length;
-    await backgroundClick(entry, entry.page.getByRole(name === 'Shipping rates' || name === 'Checkout' ? 'link' : 'button', { name }), undefined, { timeoutMs: 2000 });
+    try {
+      await backgroundClick(entry, entry.page.getByRole(name === 'Shipping rates' || name === 'Checkout' ? 'link' : 'button', { name }), undefined, { timeoutMs: 5000 });
+    } catch (error) {
+      t.diagnostic('popup failure: ' + JSON.stringify({ name, windows: entry.windowOpenNo, popups: entry.popups,
+        urls: context.pages().map(page => page.url()), events }));
+      throw error;
+    }
     if (['Shipping rates', 'Size guide', 'Sign in with DemoID'].includes(name)) {
       const end = Date.now() + 5000;
       while (entry.popups.length === before && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 10));

@@ -249,3 +249,20 @@ test('popup click waits for delayed owned adoption after windowOpen without dela
   assert.equal(f.registry.tab(entry.popups[0].tab).page.info.targetId, 'delayed-popup');
   await f.registry.endTurn();
 });
+
+test('filtered popup is admitted from trusted CDP opener metadata before Playwright can see it', async () => {
+  const owned = [], f = fixture({
+    upstream: { async send(method) {
+      assert.equal(method, 'Target.getTargets');
+      return { targetInfos: [{ type: 'page', targetId: 'child', openerId: 'target-1' },
+        { type: 'page', targetId: 'foreign', openerId: 'user' }, { type: 'worker', targetId: 'worker', openerId: 'target-1' }] };
+    } },
+    ownTarget: async targetId => { owned.push(targetId); f.page(targetId, 'target-1'); },
+  });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  f.registry.tab(tab).cdp.emit('Page.windowOpen', {});
+  await f.registry.idle();
+  assert.deepEqual(owned, ['child']);
+  assert.equal(f.registry.tab(tab).popups.length, 1);
+  await f.registry.endTurn();
+});
