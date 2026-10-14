@@ -27,7 +27,7 @@ const dialog = (role, subrole) => ['AXSheet', 'AXDialog'].includes(role) || ['AX
 function run(argv) {
   if (!/^\/private\/tmp\/sleight-exact-[A-Za-z0-9]+\/exact\.txt$/.test(argv[0] ?? '')) throw new Error('Owned probe path required');
   const url = ObjC.unwrap($.NSURL.fileURLWithPath(argv[0]).absoluteString);
-  let app, root, pid, processStart, buffer = '';
+  let app, root, openPanel, beforeWindows = [], pid, processStart, buffer = '';
   const apps = () => $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.TextEdit');
   const verify = () => {
     const running = apps();
@@ -48,7 +48,7 @@ function run(argv) {
       if (windows.length !== 1) return { status: 'ambiguous', windows: windows.length, all: Number(all.count), detail: windows.map(w => { const c = read(w, 'AXChildren', true); return { title: scalar(read(w, 'AXTitle', true)), sub: scalar(read(w, 'AXSubrole', true)), kids: c ? Number(c.count) : null, first: c && Number(c.count) ? [scalar(read(c.objectAtIndex(0), 'AXRole', true)), scalar(read(c.objectAtIndex(0), 'AXTitle', true))] : null }; }) };
       root = windows[0];
       if (scalar(read(root, 'AXDocument')) !== url) { root = null; return { status: 'unowned' }; }
-      return { status: 'ok' };
+      beforeWindows = windows; openPanel = undefined; return { status: 'ok' };
     }
     if (!root) return { status: 'unbound' };
     verify();
@@ -56,37 +56,40 @@ function run(argv) {
       // Exactly one timed attribute fetch, against the retained owned document window.
       return { status: 'ok', role: scalar(read(root, 'AXRole')) };
     }
-    if (request.op !== 'focus') return { status: 'invalid' };
+    if (!['focus', 'prepare'].includes(request.op)) return { status: 'invalid' };
     const element = read(app, 'AXFocusedUIElement');
     const role = scalar(read(element, 'AXRole')), subrole = scalar(read(element, 'AXSubrole', true));
-    let surface = read(element, 'AXWindow'), owned = false, node = element;
+    const focusWindow = read(element, 'AXWindow');
+    let surface = focusWindow, owned = false, node = element;
     // AXWindow sometimes names the enclosing document window for an attached sheet.
     // Use the nearest dialog ancestor as the surface, retaining both identities by CFEqual.
-    let found = false;
+    let found = false; const ancestors = [];
     for (let depth = 0; node && depth < 24; depth++) {
+      if (ancestors.some(old => $.CFEqual(old, node))) throw new Error('Ambiguous focus ancestry');
+      ancestors.push(node);
       if ($.CFEqual(node, root)) owned = true;
       const r = scalar(read(node, 'AXRole')), s = scalar(read(node, 'AXSubrole', true));
       if (!found && dialog(r, s)) { surface = node; found = true; }
       node = read(node, 'AXParent', true);
     }
     const windowRole = scalar(read(surface, 'AXRole')), windowSubrole = scalar(read(surface, 'AXSubrole', true));
-    const windows = read(app, 'AXWindows');
-    if (Number(windows.count) > 8) return { status: 'ambiguous' };
-    // App-level Open dialogs are not always descendants of the document. This fixture starts
-    // with only its owned document. Any additional non-dialog window invalidates ownership.
-    let rootPresent = false, surfacePresent = false, foreign = false;
-    for (let i = 0; i < Number(windows.count); i++) {
-      const window = windows.objectAtIndex(i);
-      if ($.CFEqual(window, root)) { rootPresent = true; continue; }
-      if (overlay(window, read)) continue;
-      if ($.CFEqual(window, surface)) surfacePresent = true;
-      if (!dialog(scalar(read(window, 'AXRole')), scalar(read(window, 'AXSubrole', true)))) foreign = true;
-    }
-    owned = rootPresent && !foreign && (owned || (surfacePresent && dialog(windowRole, windowSubrole)));
+    const all = read(app, 'AXWindows'), windows = [];
+    for (let i = 0; i < Number(all.count); i++) if (!overlay(all.objectAtIndex(i), read)) windows.push(all.objectAtIndex(i));
+    if (windows.length > 8) return { status: 'ambiguous' };
+    if (windows.length === 1 && $.CFEqual(windows[0], root)) openPanel = undefined;
+    if (request.op === 'prepare') beforeWindows = windows;
+    const added = windows.filter(window => !beforeWindows.some(old => $.CFEqual(old, window)));
+    // The opener may create one separate standard window. Retain its AX identity, never
+    // adopt a second or replacement window based on its title or dialog role.
+    if (!openPanel && request.op === 'focus' && added.length === 1 && $.CFEqual(added[0], focusWindow)) openPanel = added[0];
+    const rootPresent = windows.some(window => $.CFEqual(window, root));
+    const foreign = windows.some(window => !$.CFEqual(window, root) && (!openPanel || !$.CFEqual(window, openPanel)));
+    const inPanel = openPanel && ($.CFEqual(focusWindow, openPanel) || ancestors.some(node => $.CFEqual(node, openPanel)));
+    owned = rootPresent && !foreign && !!(owned || inPanel);
     if (!$.CFEqual(element, read(app, 'AXFocusedUIElement'))) return { status: 'changed' };
     verify();
     return { status: 'ok', epoch, pid, processStart, element: identity(element), surface: identity(surface),
-      role, subrole, windowRole, windowSubrole, owned };
+      role, subrole, windowRole, windowSubrole, owned, panel: inPanel ? identity(openPanel) : null };
   }
   const stdin = $.NSFileHandle.fileHandleWithStandardInput, stdout = $.NSFileHandle.fileHandleWithStandardOutput;
   for (;;) {

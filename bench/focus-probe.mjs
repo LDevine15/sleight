@@ -31,9 +31,9 @@ export function focusReady(value, baseline) {
   return value?.status === 'ok' && baseline?.status === 'ok' && value.owned === true &&
     ['epoch', 'pid', 'processStart'].every(key => value[key] === baseline[key]) &&
     Number.isSafeInteger(value.element) && value.element > 0 && Number.isSafeInteger(value.surface) &&
-    value.surface > 0 && value.surface !== baseline.surface &&
-    ['AXTextField', 'AXTextArea', 'AXComboBox'].includes(value.role) &&
-    (['AXSheet', 'AXDialog'].includes(value.windowRole) || ['AXDialog', 'AXSystemDialog'].includes(value.windowSubrole));
+    value.surface > 0 && (value.surface !== baseline.surface || (value.panel === value.surface && value.element !== baseline.element)) &&
+    ['AXTextField', 'AXTextArea', 'AXComboBox'].includes(value.role) && value.subrole !== 'AXSearchField' &&
+    (value.panel === value.surface || ['AXSheet', 'AXDialog'].includes(value.windowRole) || ['AXDialog', 'AXSystemDialog'].includes(value.windowSubrole));
 }
 
 export async function waitForFocus({ baseline, observe, now = () => performance.now(), sleep: pause = sleep }) {
@@ -57,6 +57,16 @@ export async function waitForFocus({ baseline, observe, now = () => performance.
 
 export const folderPath = bank => join(bank, 'd'.repeat(127 - bank.length - 1));
 
+export async function bindObserver(observer, { now = () => performance.now(), sleep: pause = sleep } = {}) {
+  const deadline = now() + 1000;
+  for (;;) {
+    const reply = await observer.request({ op: 'bind' }, Math.max(1, Math.ceil(deadline - now())));
+    if (now() > deadline) return { status: 'unknown', error: 'Bind deadline exceeded' };
+    if (reply.status !== 'ambiguous' || now() >= deadline) return reply;
+    await pause(Math.min(20, deadline - now()));
+  }
+}
+
 export async function runTrial({ arm, index, path, call, observe, fixture, now = () => performance.now(), sleep: pause = sleep }) {
   const entry = { arm, index, waits: [], correct: false }, start = now();
   const checked = async code => { const reply = await call(code); if (reply?.isError) throw new Error('Engine error; body omitted'); return reply; };
@@ -65,7 +75,7 @@ export async function runTrial({ arm, index, path, call, observe, fixture, now =
     assert.ok(before.documentUnchanged && before.clean, 'Fixture is not clean before trial');
     for (const key of ['super+o', 'super+shift+g']) {
       let baseline;
-      if (arm === 'focus') { try { baseline = await observe(); } catch { baseline = { status: 'unknown' }; } }
+      if (arm === 'focus') { try { baseline = await observe({ prepare: true }); } catch { baseline = { status: 'unknown' }; } }
       await checked(`await app.pressKey(${JSON.stringify(key)})`);
       const waitStart = now();
       const wait = arm === 'focus' ? await waitForFocus({ baseline, observe, now, sleep: pause }) : { reason: null, polls: 0 };
@@ -201,9 +211,9 @@ async function main(argv) {
       pathToFileURL(path).href, 'Engine selected another document; no input sent');
     // Metadata observer starts only after the engine has approved and read the owned app.
     observer = startHelper('./focus-probe-ax.js', [path]);
-    const bound = await observer.request({ op: 'bind' }, 5000); report.bind = bound;
+    const bound = await bindObserver(observer); report.bind = bound;
     assert.equal(bound.status, 'ok', JSON.stringify(bound));
-    const observe = () => observer.request({ op: 'focus', timeoutMs: 100 }, 1500);
+    const observe = ({ prepare = false } = {}) => observer.request({ op: prepare ? 'prepare' : 'focus', timeoutMs: 100 }, 1500);
     await observe(); // Warm the persistent process before timing.
     if (options.workers) stopWorkers = startLoadWorkers(options.workers, { onError: error => { cancelled = true; report.workerError = error.message; } });
     for (let index = 1; index <= options.trials; index++) for (const arm of ['focus', 'read']) {

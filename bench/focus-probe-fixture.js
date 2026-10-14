@@ -26,7 +26,7 @@ function run(argv) {
   if (!/^\/private\/tmp\/sleight-exact-[A-Za-z0-9]+\/exact\.txt$/.test(path ?? '')) throw new Error('Owned probe path required');
   const url = ObjC.unwrap($.NSURL.fileURLWithPath(path).absoluteString), app = Application('TextEdit');
   const front = () => Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier);
-  let ax, root, area, doc, openPanel, pid, processStart, originalFront, initiallyRunning, buffer = '';
+  let ax, root, area, doc, openPanel, beforeWindows = [], openNodes = [], pid, processStart, originalFront, initiallyRunning, buffer = '';
   const running = () => $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.TextEdit');
   const documents = () => app.documents();
   function verify() {
@@ -45,15 +45,15 @@ function run(argv) {
     let panels = 0, rootPresent = false;
     for (const window of windows) {
       if ($.CFEqual(root, window)) rootPresent = true;
-      else if (dialog(scalar(attribute(window, 'AXRole')), scalar(attribute(window, 'AXSubrole', true)))) panels++;
+      else if (openPanel && $.CFEqual(openPanel, window)) panels++;
       else throw new Error('Foreign window present; cleanup refused');
       const sheets = attribute(window, 'AXSheets', true); panels += Number(sheets?.count ?? 0);
     }
     if (!rootPresent) throw new Error('Owned window gone');
     // Focus must still be on the owned root or an attached/app-level modal surface.
     const focus = attribute(ax, 'AXFocusedUIElement'), focusWindow = attribute(focus, 'AXWindow');
-    if (!$.CFEqual(root, focusWindow) && !dialog(scalar(attribute(focusWindow, 'AXRole')),
-      scalar(attribute(focusWindow, 'AXSubrole', true)))) throw new Error('Input focus belongs to another window');
+    if (!$.CFEqual(root, focusWindow) && (!openPanel || (!$.CFEqual(openPanel, focusWindow) &&
+      !modalChain(focus).ancestors.some(node => $.CFEqual(node, openPanel))))) throw new Error('Input focus belongs to another window');
     return { clean: panels === 0, owned: true };
   }
   function modalChain(element) {
@@ -61,24 +61,28 @@ function run(argv) {
     for (let node = element; node; node = attribute(node, 'AXParent', true)) {
       if (seen.length >= 24 || seen.some(other => $.CFEqual(other, node))) throw new Error('Ambiguous modal ancestry');
       seen.push(node);
-      if (dialog(scalar(attribute(node, 'AXRole')), scalar(attribute(node, 'AXSubrole', true)))) result.push(node);
+      if ((openPanel && $.CFEqual(node, openPanel)) || dialog(scalar(attribute(node, 'AXRole')), scalar(attribute(node, 'AXSubrole', true)))) result.push(node);
     }
     // An app-level Open panel may only be named by AXWindow, rather than AXParent.
     const window = attribute(element, 'AXWindow');
-    if (!result.length && dialog(scalar(attribute(window, 'AXRole')), scalar(attribute(window, 'AXSubrole', true)))) result.push(window);
+    if (!result.some(node => $.CFEqual(node, window)) && ((openPanel && $.CFEqual(window, openPanel)) ||
+      (!result.length && dialog(scalar(attribute(window, 'AXRole')), scalar(attribute(window, 'AXSubrole', true)))))) result.push(window);
     return { modals: result, ancestors: seen };
   }
-  function pathControl(surface) {
-    const fields = []; let count = 0;
+  function descendants(surface) {
+    const nodes = [], seen = [];
     const walk = (node, depth) => {
-      if (++count > 400 || depth > 16) throw new Error('Path sheet tree budget exceeded');
-      const role = scalar(attribute(node, 'AXRole'));
-      if (['AXTextField', 'AXTextArea', 'AXComboBox'].includes(role)) { fields.push(node); return; }
+      if (nodes.length >= 400 || depth > 16 || seen.some(other => $.CFEqual(other, node))) throw new Error('Path tree budget or ancestry exceeded');
+      seen.push(node); nodes.push(node);
       const children = attribute(node, 'AXChildren', true);
       for (let i = 0; i < Number(children?.count ?? 0); i++) walk(children.objectAtIndex(i), depth + 1);
     };
-    walk(surface, 0);
-    if (fields.length !== 1) throw new Error('Ambiguous path field');
+    walk(surface, 0); return nodes;
+  }
+  function pathControl(surface) {
+    const fields = descendants(surface).filter(node => !openNodes.some(old => $.CFEqual(old, node)) &&
+      ['AXTextField', 'AXTextArea', 'AXComboBox'].includes(scalar(attribute(node, 'AXRole'))));
+    if (fields.length !== 1) throw new Error('Ambiguous new path field');
     return fields[0];
   }
   function answer(request) {
@@ -111,29 +115,40 @@ function run(argv) {
         for (let i = 0; i < Number(children?.count ?? 0); i++) walk(children.objectAtIndex(i), depth + 1);
       };
       walk(root, 0); if (!area) return { attached: false };
-      verify(); return { attached: true };
+      verify(); beforeWindows = windows; return { attached: true };
     }
     if (request.op === 'inventory') return inventory();
     if (request.op === 'document') {
-      const state = inventory(); if (state.clean) openPanel = undefined;
+      const state = inventory(); if (state.clean) { openPanel = undefined; beforeWindows = appWindows(ax); }
       return { ...state, text: scalar(attribute(area, 'AXValue')) };
     }
     if (request.op === 'open') {
-      if (inventory().clean) throw new Error('No owned Open modal');
-      const chain = modalChain(attribute(ax, 'AXFocusedUIElement'));
-      if (chain.modals.length !== 1) throw new Error('Open modal identity ambiguous');
-      openPanel = chain.modals[0]; return { openBound: true };
+      verify();
+      const windows = appWindows(ax), added = windows.filter(window => !beforeWindows.some(old => $.CFEqual(old, window)));
+      if (added.length > 1) throw new Error('Open panel identity ambiguous');
+      if (added.length === 1) openPanel = added[0];
+      else {
+        // Older macOS attaches the Open panel as a sheet of the retained document.
+        const chain = modalChain(attribute(ax, 'AXFocusedUIElement'));
+        if (chain.modals.length !== 1 || !chain.ancestors.some(node => $.CFEqual(node, root))) throw new Error('No new owned Open panel');
+        openPanel = chain.modals[0];
+      }
+      inventory();
+      const focus = attribute(ax, 'AXFocusedUIElement'), chain = modalChain(focus);
+      if (!chain.modals.some(node => $.CFEqual(node, openPanel))) throw new Error('Focus outside new Open panel');
+      openNodes = descendants(openPanel); return { openBound: true };
     }
     if (request.op === 'field') {
       const state = inventory(); if (state.clean) throw new Error('No owned Go to Folder sheet');
       const focus = attribute(ax, 'AXFocusedUIElement');
       if (!['AXTextField', 'AXTextArea', 'AXComboBox'].includes(scalar(attribute(focus, 'AXRole'))) || $.CFEqual(focus, area)) throw new Error('Focus is not on the owned path field');
       const chain = modalChain(focus);
-      if (!openPanel || chain.modals.length !== 2 || $.CFEqual(chain.modals[0], openPanel) ||
-        !$.CFEqual(chain.modals[1], openPanel) || scalar(attribute(focus, 'AXSubrole', true)) === 'AXSearchField') {
-        throw new Error('Focus is not in a new sheet of the bound Open modal');
-      }
-      const control = pathControl(chain.modals[0]);
+      if (!openPanel || !chain.modals.some(node => $.CFEqual(node, openPanel)) ||
+        (chain.ancestors.some(node => $.CFEqual(node, root)) && !chain.ancestors.some(node => $.CFEqual(node, openPanel))) ||
+        scalar(attribute(focus, 'AXSubrole', true)) === 'AXSearchField') throw new Error('Focus outside bound Open panel');
+      const surface = chain.modals[0];
+      if (!$.CFEqual(surface, openPanel) && openNodes.some(node => $.CFEqual(node, surface))) throw new Error('Go to Folder surface is not new');
+      const control = pathControl(surface);
       if (!chain.ancestors.some(node => $.CFEqual(node, control))) throw new Error('Focus is not the unique path control');
       return { value: scalar(attribute(focus, 'AXValue')), text: scalar(attribute(area, 'AXValue')) };
     }

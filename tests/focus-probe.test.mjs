@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { parseArgs, focusReady, waitForFocus, runTrial, cleanupOwned, summarize, folderPath, startHelper } from '../bench/focus-probe.mjs';
+import { parseArgs, focusReady, waitForFocus, runTrial, cleanupOwned, summarize, folderPath, startHelper, bindObserver } from '../bench/focus-probe.mjs';
 
 const base = { status: 'ok', epoch: 'probe', pid: 12, processStart: 123, surface: 1, element: 2,
   role: 'AXTextArea', subrole: null, windowRole: 'AXWindow', windowSubrole: 'AXStandardWindow', owned: true };
@@ -107,14 +107,23 @@ test('a timed-out helper is retired and cannot queue a second AX observation', a
   await helper.close();
 });
 
-test('persistent AX metadata helper observes an owned attached sheet without reading values', () => {
+function observerReplies({ standard = false, overlay = false, extraWindow = false, replaced = false, overlayPending = false } = {}) {
   const path = '/private/tmp/sleight-exact-AbCd12/exact.txt';
   const array = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const root = { AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow', AXDocument: 'file://' + path };
   const sheet = { AXRole: 'AXSheet', AXParent: root };
   const field = { AXRole: 'AXTextField', AXParent: sheet, AXWindow: root };
-  const app = { AXWindows: array([root]), AXFocusedUIElement: field };
-  const frames = ['{"id":0,"op":"bind"}\n', '{"id":1,"op":"focus"}\n', '{"id":2,"op":"attribute"}\n', ''], replies = [], reads = [], timeouts = [];
+  const panel = { AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow', AXTitle: 'Open', AXChildren: array([{ AXRole: 'AXSplitGroup' }]) };
+  const initial = { AXRole: 'AXTextArea', AXParent: root, AXWindow: root };
+  const panelField = { AXRole: 'AXTextField', AXParent: panel, AXWindow: panel };
+  const goField = { AXRole: 'AXTextField', AXParent: panel, AXWindow: panel };
+  const indicator = { AXRole: 'AXWindow', AXSubrole: 'AXDialog', AXTitle: 'Window',
+    get AXChildren() { return array(overlayPending && phase === 0 ? [] : [{ AXRole: 'AXButton', AXTitle: 'WindowSharingSessionButton' }]); } };
+  let phase = -1;
+  const app = { get AXWindows() { return array([root, ...(standard && phase >= 2 ? [replaced && phase >= 4 ? { ...panel } : panel] : []),
+    ...(overlay ? [indicator] : []), ...(extraWindow && phase >= 2 ? [{ AXRole: 'AXWindow', AXSubrole: 'AXDialog' }] : [])]); },
+    get AXFocusedUIElement() { return standard ? phase < 2 ? initial : phase < 4 ? panelField : goField : field; } };
+  const frames = (overlayPending ? ['bind', 'bind', 'focus', 'attribute'] : standard ? ['bind', 'prepare', 'focus', 'prepare', 'focus', 'attribute'] : ['bind', 'focus', 'attribute']).map((op, id) => JSON.stringify({ id, op }) + '\n').concat(''), replies = [], reads = [], timeouts = [];
   const dollar = value => ({ value, dataUsingEncoding: () => value });
   Object.assign(dollar, {
     NSUUID: { UUID: { UUIDString: 'epoch' } },
@@ -128,13 +137,18 @@ test('persistent AX metadata helper observes an owned attached sheet without rea
       ref[0] = element[name.value]; return 0;
     },
     CFEqual: (a, b) => a === b,
-    NSFileHandle: { fileHandleWithStandardInput: { get availableData() { return frames.shift(); } },
+    NSFileHandle: { fileHandleWithStandardInput: { get availableData() { phase++; return frames.shift(); } },
       fileHandleWithStandardOutput: { writeData: value => replies.push(JSON.parse(value)) } },
     NSString: { alloc: { initWithDataEncoding: value => value } }, NSUTF8StringEncoding: 4,
   });
   vm.runInNewContext(readFileSync(new URL('../bench/focus-probe-ax.js', import.meta.url), 'utf8') + `\nrun(${JSON.stringify([path])});`, {
     $: dollar, ObjC: { import: () => {}, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value }, Ref: () => [],
   });
+  return { replies, reads, timeouts };
+}
+
+test('persistent AX metadata helper observes an owned attached sheet without reading values', () => {
+  const { replies, reads, timeouts } = observerReplies();
   assert.equal(replies[0].status, 'ok');
   assert.equal(replies[1].status, 'ok');
   assert.equal(replies[1].windowRole, 'AXSheet');
@@ -154,18 +168,21 @@ test('read arm reads after each opener, and focus AX errors invoke the same fall
   }
 });
 
-function fixtureReplies({ nested = true, extraField = false, search = false, foreign = false, close = false } = {}) {
+function fixtureReplies({ nested = true, extraField = false, search = false, foreign = false, close = false, standard = false, direct = false, childDialog = false, overlay = false, extraWindow = false, replaced = false, oldField = false, surfaceWindow = false } = {}) {
   const path = '/private/tmp/sleight-exact-AbCd12/exact.txt', array = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const area = { AXRole: 'AXTextArea', AXValue: 'SR1 owned fixture\n' };
   const root = { AXRole: 'AXWindow', AXDocument: 'file://' + path, AXChildren: array([area]) };
-  const open = { AXRole: 'AXWindow', AXSubrole: 'AXDialog' };
-  const sheet = { AXRole: 'AXSheet', AXParent: foreign ? root : open };
+  const open = { AXRole: 'AXWindow', AXSubrole: standard ? 'AXStandardWindow' : 'AXDialog', AXTitle: 'Open' };
+  const sheet = { AXRole: childDialog ? 'AXDialog' : 'AXSheet', AXParent: foreign ? root : open };
   const field = { AXRole: 'AXTextField', AXSubrole: search ? 'AXSearchField' : null,
-    AXWindow: open, AXParent: nested ? sheet : open, AXValue: '/owned/path' };
+    AXWindow: surfaceWindow ? sheet : open, AXParent: direct ? open : nested ? sheet : open, AXValue: '/owned/path' };
   sheet.AXChildren = array(extraField ? [field, { AXRole: 'AXTextField' }] : [field]);
-  open.AXChildren = array([sheet]);
+  const indicator = { AXRole: 'AXWindow', AXSubrole: 'AXDialog', AXTitle: 'Window',
+    AXChildren: array([{ AXRole: 'AXButton', AXTitle: 'WindowSharingSessionButton' }]) };
+  Object.defineProperty(open, 'AXChildren', { get: () => array(phase < 3 && !oldField ? [] : direct ? [field] : [sheet]) });
   let phase = -1, closed = false;
-  const ax = { get AXWindows() { return array(phase < 2 ? [root] : [root, open]); },
+  const ax = { get AXWindows() { return array([root, ...(phase < 2 ? [] : [replaced && phase >= 3 ? { ...open } : open]),
+    ...(overlay ? [indicator] : []), ...(extraWindow && phase >= 2 ? [{ AXRole: 'AXWindow', AXSubrole: 'AXDialog' }] : [])]); },
     get AXFocusedUIElement() { return phase < 3 ? { AXRole: 'AXTextField', AXWindow: open, AXParent: open } : field; } };
   const frames = ['{"id":0,"op":"preflight"}\n', '{"id":1,"op":"attach"}\n', '{"id":2,"op":"open"}\n',
     '{"id":3,"op":"field"}\n', ...(close ? ['{"id":4,"op":"close"}\n'] : []), ''], replies = [];
@@ -195,7 +212,7 @@ test('fixture binds the Open modal and accepts only its new nested path sheet', 
   assert.equal(replies[3].ok, true); assert.equal(replies[3].value, '/owned/path');
 });
 
-for (const options of [{ nested: false }, { extraField: true }, { search: true }, { foreign: true }])
+for (const options of [{ extraField: true }, { search: true }, { foreign: true }])
   test('fixture refuses an unrelated or ambiguous path field: ' + JSON.stringify(options), () => {
     const { replies } = fixtureReplies(options);
     assert.equal(replies[3].ok, false);
@@ -251,4 +268,70 @@ test('127-character owned folder path and kill rule use trial medians including 
   trials[0].correct = false;
   assert.equal(summarize(trials, 2).kill, true);
   assert.equal(summarize(trials.slice(1), 2).qualified, false);
+});
+
+
+test('bind retries a sharing overlay race for at most one second', async () => {
+  let calls = 0;
+  const result = await bindObserver({ request: async () => ++calls === 1 ? { status: 'ambiguous', windows: 2 } : { status: 'ok' } }, clock());
+  assert.equal(result.status, 'ok'); assert.equal(calls, 2);
+  const c = clock(), samples = [];
+  const held = await bindObserver({ request: async () => { samples.push(c.now()); return { status: 'ambiguous', windows: 2 }; } }, c);
+  assert.equal(held.status, 'ambiguous'); assert.ok(c.now() <= 1000); assert.ok(samples.length > 1);
+});
+
+test('a retained standard Open window releases new editable focus, including a field inside that window', () => {
+  const panel = { ...ready, panel: 3, surface: 3, windowRole: 'AXWindow', windowSubrole: 'AXStandardWindow' };
+  assert.equal(focusReady(panel, base), true);
+  assert.equal(focusReady({ ...panel, element: 5 }, panel), true);
+  assert.equal(focusReady(panel, panel), false);
+  assert.equal(focusReady({ ...panel, subrole: 'AXSearchField' }, base), false);
+});
+
+for (const layout of [{}, { childDialog: true }, { direct: true }, { surfaceWindow: true }, { surfaceWindow: true, childDialog: true }])
+  test('fixture accepts macOS 27 standard Open panel and Go to Folder layout ' + JSON.stringify(layout), () => {
+    const { replies } = fixtureReplies({ standard: true, overlay: true, ...layout });
+    assert.equal(replies[1].attached, true);
+    assert.equal(replies[2].openBound, true);
+    assert.equal(replies[3].ok, true); assert.equal(replies[3].value, '/owned/path');
+  });
+
+for (const change of [{ extraWindow: true }, { replaced: true }, { oldField: true, direct: true }])
+  test('fixture refuses extra, replaced or pre-existing panel targets ' + JSON.stringify(change), () => {
+    const { replies } = fixtureReplies({ standard: true, ...change });
+    assert.equal(replies[3].ok, false);
+  });
+
+
+test('metadata observer retains the standard Open panel and ignores the sharing overlay', () => {
+  const { replies, reads } = observerReplies({ standard: true, overlay: true });
+  assert.equal(replies[0].status, 'ok');
+  assert.equal(replies[2].owned, true); assert.equal(replies[2].windowSubrole, 'AXStandardWindow');
+  assert.equal(focusReady(replies[2], replies[1]), true);
+  assert.equal(focusReady(replies[4], replies[3]), true);
+  assert.equal(reads.includes('AXValue'), false);
+});
+
+test('metadata observer refuses a second new window even when it has a dialog role', () => {
+  const { replies } = observerReplies({ standard: true, extraWindow: true });
+  assert.equal(replies[2].owned, false);
+});
+
+
+test('metadata bind retries after the sharing indicator gains its button', () => {
+  const { replies } = observerReplies({ overlay: true, overlayPending: true });
+  assert.equal(replies[0].status, 'ambiguous'); assert.equal(replies[0].windows, 2);
+  assert.equal(replies[1].status, 'ok'); assert.equal(replies[2].owned, true);
+});
+
+test('metadata observer refuses a replacement for its retained standard panel', () => {
+  const { replies } = observerReplies({ standard: true, replaced: true });
+  assert.equal(replies[2].owned, true); assert.equal(replies[4].owned, false);
+});
+
+test('bind refuses an ok reply that arrives after its one-second budget', async () => {
+  let time = 0;
+  const result = await bindObserver({ request: async () => { time += 1001; return { status: 'ok' }; } },
+    { now: () => time, sleep: async ms => { time += ms; } });
+  assert.equal(result.status, 'unknown');
 });
