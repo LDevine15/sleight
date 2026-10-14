@@ -161,3 +161,74 @@ test('callback-local fetch and drag data remain ordinary read-only computation',
     assert.equal(evaluateWrite(`await tab.playwright.evaluate(${callback}, 1)`), undefined);
   }
 });
+
+for (const method of ['append', 'prepend', 'replaceWith', 'remove', 'insertAdjacentHTML']) {
+  test(`local ${method} computes a value without a page mutation`, () => {
+    const body = `class Local { ${method}(value) { return value; } }
+      const data = new Local(); return data.${method}('read-only computation');`;
+    assert.equal(new Function(body)(), 'read-only computation');
+    assert.equal(evaluateWrite(`await tab.playwright.evaluate(() => { ${body} });`), undefined);
+  });
+  test(`known DOM ${method} still refuses through a page alias`, () => {
+    const source = `const container = document.body; container.${method}('value');`;
+    assert.match(evaluateWrite(`await tab.playwright.evaluate(() => { ${source} });`), /cannot run there/);
+  });
+}
+test('an uncertain collection receiver reaches the actual read-only engine boundary', () => {
+  assert.equal(evaluateWrite('await tab.playwright.evaluate(() => collection.append("value"))'), undefined);
+});
+
+for (const helper of [
+  'const identity = fetch => fetch;',
+  'const identity = (fetch) => { return fetch; };',
+  'function identity(fetch) { return fetch; }',
+  'const identity = function(fetch) { return fetch; };',
+  'const identity = ({fetch}) => fetch;',
+  'const identity = ({fetch: value}) => value;',
+  'const identity = (value = fetch) => value;',
+  'const identity = fetch => fetch\n',
+]) test(`a nested parameter does not hide an outer global fetch: ${helper.trim()}`, () => {
+  assert.match(evaluateWrite(`await tab.playwright.evaluate(() => { ${helper}\n return fetch('/fixture'); });`) ?? '', /fetch cannot run there/);
+});
+test('a nested fetch parameter does not hide a global fetch assignment', () => {
+  const code = 'await tab.playwright.evaluate(() => { const identity = fetch => fetch; fetch = () => 1; })';
+  assert.match(evaluateWrite(code) ?? '', /fetch cannot run there/);
+});
+test('a local fetch parameter does not shadow window.fetch', () => {
+  assert.match(evaluateWrite('await tab.playwright.evaluate(fetch => window.fetch("/fixture"), 1)') ?? '', /fetch cannot run there/);
+});
+for (const callback of [
+  'fetch => fetch("local")',
+  '(fetch) => { return fetch("local"); }',
+  'function(fetch) { return fetch("local"); }',
+  '({fetch}) => fetch("local")',
+  '({value: fetch}) => { fetch = 2; return fetch; }',
+  '(fetch = 1) => { fetch = 2; return fetch; }',
+]) test(`fetch stays local inside its own parameter scope: ${callback}`, () => {
+  const code = `await tab.playwright.evaluate(() => { const identity = ${callback}; return 1; })`;
+  assert.equal(evaluateWrite(code), undefined);
+});
+test('a named outer callback retains its local parameter scope', () => {
+  const code = 'function read(fetch) { fetch = 2; return fetch; } await tab.playwright.evaluate(read, 1)';
+  assert.equal(evaluateWrite(code), undefined);
+});
+test('the relay forwards local computation but refuses global fetch before an engine call', t => {
+  const h = harness(t), local = `await tab.playwright.evaluate(() => {
+    class Local { append(value) { return value; } }
+    const data = new Local(); return data.append('local');
+  });`;
+  h.call(1, local);
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.sent[0].method, 'tools/call');
+  assert.equal(h.sent[0].params.name, 'js');
+  assert.ok(h.sent[0].params.arguments.code.includes(local));
+  h.call(2, 'await tab.playwright.evaluate(() => { const identity = fetch => fetch; return fetch("/fixture"); })');
+  assert.equal(h.sent.length, 1);
+  assert.match(h.replies.find(row => row.id === 2)?.result.content[0].text ?? '', /fetch cannot run there/);
+});
+test('the relay keeps a confirmed DOM append refusal before any engine request', t => {
+  const h = harness(t);
+  h.call(1, 'await tab.playwright.evaluate(() => { const el = document.body; el.append("value"); })');
+  assert.equal(h.sent.length, 0);
+  assert.match(h.replies[0].result.content[0].text, /append cannot run there/);
+});
