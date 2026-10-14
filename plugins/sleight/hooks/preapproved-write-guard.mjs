@@ -1,10 +1,10 @@
-const suffix = '/library/application support/sleight/preapproved.json';
-const directorySuffix = suffix.slice(0, -'/preapproved.json'.length);
+const directorySuffix = '/library/application support/sleight';
+const suffixes = ['preapproved.json', 'turbo.json'].map(filename => `${directorySuffix}/${filename}`);
 const mutations = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const folded = path => path.normalize('NFC').toLowerCase();
 const protectedLiteral = path => {
   const value = folded(normalize(path));
-  return value.endsWith(suffix) || value.endsWith(directorySuffix);
+  return suffixes.some(suffix => value.endsWith(suffix)) || value.endsWith(directorySuffix);
 };
 const normalize = path => {
   const parts = [];
@@ -118,7 +118,7 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
       const writes = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][wax][+bt]*['"]|\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?|rename(?:Sync)?|copyFile(?:Sync)?|rm(?:Sync)?|remove|truncate|File\.write)\s*\(/;
       if (!writes.test(source)) continue;
       // Inline code is scanned as text only, never passed to the filesystem resolver.
-      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:preapproved\.json|\/sleight(?=['"`;,)\s]|$))|\bpreapproved\.json\b/gi)) add(match[0], true);
+      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo)\.json|\/sleight(?=['"`;,)\s]|$))|\b(?:preapproved|turbo)\.json\b/gi)) add(match[0], true);
     }
   }
   return paths;

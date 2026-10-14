@@ -16,6 +16,8 @@ const nativeBuilds = new WeakMap();
 const helperSources = { 'peer-host': 'peer-host.c', 'consent-host': 'consent-host.swift' };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const trustedUi = new WeakSet();
+const processProviders = new WeakSet();
+export const isNativeProcessProvider = value => typeof value === 'function' && processProviders.has(value);
 export const isTrustedUi = value => !!value && trustedUi.has(value);
 function ordinary(path, mode) {
   const stat = lstatSync(path);
@@ -149,6 +151,27 @@ export function createNativePeerProvider(receipt) {
       } catch { reject(Error('IPC_PEER_UNAVAILABLE')); }
     });
   });
+}
+
+// Private loader capability. Only the compiled, receipt-bound peer helper may
+// observe a selected PID; callers cannot supply native output or an executable
+// helper. The helper checks UID, canonical executable and birth on both reads.
+export function createNativeProcessProvider(receipt) {
+  executable('peer-host', receipt);
+  const provider = async (pid, expected) => {
+    if (!Number.isSafeInteger(pid) || pid < 1 || typeof expected !== 'string' ||
+        !isAbsolute(expected) || normalize(expected) !== expected) throw Error('SELECTED_PROCESS_UNPROVED');
+    try {
+      const { stdout } = await promisify(execFile)(executable('peer-host', receipt),
+        ['--process-pid', String(pid), expected], { env: environment(), timeout: 3000, maxBuffer: 1024 });
+      const metadata = immutableJSON(JSON.parse(stdout));
+      if (Object.keys(metadata).length !== 4 || metadata.uid !== process.getuid() || metadata.pid !== pid ||
+          !Number.isFinite(metadata.start) || metadata.start <= 0 ||
+          !new RegExp('^p' + pid + '-s[1-9]\\d*-u\\d+$').test(metadata.incarnation)) throw Error();
+      return metadata;
+    } catch { throw Error('SELECTED_PROCESS_UNPROVED'); }
+  };
+  processProviders.add(provider); return provider;
 }
 
 // Pure private channel parser. read/write are inherited pipes of the selected

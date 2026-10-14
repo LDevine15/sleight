@@ -58,6 +58,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { isFrontend } from './direct-browser/surface.mjs';
+import { isInstalledBridge } from './direct-browser/installed-bridge.mjs';
 import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -378,6 +379,7 @@ function internalTurnEnd(tool) {
 
 export function createRelay({
   directBrowser,
+  directHost,
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
@@ -447,6 +449,8 @@ export function createRelay({
   onClientReply = () => {},
 }) {
   if (directBrowser !== undefined && !isFrontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (directHost !== undefined && (!isInstalledBridge(directHost) || !isFrontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
+  let installedBootstrapped = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ?? []);
   const directTurnEnds = new Map();
   function collectDirectEnd(id) {
@@ -1635,6 +1639,27 @@ export function createRelay({
     } catch {
       if (documentMode || flowRules) return;
       serverIn.write(line + '\n');
+      return;
+    }
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && Object.hasOwn(msg.params.arguments ?? {}, 'sleight_turbo')) {
+      // Host-protected own hook calls only. Bypass journals, tracing, result
+      // compaction and the engine so the private bootstrap never reaches them.
+      const reply = result => {
+        if (!disposed && !clientOut.destroyed && !clientOut.writableEnded)
+          clientOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
+      };
+      const refuse = () => reply({ isError: true, content: [{ type: 'text', text: 'Trusted turn binding unavailable.' }] });
+      if (!directHost || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
+      const frame = msg.params.arguments.sleight_turbo;
+      if (frame && Object.keys(frame).length === 1 && frame.event === 'bootstrap' && !installedBootstrapped) {
+        installedBootstrapped = true;
+        reply({ isError: false, content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: directHost.bootstrapEnvelope() }) }] }); return;
+      }
+      if (!installedBootstrapped || frame?.event !== 'begin') { refuse(); return; }
+      directHost.bind(frame).then(available => {
+        if (available) { resumeRequested = true; resumeAfterStop(); }
+        reply({ isError: !available, content: [] });
+      }).catch(refuse);
       return;
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_stop === true) startup?.cancel();

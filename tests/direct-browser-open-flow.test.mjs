@@ -1,0 +1,29 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fixture } from './fixtures/direct-browser-open.mjs';
+import { createFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
+
+async function joined(t) {
+  const f = await fixture(t);
+  const frontend = await createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true,
+    selectedBrowser: 'bfixture', status: () => 'connected', redact: v => v, client: f.client,
+    onDelivered: value => value.name === 'browser_read' && f.adapter.delivered(f.root.leaseFor(value.tab,
+      { session: 'client', turn: 'turn', brokerEpoch: 1, browserIncarnation: 'browser' }), value.observation.observation),
+    endSession: async () => { f.root.revokeSession('client'); return { revoked: true, cleanup: (await f.root.cleanupSession('client')).cleanup }; } });
+  t.after(() => frontend.end()); return { ...f, frontend };
+}
+test('production four-tool flow must open an owned background tab before reading it', async t => {
+  const f = await joined(t);
+  const result = await f.frontend.call({ name: 'browser_open', arguments: { browser: 'bfixture', url: 'https://fixture.invalid' } });
+  assert.match(result.tab ?? '', /^t[A-Za-z0-9_-]+$/, JSON.stringify(result));
+  assert.ok(f.calls.some(c => c.method === 'Target.createTarget' && c.params.background === true));
+  const read = await f.frontend.call({ name: 'browser_read', arguments: { tab: result.tab } });
+  assert.equal(read.effect, 'verified', JSON.stringify(read)); assert.equal(f.frontend.delivered(read), true);
+  const ref = role => read.observation.data.find(row => row.role === role).ref;
+  const fill = await f.frontend.call({ name: 'browser_fill', arguments: { tab: result.tab, fields: [{ ref: ref('textbox'), value: 'Example' }] } });
+  assert.equal(fill.effect, 'verified', JSON.stringify(fill)); assert.equal(f.value(), 'Example');
+  const submit = await f.frontend.call({ name: 'browser_act', arguments: { tab: result.tab, op: 'click', ref: ref('button') } });
+  assert.equal(submit.error.effect, 'unknown', JSON.stringify(submit));
+  assert.equal(f.calls.filter(c => c.method === 'Input.dispatchMouseEvent').length, 2);
+  assert.equal(f.calls.some(c => ['Page.bringToFront', 'Target.activateTarget'].includes(c.method)), false);
+});

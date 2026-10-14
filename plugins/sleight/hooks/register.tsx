@@ -45,6 +45,51 @@ let paneRows = 20
 // The surface that last drew the pane; a snapshot carries only what it draws.
 let paneSurface = 'terminal'
 
+// Host-issued turn capability stays in this mod's private runtime. It never
+// enters atoms, pane history, prompt context or model-facing tool results.
+type TurboEnvelope = { version: 1; session: string; nonce: string }
+let turboEnvelope: TurboEnvelope | undefined
+let turboSequence = 0
+let turboPending = Promise.resolve()
+
+async function beginTurboTurn($: any, text: string) {
+  if (turboSequence >= Number.MAX_SAFE_INTEGER) return
+  const turn = `turbo-${++turboSequence}`
+  const running = turboPending.then(async () => {
+    let contactingHost = false
+    try {
+      const state = await $.process.run([`${$.plugin.root}/bin/sleight-mcp`, 'turbo-state'])
+      if (state.exitCode !== 0 || state.isStdoutTruncated === true || typeof state.stdout !== 'string' ||
+          state.stdout.length > 4096) return
+      const enabled = JSON.parse(state.stdout)?.enabled
+      if (enabled !== true) {
+        if (enabled === false) turboEnvelope = undefined
+        return
+      }
+      contactingHost = true
+      if (!turboEnvelope) {
+        const response = await call($, 'turn_ended', { sleight_turbo: { event: 'bootstrap' } })
+        if (response.isError || response.content?.length !== 1 || response.content[0]?.type !== 'text' ||
+            typeof response.content[0].text !== 'string' || response.content[0].text.length > 4096) return
+        const data = JSON.parse(response.content[0].text)
+        const envelope = data?.sleightTurbo
+        if (!data || Object.keys(data).length !== 1 || !envelope || Object.keys(envelope).length !== 3 || envelope.version !== 1 ||
+            typeof envelope.session !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(envelope.session) ||
+            typeof envelope.nonce !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.nonce)) return
+        turboEnvelope = { version: 1, session: envelope.session, nonce: envelope.nonce }
+      }
+      const response = await call($, 'turn_ended', { sleight_turbo: { ...turboEnvelope, event: 'begin', turn, text } })
+      // A declined or unavailable begin grants no authority. The bootstrap is
+      // one-use, so keep its validated envelope for a fresh genuine user turn.
+      if (!response.isError) usedThisTurn = true
+    } catch { if (contactingHost) turboEnvelope = undefined }
+  })
+  // Serialize genuine submissions so simultaneous user turns cannot create
+  // competing bootstrap envelopes. Failure never changes ordinary prompting.
+  turboPending = running
+  await running
+}
+
 const now = () => new Date().toTimeString().slice(0, 8)
 
 function appFrom(code: string, text: string | undefined): string | undefined {
@@ -255,7 +300,7 @@ export const register: Register = on => {
       stat: (path: string) => $.fs.stat(path, { resolve: true }),
       home: await $.env.get('HOME'),
     })
-    return denied ? { deny: 'Only the user edits ~/Library/Application Support/sleight/preapproved.json. Ask them to make this change.' } : next(e)
+    return denied ? { deny: "Only the user edits sleight's approval files. Ask them to make this change." } : next(e)
   })
   on('tool.check', async ($, e, next) => ownCallVerdict(e, next.origin) ?? next(e))
     // Failing open to the normal check only ever tightens. A call from inside this mod's own
@@ -263,6 +308,7 @@ export const register: Register = on => {
     // HookFailure kind union is 'throw' | 'timeout' only, so the kind reads through a widening.
     .catch(($, e, next) => ((next.error?.kind as string | undefined) === 're-entry' ? ownCallVerdict(e, next.origin) : undefined) ?? next(e))
   on('session.start', async ($, e, next) => {
+    turboEnvelope = undefined
     await $.command.register({
       name: 'sleight',
       description: 'Open the sleight pane; replay a JSON file, record this session, or stop computer use',
@@ -281,6 +327,8 @@ export const register: Register = on => {
       await call($, 'turn_ended', { sleight_resume: true }).catch(() => undefined)
     }
     await update($, stopped, () => false)
+    if ((e.origin?.kind === 'composer' || e.origin?.kind === 'bridge') &&
+        (e as { agentId?: string }).agentId === undefined) await beginTurboTurn($, e.text)
     if (snapshottedApps.size === 0) return next(e)
     const apps = [...snapshottedApps].join(', ')
     snapshottedApps.clear()

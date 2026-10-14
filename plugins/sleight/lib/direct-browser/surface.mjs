@@ -4,6 +4,7 @@ import { browserError, BrowserFailure } from './errors.mjs';
 import { immutableJSON, FRAME_LIMIT } from './ipc.mjs';
 import { createBrokerSessionHost } from './session-host.mjs';
 import { bindSemanticAdapter } from './lifecycle.mjs';
+import { isInstalledBridge } from './installed-bridge.mjs';
 function compressSchema(schema) {
   const fragments = new Map();
   const visit = value => {
@@ -47,6 +48,14 @@ function observationJSON(value) {
 
 const frontends = new WeakSet();
 export const isFrontend = value => !!value && frontends.has(value);
+// This forwarding route exists before the first genuine user turn. Only the
+// fixed worker bridge can bind its private turn and package authority.
+export function createInstalledFrontend(bridge) {
+  if (!isInstalledBridge(bridge)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  const frontend = Object.freeze({ browser: bridge.browser, tools: () => bridge.tools(),
+    call: input => bridge.call(input), delivered: value => bridge.delivered(value), end: () => bridge.endTurn() });
+  frontends.add(frontend); return frontend;
+}
 const sessions = new WeakSet();
 export const isFrontendSession = value => !!value && sessions.has(value);
 const states = { connected: null, unsupported: 'CONNECTION_UNSUPPORTED', 'setting-off': 'SETTING_OFF',

@@ -7,6 +7,7 @@ import { Deadline, eventPulse } from './waits.mjs';
 import { canonical, isAuthority } from './authority.mjs';
 import { BrowserReads } from './reads.mjs';
 import { isTransportOwner } from './transport-owner.mjs';
+import { isRootTargets } from './root-targets.mjs';
 
 // Original strategies informed by reviewed BP2-7 forms and Playwright 1.64.0.
 // The admitted upstream injected module is unchanged and remains node-scoped.
@@ -533,8 +534,9 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
 // P1/P3 join entry. P3 owns selection, connection approval, leased frame/node
 // metadata and actual delivery; this entry never discovers or connects a root.
 // A connection-owned TransportOwner retains both delivered refs and forms.
-export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, files, observeEffect } = {}) {
+export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, files, observeEffect, rootTargets } = {}) {
   if (!isTransportOwner(owner) || [leaseFor, current].some(f => typeof f !== 'function')) throw Error('SEMANTIC_OWNER_REQUIRED');
+  if (rootTargets !== undefined && !isRootTargets(rootTargets)) throw Error('SEMANTIC_OWNER_REQUIRED');
   const sessions = new Map(); let active, authority;
   const identityFor = lease => Object.fromEntries(authorityKeys.map(k => [k,
     k === 'leaseGeneration' ? lease.epoch : lease[k]]));
@@ -542,6 +544,7 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
   return Object.freeze({
     bindAuthority(value) { if (authority || !isAuthority(value)) throw Error('TRUSTED_AUTHORITY_REQUIRED'); authority = value; },
     prepare(args, context, operationName) {
+      if (operationName === 'browser_open' && rootTargets) return rootTargets.prepare(args, context, operationName);
       if (!['browser_read', 'browser_fill', 'browser_act'].includes(operationName)) throw Error('BACKGROUND_UNAVAILABLE');
       const lease = leaseFor(args.tab, context), identity = identityFor(lease);
       if (!sameAuthority(identity, current(lease)) || identity.clientSession !== context.session || identity.turn !== context.turn ||
@@ -549,9 +552,11 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
       return { target: lease.target, lease };
     },
     authorize: () => true, // P1's physical authority is the terminal payment/target gate.
-    dispatchFence(plan) { return sameAuthority(identityFor(plan.lease), current(plan.lease)); },
+    dispatchFence(plan) { return plan.operationName === 'browser_open' && rootTargets ? rootTargets.dispatchFence(plan) :
+      sameAuthority(identityFor(plan.lease), current(plan.lease)); },
     async dispatch(plan, context) {
       if (!authority) throw Error('TRUSTED_AUTHORITY_REQUIRED');
+      if (plan.operationName === 'browser_open' && rootTargets) return rootTargets.open(plan, context);
       const { lease } = plan, identity = identityFor(lease);
       return owner.run(lease, context, async view => {
         const reader = owner.reader(lease, 'semantics', () => {
@@ -602,12 +607,17 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
       });
     },
     resolveOperation(plan, context, command) {
+      if (plan.operationName === 'browser_open' && rootTargets) {
+        const operation = rootTargets.resolveOperation(plan, context, command);
+        active = { rootPlan: plan, operation }; return operation;
+      }
       if (!active || canonical(active.lease) !== canonical(plan.lease)) throw Error('SEMANTIC_OPERATION_MISMATCH');
       return active.form ? active.form.resolveOperation(command) : structuredClone(active.operation);
     },
     classify(operation) { return active?.form ? active.form.classify(operation) :
       canonical(operation) === canonical(active?.operation) ? structuredClone(operation) : (() => { throw Error('SEMANTIC_OPERATION_MISMATCH'); })(); },
     currentScope() {
+      if (active?.rootPlan && rootTargets?.dispatchFence(active.rootPlan)) return structuredClone(active.operation.scope);
       if (!active || !sameAuthority(identityFor(active.lease), current(active.lease))) throw Error('STALE_REF');
       return structuredClone(active.operation.scope);
     },
@@ -621,9 +631,10 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
     dialogBinding: (id, lease) => stateFor(lease)?.form.dialogBinding() ?? null,
     async cleanupSession(id) {
       const remote = await owner.cleanupSession(id), local = files?.cleanup(id) ?? { retained: 0 };
+      const targets = rootTargets ? await rootTargets.cleanupSession(id) : { closed: true, cleanup: [] };
       let retained = local.retained;
       for (const state of sessions.values()) if (state.identity.clientSession === id) retained += state.form.cleanup({ remoteReleased: remote.closed }).retained;
-      return { closed: remote.closed && retained === 0, retained, cleanup: remote.cleanup };
+      return { closed: remote.closed && targets.closed && retained === 0, retained, cleanup: [...remote.cleanup, ...targets.cleanup] };
     },
     // Only the host's actual delivery path calls this, after a successful read
     // survived serialization/output limits and reached that owning client.

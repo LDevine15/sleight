@@ -7,8 +7,172 @@ const PANE = { plugin: 'sleight', component: 'Pane', requestId: 'sleight' } as c
 const SURFACES = ['terminal', 'desktop'] as const
 
 describe('sleight mod', () => {
-  test('PreToolUse denies each policy-file mutation and named Bash writes, preserving reads', async ($, on) => {
-    const path = '/Users/fixture/Library/Application Support/sleight/preapproved.json'
+  const turboEnvelope = { version: 1, session: 'private-host-session', nonce: 'a'.repeat(64) }
+  const genuinePrompt = (text: string, kind = 'composer') => ({ text, origin: { kind } }) as never
+
+  test('default-off genuine prompts check fixed local state and make no turbo MCP calls', async ($, on) => {
+    const processes: string[][] = [], calls: unknown[] = []
+    on('process.run', async (_$, e) => { processes.push(e.argv); return { value: { exitCode: 0, stdout: '{"enabled":false}', stderr: '' } } as never })
+    on('mcp.connect', async (_$, e) => { calls.push(e); return { value: { isConnected: true, server: e.server } } as never })
+    on('mcp.call', async (_$, e) => { calls.push(e); return { value: { content: [] } } as never })
+    on('prompt.submit', async (_$, e) => ({ text: e.text, context: e.context }))
+    const result = await $.prompt.submit(genuinePrompt('Read this page'))
+    expect(processes.length).toBe(1); expect(processes[0]!.length).toBe(2)
+    expect(processes[0]![0]).toMatch(/\/bin\/sleight-mcp$/); expect(processes[0]![1]).toBe('turbo-state')
+    expect(calls).toEqual([]); expect(result.text).toBe('Read this page'); expect(result.context).toBeUndefined()
+  })
+
+  test('enabled genuine composer and bridge prompts privately bootstrap once and begin every turn', async ($, on) => {
+    const calls: { tool: string; args: Record<string, unknown> }[] = [], logs: string[] = []
+    let probes = 0
+    on('process.run', async () => { probes++; return { value: { exitCode: 0, stdout: '{"enabled":true}', stderr: '' } } as never })
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => {
+      calls.push({ tool: e.tool, args: e.args })
+      return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: turboEnvelope }) }] } } as never
+    })
+    on('ui.log', async (_$, e) => { logs.push(e.text); return { value: undefined } })
+    on('prompt.submit', async (_$, e) => ({ text: e.text, context: e.context }))
+    for (const [text, kind] of [['First private user message', 'composer'], ['Second private user message', 'bridge']]) {
+      const result = await $.prompt.submit(genuinePrompt(text!, kind))
+      expect(result.text).toBe(text); expect(result.context).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain(turboEnvelope.nonce)
+    }
+    expect(probes).toBe(2); expect(calls.length).toBe(3)
+    expect(calls[0]).toEqual({ tool: 'turn_ended', args: { sleight_turbo: { event: 'bootstrap' } } })
+    const begins = calls.slice(1).map(call => call.args.sleight_turbo as Record<string, unknown>)
+    expect(begins.map(begin => begin.text)).toEqual(['First private user message', 'Second private user message'])
+    for (const begin of begins) {
+      expect(begin).toEqual({ ...turboEnvelope, event: 'begin', turn: begin.turn, text: begin.text })
+      expect(String(begin.turn)).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
+    }
+    expect(begins[0]!.turn).not.toBe(begins[1]!.turn); expect(logs).toEqual([])
+  })
+
+  test('plugin prompts including asUser and programmatic or subagent deliveries cannot bootstrap turbo', async ($, on) => {
+    const work: unknown[] = []
+    on('process.run', async (_$, e) => { work.push(e); return { value: { exitCode: 0, stdout: '{"enabled":true}', stderr: '' } } as never })
+    on('mcp.connect', async (_$, e) => { work.push(e); return { value: { isConnected: true, server: e.server } } as never })
+    on('mcp.call', async (_$, e) => { work.push(e); return { value: { content: [] } } as never })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    await $.prompt.submit({ text: 'Plugin generated words', asUser: true } as never)
+    for (const kind of ['plugin', 'sdk', 'task-notification', 'peer', 'scheduled-trigger', 'unclassified']) {
+      await $.prompt.submit({ text: 'A generated delivery', origin: { kind, name: 'other-mod', asUser: true } } as never)
+    }
+    await $.prompt.submit({ text: 'Subagent message', origin: { kind: 'composer' }, agentId: 'child-agent' } as never)
+    expect(work).toEqual([])
+  })
+
+  test('malformed bootstrap stays private and cannot authorize a begin frame', async ($, on) => {
+    const frames: unknown[] = [], logs: string[] = []
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '{"enabled":true}', stderr: '' } }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => { frames.push(e.args); return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: { ...turboEnvelope, nonce: 'invalid-token' } }) }] } } as never })
+    on('ui.log', async (_$, e) => { logs.push(e.text); return { value: undefined } })
+    on('prompt.submit', async (_$, e) => ({ text: e.text, context: e.context }))
+    const result = await $.prompt.submit(genuinePrompt('Private user text'))
+    expect(frames).toEqual([{ sleight_turbo: { event: 'bootstrap' } }]); expect(logs).toEqual([])
+    expect(result).toEqual({ text: 'Private user text', context: undefined })
+  })
+
+  test('cancelled native opt-in preserves the private envelope for the next genuine turn', async ($, on) => {
+    const frames: Record<string, unknown>[] = []
+    let begins = 0
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '{"enabled":true}', stderr: '' } }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => {
+      frames.push(e.args)
+      if ((e.args.sleight_turbo as { event?: string })?.event === 'begin' && ++begins === 1) {
+        return { value: { isError: true, content: [{ type: 'text', text: 'opt-in cancelled' }] } } as never
+      }
+      return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: turboEnvelope }) }] } } as never
+    })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    await $.prompt.submit(genuinePrompt('First opt-in attempt'))
+    await $.prompt.submit(genuinePrompt('New user retry after Cancel'))
+    expect(frames.filter(frame => (frame.sleight_turbo as { event?: string })?.event === 'bootstrap').length).toBe(1)
+    const retried = frames.filter(frame => (frame.sleight_turbo as { event?: string })?.event === 'begin')
+    expect(retried.length).toBe(2)
+    expect((retried[0]!.sleight_turbo as { turn?: string }).turn).not.toBe((retried[1]!.sleight_turbo as { turn?: string }).turn)
+    expect((retried[1]!.sleight_turbo as { nonce?: string }).nonce).toBe(turboEnvelope.nonce)
+  })
+
+  test('fixed local state failure preserves ordinary prompt behavior without MCP control', async ($, on) => {
+    const work: unknown[] = []
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '{"enabled":true}', stderr: 'unavailable' } }) as never)
+    on('mcp.connect', async (_$, e) => { work.push(e); return { value: { isConnected: true, server: e.server } } as never })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    expect((await $.prompt.submit(genuinePrompt('Continue normally'))).text).toBe('Continue normally'); expect(work).toEqual([])
+  })
+
+  test('transient local state probe failure keeps an already validated one-use envelope', async ($, on) => {
+    let state = { exitCode: 0, stdout: '{"enabled":true}', stderr: '' }
+    const frames: Record<string, unknown>[] = []
+    on('process.run', async () => ({ value: state }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => { frames.push(e.args); return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: turboEnvelope }) }] } } as never })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    await $.prompt.submit(genuinePrompt('First opted-in prompt'))
+    state = { exitCode: 1, stdout: '', stderr: 'probe unavailable' }
+    await $.prompt.submit(genuinePrompt('Normal prompt during probe failure'))
+    state = { exitCode: 0, stdout: '{invalid', stderr: '' }
+    await $.prompt.submit(genuinePrompt('Normal prompt during malformed probe'))
+    expect(frames.length).toBe(2)
+    state = { exitCode: 0, stdout: '{"enabled":true}', stderr: '' }
+    await $.prompt.submit(genuinePrompt('Genuine retry after probe recovery'))
+    expect(frames.filter(frame => (frame.sleight_turbo as { event?: string })?.event === 'bootstrap').length).toBe(1)
+    expect(frames.filter(frame => (frame.sleight_turbo as { event?: string })?.event === 'begin').length).toBe(2)
+  })
+
+  test('an enabled genuine turn ends turbo authority even when it used no app or browser tool', async ($, on) => {
+    const frames: Record<string, unknown>[] = []
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '{"enabled":true}', stderr: '' } }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => { frames.push(e.args); return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: turboEnvelope }) }] } } as never })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('turn.start', async (_$, e) => ({ turnId: e.turnId }) as never)
+    on('turn.complete', async () => ({ text: '' }) as never)
+    await $.prompt.submit(genuinePrompt('Just answer a question'))
+    await $.turn.start({ turnId: 'no-tools-turn' } as never)
+    await $.turn.complete({ turnId: 'no-tools-turn', answer: '', durationMs: 1, isAborted: false, reason: 'answer' } as never)
+    expect(frames.at(-1)).toEqual({ hook_event_name: 'Stop' })
+  })
+
+  test('disabling local turbo discards its envelope before the next opt-in bootstrap', async ($, on) => {
+    let enabled = true
+    const frames: Record<string, unknown>[] = []
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify({ enabled }), stderr: '' } }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => { frames.push(e.args); return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: turboEnvelope }) }] } } as never })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    await $.prompt.submit(genuinePrompt('First opted-in prompt')); enabled = false
+    await $.prompt.submit(genuinePrompt('Ordinary engine prompt')); expect(frames.length).toBe(2)
+    enabled = true; await $.prompt.submit(genuinePrompt('New opted-in prompt'))
+    expect(frames.filter(frame => (frame.sleight_turbo as { event?: string })?.event === 'bootstrap').length).toBe(2)
+  })
+
+  test('a new genuine prompt binds a fresh turbo turn after Stop; plugin asUser supplies no turbo authority', async ($, on) => {
+    const frames: Record<string, unknown>[] = []
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '{"enabled":true}', stderr: '' } }) as never)
+    on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: e.server } }) as never)
+    on('mcp.call', async (_$, e) => {
+      frames.push(e.args)
+      return { value: { content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: turboEnvelope }) }] } } as never
+    })
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    await $.prompt.submit(genuinePrompt('First genuine message'))
+    await $.command.run({ command: 'sleight', args: 'stop' } as never)
+    const before = frames.filter(frame => frame.sleight_turbo).length
+    await $.prompt.submit({ text: 'Plugin words', asUser: true } as never)
+    expect(frames.filter(frame => frame.sleight_turbo).length).toBe(before)
+    await $.prompt.submit(genuinePrompt('New genuine message'))
+    const begins = frames.filter(frame => (frame.sleight_turbo as { event?: string })?.event === 'begin')
+    expect(begins.length).toBe(2)
+    expect((begins[1]!.sleight_turbo as { text?: string }).text).toBe('New genuine message')
+  })
+
+  for (const filename of ['preapproved.json', 'turbo.json']) test(filename + ': PreToolUse denies each policy-file mutation and named Bash writes, preserving reads', async ($, on) => {
+    const path = '/Users/fixture/Library/Application Support/sleight/' + filename
     mock.env(on, { HOME: '/Users/fixture' })
     on('fs.stat', async (_$, e) => ({ value: { kind: 'file', size: 2, mtimeMs: 0, isLink: false,
       realPath: e.path === '/fixture-alias' ? path : e.path } }) as never)
@@ -17,13 +181,13 @@ describe('sleight mod', () => {
       const result = await $.tool.call({ tool, file_path: path, notebook_path: path, content: '{}', old_string: 'a', new_string: 'b', new_source: '{}', edits: [] } as never)
       expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
     }
-    for (const command of [`tee "${path}"`, `cp source "${path}"`, `rm "${path}"`, `echo '{}' > "${path}"`,
+    for (const command of [`tee "${path}"`, `cp source "${path}"`, `mv "${path}" backup`, `rm "${path}"`, `echo '{}' > "${path}"`,
       `ln -sf source "${path}"`, `bash -c 'rm "${path}"'`, `env -i truncate -s 0 "${path}"`,
       `python3 -c "p='${path}'; open(p, 'a').write('{}')"`]) {
       const result = await $.tool.call({ tool: 'Bash', command } as never)
       expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
     }
-    for (const alias of [path.toUpperCase(), '~/Library/Application Support/sleight/preapproved.json', '/fixture-alias']) {
+    for (const alias of [path.toUpperCase(), '~/Library/Application Support/sleight/' + filename, '/fixture-alias']) {
       const result = await $.tool.call({ tool: 'Write', file_path: alias, content: '{}' } as never)
       expect(String(result.deny ?? result.text)).toMatch(/only the user/i)
     }

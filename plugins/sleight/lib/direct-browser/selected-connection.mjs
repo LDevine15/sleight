@@ -1,0 +1,233 @@
+// Fixed installed-loader connection provider. No discovery scan, HTTP lookup,
+// browser launch, retry or socket connection occurs until explicit connect().
+import { constants, lstatSync, realpathSync, readlinkSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { hostname } from 'node:os';
+import { isAbsolute, normalize, join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { promisify } from 'node:util';
+import { parseActivePort, validateEndpoint } from './discovery.mjs';
+import { createNativeProcessProvider, isNativeProcessProvider } from './host.mjs';
+
+const fail = code => { throw Error(code); };
+const ordinaryObject = value => value && typeof value === 'object' && !Array.isArray(value);
+const equalStat = (a, b) => ['dev', 'ino', 'uid', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(k => a[k] === b[k]);
+const methodName = value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/.test(value);
+
+function securePath(path, uid, directory = false, executable = false) {
+  try {
+    const stat = lstatSync(path);
+    if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || realpathSync(path) !== path ||
+        stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== uid && !(executable && stat.uid === 0) ||
+        (stat.mode & 0o022) || executable && !(stat.mode & 0o100)) throw Error();
+    return stat;
+  } catch { fail('SELECTED_PATH_UNSAFE'); }
+}
+
+function endpointFile(root, uid, start) {
+  const path = join(root, 'DevToolsActivePort'), before = securePath(path, uid);
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!equalStat(before, stat) || !stat.isFile() || stat.size < 1 || stat.size > 512 ||
+        !Number.isFinite(stat.mtimeMs) || stat.mtimeMs <= start) throw Error();
+    const bytes = Buffer.alloc(stat.size);
+    if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length ||
+        !equalStat(stat, fstatSync(fd)) || !equalStat(stat, securePath(path, uid))) throw Error();
+    const text = bytes.toString('utf8');
+    if (!Buffer.from(text).equals(bytes)) throw Error();
+    const hint = parseActivePort(text);
+    return Object.freeze({ port: hint.port, browserPath: hint.path, text, path, canonicalPath: path,
+      mtime: stat.mtimeMs, inode: stat.ino, device: stat.dev, ctime: stat.ctimeMs });
+  } catch { fail('SELECTED_ENDPOINT_UNPROVED'); }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function selectedPid(root, uid) {
+  try {
+    const path = join(root, 'SingletonLock'), stat = lstatSync(path);
+    // The selected profile's lock is a symlink, not a file to follow. Its
+    // exact local hostname-PID value is only a hint until native birth/path and
+    // listener ownership prove the selected browser process.
+    if (!stat.isSymbolicLink() || stat.uid !== uid) throw Error();
+    const prefix = hostname() + '-', target = readlinkSync(path);
+    if (!target.startsWith(prefix) || !/^[1-9]\d{0,9}$/.test(target.slice(prefix.length))) throw Error();
+    const pid = Number(target.slice(prefix.length));
+    if (!Number.isSafeInteger(pid) || pid > 2147483647 || !equalStat(stat, lstatSync(path)) || readlinkSync(path) !== target) throw Error();
+    return { pid, target, inode: stat.ino, device: stat.dev, ctime: stat.ctimeMs };
+  } catch { fail('SELECTED_PROCESS_UNPROVED'); }
+}
+
+async function listenerOwner(run, port, pid, uid) {
+  try {
+    // Inspect all TCP listeners at this exact port. Restricting to -p would hide
+    // an ambiguous/foreign listener; wildcard binds cannot prove loopback-only.
+    const { stdout } = await run('/usr/sbin/lsof', ['-nP', '-a', '-iTCP:' + port, '-sTCP:LISTEN', '-Fpun'],
+      { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, timeout: 3000, maxBuffer: 16384 });
+    if (typeof stdout !== 'string' || stdout.length > 16384) throw Error();
+    let processId, userId, fileRecord = false, files = 0;
+    for (const line of stdout.split('\n').filter(Boolean)) {
+      const value = line.slice(1);
+      if (line[0] === 'p') { if (fileRecord || !/^[1-9]\d*$/.test(value) || Number(value) !== pid) throw Error(); processId = Number(value); userId = undefined; }
+      else if (line[0] === 'u') { if (!/^\d+$/.test(value) || Number(value) !== uid || processId !== pid) throw Error(); userId = Number(value); }
+      else if (line[0] === 'f') { if (fileRecord || processId !== pid || userId !== uid || !/^\d+$/.test(value)) throw Error(); fileRecord = true; }
+      else if (line[0] === 'n') {
+        if (!fileRecord || processId !== pid || userId !== uid || value !== '127.0.0.1:' + port && value !== '[::1]:' + port) throw Error();
+        fileRecord = false; files++;
+      } else throw Error();
+    }
+    if (!files || fileRecord) throw Error();
+    return true;
+  } catch { fail('SELECTED_LISTENER_UNPROVED'); }
+}
+
+/** Private factory dependencies are trusted loader/test capabilities, never
+ * config fields, MCP arguments, page data or environment overrides. Production
+ * process observations require a locally branded compiled-native provider. */
+export async function createSelectedConnection({ config, nativeReceipt, processMetadata, testDependencies } = {}) {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || !config) fail('SELECTED_CONFIG_REQUIRED');
+  const root = config.profileRoot, application = config.executable;
+  const deps = testDependencies ?? {};
+  const metadata = deps.processMetadata ?? processMetadata ?? createNativeProcessProvider(nativeReceipt);
+  if (!testDependencies && !isNativeProcessProvider(metadata)) fail('SELECTED_PROCESS_UNPROVED');
+  const Socket = deps.WebSocket ?? globalThis.WebSocket;
+  if (typeof Socket !== 'function' || !testDependencies && Number(process.versions.node.split('.')[0]) < 24) fail('SELECTED_SOCKET_UNAVAILABLE');
+  const run = deps.execFile ?? promisify(execFile);
+  const closeTimeout = deps.closeTimeoutMs ?? 3000, openTimeout = deps.openTimeoutMs ?? 10000;
+  if (![closeTimeout, openTimeout].every(v => Number.isSafeInteger(v) && v > 0 && v <= 30000)) fail('SELECTED_CONFIG_REQUIRED');
+  async function observe() {
+    const rootStat = securePath(root, uid, true), executableStat = securePath(application, uid, false, true);
+    const lock = selectedPid(root, uid), info = await metadata(lock.pid, application);
+    if (!ordinaryObject(info) || info.pid !== lock.pid || info.uid !== uid || !Number.isFinite(info.start) || info.start <= 0 ||
+        typeof info.incarnation !== 'string' || !new RegExp('^p' + lock.pid + '-s[1-9]\\d*-u\\d+$').test(info.incarnation)) fail('SELECTED_PROCESS_UNPROVED');
+    const file = endpointFile(root, uid, info.start);
+    if (!equalStat(rootStat, securePath(root, uid, true)) || !equalStat(executableStat, securePath(application, uid, false, true)) ||
+        JSON.stringify(lock) !== JSON.stringify(selectedPid(root, uid))) fail('STALE_INSTANCE');
+    return { root, application, uid, pid: info.pid, start: info.start, incarnation: info.incarnation,
+      rootDevice: rootStat.dev, rootInode: rootStat.ino, executableDevice: executableStat.dev, executableInode: executableStat.ino, lock, file };
+  }
+  const identity = Object.freeze(await observe()), identityJSON = JSON.stringify(identity);
+  const browserIncarnation = 'p' + createHash('sha256').update(identityJSON).digest('hex');
+  const selectedBrowser = 'b' + createHash('sha256').update(root + '\0' + application).digest('hex').slice(0, 32);
+  const endpoint = validateEndpoint('ws://127.0.0.1:' + identity.file.port + identity.file.browserPath);
+  let socket, opened = false, fenced = false, attempted = false, closeIssued = false, closeConfirmed = false, opening, closing;
+  let finishOpen, failOpen;
+  const losses = new Set(); let lossNotified = false;
+  function notifyLoss() {
+    if (lossNotified) return;
+    lossNotified = true;
+    for (const callback of losses) try { callback(); } catch {}
+  }
+  const callbacks = new Set(), pending = new Map(); let sequence = 0;
+  function confirmedClose() {
+    fenced = true; opened = false; closeConfirmed = true;
+    notifyLoss();
+    failOpen?.(Error('SELECTED_CONNECTION_CLOSED'));
+    for (const command of pending.values()) command.reject(Error('SELECTED_CONNECTION_CLOSED'));
+    pending.clear();
+  }
+  function fenceClose() {
+    fenced = true; opened = false;
+    notifyLoss();
+    failOpen?.(Error('SELECTED_CONNECTION_CLOSED'));
+    if (socket && !closeIssued && !closeConfirmed) {
+      closeIssued = true;
+      try { socket.close(); } catch { /* An exception cannot prove socket closure. */ }
+    }
+  }
+  function disconnect(candidate = session) {
+    if (candidate !== session) return Promise.resolve(false);
+    fenceClose();
+    if (!socket || closeConfirmed) return Promise.resolve(true);
+    if (closing) return closing;
+    closing = new Promise(resolve => {
+      const done = () => { clearTimeout(timer); socket.removeEventListener('close', done); resolve(true); };
+      const timer = setTimeout(() => { socket.removeEventListener('close', done); resolve(closeConfirmed); }, closeTimeout);
+      socket.addEventListener('close', done, { once: true });
+      if (closeConfirmed) done();
+    }).finally(() => { closing = undefined; });
+    return closing;
+  }
+  async function current() {
+    if (JSON.stringify(await observe()) !== identityJSON) fail('STALE_INSTANCE');
+    await listenerOwner(run, identity.file.port, identity.pid, uid);
+  }
+  function message(event) {
+    try {
+      if (typeof event.data !== 'string' || Buffer.byteLength(event.data) > 8388608) throw Error();
+      const frame = JSON.parse(event.data);
+      if (!ordinaryObject(frame)) throw Error();
+      if (Object.hasOwn(frame, 'id')) {
+        const command = pending.get(frame.id);
+        if (!command || frame.sessionId !== command.route || Object.hasOwn(frame, 'result') === Object.hasOwn(frame, 'error')) throw Error();
+        pending.delete(frame.id);
+        if (Object.hasOwn(frame, 'error')) command.reject(Error('CDP_COMMAND_FAILED'));
+        else command.resolve(frame.result);
+      } else {
+        if (!methodName(frame.method) || !ordinaryObject(frame.params) || frame.sessionId !== undefined && typeof frame.sessionId !== 'string') throw Error();
+        if (!fenced) for (const callback of callbacks) {
+          try { callback(Object.freeze({ method: frame.method, params: frame.params, ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }) })); } catch {}
+        }
+      }
+    } catch { fenceClose(); }
+  }
+  const session = Object.freeze({ sessionId: 'r' + randomBytes(24).toString('hex'),
+    send(method, params = {}, sessionId = session.sessionId) {
+      if (fenced || !opened) return Promise.reject(Error('SELECTED_CONNECTION_CLOSED'));
+      const route = sessionId === session.sessionId ? undefined : sessionId;
+      if (!methodName(method) || !ordinaryObject(params) || route !== undefined && (typeof route !== 'string' || !route || route.length > 512) ||
+          pending.size >= 1024 || sequence >= Number.MAX_SAFE_INTEGER) return Promise.reject(Error('INVALID_CDP_COMMAND'));
+      const id = ++sequence;
+      let text;
+      try {
+        text = JSON.stringify({ id, method, params, ...(route === undefined ? {} : { sessionId: route }) });
+        if (Buffer.byteLength(text) > 1048576) throw Error();
+      } catch { return Promise.reject(Error('INVALID_CDP_COMMAND')); }
+      return new Promise((resolve, reject) => {
+        pending.set(id, { route, resolve, reject });
+        try { socket.send(text); } catch { fenceClose(); }
+      });
+    },
+    on(name, callback) { if (name !== 'event' || typeof callback !== 'function') fail('INVALID_CDP_EVENT'); callbacks.add(callback); },
+    off(name, callback) { if (name !== 'event' || typeof callback !== 'function') fail('INVALID_CDP_EVENT'); callbacks.delete(callback); },
+  });
+  async function connect() {
+    if (fenced || attempted && !opening) fail('SELECTED_CONNECTION_CLOSED');
+    if (opening) return opening;
+    attempted = true;
+    opening = (async () => {
+      try {
+        await current(); if (fenced) fail('SELECTED_CONNECTION_CLOSED');
+        socket = new Socket(endpoint);
+        socket.addEventListener('close', confirmedClose, { once: true });
+        socket.addEventListener('message', message);
+        socket.addEventListener('error', fenceClose);
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { reject(Error('SELECTED_CONNECTION_TIMEOUT')); fenceClose(); }, openTimeout);
+          finishOpen = () => { clearTimeout(timer); resolve(); };
+          failOpen = error => { clearTimeout(timer); reject(error); };
+          socket.addEventListener('open', finishOpen, { once: true });
+          if (fenced) failOpen(Error('SELECTED_CONNECTION_CLOSED'));
+        });
+        if (fenced) fail('SELECTED_CONNECTION_CLOSED');
+        await current(); if (fenced || socket.readyState !== 1) fail('SELECTED_CONNECTION_CLOSED');
+        opened = true; return session;
+      } catch (error) { await disconnect(); throw error; }
+      finally { finishOpen = undefined; failOpen = undefined; }
+    })();
+    return opening;
+  }
+  async function verifyConnection(candidate, expectedIncarnation = browserIncarnation) {
+    if (candidate !== session || expectedIncarnation !== browserIncarnation || !opened || fenced || socket?.readyState !== 1) return false;
+    try { await current(); return opened && !fenced && socket.readyState === 1; }
+    catch { fenceClose(); return false; }
+  }
+  return Object.freeze({ session, connect, verifyConnection, disconnect, browserIncarnation, selectedBrowser, identity, endpoint,
+    onConnectionLoss(callback) {
+      if (typeof callback !== 'function') fail('TRUSTED_ROUTE_REQUIRED');
+      losses.add(callback); if (lossNotified) callback();
+      return () => losses.delete(callback);
+    } });
+}

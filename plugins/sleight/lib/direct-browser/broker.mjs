@@ -8,6 +8,8 @@ const connectionStates = new Set(['disconnected', 'setting-off', 'unsupported', 
 const digest = data => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 const brokers = new WeakSet();
 export const isBroker = value => !!value && brokers.has(value);
+const transports = new WeakSet();
+export const isBrokerTransport = value => !!value && transports.has(value);
 const copy = data => structuredClone(data);
 function failure(code, effect = 'none', phase = 'prepared', completed = 0) {
   return { phase, effect, completed, error: { code, phase, effect, completed,
@@ -125,6 +127,7 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
           });
         },
         on: task.socket.on.bind(task.socket), off: task.socket.off.bind(task.socket) });
+      transports.add(guardedSession);
       const result = await dispatch(task.plan, { ...task.scope, clientSession: task.scope.session, session: guardedSession, signal: task.signal });
       if (task.finished) return;
       if (!live(task)) return stopped(task, 'LEASE_LOST');

@@ -7,8 +7,34 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <errno.h>
+
+static int process_metadata(const char *argument, const char *expected) {
+  char *end = NULL, canonical[PATH_MAX], actual[PROC_PIDPATHINFO_MAXSIZE];
+  errno = 0;
+  long value = strtol(argument, &end, 10);
+  if (errno || !end || *end || argument[0] < '1' || argument[0] > '9' || value < 1 || value > INT_MAX ||
+      expected[0] != '/' || !realpath(expected, canonical) || strcmp(canonical, expected)) return 64;
+  pid_t pid = (pid_t)value;
+  struct proc_bsdinfo first, last;
+  memset(&first, 0, sizeof(first)); memset(&last, 0, sizeof(last));
+  memset(actual, 0, sizeof(actual));
+  if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &first, sizeof(first)) != sizeof(first) ||
+      first.pbi_pid != (unsigned)pid || first.pbi_uid != getuid() || !first.pbi_start_tvsec ||
+      proc_pidpath(pid, actual, sizeof(actual)) <= 0 || !realpath(actual, canonical) || strcmp(canonical, expected) ||
+      proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &last, sizeof(last)) != sizeof(last) ||
+      last.pbi_pid != first.pbi_pid || last.pbi_uid != first.pbi_uid ||
+      last.pbi_start_tvsec != first.pbi_start_tvsec || last.pbi_start_tvusec != first.pbi_start_tvusec) return 65;
+  printf("{\"uid\":%u,\"pid\":%d,\"start\":%.3f,\"incarnation\":\"p%d-s%llu-u%llu\"}\n",
+    first.pbi_uid, pid, (double)first.pbi_start_tvsec * 1000.0 + (double)first.pbi_start_tvusec / 1000.0,
+    pid, (unsigned long long)first.pbi_start_tvsec, (unsigned long long)first.pbi_start_tvusec);
+  return 0;
+}
 
 int main(int argc, char **argv) {
+  if (argc == 4 && !strcmp(argv[1], "--process-pid")) return process_metadata(argv[2], argv[3]);
   if (argc != 3 || strcmp(argv[1], "--peer-fd") || strcmp(argv[2], "3")) return 64;
   struct sockaddr_un address;
   socklen_t length = sizeof(address);
