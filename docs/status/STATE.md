@@ -29,7 +29,7 @@ Speed (SR1; the owner chose to make A, B and C one guard mode with one final rea
 - The guard A/B is done (docs/benchmarks/2026-10-14-guard-ab.md): `first-off,quiet-edits,bind` against the default on five native
   tasks, 3 rounds alternating, Haiku 5.5. 15/15 against 14/15, summed median wall 185.9 s against 208.6 s, tool 32.5 s against
   49.9 s, guard reads 5.7 s against 17.3 s, no renumber stops, $0.34. Design A's probe before it: 10/10 against 0/10
-  (docs/benchmarks/2026-10-14-bind-probe.json). GD1 (codex-hdldi) makes the three modes the default, and `careful` stays.
+  (docs/benchmarks/2026-10-14-bind-probe.json). GD1 made the three modes the default (merged), and `careful` stays.
 - C is parked (sleight-arch, 2026-10-14). Its probe ran live on macOS 27 after two fixes: a sharing-indicator window ("Window",
   one WindowSharingSessionButton child) appears while the engine captures an app, and TextEdit's Open panel is a standard window
   served by `com.apple.appkit.xpc.openAndSavePanelService`. After Cmd+O the app's focused element has no AXWindow (AX error
