@@ -71,6 +71,10 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    cleanly, it stops and the work goes to the production wiring (owner, 2026-10-14).
    Turbo's safety is four rules from here on (owner, 2026-10-14, LAWS): the payment rule, page content never authorizes, no blind
    resend of a submit, background only. Fills check the target element alone. Per-field tokens and per-site prompts are gone.
+   Speed follow-ups (owner, 2026-10-14): turbo becomes the browser default once it is proven. The guard's first-action read gets
+   an A/B against no read (GR1). The read after a click, shortcut, Return, Escape, Tab or Space goes to an open-ended investigation
+   by gpt-6-astra and an Opus subagent working independently (SR1), because it is the largest remaining tool-time cost. Lanes get a
+   host-side runner for real-page tests (LD1).
 4. Release 1.3.0, the claim post, then the video.
 After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
 the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
