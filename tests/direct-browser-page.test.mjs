@@ -157,7 +157,15 @@ test('unproved popup preparation refuses before input and disarms a possible lat
 });
 
 function hookFixture() {
-  class Event { composedPath() { return this.nodes; } stopImmediatePropagation() { this.stopped = true; } }
+  class Event {
+    get defaultPrevented() { return !!this.nativePrevented; }
+    get returnValue() { return !this.nativePrevented; }
+    set returnValue(value) { if (!value) this.nativePrevented = true; }
+    preventDefault() { this.nativePrevented = true; }
+    composedPath() { return this.nodes; }
+    stopPropagation() { this.propagationStopped = true; }
+    stopImmediatePropagation() { this.stopped = this.propagationStopped = true; }
+  }
   class MouseEvent extends Event {
     get ctrlKey() { return this.control; }
     get metaKey() { return this.meta; }
@@ -170,10 +178,13 @@ function hookFixture() {
     getRootNode() { return {}; }
   }
   class EventTarget {
-    addEventListener(name, fn) { (this.listeners[name] ??= new Set()).add(fn); }
-    removeEventListener(name, fn) { this.listeners[name]?.delete(fn); }
+    addEventListener(name, fn, capture) {
+      (this.listeners[name] ??= new Set()).add(fn);
+      if (capture) (this.captureListeners[name] ??= new Set()).add(fn);
+    }
+    removeEventListener(name, fn) { this.listeners[name]?.delete(fn); this.captureListeners[name]?.delete(fn); }
   }
-  const opens = [], window = { listeners: {}, open(...args) { opens.push(args); return { real: true }; } };
+  const opens = [], window = { listeners: {}, captureListeners: {}, open(...args) { opens.push(args); return { real: true }; } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   vm.runInNewContext(`(${popupHook})()`, { window, document, navigator: { userActivation: { isActive: true } },
     MouseEvent, Element, Event, EventTarget, URL, setTimeout, clearTimeout });
@@ -302,17 +313,52 @@ test('serialized link hook replaces only an uncancelled trusted default open', (
   const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
   try {
     assert.equal(f.hook.prepare(link, 'link', 1000).kind, 'link');
-    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link], defaultPrevented: false,
-      preventDefault() { this.defaultPrevented = true; } });
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
     for (const listener of f.window.listeners.click) listener(click);
-    assert.equal(click.defaultPrevented, true);
+    assert.equal(click.nativePrevented, true);
+    assert.equal(click.defaultPrevented, false);
     assert.equal(f.hook.takeRequest('link').url, 'https://fixture.invalid/shipping');
-    assert.equal(f.hook.takeRequest('link'), undefined);
+    assert.equal(f.hook.takeRequest('link').unavailable, true);
     f.hook.finish('link'); f.hook.prepare(link, 'cancelled', 1000);
-    const cancelled = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link], defaultPrevented: true });
+    const cancelled = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    cancelled.preventDefault();
     for (const listener of f.window.listeners.click) listener(cancelled);
     assert.equal(f.hook.takeRequest('cancelled'), undefined);
     assert.deepEqual(f.opens, []);
+  } finally { f.hook.off(); }
+});
+
+for (const stop of ['stopPropagation', 'stopImmediatePropagation']) for (const cancel of [false, true])
+test(`capture suppresses the native default before ${stop}, preserving page cancellation=${cancel}`, () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  try {
+    f.hook.prepare(link, 'link', 1000);
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    assert.equal(click.nativePrevented, true, 'the native open must be suppressed before page handlers');
+    assert.equal(click.defaultPrevented, false, 'the page has not cancelled its own default');
+    click[stop]();
+    if (cancel) click.preventDefault();
+    assert.equal(click.defaultPrevented, cancel);
+    const request = f.hook.takeRequest('link');
+    assert.equal(request?.url, cancel ? undefined : 'https://fixture.invalid/shipping');
+  } finally { f.hook.off(); }
+});
+
+for (const cancel of ['returnFalse', 'returnValue']) test(`captured link respects ${cancel} cancellation without a bubble listener`, () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  link.onclick = event => {
+    event.stopImmediatePropagation();
+    if (cancel === 'returnValue') event.returnValue = false;
+    return false;
+  };
+  try {
+    f.hook.prepare(link, 'link', 1000);
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    assert.equal(click.nativePrevented, true);
+    link.onclick(click);
+    assert.equal(f.hook.takeRequest('link'), undefined);
   } finally { f.hook.off(); }
 });
 

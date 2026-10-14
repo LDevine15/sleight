@@ -18,16 +18,57 @@ export function popupHook() {
   const apply = Reflect.apply, originalOpen = window.open;
   const listen = EventTarget.prototype.addEventListener, unlisten = EventTarget.prototype.removeEventListener;
   const path = Event.prototype.composedPath, stop = Event.prototype.stopImmediatePropagation;
+  const event = Event.prototype, prevent = event.preventDefault;
+  const preventedDescriptor = Object.getOwnPropertyDescriptor(event, 'defaultPrevented');
+  const returnDescriptor = Object.getOwnPropertyDescriptor(event, 'returnValue');
   const mouse = MouseEvent.prototype;
   const descriptors = ['ctrlKey', 'metaKey'].map(name => [name, Object.getOwnPropertyDescriptor(mouse, name)]);
   const modifierState = mouse.getModifierState;
-  const decided = new WeakMap(), retired = new Set(), requests = new Map();
+  const decided = new WeakMap(), retired = new Set(), requests = new Map(), clicks = new WeakMap();
   let armed, timer;
+  const restoreHandlers = bindings => {
+    let unchanged = true;
+    for (const binding of bindings ?? []) {
+      if (binding.restored) continue;
+      if (binding.wrapper && binding.node.onclick === binding.wrapper) binding.node.onclick = binding.original;
+      else if (!binding.called && binding.node.onclick !== binding.original) unchanged = false;
+      binding.restored = true;
+    }
+    return unchanged;
+  };
+  const dropRequest = token => {
+    const request = requests.get(token);
+    if (request) { requests.delete(token); clicks.delete(request.event); }
+    return request;
+  };
   const finish = token => {
     if (token) retired.add(token);
+    const request = dropRequest(token ?? armed?.token);
+    restoreHandlers(request?.bindings);
     if (armed && token && armed.token !== token) return;
+    restoreHandlers(armed?.bindings);
     armed = undefined; clearTimeout(timer);
   };
+  const preventDefault = function () {
+    const request = clicks.get(this);
+    if (request) request.cancelled = true;
+    return apply(prevent, this, []);
+  };
+  const defaultPrevented = function () {
+    return clicks.get(this)?.cancelled ?? apply(preventedDescriptor.get, this, []);
+  };
+  const returnValue = function () {
+    const request = clicks.get(this);
+    return request ? !request.cancelled : apply(returnDescriptor.get, this, []);
+  };
+  const setReturnValue = function (value) {
+    const request = clicks.get(this);
+    if (request && !value) request.cancelled = true;
+    return apply(returnDescriptor.set, this, [value]);
+  };
+  event.preventDefault = preventDefault;
+  Object.defineProperty(event, 'defaultPrevented', { ...preventedDescriptor, get: defaultPrevented });
+  Object.defineProperty(event, 'returnValue', { ...returnDescriptor, get: returnValue, set: setReturnValue });
   const masked = event => {
     if (!decided.has(event)) decided.set(event, !!(event.isTrusted && armed?.active &&
       Date.now() < armed.until && apply(path, event, []).includes(armed.element)));
@@ -48,22 +89,24 @@ export function popupHook() {
     if (armed.active) apply(stop, event, []);
   };
   for (const type of ['keydown', 'keyup']) apply(listen, window, [type, keyboard, true]);
-  const consumeLink = event => {
-    if (!armed?.link || !event.isTrusted || event.defaultPrevented || !apply(path, event, []).includes(armed.element)) return;
-    const link = armed.link, target = link.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+  const defaultLink = link => {
+    const target = link.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
     if (!/^_blank$/i.test(target) && !/\b(?:noopener|noreferrer)\b/i.test(link.getAttribute('rel') ?? '')) return;
     if (!target || /^_(?:self|parent|top)$/i.test(target) || link.hasAttribute('download')) return;
     try {
       const url = new URL(link.getAttribute('href'), document.baseURI);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
-      // Only the default open is replaced. Page handlers have already run once.
-      event.preventDefault(); requests.set(armed.token, { url: url.href });
+      return { url: url.href };
     } catch { /* A page URL is never a grant to another protocol. */ }
   };
   const linkCapture = event => {
-    if (!armed?.link || !event.isTrusted) return;
-    apply(unlisten, window, ['click', consumeLink]);
-    apply(listen, window, ['click', consumeLink]);
+    if (!armed?.link || !event.isTrusted || !apply(path, event, []).includes(armed.element) || !defaultLink(armed.link)) return;
+    const request = { event, link: armed.link, bindings: armed.bindings,
+      cancelled: apply(preventedDescriptor.get, event, []) };
+    clicks.set(event, request); requests.set(armed.token, request);
+    // Suppress the browser default before a page can stop bubbling. Page code
+    // sees its own cancellation state; its handlers still run exactly once.
+    apply(prevent, event, []);
   };
   apply(listen, window, ['click', linkCapture, true]);
   const open = function (url, name, features) {
@@ -80,8 +123,9 @@ export function popupHook() {
     prepare(element, token, capMs) {
       if (retired.has(token) || !element.isConnected) return false;
       let node = element, link;
-      const handlers = [];
+      const handlers = [], nodes = [];
       while (node instanceof Element) {
+        nodes.push(node);
         if (['a', 'area'].includes(node.localName)) link = node;
         if (typeof node.onclick === 'function') handlers.push(Function.prototype.toString.call(node.onclick));
         if (node.isContentEditable || ['textarea', 'select', 'option', 'label'].includes(node.localName) ||
@@ -100,10 +144,32 @@ export function popupHook() {
       if (/^(iframe|frame|fencedframe|object|embed)$/.test(document.activeElement?.localName ?? ''))
         throw Error('background popup preparation needs focus outside a frame');
       finish(); armed = { element, token, active: false, until: 0, ...(independent ? { link } : {}) };
+      if (independent && defaultLink(link)) {
+        armed.bindings = [];
+        for (const node of [...nodes, document, window]) {
+          const binding = { node, original: node.onclick, called: false };
+          armed.bindings.push(binding);
+          if (typeof binding.original !== 'function') continue;
+          binding.wrapper = function (...args) {
+            binding.called = true;
+            const result = apply(binding.original, this, args), request = clicks.get(args[0]);
+            if (result === false && request) request.cancelled = true;
+            return result;
+          };
+          node.onclick = binding.wrapper;
+          if (node.onclick !== binding.wrapper) throw Error('background link handler could not be prepared');
+        }
+      }
       timer = setTimeout(() => finish(token), capMs);
       return independent ? { kind: 'link' } : true;
     },
-    takeRequest(token) { const request = requests.get(token); requests.delete(token); return request; },
+    takeRequest(token) {
+      const request = dropRequest(token);
+      if (!request) return { unavailable: true };
+      const unchanged = restoreHandlers(request.bindings);
+      if (request.cancelled) return;
+      return unchanged ? defaultLink(request.link) ?? { unavailable: true } : { unavailable: true };
+    },
     finish,
     off() {
       finish();
@@ -111,9 +177,13 @@ export function popupHook() {
       for (const [name, descriptor, getter] of getters)
         if (Object.getOwnPropertyDescriptor(mouse, name)?.get === getter) Object.defineProperty(mouse, name, descriptor);
       if (mouse.getModifierState === getModifierState) mouse.getModifierState = modifierState;
+      if (event.preventDefault === preventDefault) event.preventDefault = prevent;
+      if (Object.getOwnPropertyDescriptor(event, 'defaultPrevented')?.get === defaultPrevented)
+        Object.defineProperty(event, 'defaultPrevented', preventedDescriptor);
+      if (Object.getOwnPropertyDescriptor(event, 'returnValue')?.get === returnValue)
+        Object.defineProperty(event, 'returnValue', returnDescriptor);
       for (const type of ['keydown', 'keyup']) apply(unlisten, window, [type, keyboard, true]);
       apply(unlisten, window, ['click', linkCapture, true]);
-      apply(unlisten, window, ['click', consumeLink]);
       delete window[key]; return true;
     },
   };
@@ -154,10 +224,11 @@ export async function backgroundClick(tab, locator, click = options => locator.c
   }
   if (prepared?.kind === 'link') {
     try {
-      // The page can stop propagation before consumeLink. Keep the native
-      // default background-only too; the hook hides this modifier from handlers.
+      // Capture suppresses the native default even if page handlers stop
+      // bubbling. Open its uncancelled destination through the owned registry.
       const result = await backgroundInput();
       const request = await page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token), token);
+      if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
       if (request) {
         if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
         await tab.openChild(request.url);

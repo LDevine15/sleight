@@ -19,7 +19,8 @@ const executable = process.platform === 'darwin'
 const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'default-link qualification belongs to the host runner'
   : !existsSync(executable) ? 'pinned Chromium executable unavailable' : false;
 
-for (const handler of ['plain', 'stopPropagation', 'stopImmediatePropagation', 'preventDefault', 'stopAndPrevent'])
+for (const handler of ['plain', 'stopPropagation', 'stopImmediatePropagation', 'preventDefault', 'stopAndPrevent',
+  'returnFalse', 'returnValue'])
 test(`real new-tab link stays background-only with ${handler}`, {
   skip, timeout: 60000,
 }, async t => {
@@ -33,7 +34,9 @@ test(`real new-tab link stays background-only with ${handler}`, {
       ${handler === 'stopPropagation' || handler === 'stopAndPrevent' ? 'event.stopPropagation();' : ''}
       ${handler === 'stopImmediatePropagation' ? 'event.stopImmediatePropagation();' : ''}
       ${handler === 'preventDefault' || handler === 'stopAndPrevent' ? 'event.preventDefault();' : ''}
-      window.clickState.after = event.defaultPrevented;`;
+      ${handler === 'returnValue' ? 'event.stopImmediatePropagation(); event.returnValue = false;' : ''}
+      window.clickState.after = event.defaultPrevented;
+      ${handler === 'returnFalse' ? 'event.stopPropagation(); return false;' : ''}`;
     response.end(request.url === '/parent'
       ? `<a target="_blank" href="/child" onclick="${code}">Open child</a>`
       : '<h1>Owned fixture</h1>');
@@ -62,7 +65,7 @@ test(`real new-tab link stays background-only with ${handler}`, {
   registry = createPageRegistry({ browser, session, timeoutMs: 10000 });
   const { tab } = await registry.openTab({ url: origin + '/parent' });
   const entry = registry.tab(tab);
-  const cancelled = handler === 'preventDefault' || handler === 'stopAndPrevent';
+  const cancelled = ['preventDefault', 'stopAndPrevent', 'returnFalse', 'returnValue'].includes(handler);
   const nextPage = cancelled ? undefined : context.waitForEvent('page', { timeout: 10000 });
   const locator = entry.page.getByRole('link', { name: 'Open child' }), clicks = [];
   await backgroundClick(entry, locator, options => { clicks.push(options); return locator.click({ ...options, timeout: 5000 }); },
@@ -71,7 +74,8 @@ test(`real new-tab link stays background-only with ${handler}`, {
   await child?.waitForLoadState('domcontentloaded');
   await registry.idle();
   const state = await entry.page.evaluate(() => ({ handled: window.handled, click: window.clickState }));
-  assert.deepEqual(state, { handled: 1, click: { ctrl: false, meta: false, before: false, after: cancelled } });
+  assert.deepEqual(state, { handled: 1, click: { ctrl: false, meta: false, before: false,
+    after: cancelled && handler !== 'returnFalse' } });
   assert.equal(clicks.length, 1);
   const rows = await registry.list();
   const cleanup = await registry.endTurn();
@@ -79,8 +83,7 @@ test(`real new-tab link stays background-only with ${handler}`, {
   const focusAfter = await user.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState }));
   t.diagnostic(JSON.stringify({ handler, ownedTabs: rows.length, cleanup, backgroundAllocations, clicks, state, focusBefore, focusAfter,
     pagesRemaining: context.pages().length, childClosed: child?.isClosed(), userClosed: user.isClosed() }));
-  if (!cancelled) assert.ok(backgroundAllocations === 2 || clicks[0].modifiers?.includes('ControlOrMeta'),
-    'a new-tab default must use an explicit background target or the hidden native background modifier');
+  if (!cancelled) assert.equal(backgroundAllocations, 2, 'a new-tab default must use an explicit background target');
   else assert.equal(backgroundAllocations, 1);
   assert.deepEqual(focusAfter, focusBefore);
   assert.equal(rows.length, cancelled ? 1 : 2, 'the default child must be owned, and cancellation must create none');
