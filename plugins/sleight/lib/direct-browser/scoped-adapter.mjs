@@ -3,7 +3,7 @@ import { immutableJSON } from './ipc.mjs';
 import { isFileAuthority, consumeStagedFilePayloads } from './host-files.mjs';
 import { isRemoteResources } from './remote-resources.mjs';
 import { canonical } from './authority.mjs';
-import { popupHook } from './popups.mjs';
+import { popupHook, popupIntent, popupResult } from './popups.mjs';
 
 const allowed = new Set(['Page.enable', 'DOM.enable', 'Accessibility.enable', 'Runtime.enable']);
 const playwrightHash = '852e40f938e72e6129b6c9a8bde3f4cc6cfe5cecb5ac734b6b06c8ad1fde42bf';
@@ -205,6 +205,46 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
           if (result.exceptionDetails || result.result?.value !== true) throw Error('BACKGROUND_UNAVAILABLE');
           await reply('Page.setInterceptFileChooserDialog', { enabled: true });
           check(); return true;
+        },
+        async preparePopup(input) {
+          check(); const p = immutableJSON(input); fields(p, ['node']);
+          const object = objects.get(p.node);
+          if (object?.node === undefined || context(object.context) !== 'isolated') throw Error('OBJECT_LOST');
+          node(object.node);
+          // MAIN is required to inspect the page's assigned onclick function.
+          // This private entry resolves only the already checked node and runs
+          // this fixed source. No model expression or MAIN object is exposed.
+          const resolved = await reply('DOM.resolveNode', { backendNodeId: object.node }, true);
+          const id = resolved.object?.objectId;
+          if (!string(id, 1024) || !id) throw Error('OBJECT_LOST');
+          try {
+            const result = await reply('Runtime.callFunctionOn', { objectId: id, functionDeclaration: String(popupIntent),
+              arguments: [], returnByValue: true, awaitPromise: false });
+            node(object.node); context(object.context); check();
+            if (result.exceptionDetails || !result.result?.value) throw Error('OPENER_REQUIRED');
+            return immutableJSON(result.result.value);
+          } finally {
+            try { await reply('Runtime.releaseObject', { objectId: id }); resources?.forget(lease, id); }
+            catch { /* The connection owner retains a failed release. */ }
+          }
+        },
+        async popupResult(input) {
+          check(); const p = immutableJSON(input); fields(p, ['node']);
+          const object = objects.get(p.node);
+          if (object?.node === undefined || context(object.context) !== 'isolated') throw Error('OBJECT_LOST');
+          node(object.node);
+          const resolved = await reply('DOM.resolveNode', { backendNodeId: object.node }, true), id = resolved.object?.objectId;
+          if (!string(id, 1024) || !id) throw Error('OBJECT_LOST');
+          try {
+            const result = await reply('Runtime.callFunctionOn', { objectId: id, functionDeclaration: String(popupResult),
+              arguments: [], returnByValue: true, awaitPromise: false });
+            node(object.node); context(object.context); check();
+            if (result.exceptionDetails || !result.result?.value) throw Error('BACKGROUND_UNAVAILABLE');
+            return immutableJSON(result.result.value);
+          } finally {
+            try { await reply('Runtime.releaseObject', { objectId: id }); resources?.forget(lease, id); }
+            catch { /* Retained by the connection owner. */ }
+          }
         },
         async beginHitTarget(input) {
           check(); const p = immutableJSON(input); fields(p, ['instance', 'node', 'x', 'y']);

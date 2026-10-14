@@ -3,6 +3,7 @@ import { canonical } from './authority.mjs';
 import { isBrokerTransport } from './broker.mjs';
 import { immutableJSON } from './ipc.mjs';
 import { bounded } from './attachment.mjs';
+import { popupDestination, popupHook } from './popups.mjs';
 
 const roots = new WeakSet();
 export const isRootTargets = value => !!value && roots.has(value);
@@ -21,9 +22,11 @@ const urlOrigin = value => {
 export function createRootTargets({ session, current, timeoutMs = 1000 } = {}) {
   if (!session || ['send', 'on', 'off'].some(k => typeof session[k] !== 'function') || typeof current !== 'function' ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw Error('TRUSTED_ROUTE_REQUIRED');
-  const records = new Map(), tabs = new Map(), revoked = new Set(), observations = new WeakMap(); let closed = false;
+  const records = new Map(), tabs = new Map(), names = new Map(), revoked = new Set(), observations = new WeakMap(); let closed = false;
+  const hookSource = record => `(${popupHook})('strict', ${JSON.stringify(record.binding.session + ':' + record.binding.turn)})`;
   const live = record => !closed && !record.revoked && !record.absent && !record.retired &&
-    !revoked.has(record.binding.session) && same(record.binding, current(record.binding));
+    !revoked.has(record.binding.session) && same(record.binding, current(record.binding)) &&
+    (!record.parent || record.ready || api.checkLease(record.parent));
   const get = plan => {
     const record = records.get(plan.allocation);
     if (!record || record.key !== plan.target || record.url !== plan.url || !same(record.binding, plan)) throw Error('LEASE_LOST');
@@ -110,20 +113,44 @@ export function createRootTargets({ session, current, timeoutMs = 1000 } = {}) {
       records.set(allocation, { binding, url: args.url, origin, key, allocation, pending: 0 });
       return { target: key, allocation, url: args.url };
     },
+    preparePopup(request, parent, context) {
+      if (!api.checkLease(parent) || !same(parent, context) || !['link', 'window', 'form'].includes(request.kind) ||
+          typeof request.name !== 'string' || request.name.length > 128 || /^_/i.test(request.name) ||
+          urlOrigin(request.url) !== parent.origin || new URL(request.url).username || new URL(request.url).password)
+        throw Error('OPENER_REQUIRED');
+      const allocation = token('a'), binding = immutableJSON({ session: context.session, turn: context.turn,
+        browserIncarnation: context.browserIncarnation, brokerEpoch: context.brokerEpoch });
+      const nameKey = request.name && canonical([binding, request.name]);
+      let previous = nameKey && names.get(nameKey);
+      if (previous?.absent && !previous.pending) { names.delete(nameKey); previous = undefined; }
+      if (previous && (!live(previous) || previous.pending || previous.reserved)) throw Error('LEASE_LOST');
+      const record = { binding, parent, url: request.url, origin: parent.origin, key: parent.target, allocation, pending: 0,
+        ...(nameKey ? { nameKey } : {}), ...(previous ? { previous, target: previous.target, route: previous.route } : {}) };
+      if (previous) previous.reserved = true;
+      records.set(allocation, record); if (nameKey) names.set(nameKey, record);
+      return { ...binding, target: parent.target, allocation, url: request.url };
+    },
     dispatchFence(plan) { try { return live(get(plan)); } catch { return false; } },
     resolveOperation(plan, context, command) {
       const record = get(plan);
       if (!live(record) || !same(record.binding, context)) throw Error('LEASE_LOST');
       const root = command.route == null;
       const allowed = root && (command.method === 'Target.createTarget' && !record.target &&
-          canonical(command.params) === canonical({ url: record.url, background: true }) ||
+          canonical(command.params) === canonical({ url: record.parent ? 'about:blank' : record.url, background: true }) ||
         command.method === 'Target.attachToTarget' && record.target && !record.route &&
           canonical(command.params) === canonical({ targetId: record.target, flatten: true }) ||
         command.method === 'Target.getTargetInfo' && record.target && canonical(command.params) === canonical({ targetId: record.target })) ||
-        command.route === record.route && record.route && ['Page.enable', 'Page.getFrameTree'].includes(command.method) && canonical(command.params) === '{}';
+        command.route === record.route && record.route && (['Page.enable', 'Page.getFrameTree'].includes(command.method) && canonical(command.params) === '{}' ||
+          command.method === 'Page.navigate' && record.parent && (!record.previous || record.previous.url !== record.url) &&
+            canonical(command.params) === canonical({ url: record.url, ...(record.previous ? { frameId: record.previous.lease.frame } : {}) }) ||
+          command.method === 'Page.addScriptToEvaluateOnNewDocument' && record.parent && !record.previous &&
+            canonical(command.params) === canonical({ source: hookSource(record) }) ||
+          command.method === 'Runtime.evaluate' && record.parent && canonical(command.params) === canonical({
+            expression: `(${popupDestination})()`, returnByValue: true, awaitPromise: false }));
       if (!allowed) throw Error('SCOPED_COMMAND_DENIED');
-      return { id: token('open:'), kind: command.method === 'Target.createTarget' ? 'open' : 'read',
-        args: command.method === 'Target.createTarget' ? { url: record.url } : {}, consequence: 'ordinary',
+      const opens = ['Target.createTarget', 'Page.navigate'].includes(command.method);
+      return { id: token('open:'), kind: opens ? 'open' : 'read',
+        args: opens ? { url: record.url } : {}, consequence: 'ordinary',
         scope: { browser: record.binding.browserIncarnation, broker: record.binding.brokerEpoch, session: record.binding.session,
           turn: record.binding.turn, target: record.key, lease: 0, frame: 'allocation', document: 0, ref: record.allocation, origin: record.origin } };
     },
@@ -140,15 +167,24 @@ export function createRootTargets({ session, current, timeoutMs = 1000 } = {}) {
         const result = await bounded(() => actual, budget, context.signal); check(); return result;
       };
       try {
-        await send('Target.createTarget', { url: record.url, background: true }, undefined, value => {
-          if (typeof value?.targetId !== 'string' || !value.targetId) throw Error('TARGET_UNKNOWN');
-          record.target = value.targetId;
-        });
-        await send('Target.attachToTarget', { targetId: record.target, flatten: true }, undefined, value => {
-          if (typeof value?.sessionId !== 'string' || !value.sessionId) throw Error('ATTACHMENT_UNKNOWN');
-          record.route = value.sessionId;
-        });
+        if (!record.previous) {
+          await send('Target.createTarget', { url: record.parent ? 'about:blank' : record.url, background: true }, undefined, value => {
+            if (typeof value?.targetId !== 'string' || !value.targetId) throw Error('TARGET_UNKNOWN');
+            record.target = value.targetId;
+          });
+          await send('Target.attachToTarget', { targetId: record.target, flatten: true }, undefined, value => {
+            if (typeof value?.sessionId !== 'string' || !value.sessionId) throw Error('ATTACHMENT_UNKNOWN');
+            record.route = value.sessionId;
+          });
+        }
         await send('Page.enable', {}, record.route);
+        if (record.parent && !record.previous) {
+          const script = await send('Page.addScriptToEvaluateOnNewDocument', { source: hookSource(record) }, record.route);
+          if (typeof script.identifier !== 'string' || !script.identifier) throw Error('BACKGROUND_UNAVAILABLE');
+          await send('Page.navigate', { url: record.url }, record.route);
+        } else if (record.previous && record.previous.url !== record.url) {
+          await send('Page.navigate', { url: record.url, frameId: record.previous.lease.frame }, record.route);
+        }
         const deadline = Date.now() + timeoutMs;
         const remaining = () => { check(); const left = deadline - Date.now(); if (left <= 0) throw Error('FRAME_UNQUALIFIED'); return left; };
         const transient = url => url == null || url === '' || url === 'about:blank';
@@ -169,13 +205,39 @@ export function createRootTargets({ session, current, timeoutMs = 1000 } = {}) {
             if (new URL(frame.url).href !== requested || urlOrigin(frame.url) !== record.origin) throw Error('FRAME_UNQUALIFIED');
             frameReady = !!frame.id && !!frame.loaderId;
           }
-          if (targetReady && frameReady && version === (record.navigationVersion ?? 0)) { bindDocument(record, frame); break; }
+          if (targetReady && frameReady && version === (record.navigationVersion ?? 0)) {
+            if (record.parent) {
+              const inspected = await send('Runtime.evaluate', { expression: `(${popupDestination})()`, returnByValue: true, awaitPromise: false },
+                record.route, undefined, remaining());
+              const page = inspected.result?.value;
+              if (inspected.exceptionDetails || !page || page.url !== requested) throw Error('OPENER_REQUIRED');
+              if (!page.ready) {
+                await bounded(() => new Promise(resolve => setTimeout(resolve, Math.min(10, remaining()))), remaining(), context.signal);
+                continue;
+              }
+              if (page.independent !== true) throw Error('OPENER_REQUIRED');
+              record.title = typeof page.title === 'string' ? page.title.slice(0, 512) : '';
+            } else record.title = typeof info.title === 'string' ? info.title.slice(0, 512) : '';
+            record.lease = record.previous?.lease;
+            bindDocument(record, frame); break;
+          }
           await bounded(() => new Promise(resolve => setTimeout(resolve, Math.min(10, remaining()))), remaining(), context.signal);
         }
-        record.tab = token('t'); tabs.set(record.tab, record);
-        return { effect: 'verified', completed: 1, tab: record.tab, observation: { opened: true, background: true } };
+        record.tab = record.previous?.tab ?? token('t'); tabs.set(record.tab, record);
+        record.ready = true;
+        if (record.previous) { record.previous.retired = true; records.delete(record.previous.allocation); }
+        return { effect: 'verified', completed: 1, tab: record.tab, observation: { opened: true, background: true,
+          ...(record.parent ? { title: record.title, reused: !!record.previous } : {}) } };
       } catch (error) {
         record.revoked = true;
+        if (record.previous) {
+          // Reuse transfers exact cleanup ownership even when its navigation
+          // or qualification fails. Never close the same target twice, or
+          // discard a named tab whose navigation effect is now uncertain.
+          record.keep = true; record.tab = record.previous.tab;
+          record.previous.retired = true; records.delete(record.previous.allocation);
+          tabs.set(record.tab, record);
+        }
         throw error;
       }
     },
@@ -253,6 +315,7 @@ export function createRootTargets({ session, current, timeoutMs = 1000 } = {}) {
             if (!Array.isArray(inventory?.targetInfos) || inventory.targetInfos.some(t => t.targetId === record.target)) return retained('ABSENCE_UNPROVED');
           }
           records.delete(record.allocation); if (record.tab) tabs.delete(record.tab);
+          if (record.nameKey && names.get(record.nameKey) === record) names.delete(record.nameKey);
           return { resource: 'owned-target', target: record.target, status: 'closed', absenceVerified: true };
         } catch { return retained('CLEANUP_UNPROVED'); }
       })();

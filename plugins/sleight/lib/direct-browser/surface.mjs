@@ -150,8 +150,11 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
           observation: { omitted: true, reason: 'host_prefix_observations_withheld', next: 'browser_read' } })) : []);
     if (!Array.isArray(prefix) || prefix.length !== completed ||
         prefix.some(row => !['verified', 'unchanged', 'protected'].includes(row.effect))) throw Error('INVALID_RECEIPT');
-    const rows = prefix.map(row => ({ effect: row.effect, observation: safe(row.observation) }));
-    if (request.name === 'browser_open' && completed === 1) {
+    const rows = prefix.map(row => {
+      if (row.tab !== undefined) validateCall({ name: 'browser_read', arguments: { tab: row.tab } });
+      return { effect: row.effect, observation: safe(row.observation), ...(row.tab ? { tab: row.tab } : {}) };
+    });
+    if (response.tab !== undefined && completed === 1) {
       validateCall({ name: 'browser_read', arguments: { tab: response.tab } });
       rows[0].tab = response.tab;
     }
@@ -172,7 +175,7 @@ export async function createFrontend({ proof, verifyOptIn, packageCurrent, statu
     if (completed !== total || !['verified', 'unchanged', 'protected'].includes(response.effect) ||
         !Object.hasOwn(response, 'observation')) throw Error('INVALID_RECEIPT');
     return { completed, effect: response.effect, results: rows, observation: safe(response.observation), untouched: 0,
-      ...(request.name === 'browser_open' ? { tab: response.tab } : {}) };
+      ...(response.tab ? { tab: response.tab } : {}) };
   };
   const frontend = Object.freeze({
     browser: selectedBrowser,

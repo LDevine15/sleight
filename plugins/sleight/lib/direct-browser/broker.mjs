@@ -144,14 +144,16 @@ export function createBroker({ uid, secret, idlePolicy, browserIncarnation, conn
         if (!Array.isArray(result.results) || result.results.length !== response.completed || result.results.length > 50) return stopped(task, 'EFFECT_UNKNOWN');
         response.results = result.results.map(r => {
           if (!r || !['verified', 'protected', 'unchanged'].includes(r.effect) || !Object.hasOwn(r, 'observation')) throw Error('EFFECT_UNKNOWN');
-          return { effect: r.effect, observation: safe(r.observation) };
+          if (r.tab !== undefined && (typeof r.tab !== 'string' || !/^t[A-Za-z0-9_-]{1,63}$/.test(r.tab))) throw Error('EFFECT_UNKNOWN');
+          return { effect: r.effect, observation: safe(r.observation), ...(r.tab ? { tab: r.tab } : {}) };
         });
       }
       if (['unknown', 'unverifiable', 'none'].includes(result.effect)) {
-        const code = result.effect === 'unknown' ? 'EFFECT_UNKNOWN' : result.effect === 'unverifiable' ? 'STATE_UNVERIFIABLE' : 'NO_EFFECT';
+        const code = result.effect === 'none' && result.observation?.code === 'OPENER_REQUIRED' ? 'OPENER_REQUIRED' :
+          result.effect === 'unknown' ? 'EFFECT_UNKNOWN' : result.effect === 'unverifiable' ? 'STATE_UNVERIFIABLE' : 'NO_EFFECT';
         response.error = failure(code, result.effect, response.phase, response.completed).error;
       }
-      if (task.frame.operation === 'browser_open') {
+      if (task.frame.operation === 'browser_open' || result.tab !== undefined) {
         if (typeof result.tab !== 'string' || !/^t[A-Za-z0-9_-]{1,63}$/.test(result.tab)) return stopped(task, 'EFFECT_UNKNOWN');
         response.tab = result.tab;
       }

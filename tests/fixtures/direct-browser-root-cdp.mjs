@@ -3,14 +3,14 @@ import { existsSync, readFileSync, mkdtempSync, realpathSync, rmSync } from 'nod
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPlaywrightCore } from '../../plugins/sleight/lib/direct-browser/worlds.mjs';
-import { popupHook } from '../../plugins/sleight/lib/direct-browser/popups.mjs';
+import { popupHook, popupDestination } from '../../plugins/sleight/lib/direct-browser/popups.mjs';
 
 const rootMethods = new Set(['Target.createTarget', 'Target.attachToTarget', 'Target.getTargetInfo', 'Target.closeTarget', 'Target.getTargets']);
 const pageMethods = new Set(['Page.enable', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'DOM.enable', 'Accessibility.enable',
   'Runtime.enable', 'DOM.getDocument', 'DOM.describeNode', 'Accessibility.getPartialAXTree', 'DOM.resolveNode',
   'Runtime.callFunctionOn', 'Runtime.releaseObject', 'DOM.scrollIntoViewIfNeeded', 'Input.dispatchMouseEvent',
   'Input.insertText', 'Input.dispatchKeyEvent', 'Page.addScriptToEvaluateOnNewDocument', 'Runtime.evaluate',
-  'Page.setInterceptFileChooserDialog']);
+  'Page.setInterceptFileChooserDialog', 'Page.navigate']);
 function strictPopup(source) {
   const prefix = `(${popupHook})('strict', `;
   try {
@@ -24,7 +24,7 @@ function strictPopup(source) {
 // Root wire framing is essential: Playwright's page CDPSession.send cannot route
 // the attached session returned by Target.attachToTarget. This fixture sends the
 // actual flattened child sessionId in every page command and forwards real events.
-export async function connectRootCdp(endpoint, { WebSocketClass = globalThis.WebSocket, timeoutMs = 10000 } = {}) {
+export async function connectRootCdp(endpoint, { WebSocketClass = globalThis.WebSocket, timeoutMs = 10000, fixtureUrls = [] } = {}) {
   const url = new URL(endpoint);
   if (url.protocol !== 'ws:' || url.hostname !== '127.0.0.1' || !/^\/devtools\/browser\/[A-Za-z0-9_-]+$/.test(url.pathname) ||
       url.username || url.password || url.search || url.hash || typeof WebSocketClass !== 'function') throw Error('FIXTURE_ENDPOINT_DENIED');
@@ -64,10 +64,14 @@ export async function connectRootCdp(endpoint, { WebSocketClass = globalThis.Web
       if (closed) throw Error('FIXTURE_CDP_CLOSED');
       if (route === undefined ? !rootMethods.has(method) : !pageMethods.has(method) || !routes.has(route)) throw Error('FIXTURE_COMMAND_DENIED');
       if (method === 'Page.addScriptToEvaluateOnNewDocument' && (Object.keys(params).length !== 1 || !strictPopup(params.source)) ||
-          method === 'Runtime.evaluate' && (Object.keys(params).length !== 3 || !strictPopup(params.expression) ||
+          method === 'Runtime.evaluate' && (Object.keys(params).length !== 3 ||
+            !strictPopup(params.expression) && params.expression !== `(${popupDestination})()` ||
             params.returnByValue !== true || params.awaitPromise !== false) ||
           method === 'Page.setInterceptFileChooserDialog' && (Object.keys(params).length !== 1 || params.enabled !== true)) throw Error('FIXTURE_COMMAND_DENIED');
-      if (method === 'Target.createTarget' && (params.background !== true || !/^http:\/\/127\.0\.0\.1:\d+\/settings$/.test(params.url)) ||
+      const fixtureUrl = value => fixtureUrls.includes(value) && /^http:\/\/127\.0\.0\.1:\d+\//.test(value);
+      if (method === 'Target.createTarget' && (params.background !== true ||
+            params.url !== 'about:blank' && !fixtureUrl(params.url) && !/^http:\/\/127\.0\.0\.1:\d+\/settings$/.test(params.url)) ||
+          method === 'Page.navigate' && !fixtureUrl(params.url) ||
           method === 'Target.attachToTarget' && (params.flatten !== true || !targets.has(params.targetId)) ||
           ['Target.getTargetInfo', 'Target.closeTarget'].includes(method) && !targets.has(params.targetId)) throw Error('FIXTURE_COMMAND_DENIED');
       const id = ++sequence;

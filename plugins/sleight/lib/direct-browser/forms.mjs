@@ -152,7 +152,7 @@ export const fixedFormInspectors = Object.freeze({
 const equals = (a, b) => Array.isArray(b) ? Array.isArray(a) && a.length === b.length && new Set(a).size === a.length && b.every(v => a.includes(v)) : a === b;
 const shape = s => canonical(Object.fromEntries(['kind', 'tag', 'role', 'readonly', 'multiple', 'min', 'max', 'step', 'options', 'items', 'protected', 'frameLocal', 'frameInput']
   .filter(k => s[k] !== undefined).map(k => [k, k === 'options' ? s.options.map(({ selected, ...o }) => o) : k === 'items' ? [...s.items].sort() : s[k]])));
-const safe = error => ['HIDDEN', 'DISABLED', 'COVERED', 'STALE_REF', 'READONLY_PICKER', 'UNKNOWN_CHECKED_STATE', 'OPTIONS_CHANGED',
+const safe = error => ['OPENER_REQUIRED', 'HIDDEN', 'DISABLED', 'COVERED', 'STALE_REF', 'READONLY_PICKER', 'UNKNOWN_CHECKED_STATE', 'OPTIONS_CHANGED',
   'INVALID_FIELD', 'FRAME_UNQUALIFIED', 'RECOVERY_READ_REQUIRED', 'UNSTABLE', 'BACKGROUND_UNAVAILABLE', 'FILE_AUTHORITY_REQUIRED'].includes(error?.message) ? error.message : 'STATE_UNVERIFIABLE';
 const checkInputFrame = (state, semanticReorder = false) => {
   if (state.frameLocal || state.frameInput && !semanticReorder || ['iframe', 'frame', 'object', 'embed'].includes(state.tag)) throw Error('FRAME_UNQUALIFIED');
@@ -162,7 +162,7 @@ const checkInputFrame = (state, semanticReorder = false) => {
 // onOperation publishes only to the branded transport resolver. Input JSON
 // supplies refs and values; it cannot set submit, consequence or target checks.
 export function createFormSession({ session, identity, current, resolveRef, onOperation, paymentTerms = () => undefined,
-  files, observeEffect, onProof = () => {}, helpers = formInspectors, now = Date.now } = {}) {
+  files, observeEffect, onProof = () => {}, helpers = formInspectors, now = Date.now, allocatePopup } = {}) {
   if (!session || [current, resolveRef, onOperation].some(f => typeof f !== 'function') || authorityKeys.some(k => identity?.[k] === undefined)) throw Error('FORM_CONTRACT_REQUIRED');
   identity = Object.freeze({ ...identity });
   let world, instance, constructor, background = false, sequence = 0, closed = false, active, resolvedOperation, checked, busy = false, activeNode;
@@ -548,6 +548,26 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
       if (step.op === 'click' && ['file', 'color', 'select'].includes(prepared.state.kind)) throw Error('BACKGROUND_UNAVAILABLE');
       if (step.op === 'click' && prepared.state.payment) prepared.state.submit = true;
       const id = operationId(operation);
+      let popup, popupOpened;
+      if (allocatePopup && (step.op === 'click' || step.op === 'key' && /^(?:Enter|Space)$/.test(step.key))) {
+        activate(prepId(), step.ref);
+        popup = await deadline.run(() => session.preparePopup({ node: prepared.node }));
+        if (popup.code) {
+          const receipt = { effect: 'none', completed: 0, untouched: 1, observation: { code: 'OPENER_REQUIRED', reason: popup.reason ?? 'uncertain' } };
+          receipts.set(key, { fingerprint: hash, receipt }); return structuredClone(receipt);
+        }
+        if (popup.kind !== 'none') {
+          popupOpened = await deadline.run(() => allocatePopup(popup));
+          activate(prepId(), step.ref);
+          const fresh = await inspect(step.ref, prepared.node, '', deadline);
+          if (!fresh.connected || !fresh.visible || !fresh.enabled || fresh.hit !== true || shape(fresh) !== shape(prepared.state) ||
+              ['x', 'y', 'width', 'height'].some(k => Math.abs(fresh.rect[k] - prepared.state.rect[k]) >= .25)) throw Error('STALE_REF');
+          activate(prepId(), step.ref);
+          const intent = await deadline.run(() => session.preparePopup({ node: prepared.node }));
+          if (canonical(intent) !== canonical(popup)) throw Error('OPENER_REQUIRED');
+          prepared.state = fresh;
+        }
+      }
       if (step.op === 'key') {
         const parts = step.key.split('+'), key = parts.pop(), modifiers = { Alt: 1, Control: 2, Ctrl: 2, Meta: 4, Shift: 8 };
         if (parts.some(p => !Object.hasOwn(modifiers, p)) || new Set(parts).size !== parts.length) throw Error('INVALID_FIELD');
@@ -597,6 +617,14 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
         }
       } else {
         sent = true; await click(id, step.ref, prepared, deadline);
+      }
+      if (popup && popup.kind !== 'none') {
+        activate(prepId(), step.ref);
+        const request = await deadline.run(() => session.popupResult({ node: prepared.node }));
+        if (canonical(request) !== canonical(popup)) throw Error('STATE_UNVERIFIABLE');
+        const receipt = { ...popupOpened, untouched: 0, observation: { ...popupOpened.observation, nullReturned: request.nullReturned,
+          ...(request.nullReturned ? { note: 'window.open returned null to the source page.' } : {}) } };
+        receipts.set(key, { fingerprint: hash, receipt }); return structuredClone(receipt);
       }
       let localProof;
       if (!prepared.state.submit && !prepared.state.payment && ['click', 'key'].includes(step.op)) {
@@ -706,7 +734,7 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
       sameAuthority(identityFor(plan.lease), current(plan.lease)); },
     async dispatch(plan, context) {
       if (!authority) throw Error('TRUSTED_AUTHORITY_REQUIRED');
-      const state = { lease: plan.lease, rootPlan: plan.operationName === 'browser_open' ? plan : undefined, operation: context.operation };
+      const state = { lease: plan.lease, rootPlan: plan.operationName === 'browser_open' ? plan : undefined, operation: context.operation, plan, context };
       return operations.run(state, async () => {
         try {
           if (plan.operationName === 'browser_open' && rootTargets) return await rootTargets.open(plan, context);
@@ -718,6 +746,13 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
             });
             const form = owner.reader(lease, 'forms', () => createFormSession({ session: view, identity,
               current: () => current(lease), resolveRef: ref => reader.resolve(ref), files, paymentTerms, observeEffect,
+              ...(rootTargets ? { async allocatePopup(request) {
+                const activeState = operations.getStore(), previous = activeState.active;
+                const popupPlan = rootTargets.preparePopup(request, lease, activeState.plan);
+                activeState.rootPlan = popupPlan;
+                try { return await rootTargets.open(popupPlan, activeState.context); }
+                finally { activeState.rootPlan = undefined; activeState.active = previous; }
+              } } : {}),
               onProof(op, effect) {
                 const record = authority.receipt(op.id);
                 if (!record || record.phase !== 'dispatched') throw Error('HOST_PROOF_REQUIRED');
@@ -754,7 +789,7 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
               for (let i = 0; i < plan.args.steps.length; i++) {
                 const r = await form.act(plan.args.steps[i], { ...options, operation: options.operation + ':' + i });
                 if (!['verified', 'unchanged', 'protected'].includes(r.effect)) return { ...r, completed: results.length, results, untouched: plan.args.steps.length - results.length - (r.effect === 'unknown' ? 1 : 0) };
-                results.push({ effect: r.effect, observation: r.observation });
+                results.push({ effect: r.effect, observation: r.observation, ...(r.tab ? { tab: r.tab } : {}) });
               }
               return { effect: 'verified', completed: results.length, results, untouched: 0, observation: { targets: results.length } };
             }
@@ -766,9 +801,9 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
     resolveOperation(plan, context, command) {
       const state = operations.getStore();
       if (state?.operation !== context.operation) throw Error('SEMANTIC_OPERATION_MISMATCH');
-      if (plan.operationName === 'browser_open' && rootTargets) {
-        const operation = rootTargets.resolveOperation(plan, context, command);
-        activate({ rootPlan: plan, operation }); return operation;
+      if (state.rootPlan && rootTargets) {
+        const operation = rootTargets.resolveOperation(state.rootPlan, context, command);
+        activate({ rootPlan: state.rootPlan, operation }); return operation;
       }
       const active = activeFor();
       if (!active || canonical(active.lease) !== canonical(plan.lease)) throw Error('SEMANTIC_OPERATION_MISMATCH');

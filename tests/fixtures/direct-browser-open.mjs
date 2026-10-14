@@ -6,6 +6,7 @@ import { createAuthority, createTransportAuthority, revokeAuthoritySession } fro
 import { createBroker } from '../../plugins/sleight/lib/direct-browser/broker.mjs';
 import { validateHostRequest } from '../../plugins/sleight/lib/direct-browser/request-schema.mjs';
 import { createRootTargets } from '../../plugins/sleight/lib/direct-browser/root-targets.mjs';
+import { popupIntent } from '../../plugins/sleight/lib/direct-browser/popups.mjs';
 const identity = { browserIncarnation: 'browser', brokerEpoch: 1, clientSession: 'client', turn: 'turn', leaseGeneration: 1,
   target: 'target', frame: 'frame', document: 1, origin: 'https://fixture.invalid' };
 const lease = { ...identity, epoch: 1, cdpSessionId: 'page' };
@@ -54,6 +55,7 @@ export async function fixture(t, options = {}) {
           if (s === 'function(){return this.stop();}') return { result: { value: 'done' } };
           if (s.startsWith('function(){const module')) return { result: { objectId: 'constructor' } };
           if (s.startsWith('function(){return new this')) return { result: { objectId: 'instance' } };
+          if (s === String(popupIntent)) return { result: { value: { kind: 'none' } } };
           if (s === String(inspectControl)) return { result: { value: { standard: true, value } } };
           if (s === fixedFormInspectors['form-state'].source) return { result: { value: {
             kind: !options.secondField && objects.get(params.objectId) === 3 ? 'button' : 'text', value, connected: true, enabled: true, visible: true, hit: true, readonly: false,

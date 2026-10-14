@@ -22,6 +22,7 @@ const recovery = {
   USER_TAKEOVER: ['Resume through the trusted user control, then read fresh state.', 'resume'],
   LEASE_LOST: ['Rebind through the trusted user control, then read fresh state.', 'rebind'],
   BACKGROUND_UNAVAILABLE: ['Use the supported handoff through the trusted user control.', 'handoff'],
+  OPENER_REQUIRED: ['This popup needs its opener or has uncertain opening semantics. Use the engine browser path for this flow.', 'engine_browser'],
   SETTING_OFF: ['Enable the browser setting and connect through trusted setup.', 'connect'],
   CONNECTION_APPROVAL_PENDING: ['Review the pending browser connection request.', 'review_connection'],
   CONNECTION_DECLINED: ['Reconnect only through an explicit trusted user choice.', 'connect'],
@@ -43,6 +44,13 @@ export class BrowserFailure extends Error {
 export function browserError(failure, { tab, completed = 0, observation = null } = {}) {
   const error = failure instanceof BrowserFailure ? failure : new BrowserFailure('EFFECT_UNKNOWN');
   let [message, action] = recovery[error.code];
+  if (error.code === 'OPENER_REQUIRED') {
+    const reasons = { 'cross-origin': 'This popup is cross-origin and may need its opener.',
+      opener: 'This popup reads its opener or exchanges messages with it.',
+      post: 'This targeted form uses POST; turbo cannot replay it as GET.',
+      uncertain: 'This popup has uncertain opener or opening semantics.' };
+    message = (reasons[observation?.reason] ?? reasons.uncertain) + ' Use the engine browser path for this flow.';
+  }
   if (error.effect === 'none' && observation?.code === 'BACKGROUND_UNAVAILABLE' && observation.next === 'browser_fill')
     return { code: error.code, phase: error.phase, effect: error.effect, completed, observation,
       next: { tool: 'browser_fill', arguments: { tab } },

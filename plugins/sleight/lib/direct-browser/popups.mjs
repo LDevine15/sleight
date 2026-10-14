@@ -14,9 +14,23 @@ export function popupHook(mode, owner = 'standalone') {
   }
   const native = window.open;
   const apply = Reflect.apply;
-  const state = { blocked: null, mode, owners: new Set([owner]) };
+  const state = { blocked: null, mode, owners: new Set([owner]), armed: null, request: null };
+  const capture = (kind, url, name) => {
+    const intent = state.armed;
+    state.armed = null;
+    try {
+      const destination = new URL(url, window.document.baseURI).href;
+      if (intent?.kind === kind && intent.url === destination && intent.name === name) {
+        state.request = intent; return true;
+      }
+    } catch { /* Unknown page intent never allocates a target. */ }
+    state.blocked = 'BACKGROUND_UNAVAILABLE'; return false;
+  };
   const wrapper = function (...args) {
-    if (mode === 'strict') { state.blocked = 'BACKGROUND_UNAVAILABLE'; return null; }
+    if (mode === 'strict') {
+      const name = args[1] == null || /^_blank$/i.test(args[1]) ? '' : String(args[1]);
+      capture('window', args[0], name); return null;
+    }
     return apply(native, this, args);
   };
   const block = event => {
@@ -26,7 +40,14 @@ export function popupHook(mode, owner = 'standalone') {
       window.document.querySelector('base[target]')?.getAttribute('target') ?? '';
     if (target && !/^_self$/i.test(target)) {
       event.preventDefault();
-      state.blocked = 'BACKGROUND_UNAVAILABLE';
+      const kind = event.type === 'submit' ? 'form' : 'link';
+      const name = /^_blank$/i.test(target) ? '' : target;
+      const intent = state.armed;
+      // Form serialization was checked immediately before this action. Only
+      // that exact form can consume it; POSTs are never replayed as a GET.
+      if (kind === 'form' && intent?.kind === 'form' && intent.form === node) {
+        state.request = { kind, url: intent.url, name, nullReturned: false }; state.armed = null;
+      } else capture(kind, node?.getAttribute('href'), name);
     }
   };
   window.open = wrapper;
@@ -43,6 +64,93 @@ export function popupHook(mode, owner = 'standalone') {
   };
   window[key] = state;
   return true;
+}
+
+// Fixed MAIN-world metadata preflight for one owned node. It is intentionally
+// narrow: a literal open with no returned-window use, or a GET link/form. Page
+// data may veto a flow but cannot grant a different origin or a native open.
+export function popupIntent() {
+  const state = window[Symbol.for('sleight.popup2')];
+  if (!state || state.mode !== 'strict' || !(this instanceof Element) || !this.isConnected)
+    return { code: 'OPENER_REQUIRED', reason: 'uncertain' };
+  state.armed = state.request = null;
+  const deny = reason => ({ code: 'OPENER_REQUIRED', reason });
+  const get = (node, name) => Element.prototype.getAttribute.call(node, name);
+  const scripts = Array.from(document.scripts ?? []);
+  const source = scripts.map(s => s.textContent ?? '').join('\n');
+  const handlers = [];
+  let link, form, submitter;
+  for (let node = this, depth = 0; node instanceof Element && depth < 32; node = node.parentElement, depth++) {
+    if (!link && ['a', 'area'].includes(node.localName)) link = node;
+    for (const name of ['onclick', 'onauxclick', 'onsubmit']) {
+      const handler = node[name];
+      if (typeof handler === 'function') handlers.push(Function.prototype.toString.call(handler));
+    }
+  }
+  if (this.localName === 'form') form = this;
+  else if (this.form && ['button', 'input'].includes(this.localName) && (this.type ?? 'submit') === 'submit') {
+    form = this.form; submitter = this;
+  }
+  const target = (submitter && get(submitter, 'formtarget')) ?? get(form ?? link ?? this, 'target') ??
+    document.querySelector('base[target]')?.getAttribute('target') ?? '';
+  const opening = handlers.filter(text => /\bwindow\s*(?:\.\s*open|\[)/.test(text));
+  let intent;
+  if (opening.length) {
+    if (opening.length !== 1 || handlers.length !== 1) return deny('uncertain');
+    const text = opening[0];
+    const body = text.includes('{') ? text.slice(text.indexOf('{') + 1, text.lastIndexOf('}')).trim()
+      : text.slice(text.indexOf('=>') + 2).trim();
+    const match = /^(?:return\s+)?window\.open\(\s*(['"])([^'"\\]*)\1\s*(?:,\s*(['"])([^'"\\]*)\3\s*(?:,\s*(['"])([^'"\\]*)\5\s*)?)?\)\s*;?$/.exec(body);
+    if (!match) return deny('uncertain');
+    intent = { kind: 'window', url: match[2], name: match[4] ?? '', nullReturned: true };
+    if (scripts.some(s => s.src)) return deny('uncertain');
+  } else if (target && !/^_self$/i.test(target) && (form || link)) {
+    if (handlers.length) return deny('uncertain');
+    if (form) {
+      const method = ((submitter && get(submitter, 'formmethod')) ?? get(form, 'method') ?? 'get').toLowerCase();
+      if (method !== 'get') return deny('post');
+      const url = new URL((submitter && get(submitter, 'formaction')) ?? get(form, 'action') ?? window.location.href, document.baseURI);
+      const data = new FormData(form, submitter);
+      if (Array.from(data.values()).some(value => typeof value !== 'string')) return deny('uncertain');
+      url.search = new URLSearchParams(data).toString();
+      intent = { kind: 'form', url: url.href, name: target, nullReturned: false };
+    } else {
+      if (get(link, 'download') !== null) return deny('uncertain');
+      intent = { kind: 'link', url: get(link, 'href'), name: target, nullReturned: false };
+    }
+  } else {
+    if (/\bwindow\s*(?:\.\s*open|\[)/.test(source)) return deny('uncertain');
+    return { kind: 'none' };
+  }
+  if (/\b(?:opener|postMessage)\b/.test(source + '\n' + handlers.join('\n'))) return deny('opener');
+  if (/^_(?:parent|top|self)$/i.test(intent.name) || intent.name.length > 128) return deny('uncertain');
+  if (/^_blank$/i.test(intent.name)) intent.name = '';
+  try {
+    const url = new URL(intent.url, document.baseURI);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return deny('uncertain');
+    if (url.origin !== window.location.origin) return deny('cross-origin');
+    intent.url = url.href;
+  } catch { return deny('uncertain'); }
+  state.armed = { ...intent, ...(form ? { form } : {}) };
+  return intent;
+}
+
+export function popupResult() {
+  const state = window[Symbol.for('sleight.popup2')];
+  if (!state || state.mode !== 'strict') return { code: 'BACKGROUND_UNAVAILABLE' };
+  const request = state.request;
+  state.armed = state.request = null;
+  return request ?? { kind: 'none' };
+}
+
+// External or dynamically loaded scripts cannot prove independence. This
+// private fixed read inspects only the new owned destination document.
+export function popupDestination() {
+  const scripts = Array.from(document.scripts), attributes = Array.from(document.querySelectorAll('[onclick]'));
+  const source = [...scripts.map(s => s.textContent ?? ''), ...attributes.map(n => n.getAttribute('onclick') ?? '')].join('\n');
+  return { ready: document.readyState !== 'loading', url: window.location.href, title: document.title.slice(0, 512),
+    independent: !scripts.some(s => s.src) &&
+      !/\b(?:opener|postMessage|eval|Function|import|createElement|innerHTML|write|Reflect|Proxy)\b|\b[A-Za-z_$][\w$]*\s*\[/.test(source) };
 }
 
 export const popupSupport = Object.freeze([
@@ -155,4 +263,3 @@ export class PopupController {
     return cleanup;
   }
 }
-
