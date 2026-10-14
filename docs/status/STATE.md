@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 23:58 UTC)
+## Banner (2026-10-14 23:57 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -36,7 +36,11 @@ installed worker. The load average fell from about 49 to 2.7 within the hour aft
 shorter than a model turn, queued as V10R2 on lane `codex-v3-v10r2`. A lane review of V10R reproduced two HIGH bypasses on real pages (a page redefines
 the activeElement or form getter in the main world, and a neutral control sends Enter or a click to a card form): queued as
 V10R3 after V10R2, reading authority only from the utility world or CDP. V7 (installed worker, `codex/v7b` 5212de62): a lane
-review found Pause/Disconnect expire at 30 s while the refresh is 60 s (queued as V7R), and a Claude review is running. V9R
+review found Pause/Disconnect expire at 30 s while the refresh is 60 s (V7R, claimed). The Claude review found cleanup that
+never releases Chrome's connection after UI or parent loss, a stale upload receipt, an eager first-prompt connect, and browser_open
+reaching the DevTools endpoint: V7R2 after V7R. sleight-arch's call: one session keeps its connection between turns and releases it
+when the session ends. CS3R2 merged at `566f4d4e` (5691 pass, 0 fail, 49 mod). Before it, offline handoff tests
+could quit TextEdit or Preview through real osascript. V9R
 passed its re-review. Owner (01:30 UTC): no competitor code in sleight, so LAWS and ROADMAP now say ideas only, written
 clean-room. `private/cr1-base` (`a9212d4d`) strips the two FowlBrowser-adapted pieces (page.mjs popupHook and backgroundClick,
 snapshot.mjs closedRoots) to stubs, and lane `codex-cr1` rewrites them from the behavior spec in queue/CR1.md without access to
