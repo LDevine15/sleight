@@ -19,22 +19,26 @@ const load = async file => {
 };
 const origin = 'http://127.0.0.1:5431';
 
-test('turbo setup isolates Claude, authenticates only the original task and imports the four tools', async () => {
+test('turbo setup isolates Claude, authenticates only the original task and imports turbo with the engine', async () => {
   const { turboSetup, fixtureOrigins } = await load('setup.mjs');
   const task = { prompt: 'Fill ' + origin + '/form then submit it', grade: origin + '/grade' };
   const setup = turboSetup({ task, repo: '/fixture/repo', dir: join(tmpdir(), 'turbo-arm-setup'), prompt: task.prompt,
     env: { HOME: '/fixture/home', PATH: '/bin', CLAUDE_CONFIG_DIR: '/owner', CLAUDE_CODE_SESSION_ID: 'owner' } });
-  assert.equal(setup.metadata.measurement, 'production turbo tools and modules; installed path excluded');
+  assert.equal(setup.metadata.measurement, 'production turbo tools and modules plus engine companion; installed path excluded');
   assert.equal(setup.env.CLAUDE_CODE_SESSION_ID, undefined);
   assert.notEqual(setup.env.CLAUDE_CONFIG_DIR, '/owner');
-  assert.equal(setup.allowed.split(',').length, 4);
-  assert.deepEqual(setup.allowed.split(',').map(name => name.replace('mcp__sleight-turbo__', '')), compactTools().map(tool => tool.name));
+  assert.equal(setup.allowed.split(',').length, 7);
+  assert.deepEqual(setup.allowed.split(',').filter(name => name.startsWith('mcp__sleight-turbo__'))
+    .map(name => name.replace('mcp__sleight-turbo__', '')), compactTools().map(tool => tool.name));
   const server = setup.mcpServers['sleight-turbo'];
   assert.deepEqual(server.args, ['/fixture/repo/bench/turbo/server.mjs']);
   assert.equal(server.env.SLEIGHT_TURBO_TASK, task.prompt);
   assert.deepEqual(JSON.parse(server.env.SLEIGHT_TURBO_ORIGINS), [origin]);
   assert.deepEqual(fixtureOrigins(task), [origin]);
-  assert.throws(() => turboSetup({ task: { prompt: 'Visit https://example.com/' } }), /fixture/i);
+  const external = turboSetup({ task: { prompt: 'Visit https://example.com/' }, repo: '/fixture/repo',
+    dir: join(tmpdir(), 'turbo-arm-external'), prompt: 'Visit https://example.com/' });
+  assert.equal(external.metadata.path, 'model-selected');
+  assert.deepEqual(JSON.parse(external.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_ORIGINS), []);
 });
 
 test('protocol catalog equals installed turbo and fake Claude completes one production form fill and submit', async t => {
@@ -216,7 +220,7 @@ test('plugin sources never import the benchmark server', async () => {
 });
 
 const cache = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser');
-test('Fowl patch wires turbo into isolated rounds without an extension, and refuses unsupported tasks',
+test('Fowl patch wires both servers into isolated rounds and leaves fixture turbo unmeasured by the extension',
   { skip: !existsSync(join(cache, '.git')) && 'pinned FowlBrowser source is absent' }, async t => {
     const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-rounds-')));
     const root = fileURLToPath(new URL('..', import.meta.url));
@@ -232,15 +236,16 @@ test('Fowl patch wires turbo into isolated rounds without an extension, and refu
     for (const world of [false, true]) {
       const setup = runner.agentSetup({ task, surface: 'sleight-turbo', dir, mcpRoot: '/fixture/mcp', settings: '/fixture/settings', model: 'haiku', effort: 'high', world });
       assert.ok(setup.mcpConfig.mcpServers['sleight-turbo'], JSON.stringify(setup.mcpConfig));
-      assert.equal(setup.metadata.measurement, 'production turbo tools and modules; installed path excluded');
-      assert.match(setup.prompt, /bbench/); assert.doesNotMatch(setup.prompt, /createBrowserTab/);
+      assert.equal(setup.metadata.measurement, 'production turbo tools and modules plus engine companion; installed path excluded');
+      assert.match(setup.prompt, /bbench/);
       assert.equal(setup.env.ANTHROPIC_SMALL_FAST_MODEL, 'claude-haiku-5-5');
       assert.equal(setup.mcpConfig.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_TASK,
         'Read ' + origin + '/form\n\nEnd your answer with one line starting with RESULT: that states the value.');
     }
     assert.equal(runner.surfaceObserved('sleight-turbo'), false);
-    assert.deepEqual(runner.roundSettings('sleight-turbo', {}), { hooks: {}, enabledPlugins: { 'sleight@sleight': false } });
-    assert.ok(runner.taskSupport({ ...task, takeover: {} }, 'sleight-turbo'));
-    assert.ok(runner.taskSupport({ ...task, prompt: 'Read https://example.com' }, 'sleight-turbo'));
-    assert.match(readFileSync(join(dir, 'tools/rounds.mjs'), 'utf8'), /!\['browser-use', 'sleight-turbo'\]\.includes\(surfaceOf\(t\)\)/);
+    assert.ok(runner.roundSettings('sleight-turbo', { mcpRoot: '/fixture/mcp' }).hooks.Elicitation);
+    assert.equal(runner.taskSupport({ ...task, takeover: {} }, 'sleight-turbo'), null);
+    assert.equal(runner.taskSupport({ ...task, prompt: 'Read https://example.com' }, 'sleight-turbo'), null);
+    assert.equal(runner.surfaceObserved('sleight-turbo', task), false);
+    assert.equal(runner.surfaceObserved('sleight-turbo', { ...task, takeover: {} }), false);
   });
