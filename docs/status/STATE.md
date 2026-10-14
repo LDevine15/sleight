@@ -27,8 +27,13 @@ Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging c
     every tool schema without a top-level oneOf (Claude Code drops such tools), and P2 must make the demo forms fill and submit.
   - GR1 (codex-hdlcg): `SLEIGHT_GUARD=first-off`, an A/B switch for the guard's first-action read. sleight-arch runs the A/B.
   - LD1 (codex-hdlci): a host-side runner so lanes can request real-page test runs. sleight-arch starts it outside any sandbox.
-  - SR1, the read after a click (the largest tool-time cost): `ledger/sr1-astra-report.md` (gpt-6-astra) is written. The Opus
-    subagent's `ledger/sr1-opus-report.md` was finishing at the clear. Compare both and propose the live experiment.
+  - SR1, the read after an action: both reports are written, `ledger/sr1-astra-report.md` (gpt-6-astra) and
+    `ledger/sr1-opus-report.md` (Opus, scripts in `ledger/sr1-opus-scripts/`). Opus found the 262 s against 110 s gap was all
+    browser-path calls, not native reads. Of 915 mid-call native reads (about 430 s, 16% of native tool time), only 80 follow a
+    sheet or panel opener, and 673 sit between two clicks for ID lookup. Its Design A binds IDs once against the call's first read
+    and skips later reads before clicks, except after likely openers: about 280 to 300 s saved. First comes its no-model Calculator
+    probe (clicks by number from one read, against a read-once control), then an A/B behind `SLEIGHT_GUARD=bind`. Compare it with
+    astra's report before deciding. Skipping the wait after real openers stays rejected, since Codex got 15 of 49 such calls wrong.
 - Done, to apply: RP1 (`ledger/claims/RP1/`: CHANGELOG-1.3.0.md, README-diff.md, release-checklist.md) for the release. CS1
   (`ledger/claims/CS1/REPORT.md`) found only the Codex native arm ready for the claim suite, out of 18. Its table gives each
   other arm's install command, and claude-cu needs the owner's login.
