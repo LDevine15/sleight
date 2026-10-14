@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 03:50 UTC, after the reboot)
+## Banner (2026-10-14 03:45 UTC, after the reboot)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then release 1.3.0, the claim
 post and the video (ROADMAP 0b). LAWS was cut to 4.7 KB on 2026-10-14 (owner's decisions plus Mac protections). Engine facts are in
@@ -23,20 +23,21 @@ Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging c
   Turbo becomes the default once its benchmark proves it.
 - In flight (headless `codex exec` lanes keep running through the clear and report only through
   `~/Projects/sleight-wt/ledger/claims/`; logs in `/private/tmp/claude-501/lanes/`):
-  - BP2-P2 (codex-hdlck) and BP2-P3 (codex-hdlcl) restarted on P1S at 03:50 UTC, rebasing `codex/bp2-p2` (`e8c380df`) and
+  - BP2-P2 (codex-hdlck) and BP2-P3 (codex-hdlcl) restarted on P1S at 03:44 UTC, rebasing `codex/bp2-p2` (`e8c380df`) and
     `codex/bp2-p3` (`e9b193f4`) onto `pane/auto-mode`. P2 supplies the target check, submit and payment classification, fresh-read
     evidence and the file provider, and must make the demo forms fill and submit. P3 wires turbo into the plugin and advertises
     every tool schema without a top-level oneOf (Claude Code drops such tools).
   - LD1 (`codex/ld1`, `49ed9b0a`): a host-side runner so lanes can request real-page test runs. Its review said FIX (a natural
     leader exit leaves its process group running); LD1R (codex-hdlcj, `codex/ld1r`) is fixing that. Merge both together, then
     sleight-arch starts the runner outside any sandbox.
-  - SR1, the read after an action: both reports are written, `ledger/sr1-astra-report.md` (gpt-6-astra) and
-    `ledger/sr1-opus-report.md` (Opus, scripts in `ledger/sr1-opus-scripts/`). Opus found the 262 s against 110 s gap was all
-    browser-path calls, not native reads. Of 915 mid-call native reads (about 430 s, 16% of native tool time), only 80 follow a
-    sheet or panel opener, and 673 sit between two clicks for ID lookup. Its Design A binds IDs once against the call's first read
-    and skips later reads before clicks, except after likely openers: about 280 to 300 s saved. First comes its no-model Calculator
-    probe (clicks by number from one read, against a read-once control), then an A/B behind `SLEIGHT_GUARD=bind`. Compare it with
-    astra's report before deciding. Skipping the wait after real openers stays rejected, since Codex got 15 of 49 such calls wrong.
+  - SR1, the read after an action, decided 2026-10-14 from both reports (`ledger/sr1-opus-report.md`, `ledger/sr1-astra-report.md`).
+    Both found the 262 s against 110 s gap was all browser-path calls. Of 915 mid-call native reads (about 430 s, 16% of native
+    tool time), 80 follow a sheet or panel opener and 673 sit between two clicks. Opus's design A goes first (bind numbers to the
+    call's first read, no reads between clicks, about 280 to 300 s), once its no-model probe passes: `node bench/engine-time.mjs
+    bind` (Calculator, 10 trials an arm, owner away). It needs bind 10/10 at 391 with the control showing the renumber. Then
+    `SLEIGHT_GUARD=bind`. Design B (quiet edit shortcuts and field clicks) is lane SR1B (codex-hdlcm, `SLEIGHT_GUARD=quiet-edits`).
+    Astra's readiness predicate is Opus's design C and comes after A. Skipping the wait after real openers stays rejected
+    (Codex got 15 of 49 such calls wrong).
 - Done, to apply: RP1 (`ledger/claims/RP1/`: CHANGELOG-1.3.0.md, README-diff.md, release-checklist.md) for the release. CS1
   (`ledger/claims/CS1/REPORT.md`) found only the Codex native arm ready for the claim suite, out of 18. Its table gives each
   other arm's install command, and claude-cu needs the owner's login.

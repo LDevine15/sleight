@@ -10,7 +10,7 @@ import { windowFromText, guardedCode, elementLines, hasIdentifier } from '../plu
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const mode = process.argv[2] ?? 'inspect';
-assert.ok(['inspect', 'latency', 'floor'].includes(mode));
+assert.ok(['inspect', 'latency', 'floor', 'bind'].includes(mode));
 const bank = trackTemp(await mkdtemp('/private/tmp/sleight-engine-time-'));
 const server = resolveServer();
 const report = { mode, engine: server.version, started: new Date().toISOString(),
@@ -125,6 +125,64 @@ try {
         report.trials.at(-1).passed = true;
       }
     }
+  }
+  if (mode === 'bind') {
+    // SR1 design A (ledger/sr1-opus-report.md): does the engine bind element numbers to the capture
+    // Claude saw, so a batch needs no read between clicks? With "Last Expression" showing, All Clear
+    // removes it and renumbers the keypad. The bind arm clicks AC, 1, 7, ×, 2, 3, = by the numbers of
+    // one read with no reads between. The control arm reads once after AC, as the guard does today,
+    // and records whether the later numbers moved. Design A needs bind 10/10 at 391 with the move present.
+    await call('var direct = app;');
+    const target = { title: 'Calculator', app: 'Calculator', url: null };
+    const setup = guardedCode(`for (const id of ['AllClear', 'One', 'Seven']) await app.click({ id });
+      await app.click({ label: 'Multiply' });
+      for (const id of ['Two', 'Three']) await app.click({ id });
+      await app.click({ label: 'Equals' });
+      nodeRepl.write('\\n' + await direct.getAXState({ emit: false, disableDiffing: true }));`, target);
+    const lastExpression = text => /^\s*\d+ text Description: Last Expression, Value: ([^\r\n]*)$/m.exec(text)?.[1] ?? null;
+    let state = await call(setup);
+    for (let repetition = 1; repetition <= 10; repetition++) {
+      for (const arm of repetition % 2 ? ['bind', 'control'] : ['control', 'bind']) {
+        if (calculatorValue(state) !== '391' || lastExpression(state) !== '17 × 23') state = await call(setup);
+        assert.equal(calculatorValue(state), '391');
+        assert.equal(lastExpression(state), '17 × 23');
+        const text = await call(`{
+          const parse = ${windowFromText.toString()}, elements = ${elementLines.toString()}, match = ${hasIdentifier.toString()};
+          const start = performance.now();
+          const text = await direct.getAXState({ emit: false, disableDiffing: true });
+          if (JSON.stringify(parse(text)) !== ${JSON.stringify(JSON.stringify(target))}) throw new Error('Calculator identity changed');
+          const lines = elements(text);
+          const numbers = ['AllClear', 'One', 'Seven', 'Multiply', 'Two', 'Three', 'Equals'].map(name => {
+            const found = [...lines].filter(([, line]) => match(line, name) || line === 'button ' + name);
+            if (found.length !== 1) throw new Error('Calculator selector ' + name + ' is not unique: ' + found.length);
+            return found[0][0];
+          });
+          const out = { repetition: ${repetition}, arm: ${JSON.stringify(arm)}, numbers };
+          await direct.click(numbers[0]);
+          if (${JSON.stringify(arm)} === 'control') {
+            const after = elements(await direct.getAXState({ emit: false, disableDiffing: true }));
+            out.moved = numbers.slice(1).filter(n => after.get(n) !== lines.get(n)).length;
+          }
+          for (const number of numbers.slice(1)) await direct.click(number);
+          out.ms = performance.now() - start;
+          nodeRepl.write(await direct.getAXState({ emit: false, disableDiffing: true }));
+          nodeRepl.write('\\nengine-probe:' + JSON.stringify(out));
+        }`);
+        const trial = report.trials.at(-1);
+        trial.observedValue = calculatorValue(text);
+        trial.observedExpression = lastExpression(text);
+        trial.passed = trial.observedValue === '391' && trial.observedExpression === '17 × 23';
+        state = text;
+      }
+    }
+    const arms = ['bind', 'control'].map(arm => {
+      const trials = report.trials.filter(t => t.measurements?.arm === arm);
+      const ms = trials.map(t => t.measurements.ms).sort((a, b) => a - b);
+      return { arm, passed: trials.filter(t => t.passed).length, of: trials.length,
+        moved: trials.map(t => t.measurements.moved).filter(n => n !== undefined), medianMs: ms[Math.floor(ms.length / 2)] };
+    });
+    report.summary = arms;
+    console.log(JSON.stringify(arms));
   }
 } catch (error) {
   report.failures.push(scrub(error.message)); process.exitCode = 1;
