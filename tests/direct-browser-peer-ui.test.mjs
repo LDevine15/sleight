@@ -2,13 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { createServer, createConnection } from 'node:net';
-import { mkdtempSync, realpathSync, chmodSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
+import { swiftModuleCache } from '../bench/swift-cache.mjs';
 import { createUiChannel, createNativePeerProvider, startBrokerHost } from '../plugins/sleight/lib/direct-browser/host.mjs';
 import { listenIPC, connectIPC } from '../plugins/sleight/lib/direct-browser/ipc.mjs';
 
@@ -67,8 +69,8 @@ test('JSON incarnation cannot override OS peer identity, and singleton never tak
   const good = await connectIPC({ path: listener.path, hello: { version: 1, uid, secret, session: 's1', incarnation: 'self' } });
   assert.equal(attached, 1); good.close();
 });
-const native = process.platform === 'darwin' && existsSync('/usr/bin/xcrun');
-test('Darwin native peer source compiles and reads inherited UDS peer UID/PID/incarnation', { skip: !native && 'Darwin compiler and peer APIs unavailable' }, async t => {
+const nativeSkip = macCommandSkip('xcrun');
+test('Darwin native peer source compiles and reads inherited UDS peer UID/PID/incarnation', { skip: nativeSkip }, async t => {
   const directory = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'bp2-peer-native-')))));
   const binary = join(directory, 'peer-host');
   const source = fileURLToPath(new URL('../plugins/sleight/lib/direct-browser/native/peer-host.c', import.meta.url));
@@ -84,10 +86,10 @@ test('Darwin native peer source compiles and reads inherited UDS peer UID/PID/in
   const peer = JSON.parse(output); assert.equal(peer.uid, process.getuid()); assert.equal(peer.pid, process.pid);
   assert.match(peer.incarnation, new RegExp('^p' + process.pid + '-v\\d+$'));
 });
-test('Darwin consent helper compiles without launching UI or acquiring permissions', { skip: !native && 'Darwin AppKit compiler unavailable' }, t => {
+test('Darwin consent helper compiles without launching UI or acquiring permissions', { skip: nativeSkip }, t => {
   const directory = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'bp2-ui-native-')))));
   const source = fileURLToPath(new URL('../plugins/sleight/lib/direct-browser/native/consent-host.swift', import.meta.url));
-  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(directory, 'cache'), source, '-o', join(directory, 'consent-host')], { encoding: 'utf8' });
+  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), source, '-o', join(directory, 'consent-host')], { encoding: 'utf8' });
   assert.equal(built.status, 0, built.stderr);
   assert.doesNotMatch(readFileSync(source, 'utf8'), /AXUIElement|CGEvent|activate\(ignoringOtherApps|performClick/);
 });

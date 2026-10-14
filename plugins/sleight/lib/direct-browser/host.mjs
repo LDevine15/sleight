@@ -67,10 +67,11 @@ function executable(name, receipt) {
 }
 const environment = () => ({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
 
+// A cold module cache rebuilds AppKit's modules: over 120 s at load 31 to 38 (2026-10-14), so first use allows 300 s.
 async function compileNative({ name, source, binary, moduleCache }) {
   const args = name === 'peer-host' ? ['clang', '-Wall', '-Werror', '-fmodules-cache-path=' + moduleCache, source, '-lbsm', '-o', binary]
     : ['swiftc', '-module-cache-path', moduleCache, source, '-o', binary];
-  await promisify(execFile)('/usr/bin/xcrun', args, { env: environment(), timeout: 120000, maxBuffer: 65536 });
+  await promisify(execFile)('/usr/bin/xcrun', args, { env: environment(), timeout: 300000, maxBuffer: 65536 });
 }
 
 // Internal loader options, never exposed as tool arguments. Compile staged exact

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, writeFileSync, symlinkSync, chmodSync, utimesSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync, symlinkSync, chmodSync, utimesSync, rmSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
 import { createSelectedConnection } from '../plugins/sleight/lib/direct-browser/selected-connection.mjs';
 import { createNativeProcessProvider, isNativeProcessProvider } from '../plugins/sleight/lib/direct-browser/host.mjs';
 
@@ -163,7 +164,7 @@ test('verification raced with disconnect cannot restore the fenced connection', 
   assert.equal(await verifying, false); assert.equal(await closing, true);
 });
 test('native peer-host compiles and binds metadata to an owned synthetic child (Darwin host tools)', {
-  skip: process.platform !== 'darwin' || !existsSync('/usr/bin/xcrun') ? 'Darwin host tools unavailable' : false,
+  skip: macCommandSkip('xcrun'),
 }, async t => {
   const directory = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-process-helper-'))));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

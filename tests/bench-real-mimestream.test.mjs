@@ -7,6 +7,7 @@ import * as mail from '../bench/real-mimestream.mjs';
 import { runOwned } from '../bench/preapproved-process.mjs';
 import { probeMimestream } from '../bench/mimestream-probe.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
 function context(t) {
   const ctx = { dir: trackTemp(mkdtempSync(join(tmpdir(), 'sleight-private-mail-'))), nonce: 'private-test' };
@@ -264,7 +265,7 @@ test('read-only probe retains its lock if compiler collection is unconfirmed', a
   assert.equal(JSON.parse(output[0]).code, 'MIMESTREAM_HELPER_UNCOLLECTED');
 });
 
-test('native capability decisions require explicit counts, read proof, and unique creation events', async t => {
+test('native capability decisions require explicit counts, read proof, and unique creation events', { skip: macCommandSkip('xcrun') }, async t => {
   const helper = await mail.mimestreamHelper(t.signal);
   const result = await runOwned(helper, ['--self-test'], { timeoutMs: 15000, signal: t.signal });
   assert.equal(result.exit.code, 0);
@@ -275,7 +276,7 @@ test('native capability decisions require explicit counts, read proof, and uniqu
     duplicateSubjectsRefused: true, searchQueryBoundRequired: true });
 });
 
-test('native Mimestream helper refuses a request without the owner-present boundary before any AX use', async t => {
+test('native Mimestream helper refuses a request without the owner-present boundary before any AX use', { skip: macCommandSkip('xcrun') }, async t => {
   const helper = await mail.mimestreamHelper(t.signal);
   const result = await runOwned(helper, [JSON.stringify({ control: '/private/tmp/x.json', nonce: 'unit', kind: 'label' })],
     { timeoutMs: 15000, signal: t.signal });

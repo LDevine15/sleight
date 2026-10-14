@@ -456,7 +456,11 @@ test('a confirmed stop drops a rejected turn cleanup instead of retrying it on t
   await new Promise(resolve => setImmediate(resolve));
   h.reply(result('read-after'));
   const before = h.forwarded.length;
-  await h.relay.shutdown();
+  const shuttingDown = h.relay.shutdown();
+  // The fake engine must answer the new turn's cleanup. Its in-memory streams
+  // don't keep Node 22 alive for the relay's unref'ed fallback deadline.
+  for (const msg of h.forwarded.slice(before)) if (msg.params?.name === 'turn_ended') h.reply(result(msg.id, 'ended'));
+  await shuttingDown;
   const retried = h.forwarded.slice(before).filter(m => m.params?.name === 'turn_ended' && m.params.arguments.turn_id === rejected.params.arguments.turn_id);
   assert.equal(retried.length, 0);
 });

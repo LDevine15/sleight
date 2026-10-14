@@ -46,7 +46,8 @@ import { acquireLiveLock } from './live-lock.mjs';
 import { runDriver, privateDriverEnvironment } from './driver.mjs';
 import { privateMailResult, publicPrivateMailRows, publishPrivateMailResults } from './private-mail.mjs';
 import { assertPrivateClaudePolicy } from './private-policy.mjs';
-import { DEFAULT_CAP_USD, addSpend, benchAuth, runCost } from './api-auth.mjs';
+import { CONFIG_DIR, LEDGER_FILE, DEFAULT_CAP_USD, addSpend, benchAuth, runCost } from './api-auth.mjs';
+import { assertLogin, assertEngineSockets, quote } from './preflight.mjs';
 import { archiveOldRuns } from './run-archive.mjs';
 import { prepareGenericArm, acceptGenericCatalog, genericSettings } from './plugin-arm.mjs';
 import { genericTask } from './generic-task.mjs';
@@ -234,7 +235,13 @@ if (privatePass && (selected.some(task => !task.privateMail) || armNames.some(na
 // Claude arms run on the owner's API key when ~/.config/sleight-bench/anthropic-api-key exists
 // (--auth api|login|auto), up to a monthly cap (bench/api-auth.mjs).
 const auth = !preparationErrors.length && !isDryRun && armNames.some(name => !ARMS[name].codex && !ARMS[name].unsupported && !ARMS[name].interactive)
-  ? benchAuth({ mode: option('auth', 'auto'), capUsd: Number(process.env.SLEIGHT_BENCH_API_CAP_USD || DEFAULT_CAP_USD) })
+  ? (() => {
+    try { return benchAuth({ mode: option('auth', 'auto'), capUsd: Number(process.env.SLEIGHT_BENCH_API_CAP_USD || DEFAULT_CAP_USD) }); }
+    catch (error) {
+      if (/spend|unpriced/i.test(error.message)) error.message += `\nFix: ${quote('nano')} ${quote(LEDGER_FILE)}`;
+      throw error;
+    }
+  })()
   : { mode: 'login', env: {}, unset: [] };
 if (world && !isDryRun && !preparationErrors.length && armNames.some(name => !ARMS[name].codex && !ARMS[name].interactive && !ARMS[name].unsupported) && auth.mode === 'login') {
   throw new Error('world auth resolved to login: isolated Claude arm configs have no login; configure the benchmark API key');
@@ -253,9 +260,12 @@ const armEnv = (arm, extra = {}) => {
     ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
     ...(['real', 'world'].includes(suite) ? { SLEIGHT_SURFACES: realSurfaces } : {}) };
   for (const key of auth.unset) delete env[key];
-  if (arm.interactive) { delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; }
+  if (auth.mode === 'login' || arm.interactive) {
+    delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  }
   env.DO_NOT_TRACK = '1';
   if (arm.native || arm.world) env.CLAUDE_CONFIG_DIR = arm.env.CLAUDE_CONFIG_DIR;
+  else env.CLAUDE_CONFIG_DIR = auth.env.CLAUDE_CONFIG_DIR ?? arm.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR;
   return env;
 };
 
@@ -301,6 +311,17 @@ function armServers(arm) {
 // until settings.json turned off the installed sleight).
 const otherServers = Object.values(ARMS).flatMap(a => a.servers ?? [a.server]).filter(Boolean);
 async function checkArms() {
+if (!isDryRun && !isSetupOnly) {
+  // Admit every selected arm before discovery can start an MCP server or a fixture.
+  for (const name of armNames.filter(name => !ARMS[name].codex && !ARMS[name].unsupported && !ARMS[name].rejected)) {
+    const arm = ARMS[name];
+    if (arm.interactive) {
+      const plan = interactivePlan({ armDir: arm.cwd, prompt: 'login preflight only', model, effort });
+      assertLogin(plan);
+    } else if (auth.mode === 'login') assertLogin({ command: claudeBin, cwd: arm.cwd, env: armEnv(arm) });
+  }
+  if (selected.some(task => task.surface === 'extension')) await assertEngineSockets();
+}
 if (world && !isDryRun && armNames.some(name => !ARMS[name].codex && !ARMS[name].interactive && !ARMS[name].unsupported && !ARMS[name].rejected)) {
   assertWorldCLI(claudeBin, execFileSync);
 }
