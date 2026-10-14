@@ -10,6 +10,16 @@ function attribute(element, name, optional = false) {
   throw new Error(name + ': AX error ' + error);
 }
 const scalar = value => value === null ? null : ObjC.deepUnwrap(value);
+// macOS 27 adds a "Window" dialog holding only a WindowSharingSessionButton while the engine
+// captures the app (2026-10-14). It is the system's sharing indicator, not the app's window.
+const overlay = window => {
+  const children = attribute(window, 'AXChildren', true);
+  if (!children || Number(children.count) !== 1) return false;
+  return scalar(attribute(children.objectAtIndex(0), 'AXTitle', true)) === 'WindowSharingSessionButton';
+};
+const appWindows = ax => { const all = attribute(ax, 'AXWindows'), out = [];
+  for (let i = 0; i < Number(all.count); i++) if (!overlay(all.objectAtIndex(i))) out.push(all.objectAtIndex(i));
+  return out; };
 const dialog = (role, subrole) => ['AXSheet', 'AXDialog'].includes(role) || ['AXDialog', 'AXSystemDialog'].includes(subrole);
 function run(argv) {
   const path = argv[0];
@@ -30,11 +40,10 @@ function run(argv) {
   }
   function inventory() {
     verify();
-    const windows = attribute(ax, 'AXWindows');
-    if (Number(windows.count) > 8) throw new Error('Window budget exceeded');
+    const windows = appWindows(ax);
+    if (windows.length > 8) throw new Error('Window budget exceeded');
     let panels = 0, rootPresent = false;
-    for (let i = 0; i < Number(windows.count); i++) {
-      const window = windows.objectAtIndex(i);
+    for (const window of windows) {
       if ($.CFEqual(root, window)) rootPresent = true;
       else if (dialog(scalar(attribute(window, 'AXRole')), scalar(attribute(window, 'AXSubrole', true)))) panels++;
       else throw new Error('Foreign window present; cleanup refused');
@@ -79,7 +88,7 @@ function run(argv) {
       if (ObjC.unwrap($.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier) === 'com.apple.TextEdit') return { safe: false };
       if (initiallyRunning) {
         const apps = running(); if (Number(apps.count) !== 1 || documents().length !== 0) return { safe: false };
-        if (Number(attribute($.AXUIElementCreateApplication(Number(apps.objectAtIndex(0).processIdentifier)), 'AXWindows').count) !== 0) return { safe: false };
+        if (appWindows($.AXUIElementCreateApplication(Number(apps.objectAtIndex(0).processIdentifier))).length !== 0) return { safe: false };
       }
       return { safe: true, initiallyRunning };
     }
@@ -91,9 +100,9 @@ function run(argv) {
       ax = $.AXUIElementCreateApplication(pid);
       const docs = documents(); if (docs.length === 0) return { attached: false };
       if (docs.length !== 1 || String(docs[0].path()) !== path) throw new Error('Foreign document present'); doc = docs[0];
-      const windows = attribute(ax, 'AXWindows'); if (Number(windows.count) === 0) return { attached: false };
-      if (Number(windows.count) !== 1) throw new Error('Ambiguous fixture window');
-      root = windows.objectAtIndex(0); if (scalar(attribute(root, 'AXDocument', true)) !== url) return { attached: false };
+      const windows = appWindows(ax); if (windows.length === 0) return { attached: false };
+      if (windows.length !== 1) throw new Error('Ambiguous fixture window');
+      root = windows[0]; if (scalar(attribute(root, 'AXDocument', true)) !== url) return { attached: false };
       area = undefined; let count = 0;
       const walk = (node, depth) => {
         if (++count > 400 || depth > 16) throw new Error('Fixture tree budget exceeded');
@@ -132,7 +141,7 @@ function run(argv) {
       if (!inventory().clean) throw new Error('Owned panels remain; close refused');
       doc.close({ saving: 'no' });
       if (documents().length !== 0) throw new Error('Document close unconfirmed');
-      if (Number(attribute(ax, 'AXWindows').count) !== 0) throw new Error('Window close unconfirmed');
+      if (appWindows(ax).length !== 0) throw new Error('Window close unconfirmed');
       // Quit only a launch this run made, after proving no other documents/windows exist.
       if (!initiallyRunning) app.quit({ saving: 'no' });
       return { closed: true };

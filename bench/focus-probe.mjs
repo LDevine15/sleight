@@ -201,7 +201,8 @@ async function main(argv) {
       pathToFileURL(path).href, 'Engine selected another document; no input sent');
     // Metadata observer starts only after the engine has approved and read the owned app.
     observer = startHelper('./focus-probe-ax.js', [path]);
-    assert.equal((await observer.request({ op: 'bind' }, 5000)).status, 'ok');
+    const bound = await observer.request({ op: 'bind' }, 5000); report.bind = bound;
+    assert.equal(bound.status, 'ok', JSON.stringify(bound));
     const observe = () => observer.request({ op: 'focus', timeoutMs: 100 }, 1500);
     await observe(); // Warm the persistent process before timing.
     if (options.workers) stopWorkers = startLoadWorkers(options.workers, { onError: error => { cancelled = true; report.workerError = error.message; } });

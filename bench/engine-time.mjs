@@ -134,16 +134,20 @@ try {
     // and records whether the later numbers moved. Design A needs bind 10/10 at 391 with the move present.
     await call('var direct = app;');
     const target = { title: 'Calculator', app: 'Calculator', url: null };
-    const setup = guardedCode(`for (const id of ['AllClear', 'One', 'Seven']) await app.click({ id });
+    // Escape clears whatever a control trial's stale clicks left (its clear button reads "Clear" mid-entry).
+    const setup = guardedCode(`await app.pressKey('Escape'); await app.pressKey('Escape');
+      for (const id of ['One', 'Seven']) await app.click({ id });
       await app.click({ label: 'Multiply' });
       for (const id of ['Two', 'Three']) await app.click({ id });
       await app.click({ label: 'Equals' });
       nodeRepl.write('\\n' + await direct.getAXState({ emit: false, disableDiffing: true }));`, target);
-    const lastExpression = text => /^\s*\d+ text Description: Last Expression, Value: ([^\r\n]*)$/m.exec(text)?.[1] ?? null;
-    let state = await call(setup);
+    // A guarded call's output can hold the guard's read before the probe's own; use the last tree.
+    const lastTree = text => text.slice(Math.max(0, text.lastIndexOf('Window: ')));
+    const lastExpression = text => /^\s*\d+ text Description: Last Expression, Value: ([^\r\n]*)$/m.exec(lastTree(text))?.[1] ?? null;
+    let state = lastTree(await call(setup));
     for (let repetition = 1; repetition <= 10; repetition++) {
       for (const arm of repetition % 2 ? ['bind', 'control'] : ['control', 'bind']) {
-        if (calculatorValue(state) !== '391' || lastExpression(state) !== '17 × 23') state = await call(setup);
+        if (calculatorValue(state) !== '391' || lastExpression(state) !== '17 × 23') state = lastTree(await call(setup));
         assert.equal(calculatorValue(state), '391');
         assert.equal(lastExpression(state), '17 × 23');
         const text = await call(`{
@@ -169,10 +173,10 @@ try {
           nodeRepl.write('\\nengine-probe:' + JSON.stringify(out));
         }`);
         const trial = report.trials.at(-1);
-        trial.observedValue = calculatorValue(text);
+        trial.observedValue = calculatorValue(lastTree(text));
         trial.observedExpression = lastExpression(text);
         trial.passed = trial.observedValue === '391' && trial.observedExpression === '17 × 23';
-        state = text;
+        state = lastTree(text);
       }
     }
     const arms = ['bind', 'control'].map(arm => {

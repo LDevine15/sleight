@@ -16,6 +16,13 @@ function attribute(element, name, timeout, optional = false) {
   throw new Error(name + ': AX error ' + error);
 }
 const scalar = value => value === null ? null : ObjC.deepUnwrap(value);
+// macOS 27 adds a "Window" dialog holding only a WindowSharingSessionButton while the engine
+// captures the app (2026-10-14). It is the system's sharing indicator, not the app's window.
+const overlay = (window, read) => {
+  const children = read(window, 'AXChildren', true);
+  if (!children || Number(children.count) !== 1) return false;
+  return scalar(read(children.objectAtIndex(0), 'AXTitle', true)) === 'WindowSharingSessionButton';
+};
 const dialog = (role, subrole) => ['AXSheet', 'AXDialog'].includes(role) || ['AXDialog', 'AXSystemDialog'].includes(subrole);
 function run(argv) {
   if (!/^\/private\/tmp\/sleight-exact-[A-Za-z0-9]+\/exact\.txt$/.test(argv[0] ?? '')) throw new Error('Owned probe path required');
@@ -32,13 +39,14 @@ function run(argv) {
     const timeout = request.op === 'attribute' ? 1 : 0.1;
     const read = (element, name, optional = false) => attribute(element, name, timeout, optional);
     if (request.op === 'bind') {
-      const running = apps(); if (Number(running.count) !== 1) return { status: 'ambiguous' };
+      const running = apps(); if (Number(running.count) !== 1) return { status: 'ambiguous', running: Number(running.count) };
       pid = Number(running.objectAtIndex(0).processIdentifier);
       processStart = Number(running.objectAtIndex(0).launchDate.timeIntervalSince1970);
       app = $.AXUIElementCreateApplication(pid);
-      const windows = read(app, 'AXWindows');
-      if (Number(windows.count) !== 1) return { status: 'ambiguous' };
-      root = windows.objectAtIndex(0);
+      const all = read(app, 'AXWindows'), windows = [];
+      for (let i = 0; i < Number(all.count); i++) if (!overlay(all.objectAtIndex(i), read)) windows.push(all.objectAtIndex(i));
+      if (windows.length !== 1) return { status: 'ambiguous', windows: windows.length, all: Number(all.count), detail: windows.map(w => { const c = read(w, 'AXChildren', true); return { title: scalar(read(w, 'AXTitle', true)), sub: scalar(read(w, 'AXSubrole', true)), kids: c ? Number(c.count) : null, first: c && Number(c.count) ? [scalar(read(c.objectAtIndex(0), 'AXRole', true)), scalar(read(c.objectAtIndex(0), 'AXTitle', true))] : null }; }) };
+      root = windows[0];
       if (scalar(read(root, 'AXDocument')) !== url) { root = null; return { status: 'unowned' }; }
       return { status: 'ok' };
     }
@@ -70,6 +78,7 @@ function run(argv) {
     for (let i = 0; i < Number(windows.count); i++) {
       const window = windows.objectAtIndex(i);
       if ($.CFEqual(window, root)) { rootPresent = true; continue; }
+      if (overlay(window, read)) continue;
       if ($.CFEqual(window, surface)) surfacePresent = true;
       if (!dialog(scalar(read(window, 'AXRole')), scalar(read(window, 'AXSubrole', true)))) foreign = true;
     }
