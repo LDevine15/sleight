@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { loadPlaywrightCore } from './worlds.mjs';
 import { authorityKeys, sameAuthority } from './protected-proof.mjs';
 import { Deadline, eventPulse } from './waits.mjs';
@@ -236,14 +237,30 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
       let before = await inspect(ref, node, expected, deadline);
       if (before.kind === 'custom' && typeof expected === 'boolean') {
         const tree = await deadline.run(() => readCommand(ref, 'DOM.describeNode', { backendNodeId: resolved.backendNodeId, depth: 2, pierce: false }));
-        const candidates = [];
-        const walk = (raw, depth = 0) => {
-          if (!raw || depth > 3 || raw.frameId && raw.frameId !== identity.frame) return;
+        const candidates = [], visited = new Set(); let descriptions = 0;
+        const walk = async (raw, depth = 0) => {
+          const id = raw?.backendNodeId;
+          if (!Number.isSafeInteger(id) || id <= 0 || depth > 8 || visited.size >= 64 || visited.has(id)) throw Error('UNKNOWN_CHECKED_STATE');
+          visited.add(id);
+          const children = node => Array.isArray(node.children) ? node.children : [];
+          const count = node => node.childNodeCount ?? children(node).length;
+          const check = node => {
+            if (node?.backendNodeId !== id || node.frameId && node.frameId !== identity.frame ||
+                ['iframe', 'frame', 'object', 'embed'].includes(node.localName) ||
+                !Number.isSafeInteger(count(node)) || count(node) < 0) throw Error('UNKNOWN_CHECKED_STATE');
+          };
+          check(raw);
+          if (count(raw) > children(raw).length) {
+            if (++descriptions > 16) throw Error('UNKNOWN_CHECKED_STATE');
+            raw = (await deadline.run(() => readCommand(ref, 'DOM.describeNode', { backendNodeId: id, depth: 2, pierce: false }))).node;
+            check(raw);
+            if (count(raw) > children(raw).length) throw Error('UNKNOWN_CHECKED_STATE');
+          }
           const attrs = Object.fromEntries((raw.attributes ?? []).flatMap((value, i, all) => i % 2 ? [] : [[value, all[i + 1]]]));
           if (['switch', 'checkbox', 'radio'].includes(attrs.role)) candidates.push(raw.backendNodeId);
-          for (const child of [...raw.children ?? [], ...raw.shadowRoots ?? []]) walk(child, depth + 1);
+          for (const child of [...children(raw), ...raw.shadowRoots ?? []]) await walk(child, depth + 1);
         };
-        walk(tree.node);
+        await walk(tree.node);
         if (candidates.length !== 1) throw Error('UNKNOWN_CHECKED_STATE');
         await release(ref, node); activeNode = candidates[0]; node = await object(ref, deadline, activeNode);
         before = await inspect(ref, node, expected, deadline);
@@ -583,7 +600,14 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
 export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, files, observeEffect, rootTargets } = {}) {
   if (!isTransportOwner(owner) || [leaseFor, current].some(f => typeof f !== 'function')) throw Error('SEMANTIC_OWNER_REQUIRED');
   if (rootTargets !== undefined && !isRootTargets(rootTargets)) throw Error('SEMANTIC_OWNER_REQUIRED');
-  const sessions = new Map(); let active, authority;
+  const sessions = new Map(), operations = new AsyncLocalStorage(); let authority;
+  const activeFor = () => { const state = operations.getStore(); return state && !state.closed ? state.active : undefined; };
+  const activate = active => {
+    const state = operations.getStore();
+    if (!state || state.closed || (active.rootPlan ? state.rootPlan !== active.rootPlan : canonical(state.lease) !== canonical(active.lease)))
+      throw Error('SEMANTIC_OPERATION_MISMATCH');
+    state.active = active;
+  };
   const identityFor = lease => Object.fromEntries(authorityKeys.map(k => [k,
     k === 'leaseGeneration' ? lease.epoch : lease[k]]));
   const stateFor = lease => sessions.get(canonical(lease));
@@ -602,77 +626,87 @@ export function createSemanticAdapter({ owner, leaseFor, current, paymentTerms, 
       sameAuthority(identityFor(plan.lease), current(plan.lease)); },
     async dispatch(plan, context) {
       if (!authority) throw Error('TRUSTED_AUTHORITY_REQUIRED');
-      if (plan.operationName === 'browser_open' && rootTargets) return rootTargets.open(plan, context);
-      const { lease } = plan, identity = identityFor(lease);
-      return owner.run(lease, context, async view => {
-        const reader = owner.reader(lease, 'semantics', () => {
-          const reader = new BrowserReads({ identity, authorize: () => sameAuthority(identity, current(lease)) });
-          reader.addFrame({ session: view, frameId: lease.frame, target: lease.target, document: lease.document }); return reader;
-        });
-        const form = owner.reader(lease, 'forms', () => createFormSession({ session: view, identity,
-          current: () => current(lease), resolveRef: ref => reader.resolve(ref), files, paymentTerms, observeEffect,
-          onProof(op, effect) {
-            const record = authority.receipt(op.id);
-            if (!record || record.phase !== 'dispatched') throw Error('HOST_PROOF_REQUIRED');
-            authority.observe(op.id); authority.verify(op.id, effect);
-          },
-          onOperation: operation => { active = { operation, form: stateFor(lease)?.form, lease }; } }));
-        const cursors = stateFor(lease)?.cursors ?? new Map(), deliveries = stateFor(lease)?.deliveries ?? new Map();
-        sessions.set(canonical(lease), { reader, form, identity, cursors, deliveries });
-        if (plan.operationName === 'browser_read') {
-          const scope = { browser: identity.browserIncarnation, broker: identity.brokerEpoch, session: identity.clientSession, turn: identity.turn,
-            target: identity.target, lease: identity.leaseGeneration, frame: identity.frame, document: identity.document, ref: plan.args.scope ?? 'read', origin: identity.origin };
-          active = { lease, operation: { id: 'read:' + randomBytes(16).toString('hex'), kind: 'read', args: {}, scope, consequence: 'ordinary' } };
-          const continuation = cursors.get(plan.args.scope);
-          if (continuation && !continuation.delivered) return { effect: 'none', completed: 0, observation: { code: 'STALE_REF' } };
-          const observation = await reader.read({ ...(continuation ? { cursor: continuation.cursor } : { ref: plan.args.scope }),
-            maxBytes: Math.min(plan.args.max_bytes ?? 12000, 11000) - 80 });
-          const refs = observation.data.filter(row => row.kind !== 'removed').map(row => row.ref);
-          deliveries.set(observation.observation, { operation: active.operation.id, refs });
-          form.pendingRead(observation.observation, identity, refs);
-          // Cursor handles are scoped read continuations, never element refs or
-          // input capabilities. The closed host already admits r read scopes.
-          if (observation.cursor) {
-            const handle = 'r' + randomBytes(16).toString('hex');
-            cursors.set(handle, { cursor: observation.cursor, observation: observation.observation, delivered: false });
-            while (cursors.size > 32) cursors.delete(cursors.keys().next().value);
-            return { effect: 'verified', observation: { ...observation, cursor: handle } };
-          }
-          return { effect: 'verified', observation };
-        }
-        const options = { operation: context.operation, timeoutMs: plan.args.timeout_ms ?? 3000, signal: context.signal };
-        if (plan.operationName === 'browser_fill') return form.fill(plan.args.fields, options);
-        if (plan.args.steps) {
-          const results = [];
-          for (let i = 0; i < plan.args.steps.length; i++) {
-            const r = await form.act(plan.args.steps[i], { ...options, operation: options.operation + ':' + i });
-            if (!['verified', 'unchanged', 'protected'].includes(r.effect)) return { ...r, completed: results.length, results, untouched: plan.args.steps.length - results.length - (r.effect === 'unknown' ? 1 : 0) };
-            results.push({ effect: r.effect, observation: r.observation });
-          }
-          return { effect: 'verified', completed: results.length, results, untouched: 0, observation: { targets: results.length } };
-        }
-        return form.act(plan.args, options);
+      const state = { lease: plan.lease, rootPlan: plan.operationName === 'browser_open' ? plan : undefined, operation: context.operation };
+      return operations.run(state, async () => {
+        try {
+          if (plan.operationName === 'browser_open' && rootTargets) return await rootTargets.open(plan, context);
+          const { lease } = plan, identity = identityFor(lease);
+          return await owner.run(lease, context, async view => {
+            const reader = owner.reader(lease, 'semantics', () => {
+              const reader = new BrowserReads({ identity, authorize: () => sameAuthority(identity, current(lease)) });
+              reader.addFrame({ session: view, frameId: lease.frame, target: lease.target, document: lease.document }); return reader;
+            });
+            const form = owner.reader(lease, 'forms', () => createFormSession({ session: view, identity,
+              current: () => current(lease), resolveRef: ref => reader.resolve(ref), files, paymentTerms, observeEffect,
+              onProof(op, effect) {
+                const record = authority.receipt(op.id);
+                if (!record || record.phase !== 'dispatched') throw Error('HOST_PROOF_REQUIRED');
+                authority.observe(op.id); authority.verify(op.id, effect);
+              },
+              onOperation: operation => { activate({ operation, form: stateFor(lease)?.form, lease }); } }));
+            const cursors = stateFor(lease)?.cursors ?? new Map(), deliveries = stateFor(lease)?.deliveries ?? new Map();
+            sessions.set(canonical(lease), { reader, form, identity, cursors, deliveries });
+            if (plan.operationName === 'browser_read') {
+              const scope = { browser: identity.browserIncarnation, broker: identity.brokerEpoch, session: identity.clientSession, turn: identity.turn,
+                target: identity.target, lease: identity.leaseGeneration, frame: identity.frame, document: identity.document, ref: plan.args.scope ?? 'read', origin: identity.origin };
+              activate({ lease, operation: { id: 'read:' + randomBytes(16).toString('hex'), kind: 'read', args: {}, scope, consequence: 'ordinary' } });
+              const continuation = cursors.get(plan.args.scope);
+              if (continuation && !continuation.delivered) return { effect: 'none', completed: 0, observation: { code: 'STALE_REF' } };
+              const observation = await reader.read({ ...(continuation ? { cursor: continuation.cursor } : { ref: plan.args.scope }),
+                maxBytes: Math.min(plan.args.max_bytes ?? 12000, 11000) - 80 });
+              const refs = observation.data.filter(row => row.kind !== 'removed').map(row => row.ref);
+              deliveries.set(observation.observation, { operation: activeFor().operation.id, refs });
+              form.pendingRead(observation.observation, identity, refs);
+              // Cursor handles are scoped read continuations, never element refs or
+              // input capabilities. The closed host already admits r read scopes.
+              if (observation.cursor) {
+                const handle = 'r' + randomBytes(16).toString('hex');
+                cursors.set(handle, { cursor: observation.cursor, observation: observation.observation, delivered: false });
+                while (cursors.size > 32) cursors.delete(cursors.keys().next().value);
+                return { effect: 'verified', observation: { ...observation, cursor: handle } };
+              }
+              return { effect: 'verified', observation };
+            }
+            const options = { operation: context.operation, timeoutMs: plan.args.timeout_ms ?? 3000, signal: context.signal };
+            if (plan.operationName === 'browser_fill') return form.fill(plan.args.fields, options);
+            if (plan.args.steps) {
+              const results = [];
+              for (let i = 0; i < plan.args.steps.length; i++) {
+                const r = await form.act(plan.args.steps[i], { ...options, operation: options.operation + ':' + i });
+                if (!['verified', 'unchanged', 'protected'].includes(r.effect)) return { ...r, completed: results.length, results, untouched: plan.args.steps.length - results.length - (r.effect === 'unknown' ? 1 : 0) };
+                results.push({ effect: r.effect, observation: r.observation });
+              }
+              return { effect: 'verified', completed: results.length, results, untouched: 0, observation: { targets: results.length } };
+            }
+            return form.act(plan.args, options);
+          });
+        } finally { state.closed = true; state.active = undefined; }
       });
     },
     resolveOperation(plan, context, command) {
+      const state = operations.getStore();
+      if (state?.operation !== context.operation) throw Error('SEMANTIC_OPERATION_MISMATCH');
       if (plan.operationName === 'browser_open' && rootTargets) {
         const operation = rootTargets.resolveOperation(plan, context, command);
-        active = { rootPlan: plan, operation }; return operation;
+        activate({ rootPlan: plan, operation }); return operation;
       }
+      const active = activeFor();
       if (!active || canonical(active.lease) !== canonical(plan.lease)) throw Error('SEMANTIC_OPERATION_MISMATCH');
       return active.form ? active.form.resolveOperation(command) : structuredClone(active.operation);
     },
-    classify(operation) { return active?.form ? active.form.classify(operation) :
+    classify(operation) { const active = activeFor(); return active?.form ? active.form.classify(operation) :
       canonical(operation) === canonical(active?.operation) ? structuredClone(operation) : (() => { throw Error('SEMANTIC_OPERATION_MISMATCH'); })(); },
     currentScope() {
+      const active = activeFor();
       if (active?.rootPlan && rootTargets?.dispatchFence(active.rootPlan)) return structuredClone(active.operation.scope);
       if (!active || !sameAuthority(identityFor(active.lease), current(active.lease))) throw Error('STALE_REF');
       return structuredClone(active.operation.scope);
     },
-    checkTarget: operation => active?.form?.checkTarget(operation),
+    checkTarget: operation => activeFor()?.form?.checkTarget(operation),
     fileBinding(lease, backendNodeId) {
+      const active = activeFor();
       const state = stateFor(lease), operation = active?.operation;
-      if (!state || active.form !== state.form || state.form.activeNode !== backendNodeId || operation?.kind !== 'upload' ||
+      if (!active || !state || active.form !== state.form || state.form.activeNode !== backendNodeId || operation?.kind !== 'upload' ||
           !sameAuthority(state.identity, current(lease))) return null;
       return { ...state.identity, operation: operation.id, ref: operation.scope.ref };
     },

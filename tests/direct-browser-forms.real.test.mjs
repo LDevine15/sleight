@@ -8,6 +8,7 @@ import { createScopedAdapter } from '../plugins/sleight/lib/direct-browser/scope
 import { createFormSession, formInspectors } from '../plugins/sleight/lib/direct-browser/forms.mjs';
 import { RefMap } from '../plugins/sleight/lib/direct-browser/refs.mjs';
 import { loadPlaywrightCore } from '../plugins/sleight/lib/direct-browser/worlds.mjs';
+import { createFormsFixtureHandler, finishTravelFixture } from './fixtures/direct-browser-forms-fixture.mjs';
 
 const live = process.env.SLEIGHT_LIVE_DOM_TEST === '1';
 const cache = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser');
@@ -29,22 +30,8 @@ async function fixture(t, route) {
     const source = readFileSync(join(cache, 'test/demo/server.mjs'), 'utf8');
     shop = await import('data:text/javascript;base64,' + Buffer.from(source + '\nexport {shopPage as renderFixture};').toString('base64'));
   }
-  const server = createServer(async (request, response) => {
-    if (request.method === 'POST') {
-      let body = ''; for await (const chunk of request) body += chunk;
-      const data = request.headers['content-type']?.includes('json') ? JSON.parse(body) : Object.fromEntries(new URLSearchParams(body));
-      posts.push({ path: request.url, data });
-      if (route === 'shop') response.writeHead(200, { 'content-type': 'text/html' }).end('<h1>Order placed</h1>');
-      else response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'P2-FIXTURE' }));
-      return;
-    }
-    if (route === 'shop') { response.writeHead(200, { 'content-type': 'text/html' }).end(shop.renderFixture('checkout/payment', { base: '', cart: ['harbor'] }, origin)); return; }
-    const names = { '/travel': 'travel.html', '/settings': 'settings.html', '/common.js': 'common.js', '/airports.json': 'airports.json' };
-    const name = names[new URL(request.url, 'http://fixture.invalid').pathname];
-    if (!name) { response.writeHead(404).end(); return; }
-    response.writeHead(200, { 'content-type': name.endsWith('.js') ? 'text/javascript' : name.endsWith('.json') ? 'application/json' : 'text/html' })
-      .end(readFileSync(join(cache, 'test/forms/site', name)));
-  });
+  const server = createServer(createFormsFixtureHandler({ route, siteRoot: join(cache, 'test/forms/site'),
+    renderShop: shop?.renderFixture, origin: () => origin, posts }));
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
@@ -104,7 +91,12 @@ async function fixture(t, route) {
     assert.ok(covered.length); const id = 'delivered' + (++serial);
     form.pendingRead(id, identity, covered); assert.equal(form.deliveredRead(id, identity), true);
   };
-  const posted = async () => { for (let i = 0; i < 100 && !posts.length; i++) await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(posts.length, 1); return posts[0]; };
+  let submissionObserved = false;
+  const posted = async () => {
+    for (let i = 0; i < 100 && !posts.length; i++) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(posts.length, 1, 'exactly one submission must reach the fixture endpoint'); submissionObserved = true; return posts[0];
+  };
+  t.after(() => { if (submissionObserved) assert.equal(posts.length, 1, 'no later duplicate submission'); });
   return { form, ref, fill, click, reconcile, posted, calls, page, current: () => active };
 }
 
@@ -114,20 +106,19 @@ test('real demo /travel fills ordinary and dependent fields, chooses readonly da
   const readonly = await f.form.fill([{ ref: await f.ref('#dates'), value: 'unproved date' }], { operation: 'readonly' });
   assert.equal(readonly.effect, 'none'); assert.equal(readonly.observation.code, 'READONLY_PICKER');
   await f.click('#dates');
+  const dates = [];
   for (const offset of [2, 5]) {
     const date = new Date(); date.setDate(date.getDate() + offset);
     const iso = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+    dates.push(iso);
     const selector = `button[data-date="${iso}"]`;
     for (let attempt = 0; attempt < 3; attempt++) { try { await f.ref(selector); break; } catch { await f.click('#next'); } }
     await f.click(selector);
   }
-  await f.click('#next1');
-  await f.fill([['#country', 'Japan'], ['#city', 'Osaka']]);
-  await f.click('#airports [role="option"]');
-  await f.click('#next2'); await f.click('#seatmap button:not(:disabled)'); await f.click('button[type="submit"]');
-  const post = await f.posted(); assert.equal(post.path, '/submit/travel');
-  assert.equal(post.data.fullName, 'Example Traveler'); assert.equal(post.data.country, 'Japan'); assert.equal(post.data.city, 'Osaka');
-  assert.ok(post.data.checkIn && post.data.checkOut && post.data.airport && post.data.seat);
+  const post = await finishTravelFixture(f); assert.equal(post.path, '/submit/travel');
+  const firstAirport = JSON.parse(readFileSync(join(cache, 'test/forms/site/airports.json'), 'utf8'))[0].code;
+  assert.deepEqual(post.data, { reference: 'P2-TRAVEL', fullName: 'Example Traveler', email: 'traveler@example.invalid',
+    checkIn: dates[0], checkOut: dates[1], adults: 1, children: 0, country: 'Japan', city: 'Osaka', airport: firstAirport, seat: '1A' });
 });
 test('real demo /settings fills a closed-shadow switch, grouped multi-select and slider, then confirms submission', { skip }, async t => {
   const f = await fixture(t, 'settings');
@@ -141,5 +132,6 @@ test('real demo shop checkout fills protected fields and sends an explicit submi
   const filled = await f.fill([['input[name="number"]', '4242424242424242'], ['input[name="expiry"]', '12/30'], ['input[name="cvc"]', '123']]);
   assert.doesNotMatch(JSON.stringify(filled), /4242424242424242/);
   await f.click('form button'); const post = await f.posted();
-  assert.equal(post.path, '/shop/checkout/order'); assert.equal(post.data.number, '4242424242424242'); assert.equal(post.data.cvc, '123');
+  assert.equal(post.path, '/shop/checkout/order');
+  assert.equal(post.data.number, '4242424242424242'); assert.equal(post.data.expiry, '12/30'); assert.equal(post.data.cvc, '123');
 });
