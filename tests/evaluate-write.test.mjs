@@ -232,3 +232,29 @@ test('the relay keeps a confirmed DOM append refusal before any engine request',
   assert.equal(h.sent.length, 0);
   assert.match(h.replies[0].result.content[0].text, /append cannot run there/);
 });
+
+for (const body of [
+  "const identity = fetch => fetch\nfetch('/fixture')\nreturn document.title;",
+  "const identity = fetch => fetch\nfetch = () => 1; return document.title;",
+]) test('Q1-2R2 ASI ends a helper parameter before a global call or assignment: '+body.split('\n')[1], t => {
+  assert.equal(typeof new Function(body),'function');
+  const code=`await tab.playwright.evaluate(() => { ${body} });`;
+  assert.match(evaluateWrite(code)??'',/fetch cannot run there/);
+  const h=harness(t);h.call(1,code);
+  assert.equal(h.sent.length,0,'a confirmed write must never reach the fake engine');
+  assert.equal(h.replies[0].result.isError,true);
+});
+for (const expression of [
+  "fetch\n('/fixture')", "fetch\n?.('/fixture')", "fetch\n['value']", "fetch\n+ fetch('/fixture')",
+  "fetch\n? fetch('/fixture')\n: 'none'", "fetch\n= () => 1", "fetch\n`fixture`",
+  "Promise.resolve(fetch)\n.then(fetch => fetch('/fixture'))",
+]) test('Q1-2R2 real multiline expression remains inside its parameter scope: '+expression, t=>{
+  const code=`await tab.playwright.evaluate(() => {const helper = fetch => ${expression}; return document.title;});`;
+  assert.equal(evaluateWrite(code),undefined);const h=harness(t);h.call(1,code);
+  assert.equal(h.sent.length,1);assert.ok(h.sent[0].params.arguments.code.includes(code));
+});
+
+for (const expression of ["fetch\n+ fetch('/fixture')","fetch\n?.('/fixture')","fetch\n['value']","fetch\n`fixture`"]) test('Q1-2R2 outer callback retains a complete multiline expression: '+expression,t=>{
+  const code=`await tab.playwright.evaluate(fetch => ${expression})`;
+  assert.equal(evaluateWrite(code),undefined);const h=harness(t);h.call(1,code);assert.equal(h.sent.length,1);
+});

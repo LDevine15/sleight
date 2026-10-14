@@ -77,12 +77,13 @@ function argumentEnd(ts, start) {
 
 function callbacks(ts) {
   const ranges = [];
+  const range = (start, end) => Object.assign(ts.slice(start, end), { endAt: ts[end]?.at });
   for (let i = 0; i < ts.length; i++) {
     const computed = ts[i - 1]?.v === '[' && ts[i].string && ts[i + 1]?.v === ']';
     let open = computed ? i + 2 : i + 1;
     if (ts[open]?.v === '?.') open++;
     if (ts[i].v !== 'evaluate' || (!computed && !['.', '?.'].includes(ts[i - 1]?.v)) || ts[open]?.v !== '(') continue;
-    const start = open + 1, end = argumentEnd(ts, start), arg = ts.slice(start, end);
+    const start = open + 1, end = argumentEnd(ts, start), arg = range(start, end);
     if (arg.some(t => !t.string && ['=>', 'function'].includes(t.v))) ranges.push(arg);
     else if (arg.length === 1 && !arg[0].string) {
       const name = arg[0].v;
@@ -91,9 +92,9 @@ function callbacks(ts) {
         if (ts[j - 1]?.v === 'function') {
           const parameters = ts.findIndex((t, k) => k > j && !t.string && t.v === '(');
           const body = closingToken(ts, parameters) + 1;
-          if (ts[body]?.v === '{') ranges.push(ts.slice(j - 1, closingToken(ts, body) + 1));
+          if (ts[body]?.v === '{') ranges.push(range(j - 1, closingToken(ts, body) + 1));
         } else if (ts[j + 1]?.v === '=') {
-          const value = ts.slice(j + 2, argumentEnd(ts, j + 2));
+          const value = range(j + 2, argumentEnd(ts, j + 2));
           if (value.some(t => t.v === '=>' || t.v === 'function')) ranges.push(value);
         }
       }
@@ -156,17 +157,24 @@ function bindsFetch(ts, depth = 0) {
   return false;
 }
 
-function parameterScopes(ts) {
+function parameterScopes(ts, source) {
   const ranges = [];
   const bodyEnd = start => {
     if (ts[start]?.v === '{') return closingToken(ts, start);
-    const end = argumentEnd(ts, start); let depth = 0;
+    const end = argumentEnd(ts, start), candidates = [end]; let depth = 0;
     for (let i = start; i < end; i++) {
-      if (ts[i].string) continue;
-      const v = ts[i].v;
-      if (!depth && i > start && ['return', 'const', 'let', 'var', 'throw'].includes(v) && !['.', '?.'].includes(ts[i - 1]?.v)) return i;
-      if (['(', '[', '{'].includes(v)) depth++;
-      if ([')', ']', '}'].includes(v)) depth--;
+      if (!ts[i].string) {
+        if (['(', '[', '{'].includes(ts[i].v)) depth++;
+        if ([')', ']', '}'].includes(ts[i].v)) depth--;
+      }
+      if (!depth && i + 1 < end && /[\r\n\u2028\u2029]/.test(source.slice(ts[i].at, ts[i + 1].at))) candidates.push(i + 1);
+    }
+    // The JS parser distinguishes ASI from a multiline call, property, operator
+    // or tagged template. Compile only: never invoke a page callback or value.
+    // Choose the longest complete expression before a possible statement break.
+    for (const candidate of candidates.sort((a, b) => b - a)) {
+      const expression = source.slice(ts[start].at, ts[candidate]?.at ?? ts.endAt ?? source.length);
+      try { new Function('return async () => (' + expression + '\n);'); return candidate; } catch {}
     }
     return end;
   };
@@ -181,8 +189,8 @@ function parameterScopes(ts) {
   return ranges;
 }
 
-function writeIn(ts) {
-  const locals = new Set(), data = new Set(), parameters = parameterScopes(ts);
+function writeIn(ts, source) {
+  const locals = new Set(), data = new Set(), parameters = parameterScopes(ts, source);
   const pageRoots = new Set(['document', 'window', 'globalThis']), pageAliases = new Set();
   for (let i = 0; i < ts.length; i++) {
     if (['const', 'let', 'var', 'function', 'class'].includes(ts[i - 1]?.v) && !ts[i].string) {
@@ -243,7 +251,7 @@ function writeIn(ts) {
 
 export function evaluateWrite(code) {
   if (typeof code !== 'string' || !code.includes('evaluate')) return;
-  const writes = callbacks(tokens(code)).map(writeIn).filter(Boolean).sort((a, b) => a.token.at - b.token.at);
+  const writes = callbacks(tokens(code)).map(range => writeIn(range, code)).filter(Boolean).sort((a, b) => a.token.at - b.token.at);
   const write = writes[0];
   if (!write) return;
   const line = code.slice(0, write.token.at).split('\n').length;
