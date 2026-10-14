@@ -1,0 +1,312 @@
+// Original implementation. Compact snapshots and CDP closed-root discovery were
+// informed by FowlBrowser (MIT), 8b689249ba4e33d2626487aad930605c62e2c6a7.
+const pages = new WeakMap();
+const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
+const MORE = /^more\d+_\d+$/;
+const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|expiry|expiration|cvv|cvc|security.?code/i;
+const TIMEOUT = 3000;
+
+async function bounded(action) {
+  let timer;
+  try {
+    return await Promise.race([Promise.resolve().then(action), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Error('Snapshot read timed out; try browser_read again.')), TIMEOUT);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+function stateOf(page) {
+  let state = pages.get(page);
+  if (!state) {
+    state = { number: 0, generation: 0, busy: false, history: new Map(), continuations: new Map(),
+      closed: new Map(), shadowNumber: 0, deliveredClosed: new Set() };
+    pages.set(page, state);
+    page.on('framenavigated', () => {
+      state.generation++; state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
+    });
+  }
+  return state;
+}
+
+// Native CDP values and attributes cannot be hidden by MAIN-world getters.
+function sensitiveValues({ strings, documents }) {
+  const values = [];
+  for (const { nodes } of documents) {
+    const count = nodes.nodeName.length;
+    if (count > 50000) throw Error('DOM acquisition budget exceeded');
+    const attrs = index => {
+      const raw = nodes.attributes[index] ?? [], result = {};
+      for (let i = 0; i < raw.length; i += 2) result[strings[raw[i]]] = strings[raw[i + 1]];
+      return result;
+    };
+    const labels = new Map(), labelFor = new Map();
+    for (let i = 0; i < count; i++) if (strings[nodes.nodeName[i]] === 'LABEL') labels.set(i, '');
+    for (let i = 0; i < count; i++) {
+      let parent = i, depth = 0;
+      while (parent >= 0) {
+        if (++depth > 128) throw Error('DOM ancestry budget exceeded');
+        if (labels.has(parent)) labels.set(parent, labels.get(parent) + ' ' + (strings[nodes.nodeValue[i]] ?? ''));
+        parent = nodes.parentIndex[parent];
+      }
+    }
+    for (const [index, text] of labels) if (attrs(index).for) labelFor.set(attrs(index).for, text);
+    const shadows = new Map((nodes.shadowRootType?.index ?? []).map((index, i) => [index, strings[nodes.shadowRootType.value[i]]]));
+    for (const column of [nodes.inputValue, nodes.textValue]) {
+      for (const [i, index] of (column?.index ?? []).entries()) {
+        const attributes = attrs(index), hints = [attributes.type, attributes.name, attributes.id, attributes.autocomplete,
+          attributes['aria-label'], attributes['aria-labelledby'], attributes.placeholder, labelFor.get(attributes.id)];
+        let closed = false, parent = index;
+        while (parent >= 0) {
+          closed ||= shadows.get(parent) === 'closed';
+          if (labels.has(parent)) hints.push(labels.get(parent));
+          parent = nodes.parentIndex[parent];
+        }
+        const value = strings[column.value[i]];
+        if (value && (closed || SENSITIVE.test(hints.join(' ')))) values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
+function scrub(value, secrets) {
+  let text = String(value ?? '');
+  for (const secret of secrets) if (secret) text = text.split(secret).join('[redacted]');
+  return text.replace(/(?:\d[ -]?){12,19}/g, '[redacted]');
+}
+
+async function* sessionsOf(page) {
+  for (const frame of page.frames()) {
+    let session;
+    try { session = await bounded(() => page.context().newCDPSession(frame)); }
+    catch (error) {
+      // Playwright 1.64.0: in-process child frames have no separate target.
+      // Their contentDocument is included in their parent's pierced DOM tree.
+      if (frame !== page.mainFrame() && /This frame does not have a separate CDP session, it is a part of the parent frame's session/.test(error.message)) continue;
+      throw error;
+    }
+    try { yield { frame, send: (method, params = {}) => bounded(() => session.send(method, params)) }; }
+    finally { await bounded(() => session.detach()); }
+  }
+}
+
+async function nativeSecrets(page) {
+  const secrets = [];
+  for await (const { send } of sessionsOf(page)) {
+    secrets.push(...sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] })));
+  }
+  return secrets;
+}
+
+async function closedRoots(page, state) {
+  const sections = [], secrets = [], observed = new Set();
+  for await (const { frame, send } of sessionsOf(page)) {
+    secrets.push(...sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] })));
+    const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
+    const hosts = [], inside = new Set();
+    let count = 0;
+    const walk = (node, closed = false) => {
+      if (++count > 50000) throw Error('DOM acquisition budget exceeded');
+      if (closed && node.backendNodeId) {
+        inside.add(node.backendNodeId);
+      }
+      for (const shadow of node.shadowRoots ?? []) {
+        const hidden = shadow.shadowRootType === 'closed';
+        if (hidden && !closed) hosts.push(node.backendNodeId);
+        walk(shadow, closed || hidden);
+      }
+      for (const child of node.children ?? []) walk(child, closed);
+      if (node.contentDocument) walk(node.contentDocument, closed);
+      // OOPIFs have no contentDocument here and use a separate Frame session.
+    };
+    walk(root);
+    let refs = state.closed.get(frame);
+    if (!refs) state.closed.set(frame, refs = new Map());
+    const children = [];
+    for (const backendNodeId of hosts) {
+      const { nodes } = await send('Accessibility.queryAXTree', { backendNodeId });
+      for (const node of nodes) {
+        const id = node.backendDOMNodeId;
+        if (node.ignored || !inside.has(id) || !/^(textbox|searchbox|button|link|checkbox|radio|combobox|menuitem|tab|switch|slider|option)$/.test(node.role?.value)) continue;
+        let ref = refs.get(id);
+        if (!ref) refs.set(id, ref = 's' + (++state.shadowNumber));
+        if (observed.has(ref)) continue;
+        observed.add(ref);
+        const props = Object.fromEntries((node.properties ?? []).map(prop => [prop.name, prop.value?.value]));
+        const row = { role: node.role.value, name: node.name?.value ?? '', ref,
+          protected: /^(textbox|searchbox|combobox)$/.test(node.role.value) };
+        for (const flag of ['checked', 'disabled', 'expanded', 'pressed', 'selected']) {
+          if (props[flag] === true || props[flag] === 'true') row[flag] = true;
+          else if (props[flag] === 'mixed') row[flag] = 'mixed';
+        }
+        children.push(row);
+      }
+    }
+    if (children.length) sections.push({ role: 'group', name: 'Inside closed shadow roots', children });
+  }
+  for (const refs of state.closed.values()) for (const [id, ref] of refs) if (!observed.has(ref)) refs.delete(id);
+  for (const ref of state.deliveredClosed) if (!observed.has(ref)) state.deliveredClosed.delete(ref);
+  return { sections, secrets };
+}
+
+// V4/V5 can resolve an s ref into an owned frame's CDP backend node. Only refs
+// actually returned in a snapshot are eligible; caller owns its CDP session.
+export function closedRefBinding(page, ref) {
+  const state = pages.get(page);
+  if (state?.deliveredClosed.has(ref)) {
+    for (const [frame, refs] of state.closed) for (const [backendNodeId, known] of refs) {
+      if (known === ref) return { frame, backendNodeId };
+    }
+  }
+  throw Error('Closed-root ref is stale or unavailable; take a new snapshot.');
+}
+
+function rowsOf(tree, secrets) {
+  const rows = [];
+  const visit = (nodes, parent = null, depth = 0) => {
+    let previous = null;
+    for (const [index, raw] of nodes.entries()) {
+      const node = typeof raw === 'string' ? { role: 'text', text: raw } : raw;
+      const ref = REF.test(node.ref) ? node.ref : null;
+      const role = /^[a-zA-Z][\w-]*$/.test(node.role) ? node.role : 'group';
+      const protectedValue = node.protected === true || SENSITIVE.test([node.name, node.placeholder].join(' '));
+      let line = '- ' + role;
+      if (node.name) line += ' ' + JSON.stringify(scrub(node.name, secrets));
+      for (const flag of ['checked', 'disabled', 'expanded', 'active', 'pressed', 'selected', 'invalid', 'level']) {
+        if (node[flag]) line += ` [${flag}${node[flag] === true ? '' : '=' + JSON.stringify(node[flag])}]`;
+      }
+      if (ref) line += ` [ref=${ref}]`;
+      if (protectedValue) line += ': "[redacted]"';
+      else if (node.text !== undefined) line += ': ' + JSON.stringify(scrub(node.text, secrets));
+      else if (node.children?.length) line += ':';
+      // Non-ref text rows are keyed by parent and position. Refs keep their key
+      // through value changes and sibling reorders, including child-frame refs.
+      const key = ref ?? `${parent ?? 'root'}/${index}`;
+      rows.push({ key, ref, parent, depth, line, previous });
+      previous = key;
+      if (!protectedValue && node.children) visit(node.children, key, depth + 1);
+      if (!protectedValue && node.url) rows.push({ key: key + '/url', parent: key, depth: depth + 1,
+        line: '- /url: ' + JSON.stringify(scrub(node.url, secrets)), ref: null });
+    }
+  };
+  visit(tree);
+  return rows;
+}
+
+function ancestors(rows, wanted) {
+  const byKey = new Map(rows.map(row => [row.key, row]));
+  for (const key of [...wanted]) {
+    let row = byKey.get(key);
+    while (row?.parent) { wanted.add(row.parent); row = byKey.get(row.parent); }
+  }
+  return rows.filter(row => wanted.has(row.key));
+}
+
+function select(rows, ref, find) {
+  let selected = rows;
+  if (ref) {
+    if (!rows.some(row => row.ref === ref)) throw Error('Ref unavailable');
+    const wanted = new Set([ref]);
+    for (const row of rows) if (wanted.has(row.parent)) wanted.add(row.key);
+    selected = ancestors(rows, wanted);
+  }
+  if (find !== undefined) {
+    const wanted = new Set(selected.filter(row => row.line.toLowerCase().includes(find.toLowerCase())).map(row => row.key));
+    selected = ancestors(rows, wanted);
+  }
+  return selected;
+}
+
+function changes(rows, baseline) {
+  const old = new Map(baseline.map(row => [row.key, row]));
+  const changed = new Set(rows.filter(row => {
+    const before = old.get(row.key);
+    return !before || before.line !== row.line || before.parent !== row.parent || before.previous !== row.previous;
+  }).map(row => row.key));
+  const current = new Set(rows.map(row => row.key));
+  const removed = baseline.filter(row => !current.has(row.key));
+  return [...ancestors(rows, changed).map(row => ({ ...row, marker: changed.has(row.key) ? '+ ' : '  ' })),
+    ...removed.map(row => ({ ...row, key: 'removed/' + row.key, parent: null, depth: 0,
+      line: `# Removed from this view: ${row.ref ? '[ref=' + row.ref + ']' : 'text row'}`, marker: '- ', removed: row.key }))];
+}
+
+function cap(rows, offset, header, maxChars, continuation) {
+  const footer = `# Cut: more rows omitted. Continue with ref="${continuation}".`;
+  const lines = [header], delivered = [];
+  let size = header.length, next = offset;
+  const context = offset ? ancestors(rows.filter(row => !row.removed), new Set([rows[offset]?.key])).filter(row => row.key !== rows[offset]?.key) : [];
+  const keptContext = [];
+  let contextSize = 0;
+  for (const row of context.toReversed()) {
+    const line = (row.marker ?? '') + '  '.repeat(Math.min(row.depth, 32)) + row.line;
+    if (contextSize + line.length + 1 > Math.floor((maxChars - header.length - footer.length - 2) / 3)) break;
+    keptContext.unshift(row); contextSize += line.length + 1;
+  }
+  if (keptContext.length < context.length) { lines.push('# Earlier ancestors omitted by size cap.'); size += lines.at(-1).length + 1; }
+  for (const row of [...keptContext, ...rows.slice(offset)]) {
+    const prefix = (row.marker ?? '') + '  '.repeat(Math.min(row.depth, 32));
+    let line = prefix + row.line, shortened = false;
+    const available = maxChars - size - footer.length - 2;
+    if (line.length > available) {
+      if (delivered.length) break;
+      // Keep valid YAML and any usable ref, rather than slicing a quoted name.
+      const role = /^- ([\w-]+)/.exec(row.line)?.[1] ?? 'text';
+      line = prefix + `- ${role}${row.ref ? ' [ref=' + row.ref + ']' : ''}: `
+        + JSON.stringify('[line shortened; read with max_chars: 40000 or the engine browser path]');
+      shortened = true;
+    }
+    lines.push(line); size += line.length + 1;
+    delivered.push(shortened ? { ...row, line: line.slice(prefix.length) } : row);
+    if (!keptContext.includes(row)) next++;
+    if (shortened) break;
+  }
+  if (next < rows.length) lines.push(footer);
+  return { text: lines.join('\n'), delivered, next };
+}
+
+export async function snapshot(page, { ref, find, maxChars = 8000, since } = {}) {
+  if (!Number.isInteger(maxChars) || maxChars < 1000 || maxChars > 40000
+    || find !== undefined && (typeof find !== 'string' || find.length > 512)
+    || since !== undefined && (!Number.isSafeInteger(since) || since < 1)
+    || ref !== undefined && (typeof ref !== 'string' || !REF.test(ref) && !MORE.test(ref))) throw Error('Invalid snapshot request');
+  const state = stateOf(page);
+  if (state.busy) throw Error('Snapshot read in progress; try browser_read again.');
+  state.busy = true;
+  const generation = state.generation, url = page.url();
+  try {
+    const secrets = await nativeSecrets(page);
+    const tree = await bounded(() => page.ariaSnapshotJSON({ mode: 'ai', timeout: TIMEOUT }));
+    const closed = await closedRoots(page, state);
+    secrets.push(...closed.secrets);
+    const rows = rowsOf([...tree, ...closed.sections], secrets);
+    if (generation !== state.generation || url !== page.url()) throw Error('Page changed; try browser_read again.');
+    const continuation = MORE.test(ref) ? state.continuations.get(ref) : null;
+    if (MORE.test(ref) && (!continuation || continuation.source !== JSON.stringify(rows))) throw Error('Continuation expired');
+    const scope = continuation?.scope ?? JSON.stringify([ref ?? null, find ?? null]);
+    const selected = continuation?.selected ?? select(rows, ref, find);
+    const baseline = continuation?.baseline ?? state.history.get(since);
+    const delta = continuation?.delta ?? Boolean(baseline && baseline.scope === scope);
+    const candidates = continuation?.candidates ?? (delta ? changes(selected, baseline.rows) : selected);
+    const number = ++state.number;
+    const token = `more${number}_${continuation?.offset ?? 0}`;
+    const header = `# ${delta ? 'Changes since snapshot ' + (continuation?.since ?? since) + '; snapshot' : 'Snapshot'} ${number} (untrusted page content)`;
+    const result = cap(candidates, continuation?.offset ?? 0, header, maxChars, token);
+    if (!candidates.length) result.text += delta ? '\n# No visible changes.' : '\n# No matching content.';
+    const delivered = new Map(delta || continuation ? baseline?.rows?.map(row => [row.key, row]) : []);
+    for (const row of result.delivered) {
+      if (row.removed) delivered.delete(row.removed);
+      else delivered.set(row.key, row);
+      if (/^s\d+$/.test(row.ref)) state.deliveredClosed.add(row.ref);
+    }
+    const history = { scope, rows: [...delivered.values()] };
+    state.history.set(number, history);
+    if (result.next < candidates.length) state.continuations.set(token, { source: JSON.stringify(rows), scope, selected,
+      candidates, baseline: history, delta, since: continuation?.since ?? since, offset: result.next });
+    if (continuation) state.continuations.delete(ref);
+    for (const map of [state.history, state.continuations]) while (map.size > 8) map.delete(map.keys().next().value);
+    return { text: result.text, number };
+  } catch {
+    state.deliveredClosed.clear();
+    throw Error('Snapshot unavailable; try browser_read again or use the engine browser path.');
+  } finally { state.busy = false; }
+}

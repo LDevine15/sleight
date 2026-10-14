@@ -41,3 +41,8 @@ host, preserve delivered refs, and limit uncertain-submit recovery to a fresh re
 The new form and user-file providers are original sleight code. They call the
 unchanged pinned Playwright module through the host's closed node interface.
 No additional dependency or native binary is distributed by this semantic join.
+
+The v3 `lib/direct-browser/snapshot.mjs` is independently authored sleight code.
+Its compact snapshot and closed-root discovery design was informed by FowlBrowser
+8b689249ba4e33d2626487aad930605c62e2c6a7 (MIT). It uses the unchanged bundled
+Playwright API and carries the design credit in its source header.
