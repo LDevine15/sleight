@@ -280,7 +280,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
           if (!connected) { if (await selected.connect() !== selected.session) throw Error('STALE_INSTANCE'); connected = true; }
           if (!current() || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
           const { loadPlaywrightCore } = await import('./worlds.mjs');
-          const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true });
+          const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true }).inprocess.playwright;
           resource.filter = selected.createFilter();
           resource.listener = await resource.filter.listen();
           resource.browser = await playwright.chromium.connectOverCDP(resource.listener.endpoint, { noDefaults: true, timeout: 10000 });

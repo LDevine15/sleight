@@ -22,10 +22,10 @@ function fixture() {
     list: async () => [] };
   const dependencies = { schedule: () => undefined, readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status:'ready', receipt:{} }), selectConnection: async () => selected,
-    createUi: () => ui, loadPlaywright: () => ({ chromium: { async connectOverCDP(endpoint, options) {
+    createUi: () => ui, loadPlaywright: () => ({ inprocess: { playwright: { chromium: { async connectOverCDP(endpoint, options) {
       assert.equal(endpoint, 'private'); assert.equal(options.noDefaults,true);
       return { newBrowserCDPSession: async () => ({}), async close() { events.push('browser-close'); } };
-    } } }), createPages: () => pages,
+    } } } } }), createPages: () => pages,
     snapshot: async () => ({ text:'untrusted fixture',number:1 }),
   };
   return { channel, frames, events, selected, ui, dependencies };
