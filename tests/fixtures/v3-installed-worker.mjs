@@ -30,6 +30,7 @@ const selected = {selectedBrowser:'bfixture',session:raw,
   createFilter(){const filter=createCDPFilter({session:raw});filters.push(filter);return filter;},
 };
 const host = await startInstalledV3Worker({channel:process},{
+  onError:error=>process.stderr.write('Installed fixture startup: '+error.message+'\n'),
   readConfig:()=>({}),acceptPackage:()=>({current:()=>true}),
   prepareHelpers:async()=>({status:'ready',receipt:{}}),selectConnection:async()=>selected,
   createUi:()=>({present(){},authenticate:()=>false,close(){}}),

@@ -310,7 +310,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
               return ending;
             },
           });
-        } catch (error) { await collect(resource); throw error; }
+        } catch (error) { dependencies.onError?.(error); await collect(resource); throw error; }
       }, close });
     timer = (dependencies.schedule ?? setInterval)(() => {
       try { status(); } catch { stopped = true; protocol.end().catch(() => {}); }
