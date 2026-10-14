@@ -43,9 +43,9 @@ for (const options of [
   assert.deepEqual(pair.combined.guardDecisions, pair.separate.guardDecisions);
 });
 
-test('NP-4 retains full relay fail-stop after the first invalidating action', async () => {
+test('NP-4 retains careful relay fail-stop after the first invalidating action', async () => {
   const actions = [{ read: true }, { set: { id: 'entry', value: 'first' } }, { set: { id: 'entry', value: 'after' } }];
-  const compiled = await relayTrial(true, { fault: 'invalidating-action', plan: dependencyPlan(actions).code });
+  const compiled = await relayTrial(true, { mode: 'careful', fault: 'invalidating-action', plan: dependencyPlan(actions).code });
   assert.equal(compiled.actions, 1); assert.equal(compiled.value, 'first'); assert.ok(compiled.error);
 });
 
@@ -62,10 +62,10 @@ test('transition barrier resolves an ID after element renumbering', async () => 
   assert.equal(compiled.error, null); assert.equal(compiled.value, 'after'); assert.equal(compiled.reads, 3);
 });
 
-test('click-to-modal keeps its required read before dependent typing', async () => {
+for (const [mode, reads] of [['default', 2], ['careful', 3]]) test(`field click then typing preserves the ${mode} guard's read count`, async () => {
   const plan = dependencyPlan([{ read: true }, { click: { id: 'entry' } }, { type: 'after' }]);
-  const compiled = await relayTrial(true, { plan: plan.code });
-  assert.equal(compiled.error, null); assert.equal(compiled.value, 'after'); assert.equal(compiled.reads, 3);
+  const compiled = await relayTrial(true, { mode, plan: plan.code });
+  assert.equal(compiled.error, null); assert.equal(compiled.value, 'after'); assert.equal(compiled.reads, reads);
 });
 
 test('user takeover stops the dependent suffix in the full relay', async () => {

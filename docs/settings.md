@@ -225,20 +225,12 @@ must reopen it in the app. Snapshots last until the session ends.
 
 ## Careful guard
 
-Before an action, sleight reads the app's window to check it's the one Claude saw. A read right
-after an action waits for the app to settle, about 400 ms and much longer on a busy Mac, and Codex
-doesn't make that read. So by default, keys, typing, paste and clicks or drags at coordinates that
-come after typing, pasting or a plain key in the same call go straight to the engine, and so does a
-Return that follows `setValue` (in a Save sheet that read took 1.85 s a save). After a click, a
-shortcut, Return, Escape, Tab or Space, the next action still reads, since that read also waits for
-a panel or sheet the action opened. The first action of each call is checked, and so is every action on an element number, ID or label, which is what catches a window
-that renumbered mid-call. A first action that sends keys, text or coordinates uses Claude's full
-read from the call just before when that read is less than 10 s old, however slow it was (owner,
-2026-10-10, about 0.35 s a run). Under load a new read took 17 to 57 s. Otherwise the guard reads
-again, about 50 ms on a settled app, and stops if an element Claude is about to act on changed since
-Claude read the window.
-Set `SLEIGHT_GUARD=careful` to read before every action. Document scope
-(`SLEIGHT_APPROVAL_SCOPE=document`) always reads.
+The native guard skips the first read for keys, text and coordinates, lets typing follow edit shortcuts or field clicks without
+another read, and uses one capture's element numbers until an opener or explicit read replaces it. It still reads for the first
+element lookup, after actions that can open a panel, and at the end of an acting call. In the 2026-10-14 A/B this default passed
+15/15 against 14/15, with tool time 35% less and guard-read time 5.7 s against 17.3 s.
+Set `SLEIGHT_GUARD=careful` to read before every action. Document scope (`SLEIGHT_APPROVAL_SCOPE=document`) and change review keep
+their reads.
 
 ## First-call batching
 

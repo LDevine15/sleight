@@ -277,8 +277,8 @@ const missed = [
 ];
 
 for (const [index, code] of [...bypasses, ...missed].entries()) {
-  test(`native runtime guard stops bypass ${index + 1}: ${code}`, async t => {
-    const h = runtime(t);
+  test(`careful native runtime guard stops bypass ${index + 1}: ${code}`, async t => {
+    const h = runtime(t, { guardMode: 'careful' });
     // Previous native authorization must not survive a later read of another window.
     await h.run(guardedCode('app = await cua.getApp("TextEdit")', { title: 'b.txt', app: 'TextEdit', url: null }));
     h.call(1, 'app = await cua.getApp("TextEdit")');

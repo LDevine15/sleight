@@ -2281,43 +2281,27 @@ test('SLEIGHT_GUARD=careful reaches the guard sent to the engine; the default sk
   }
 });
 
-test('first-off reaches only the ordinary native guard and leaves strict review and default unchanged', async () => {
-  for (const [guardMode, changeReview, enabled] of [
-    ['first-off', false, true], ['first-off', true, false],
-    [undefined, false, false], ['careful', false, false], ['unrecognized', false, false],
+test('the combined guard is the native default and strict modes keep every read', async () => {
+  for (const [guardMode, changeReview, approvalScope, enabled] of [
+    [undefined, false, 'session', true], ['unrecognized', false, 'session', true],
+    ['first-off', false, 'session', true], ['quiet-edits', false, 'session', true], ['bind', false, 'session', true],
+    ['careful', false, 'session', false], [' first-off , careful , bind ', false, 'session', false],
+    [undefined, true, 'session', false], [undefined, false, 'document', false],
   ]) {
-    const h = harness({ guardMode, changeReview, inputLease: new InputLease({ directory: leaseDir('sleight-first-off-'), holder: 'A' }) });
+    const h = harness({ guardMode, changeReview, approvalScope, ask: async () => 'accept', inputLease: new InputLease({ directory: leaseDir('sleight-default-guard-'), holder: 'A' }) });
     helperRead(h, 1, 'let app = await cua.getApp("TextEdit")');
     h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: `Window: "a.txt", App: TextEdit, URL: ${fixtureURL}\n0 standard window a.txt` }],
       _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } });
     await tick();
-    h.fromClient({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.typeText("x")' } } });
-    await tick(); const sent = h.toServer.find(m => m.id === 2)?.params.arguments.code ?? '';
-    assert.equal(/"firstOff":true/.test(sent), enabled, String(guardMode) + ' changeReview=' + changeReview);
-    if (guardMode !== 'first-off') assert.equal(/"firstOff":/.test(sent), false);
-  }
-});
-
-test('comma-separated guard modes combine quiet-edits with first-off and careful wins', async () => {
-  for (const [guardMode, firstOff, quietEdits, careful] of [
-    ['quiet-edits', false, true, false], ['first-off,quiet-edits', true, true, false],
-    [' quiet-edits , first-off ', true, true, false], ['first-off,quiet-edits,careful', false, false, true],
-    ['careful,quiet-edits', false, false, true], ['quiet-edits-extra', false, false, false],
-  ]) {
-    const h = harness({ guardMode, changeReview: false,
-      inputLease: new InputLease({ directory: leaseDir('sleight-quiet-edits-'), holder: 'A' }) });
-    helperRead(h, 1, 'let app = await cua.getApp("TextEdit")');
-    h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text:
-      `Window: "a.txt", App: TextEdit, URL: ${fixtureURL}\n0 standard window a.txt` }],
-      _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } });
-    await tick();
-    h.fromClient({ id: 2, method: 'tools/call', params: { name: 'js', arguments: {
-      code: 'await app.pressKey("super+a"); await app.typeText("x")' } } });
+    if (approvalScope === 'document') {
+      h.fromClient({ id: 10, method: 'tools/call', params: { name: 'document_scope', arguments: {} } });
+      await tick();
+    }
+    h.fromClient({ id: 2, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.typeText("x")' } } });
     await tick();
     const sent = h.toServer.find(m => m.id === 2)?.params.arguments.code ?? '';
-    assert.equal(/"firstOff":true/.test(sent), firstOff, guardMode);
-    assert.equal(/"quietEdits":true/.test(sent), quietEdits, guardMode);
-    assert.match(sent, new RegExp(`"careful":${careful}`));
+    for (const flag of ['firstOff', 'quietEdits', 'bind'])
+      assert.match(sent, new RegExp(`"${flag}":${enabled}`), String(guardMode) + ' ' + approvalScope + ' review=' + changeReview);
   }
 });
 

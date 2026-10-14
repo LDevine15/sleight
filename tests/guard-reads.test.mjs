@@ -1,4 +1,7 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { PassThrough } from 'node:stream';
+import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -10,7 +13,28 @@ import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement } from
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
   `Window: ${JSON.stringify(window.title)}, App: ${window.app}.\n0 standard window${window.url ? `, URL: ${window.url}` : ''}\n${rows}`;
-function fixture({ current = () => tree(), action = () => {}, screenshotState, strict = false } = {}) {
+// Obtain the ordinary native options from the relay, so the default tests exercise its routing.
+const leaseDir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-guard-default-')));
+after(() => removeTemp(leaseDir));
+function defaultOptions() {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [];
+  serverIn.on('data', data => sent.push(...data.toString().trim().split('\n').map(line => JSON.parse(line))));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
+    inputLease: new InputLease({ directory: leaseDir, holder: 'default-test' }) });
+  const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+  try {
+    call(1, 'let app = await cua.getApp("TextEdit")');
+    serverOut.write(JSON.stringify({ id: 1, result: { content: [{ type: 'text', text: tree() }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+    call(2, 'await app.typeText("x");');
+    const code = sent.find(message => message.id === 2)?.params.arguments.code ?? '';
+    const update = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)?.[1] ?? '{}');
+    return Object.fromEntries(['firstOff', 'quietEdits', 'bind'].map(key => [key, update[key]]));
+  } finally { relay.dispose(); }
+}
+
+function fixture({ current = () => tree(), action = () => {}, screenshotState, strict = false, ordinary = false } = {}) {
   const calls = [], output = [];
   const raw = {
     async getAXState(options) { calls.push(['read', options]); return current(); },
@@ -30,7 +54,7 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
     throw Error('unsupported engine method ' + key);
   } }) : raw;
   const context = { app: engine, cua: { getApp: async () => engine }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
-  const run = (code, options = {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, options)} })()`, context);
+  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, options)} })()`, context);
   return { run, raw, calls, output, context };
 }
 
@@ -280,13 +304,12 @@ test('bind compares literal numbers against explicit reads the call actually too
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
 });
 
-test('bind combines with quiet-edits and first-off and resets on the next call', async () => {
-  const f = fixture({ strict: true, current: () => tree(expected, '\t1 text field Editor\n\t2 button Next') });
-  const options = { bind: true, quietEdits: true, firstOff: true };
-  await f.run('await app.pressKey("super+a"); await app.typeText("x"); await app.click(1); await app.typeText("y"); await app.click(2);', options);
+test('the default combines capture binding and quiet edits and resets on the next call', async () => {
+  const f = fixture({ ordinary: true, strict: true, current: () => tree(expected, '\t1 text field Editor\n\t2 button Next') });
+  await f.run('await app.pressKey("super+a"); await app.typeText("x"); await app.click(1); await app.typeText("y"); await app.click(2);');
   assert.deepEqual(f.calls.map(c => c[0]), ['pressKey', 'typeText', 'read', 'click', 'typeText', 'click', 'read']);
   f.calls.length = 0;
-  await f.run('await app.click(2);', options);
+  await f.run('await app.click(2);');
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
 });
 
@@ -349,10 +372,9 @@ test('quiet-edits field clicks skip only typing or paste and keep element lookup
   }
 });
 
-test('quiet-edits combines with first-off and careful overrides both', async () => {
-  for (const [options, reads] of [[{ firstOff: true, quietEdits: true }, 1],
-    [{ firstOff: true, quietEdits: true, careful: true }, 3]]) {
-    const f = fixture({ strict: true });
+test('the default skips reads between edit shortcuts and typing, and careful reads every time', async () => {
+  for (const [options, reads] of [[undefined, 1], [{ careful: true }, 3], [{ careful: true, fileOnly: true }, 3]]) {
+    const f = fixture({ ordinary: true, strict: true });
     await f.run('await app.pressKey("super+a"); await app.typeText("x");', options);
     assert.equal(f.calls.filter(c => c[0] === 'read').length, reads);
   }
