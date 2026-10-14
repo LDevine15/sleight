@@ -256,12 +256,12 @@ for (const hiding of ['faint','offscreen','tiny','scroll-clip','clip-path','hidd
     assert.equal((await f.ctx.check('click',f.target('e1'))).verdict,'confirm');
     assert.equal(await f.page.locator('#count').innerText(),'0');
   });
-test('V10R2C real visible terms cannot be replaced by a hidden disagreeing value', {skip}, async t => {
+test('V10R2C real hidden and visible disagreement requires confirmation', {skip}, async t => {
   const f=await fixture(t,'Pay ' + JSON.stringify(terms));
   await f.page.locator('[data-payment-amount]').evaluate(el => {
     const hidden=el.cloneNode(true); hidden.textContent='Amount: 99.00'; hidden.setAttribute('data-payment-amount','99.00'); hidden.style.opacity='0.05'; el.before(hidden);
   });
-  assert.equal((await f.ctx.check('click',f.target('e1'))).verdict,'allow');
+  assert.equal((await f.ctx.check('click',f.target('e1'))).verdict,'confirm');
 });
 test('V10R2D real inline labels supply exact terms and preserve block boundaries', {skip}, async t => {
   const f=await fixture(t,'Pay ' + JSON.stringify(terms));

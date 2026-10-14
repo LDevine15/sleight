@@ -104,12 +104,17 @@ export function readPaymentPage(el) {
   };
   const field = key => {
     if (!root) return;
-    const values = [];
+    const values = [], hidden = [];
+    const valueOf = value => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
     for (const node of root.querySelectorAll('[data-payment-' + key + '],[itemprop="' + key + '"],[name="' + key + '"],[aria-label="' + key + '" i]')) {
-      if (!visible(node)) continue;
-      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : visibleText(node);
-      const shown = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
       const attribute = node.getAttribute('data-payment-' + key);
+      if (!visible(node)) {
+        // Hidden candidates can contradict evidence, never supply authority.
+        hidden.push(valueOf(attribute), valueOf(['input','select','textarea'].includes(node.localName) ? node.value : node.textContent));
+        continue;
+      }
+      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : visibleText(node);
+      const shown = valueOf(value);
       if (attribute !== null && attribute.trim() !== shown) return;
       if (shown) values.push(shown);
     }
@@ -117,7 +122,7 @@ export function readPaymentPage(el) {
       const label = new RegExp('^' + key + ':\\s*(.+)$', 'i');
       for (const line of visibleText(root).split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
     }
-    return values.length === 1 && values[0].length <= 4096 ? values[0] : undefined;
+    return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };
   const page = Object.fromEntries(['item', 'amount', 'payee', 'currency'].map(key => [key, field(key)]).filter(([,value]) => value !== undefined));
   const labels = el.labels ? [...el.labels].map(label => label.innerText.trim()).filter(Boolean) : [];

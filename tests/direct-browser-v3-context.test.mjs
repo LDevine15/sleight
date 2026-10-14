@@ -222,7 +222,7 @@ test('V10R5 payment terms follow el.form and exclude an opacity-zero amount deco
     createTreeWalker(node) { let read=false; return {nextNode() { if (read) return null; read=true; return node.innerText ? {parentElement:node,textContent:node.innerText} : null; }}; },
     defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({visibility:'visible',display:'block',opacity:'1'})}};
   const observed=api.readPaymentPage({ownerDocument:doc,form:root,closest:() => wrong,getAttribute:() => null});
-  assert.equal(observed.page.amount,'99.00');
+  assert.equal(observed.page.amount,undefined);
 });
 
 test('V10R6 dismissing a page dialog before an allowed click remains available', async () => {

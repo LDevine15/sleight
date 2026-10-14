@@ -40,8 +40,8 @@ for (const [name,options] of [
 ]) test('V10R2C payment terms exclude ' + name, () => {
   assert.equal(fixture(options).read().page.amount,undefined);
 });
-test('V10R2C visible terms win over disagreeing hidden metadata', () => {
-  assert.equal(fixture({decoy:true}).read().page.amount,'18.00');
+test('V10R2C disagreeing hidden candidates cannot settle visible terms', () => {
+  assert.equal(fixture({decoy:true}).read().page.amount,undefined);
 });
 for (const options of [{},{style:{opacity:'0.1'}},{box:rect(496,10),parentStyle:{overflowX:'scroll'}}])
   test('V10R2C readable area at least 4x4 stays usable ' + JSON.stringify(options), () => {
