@@ -6,6 +6,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { fowlPreflight } from '../bench/fowl/preflight.mjs';
 const cacheSkip = !existsSync(join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/.git')) && 'pinned FowlBrowser cache is absent';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -201,6 +202,35 @@ test('unsupported task pairs are written before any remote or browser connection
   }
   assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /not supported/);
   assert.equal(existsSync(join(out, 'monitor.jsonl')), false);
+});
+
+test('runner support boundaries agree with offline admission without mutating task rows', { skip: cacheSkip }, async t => {
+  const { file } = runner(t), previous = process.env.SLEIGHT_REPO;
+  process.env.SLEIGHT_REPO = root;
+  t.after(() => { if (previous === undefined) delete process.env.SLEIGHT_REPO; else process.env.SLEIGHT_REPO = previous; });
+  const { taskSupport } = await import(pathToFileURL(file));
+  const cases = [
+    ['claude-in-chrome', 'helium', { world: true }, /requires.*Chrome/],
+    ['codex-agent', 'chrome', { world: true }, /does not run Claude/],
+    ['sleight-turbo', 'chrome', { remote: 'fixture' }, /local only/],
+    ['sleight', 'chrome', { world: true, remote: 'fixture' }, /world arms/],
+    ['browser-use', 'chrome', { remote: 'fixture' }, /remote configuration/],
+    ['playwright-mcp', 'native', {}, /browser tasks only/],
+    ['claude-in-chrome', 'chrome', { world: true }, null],
+    ['sleight-turbo', 'chrome', { world: true }, null],
+    ['sleight', 'helium', {}, null],
+  ];
+  for (const [surface, browser, options, reason] of cases) {
+    const selected = { ...task, surface, browser }, tasks = [selected], calls = [];
+    const actual = taskSupport(selected, surface, options);
+    if (reason) assert.match(actual, reason); else assert.equal(actual, null);
+    await fowlPreflight({ tasks, model: 'opus', home: '/fixture', ...options }, {
+      spend() { calls.push('spend'); }, fowlSocket() { calls.push('socket'); },
+      engineSockets() { calls.push('engine'); }, login() { calls.push('login'); },
+    });
+    assert.equal(calls.length === 0, !!reason, JSON.stringify([surface, browser, options]));
+    assert.equal(tasks[0], selected, 'admission preserves the runner task and its unsupported row');
+  }
 });
 
 test('agent timeout collects its whole process group and stops signaling after collection', { skip: cacheSkip }, async (t) => {

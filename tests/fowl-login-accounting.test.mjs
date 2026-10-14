@@ -8,20 +8,22 @@ import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import * as spend from '../bench/fowl/add-spend.mjs';
 const { roundCost, addRoundSpend } = spend;
 
-function auth(t, { model, surface, tasks, only = '', spent, unpriced = false, month = new Date().toISOString().slice(0, 7), status = 0 }) {
+function auth(t, { model, surface, tasks, only = '', world = false, remote = '', swap = false, spent, unpriced = false, month = new Date().toISOString().slice(0, 7), status = 0 }) {
   const dir = mkdtempSync(join(tmpdir(), 'sleight-fowl-login-')); t.after(() => removeTemp(dir));
   mkdirSync(join(dir, '.config/sleight-bench'), { recursive: true });
   writeFileSync(join(dir, '.config/sleight-bench/anthropic-api-key'), 'sk-ant-fixture', { mode: 0o600 });
   const taskFile = join(dir, 'tasks.json');
-  if (tasks) writeFileSync(taskFile, JSON.stringify(tasks));
+  writeFileSync(taskFile, JSON.stringify((tasks ?? [{}]).map(task => ({ browser: 'chrome', ...task }))));
   const source = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
   const end = spent === undefined ? '\n[ "$AUTH" = account ]' : '\nmkdir /tmp/sleight-live.lock';
   const selection = source.slice(source.indexOf('\n', source.indexOf('SPEND=')) + 1, source.indexOf(end));
   const ledger = join(dir, 'spend.json');
   if (spent !== undefined) writeFileSync(ledger, JSON.stringify({ month, usd: spent, unpriced }));
-  const result = spawnSync('/bin/sh', ['-c', selection + '\nprintf "%s:%s" "$AUTH" "$KEY"'], {
+  const args = ['--model', model, '--tasks', taskFile, ...(surface ? ['--surface', surface] : []),
+    ...(only ? ['--only', only] : []), ...(world ? ['--world'] : []), ...(remote ? ['--remote', remote] : []), ...(swap ? ['--swap'] : [])];
+  const result = spawnSync('/bin/sh', ['-c', selection + '\nprintf "%s:%s" "$AUTH" "$KEY"', 'auth-fixture', ...args], {
     encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MODEL: model, SURFACE: surface, ONLY: only, SPEND: ledger, OUT: join(dir, 'out'),
-      REPO: new URL('..', import.meta.url).pathname, ...(tasks && { TASKS: taskFile }) } });
+      REPO: new URL('..', import.meta.url).pathname, TASKS: taskFile } });
   assert.equal(result.status, status, result.stderr);
   return result.stdout;
 }
@@ -30,6 +32,24 @@ test('only-selected login tasks do not require API funding for an excluded brows
   const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'browser', surface: 'sleight' }];
   assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, only: 'login', spent: 190 }), 'account:');
   assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, only: 'browser', spent: 190, status: 1 }), '');
+});
+test('unsupported API pairs cannot charge or block a runnable login cohort', t => {
+  const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'unsupported', browser: 'native', surface: 'browser-use' }];
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', world: true, tasks, spent: 190 }), 'account:');
+});
+test('all-unsupported cohorts do not need Claude funding and retain their tasks for result rows', t => {
+  const tasks = [{ name: 'unsupported', surface: 'codex-agent' }, { name: 'device', browser: 'helium', surface: 'claude-in-chrome' }];
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', world: true, tasks, spent: 190 }), 'account:');
+  assert.equal(tasks.length, 2);
+});
+test('swap support rules apply before choosing API funding', t => {
+  const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'device', surface: 'claude-in-chrome' }];
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, swap: true, spent: 190 }), 'account:');
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, spent: 190, status: 1 }), '');
+});
+test('remote browser-only cohorts do not need local Claude funding', t => {
+  const tasks = [{ name: 'unsupported', surface: 'browser-use' }];
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, remote: 'fixture-host', spent: 190 }), 'account:');
 });
 
 for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']) {

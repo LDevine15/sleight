@@ -8,8 +8,48 @@ import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { assertLogin, assertSpend, probeSocket } from '../bench/preflight.mjs';
 import { fowlPreflight, selectedTasks } from '../bench/fowl/preflight.mjs';
+import { turboSetup } from '../bench/turbo/setup.mjs';
 
 const config = join(tmpdir(), 'bench-isolated-config');
+for (const world of [false, true]) test(`turbo login preflight checks the actual launcher and config, world=${world}`, async t => {
+  const home = mkdtempSync(join(tmpdir(), 'sleight-preflight-')); t.after(() => removeTemp(home));
+  const previous = process.env.HOME; process.env.HOME = home;
+  t.after(() => { if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous; });
+  const task = { name: 'fixture', browser: 'chrome', surface: 'sleight-turbo', prompt: 'Read http://127.0.0.1:1234/' };
+  const actual = turboSetup({ task, repo: new URL('..', import.meta.url).pathname, dir: join(home, 'out'), prompt: task.prompt,
+    env: { HOME: home, PATH: '/usr/bin' } });
+  let checked;
+  await fowlPreflight({ tasks: [task], model: 'opus', world, home, env: {} }, {
+    spend() { assert.fail('unexpected spend'); }, fowlSocket() { assert.fail('unexpected monitor'); }, engineSockets() {},
+    login(plan) { checked = plan; },
+  });
+  assert.deepEqual({ command: checked.command, config: checked.env.CLAUDE_CONFIG_DIR },
+    { command: actual.command, config: actual.env.CLAUDE_CONFIG_DIR });
+});
+for (const task of [
+  { name: 'unsupported-browser', browser: 'helium', surface: 'claude-in-chrome' },
+  { name: 'unsupported-client', browser: 'chrome', surface: 'codex-agent' },
+]) test(`unsupported pair skips all preflight admission: ${task.name}`, async () => {
+  const calls = [];
+  await fowlPreflight({ tasks: selectedTasks([task], {}), model: 'opus', world: true, home: '/fixture' }, {
+    spend() { calls.push('spend'); }, engineSockets() { calls.push('engine'); }, login() { calls.push('login'); },
+    fowlSocket(browser) { calls.push(browser); throw Error('stale socket for unsupported pair'); },
+  });
+  assert.deepEqual(calls, []);
+});
+test('unsupported API arms do not change funding or socket admission for a runnable account task', async () => {
+  const tasks = [{ name: 'login', browser: 'chrome', surface: 'claude-cu' },
+    { name: 'unsupported', browser: 'native', surface: 'browser-use' },
+    { name: 'unsupported-device', browser: 'helium', surface: 'claude-in-chrome' }];
+  const calls = [];
+  await fowlPreflight({ tasks, model: 'haiku', world: true, home: '/fixture' }, {
+    spend() { assert.fail('unsupported API arm cannot require funding'); },
+    fowlSocket(browser) { calls.push(browser); }, engineSockets() { assert.fail('no engine task'); },
+    login(plan) { calls.push(plan.env.CLAUDE_CONFIG_DIR); },
+  });
+  assert.deepEqual(calls, ['chrome', '/fixture/.config/sleight-bench/world/arms/claude-cu/claude']);
+  assert.equal(tasks.length, 3, 'runner must still receive unsupported tasks to write their rows');
+});
 test('login status uses the exact arm config and a credential-free environment, without a model call', () => {
   let checked = false;
   assertLogin({ command: '/arm/claude', env: { PATH: '/bin', HOME: '/owner', CLAUDE_CONFIG_DIR: config,

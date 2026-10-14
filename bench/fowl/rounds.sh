@@ -34,11 +34,7 @@ fi
 # from $190, and add each round's cost to the ledger.
 SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
 # Task overrides determine whether any arm needs the API key. Computer use always uses its login.
-SURFACE="${SURFACE:-fowlbrowser}"
-SURFACES="$SURFACE"
-if [ -n "${TASKS:-}" ]; then
-  SURFACES="$(node -e 'const tasks=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const [only,gui,remote]=process.argv.slice(3);process.stdout.write([...new Set(tasks.filter(t=>(!only||only.split(",").includes(t.name))&&(gui||remote||!t.takeover)).map(t=>t.surface??process.argv[2]))].join("\n"))' "$TASKS" "$SURFACE" "${ONLY:-}" "${GUI:-}" "${REMOTE:-}")"
-fi
+SURFACES="$(node "$REPO/bench/fowl/preflight.mjs" --funding-surfaces "$@")"
 if [ -z "$SURFACES" ] || [ "$SURFACES" = claude-cu ]; then
   AUTH=account; KEY=""
 elif echo "$SURFACES" | grep -qx browser-use; then
