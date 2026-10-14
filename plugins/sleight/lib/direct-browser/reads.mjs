@@ -308,7 +308,10 @@ export class BrowserReads {
     const started = performance.now(), deadline = started + this.#timeout;
     try {
       if (!Number.isFinite(maxBytes) || maxBytes < 700 || (query !== undefined && (typeof query !== 'string' || query.length > 512))) throw Error('Invalid read request');
-      maxBytes = Math.min(Math.floor(maxBytes), MAX_BYTES);
+      // The frontend carries the observation both at the top level and in its
+      // proved prefix. Reserve both copies plus receipt/cursor space so a dense
+      // default read delivers a page instead of an output-budget omission.
+      maxBytes = Math.max(700, Math.floor(Math.min(maxBytes, MAX_BYTES) / 2) - 512);
       let binding = ref ? this.resolve(ref) : null;
       const page = cursor ? this.#pages.get(cursor) : null;
       if (cursor && !page) throw Error('Cursor stale or unavailable');

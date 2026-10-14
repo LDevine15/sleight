@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { createScopedAdapter } from '../plugins/sleight/lib/direct-browser/scoped-adapter.mjs';
 import { createBroker } from '../plugins/sleight/lib/direct-browser/broker.mjs';
 import { createAuthority, createTransportAuthority } from '../plugins/sleight/lib/direct-browser/authority.mjs';
+import { createFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
 
 // Before the production port this exercises the actual reviewed prototype.
 const production = process.env.SLEIGHT_P2_BASELINE !== '1' && existsSync(new URL('../plugins/sleight/lib/direct-browser/reads.mjs', import.meta.url));
@@ -38,7 +39,7 @@ function fixture(t, options = {}) {
     } }, { get(obj, key) { if (key in obj || typeof key === 'symbol' || key === 'then') return obj[key]; throw Error('Unsupported fake member ' + key); } });
   const helper = { version: 1, source: String(inspectControl), sha256: createHash('sha256').update(String(inspectControl)).digest('hex'), parameters: [] };
   const adapter = createScopedAdapter({ session: raw, checkLease: () => live, helpers: fixedReadInspectors ?? { 'control-state': helper },
-    nodeBinding: id => [1, 2, 3, 4].includes(id) ? { ...lease, backendNodeId: id } : null });
+    nodeBinding: id => (options.backendNodes ?? [1, 2, 3, 4]).includes(id) ? { ...lease, backendNodeId: id } : null });
   const reader = new BrowserReads({ identity: production ? identity : legacy, authorize: () => options.allow !== false, timeoutMs: 200,
     ...(options.reader ?? {}) });
   reader.addFrame({ session: adapter.forLease(lease), frameId: identity.frame, document: 1, target: identity.target });
@@ -160,4 +161,47 @@ test('shallow closed-root controls share the delivered ref namespace and retain 
   assert.ok(control); assert.equal(control.state.checked, false); assert.equal(result.complete, false);
   assert.equal(f.reader.acknowledge(result.observation), true);
   assert.equal(f.reader.resolve(control.ref).backendNodeId, 4);
+});
+
+for (const budget of [undefined, 8000, 64000]) test(`dense read fits the whole frontend budget ${budget ?? 'default'} and paginates delivered refs`, async t => {
+  const backendNodes = Array.from({ length: 100 }, (_, i) => i + 1);
+  const f = fixture(t, { backendNodes, dom: { backendNodeId: 1, nodeType: 9,
+    children: backendNodes.slice(1).map(backendNodeId => ({ backendNodeId, nodeType: 1, childNodeCount: 0 })) } });
+  f.nodes.splice(0, f.nodes.length, ...backendNodes.map(id => ({ nodeId: String(id), backendDOMNodeId: id,
+    role: { value: id === 1 ? 'RootWebArea' : 'button' }, name: { value: `Row ${id} ` + '選択🧪'.repeat(35) },
+    childIds: id === 1 ? backendNodes.slice(1).map(String) : [] })));
+  const proof = {}, delivered = [];
+  let cursor;
+  const frontend = await createFrontend({ proof, verifyOptIn: value => value === proof, packageCurrent: () => true,
+    status: () => 'connected', redact: value => value, endSession: () => ({ revoked: true, cleanup: [] }),
+    onDelivered({ observation }) { delivered.push(observation); return f.reader.acknowledge(observation.observation); },
+    client: { async request(frame) {
+      // The production semantic host reserves its cursor space within 11 KB.
+      const observation = await f.reader.read({ maxBytes: Math.min(frame.args.max_bytes ?? 12000, 11000) - 80,
+        ...(cursor ? { cursor } : {}) });
+      cursor = observation.cursor;
+      return { effect: 'verified', completed: 1, observation };
+    } } });
+  t.after(() => frontend.end());
+  const seen = new Set();
+  for (let page = 0; page < 100; page++) {
+    const result = await frontend.call({ name: 'browser_read', arguments: { tab: 't1',
+      ...(budget === undefined ? {} : { max_bytes: budget }) } });
+    assert.equal(result.error, undefined);
+    assert.notEqual(result.observation.omitted, true, 'budget must preserve rows instead of withholding the whole read');
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) <= (budget ?? 12000));
+    assert.ok(result.observation.data.length > 0);
+    for (const row of result.observation.data) {
+      assert.throws(() => f.reader.resolve(row.ref), /stale/);
+      assert.equal(seen.has(row.ref), false);
+    }
+    assert.equal(frontend.delivered(result), true);
+    for (const row of result.observation.data) {
+      seen.add(row.ref); assert.ok(f.reader.resolve(row.ref));
+    }
+    if (!cursor) break;
+    assert.equal(result.observation.complete, false);
+  }
+  assert.equal(seen.size, 100);
+  assert.equal(delivered.at(-1).complete, true);
 });
