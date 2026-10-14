@@ -44,7 +44,9 @@ function installAliases(cua) {
         };
         if (name === 'keyboard' || name === 'mouse') return new Proxy({}, { get(_, action) {
           if (typeof action !== 'string' || action === 'then') return undefined;
-          const next = name === 'keyboard' ? 'tab.pressKey(null, key)' :
+          const next = name === 'keyboard' ?
+            action === 'press' ? 'tab.pressKey(null, key)' :
+              ['type', 'insertText'].includes(action) ? 'tab.typeText(null, text)' : 'tab.getAXState() and a documented tab action' :
             ['move', 'drag'].includes(action) ? 'sleight.dragTo(tab, from, to) for a drag' :
               action === 'click' ? 'tab.click(index) or locator.click()' : 'tab.getAXState() and a documented tab action';
           return unsupported(`${kind === 'tab' ? 'tab' : 'tab.' + kind}.${name}.${action}`, next);
@@ -62,9 +64,13 @@ function installAliases(cua) {
           boundingBox: 'locator.evaluate(el => el.getBoundingClientRect())',
           drag: 'sleight.dragTo(tab, locator, target)', move: 'sleight.dragTo(tab, locator, target)',
           typeText: 'locator.pressSequentially(text, options)',
-        } : kind === 'playwright' ? { waitForResponse: 'tab.playwright.waitForLoadState({ state: "load" }) to wait for page load' }
+          inputValue: 'locator.evaluate(el => el.value)', isChecked: 'locator.evaluate(el => el.checked)',
+          innerHTML: 'locator.evaluate(el => el.innerHTML)',
+          allInnerTexts: 'locator.evaluateAll(els => els.map(el => el.innerText))',
+        } : kind === 'playwright' ? { waitForResponse: 'tab.playwright.waitForLoadState({ state: "load" }) to wait for page load',
+          getAXState: 'tab.getAXState()', readState: 'tab.getAXState()' }
           : { getNetworkActivity: 'tab.playwright.waitForLoadState({ state: "load" }) to wait for page load' };
-        return hints[name] ? unsupported(`${kind}.${name}`, hints[name]) : undefined;
+        return Object.hasOwn(hints, name) ? unsupported(`${kind === 'playwright' ? 'tab.playwright' : kind}.${name}`, hints[name]) : undefined;
       } });
       wrapped.set(raw, proxy); state.raw.set(proxy, raw); state.owners.set(proxy, tab);
       return proxy;
@@ -80,9 +86,10 @@ function installAliases(cua) {
         return object(raw.playwright, 'playwright')[name](...args);
       };
       const hints = { readState: 'tab.getAXState()', readDOMState: 'tab.playwright.domSnapshot()',
+        getDOMSnapshot: 'tab.playwright.domSnapshot()', readDOM: 'tab.playwright.domSnapshot()',
         waitForLoad: 'tab.playwright.waitForLoadState({ state: "load" })' };
       if (name === 'keyboard' || name === 'mouse') return object({}, 'tab')[name];
-      return hints[name] ? unsupported(`tab.${name}`, hints[name]) : undefined;
+      return Object.hasOwn(hints, name) ? unsupported(`tab.${name}`, hints[name]) : undefined;
     } });
     state.tabs.set(tab, proxy); state.raw.set(proxy, tab);
     return proxy;
