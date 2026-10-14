@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createScopedAdapter } from '../plugins/sleight/lib/direct-browser/scoped-adapter.mjs';
 import { createFormSession, formInspectors, fixedFormInspectors } from '../plugins/sleight/lib/direct-browser/forms.mjs';
 import { RefMap } from '../plugins/sleight/lib/direct-browser/refs.mjs';
+import { runInNewContext } from 'node:vm';
 
 const identity = { browserIncarnation: 'closed-fixture', brokerEpoch: 1, clientSession: 'client', turn: 'turn',
   leaseGeneration: 1, target: 'target', frame: 'frame', document: 1, origin: 'https://fixture.invalid' };
@@ -18,6 +19,30 @@ const button = { backendNodeId: 6, nodeType: 1, nodeName: 'BUTTON', localName: '
   childNodeCount: 0, attributes: ['type', 'button', 'role', 'switch', 'aria-label', 'Two-factor authentication', 'aria-checked', 'false'] };
 const visible = { connected: true, visible: true, enabled: true, editable: true, readonly: false,
   hit: true, frameLocal: false, rect: { x: 20, y: 20, width: 46, height: 28 } };
+for (const mode of ['closed', 'nested-closed', 'outer-overlay', 'inner-overlay'])
+  test(`actual inspector hit testing preserves ${mode} boundaries`, () => {
+    const context = { source: fixedFormInspectors['form-state'].source, mode };
+    const state = runInNewContext(`
+      class Element {
+        localName = 'div'; isConnected = true; textContent = ''; parentNode = null;
+        getAttribute(name) { return name === 'role' ? 'switch' : name === 'aria-checked' ? 'false' : null; }
+        getBoundingClientRect() { return { x: 20, y: 20, width: 46, height: 28 }; }
+        matches() { return false; } closest() { return null; } getRootNode() { return document; }
+      }
+      class HTMLInputElement {} class HTMLTextAreaElement {} class HTMLSelectElement {}
+      class HTMLButtonElement {} class HTMLOptionElement {}
+      const window = {}; window.top = window;
+      const getComputedStyle = () => ({ visibility: 'visible', display: 'block' });
+      const host = new Element(), innerHost = new Element(), target = new Element(), overlay = new Element();
+      const document = { activeElement: null, elementFromPoint: () => mode === 'outer-overlay' ? overlay : host };
+      const outer = { host, elementFromPoint: () => mode === 'inner-overlay' ? overlay : mode === 'nested-closed' ? innerHost : target };
+      innerHost.getRootNode = () => outer;
+      const inner = { host: innerHost, elementFromPoint: () => target };
+      target.getRootNode = () => mode === 'nested-closed' ? inner : outer;
+      eval('(' + source + ')').call(target, '');
+    `, context);
+    assert.equal(state.hit === true, ['closed', 'nested-closed'].includes(mode));
+  });
 
 // The cached settings.html builds STYLE + BUTTON in a closed fragment. Chromium's
 // unpierced host description reports the fragment's count without its children.

@@ -66,6 +66,16 @@ function formState(expected) {
     const next = hit.shadowRoot.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     if (!next || next === hit) break; hit = next;
   }
+  // The document reports a closed root's host. Only descend through the
+  // checked element's own root chain when the outer hit is that exact host.
+  // An overlay in the document or any inner root must still fail the hit.
+  const roots = [], seenRoots = new Set();
+  for (let root = el.getRootNode(); root?.host; root = root.host.getRootNode()) {
+    if (seenRoots.has(root) || roots.length >= 8) return { ...state, connected: false };
+    seenRoots.add(root); roots.unshift(root);
+  }
+  for (const root of roots) if (hit === root.host && typeof root.elementFromPoint === 'function')
+    hit = root.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
   for (let node = hit; node; node = node.parentNode ?? node.getRootNode()?.host) if (node === el) { state.hit = true; break; }
   // Page text can raise payment risk, never authorize a payment.
   const words = node => [Element.prototype.getAttribute.call(node, 'aria-label'), node.textContent,
