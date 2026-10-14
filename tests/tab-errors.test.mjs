@@ -325,8 +325,9 @@ test('native calls and native observations do not get tab recovery advice', t =>
 test('unmatched engine text is returned unchanged', () => {
   const src = 'noWindowsAvailable';
   assert.equal(rewriteTabError(src), src);
-  assert.equal(rewriteTabError('Browser Use rejected this action due to browser security policy.'),
-    'Browser Use rejected this action due to browser security policy.');
+  const refused = 'Browser Use rejected this action due to browser security policy.';
+  assert.ok(rewriteTabError(refused).startsWith(refused));
+  assert.match(rewriteTabError(refused), /Read-only inventory: await cua.listBrowsers/);
 });
 
 test('the relay rewrites a covered-element error and leaves a success containing the same words alone', t => {

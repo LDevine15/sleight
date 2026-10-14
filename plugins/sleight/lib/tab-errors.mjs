@@ -63,7 +63,14 @@ export function rewriteTabError(text, { read = false } = {}) {
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
     out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties.');
   }
-  return out.join('\n');
+  const rewritten = out.join('\n');
+  if (/^(?:Error: )?Browser Use rejected this action due to browser security policy\.(?:\n|$)/.test(text)) {
+    return rewritten + '\nPermission or security policy refused this operation. Keep the action stopped. The user must decide whether to continue with an allowed operation. Do not retry or change permissions. Read-only inventory: await cua.listBrowsers().';
+  }
+  if (/^(?:Error: )?[\w -]{1,40} requested permissions to use a tool, but you haven't granted it yet\.(?:\n|$)/.test(text)) {
+    return rewritten + '\nTool permission has not been granted. Keep the action stopped. The user must decide whether to grant permission in a later request.';
+  }
+  return rewritten;
 }
 
 export function evaluateWriteAdvice(text) {
