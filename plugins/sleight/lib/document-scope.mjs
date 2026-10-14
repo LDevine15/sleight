@@ -585,7 +585,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // cannot turn an ordinary button into a confirming control.
           const button = /^button(?: \\([^)]*\\))* (.*)$/i.exec(line ?? '')?.[1];
           const label = /(?:^|, )Description: (.*?)(?=, (?:Value|ID|Help|Secondary Actions): |$)/.exec(button ?? '')?.[1] ??
-            button?.split(/, (?:Description|Value|ID|Help|Secondary Actions): /)[0];
+            button?.split(/(?:^|, )(?:Description|Value|ID|Help|Secondary Actions): /)[0];
           const opens = name === 'click' && (line === undefined || /^(?:menu button|pop up button|menu bar item|menu item|link|tab|disclosure triangle|close button)(?: |,|$)/i.test(line) ||
             /(?:…|\\.\\.\\.)$/.test(label ?? '') || /^(?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(label ?? '')) ||
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&

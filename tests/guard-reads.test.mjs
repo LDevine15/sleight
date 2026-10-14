@@ -340,6 +340,18 @@ for (const line of ['button Description: Mode, Help: Delete the last digit, ID: 
   });
 }
 
+for (const field of ['Help', 'Secondary Actions', 'ID', 'Value']) {
+  for (const value of ['Delete', 'Browse…', 'Open...']) {
+    test(`leading ${field} metadata never supplies an opener label: ${value}`, async () => {
+      const line = `button ${field}: ${value}${field === 'ID' ? '' : ', ID: mode'}`;
+      const f = fixture({ strict: true, current: () => tree(expected, '\t1 ' + line + '\n\t2 button Second') });
+      f.context.cua.listApps = () => { assert.fail('bound clicks must not request an inventory'); };
+      await f.run('await app.click(1); await app.click(2);', { bind: true });
+      assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+    });
+  }
+}
+
 test('setValue invalidates binding before the next element action', async () => {
   let changed = false;
   const f = fixture({ current: () => tree(expected, changed ? '\t1 text field Editor\n\t2 button Other' : '\t1 text field Editor\n\t2 button Second'),
