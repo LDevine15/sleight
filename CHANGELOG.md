@@ -1,74 +1,173 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 (TODO: release date)
 
-- `blocked_app` is gone. When the engine refuses a terminal or OpenAI's app, the result gives the one
-  setting that lifts the refusal (`ComputerUseAllowForbiddenTargets`), which only the user turns on.
-- With that setting on, terminals and OpenAI's apps get the same approval card as any app, Always
-  allow included, with one line saying the app could be dangerous.
-- When the engine's helper crashes during a read ("native pipe closed before response"), sleight
-  sends the read again once, 2 s later, so Claude doesn't spend a turn on it. A call with actions is
-  never resent, and Claude hears that its actions may or may not have run.
-- An app that lives only in the menu bar (OpenUsage, for one) and times out in `getApp` now gets the
-  `menu_bar` route on the first timeout. Before, Claude retried, and the second timeout started
-  stuck-app recovery that could advise quitting and reopening an app that answered Accessibility.
-- Before telling the user an app is hung, sleight probes it again with a 3 s Accessibility deadline
-  instead of 0.5 s, so a loaded Mac no longer gets an app called hung after one slow answer.
-- An action chained with `.then`, `.catch` or `.finally` and assigned or followed by more code is
-  refused like a bare un-awaited action, since its failure would end the engine's session.
-- Under the `SLEIGHT_RESULT_TRIM=1` A/B, a result over 25,000 characters drops runs of 20 or more
-  sibling rows in a list or outline, keeping selected rows, folders and rows that match the window
-  title or file name. A constructed 198-file folder went from 72,616 characters to under 25,000.
-- When the helper won't start and launchd still holds an old job for it, the result gives the
-  `launchctl remove` command for the user to run. sleight never runs it.
-- In Cursor and other MCP clients, approval prompts use the client's name (`cursor` shows as
-  Cursor) instead of Claude. The Claude Code text is unchanged.
-- `hover` refuses a window that crosses two displays, asking the user to move it onto one, since its
-  capture of that rectangle could include another app's pixels.
-- Recording from the desktop pane goes through a file instead of the mod's 4 MiB output limit, and
-  after a replay that acquired an app by window id, Refresh and the next prompt find that app.
-- Receipts scrub the owner's name in any letter case ("SMITH", "smith"), not only as written.
-- Tests that waited in real time (helper retries, process cleanup, the probe deadline) use mocked
-  clocks and stubs, so they no longer fail on a loaded Mac: 176 tests in 0.95 s.
-- On a window whose tree is only its chrome (a mirrored iPhone screen), `scroll` becomes a swipe
-  across the content, since the engine's scroll did nothing there.
-- `SLEIGHT_FIRST_CALL_BATCH=nosavestop`, for an A/B: the default wording without the instruction to
-  end a call after Cmd+S, saying instead that sleight waits for the sheet a shortcut opens.
-- `SLEIGHT_LAUNCH_REREAD=1`, for an A/B: when a launch returns a tree of 1 to 19 elements, sleight
-  reads once more after 2.5 s and keeps the fuller tree only if it shows the same window.
-- A drag of text whose formatting differs from its paragraph's (a bold word in plain text) takes the
-  posted or foreground path instead of the background Accessibility write, which came out plain in
-  3/3 trials. Plain text keeps the background path.
-- `drag` reads the window's elements through the Accessibility API with a 0.5 s deadline instead of
-  System Events, which took 9.4 s of an 11 to 14 s drag. A read that times out stops the drag before
-  anything is pressed, and a timeout after the drop reports the drop as unverified. Unit-tested; the
-  live timing is unmeasured.
-- The mod refuses Claude's file edits and common shell writes (redirections, `cp`, `mv`, `rm`, `sed -i`,
-  `plutil`, inline scripts that write) to the preapproved-apps file, which only the user changes.
-  Reads stay allowed. A path built at run time still gets past it.
-- A number the code reads itself in a call (a match over `getAXState` after a click) is checked
-  against that read, not the tree from before the call. sleight stopped those correct clicks in ZCode,
-  and Claude fell back to one action per call.
+Native actions read the app less, and browsers get an opt-in turbo path beside the engine's tools.
+In the guard A/B on five native tasks (2026-10-14, Haiku 5.5 at high effort, three runs a side),
+the combined changes passed 15/15 against 14/15 and cut summed median tool time from 49.9 s to 32.5 s.
+After safety fixes, a follow-up passed 14/14 with one skipped run, at 43.9 s of tool time and
+11.6 s of guard reads. [Guard measurements](docs/benchmarks/2026-10-14-guard-ab.md).
+
+On FowlBrowser's 13 browser tasks in both orders (2026-10-13, Haiku 5.5 at high effort),
+sleight passed 23/26 and then 21/26 against FowlBrowser's 26/26 each time, taking 1,206 s and
+1,517 s against 677 s and 711 s. Every miss was a form. These rounds predate production turbo.
+[Browser measurements](docs/benchmarks/2026-10-13-gate.md).
+TODO: gate measurements for turbo in production. TODO: full release pass result.
+
+### Native apps
+
+- The guard reads less by default. A call's first key, text or coordinate action skips its read
+  only after a passed focus check. Typing after an edit shortcut or a field click skips another read
+  while text is being edited. Element actions use the call's first read until an opener or explicit
+  read replaces it. Confirming buttons count as openers. The guard still reads for the first element
+  lookup, after a panel opener and at the end of an acting call. On Calculator, numbers from one
+  read hit the right buttons 10/10, against 0/10 with a read after AC that moved all 6 later numbers.
+  `SLEIGHT_GUARD=careful` reads before every action. Document scope and change review keep their reads.
 - When the window renumbers between Claude's read and a call with one element number, and the line
-  Claude saw (unique when it saw it) is now on exactly one element, the action goes there with a note
-  instead of stopping. A one-line shift in ZCode's sidebar cost a turn.
-- A browser tab's tree in a result is capped, with a note naming how many rows were left out and how
-  to read them. The engine's docs and a native window's tree in the same result are never cut. On a
-  saved Wikipedia read the tree kept 398 of 4,606 rows.
-- `getAXState({ emit: false })` and its screenshot variants leave that read's tree out of the result,
-  and sleight still refuses an element number Claude could only have taken from a tree it never saw.
-- `sleight.dragTo(tab, from, to)` drags between two elements in a browser tab so the page sees the drop. The
-  engine's `tab.drag` aimed at a target's center never dropped on an HTML5 list (0/14). On FowlBrowser's
-  settings form in Helium the task took 39 s instead of 313 s, and every `dragTo` call moved its item (7/7
-  in Helium and Chrome).
-- A call that writes text with `setValue` and then saves with Cmd+S in the same app is split at the save, and sleight
-  posts one Shift press to that app between the two, the fix for the save that hung after an Accessibility write. When
-  that press can't be sent, the call goes through unsplit as before, with a note.
-- A click that opens a sheet or dialog lets the rest of the call act on it, when the click itself opened it.
-- A browser tab's common engine errors get one more line: the cause, whether input was sent, and the next call to make:
-  a covered or stale element, a page dialog (with the right `accept` or `dismiss` for its kind), CDP timeouts, a lost
-  debugger, a stalled download, and a `TypeError` from code in the read-only page scope. The original text stays.
-- A tab read that meets "Debugger unattached" is sent once more after 1 s. Actions, tab creation and mixed calls never are.
+  Claude saw is now on exactly one element, the action goes there with a note instead of stopping.
+  A number the code reads itself in a call is checked against that read. Both previously stopped
+  correct clicks in recorded runs.
+- A click that opens a new sheet or dialog in the same app lets the rest of the call act on it.
+- A call that writes with `setValue` and then saves with Cmd+S in the same app is split at the save,
+  with one Shift press posted to the app between the two. That press stops the save hang after an
+  Accessibility write. When the press can't be sent, the call goes
+  through unsplit with a note.
+- When acquiring an app launches it, sleight puts your previous front app back in front. A click
+  during the launch cancels that, and typing doesn't. `SLEIGHT_FRONT_RESTORE=0` turns it off.
+- When the engine's helper crashes during a read ("native pipe closed before response"), sleight
+  sends the read again once, 2 s later. A call with actions is never resent.
+- An app that lives only in the menu bar gets the `menu_bar` route on its first `getApp` timeout,
+  without stuck-app advice to quit an app that answers Accessibility.
+- Before telling you an app is hung, sleight probes it again with a 3 s Accessibility deadline instead
+  of 0.5 s. At a load average of 101, apps missed 0.5 s in 5 of 5 probes and answered within 0.52 s.
+- When the helper won't start because launchd still holds its old job, the result gives the
+  `launchctl remove` command for you to run. sleight never runs it.
+- An action chained with `.then`, `.catch` or `.finally` and followed by more code is refused
+  like a bare unawaited action, since its failure would end the engine's session.
+- On a window whose tree is only its chrome (a mirrored iPhone screen), `scroll` becomes a swipe
+  across the content. The engine's scroll left the list unmoved in 3 of 3 tries.
+- A drag of text formatted unlike its paragraph (a bold word in plain text) takes the posted or
+  foreground path, since the Accessibility write came out plain in 3/3 trials. `drag` reads the
+  window through Accessibility with a 0.5 s deadline instead of System Events, which took 9.4 s of an
+  11 to 14 s drag. The live timing of both changes is unmeasured.
+- `hover` refuses a window that spans two displays, since its capture could include another app.
+- Replay and demonstration recording no longer report unconfirmed cleanup when their processes have
+  exited but macOS still answers EPERM for the group. A group with a live member still reports it.
+
+### Browsers
+
+- `sleight.fillForm(tab, fields)` fills a form in one call and never submits. It reports the count
+  filled and each field that failed, takes multi-select options by label or value, refuses read-only
+  fields (naming the page's picker when there is one) and reads switches by `aria-checked`. Forms
+  remain the weak spot: form runs passed 13 of 24 across the two gate rounds and one targeted check,
+  while every other task passed 36/36 (2026-10-13, before production turbo).
+- `sleight.dragTo(tab, from, to)` drags between two elements so the page sees the drop. The engine's
+  `tab.drag` never dropped on an HTML5 list (0/14). On FowlBrowser's settings form the task took
+  39 s instead of 313 s (2026-10-12).
+- `sleight.pickFromList(tab, list, text)` scrolls a virtualized list, prefers an exact row and reads
+  the selection back. On an unsorted list it can pick a prefix match at the scroll cap before
+  reaching a later exact row.
+- `sleight.reorder(tab, list, order)` drags a list into order and reads it back. Lists take an exact
+  accessible name, a CSS selector or a locator, and an ambiguous name is refused.
+- Common Playwright calls on a tab go to `tab.playwright`, and a locator's `dragTo` goes to
+  `sleight.dragTo`, with one note a session.
+- Browser calls no longer take a native window lease.
+- A link or GET form that targets a new tab or window opens as a background tab. Inline handlers,
+  links that need `window.opener` and popups a script opens keep the page's own click and can still
+  take focus: 18 focus events in 26 runs, against 0 for FowlBrowser (2026-10-13).
+- An explicit turn end closes finished tabs the session created, after checking each one's identity.
+  It keeps tabs still loading, edited forms, tabs handed to you and deliverables. Tabs left open in
+  a 26-run round fell from 74 to 41.
+- After a kernel reset, browser and tab handles the session opened or read come back from their own
+  saved identity.
+- When a call opens a tab and then fails, the error gives the tab and the call that gets it back.
+- Common tab errors get one more line with the cause, whether input was sent and the next call, for
+  covered or stale elements, page dialogs, CDP timeouts, a lost
+  debugger, stalled downloads and a `TypeError` from the read-only page scope.
+- A tab read that meets "Debugger unattached" is sent once more after 1 s. Actions, tab creation and
+  mixed calls never are.
+- A page write inside a read-only `evaluate` is refused before it reaches the engine, with the call
+  that does it. A recorded replay refused 19 of 19 writes and allowed 89 reads. DOM clicks inside
+  `evaluate` no longer count as unawaited engine actions. Real unawaited actions remain refused.
+- A submit-like click or Enter that leaves the page unchanged warns that a retry may submit twice.
+  Ordinary clicks don't add engine reads.
+- A tab's tree in a result is capped, dialogs and focused rows first, with a note on reading the
+  rest. The browser cap leaves native trees and the engine's docs unchanged.
+- `getAXState({ emit: false })` leaves that read's tree out of the result. Its element numbers stay
+  unavailable for input.
+- First results are smaller. Browser-first sessions defer the native API reference until needed.
+  An offline replay saved 309,759 characters over 39 recorded runs. A first result still over
+  45,000 characters also defers the browser reference while retaining confirmations policy
+  and Browser Safety.
+- A call that ends in an unprinted expression says how to print it (23 of 34 recorded cases).
+  `SLEIGHT_AUTOPRINT=1` prints a pure final expression.
+- The engine's JavaScript session is prepared before the first call. With 13 sessions starting
+  together, an empty first call took 34 and 26 ms on average against 804 and 1,160 ms without it.
+  `SLEIGHT_WARM_REPL=0` turns it off.
+- Browser discovery binds to the chosen browser's verified backend instead of probing every socket.
+  Startup caches the engine's first tool list by version. The cache's hit rate is unmeasured.
+- `SLEIGHT_ENGINE_DOCS=lean` cuts the reference from 11,897 to 9,393 characters, and `min` sends 672
+  with the reference on demand. Both are opt-in.
+
+### Approvals and safety
+
+- `blocked_app` is gone. When the engine refuses a terminal or OpenAI's app, the result gives the
+  setting that lifts the refusal (`ComputerUseAllowForbiddenTargets`), which only you turn on. With
+  it on, those apps get the usual approval card with one line saying the app could be dangerous.
+- When your own message names what to pay and with what, that payment counts as confirmed, including
+  the page's confirm dialog for the same item, amount and payee. Any other payment asks.
+  `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking.
+- In Cursor and other MCP clients, approval prompts use the client's name instead of Claude.
+- The mod refuses Claude's file edits and common shell writes to the preapproved-apps file. Reads
+  stay allowed. A path built at run time still gets past it.
+
+### Pane, replay and receipts
+
+- Recording from the pane goes through a file instead of the mod's 4 MiB output limit. After a
+  replay that acquired an app by window ID, Refresh and the next prompt find that app.
+- Receipts scrub your name in any letter case.
+
+### Turbo
+
+- Turbo is wired into the installed plugin, opt-in, with `browser_open`, `browser_read`,
+  `browser_act` and `browser_fill`. The engine stays the default. With turbo on, Claude can also
+  choose the engine's browser tools, including mobile viewport control. Each path keeps separate tabs
+  and refs. A safety refusal or an uncertain action must not be retried through the other path.
+- Turbo connects to the selected browser through its remote-debugging consent, without an extension.
+  The operator-owned `~/Library/Application Support/sleight/turbo.json` binds the accepted package
+  and selected browser profile. Missing or disabled configuration leaves turbo off. Installed setup
+  and native consent still need qualification before release.
+- Page content never supplies instructions or permission. Payments follow the rule above. Before
+  retrying a submit with an unknown effect, Claude must read fresh state. Input checks the target
+  element, and incomplete page sensing does not alone block it. Pausing, losing consent or changing
+  the package stops input. Unresolved actions retain their tabs for review.
+- Turbo includes the whole `playwright-core` 1.64.0 package with file hashes and license notices,
+  loaded only when enabled. Its two native helpers compile from hash-checked source on the user's
+  Mac at first use, requiring Apple's command-line tools. A failed compiler leaves the engine path
+  available. Native apps keep the engine path.
+- The nine-task prototype passed 4/9 in its last round, with all four forms failing. It skipped
+  production consent and the broker, so it doesn't support a claim about production speed or accuracy.
+  [Prototype measurements](docs/benchmarks/2026-10-14-turbo-prototype.md).
+  TODO: qualify installed native approval and cleanup, then add the gate results.
+
+### A/B switches, off by default
+
+- `SLEIGHT_RESULT_TRIM=1` drops runs of 20 or more sibling rows from a result over 25,000 characters,
+  keeping selected rows, folders and title matches. A constructed 198-file folder went from 72,616
+  characters to under 25,000.
+- `SLEIGHT_LAUNCH_REREAD=1` reads a just-launched app once more after 2.5 s when its tree has 1 to 19
+  elements, and keeps the fuller tree only for the same window.
+- `SLEIGHT_FIRST_CALL_BATCH=nosavestop` drops the first-call advice to end a call after Cmd+S.
+- `SLEIGHT_LEAN_CALLS=1` ends native actions with compact changes. After its cache fix, the rerun
+  passed 11/13 against 12/14 and took 220.8 s against 194.4 s (summed medians, five tasks).
+  It stays off: no measured win. [Lean-call measurements](docs/benchmarks/2026-10-14-lean-calls-ab.md).
+
+### Benchmark
+
+- Before each Chess arm starts, earlier benchmark task folders are archived without deleting their
+  games or traces. Whether a remembered Save location falls back correctly needs a live check.
+- Runs use isolated Claude configuration, record the resolved model and price usage from token
+  counts. Tab inventories have deadlines. Runner checks distinguish unavailable evidence from a pass.
 
 ## 1.2.5 (2026-10-11)
 

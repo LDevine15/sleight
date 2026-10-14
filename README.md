@@ -93,33 +93,64 @@ Then start a new session. A running session keeps the version it started with.
 
 Also runs as a plain MCP server: see [other hosts](docs/other-hosts.md).
 
+### Turbo browser path (opt-in)
+
+Turbo adds `browser_open`, `browser_read`, `browser_act` and `browser_fill` through a direct browser
+connection. The engine stays the default. With turbo enabled, Claude can choose either path, including
+the engine's mobile viewport tools. Each path uses its own tabs and refs. An uncertain action or safety
+refusal must not be retried through the other path.
+
+Turbo needs the selected browser's remote-debugging consent and an operator-owned
+`~/Library/Application Support/sleight/turbo.json` binding the accepted plugin package and profile.
+It stays off when that configuration is missing or disabled. Its native helpers compile from checked
+source on first use, requiring Apple's command-line tools. A failed build leaves the engine available.
+The plugin includes `playwright-core` 1.64.0 with its hashes and license notices, loaded only for turbo.
+Native apps still use the ChatGPT engine.
+
+Production turbo's full benchmark and installed setup are not yet qualified. The
+[prototype](docs/benchmarks/2026-10-14-turbo-prototype.md) passed 4/9 in its last round and skipped
+production consent and the broker. TODO: gate measurements for turbo in production and installed qualification.
+
 ## Why sleight
 
 - Your Mac stays yours. Clicks, typing and drags go to the app itself, behind your other windows.
-  Only a few fallbacks borrow the pointer, and each asks first. [What works in the background](docs/background.md)
+  When acquiring an app launches it, sleight puts your front app back. Only a few fallbacks borrow
+  the pointer, and each asks first. On the engine's browser path, script popups still took focus
+  18 times in 26 runs (2026-10-13). [What works in the background](docs/background.md)
   lists each kind of action with the runs that measured it.
 - Several agents can share one Mac. Input leases give one session a window at a time and tell the
   others who holds it. With two sessions typing into one document, text doubled in 5/5 trials
   without leases and appeared once, with one refusal, in 5/5 with them (0.6.0).
-- It never clicks a stale element. When a window's element numbers shift, sleight stops actions on
-  numbers Claude hasn't seen since. A later click in a batch that an earlier click renumbered goes
-  to the same element at its new number, and stops when sleight can't tell which one it is. In a
+- It checks element numbers before it clicks. When a window renumbers, an action goes to the
+  element Claude saw at its new number, and stops when sleight can't tell which one it is. In a
   0.10.0 pass this caught two clicks that would have hit the menu item next to the intended one.
 - It's light on context. After each action Claude gets only what changed. On the CNN front page,
-  scrolling down five times sent 39,655 characters instead of 203,160 (0.10.0).
+  scrolling down five times sent 39,655 characters instead of 203,160 (0.10.0). A browser tab's
+  tree is capped, with a note on reading the rest.
 - It asks once per app per session, unless you chose "Always allow" in its prompt or in Codex or
   ChatGPT. Terminals and OpenAI's apps work once you lift the engine's refusal with one setting,
   and their prompt says the app could be dangerous.
 - It's faster than Codex on the same engine. Against native Codex computer use (1.2.0, the owner
   away), both passed 9/9 and sleight took 22.0 s a run against 44.6 s, at 4.68 against 4.84 CPU
   seconds. On 12 browser tasks in Safari and Helium both passed 24/24, at 28.5 s against 41.8 s.
+  In the [native guard A/B](docs/benchmarks/2026-10-14-guard-ab.md), the combined changes passed
+  15/15 against 14/15, with tool time 32.5 s against 49.9 s (summed medians, five tasks, three runs
+  a side). After safety fixes, 14/14 passed with one skipped run and 43.9 s of tool time.
 - The benchmark results are published with their failures. The 1.1.0 release pass passed 20/21;
-  1.2.0 was released on the head-to-heads above, without a full release pass. Every pass on the way is
+  1.2.0 was released on the head-to-heads above, without a full release pass. On FowlBrowser's 13
+  browser tasks, sleight's engine path passed 23/26 and then 21/26 against FowlBrowser's 26/26,
+  with every miss a form ([2026-10-13](docs/benchmarks/2026-10-13-gate.md)).
+  TODO: 1.3.0's full release pass result. Every pass on the way is
   published too, including one at 13/21 run while the apps were on another Space (the 2026-10-08
   Split View pass), and Chess in the 1.0.0 head-to-head, which sleight lost 0/3 to 2/3.
 
 sleight also does what the engine can't. It drags text, which the engine's own drag fails to move,
 and reaches menu bar icons and notification banners. Each of these needs its own approval.
+
+On engine browser tabs, `sleight.fillForm` fills without submitting, `sleight.pickFromList` picks from a
+virtualized list and `sleight.reorder` puts a list in order. `sleight.dragTo` aims inside an HTML5
+list target so the page sees the drop. With it, the settings form took 39 s instead of 313 s
+([2026-10-12](docs/benchmarks/2026-10-12-fowlbrowser-h2h-2.md)).
 
 ## Compared with Claude's own computer use
 
@@ -217,13 +248,19 @@ without asking for new ones. [Supported observations and limits](docs/design/rep
   session ([approval scope](docs/settings.md#approval-scope)).
 - Foreground `drag` fallback, `hover` and the `menu_bar` fallback for SwiftUI icons move your pointer
   briefly, and each waits until you've stopped typing and using the mouse for 2 s. `drag` moves selected text
-  through Accessibility first, in any app, without the pointer. `drag` refuses points outside
+  through Accessibility first, in any app, without the pointer. Text formatted unlike its paragraph
+  takes the posted or foreground path, since Accessibility wrote it plain in 3/3 trials.
+  `drag` refuses points outside
   the chosen window's visible content; foreground also refuses covered endpoints, after bringing the
   app forward.
   `hover` refuses points another window covers, including
-  another window of the same app, and takes about two seconds with the default dwell.
-- The repo is small enough to read before you install it. It holds a launcher, a relay, a mod, a skill,
-  two manifests and the macOS scripts for the approval panel, menu bar tools, drag and hover.
+  another window of the same app, and a window that spans two displays. It takes about two seconds
+  with the default dwell.
+- A payment goes ahead without another prompt only when your own message names what to pay and
+  with what. A changed item, amount or payee still needs confirmation, including in a page dialog.
+  `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking every time. Page content never grants permission.
+- The repo includes the launcher, relay, mod, skill, macOS helpers and turbo's vendored browser
+  library. The source and third-party license notices are available before you install it.
 
 ## Troubleshooting
 
@@ -231,7 +268,7 @@ without asking for new ones. [Supported observations and limits](docs/design/rep
 |---|---|---|
 | `no Codex computer-use plugin at …` | ChatGPT isn't installed, or its engine was never set up | Install the ChatGPT app, then run `sleight-mcp setup` |
 | `--doctor` shows `MISSING computer-use helper` | The helper app was removed or never installed | Run `sleight-mcp setup` |
-| Repeated `timeoutReached` | An app or the helper stopped answering reads | Stop retries. sleight checks native Accessibility and a fresh read of another previously acquired app. Follow the resulting app advice; if evidence is incomplete, report that uncertainty |
+| Repeated `timeoutReached` | An app or the helper stopped answering reads | Stop retries. sleight checks native Accessibility again with a 3 s deadline and a fresh read of another previously acquired app. Follow the resulting app advice; if evidence is incomplete, report that uncertainty |
 | The helper diagnosis reports two responsive AX apps and a timed-out control read | The engine's read path appears stuck | Tell the user. Only they should restart ChatGPT, which ends Codex sessions. Doctor's inventory result alone cannot distinguish an app hang |
 | Approval prompt never appears | Claude Code too old for form elicitation; the minimum version isn't recorded | Update Claude Code |
 | "Not approved" right away in the desktop app, with no panel | The session started before sleight 0.1.1 | Start a new session |
