@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
-import { createFormsFixtureHandler, finishTravelFixture } from './fixtures/direct-browser-forms-fixture.mjs';
+import { createFormsFixtureHandler } from './fixtures/direct-browser-forms-fixture.mjs';
 
 const live = process.env.SLEIGHT_LIVE_DOM_TEST === '1';
 const cache = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser');
@@ -123,9 +123,14 @@ test('v3 real travel fills ordinary and dependent fields, chooses readonly dates
     for (let attempt = 0; attempt < 3 && !await f.page.locator(selector).count(); attempt++) await f.click('#next');
     await f.click(selector);
   }
-  const post = await finishTravelFixture(f);
-  assert.equal(post.path, '/submit/travel');
-  const firstAirport = JSON.parse(readFileSync(join(cache, 'test/forms/site/airports.json'), 'utf8'))[0].code;
+  await f.click('#to2');
+  await f.fill([['#country', 'Japan'], ['#city', 'Osaka']]);
+  const airport = JSON.parse(readFileSync(join(cache, 'test/forms/site/airports.json'), 'utf8'))[0];
+  await f.fill([['#airports', airport.name + ' ' + airport.code]]);
+  await f.click('#to3'); await f.click('#seatmap button[data-seat="1A"]');
+  await f.click('button[type="submit"]');
+  const post = await f.posted(); assert.equal(post.path, '/submit/travel');
+  const firstAirport = airport.code;
   assert.deepEqual(post.data, { reference: 'V5-TRAVEL', fullName: 'Example Traveler', email: 'traveler@example.invalid',
     checkIn: dates[0], checkOut: dates[1], adults: 1, children: 0, country: 'Japan', city: 'Osaka', airport: firstAirport, seat: '1A' });
 });
