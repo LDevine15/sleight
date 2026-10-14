@@ -210,9 +210,10 @@ export function createRootTargets({ session, current, timeoutMs = 1000 } = {}) {
       }
       record.nodes ??= new Set();
       const collect = (node, depth = 0) => {
-        if (!node || depth > 4 || record.nodes.size >= 4096 || node.frameId && node.frameId !== record.lease.frame) return;
+        if (!node || depth > 4 || record.nodes.size >= 4096 || node.frameId && node.frameId !== record.lease.frame && !['iframe', 'frame'].includes(node.localName)) return;
         const id = node.backendNodeId ?? node.backendDOMNodeId;
         if (Number.isSafeInteger(id) && id > 0) record.nodes.add(id);
+        if (['iframe', 'frame'].includes(node.localName)) return;
         for (const child of [...node.children ?? [], ...node.shadowRoots ?? []]) collect(child, depth + 1);
       };
       if (value.nodes) for (const node of value.nodes) collect(node);

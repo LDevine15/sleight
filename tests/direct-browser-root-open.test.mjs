@@ -323,3 +323,14 @@ test('pre-await observation fences prevent an old document response from binding
   assert.equal(f.opener.nodeBinding(12, fresh), null, 'a captured response fence is single use');
   assert.equal(f.opener.captureObservation('foreign'), null);
 });
+
+test('checkout iframe host is parent-owned while child content never gains a parent binding', async t => {
+  const f = await fixture(t), opened = await f.open(), lease = f.opener.leaseFor(opened.tab, f.binding);
+  f.opener.observeNodes(lease.cdpSessionId, 'DOM.getDocument', { root: { backendNodeId: 1, nodeType: 9,
+    children: [{ backendNodeId: 2, nodeType: 1, localName: 'iframe', frameId: 'payment',
+      children: [{ backendNodeId: 99, nodeType: 1 }], contentDocument: { backendNodeId: 100 } }] } });
+  assert.deepEqual(f.opener.nodeBinding(2, lease), { ...lease, backendNodeId: 2 });
+  assert.equal(f.opener.nodeBinding(99, lease), null); assert.equal(f.opener.nodeBinding(100, lease), null);
+  f.opener.observeNodes(lease.cdpSessionId, 'Accessibility.getPartialAXTree', { nodes: [{ backendDOMNodeId: 101, frameId: 'payment' }] });
+  assert.equal(f.opener.nodeBinding(101, lease), null);
+});

@@ -26,6 +26,54 @@ const fileTransfer = function(payloads) {
   this.dispatchEvent(new Event('change', { bubbles: true }));
   return { transferred: true, count: payloads.length };
 }.toString();
+// Closed HTML drag actuator for one observed list. It calls the page's exposed
+// drag/drop operations; it never rewrites DOM order or page model properties.
+export const reorderListSource = function(values) {
+  const list = this;
+  if (!(list instanceof Element) || !['ol', 'ul'].includes(list.localName) ||
+      !Array.isArray(values) || !values.length || values.length > 100 || new Set(values).size !== values.length)
+    return { effect: 'none' };
+  const children = () => Array.from(Object.getOwnPropertyDescriptor(Element.prototype, 'children').get.call(list));
+  const name = node => (Element.prototype.getAttribute.call(node, 'aria-label') ||
+    Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get.call(node) || '').trim();
+  const members = () => {
+    const nodes = children(), names = nodes.map(name);
+    if (nodes.length !== values.length || new Set(names).size !== names.length ||
+        values.some(v => !names.includes(v)) || nodes.some(n => n.localName !== 'li' ||
+          Element.prototype.getAttribute.call(n, 'draggable') !== 'true')) return null;
+    return nodes;
+  };
+  const checked = node => {
+    if (!list.isConnected || !node.isConnected || !children().includes(node) || node.matches(':disabled') ||
+        Element.prototype.getAttribute.call(node, 'aria-disabled') === 'true') return false;
+    const rect = Element.prototype.getBoundingClientRect.call(node), style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' &&
+      node.contains(node.getRootNode().elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+  };
+  let sent = false;
+  try {
+    for (let i = 0; i < values.length; i++) {
+      const nodes = members();
+      if (!nodes) return { effect: sent ? 'unknown' : 'none' };
+      if (name(nodes[i]) === values[i]) continue;
+      const from = nodes.find(n => name(n) === values[i]), to = nodes[i];
+      if (!checked(from) || !checked(to)) return { effect: sent ? 'unknown' : 'none' };
+      const transfer = new DataTransfer();
+      const emit = (node, type) => {
+        if (!checked(from) || !checked(to) || !members()?.includes(from) || !members()?.includes(to)) throw Error('target changed');
+        sent = true;
+        node.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: transfer }));
+      };
+      emit(from, 'dragstart'); emit(to, 'dragenter'); emit(to, 'dragover'); emit(to, 'drop');
+      // A drop may replace every item. Never dispatch a later event to a detached node.
+      if (from.isConnected && children().includes(from)) from.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
+      const after = members();
+      if (!after || name(after[i]) !== values[i]) return { effect: 'unknown' };
+    }
+    const after = members();
+    return { effect: after && after.every((n, i) => name(n) === values[i]) ? 'verified' : sent ? 'unknown' : 'none' };
+  } catch { return { effect: sent ? 'unknown' : 'none' }; }
+}.toString();
 const fields = (value, names) => {
   if (!value || Array.isArray(value) || Object.keys(value).some(k => !names.includes(k))) throw Error('SCOPED_COMMAND_DENIED');
 };
@@ -258,8 +306,8 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
               if (!raw || depth > 3 || ++count > 2048) throw Error('READ_BUDGET');
               node(raw.backendNodeId);
               const { contentDocument, importedDocument, templateContent, distributedNodes, pseudoElements, children, shadowRoots, ...metadata } = raw;
-              if (raw.frameId && raw.frameId !== lease.frame) throw Error('FOREIGN_FRAME');
-              return { ...metadata, ...(children ? { children: children.map(child => prune(child, depth + 1)) } : {}),
+              if (raw.frameId && raw.frameId !== lease.frame && !['iframe', 'frame'].includes(raw.localName)) throw Error('FOREIGN_FRAME');
+              return { ...metadata, ...(children && !['iframe', 'frame'].includes(raw.localName) ? { children: children.map(child => prune(child, depth + 1)) } : {}),
                 ...(shadowRoots ? { shadowRoots: shadowRoots.map(child => prune(child, depth + 1)) } : {}) };
             };
             if (method === 'DOM.describeNode' && root?.backendNodeId !== params.backendNodeId) throw Error('FOREIGN_NODE');
@@ -350,6 +398,19 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
           node(object.node); context(instance.context); check();
           if (Buffer.byteLength(JSON.stringify(result)) > 262144 || result?.result?.objectId) throw Error('READ_BUDGET');
           return immutableJSON(result);
+        },
+        async reorderList(input) {
+          check(); const p = immutableJSON(input); fields(p, ['node', 'values']);
+          const object = objects.get(p.node);
+          if (object?.node === undefined || context(object.context) !== 'isolated') throw Error('OBJECT_LOST');
+          node(object.node);
+          if (!Array.isArray(p.values) || !p.values.length || p.values.length > 100 ||
+              new Set(p.values).size !== p.values.length || p.values.some(v => !string(v, 512))) throw Error('SCOPED_COMMAND_DENIED');
+          const result = await reply('Runtime.callFunctionOn', { objectId: p.node, functionDeclaration: reorderListSource,
+            arguments: [{ value: p.values }], returnByValue: true, awaitPromise: false });
+          if (objects.get(p.node) !== object) throw Error('OBJECT_LOST');
+          node(object.node); context(object.context); check();
+          return result;
         },
         async setFiles(input, capability) {
           check(); const p = immutableJSON(input); fields(p, ['backendNodeId', 'operation']); node(p.backendNodeId);

@@ -42,7 +42,11 @@ export class BrowserFailure extends Error {
 // Only trusted adapter failures enter here. Raw exceptions never become model text.
 export function browserError(failure, { tab, completed = 0, observation = null } = {}) {
   const error = failure instanceof BrowserFailure ? failure : new BrowserFailure('EFFECT_UNKNOWN');
-  const [message, action] = recovery[error.code];
+  let [message, action] = recovery[error.code];
+  if (error.effect === 'none' && observation?.code === 'BACKGROUND_UNAVAILABLE' && observation.next === 'browser_fill')
+    return { code: error.code, phase: error.phase, effect: error.effect, completed, observation,
+      next: { tool: 'browser_fill', arguments: { tab } },
+      message: 'Use browser_fill with the control ref and desired value; native panels and direct drag are unavailable in the background.' };
   const next = action === 'read' && tab ? { tool: 'browser_read', arguments: { tab } }
     : { kind: action === 'continue' ? 'continue' : 'user', action };
   return { code: error.code, phase: error.phase, effect: error.effect, completed, next, observation, message };

@@ -100,3 +100,24 @@ test('background refusal names browser_fill and preserves the no-input effect', 
     tab: 'tfixture', observation: { code: 'BACKGROUND_UNAVAILABLE', next: 'browser_fill' } });
   assert.match(error.message, /browser_fill/); assert.equal(error.next.tool, 'browser_fill'); assert.equal(error.effect, 'none');
 });
+
+test('reorder reaches the real broker authority as one exact select operation', async t => {
+  const { createAuthority, createTransportAuthority } = await import('../plugins/sleight/lib/direct-browser/authority.mjs');
+  const { createBroker } = await import('../plugins/sleight/lib/direct-browser/broker.mjs');
+  const { validateHostRequest } = await import('../plugins/sleight/lib/direct-browser/request-schema.mjs');
+  const f = formFixture(t, [{ kind: 'reorder', value: ['B', 'A'], items: ['B', 'A'] }]);
+  const authority = createAuthority({ current: f.scope, authenticate: () => false,
+    classify: f.form.classify, checkTarget: f.form.checkTarget, snapshot: () => ({ scope: f.scope(), time: Date.now() }) });
+  const transportAuthority = createTransportAuthority({ authority, resolveOperation: (plan, context, command) => f.form.resolveOperation(command) });
+  const uid = process.getuid?.() ?? 1000, secret = 'c'.repeat(64);
+  const broker = createBroker({ uid, secret, idlePolicy: 'retain', browserIncarnation: 'browser', connect: async () => f.raw,
+    verifyConnection: () => true, currentTurn: () => 'turn', validateRequest: validateHostRequest, prepare: () => ({ target: 'target' }),
+    authorize: () => true, dispatchFence: () => true, transportAuthority, endSession: () => true, disconnect: () => true, redact: v => v,
+    async dispatch(plan, context) { f.setContext(context); try { return await f.form.fill(plan.args.fields, { operation: context.operation }); } finally { f.setContext(null); } } });
+  t.after(() => broker.shutdown()); await broker.connect({ userInitiated: true });
+  const client = broker.attach({ version: 1, uid, secret, session: 'client', incarnation: 'fixture' });
+  const result = await client.request({ id: 'order', operation: 'browser_fill', args: { tab: 'tfixture', fields: [{ ref: f.handles[0], value: ['A', 'B'] }] } });
+  assert.equal(result.effect, 'verified', JSON.stringify({ result, errors: f.errors })); assert.equal(result.completed, 1);
+  const command = f.calls.find(c => c.params.functionDeclaration === reorderListSource);
+  assert.equal(authority.receipt(command.operation.id).phase, 'verified');
+});

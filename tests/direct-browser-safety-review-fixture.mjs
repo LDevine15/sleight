@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createScopedAdapter } from '../plugins/sleight/lib/direct-browser/scoped-adapter.mjs';
+import { createScopedAdapter, reorderListSource } from '../plugins/sleight/lib/direct-browser/scoped-adapter.mjs';
 import { createAuthority, createTransportAuthority } from '../plugins/sleight/lib/direct-browser/authority.mjs';
 import { createBroker } from '../plugins/sleight/lib/direct-browser/broker.mjs';
 import { validateHostRequest } from '../plugins/sleight/lib/direct-browser/request-schema.mjs';
@@ -50,6 +50,7 @@ export function formFixture(t, fields, options = {}) {
         const node = bindings.get(params.arguments?.[0]?.objectId ?? params.objectId);
         assert.ok(states.has(node), 'function must bind an owned node');
         const state = states.get(node), value = params.arguments?.at(-1)?.value;
+        if (source === reorderListSource) { state.value = value; return { result: { value: { effect: 'verified' } } }; }
         if (source === api.fixedFormInspectors['form-state'].source) {
           return { result: { value: { ...state, value: state.protected ? undefined : state.value,
             ...(state.protected ? { matched: state.value === value } : {}) } } };

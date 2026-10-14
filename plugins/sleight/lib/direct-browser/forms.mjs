@@ -8,6 +8,7 @@ import { Deadline, eventPulse } from './waits.mjs';
 import { canonical, isAuthority } from './authority.mjs';
 import { BrowserReads } from './reads.mjs';
 import { isTransportOwner } from './transport-owner.mjs';
+import { reorderListSource } from './scoped-adapter.mjs';
 import { isRootTargets } from './root-targets.mjs';
 
 // Original strategies informed by reviewed BP2-7 forms and Playwright 1.64.0.
@@ -56,9 +57,22 @@ function formState(expected) {
   } else {
     state.kind = ['switch', 'checkbox', 'radio'].includes(state.role) ? state.role : el instanceof HTMLButtonElement ? 'button' : 'custom';
     // ARIA state is labeled as such; custom MAIN getters are never invoked here.
+    for (const name of ['selected', 'expanded']) { const value = get('aria-' + name);
+      if (['true', 'false'].includes(value)) state[name] = value === 'true'; }
     const checked = get('aria-checked');
     if (['true', 'false'].includes(checked)) { state.value = checked === 'true'; state.source = 'ax'; }
     if (el instanceof HTMLButtonElement) state.submit = read(HTMLButtonElement, 'type') === 'submit' && !!read(HTMLButtonElement, 'form');
+  }
+  if (['ol', 'ul'].includes(state.tag)) {
+    const children = Array.from(Object.getOwnPropertyDescriptor(Element.prototype, 'children').get.call(el));
+    if (children.length && children.length <= 100 && children.every(n => n.localName === 'li' &&
+        Element.prototype.getAttribute.call(n, 'draggable') === 'true')) {
+      state.kind = 'reorder';
+      state.items = children.map(n => (Element.prototype.getAttribute.call(n, 'aria-label') ||
+        Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get.call(n) || '').trim());
+      if (state.items.some(v => v.length > 512)) { state.kind = 'custom'; delete state.items; }
+      else state.value = state.items;
+    }
   }
   state.editable = !state.readonly && state.enabled;
   let hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
@@ -120,8 +134,8 @@ export const fixedFormInspectors = Object.freeze({
     parameters: [{ type: 'string', maxBytes: 65536 }] }),
 });
 const equals = (a, b) => Array.isArray(b) ? Array.isArray(a) && a.length === b.length && new Set(a).size === a.length && b.every(v => a.includes(v)) : a === b;
-const shape = s => canonical(Object.fromEntries(['kind', 'tag', 'role', 'readonly', 'multiple', 'min', 'max', 'step', 'options', 'protected']
-  .filter(k => s[k] !== undefined).map(k => [k, k === 'options' ? s.options.map(({ selected, ...o }) => o) : s[k]])));
+const shape = s => canonical(Object.fromEntries(['kind', 'tag', 'role', 'readonly', 'multiple', 'min', 'max', 'step', 'options', 'items', 'protected']
+  .filter(k => s[k] !== undefined).map(k => [k, k === 'options' ? s.options.map(({ selected, ...o }) => o) : k === 'items' ? [...s.items].sort() : s[k]])));
 const safe = error => ['HIDDEN', 'DISABLED', 'COVERED', 'STALE_REF', 'READONLY_PICKER', 'UNKNOWN_CHECKED_STATE', 'OPTIONS_CHANGED',
   'INVALID_FIELD', 'FRAME_UNQUALIFIED', 'RECOVERY_READ_REQUIRED', 'UNSTABLE', 'BACKGROUND_UNAVAILABLE', 'FILE_AUTHORITY_REQUIRED'].includes(error?.message) ? error.message : 'STATE_UNVERIFIABLE';
 
@@ -351,6 +365,18 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
           if (reply.exceptionDetails) throw Error('STATE_UNVERIFIABLE');
         }
         field = { ref, value: state.multiple ? selected : selected[0] };
+      } else if (state.kind === 'reorder') {
+        if (!Array.isArray(value) || !value.length || value.length !== state.items.length || new Set(value).size !== value.length ||
+            new Set(state.items).size !== state.items.length || value.some(v => typeof v !== 'string' || Buffer.byteLength(v) > 512 || !state.items.includes(v))) throw Error('INVALID_FIELD');
+        if (!value.every((v, i) => state.value[i] === v)) {
+          const fresh = await inspect(ref, prepared.node, '', deadline);
+          if (!fresh.connected || !fresh.visible || !fresh.enabled || !fresh.hit || shape(fresh) !== shape(state)) throw Error('STALE_REF');
+          activate(id, ref, 'select', { values: value }, fresh);
+          sent = true;
+          const reply = await deadline.run(() => { activate(id, ref, 'select', { values: value }, fresh);
+            return session.reorderList({ node: prepared.node, values: value }); });
+          if (reply.exceptionDetails || reply.result?.value?.effect !== 'verified') throw Error('STATE_UNVERIFIABLE');
+        }
       } else if (state.kind === 'file') {
         if (!files || !Array.isArray(value?.files)) throw Error('FILE_AUTHORITY_REQUIRED');
         const binding = { ...identity, operation: id, ref };
@@ -400,7 +426,7 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
       }
       const after = await inspect(ref, prepared.node, field.value, deadline);
       if (!after.connected || shape(state) !== shape(after)) throw Error('OPTIONS_CHANGED');
-      if (after.valid === false || (state.protected ? after.matched !== true : !equals(after.value, field.value))) throw Error('STATE_UNVERIFIABLE');
+      if (after.valid === false || (state.protected ? after.matched !== true : !(state.kind === 'reorder' ? Array.isArray(after.value) && after.value.length === field.value.length && field.value.every((v, i) => after.value[i] === v) : equals(after.value, field.value)))) throw Error('STATE_UNVERIFIABLE');
       fence(ref); deadline.check(); proveField(state.protected ? 'protected' : 'verified');
       return { effect: state.protected ? 'protected' : sent ? 'verified' : 'unchanged', observation: { target: true,
         ...(state.protected ? { protected: true } : {}), source: state.source ?? 'native' } };
@@ -542,10 +568,19 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
       } else {
         sent = true; await click(id, step.ref, prepared, deadline);
       }
-      const proof = typeof observeEffect === 'function' ? await deadline.run(() => observeEffect({ identity, ref: step.ref, operation, signal })) : null;
+      let localProof;
+      if (!prepared.state.submit && !prepared.state.payment && ['click', 'key'].includes(step.op)) {
+        const after = await inspect(step.ref, prepared.node, '', deadline);
+        if (after.connected && shape(after) === shape(prepared.state) &&
+            (['checkbox', 'radio', 'switch'].includes(after.kind) && typeof after.value === 'boolean' && after.value !== prepared.state.value ||
+             ['selected', 'expanded'].some(k => typeof after[k] === 'boolean' && typeof prepared.state[k] === 'boolean' && after[k] !== prepared.state[k])))
+          localProof = { matched: true, identity, source: after.source ?? 'native' };
+      }
+      const proof = localProof ?? (typeof observeEffect === 'function' ? await deadline.run(() => observeEffect({ identity, ref: step.ref, operation, signal })) : null);
       fence(step.ref);
       const verified = proof?.matched === true && sameAuthority(identity, proof.identity) && ['native', 'ax', 'causal-event'].includes(proof.source);
       if (!verified) unknownTarget(step.ref);
+      else proveField('verified');
       const receipt = { effect: verified ? 'verified' : 'unknown', completed: verified ? 1 : 0, untouched: 0,
         observation: { target: true, ...(verified ? { source: proof.source } : { code: 'EFFECT_UNKNOWN' }) } };
       receipts.set(key, { fingerprint: hash, receipt }); return structuredClone(receipt);
@@ -565,13 +600,14 @@ export function createFormSession({ session, identity, current, resolveRef, onOp
     resolveOperation(command) {
       if (!active) throw Error('SEMANTIC_OPERATION_MISMATCH');
       const { method, params } = command;
-      const physical = method.startsWith('Input.') || method === 'Page.handleJavaScriptDialog' ||
+      const physical = params.functionDeclaration === reorderListSource || method.startsWith('Input.') || method === 'Page.handleJavaScriptDialog' ||
         method === 'Runtime.callFunctionOn' && /^(?:function\(node,(?:value|options)\)\{return this\.(?:fill|selectOptions)\(|function\(payloads\)\s*\{)/.test(params.functionDeclaration);
       if (physical) {
+        if (params.functionDeclaration === reorderListSource && (active.kind !== 'select' || canonical(params.arguments?.[0]?.value) !== canonical(active.args.values))) throw Error('SEMANTIC_OPERATION_MISMATCH');
         if (active.kind === 'read') throw Error('SEMANTIC_OPERATION_MISMATCH');
         if (method === 'Input.insertText' && (active.kind !== 'fill' || params.text !== active.args.value) ||
             method === 'Runtime.callFunctionOn' && active.kind === 'fill' && params.arguments?.[1]?.value !== active.args.value ||
-            method === 'Runtime.callFunctionOn' && active.kind === 'select' && !equals(params.arguments?.[1]?.value?.map(o => o.value), active.args.values)) throw Error('SEMANTIC_OPERATION_MISMATCH');
+            method === 'Runtime.callFunctionOn' && params.functionDeclaration !== reorderListSource && active.kind === 'select' && !equals(params.arguments?.[1]?.value?.map(o => o.value), active.args.values)) throw Error('SEMANTIC_OPERATION_MISMATCH');
         resolvedOperation = active;
       } else resolvedOperation = { id: prepId(), kind: 'read', args: {}, scope: active.scope, consequence: 'ordinary' };
       return structuredClone(resolvedOperation);

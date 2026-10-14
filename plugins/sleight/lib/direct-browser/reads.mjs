@@ -72,7 +72,7 @@ async function acquireARIA({ session, frameId, backendNodeId, maxNodes, run }) {
     if (!raw || depth > 64 || seen.size >= maxNodes) { complete = false; return; }
     if (seen.has(raw.backendNodeId)) { complete = false; return; }
     seen.add(raw.backendNodeId);
-    if (raw.frameId && raw.frameId !== frameId) { complete = false; return; }
+    if (raw.frameId && raw.frameId !== frameId && !['iframe', 'frame'].includes(raw.localName)) { complete = false; return; }
     const partial = await run(() => session.send('Accessibility.getPartialAXTree',
       { backendNodeId: raw.backendNodeId, fetchRelatives: false, maxNodes }));
     for (const node of partial.nodes) {
