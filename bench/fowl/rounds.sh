@@ -9,14 +9,18 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 for a in "$@"; do
   [ "$a" != --plan ] || exec node "$REPO/bench/fowl/accounting.mjs" "$@"
 done
-MODEL=opus; SURFACE=""; TASKS=""; OUT=""; prev=""; for a in "$@"; do
+MODEL=opus; SURFACE=""; TASKS=""; OUT=""; ONLY=""; GUI=""; REMOTE=""; prev=""; for a in "$@"; do
   [ "$prev" = --model ] && MODEL="$a"
   [ "$prev" = --surface ] && SURFACE="$a"
   [ "$prev" = --tasks ] && TASKS="$a"
   [ "$prev" = --out ] && OUT="$a"
+  [ "$prev" = --only ] && ONLY="$a"
+  [ "$prev" = --remote ] && REMOTE="$a"
+  [ "$a" = --gui ] && GUI=1
   prev="$a"
 done
 MODEL=$(node "$REPO/bench/fowl/accounting.mjs" --model-id "$MODEL")
+node "$REPO/bench/fowl/preflight.mjs" "$@"
 [ -d "$DIR/.git" ] || git clone -q https://github.com/argofowl/FowlBrowser "$DIR"
 cd "$DIR"
 # The clone is this benchmark's own cache: when its tracked files differ from the current patch (an older
@@ -33,9 +37,9 @@ SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
 SURFACE="${SURFACE:-fowlbrowser}"
 SURFACES="$SURFACE"
 if [ -n "${TASKS:-}" ]; then
-  SURFACES="$(node -e 'const tasks=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write([...new Set(tasks.map(t=>t.surface??process.argv[2]))].join("\n"))' "$TASKS" "$SURFACE")"
+  SURFACES="$(node -e 'const tasks=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const [only,gui,remote]=process.argv.slice(3);process.stdout.write([...new Set(tasks.filter(t=>(!only||only.split(",").includes(t.name))&&(gui||remote||!t.takeover)).map(t=>t.surface??process.argv[2]))].join("\n"))' "$TASKS" "$SURFACE" "${ONLY:-}" "${GUI:-}" "${REMOTE:-}")"
 fi
-if [ "$SURFACES" = claude-cu ]; then
+if [ -z "$SURFACES" ] || [ "$SURFACES" = claude-cu ]; then
   AUTH=account; KEY=""
 elif echo "$SURFACES" | grep -qx browser-use; then
   AUTH=api
@@ -51,5 +55,6 @@ mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; e
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
 trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"' EXIT
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
+  CLAUDE_CONFIG_DIR="$HOME/Library/Caches/sleight-bench/fowl-claude-config" \
   SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" SLEIGHT_ENGINE_DOCS="${SLEIGHT_ENGINE_DOCS:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
   node tools/rounds.mjs --effort medium "$@" --model "$MODEL"

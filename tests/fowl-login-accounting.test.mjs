@@ -8,7 +8,7 @@ import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import * as spend from '../bench/fowl/add-spend.mjs';
 const { roundCost, addRoundSpend } = spend;
 
-function auth(t, { model, surface, tasks, spent, unpriced = false, month = new Date().toISOString().slice(0, 7), status = 0 }) {
+function auth(t, { model, surface, tasks, only = '', spent, unpriced = false, month = new Date().toISOString().slice(0, 7), status = 0 }) {
   const dir = mkdtempSync(join(tmpdir(), 'sleight-fowl-login-')); t.after(() => removeTemp(dir));
   mkdirSync(join(dir, '.config/sleight-bench'), { recursive: true });
   writeFileSync(join(dir, '.config/sleight-bench/anthropic-api-key'), 'sk-ant-fixture', { mode: 0o600 });
@@ -20,11 +20,17 @@ function auth(t, { model, surface, tasks, spent, unpriced = false, month = new D
   const ledger = join(dir, 'spend.json');
   if (spent !== undefined) writeFileSync(ledger, JSON.stringify({ month, usd: spent, unpriced }));
   const result = spawnSync('/bin/sh', ['-c', selection + '\nprintf "%s:%s" "$AUTH" "$KEY"'], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MODEL: model, SURFACE: surface, SPEND: ledger, OUT: join(dir, 'out'),
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MODEL: model, SURFACE: surface, ONLY: only, SPEND: ledger, OUT: join(dir, 'out'),
       REPO: new URL('..', import.meta.url).pathname, ...(tasks && { TASKS: taskFile }) } });
   assert.equal(result.status, status, result.stderr);
   return result.stdout;
 }
+
+test('only-selected login tasks do not require API funding for an excluded browser arm', t => {
+  const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'browser', surface: 'sleight' }];
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, only: 'login', spent: 190 }), 'account:');
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, only: 'browser', spent: 190, status: 1 }), '');
+});
 
 for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']) {
   test(`claude-cu selects account auth without an API credential for ${model}`, t => {
