@@ -138,4 +138,3 @@ export function validateCall(request) {
   if (Object.hasOwn(args, 'timeout_ms') && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1 || args.timeout_ms > 30000)) invalid();
   return data;
 }
-
