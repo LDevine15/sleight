@@ -114,3 +114,32 @@ test('all recorded locator errors preserve their full engine diagnostics without
     assert.match(hint, /domSnapshot/, row.id);
   }
 });
+
+test('strict matches distinguish duplicate text with exact escaped labels without choosing one', () => {
+  const labels = ['Save "draft"\\copy', "Save owner's final"];
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: labels.map(ariaLabel => ({ tag: 'button', role: 'button', text: 'Save', ariaLabel, visible: true })) });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  for (const label of labels) assert.ok(hint.includes(`getByLabel(${JSON.stringify(label)}, { exact: true })`), hint);
+  assert.match(hint, /button/);
+  assert.match(hint, /resolve one matching locator/);
+  assert.doesNotMatch(hint, /\.first\(|\.nth\(|\.click\(/);
+  assert.ok(rewriteLocatorFailure(src).endsWith(src));
+});
+
+test('strict diagnostics explicitly report the bounded match listing', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 8, truncated: true,
+    matches: Array.from({ length: 8 }, (_, i) => ({ tag: 'button', ariaLabel: `Save ${i}` })) });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /showing 5 of 8 matches; truncated/);
+  assert.equal((hint.match(/exact: true/g) ?? []).length, 5);
+});
+
+test('a long label is bounded without suggesting a truncated label as an exact match', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: [{ role: 'button', ariaLabel: 'private'.repeat(100) }, { role: 'button', ariaLabel: 'Done' }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.ok(hint.length < 900);
+  assert.match(hint, /label truncated/);
+  assert.doesNotMatch(hint, /getByLabel\("private/);
+});

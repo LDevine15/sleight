@@ -65,7 +65,9 @@ function locatorAdvice(block) {
     : kind === 'covered' ? `${action} ${target} is covered by ${coveringElement(block) || 'another element'}`
     : kind === 'matched' ? `${action} ${target}: the action failed after the element matched`
     : `${action} ${target} timed out`;
-  return `${causeText}. Next: ${nextCall(kind)}.`;
+  const truncated = kind === 'strict' && (diag?.truncated || Number(total) > matches.length)
+    ? ` (showing ${matches.length} of ${total} matches; truncated)` : '';
+  return `${causeText}${truncated}. Next: ${nextCall(kind)}.`;
 }
 
 function parseDiag(block) {
@@ -95,7 +97,7 @@ function describeMatches(diag, akas, selector) {
     const row = rows[i] || {};
     const name = row.ariaLabel || /name:\s*['"]([^'"]+)['"]/.exec(akas[i] || '')?.[1] || '';
     const role = row.role || impliedRole(row);
-    const loc = akas[i] || locatorFor(row, i, selector, name, role);
+    const loc = row.ariaLabel ? locatorFor(row, name, role) : akas[i] || locatorFor(row, name, role);
     const visible = typeof row.visible === 'boolean' ? `visible:${row.visible}` : '';
     out.push([role, name && `"${name.replace(/\s+/g, ' ').trim().slice(0, 40)}"`, `via ${loc}`, visible].filter(Boolean).join(' '));
   }
@@ -108,10 +110,11 @@ function impliedRole(row) {
   return row.tag || '';
 }
 
-function locatorFor(row, i, selector, name, role) {
-  if (role && name) return `getByRole('${role}', { name: '${name.replace(/'/g, "\\'")}' })`;
-  if (selector) return `locator(${JSON.stringify(selector)}).nth(${i})`;
-  return `nth(${i})`;
+function locatorFor(row, name, role) {
+  if (name.length > 120) return 'read the full label (label truncated)';
+  if (row.ariaLabel) return `getByLabel(${JSON.stringify(name)}, { exact: true })`;
+  if (role && name) return `getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(name)}, exact: true })`;
+  return 'read current labels before selecting';
 }
 
 function coveringElement(block) {
