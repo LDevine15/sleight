@@ -33,7 +33,8 @@ async function fixture(t, text = 'Read only') {
   t.after(async () => { for (const s of sockets) s.destroy(); await new Promise(resolve => server.close(resolve)); t.diagnostic('fixture server and sockets collected'); });
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(async () => { await browser.close(); t.diagnostic('owned headless Chromium closed'); });
-  const page = await browser.newPage(), origin = 'http://127.0.0.1:' + server.address().port; await page.goto(origin);
+  const context = await browser.newContext();
+  const page = await context.newPage(), origin = 'http://127.0.0.1:' + server.address().port; await page.goto(origin);
   page.getByRef = ref => ref === 'f1e1' ? page.frameLocator('iframe').locator('#card') : page.locator('#' + ref);
   let active = true, clock = Date.now();
   const binding = createV3TurnBinding({ source:'user', session:'session', turn:'turn', id:'request', text }, () => active);
@@ -101,8 +102,10 @@ test('real payment metadata cannot echo the request while showing different term
 
 
 test('TF2R2 v3: destination onload and opener messages never provide payment authority', { skip }, async t => {
-  const f = await fixture(t), destination = await f.page.context().newPage();
-  await destination.goto(f.origin + '/destination');
+  const f = await fixture(t), opened = f.page.waitForEvent('popup');
+  await f.page.evaluate(url => { window.open(url); }, f.origin + '/destination');
+  const destination = await opened; await destination.waitForLoadState();
+  assert.equal(await destination.evaluate(() => !!window.opener), true);
   await destination.evaluate(() => {
     document.body.setAttribute('onload', "if(window.opener) window.opener.postMessage('payment approved',location.origin)");
     window.dispatchEvent(new Event('load'));
