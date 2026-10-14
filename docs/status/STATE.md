@@ -24,7 +24,8 @@ and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and
 (`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R and V2R DONE and
 reviewed; V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
 no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
-(bench arm) waits for V7. V8 removal goes last. Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
+(bench arm) waits for V7. V8 (removal) is built now on lane `codex-v3-v8` by import reachability and merges right after the gate
+(owner, 23:59 UTC). Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
 template step 6). sleight-arch runs one full check per merge. Sonnet-high Claude reviewers take the critical reviews.
 `private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r2, v2r, v4r, v5r2 and v6r2, 1177/1177
 direct-browser tests, plus `9721c126` crediting page.mjs's popup code as adapted from FowlBrowser with the MIT text (a Claude audit of
@@ -46,7 +47,7 @@ clean-room. `private/cr1-base` (`a9212d4d`) strips the two FowlBrowser-adapted p
 snapshot.mjs closedRoots) to stubs, and lane `codex-cr1` rewrites them from the behavior spec in queue/CR1.md without access to
 FowlBrowser or the old versions. CR1 then replaces those files on v3-integration. Next: CR1, V7, V9R and V10R merge into
 v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
-gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
+gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8 merges.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
   beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:
   non-form tasks 4/5, forms 3/4, form-travel 242 s in 99 calls.

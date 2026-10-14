@@ -77,6 +77,7 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    Everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (owner, 2026-10-14 evening): the claim-suite
    arms, public CI, the release-pass runner and benchmark preflights. Lanes stay busy: post-release work (Electron pieces that
    don't use turbo's semantic layer, the Q1 error fixes) builds on branches now and merges after the tag.
+   The v1/v2 turbo removal (V8) is built now, in parallel, and merges right after the gate round (owner, 2026-10-14 night).
    Turbo's action layer gets redesigned (owner, 2026-10-14 evening): study what makes FowlBrowser fast and accurate and where it
    fails, then build our own better layer on the bundled Playwright, under the same safety rules. Studying their code is fine, copying
    it isn't the goal.
