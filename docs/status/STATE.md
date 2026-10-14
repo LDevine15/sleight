@@ -30,9 +30,11 @@ Speed (SR1; the owner chose to make A, B and C one guard mode with one final rea
   clicks, 10/10 correct; the control with today's read after AC moved 6 of 6 numbers in all 10 trials and got 0/10 (it clicked
   Square Root). SR1A builds `SLEIGHT_GUARD=bind`.
 - B is merged (`SLEIGHT_GUARD=quiet-edits`, SR1B). GR1's `first-off` is merged. Their A/Bs wait for SR1A, to run together.
-- C's probe (`bench/focus-probe.mjs`, merged) failed to measure on macOS 27. While the engine captures an app, macOS adds a "Window"
-  dialog whose one child is a WindowSharingSessionButton (now skipped). TextEdit's Open panel is a standard window titled "Open", not a
-  sheet. SR1CPR2 fixes the probe, then sleight-arch reruns it.
+- C is parked (sleight-arch, 2026-10-14). Its probe ran live on macOS 27 after two fixes: a sharing-indicator window ("Window",
+  one WindowSharingSessionButton child) appears while the engine captures an app, and TextEdit's Open panel is a standard window
+  served by `com.apple.appkit.xpc.openAndSavePanelService`. After Cmd+O the app's focused element has no AXWindow (AX error
+  -25212). A focus check on the app can't see the panel. C would need an observer on that service for about 50 to 70 s across
+  296 sessions. The read after a real opener stays.
 - Done, to apply: RP1 (CHANGELOG-1.3.0.md, README-diff.md, release-checklist.md). CS1 found the claim-suite arms mostly not installed;
   its table gives each install command. The unpriced-spend blocker it reported was already reconciled.
 

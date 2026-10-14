@@ -77,7 +77,8 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    host-side runner for real-page tests (LD1).
    SR1's designs combine into one guard mode (owner, 2026-10-14): no reads between clicks (A), quiet edit shortcuts and field
    clicks (B), and a focus check in place of the read after a real opener (C). Each call keeps one final read, like Codex. A's
-   Calculator probe and C's TextEdit Open-panel probe run first, in the same away window, then one lane builds the mode for the A/B.
+   Calculator probe passed 10/10 (2026-10-14). C is parked: on macOS 27 the Open panel runs in a separate system process, so the
+   app's focus can't show it is ready. The mode has A and B.
 4. Release 1.3.0, the claim post, then the video.
 After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
 the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
