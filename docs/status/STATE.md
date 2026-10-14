@@ -7,7 +7,7 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
 1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4291 pass, 0 fail, 41 skipped, mod 33/33.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4293 pass, 0 fail, 41 skipped, mod 33/33.
 `~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
 
 The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
@@ -36,7 +36,10 @@ BP2-8R3, and sleight-arch dispatched it at 00:55 UTC (codex-hdlbh). BP2-P3 adds 
 AM1's speed map, live with the owner away (2026-10-14). The first run failed every read on the relay's native lease. AM1R2
 (merged 00:45 UTC) fixes that. With it, TextEdit completed every phase, with a 54 ms first read and a 937 ms scroll
 (evidence below). Finder still fails on its several scroll areas and an unprovable folder-window cleanup (AM1F). A wider run
-crashed when `bench/preapproved-process.mjs` threw `kill EPERM` out of an abort listener (PP1). codex-hdlbe takes PP1, then AM1F.
+crashed when `bench/preapproved-process.mjs` threw `kill EPERM` out of an abort listener, and PP1 (merged) fixed it. Since then
+TextEdit completes 3/3 (first read 52 ms median, scroll 918 ms). VS Code and Word fail setup with AX error -25204 on the first
+window read after launch, and Word kept the fixture open until sleight-arch quit it. AM1E queues a generic bounded retry and
+a cleanup fix after AM1F (codex-hdlbe).
 Evidence is in `ledger/claims/_evidence-AM1-live/`. No run left a window open, and sleight-arch cleared their banks and lock.
 
 Keychain prompts (owner's complaint, 2026-10-14) had two sources. Lanes on branches older than `scripts/claude-isolated.sh` ran
@@ -55,7 +58,7 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge as items pass: PP1, AM1F (then rerun AM1 live), BP2-P1, then P3.
+1. Merge as items pass: AM1F, AM1E (then rerun AM1 live), BP2-P1 and P2, then dispatch P3.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. AM1's live speed map in an away window.
