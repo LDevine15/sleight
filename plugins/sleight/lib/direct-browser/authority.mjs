@@ -89,6 +89,7 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     throw new Error('trusted boundaries required');
   const secret = randomBytes(32), confirmations = new Map(), requests = new Map(), revocationsBySession = new Map();
   const capabilities = new Map(), records = new Map(), quarantined = new Map();
+  const paymentOperations = new Map(), paymentDialogs = new Map();
   let fence = 0, active = true, sequence = 0;
   const clock = () => {
     const value = now();
@@ -98,12 +99,17 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
   const digest = value => createHmac('sha256', secret).update(canonical(value)).digest('hex');
   // Effect uncertainty belongs to the document, not the current command owner.
   // Dispatch still checks every SCOPE_KEY, including broker, session and lease.
-  const targetKey = scope => canonical(['browser', 'target', 'frame', 'document', 'origin'].map(key => scope[key]));
+  const targetKey = scope => canonical(['browser', 'target', 'frame', 'document', 'origin', 'ref'].map(key => scope[key]));
   const exactTerms = (op, req) => op.terms && req?.terms &&
     ['item', 'method'].every(k => typeof op.terms[k] === 'string' && op.terms[k]) && digest(op.terms) === digest(req.terms);
-  const paymentKey = op => digest(op.terms ? [op.scope.session, op.terms] : [op.id, op.kind, op.args, op.scope]);
-  const decide = op => verdict(op, { confirmed: confirmations.has(paymentKey(op)), confirmPayments,
-    exactRequest: exactTerms(op, requests.get(op.scope.session)) });
+  const paymentKey = op => digest(op.terms ? [op.scope.session, op.scope.origin, op.terms] : [op.id, op.kind, op.args, op.scope]);
+  const dialogKey = op => digest([paymentKey(op), op.scope.browser, op.scope.broker, op.scope.turn,
+    op.scope.target, op.scope.lease, op.scope.frame, op.scope.document, op.scope.ref]);
+  const decide = op => verdict(op, { confirmed: confirmations.has(paymentKey(op)) ||
+    paymentOperations.get(op.id)?.key === dialogKey(op) || op.kind === 'dialog' && paymentDialogs.has(dialogKey(op)), confirmPayments,
+    exactRequest: exactTerms(op, requests.get(op.scope.session)) &&
+      (!requests.get(op.scope.session)?.origin || requests.get(op.scope.session).origin === op.scope.origin) });
+  const mutating = op => !['read', 'screenshot', 'network', 'console', 'open'].includes(op.kind);
   const submit = op => op.submit === true || op.consequence === 'payment' && op.args?.action !== 'dismiss';
   const checkedTarget = op => {
     if (!['click', 'fill', 'paste', 'key', 'select', 'check', 'upload'].includes(op.kind)) return true;
@@ -113,9 +119,10 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     return state && ['present', 'visible', 'enabled', 'same'].every(k => state[k] === true);
   };
   const record = (op, phase) => ({ id: op.id, scope: clone(op.scope), kind: op.kind, phase, effect: 'untouched', submit: submit(op), sequence: op.sequence ?? 0,
-    ...(op.needsNewRead !== undefined ? { needsNewRead: op.needsNewRead } : {}) });
+    ...(op.needsNewRead !== undefined ? { needsNewRead: op.needsNewRead } : {}),
+    ...(op.delivered === true ? { delivered: true, covered: clone(op.covered) } : {}) });
   const quarantine = r => {
-    if (r.submit) {
+    if (mutating(r)) {
       const key = targetKey(r.scope);
       // A missing order cannot be reconstructed from another recovered receipt.
       // Retain whether a live read resolved it, separately from effect proof.
@@ -128,16 +135,18 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     }
   };
   const clearRead = (r, live = false) => {
-    if (r.phase !== 'verified' || r.kind !== 'read' || r.sequence === 0) return;
-    const key = targetKey(r.scope), held = quarantined.get(key);
-    if (!held) return;
-    if (live) {
+    if (r.phase !== 'verified' || r.kind !== 'read' || r.sequence === 0 || !r.delivered) return;
+    for (const ref of r.covered) {
+      const key = targetKey({ ...r.scope, ref }), held = quarantined.get(key);
+      if (!held) continue;
+      if (live) {
       // Only verification of a read dispatched in this authority resolves legacy
       // capture order. Export the disposition so another recovery cannot revive it.
       for (const id of held.unordered) records.get(id).needsNewRead = false;
       held.unordered.clear();
+      }
+      if (held.unordered.size === 0 && r.sequence > held.sequence) quarantined.delete(key);
     }
-    if (held.unordered.size === 0 && r.sequence > held.sequence) quarantined.delete(key);
   };
   const unknown = r => {
     // Independent effect proof is stronger than a late transport failure.
@@ -151,7 +160,9 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     if (!identifier(r.id) || !Object.hasOwn(OPERATIONS, r.kind) ||
       !['prepared', 'dispatched', 'observed', 'verified', 'unknown'].includes(r.phase) ||
       r.sequence !== undefined && (!Number.isSafeInteger(r.sequence) || r.sequence < 0) ||
-      r.needsNewRead !== undefined && typeof r.needsNewRead !== 'boolean') throw new Error('recovery');
+      r.needsNewRead !== undefined && typeof r.needsNewRead !== 'boolean' ||
+      r.delivered !== undefined && typeof r.delivered !== 'boolean' || r.delivered === true &&
+        (!Array.isArray(r.covered) || r.covered.length > 4096 || r.covered.some(ref => !identifier(ref)))) throw new Error('recovery');
     const retained = record(r, r.phase);
     sequence = Math.max(sequence, retained.sequence);
     if (['unknown', 'dispatched', 'observed'].includes(r.phase)) unknown(retained);
@@ -167,6 +178,9 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     if (session) revocationsBySession.set(session, (revocationsBySession.get(session) ?? 0) + 1);
     for (const [key] of requests) if (!session || key === session) requests.delete(key);
     for (const [hash, owner] of confirmations) if (!session || owner === session) confirmations.delete(hash);
+    // These allowances cannot survive a session/turn fence.
+    for (const [id, value] of paymentOperations) if (!session || value.session === session) paymentOperations.delete(id);
+    for (const [key, owner] of paymentDialogs) if (!session || owner === session) paymentDialogs.delete(key);
     for (const r of records.values()) if ((!session || r.scope.session === session) &&
       ['dispatched', 'observed'].includes(r.phase)) unknown(r);
   };
@@ -197,7 +211,7 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
       const op = classify(clone(raw)); validateOperation(op);
       // Classification may add semantic intent, but may not swap its route/args.
       if (digest([raw.id, raw.kind, raw.args, raw.scope]) !== digest([op.id, op.kind, op.args, op.scope])) throw new Error('classification');
-      if (!active || submit(op) && quarantined.has(targetKey(op.scope))) return { verdict: 'deny', reason: 'fenced-or-unknown' };
+      if (!active || mutating(op) && quarantined.has(targetKey(op.scope))) return { verdict: 'deny', reason: 'fenced-or-unknown' };
       if (digest(op.scope) !== digest(current())) return { verdict: 'deny', reason: 'scope-fence' };
       const hash = digest(op), decision = decide(op);
       if (decision.verdict !== 'allow') return decision;
@@ -229,7 +243,7 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     // check. current() can revoke authority or outlive the capability's expiry.
     const actual = current();
     if (!active || (!owned && capabilities.get(capability) !== cap) || cap.fence !== fence || digest(cap.op.scope) !== digest(actual) ||
-      decide(cap.op).verdict !== 'allow' || (revocationsBySession.get(cap.op.scope.session) ?? 0) !== cap.sessionEpoch || submit(cap.op) && quarantined.has(targetKey(cap.op.scope))) throw new Error('dispatch fence');
+      decide(cap.op).verdict !== 'allow' || (revocationsBySession.get(cap.op.scope.session) ?? 0) !== cap.sessionEpoch || mutating(cap.op) && quarantined.has(targetKey(cap.op.scope))) throw new Error('dispatch fence');
     if (typeof send !== 'function') throw new Error('dispatch function');
     const finalTime = clock();
     // The clock callback may replace target/frame/document/lease identity.
@@ -256,10 +270,17 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     // The provider cannot grant authority: internal state is checked after it.
     if (!Number.isFinite(terminal.time) || terminal.time < finalTime || terminal.time < started ||
       terminal.time < cap.issued || terminal.time >= cap.deadline || !active || (!owned && capabilities.get(capability) !== cap) || cap.fence !== fence ||
-      digest(cap.op.scope) !== finalScopeHash || digest(cap.op.scope) !== digest(terminal.scope) || (revocationsBySession.get(cap.op.scope.session) ?? 0) !== cap.sessionEpoch || submit(cap.op) && quarantined.has(targetKey(cap.op.scope)) ||
+      digest(cap.op.scope) !== finalScopeHash || digest(cap.op.scope) !== digest(terminal.scope) || (revocationsBySession.get(cap.op.scope.session) ?? 0) !== cap.sessionEpoch || mutating(cap.op) && quarantined.has(targetKey(cap.op.scope)) ||
       window !== undefined && (terminal.time < window.issued || terminal.time >= window.expires) ||
       decide(cap.op).verdict !== 'allow') throw new Error('dispatch fence');
     if (!retained) capabilities.delete(capability);
+    if (cap.op.consequence === 'payment' && cap.op.args?.action !== 'dismiss' && !paymentOperations.has(cap.op.id)) {
+      confirmations.delete(paymentKey(cap.op));
+      if (exactTerms(cap.op, requests.get(cap.op.scope.session))) requests.delete(cap.op.scope.session);
+      paymentOperations.set(cap.op.id, { key: dialogKey(cap.op), session: cap.op.scope.session });
+      if (cap.op.kind === 'dialog') paymentDialogs.delete(dialogKey(cap.op));
+      else paymentDialogs.set(dialogKey(cap.op), cap.op.scope.session);
+    }
     if (!Number.isSafeInteger(sequence + 1)) throw Error('receipt sequence full');
     const r = records.get(cap.op.id); r.phase = 'dispatched'; r.effect = 'unknown';
     sequence++;
@@ -289,7 +310,14 @@ export function createAuthority({ current, classify, authenticate, snapshot, now
     return clone(r);
   }
   function timeout(id) { const r = records.get(id); if (r && ['dispatched', 'observed'].includes(r.phase)) unknown(r); }
+  function deliveredRead(id, refs) {
+    const r = records.get(id);
+    if (!r || r.kind !== 'read' || r.phase !== 'verified' || r.delivered || !Array.isArray(refs) || refs.length > 4096 ||
+        refs.some(ref => !identifier(ref))) return false;
+    r.delivered = true; r.covered = [...new Set(refs)]; clearRead(r, true); return true;
+  }
   const authority = Object.freeze({ user, prepare, dispatch: (capability, raw, send) => dispatch(capability, raw, send), observe, verify, timeout,
+    deliveredRead,
     receipt: id => records.has(id) ? clone(records.get(id)) : null,
     recovery: () => [...records.values()].map(clone) });
   authorities.add(authority);

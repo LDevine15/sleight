@@ -29,6 +29,9 @@ export function formFixture(t, fields, options = {}) {
     async send(method, params, route) {
       assert.equal(route, 'page'); calls.push({ method, params: structuredClone(params), operation });
       if (options.beforeSend) await options.beforeSend(method, params, { states, revoke: () => { live = false; } });
+      if (method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: 'strict-popup' };
+      if (method === 'Runtime.evaluate') return { result: { value: true } };
+      if (method === 'Page.setInterceptFileChooserDialog') return {};
       if (method === 'Page.createIsolatedWorld') return { executionContextId: 9 };
       if (['Page.enable', 'DOM.scrollIntoViewIfNeeded', 'Runtime.releaseObject', 'Page.handleJavaScriptDialog'].includes(method)) return {};
       if (method === 'DOM.resolveNode') {
@@ -42,6 +45,8 @@ export function formFixture(t, fields, options = {}) {
       if (method === 'Runtime.callFunctionOn') {
         const source = params.functionDeclaration;
         if (source.startsWith('function(){const module')) return { result: { objectId: 'constructor' } };
+        if (source.includes('this.setupHitTargetInterceptor')) return { result: { objectId: 'interceptor-' + (++sequence) } };
+        if (source === 'function(){return this.stop();}') return { result: { value: 'done' } };
         if (source.startsWith('function(){return new this')) return { result: { objectId: 'instance' } };
         const node = bindings.get(params.arguments?.[0]?.objectId ?? params.objectId);
         assert.ok(states.has(node), 'function must bind an owned node');
@@ -170,7 +175,7 @@ test('uncertain submits require a successful delivered read, while ordinary fiel
   assert.equal((await f.form.act({ op: 'click', ref: f.handles[1] }, { operation: 'blocked' })).observation.code, 'RECOVERY_READ_REQUIRED');
   assert.equal((await f.form.fill([{ ref: f.handles[0], value: 'Example' }], { operation: 'ordinary' })).completed, 1);
   assert.equal(f.form.deliveredRead('not-owned', identity), false);
-  f.form.pendingRead('fresh', identity);
+  f.form.pendingRead('fresh', identity, f.handles);
   assert.equal(f.form.deliveredRead('fresh', { ...identity, frame: 'foreign' }), false);
   assert.equal(f.form.deliveredRead('fresh', identity), true);
   assert.equal((await f.form.act({ op: 'click', ref: f.handles[1] }, { operation: 'after-read' })).effect, 'unknown');
@@ -247,7 +252,7 @@ test('broker-scoped file input transfers only the user-named retained bytes befo
 for (const mode of ['page-only', 'requested', 'always', 'changed-dialog']) test('trusted payment classification: ' + mode, async t => {
   const terms = { item: 'Fixture product', method: 'fixture card', amount: '18.00', payee: 'Fixture shop' };
   const f = formFixture(t, [{ kind: 'button', submit: true, payment: true }], {
-    form: { paymentTerms: state => ({ ...terms, ...(state.dialog ? { amount: '19.00' } : {}) }) },
+    form: { paymentTerms: state => ({ page: { item: terms.item, amount: state.dialog ? '19.00' : terms.amount, payee: terms.payee }, method: terms.method }) },
     ...(mode === 'changed-dialog' ? { submit: (_, emit) => emit('Page.javascriptDialogOpening', {
       type: 'confirm', url: identity.origin, frameId: identity.frame, message: 'Pay $19.00 now?' }) } : {}),
   });

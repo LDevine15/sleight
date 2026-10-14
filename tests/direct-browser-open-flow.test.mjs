@@ -27,3 +27,24 @@ test('production four-tool flow must open an owned background tab before reading
   assert.equal(f.calls.filter(c => c.method === 'Input.dispatchMouseEvent').length, 2);
   assert.equal(f.calls.some(c => ['Page.bringToFront', 'Target.activateTarget'].includes(c.method)), false);
 });
+test('semantic allocator cleanup retains authenticated pending leases before any target close', async t => {
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; }); t.after(() => finish());
+  const f = await fixture(t, { send(method) { if (method === 'Input.dispatchMouseEvent') return pending; } });
+  const opened = await f.client.request({ id: 'open', operation: 'browser_open', args: { browser: 'bfixture', url: 'https://fixture.invalid' } });
+  const read = await f.client.request({ id: 'read', operation: 'browser_read', args: { tab: opened.tab } });
+  const binding = { session: 'client', turn: 'turn', brokerEpoch: 1, browserIncarnation: 'browser' };
+  const lease = f.root.leaseFor(opened.tab, binding);
+  assert.equal(f.adapter.delivered(lease, read.observation.observation), true);
+  const action = f.client.request({ id: 'held', operation: 'browser_act', args: { tab: opened.tab, op: 'click', ref: read.observation.data.find(row => row.role === 'button').ref } });
+  for (let i = 0; i < 50 && !f.calls.some(c => c.method === 'Input.dispatchMouseEvent'); i++) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.calls.some(c => c.method === 'Input.dispatchMouseEvent'));
+  const retainedTargets = f.owner.pendingOperations('client').map(row => row.lease);
+  f.client.disconnect();
+  const first = await f.adapter.cleanupSession('client', { retainedTargets });
+  assert.ok(first.cleanup.some(row => row.target === 'owned' && row.code === 'EFFECT_UNKNOWN'));
+  assert.equal(f.calls.some(c => c.method === 'Target.closeTarget'), false);
+  assert.equal((await action).effect, 'unknown'); finish(); await new Promise(resolve => setImmediate(resolve));
+  await f.adapter.cleanupSession('client');
+  assert.equal(f.calls.some(c => c.method === 'Target.closeTarget'), false);
+});

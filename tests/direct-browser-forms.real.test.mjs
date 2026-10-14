@@ -75,7 +75,7 @@ async function fixture(t, route) {
   form = createFormSession({ session: adapter.forLease(lease), identity, current: () => identity,
     resolveRef: ref => refs.resolve(ref, identity), onOperation: op => { active = op; } });
   t.after(() => { form.dispose(); adapter.disconnect(); });
-  let serial = 0;
+  let serial = 0; const issued = new Set();
   const ref = async selector => {
     // Selector acquisition is read-only setup for this owned local fixture, not
     // a production arbitrary selector or root API exposed to a model.
@@ -85,7 +85,8 @@ async function fixture(t, route) {
     const { node } = await cdp.send('DOM.describeNode', { nodeId, depth: 2, pierce: false }); collect(node);
     const tree = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: false });
     const ax = tree.nodes.find(n => n.backendDOMNodeId === node.backendNodeId);
-    return refs.observe(identity, node.backendNodeId, JSON.stringify([ax.role?.value ?? 'group', ax.name?.value ?? '', null]));
+    const handle = refs.observe(identity, node.backendNodeId, JSON.stringify([ax.role?.value ?? 'group', ax.name?.value ?? '', null]));
+    issued.add(handle); return handle;
   };
   const fill = async fields => {
     const values = []; for (const [selector, value] of fields) values.push({ ref: await ref(selector), value });
@@ -94,8 +95,14 @@ async function fixture(t, route) {
   };
   const click = async selector => form.act({ op: 'click', ref: await ref(selector) }, { operation: 'click' + (++serial), timeoutMs: 10000 });
   const reconcile = async () => {
-    const result = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId: (await cdp.send('DOM.getDocument', { depth: 1, pierce: false })).root.backendNodeId, fetchRelatives: false });
-    assert.ok(result.nodes.length); const id = 'delivered' + (++serial); form.pendingRead(id, identity); assert.equal(form.deliveredRead(id, identity), true);
+    const covered = [];
+    for (const handle of issued) {
+      const node = refs.resolve(handle, identity);
+      const result = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: false });
+      if (result.nodes.some(row => row.backendDOMNodeId === node.backendNodeId)) covered.push(handle);
+    }
+    assert.ok(covered.length); const id = 'delivered' + (++serial);
+    form.pendingRead(id, identity, covered); assert.equal(form.deliveredRead(id, identity), true);
   };
   const posted = async () => { for (let i = 0; i < 100 && !posts.length; i++) await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(posts.length, 1); return posts[0]; };
   return { form, ref, fill, click, reconcile, posted, calls, page, current: () => active };

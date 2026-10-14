@@ -26,6 +26,9 @@ async function fixture(t, options = {}) {
       assert.equal(route, 'page'); calls.push({ method, params });
       if (options.send) await options.send(method, params);
       switch (method) {
+        case 'Page.addScriptToEvaluateOnNewDocument': return { identifier: 'strict-popup' };
+        case 'Runtime.evaluate': return { result: { value: true } };
+        case 'Page.setInterceptFileChooserDialog': return {};
         case 'Page.enable': case 'Accessibility.enable': case 'DOM.scrollIntoViewIfNeeded': case 'Runtime.releaseObject': return {};
         case 'DOM.getDocument': return { root: { backendNodeId: 1, nodeType: 9, children: ax.slice(1).map(n => ({ backendNodeId: n.backendDOMNodeId, nodeType: 1, childNodeCount: 0 })) } };
         case 'DOM.describeNode': return { node: { backendNodeId: params.backendNodeId, nodeType: 1, childNodeCount: 0 } };
@@ -34,11 +37,13 @@ async function fixture(t, options = {}) {
         case 'DOM.resolveNode': { const id = 'object-' + (++serial); objects.set(id, params.backendNodeId); return { object: { objectId: id } }; }
         case 'Runtime.callFunctionOn': {
           const s = params.functionDeclaration;
+          if (s.includes('this.setupHitTargetInterceptor')) return { result: { objectId: 'interceptor-' + (++serial) } };
+          if (s === 'function(){return this.stop();}') return { result: { value: 'done' } };
           if (s.startsWith('function(){const module')) return { result: { objectId: 'constructor' } };
           if (s.startsWith('function(){return new this')) return { result: { objectId: 'instance' } };
           if (s === String(inspectControl)) return { result: { value: { standard: true, value } } };
           if (s === fixedFormInspectors['form-state'].source) return { result: { value: {
-            kind: !options.secondField && objects.get(params.objectId) === 3 ? 'button' : 'text', value, connected: true, enabled: true, visible: true, readonly: false,
+            kind: !options.secondField && objects.get(params.objectId) === 3 ? 'button' : 'text', value, connected: true, enabled: true, visible: true, hit: true, readonly: false,
             rect: { x: 1, y: 1, width: 100, height: 20 }, submit: !options.secondField && objects.get(params.objectId) === 3,
           } } };
           if (s.includes('this.checkElementStates')) return { result: { value: null } };

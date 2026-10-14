@@ -147,7 +147,7 @@ export function bindSemanticAdapter({ session, adapter, transportOwner, lifecycl
       const retained = count => ({ session, resource: 'semantic-journals', status: 'retained',
         code: 'SEMANTIC_CLEANUP_UNPROVED', ...(count === undefined ? {} : { count }) });
       if (!revoked) return Promise.resolve({ cleanup: [retained()] });
-      collecting = Promise.resolve().then(() => adapter.cleanupSession(session)).then(value => {
+      collecting = Promise.resolve().then(() => adapter.cleanupSession(session, { retainedTargets: [...held.values()] })).then(value => {
           const receipt = immutableJSON(value);
           if (typeof receipt.closed !== 'boolean' || !Array.isArray(receipt.cleanup) || !Number.isSafeInteger(receipt.retained) || receipt.retained < 0) throw Error();
           return [...receipt.cleanup, ...(receipt.closed && receipt.retained === 0 ? [] : [retained(receipt.retained)])];

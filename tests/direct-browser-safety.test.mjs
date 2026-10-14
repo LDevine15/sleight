@@ -12,6 +12,33 @@ function fixture(options = {}) {
     checkTarget: () => ({ present: true, visible: true, enabled: true, same: true }), ...options });
   return { authority, user, current: op => { current = op.scope; }, clock: value => { time = value; } };
 }
+test('verified private reads cannot release unknown input until covered data is delivered', () => {
+  const f = fixture(), op = operation({ kind: 'click', args: {} });
+  const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => { throw Error('unknown'); });
+  const read = operation({ id: 'private', kind: 'read', args: {} }), r = f.authority.prepare(read);
+  f.authority.dispatch(r.capability, read, () => {}); f.authority.observe(read.id); f.authority.verify(read.id, 'verified');
+  assert.equal(f.authority.prepare({ ...op, id: 'private-retry' }).verdict, 'deny');
+  f.authority.deliveredRead(read.id, ['runrelated']);
+  assert.equal(f.authority.prepare({ ...op, id: 'unrelated-retry' }).verdict, 'deny');
+  const covered = { ...read, id: 'covered' }, c = f.authority.prepare(covered);
+  f.authority.dispatch(c.capability, covered, () => {}); f.authority.observe(covered.id); f.authority.verify(covered.id, 'verified');
+  f.authority.deliveredRead(covered.id, [op.scope.ref]);
+  assert.equal(f.authority.prepare({ ...op, id: 'delivered-retry' }).verdict, 'allow');
+});
+test('once payment has exactly one same-document dialog allowance and no cross-origin confirmation', () => {
+  const f = fixture({ confirmPayments: 'always' });
+  const pay = operation({ id: 'pay', kind: 'click', args: {}, consequence: 'payment', terms });
+  f.authority.user(f.user, 'confirm', { operation: pay });
+  const foreign = { ...pay, id: 'foreign', scope: { ...pay.scope, origin: 'https://other.invalid' } };
+  f.current(foreign); assert.equal(f.authority.prepare(foreign).verdict, 'confirm'); f.current(pay);
+  const p = f.authority.prepare(pay); f.authority.dispatch(p.capability, pay, () => {});
+  f.authority.observe(pay.id); f.authority.verify(pay.id, 'verified');
+  assert.equal(f.authority.prepare({ ...pay, id: 'pay-again' }).verdict, 'confirm');
+  const dialog = { ...pay, id: 'dialog', kind: 'dialog', args: { action: 'accept' } }, d = f.authority.prepare(dialog);
+  assert.equal(d.verdict, 'allow'); f.authority.dispatch(d.capability, dialog, () => {});
+  f.authority.observe(dialog.id); f.authority.verify(dialog.id, 'verified');
+  assert.equal(f.authority.prepare({ ...dialog, id: 'dialog-again' }).verdict, 'confirm');
+});
 test('ordinary fields, URLs and nonpayment actions need no site or transmission permission', () => {
   for (const op of [operation(), operation({ kind: 'navigate', args: { url: 'https://other.invalid/path?q=fixture' } }),
     operation({ kind: 'click', args: {}, consequence: 'deletion' })]) {
@@ -57,13 +84,13 @@ test('one payment confirmation covers the same payment dialog, without site gran
   const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => {});
   assert.equal(f.authority.prepare(operation({ id: 'dialog', kind: 'dialog', args: { action: 'accept' }, consequence: 'payment', terms })).verdict, 'allow');
 });
-for (const submit of [false, true]) test('unknown submit needs a fresh read; ordinary unknown click continues; submit=' + submit, () => {
+for (const submit of [false, true]) test('every unknown input needs a delivered element read; submit=' + submit, () => {
   const f = fixture(), op = operation({ kind: 'click', args: {}, submit });
   const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => { throw Error('uncertain'); });
-  assert.equal(f.authority.prepare({ ...op, id: 'retry' }).verdict, submit ? 'deny' : 'allow');
+  assert.equal(f.authority.prepare({ ...op, id: 'retry' }).verdict, 'deny');
   const read = operation({ id: 'read', kind: 'read', args: {} }), r = f.authority.prepare(read);
   assert.equal(r.verdict, 'allow'); f.authority.dispatch(r.capability, read, () => {});
-  f.authority.observe(read.id); f.authority.verify(read.id, 'verified');
+  f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.authority.deliveredRead(read.id, [read.scope.ref]);
   assert.equal(f.authority.prepare({ ...op, id: 'after-read' }).verdict, 'allow');
 });
 test('Disconnect revokes even an ordinary request prepared without site grants', () => {
@@ -86,7 +113,7 @@ test('a failed read or a read of another frame cannot release an uncertain submi
   const p = f.authority.prepare(op); f.authority.dispatch(p.capability, op, () => { throw Error('unknown'); });
   const read = operation({ id: 'read', kind: 'read', args: {}, scope: { ...op.scope, frame: 'other' } }); f.current(read);
   const r = f.authority.prepare(read); f.authority.dispatch(r.capability, read, () => {});
-  f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.current(op);
+  f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.authority.deliveredRead(read.id, [read.scope.ref]); f.current(op);
   assert.equal(f.authority.prepare({ ...op, id: 'retry' }).verdict, 'deny');
   const failed = operation({ id: 'failed-read', kind: 'read', args: {} }), q = f.authority.prepare(failed);
   f.authority.dispatch(q.capability, failed, () => { throw Error('no state'); });
@@ -123,7 +150,7 @@ function dispatch(f, op, send = () => {}) {
 }
 const submitOperation = id => operation({ id, kind: 'click', args: {}, submit: true });
 const readOperation = id => operation({ id, kind: 'read', args: {} });
-function verifyRead(f, read) { f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); }
+function verifyRead(f, read) { f.authority.observe(read.id); f.authority.verify(read.id, 'verified'); f.authority.deliveredRead(read.id, [read.scope.ref]); }
 
 test('a delayed read captured before a submit cannot release its retry fence', () => {
   const f = fixture(), read = readOperation('old-read'), submit = submitOperation('submit');

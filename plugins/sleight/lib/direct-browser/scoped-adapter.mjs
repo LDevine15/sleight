@@ -3,6 +3,7 @@ import { immutableJSON } from './ipc.mjs';
 import { isFileAuthority, consumeStagedFilePayloads } from './host-files.mjs';
 import { isRemoteResources } from './remote-resources.mjs';
 import { canonical } from './authority.mjs';
+import { popupHook } from './popups.mjs';
 
 const allowed = new Set(['Page.enable', 'DOM.enable', 'Accessibility.enable', 'Runtime.enable']);
 const playwrightHash = '852e40f938e72e6129b6c9a8bde3f4cc6cfe5cecb5ac734b6b06c8ad1fde42bf';
@@ -134,6 +135,42 @@ export function createScopedAdapter({ session, checkLease, helpers, nodeBinding,
         return result;
       };
       const api = Object.freeze({ sessionId: lease.cdpSessionId,
+        async installBackground() {
+          check();
+          // Fixed host code only, never an expression from a tool request.
+          const source = `(${popupHook})('strict', ${JSON.stringify(lease.clientSession + ':' + lease.turn)})`;
+          const script = await reply('Page.addScriptToEvaluateOnNewDocument', { source });
+          if (!string(script.identifier, 1024) || !script.identifier) throw Error('BACKGROUND_UNAVAILABLE');
+          const result = await reply('Runtime.evaluate', { expression: source, returnByValue: true, awaitPromise: false });
+          if (result.exceptionDetails || result.result?.value !== true) throw Error('BACKGROUND_UNAVAILABLE');
+          await reply('Page.setInterceptFileChooserDialog', { enabled: true });
+          check(); return true;
+        },
+        async beginHitTarget(input) {
+          check(); const p = immutableJSON(input); fields(p, ['instance', 'node', 'x', 'y']);
+          const instance = objects.get(p.instance), object = objects.get(p.node);
+          if (instance?.kind !== 'playwright-instance' || object?.node === undefined || instance.context !== object.context ||
+              ![p.x, p.y].every(v => Number.isFinite(v) && v >= 0 && v <= 100000)) throw Error('SCOPED_COMMAND_DENIED');
+          node(object.node); context(instance.context);
+          const result = await reply('Runtime.callFunctionOn', { objectId: p.instance,
+            functionDeclaration: 'function(node,x,y){return this.setupHitTargetInterceptor(node,"mouse",{x,y},false);}',
+            arguments: [{ objectId: p.node }, { value: p.x }, { value: p.y }], returnByValue: false, awaitPromise: false }, true);
+          if (result.exceptionDetails || !string(result.result?.objectId, 1024) || !result.result.objectId) throw Error('COVERED');
+          const id = result.result.objectId;
+          if (objects.has(id)) throw Error('OBJECT_LOST');
+          objects.set(id, { context: instance.context, node: object.node, kind: 'hit-interceptor' });
+          return { objectId: id };
+        },
+        async finishHitTarget(input) {
+          check(); const p = immutableJSON(input); fields(p, ['objectId']);
+          const object = objects.get(p.objectId);
+          if (object?.kind !== 'hit-interceptor') throw Error('OBJECT_LOST');
+          node(object.node); context(object.context);
+          const result = await reply('Runtime.callFunctionOn', { objectId: p.objectId,
+            functionDeclaration: 'function(){return this.stop();}', arguments: [], returnByValue: true, awaitPromise: false });
+          if (result.exceptionDetails || result.result?.value !== 'done') throw Error('COVERED');
+          return true;
+        },
         on(event, fn) { check(); if (typeof fn !== 'function') throw Error('INVALID_ARGUMENT'); if (!listeners.has(event)) listeners.set(event, new Set()); listeners.get(event).add(fn); },
         off(event, fn) { listeners.get(event)?.delete(fn); },
         async send(method, input = {}) {
