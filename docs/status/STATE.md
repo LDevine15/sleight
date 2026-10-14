@@ -31,7 +31,8 @@ Past the cap (owner, 2026-10-13 and 14): BP2-1 ended at R4, BP2-4 at R4 and BP2-
 every turbo prototype module is in. BP2-12's plan merged (`bench/direct-browser2/promotion-plan.md`). It proposed three large wiring items. BP2-P1 is the authenticated
 broker and a native helper for the trusted UI, and it ends with the bundling inventory (runtime, signing, dependencies) for the owner
 to accept. sleight-arch dispatched it at 00:35 UTC (codex-hdlbf). BP2-P2 moves the semantic modules into the plugin. It waited for
-BP2-8R3, and sleight-arch dispatched it at 00:55 UTC (codex-hdlbh). BP2-P3 adds the four tools and the relay and skill hooks after P1 and P2.
+BP2-8R3, and sleight-arch dispatched it at 00:55 UTC. It blocked on bundling Playwright, the owner chose to include
+playwright-core 1.64.0 pinned (LAWS), and codex-hdlbi took it over. BP2-P3 adds the four tools and the relay and skill hooks after P1 and P2.
 
 AM1's speed map, live with the owner away (2026-10-14). The first run failed every read on the relay's native lease. AM1R2
 (merged 00:45 UTC) fixes that. With it, TextEdit completed every phase, with a 54 ms first read and a 937 ms scroll
@@ -39,7 +40,7 @@ AM1's speed map, live with the owner away (2026-10-14). The first run failed eve
 crashed when `bench/preapproved-process.mjs` threw `kill EPERM` out of an abort listener, and PP1 (merged) fixed it. Since then
 TextEdit completes 3/3 (first read 52 ms median, scroll 918 ms). VS Code and Word fail setup with AX error -25204 on the first
 window read after launch, and Word kept the fixture open until sleight-arch quit it. AM1E queues a generic bounded retry and
-a cleanup fix after AM1F (codex-hdlbe).
+a cleanup fix after AM1F, which is built and in review (codex-hdlbj).
 Evidence is in `ledger/claims/_evidence-AM1-live/`. No run left a window open, and sleight-arch cleared their banks and lock.
 
 Keychain prompts (owner's complaint, 2026-10-14) had two sources. Lanes on branches older than `scripts/claude-isolated.sh` ran
