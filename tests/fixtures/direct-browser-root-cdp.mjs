@@ -3,12 +3,23 @@ import { existsSync, readFileSync, mkdtempSync, realpathSync, rmSync } from 'nod
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPlaywrightCore } from '../../plugins/sleight/lib/direct-browser/worlds.mjs';
+import { popupHook } from '../../plugins/sleight/lib/direct-browser/popups.mjs';
 
 const rootMethods = new Set(['Target.createTarget', 'Target.attachToTarget', 'Target.getTargetInfo', 'Target.closeTarget', 'Target.getTargets']);
 const pageMethods = new Set(['Page.enable', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'DOM.enable', 'Accessibility.enable',
   'Runtime.enable', 'DOM.getDocument', 'DOM.describeNode', 'Accessibility.getPartialAXTree', 'DOM.resolveNode',
   'Runtime.callFunctionOn', 'Runtime.releaseObject', 'DOM.scrollIntoViewIfNeeded', 'Input.dispatchMouseEvent',
-  'Input.insertText', 'Input.dispatchKeyEvent']);
+  'Input.insertText', 'Input.dispatchKeyEvent', 'Page.addScriptToEvaluateOnNewDocument', 'Runtime.evaluate',
+  'Page.setInterceptFileChooserDialog']);
+function strictPopup(source) {
+  const prefix = `(${popupHook})('strict', `;
+  try {
+    if (!source?.startsWith(prefix) || !source.endsWith(')')) return false;
+    const owner = JSON.parse(source.slice(prefix.length, -1));
+    return typeof owner === 'string' && /^[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}$/.test(owner) &&
+      source === prefix + JSON.stringify(owner) + ')';
+  } catch { return false; }
+}
 
 // Root wire framing is essential: Playwright's page CDPSession.send cannot route
 // the attached session returned by Target.attachToTarget. This fixture sends the
@@ -52,6 +63,10 @@ export async function connectRootCdp(endpoint, { WebSocketClass = globalThis.Web
       calls.push({ method, params: structuredClone(params), route });
       if (closed) throw Error('FIXTURE_CDP_CLOSED');
       if (route === undefined ? !rootMethods.has(method) : !pageMethods.has(method) || !routes.has(route)) throw Error('FIXTURE_COMMAND_DENIED');
+      if (method === 'Page.addScriptToEvaluateOnNewDocument' && (Object.keys(params).length !== 1 || !strictPopup(params.source)) ||
+          method === 'Runtime.evaluate' && (Object.keys(params).length !== 3 || !strictPopup(params.expression) ||
+            params.returnByValue !== true || params.awaitPromise !== false) ||
+          method === 'Page.setInterceptFileChooserDialog' && (Object.keys(params).length !== 1 || params.enabled !== true)) throw Error('FIXTURE_COMMAND_DENIED');
       if (method === 'Target.createTarget' && (params.background !== true || !/^http:\/\/127\.0\.0\.1:\d+\/settings$/.test(params.url)) ||
           method === 'Target.attachToTarget' && (params.flatten !== true || !targets.has(params.targetId)) ||
           ['Target.getTargetInfo', 'Target.closeTarget'].includes(method) && !targets.has(params.targetId)) throw Error('FIXTURE_COMMAND_DENIED');

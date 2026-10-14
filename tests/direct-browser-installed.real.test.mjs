@@ -11,6 +11,7 @@ import { createUiChannel } from '../plugins/sleight/lib/direct-browser/host.mjs'
 import { createPackageInventory } from '../plugins/sleight/lib/direct-browser/session-host.mjs';
 import { prepareInstalledBrowser } from '../plugins/sleight/lib/launch.mjs';
 import * as transport from './fixtures/direct-browser-root-cdp.mjs';
+import { popupHook } from '../plugins/sleight/lib/direct-browser/popups.mjs';
 
 class SocketFixture extends EventTarget {
   readyState = 0; sent = []; closed = false;
@@ -61,6 +62,16 @@ test('owned root CDP close settles outstanding commands and closes its socket', 
   const rejected = assert.rejects(pending, /FIXTURE_CDP_CLOSED/);
   await f.raw.close(); await rejected;
   assert.equal(f.socket.closed, true);
+});
+test('owned real transport admits only the fixed strict popup and chooser setup', async t => {
+  const f = await offline(t), source = `(${popupHook})('strict', "client:turn")`;
+  await f.roundtrip('Page.addScriptToEvaluateOnNewDocument', { source }, 'child', { identifier: 'fixed' });
+  await f.roundtrip('Runtime.evaluate', { expression: source, returnByValue: true, awaitPromise: false }, 'child', { result: { value: true } });
+  await f.roundtrip('Page.setInterceptFileChooserDialog', { enabled: true }, 'child', {});
+  for (const [method, params] of [['Runtime.evaluate', { expression: 'document.body.click()', returnByValue: true }],
+    ['Page.addScriptToEvaluateOnNewDocument', { source: source + ';document.body.click()' }],
+    ['Page.setInterceptFileChooserDialog', { enabled: false }]])
+    await assert.rejects(f.raw.send(method, params, 'child'), /FIXTURE_COMMAND_DENIED/);
 });
 
 // Explicit synthetic installed-host inputs. They exercise the actual loader's
