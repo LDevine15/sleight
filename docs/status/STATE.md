@@ -30,8 +30,12 @@ the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and
 Past the cap (owner): BP2-4R4 passed and merged. BP2-1R3 failed, so codex-hdlaw builds BP2-1R4, its pre-approved last round.
 BP2-8R2 parked on two cleanup races, and the owner allowed one last round, BP2-8R3 (codex-hdlaz, 2026-10-14). BP2-12, the
 promotion plan, is dispatched (codex-hdlba). It moves no code, and its wiring items wait until BP2-1R4 and BP2-8R3 merge.
-BP2-1R4 merged (00:35 UTC), and both earlier reviewers' repros pass on it. BP2-8R3 is built and under review, and it is the last
-module before BP2-12's wiring items.
+BP2-1R4 merged (00:35 UTC), and both earlier reviewers' repros pass on it. BP2-8R3 passed review but its real-page popup test is
+wrong (a second `window.open('about:blank', name)` resets the window in Chromium, hook or not), so it waits for the test-only BP2-8T
+(codex-hdlbd). BP2-12's plan is DONE and awaits review (`bench/direct-browser2/promotion-plan.md` on `codex/bp2-12`). It proposes
+three large wiring items in `queue/next/`. BP2-P1 is the authenticated broker and a native helper for the trusted UI, and it ends with
+the bundling inventory (runtime, signing, dependencies) for the owner to accept. BP2-P2 moves the semantic modules into the plugin, and
+BP2-P3 adds the four tools, relay and skill hooks after P1 and P2. sleight-arch dispatches P1 and P2 once BP2-12 and BP2-8R3 merge.
 
 AM1's first live run (2026-10-14 00:00 UTC, owner away and reachable by phone, who said to run local work) failed every trial: the
 relay's native-lease guard refused the harness's read, because it passes the app handle into a helper with no standalone read first.
@@ -54,7 +58,7 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge reviewed items as they pass: BP2-8R3, AM1R2 (then rerun AM1 live), then BP2-12's wiring items.
+1. Merge as items pass: BP2-8T with BP2-8R3, BP2-12, AM1R2 (then rerun AM1 live). Dispatch BP2-P1 and P2, then P3.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. AM1's live speed map in an away window.
