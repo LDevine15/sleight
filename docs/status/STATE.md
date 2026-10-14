@@ -37,10 +37,11 @@ three large wiring items in `queue/next/`. BP2-P1 is the authenticated broker an
 the bundling inventory (runtime, signing, dependencies) for the owner to accept. BP2-P2 moves the semantic modules into the plugin, and
 BP2-P3 adds the four tools, relay and skill hooks after P1 and P2. sleight-arch dispatches P1 and P2 once BP2-12 and BP2-8R3 merge.
 
-AM1's first live run (2026-10-14 00:00 UTC, owner away and reachable by phone, who said to run local work) failed every trial: the
-relay's native-lease guard refused the harness's read, because it passes the app handle into a helper with no standalone read first.
-AM1R2 (codex-hdlbc) fixes the harness, and the evidence is in `ledger/claims/_evidence-AM1-live/`. The run also kept its bank
-`/private/tmp/sleight-battery-am1-ByX2a7`. Nothing was left open, and sleight-arch released its live lock.
+AM1's speed map, live with the owner away (2026-10-14). The first run failed every read on the relay's native lease. AM1R2
+(DONE, awaiting review) fixes that. On its branch TextEdit completed every phase, with a 54 ms first read and a 937 ms scroll
+(evidence below). Finder still fails on its several scroll areas and an unprovable folder-window cleanup (AM1F). A wider run
+crashed when `bench/preapproved-process.mjs` threw `kill EPERM` out of an abort listener (PP1). codex-hdlbe takes PP1, then AM1F.
+Evidence is in `ledger/claims/_evidence-AM1-live/`. No run left a window open, and sleight-arch cleared their banks and lock.
 
 Keychain prompts (owner's complaint, 2026-10-14) had two sources. Lanes on branches older than `scripts/claude-isolated.sh` ran
 bare `claude plugin validate`. Lanes now start with a throwaway `CLAUDE_CONFIG_DIR`, and LEDGER.md and the lane prompt require it.
