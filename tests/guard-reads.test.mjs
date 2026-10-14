@@ -297,6 +297,49 @@ for (const title of ['Delete', 'Remove Group', 'Revert', 'Discard', 'Erase', 'Em
     assert.equal(f.calls.filter(c => c[0] === 'read').length, 3);
   });
 
+for (const line of ['button Delete, ID: opener', 'button Description: Delete, ID: opener',
+  'button (enabled) Description: Remove Group, ID: opener', 'button ID: opener, Description: Save',
+  'button Description: Delete, Help: Delete the last digit, ID: opener',
+  'button Description: Browse…, ID: opener', 'close button, ID: opener', 'close button (enabled), ID: opener']) {
+  for (const target of ['1', '{ id: "opener" }', '{ line: ' + JSON.stringify(line) + ' }']) {
+    for (const careful of [false, true]) {
+      test(`confirming row refreshes before a stale click: ${line}, ${target}, careful=${careful}`, async () => {
+        let changed = false;
+        const f = fixture({ strict: true,
+          current: () => tree(expected, changed ? '\t3 sheet Confirm\n\t1 button Cancel\n\t2 button Confirm unrelated deletion'
+            : '\t1 ' + line + '\n\t2 button Second'), action: () => { changed = true; } });
+        await assert.rejects(f.run(`await app.click(${target}); await app.click(2);`, { bind: true, careful }),
+          /changed what element 2 is/);
+        assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
+        assert.deepEqual(f.calls.filter(c => c[0] === 'click'), [['click', 1]]);
+      });
+    }
+  }
+}
+
+for (const line of ['button Description: Delete, ID: opener', 'button ID: opener, Description: Delete']) {
+  test('a label click refreshes after the displayed confirming label: ' + line, async () => {
+    let changed = false;
+    const f = fixture({ strict: true, current: () => tree(expected,
+      changed ? '\t1 button Cancel\n\t2 button Other' : '\t1 ' + line + '\n\t2 button Second'),
+    action: () => { changed = true; } });
+    await assert.rejects(f.run('await app.click({ label: "Delete" }); await app.click(2);', { bind: true }),
+      /changed what element 2 is/);
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
+  });
+}
+
+for (const line of ['button Description: Mode, Help: Delete the last digit, ID: mode',
+  'button Description: Mode, Secondary Actions: Delete, Cancel, ID: mode',
+  'button Description: Mode, Help: Browse…, ID: mode', 'button Mode, ID: Delete',
+  'button Help: Delete, ID: mode', 'button Secondary Actions: Delete, Cancel, ID: mode']) {
+  test('binding ignores confirming words in unrelated fields: ' + line, async () => {
+    const f = fixture({ strict: true, current: () => tree(expected, '\t1 ' + line + '\n\t2 button Second') });
+    await f.run('await app.click(1); await app.click(2);', { bind: true });
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+  });
+}
+
 test('setValue invalidates binding before the next element action', async () => {
   let changed = false;
   const f = fixture({ current: () => tree(expected, changed ? '\t1 text field Editor\n\t2 button Other' : '\t1 text field Editor\n\t2 button Second'),

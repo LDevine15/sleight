@@ -581,8 +581,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const editKey = modifiers && (/^(?:arrow)?(?:left|right|up|down)$/.test(key ?? '') && (!command || textEditing) ||
             keys.length === 1 && ['super', 'cmd', 'command', 'meta'].includes(keys[0]) && (['a', 'c', 'x', 'z'].includes(key) || textEditing && ['b', 'i', 'u'].includes(key)) ||
             keys.length === 2 && keys.includes('shift') && keys.some(k => ['super', 'cmd', 'command', 'meta'].includes(k)) && key === 'z');
-          const opens = name === 'click' && (line === undefined || /^(?:menu button|pop up button|menu bar item|menu item|link|tab|disclosure triangle)(?: |$)/i.test(line) ||
-            /(?:…|\\.\\.\\.)(?:,|$)/.test(line) || /^button(?: \\([^)]*\\))* (?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(line)) ||
+          // Description is the displayed name in field rows; Help, IDs and secondary actions
+          // cannot turn an ordinary button into a confirming control.
+          const button = /^button(?: \\([^)]*\\))* (.*)$/i.exec(line ?? '')?.[1];
+          const label = /(?:^|, )Description: (.*?)(?=, (?:Value|ID|Help|Secondary Actions): |$)/.exec(button ?? '')?.[1] ??
+            button?.split(/, (?:Description|Value|ID|Help|Secondary Actions): /)[0];
+          const opens = name === 'click' && (line === undefined || /^(?:menu button|pop up button|menu bar item|menu item|link|tab|disclosure triangle|close button)(?: |,|$)/i.test(line) ||
+            /(?:…|\\.\\.\\.)$/.test(label ?? '') || /^(?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(label ?? '')) ||
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
           state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey,
