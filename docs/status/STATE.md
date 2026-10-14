@@ -11,7 +11,7 @@ busy, and post-release work builds on branches and merges after the tag.
 Pushed: `pane/auto-mode` at the commit holding this banner. `~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and
 public CI is green on 1.2.5. The engine updated to 26.1007.71326 (the watch's baseline follows it), and `--doctor` passes with a live read.
 
-Running (headless, nohup): 11 `codex exec` lanes (launcher `~/Projects/sleight-wt/ledger/start-lane.sh <lane> "<START WITH line>"`,
+Running (headless, nohup): 12 `codex exec` lanes (launcher `~/Projects/sleight-wt/ledger/start-lane.sh <lane> "<START WITH line>"`,
 template `ledger/lane-prompt-codex.md`, prompts and logs in `ledger/lane-runs/`) and the real-page runner (`node
 scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, log `ledger/lane-runs-runner.log`). Two NOTICEs top LEDGER.md: the
 resolved blockers (group 49357, the 300 s compile deadline) and V10 claimable. Restart the runner after merging any runner or
@@ -21,10 +21,14 @@ owned-group fix (a runner keeps the code it started with). A lane worktree from 
 Turbo v3 (owner's direction, ROADMAP; design `ledger/opus-turbo-v3-design.md`): our own action layer on the bundled Playwright, 5
 always-loaded tools, effects as observations, whole-form fill, background popups that keep their opener, the four rules as one module,
 and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and 6.8 MB of playwright-core. Lanes and branches
-(`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R DONE and
-reviewed; V2R, V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
+(`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R and V2R DONE and
+reviewed; V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
 no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
-(bench arm) waits for V7. V8 removal goes last. Next: once V1 to V7 and V10 pass review, they go onto one branch. Then V9's arm runs the
+(bench arm) waits for V7. V8 removal goes last. Speed-up (owner, 23:25 UTC: the load holds up their other projects): lanes no longer run the full check (LEDGER NOTICE 3,
+lane template step 6); they run focused tests, and sleight-arch runs one full check per merge. Sonnet-high Claude reviews take
+release-critical items (CS3 first). `private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r, v2r, v4r, v5r2
+and v6r2, merged clean, 1169/1169 direct-browser tests. V2R is reviewed. Lane `codex-v3-v9b` builds V9 now against V7's partial
+interface. Next: V3, V10, V7, V9 and V1R2 merge into v3-integration as they pass review, then one full check. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
   beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:

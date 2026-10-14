@@ -114,7 +114,7 @@ function template(helper, args) {
   }
   return helper;
 }
-// Virtual-target architecture reference: Apache-2.0 FowlBrowser vendor/browserModel.mjs
+// Virtual-target architecture reference: Playwright's browserModel (Apache-2.0, Microsoft), as vendored by FowlBrowser
 // and cdpRelay.mjs at 8b689249ba4e33d2626487aad930605c62e2c6a7. This is a new,
 // deliberately smaller implementation, not a copied or complete Playwright relay.
 // No generic connectOverCDP initializer may use the real root socket.
