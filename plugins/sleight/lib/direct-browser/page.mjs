@@ -111,6 +111,22 @@ export function popupHook() {
     const record = { cancelled: prevented.get.call(event), event, signature: arm.link.signature, url: arm.link.url };
     events.set(event, record); arm.request = record;
     nativePrevent.call(event);
+    // Read the actual handlers at dispatch, after pointer handlers may have
+    // changed them. A browser internally cancels when an inline handler returns
+    // false, so observe that return without calling the handler a second time.
+    for (const node of [...ancestors(arm.element), document, window]) {
+      const before = node.onclick;
+      let wrapper = before;
+      if (typeof before === 'function') {
+        wrapper = function(event) {
+          const result = before.apply(this, arguments);
+          if (result === false && events.has(event)) events.get(event).cancelled = true;
+          return result;
+        };
+        node.onclick = wrapper;
+      }
+      arm.handlers.push({ node, before, wrapper });
+    }
   };
   add.call(window, 'keydown', keyEvent, true);
   add.call(window, 'keyup', keyEvent, true);
@@ -119,7 +135,7 @@ export function popupHook() {
     retired.add(token);
     if (arm?.token !== token) return true;
     clearTimeout(arm.timer);
-    for (const { node, before, wrapper } of arm.handlers) if (node.onclick === wrapper) node.onclick = before;
+    for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
     arm = undefined; return true;
   };
   const api = {
@@ -145,18 +161,6 @@ export function popupHook() {
         || [...chain, document, window].some(node => [...listeners.get(node) ?? []].some(listener => opens(typeof listener === 'function' ? listener : listener.handleEvent)));
       if (!link && (linkElement ? !handlerOpens : !handlerOpens && ![...document.scripts].some(script => opens(script.textContent)))) return false;
       arm = { element, token, until: Date.now() + capMs, modifierUntil: 0, link, linkElement, handlers: [] };
-      // An inline handler returning false cancels internally in the browser.
-      // Observe that return while preserving its receiver, result and one call.
-      if (link) for (const node of [...chain, document, window]) {
-        const before = node.onclick;
-        if (typeof before !== 'function') continue;
-        const wrapper = function(event) {
-          const result = before.apply(this, arguments);
-          if (result === false && events.has(event)) events.get(event).cancelled = true;
-          return result;
-        };
-        node.onclick = wrapper; arm.handlers.push({ node, before, wrapper });
-      }
       arm.timer = setTimeout(() => finish(token), capMs);
       return link ? { kind: 'link' } : true;
     },

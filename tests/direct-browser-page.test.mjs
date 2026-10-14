@@ -561,3 +561,26 @@ test('CR1 no live user activation means no window, including during an armed cli
     assert.deepEqual(f.opens, []);
   } finally { f.hook.off(); }
 });
+
+test('CR1 observes an inline cancellation installed after preparation and before dispatch', () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  try {
+    f.hook.prepare(link, 'late-handler', 1000);
+    link.onclick = () => false;
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    link.onclick(click);
+    assert.equal(f.hook.takeRequest('late-handler'), undefined);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 a handler installed during dispatch makes an uncancelled default unavailable', () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  try {
+    f.hook.prepare(link, 'during-dispatch', 1000);
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    link.onclick = () => {};
+    assert.equal(f.hook.takeRequest('during-dispatch').unavailable, true);
+  } finally { f.hook.off(); }
+});
