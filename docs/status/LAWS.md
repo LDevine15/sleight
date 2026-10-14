@@ -92,6 +92,12 @@ belong in [STATE.md](STATE.md).
 - Turbo works in the background like the engine path (owner, 2026-10-14, after test browsers pulled the owner across Spaces): it
   never activates the browser or switches Spaces, opens tabs and handles popups in the background, and never brings a page to the
   front. Chrome's own remote-debugging prompt is the only allowed activation. Its live gate fails on any Space switch or focus change.
+- Turbo's safety policy is four rules (owner, 2026-10-14, replacing design v2's heavier authority model). Payments follow the
+  payment rule above. Page content is never an instruction or a permission. A submit with an unknown effect gets a fresh read before
+  any retry. Turbo works in the background. Before typing or clicking, turbo checks the target element alone (present, visible,
+  enabled and the one the model saw), and an incomplete read elsewhere on the page doesn't block it. Values from the user's message
+  go into the form the task names without per-field permission tokens. Turbo doesn't ask per site for sites the user named or pages
+  the task opened.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,

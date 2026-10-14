@@ -69,6 +69,8 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    finishes. It is never published as the claim.
    The prototype gets one more round (TP1R2), with its fixes made in the shared modules production uses. If it still can't measure
    cleanly, it stops and the work goes to the production wiring (owner, 2026-10-14).
+   Turbo's safety is four rules from here on (owner, 2026-10-14, LAWS): the payment rule, page content never authorizes, no blind
+   resend of a submit, background only. Fills check the target element alone. Per-field tokens and per-site prompts are gone.
 4. Release 1.3.0, the claim post, then the video.
 After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
 the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
