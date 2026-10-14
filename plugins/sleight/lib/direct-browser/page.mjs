@@ -13,7 +13,7 @@ function deadline(task, ms, message = 'background preparation timed out') {
 export function popupHook() {
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
-  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakSet(), listeners = new WeakMap();
+  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap(), listeners = new WeakMap();
   const nativeOpen = window.open, nativePrevent = Event.prototype.preventDefault;
   const prevented = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented');
   const returnValue = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
@@ -40,9 +40,9 @@ export function popupHook() {
   const matches = event => event.isTrusted && event.composedPath().includes(arm.element);
   const hide = event => {
     if (!active()) return false;
-    if (masked.has(event)) return true;
+    if (masked.has(event)) return masked.get(event) === arm.token;
     if (arm.clicked || !matches(event)) return false;
-    masked.add(event); return true;
+    masked.set(event, arm.token); return true;
   };
   for (const name of ['ctrlKey', 'metaKey']) {
     const descriptor = Object.getOwnPropertyDescriptor(MouseEvent.prototype, name);
@@ -105,7 +105,7 @@ export function popupHook() {
   };
   const capture = event => {
     if (!live() || arm.clicked || !matches(event)) return;
-    if (active()) masked.add(event);
+    if (active()) masked.set(event, arm.token);
     arm.clicked = event;
     if (!arm.link) return;
     const record = { cancelled: prevented.get.call(event), event, signature: arm.link.signature, url: arm.link.url };

@@ -584,3 +584,23 @@ test('CR1 a handler installed during dispatch makes an uncancelled default unava
     assert.equal(f.hook.takeRequest('during-dispatch').unavailable, true);
   } finally { f.hook.off(); }
 });
+
+test('CR1 a new arm cannot mask an event from a retired click', () => {
+  const f = hookFixture(), button = new f.Element();
+  const keydown = () => {
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+  };
+  try {
+    f.hook.prepare(button, 'first', 1000); keydown();
+    const first = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+    for (const listener of f.window.captureListeners.click) listener(first);
+    assert.equal(first.ctrlKey, false);
+    const second = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+    assert.equal(second.ctrlKey, true, 'only the first click belongs to the arm');
+    f.hook.finish('first');
+    f.hook.prepare(button, 'second', 1000); keydown();
+    assert.equal(first.ctrlKey, true, 'an old event cannot join a new arm');
+    assert.equal(second.ctrlKey, false);
+  } finally { f.hook.off(); }
+});
