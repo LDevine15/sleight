@@ -64,7 +64,7 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    The owner approved the Electron design's six decisions (2026-10-14, written in LAWS). The debugger is a separate opt-in for each
    app, with an Always allow that only the user's click writes. EP-1 to EP-7 build after 1.3.0.
    The astra report (2026-10-13) disproved one extension queue across sessions. The owner lifted the code freeze for AS-1 (bind discovery
-   to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. MIT and Apache-2.0 code may be adapted (Apache with its notice). Closed code gives notes only.
+   to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. Competitors' code gives ideas only, rewritten clean-room (owner, 2026-10-15).
    Owner, 2026-10-14: a prototype turbo arm (TP1) runs the Haiku gate round early, as a measurement before the production wiring
    finishes. It is never published as the claim.
    The prototype gets one more round (TP1R2), with its fixes made in the shared modules production uses. If it still can't measure
@@ -128,7 +128,8 @@ lack. The owner's plan (2026-10-12) is that sleight takes over where browser con
    is a scope call for the owner. The owner asked for a video by the end of 2026-10-12 that shows sleight
    beating it, so the rerun after batch F decides what the video says.
    Learn from its design (owner, 2026-10-12): anything in FowlBrowser's architecture or logic that sleight
-   can adapt (its MIT code included, with credit) gets adapted, in the relay, the skill or the benchmark.
+   can learn from gets rebuilt our way, in the relay, the skill or the benchmark. Since 2026-10-15 (owner) none of its code is
+   adapted: lanes write from a behavior spec without reading its source.
    Read before probing (owner, 2026-10-12): read how others built it before discovering it ourselves. FowlBrowser's
    source first (the 21:05 UTC study feeds batch H). Then the installed code of Claude in Chrome, the Codex browser
    extension and the ChatGPT engine, with REA (github.com/morluto/rea, MIT) where the code isn't readable as is.
