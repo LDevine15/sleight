@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createScopedAdapter } from '../plugins/sleight/lib/direct-browser/scoped-adapter.mjs';
 import { createFormSession, formInspectors } from '../plugins/sleight/lib/direct-browser/forms.mjs';
+import { BrowserReads, fixedReadInspectors } from '../plugins/sleight/lib/direct-browser/reads.mjs';
 import { RefMap } from '../plugins/sleight/lib/direct-browser/refs.mjs';
 import { loadPlaywrightCore } from '../plugins/sleight/lib/direct-browser/worlds.mjs';
 import { createFormsFixtureHandler, finishTravelFixture } from './fixtures/direct-browser-forms-fixture.mjs';
@@ -40,6 +41,8 @@ async function fixture(t, route) {
   const browser = await runtime.inprocess.playwright.chromium.launch({ headless: true, executablePath: executable });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+  if (route === 'checkout') await page.route('**/payment.html?*', request => request.fulfill({
+    contentType: 'text/html', body: readFileSync(join(cache, 'test/forms/site/payment.html'), 'utf8') }));
   await page.goto(origin + (route === 'shop' ? '/shop/checkout/payment' : '/' + route));
   const cdp = await page.context().newCDPSession(page), { frameTree } = await cdp.send('Page.getFrameTree');
   const identity = { browserIncarnation: 'owned-fixture', brokerEpoch: 1, clientSession: 'fixture', turn: 'turn', leaseGeneration: 1,
@@ -56,7 +59,7 @@ async function fixture(t, route) {
       const result = await cdp.send(method, params); collect(result.root ?? result.node); return result;
     } };
   let form, active;
-  const adapter = createScopedAdapter({ session: raw, helpers: formInspectors(), checkLease: () => true,
+  const adapter = createScopedAdapter({ session: raw, helpers: { ...formInspectors(), ...fixedReadInspectors }, checkLease: () => true,
     nodeBinding: id => nodes.has(id) ? { ...lease, backendNodeId: id } : null,
     dialogBinding: () => form.dialogBinding() });
   form = createFormSession({ session: adapter.forLease(lease), identity, current: () => identity,
@@ -97,7 +100,10 @@ async function fixture(t, route) {
     assert.equal(posts.length, 1, 'exactly one submission must reach the fixture endpoint'); submissionObserved = true; return posts[0];
   };
   t.after(() => { if (submissionObserved) assert.equal(posts.length, 1, 'no later duplicate submission'); });
-  return { form, ref, fill, click, reconcile, posted, calls, page, current: () => active };
+  const reader = new BrowserReads({ identity, authorize: () => true });
+  reader.addFrame({ session: adapter.forLease(lease), frameId: identity.frame, target: identity.target, document: 1 });
+  t.after(() => reader.dispose());
+  return { form, reader, ref, fill, click, reconcile, posted, calls, page, current: () => active };
 }
 
 test('real demo /travel fills ordinary and dependent fields, chooses readonly dates, and submits', { skip }, async t => {
@@ -134,4 +140,23 @@ test('real demo shop checkout fills protected fields and sends an explicit submi
   await f.click('form button'); const post = await f.posted();
   assert.equal(post.path, '/shop/checkout/order');
   assert.equal(post.data.number, '4242424242424242'); assert.equal(post.data.expiry, '12/30'); assert.equal(post.data.cvc, '123');
+});
+
+// TF1 qualifies against the exact MIT form fixtures that produced the saved errors.
+test('real settings priority order fills through exposed drag operations and submits exact order', { skip }, async t => {
+  const f = await fixture(t, 'settings');
+  const order = ['Security', 'Mentions', 'Billing', 'Reminders', 'Product updates'];
+  await f.fill([['#reference', 'TF1-ORDER'], ['#languages', ['Japanese']], ['#prio', order]]);
+  assert.deepEqual(await f.page.locator('#prio li').allTextContents(), order.map(v => '⋮⋮' + v));
+  await f.click('button[type="submit"]'); await f.reconcile(); await f.click('#do-save');
+  const post = await f.posted(); assert.deepEqual(post.data.priorities, order);
+});
+test('real checkout read exposes only parent controls across the cross-origin payment frame', { skip }, async t => {
+  const f = await fixture(t, 'checkout');
+  const result = await f.reader.read({ maxBytes: 64000 });
+  assert.ok(result.data.some(row => row.name === 'Full name'));
+  assert.ok(result.data.some(row => row.name === 'Cookie notice'));
+  assert.equal(result.coverage.sensing, 'incomplete');
+  assert.equal(result.data.some(row => /Card number|Expiry|CVC/.test(row.name)), false);
+  assert.equal(f.calls.includes('Page.bringToFront'), false);
 });

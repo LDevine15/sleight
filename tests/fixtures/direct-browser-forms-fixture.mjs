@@ -19,7 +19,7 @@ export function createFormsFixtureHandler({ route, siteRoot, renderShop, origin,
       return;
     }
     if (route === 'shop') { response.writeHead(200, { 'content-type': 'text/html' }).end(renderShop('checkout/payment', { base: '', cart: ['harbor'] }, origin())); return; }
-    const names = { '/travel': 'travel.html', '/settings': 'settings.html', '/common.js': 'common.js', '/airports.json': 'airports.json', '/style.css': 'style.css' };
+    const names = { '/travel': 'travel.html', '/settings': 'settings.html', '/checkout': 'checkout.html', '/common.js': 'common.js', '/airports.json': 'airports.json', '/style.css': 'style.css' };
     const name = names[new URL(request.url, 'http://fixture.invalid').pathname];
     if (!name) { response.writeHead(404).end(); return; }
     response.writeHead(200, { 'content-type': name.endsWith('.js') ? 'text/javascript' : name.endsWith('.json') ? 'application/json' : name.endsWith('.css') ? 'text/css' : 'text/html' })
