@@ -48,7 +48,7 @@ test('installed v3 fork and relay serve all five tools on an owned real local fo
   const call=async(name,args)=>{const result=await request('tools/call',{name,arguments:args});assert.equal(result.isError,false,JSON.stringify(result));return result.content.map(x=>x.text??'').join('\n');};
   const opened=await call('browser_open',{url:'http://127.0.0.1:'+server.address().port});
   const tab=/^t\w+/.exec(opened)?.[0];assert.ok(tab,opened);
-  const ref=(text,label)=>{const row=text.split('\n').find(line=>line.includes('"'+label+'"'));assert.ok(row,text);const found=/\[ref=(e\d+)\]/.exec(row);assert.ok(found,row);return found[1];};
+  const ref=(text,label)=>{const row=text.split('\n').find(line=>line.includes('[ref=')&&line.includes('"'+label+'"'));assert.ok(row,text);const found=/\[ref=(e\d+)\]/.exec(row);assert.ok(found,row);return found[1];};
   const field=ref(opened,'Name');
   const read=await call('browser_read',{tab});assert.match(read,/untrusted/);
   assert.match(await call('browser_act',{tab,steps:[{do:'click',ref:ref(read,'Change label')}]}),/Changed/);
