@@ -3,45 +3,36 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 17:29 UTC, owner away since 12:59 UTC, reachable by phone)
+## Banner (2026-10-14 22:45 UTC, owner checking in by phone)
 
-Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then release 1.3.0, the claim
-post and the video (ROADMAP 0b). Engine facts are in docs/engine-notes.md, and process is sleight-arch's judgment (memory `slim-laws`).
-The laptop lost power around 05:05 UTC and rebooted at 12:53 UTC. The ChatGPT engine is now 26.1007.71326.
-Pushed: `pane/auto-mode` at the commit holding this banner (private sleight-dev). Full check 4780 pass, 0 fail, 44 skipped,
-mod 33/33 (an earlier run failed once on a kill EPERM, queued as OG1). `~/Projects/sleight` is fast-forwarded to it.
-There are 0 open PRs, and public CI is green on 1.2.5.
+Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
+the video. Owner (evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3; lanes stay busy, and
+post-release work builds on branches and merges after the tag.
+Pushed: `pane/auto-mode` at the commit holding this banner. Full check 5598 pass, 0 fail, mod 49/49. `~/Projects/sleight` is
+fast-forwarded to it.
 
-Turbo (sleight's direct browser path, opt-in through Chrome's remote-debugging consent) is the path to the gate.
-- Merged, inactive until wired: the P1 chain, BP2-P1B, BP2-P1S plus its two review fixes (P1SR, P1SR2: an uncertain submit stays
-  fenced until a newer read). Owner decisions (LAWS): `playwright-core` 1.64.0 pinned, helpers compiled on first use, background only,
-  four safety rules.
-- Turbo is merged into `pane/auto-mode` (`2e0375a7`, opt-in and off by default): P2 and P2R (ported), P3 and P3R, P4, TS1 and
-  TS1R, each reviewed MERGE. TS1 and TS1R fixed the Opus safety review's 1 critical and 3 high findings plus a second critical (Enter
-  classified from a stale inspection). Full check 5454 pass, 0 fail, mod 49/49. Real-page and real-suite tests at the stack's exact
-  commit: 403 of 403 ran and passed. Payments stay refused on the installed path until a payment-terms provider is qualified. The plugin is
-  16 MB with Playwright bundled. TB2 (codex-hdlds) builds a bench arm for production turbo in a disposable headless Chromium.
-  Live qualification needs the owner: accept the opt-in in sleight's prompt, then click Allow on Chrome's prompt once per launch.
-- Lanes start with `~/Projects/sleight-wt/ledger/start-lane.sh <lane> "<START WITH line>"` (template `ledger/lane-prompt-codex.md`,
-  prompts and logs in `ledger/lane-runs/`, kept across reboots). The real-page runner serves from `~/Projects/sleight` (restarted
-  13:12 UTC after clearing the dead runner's lock; log `ledger/lane-runs-runner.log`).
+Turbo v3 (owner's direction, ROADMAP): turbo v1's own CDP layer made 98 of 133 errors as unproved clicks, and model time was 91% of form
+wall time. Opus studied FowlBrowser and turbo (`ledger/opus-turbo-v3-design.md`) and designed our own layer on the bundled Playwright:
+5 always-loaded tools, effects reported as observations, batched steps, whole-form fill, background popups that keep their opener, the
+four rules as one module. It removes 7,638 of 8,814 library lines, 7,217 test lines, bench/direct-browser2, and 6.8 MB of
+playwright-core (plugin about 15.9 to 9.1 MB). Lanes V1 to V7 and V9 build it in parallel against fixed interfaces (queue/V*.md); V8
+removal merges last. V4 is DONE, and V9 waits for V7. Targets per gate round: 26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors,
+0 ToolSearch, 0 focus events.
+- Merged today on v1 (kept as fallback and test source): the popup and read stack (TF2R, TF4, TF2R2, TS2), TG1R2 (with turbo on the
+  engine's browser path stays beside it, owner, LAWS), CH1R and CH1R2 (chess fixture), the guard default and fixes, CI1, a 300 s
+  first-use helper compile. TF3, TF5 and TF6 sit on their branches as reference for v3's V5 lane.
+- Measured on v1 in the headless arm: non-form tasks 4/5 (demoid needs the opener popup), forms 3/4 (checkout fails), form-travel
+  242 s in 99 calls.
 
-Speed (SR1; the owner chose to make A, B and C one guard mode with one final read a call):
-- The guard A/B is done (docs/benchmarks/2026-10-14-guard-ab.md): `first-off,quiet-edits,bind` against the default on five native
-  tasks, 3 rounds alternating, Haiku 5.5. 15/15 against 14/15, summed median wall 185.9 s against 208.6 s, tool 32.5 s against
-  49.9 s, guard reads 5.7 s against 17.3 s, no renumber stops, $0.34. Design A's probe before it: 10/10 against 0/10
-  (docs/benchmarks/2026-10-14-bind-probe.json). GD1 made the three modes the default (merged), and `careful` stays.
-  An Opus review of the new default (`ledger/opus-guard-default-review.md`) found six sequences it now lets through. The worst
-  two are a plain confirming button that opens a sheet, and a click that swaps the window. GD2, GD2R, GD2R2 and GD2R3 (merged) fixed
-  five and a menu-label bug, and the sixth (a look-alike document swap) is a documented limit. A Haiku pass after them: 14/14, wall
-  191.1 s against the old default's 208.6 s.
-- C is parked (sleight-arch, 2026-10-14). Its probe ran live on macOS 27 after two fixes: a sharing-indicator window ("Window",
-  one WindowSharingSessionButton child) appears while the engine captures an app, and TextEdit's Open panel is a standard window
-  served by `com.apple.appkit.xpc.openAndSavePanelService`. After Cmd+O the app's focused element has no AXWindow (AX error
-  -25212). A focus check on the app can't see the panel. C would need an observer on that service for about 50 to 70 s across
-  296 sessions. The read after a real opener stays.
-- Done, to apply: RP1 (CHANGELOG-1.3.0.md, README-diff.md, release-checklist.md). CS1 found the claim-suite arms mostly not installed;
-  its table gives each install command. The unpriced-spend blocker it reported was already reconciled.
+Release readiness (everything besides turbo): CI1 merged. CS3 closes the claim-suite runner gaps (owner: drop the codex-cu and
+devtools bridge arms and say so in the published coverage). RP2 builds the release-pass runner with sleight-arch's stage vectors
+(claims/RP2/ARCH-NOTE.md). OL1R fixes OL1's review findings. RL1 (release notes) waits on `codex/rl1`. Post-release on branches:
+EP-2 DONE, EP-6, Q1-1 DONE, Q1-2 to Q1-4 finishing.
+
+Owner steps, at the Mac: reload FowlBrowser's extension in Helium (sleight-arch can't, since Helium isn't on the benchmark allowlist);
+run the sleight-arm login (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`);
+turbo's opt-in and Chrome's Allow (by design only a person grants debugger control); the claim-suite checklist
+(`ledger/claim-suite-owner-checklist.md`). API spend for October: $159.72 of $200.
 
 Next steps, in order:
 1. Review P2; merge P2, P3 and P4 together once P4 passes. Merge SR1A, SR1CPR2 and OG1 as they pass.
