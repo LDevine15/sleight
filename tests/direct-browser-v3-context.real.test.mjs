@@ -197,7 +197,7 @@ for (const redirect of [true, false]) test('V10R2A real iframe focus chain, pare
   const f=await fixture(t);
   await f.page.frameLocator('iframe').locator('#card').evaluate((el, redirect) => {
     // The child's activeElement stays el after its handler moves focus upstairs.
-    el.closest('form').removeAttribute('id'); el.removeAttribute('autocomplete');
+    el.closest('form').replaceWith(el); el.removeAttribute('autocomplete');
     if (redirect) el.onfocus=() => parent.document.querySelector('#e1').focus();
   },redirect);
   const result=await f.runSteps(f.tab,[{do:'press',ref:'f1e1',key:'Enter'}],f.ctx);
