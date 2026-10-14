@@ -6,7 +6,7 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 ## Banner (2026-10-14 23:15 UTC, re-hydrated after the owner's clear)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3; lanes stay
+the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
 busy, and post-release work builds on branches and merges after the tag.
 Pushed: `pane/auto-mode` at the commit holding this banner. `~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and
 public CI is green on 1.2.5. The engine updated to 26.1007.71326 (the watch's baseline follows it), and `--doctor` passes with a live read.
@@ -22,7 +22,7 @@ Turbo v3 (owner's direction, ROADMAP; design `ledger/opus-turbo-v3-design.md`): 
 always-loaded tools, effects as observations, whole-form fill, background popups that keep their opener, the four rules as one module,
 and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and 6.8 MB of playwright-core. Lanes and branches
 (`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R DONE and
-reviewed; V2R, V5R2, V6R2 DONE with reviews running. V3 and V1R2 are in progress. V10's brief said "after V7" while V7 waits on V10, so
+reviewed; V2R, V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
 no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
 (bench arm) waits for V7. V8 removal goes last. Next: once V1 to V7 and V10 pass review, they go onto one branch. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
