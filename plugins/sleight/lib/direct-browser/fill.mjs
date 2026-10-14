@@ -1,3 +1,4 @@
+import { isV3Context } from './v3-context.mjs';
 // Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
 class FieldError extends Error {}
@@ -102,10 +103,12 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             if (stopped) throw new FieldError(stopped);
             const element = await locator.evaluate(inspectElement, value, options);
             const target = { ...element, element, prior, tab, page, ref, locator, state: tab.state, do: kind };
-            refusal(await check(ctx, kind, target));
-            if (kind === 'click' && element.submit) refusal(await check(ctx, 'submit', target));
-            if (stopped) throw new FieldError(stopped);
-            sent = true; return action();
+            try {
+              refusal(await (isV3Context(ctx) ? ctx.check(kind, target) : check(ctx, kind, target)));
+              if (!isV3Context(ctx) && kind === 'click' && element.submit) refusal(await check(ctx, 'submit', target));
+              if (stopped) throw new FieldError(stopped);
+              sent = true; return await action(isV3Context(ctx) ? target.locator : locator, target);
+            } finally { if (isV3Context(ctx)) await ctx.releaseTarget(target); }
           };
           if (state.kind === 'file') {
             if (!Array.isArray(value) || !value.length) throw new FieldError('file fields need browser_act upload with user-named paths');
@@ -121,9 +124,9 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
                 try {
                   const label = handle.asElement();
                   if (!label) throw new FieldError('associated label unavailable; read the form');
-                  await send(() => label.click(options), 'click', label);
+                  await send(checked => checked.click(options), 'click', label);
                 } finally { await handle.dispose(); }
-              } else await send(() => state.kind === 'custom' || state.type === '' ? loc.click(options) : loc.setChecked(value, options),
+              } else await send(checked => state.kind === 'custom' || state.type === '' ? checked.click(options) : checked.setChecked(value, options),
                 state.kind === 'custom' || state.type === '' ? 'click' : value ? 'check' : 'uncheck');
             }
             if (!stopped && (await loc.evaluate(inspect, value, options)).checked !== value) throw new FieldError('checked state did not match; read the page');
@@ -136,7 +139,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               if (matches.length !== 1 || matches[0].disabled) throw new FieldError('option missing, disabled or ambiguous; read the select');
               return matches[0].value;
             });
-            await send(() => loc.selectOption(selected.map(value => ({ value })), options), 'select');
+            await send(checked => checked.selectOption(selected.map(value => ({ value })), options), 'select');
             if (!stopped) {
               const after = await loc.evaluate(inspect, value, options), actual = after.options.filter(o => o.selected).map(o => o.value);
               if (actual.length !== selected.length || selected.some(v => !actual.includes(v))) throw new FieldError('selection did not match; read the select');
@@ -148,11 +151,11 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             const candidate = loc.getByRole('option', { name: value, exact: true });
             await candidate.waitFor({ ...options, state: 'visible' });
             if (await candidate.count() !== 1) throw new FieldError('option missing or ambiguous; read the list');
-            await send(() => candidate.click(options), 'click', candidate);
+            await send(checked => checked.click(options), 'click', candidate);
           } else if (state.kind === 'combo') {
             if (typeof value !== 'string' || !state.controls || /[\r\n\0]/.test(state.controls)) throw new FieldError('combobox needs text and a controlled option list');
-            if (state.editableText) await send(() => loc.fill(value, options));
-            else await send(() => loc.click(options), 'click');
+            if (state.editableText) await send(checked => checked.fill(value, options));
+            else await send(checked => checked.click(options), 'click');
             const handle = await loc.elementHandle(options);
             try {
               const frame = await handle.ownerFrame();
@@ -161,15 +164,15 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               const candidate = frame.locator('[id="' + id + '"]').getByRole('option', { name: value, exact: true });
               await candidate.waitFor({ ...options, state: 'visible' });
               if (await candidate.count() !== 1) throw new FieldError('ambiguous option; read the list');
-              await send(() => candidate.click(options), 'click', candidate);
+              await send(checked => checked.click(options), 'click', candidate);
               if (!stopped && !(await loc.evaluate(inspect, value, options)).matched) throw new FieldError('combobox value did not match; read the field');
             } finally { await handle?.dispose(); }
           } else if (state.kind === 'range') {
             const min = Number(state.min), max = Number(state.max), step = Number(state.step), count = Math.round((value - min) / step);
             if (typeof value !== 'number' || ![min, max, step].every(Number.isFinite) || step <= 0 || value < min || value > max ||
                 Math.abs(min + count * step - value) > 1e-8 || count > 1000) throw new FieldError('range value is outside its bounds or step');
-            await send(() => loc.press('Home', options), 'press');
-            for (let j = 0; j < count && !stopped; j++) await send(() => loc.press('ArrowRight', options), 'press');
+            await send(checked => checked.press('Home', options), 'press');
+            for (let j = 0; j < count && !stopped; j++) await send(checked => checked.press('ArrowRight', options), 'press');
             if (!stopped && (await loc.evaluate(inspect, value, options)).number !== value) throw new FieldError('range value did not match; read the field');
           } else if (state.kind === 'reorder') {
             const names = await loc.evaluate(order, undefined, options);
@@ -180,12 +183,15 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             for (let j = 0; j < value.length && !stopped; j++) {
               const current = await loc.evaluate(order, undefined, options), from = current.indexOf(value[j]);
               if (from < 0 || current.length !== names.length) throw new FieldError('list changed; read it before continuing');
-              if (from !== j) await send(() => children.nth(from).dragTo(children.nth(j), options), 'drag');
+              if (from !== j) {
+                if (isV3Context(ctx)) await send((checked, target) => ctx.dragTo(target, children.nth(j)), 'drag', children.nth(from));
+                else await send(() => children.nth(from).dragTo(children.nth(j), options), 'drag');
+              }
             }
             if (!stopped && JSON.stringify(await loc.evaluate(order, undefined, options)) !== JSON.stringify(value)) throw new FieldError('order did not match; read the list');
           } else if (state.kind === 'color') {
             if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) throw new FieldError('color needs a six-digit hex value');
-            await send(() => loc.evaluate((el, color) => {
+            await send(checked => checked.evaluate((el, color) => {
               const view = el.ownerDocument.defaultView;
               Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value').set.call(el, color);
               for (const type of ['input', 'change']) el.dispatchEvent(new view.Event(type, { bubbles: true }));
@@ -193,7 +199,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             if (!stopped && !(await loc.evaluate(inspect, value.toLowerCase(), options)).matched) throw new FieldError('color did not match; read the field');
           } else if (state.kind === 'text') {
             if (!['string', 'number'].includes(typeof value)) throw new FieldError('text fields need a string or number');
-            await send(() => loc.fill(String(value), options));
+            await send(checked => checked.fill(String(value), options));
             if (!stopped && !(await loc.evaluate(inspect, value, options)).matched) rows[i].note = 'value was formatted or changed by the page; read it if exact text matters';
           } else throw new FieldError('unsupported field kind; use browser_act');
           rows[i].status = 'set';
@@ -219,6 +225,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
 // Parallel lanes own these siblings. Loading them only at the entry keeps the
 // field strategies testable against the fixed interfaces before the join lands.
 export async function fillFields(tab, fields, options, ctx) {
+  if (!isV3Context(ctx)) throw Error('TRUSTED_TURN_REQUIRED');
   const [{ check, inspectElement }, { runSteps }] = await Promise.all([import('./rules.mjs'), import('./act.mjs')]);
   return createFillFields({ check, runSteps, inspectElement })(tab, fields, options, ctx);
 }

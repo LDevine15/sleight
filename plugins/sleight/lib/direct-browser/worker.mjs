@@ -2,7 +2,8 @@ import { fork } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readInstalledConfig, acceptedInstalledPackage } from './installed-config.mjs';
-import { browserTools, validateToolCall } from './tools.mjs';
+import { browserTools, validateToolCall, createToolDispatcher } from './tools.mjs';
+import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
 
 const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
@@ -110,6 +111,31 @@ export function createV3Frontend(bridge) {
   frontends.add(frontend); return frontend;
 }
 
+// The installed join supplies owned pages and snapshots. Only the worker begin
+// binding supplies user authority; MCP arguments never reach this constructor.
+export async function createV3TurnRuntime({ binding, browser, pages, snapshot, ui, dependencies = {} }) {
+  const [{ runSteps }, { fillFields }, { deliverSnapshot }] = await Promise.all([
+    import('./act.mjs'), import('./fill.mjs'), import('./rules.mjs'),
+  ]);
+  const ctx = createV3Context({ binding, browser, ui });
+  const runtime = createToolDispatcher({ browser, pages, snapshot, ctx,
+    runSteps: dependencies.runSteps ?? runSteps, fillFields: dependencies.fillFields ?? fillFields,
+    deliverSnapshot(state, capture) {
+      if (capture.state !== state || !Number.isSafeInteger(capture.number) || capture.number < 1 ||
+          !Number.isFinite(capture.capturedAt) || capture.capturedAt < 0) return false;
+      deliverSnapshot(state, capture);
+      // V6's boolean means a submit fence was released, rather than whether
+      // an ordinary snapshot was accepted. Both count as delivered text here.
+      return true;
+    } });
+  return Object.freeze({ call: runtime.call, delivered: runtime.delivered,
+    async end() { const cleanup = ctx.dispose(); const receipt = await runtime.end();
+      if ((await cleanup).retained) receipt.cleanup.push({ resource: 'uploads', status: 'retained', code: 'CLEANUP_UNPROVED' });
+      return receipt;
+    },
+  });
+}
+
 // Only an inherited fork channel reaches this entry. MCP calls carry tool JSON,
 // while begin frames carry the relay hook's authenticated user message separately.
 export function serveV3Worker({ channel, browser, begin, current = () => true, close = async () => ({ revoked: true, cleanup: [] }) }) {
@@ -138,7 +164,9 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
       work = work.catch(() => {}).then(async () => {
         await stopped;
         if (ended || epoch !== generation || !current()) return { available: false };
-        const prepared = await begin(Object.freeze({ source: 'user', session, turn: frame.params.turn, id: frame.params.turn, text: frame.params.text }));
+        const message = Object.freeze({ source: 'user', session, turn: frame.params.turn, id: frame.params.turn, text: frame.params.text });
+        const binding = createV3TurnBinding(message, () => !ended && epoch === generation && current());
+        const prepared = await begin(message, binding);
         if (ended || epoch !== generation || !current()) { await prepared?.end(); return { available: false }; }
         runtime = prepared; return { available: !!runtime };
       });
@@ -171,11 +199,9 @@ async function installedMain() {
   if (!config) throw Error('SETTING_OFF');
   const accepted = acceptedInstalledPackage(config);
   if (!accepted.current()) throw Error('HOST_PACKAGE_MISMATCH');
-  // The action/rule interfaces do not yet supply the document-bound payment
-  // terms and private upload binding required by the existing host providers.
-  // Keep the installed route on v2 until that join is reviewed. Never replace
-  // those providers with an always-allow stub or infer permission from tool JSON.
-  throw Error('V3_PRIVATE_PROVIDERS_UNAVAILABLE');
+  // V10 supplies the private turn context. V7 still owns the approved selected
+  // connection, CDP filter, page and snapshot join before installed activation.
+  throw Error('V3_INSTALLED_JOIN_UNAVAILABLE');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.send) {
   installedMain().catch(() => { if (process.connected) { process.send({ version: 3, status: 'unavailable' }); process.disconnect(); } });
