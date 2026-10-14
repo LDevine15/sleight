@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..e1c9e1a 100644
+index e7f1db8..843267f 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,6 @@
@@ -29,7 +29,7 @@ index e7f1db8..e1c9e1a 100644
  
  const ROOT = fileURLToPath(new URL('..', import.meta.url));
  const SOCKET_DIR = path.join(os.homedir(), '.fowlbrowser');
-@@ -60,17 +63,44 @@ export function agentTabs(name, journal, monitor, tabMatch = null) {
+@@ -60,17 +63,52 @@ export function agentTabs(name, journal, monitor, tabMatch = null) {
  }
  
  // Codex's browser extension, driven by a Claude agent (codex) or by Codex itself (codex-agent): graded alike.
@@ -44,6 +44,14 @@ index e7f1db8..e1c9e1a 100644
  // never FowlBrowser's, but an agent's tab stays in its session's tab group (sessionName) while Codex holds it.
 +export const surfaceObserved = (surface) => surface !== 'sleight-turbo' && !BROWSER_ARMS.includes(surface);
 +export const observationGrade = (surface, grade) => surfaceObserved(surface) ? grade() : { ok: null, cell: 'not measured', problems: [] };
++
++// Host focus/Space/window checks don't depend on extension tab ownership.
++export function gradeFocus({ surface, monitor, run, runs = [run], focus = [] }) {
++  if (surface === 'sleight-turbo') return require(path.join(SLEIGHT_REPO, 'bench/fowl/host-monitor.mjs')).gradeHostMonitor(monitor, run, runs);
++  if (!surfaceObserved(surface)) return { ok: null, cell: 'not measured', events: [], problems: [] };
++  const events = focus.filter(event => event.owner === run.name);
++  return { ok: events.length === 0, cell: events.length ? `FAIL: ${events.length}` : 'ok', events, problems: events.map(event => event.text) };
++}
 +
 +export function taskSupport(task, surface, { world = false, remote = null } = {}) {
 +  if (surface === 'sleight-turbo') {
@@ -76,7 +84,7 @@ index e7f1db8..e1c9e1a 100644
    const problems = [];
    if (run.timedOut) problems.push(`stopped after ${task.budgetSeconds ? `${AGENT_CAP} times its budget` : '10 min'} without a result`);
    if (run.exitCode !== 0) problems.push(`exit ${run.exitCode ?? 'none'}${run.killed ? ' (killed after 20 s)' : ''}`);
-@@ -79,11 +109,11 @@ export function gradeOutcome({ task, run, journal, after, startKeys, grade, cont
+@@ -79,11 +117,11 @@ export function gradeOutcome({ task, run, journal, after, startKeys, grade, cont
    const text = String(run.result?.result ?? '');
    for (const e of task.expect || []) if (!new RegExp(e, 'i').test(text)) problems.push(`answer does not match /${e}/`);
    for (const e of task.forbid || []) if (new RegExp(e, 'i').test(text)) problems.push(`answer matches /${e}/: ${text.match(new RegExp(e, 'i'))[0]}`);
@@ -90,7 +98,7 @@ index e7f1db8..e1c9e1a 100644
      const kept = [...run.tabs].filter((k) => after[k] && !controlled(k, after) && !startKeys.has(k) && keepMatches(task, after[k].url)).length;
      if (kept < task.keepMin) problems.push(`${kept} tabs left for the user, wanted ${task.keepMin}`);
    }
-@@ -225,7 +255,7 @@ export function gradeTokens(run) {
+@@ -225,7 +263,7 @@ export function gradeTokens(run) {
    const u = run.result?.usage || {};
    const parts = [u.input_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens, u.output_tokens].map((n) => n || 0);
    const total = parts.reduce((a, b) => a + b, 0);
@@ -99,7 +107,7 @@ index e7f1db8..e1c9e1a 100644
  }
  
  // task.numbers: [{name, pattern, unit?, min, max}]: the answer must quote each number within its range. `pattern` has
-@@ -659,11 +689,27 @@ export function codexAgentEvent(e, state, { model, now }) {
+@@ -659,11 +697,27 @@ export function codexAgentEvent(e, state, { model, now }) {
  }
  
  // One agent's MCP config, command, arguments and prompt for a surface.
@@ -130,7 +138,7 @@ index e7f1db8..e1c9e1a 100644
    const id = codex?.browsers[task.browser];
    const find = id ? `${browserName} is the browser with extensionInstanceId ${id}: get it with \`const b = await cua.getBrowser({ extensionInstanceId: '${id}' })\``
      : `Find ${browserName} by its name with \`await cua.listBrowsers()\`, get it with \`const b = await cua.getBrowser({ extensionInstanceId })\``;
-@@ -682,6 +728,29 @@ export function agentSetup({ task, surface, dir, mcpRoot, settings, model, effor
+@@ -682,6 +736,29 @@ export function agentSetup({ task, surface, dir, mcpRoot, settings, model, effor
      allowed = 'mcp__codex-cu__js,mcp__codex-cu__js_reset';
      disallowed.push('mcp__codex-cu__js_add_node_module_dir');
      prompt = `Use the browser through the mcp__codex-cu__js tool. ${find} and ${open}.\n\n${prompt}`;
@@ -160,7 +168,7 @@ index e7f1db8..e1c9e1a 100644
    } else if (surface === 'devtools') {
      // Chrome DevTools MCP through the user's cdp-relay (~/.claude/tools/cdp-relay): one relay per browser, on this Mac.
      if (remote) throw new Error('--surface devtools has no --remote');
-@@ -693,10 +762,19 @@ export function agentSetup({ task, surface, dir, mcpRoot, settings, model, effor
+@@ -693,10 +770,19 @@ export function agentSetup({ task, surface, dir, mcpRoot, settings, model, effor
      mcpServers = { fowlbrowser: remote ? remoteServer(server, { ssh: remote.ssh, dir: remoteDir }) : server };
      allowed = 'mcp__fowlbrowser';
    }
@@ -182,7 +190,7 @@ index e7f1db8..e1c9e1a 100644
  }
  
  // The Stop hook that ends a turn on each surface (also in the user's settings; explicit so a change there can't
-@@ -704,12 +782,16 @@ export function agentSetup({ task, surface, dir, mcpRoot, settings, model, effor
+@@ -704,12 +790,16 @@ export function agentSetup({ task, surface, dir, mcpRoot, settings, model, effor
  // hangs for minutes), so tools/elicitation-hook.mjs declines each at once (logged; never answered for the user). A remote round's codex-cu Stop hook finds no local
  // socket (rounds ends remote turns itself).
  export function roundSettings(surface, { mcpRoot, codex }) {
@@ -200,7 +208,7 @@ index e7f1db8..e1c9e1a 100644
  }
  
  // The user's own tabs (unowned at round start) must keep their url and stay open: every change the monitor saw
-@@ -777,11 +859,25 @@ const time = (t) => new Date(t).toTimeString().slice(0, 8);
+@@ -777,11 +867,25 @@ const time = (t) => new Date(t).toTimeString().slice(0, 8);
  
  // --- Host socket client ---
  
@@ -229,7 +237,7 @@ index e7f1db8..e1c9e1a 100644
    socket.on('data', (chunk) => {
      buffer = Buffer.concat([buffer, chunk]);
      while (buffer.length >= 4 && buffer.length >= 4 + buffer.readUInt32LE(0)) {
-@@ -793,7 +889,11 @@ export async function connectHost(browser, dir = remote ? remote.dir : SOCKET_DI
+@@ -793,7 +897,11 @@ export async function connectHost(browser, dir = remote ? remote.dir : SOCKET_DI
    });
    send({ method: 'host.auth', params: { token: fs.readFileSync(path.join(dir, 'token'), 'utf8').trim() } });
    return {
@@ -242,7 +250,7 @@ index e7f1db8..e1c9e1a 100644
      on: (method, fn) => listeners.set(method, fn),
      close: () => socket.end(),
    };
-@@ -802,7 +902,10 @@ export async function connectHost(browser, dir = remote ? remote.dir : SOCKET_DI
+@@ -802,7 +910,10 @@ export async function connectHost(browser, dir = remote ? remote.dir : SOCKET_DI
  // One inventory of every tab in both browsers, keyed "browser:id".
  export async function inventory(hosts) {
    const all = {};
@@ -254,12 +262,15 @@ index e7f1db8..e1c9e1a 100644
    return all;
  }
  
-@@ -816,18 +919,18 @@ function frontApp() {
+@@ -816,18 +927,21 @@ function frontApp() {
    }));
  }
  
 -async function startMonitor(hosts, file) {
-+export async function startMonitor(hosts, file, { readFront = frontApp } = {}) {
++export async function startMonitor(hosts, file, { readFront = frontApp, hostObservations = false,
++  startHost = (...args) => require(path.join(SLEIGHT_REPO, 'bench/fowl/host-monitor.mjs')).startHostMonitor(...args) } = {}) {
++  const hostMonitor = hostObservations ? await startHost(file) : null;
++  await hostMonitor?.ready?.();
    const log = [];
    const write = (e) => { const entry = { t: Date.now(), ...e }; log.push(entry); fs.appendFileSync(file, JSON.stringify(entry) + '\n'); };
    // Exact activations, new tabs and windows and window focus, as the extension sees them (polling misses flashes).
@@ -276,7 +287,15 @@ index e7f1db8..e1c9e1a 100644
      if (app && app !== front) { write({ kind: 'front', app, initial: firstFront || undefined }); front = app; }
      firstFront = false;
    };
-@@ -882,19 +985,79 @@ async function startMonitor(hosts, file) {
+@@ -876,25 +990,86 @@ async function startMonitor(hosts, file) {
+     }
+   };
+   const done = Promise.all([loop(tickFront, 250, (t) => ticks.push(t)), loop(tickInventory, 1000)]);
+-  return { log, ticks, stop: async () => { running = false; await done; } };
++  return { get log() { return [...log, ...(hostMonitor?.log || [])].sort((a, b) => a.t - b.t); }, ticks,
++    stop: async () => { running = false; try { await done; } finally { await hostMonitor?.stop(); } } };
+ }
+ 
  // --- One agent ---
  
  const AGENT_CAP = 4;
@@ -362,7 +381,7 @@ index e7f1db8..e1c9e1a 100644
    // Each stream-json line as it arrived, stamped with `t` (parseTranscript times calls and errors by it). A Codex
    // agent's own events go to codex-events.jsonl, translated into events.jsonl.
    const events = fs.createWriteStream(path.join(dir, 'events.jsonl'));
-@@ -929,20 +1092,23 @@ function runAgent(task, out, { model, effort, mcpRoot, hosts, surface, codex })
+@@ -929,20 +1104,24 @@ function runAgent(task, out, { model, effort, mcpRoot, hosts, surface, codex })
    return (async () => {
      await gotResult;
      clearTimeout(cap);
@@ -381,6 +400,7 @@ index e7f1db8..e1c9e1a 100644
 +    } });
      // A remote server's record dir (journal, frames, elicitations) comes back next to the transcript.
      if (remote && !codexAgent) await sh('rsync', ['-a', '-e', `ssh ${remote.ssh.slice(0, -1).join(' ')}`, `${remote.host}:${remote.runDir}/${task.name}/`, `${dir}/`]).catch((err) => { run.pullError = err.message; });
++    run.finished = Date.now();
      events.end();
      if (raw) raw.end();
      if (stderr) fs.writeFileSync(path.join(dir, 'stderr.txt'), stderr);
@@ -395,7 +415,7 @@ index e7f1db8..e1c9e1a 100644
      return run;
    })();
  }
-@@ -977,7 +1143,7 @@ function htmlReport(rows) {
+@@ -977,7 +1156,7 @@ function htmlReport(rows) {
  // (a Mac without the user entry). Preflight: the proxy, ChatGPT's node and a live Codex browser socket.
  function loadCodex(args) {
    const home = os.homedir();
@@ -404,7 +424,7 @@ index e7f1db8..e1c9e1a 100644
    if (!entry) {
      const pluginDir = path.join(home, '.codex/plugins/cache/openai-bundled/unified-computer-use');
      const version = fs.existsSync(pluginDir) ? fs.readdirSync(pluginDir).sort().at(-1) : null;
-@@ -1035,7 +1201,7 @@ export async function takeoverAct(task, hosts, finished) {
+@@ -1035,7 +1214,7 @@ export async function takeoverAct(task, hosts, finished) {
      const tab = Object.values(await inventory(hosts)).filter((t) => tagged(task.name, t.url)).sort((a, b) => b.id - a.id)[0];
      if (!tab) return { error: 'no tab of the agent on the demo site' };
      from = Date.now();
@@ -413,7 +433,7 @@ index e7f1db8..e1c9e1a 100644
      await sleep(600);
      const windows = (await cua('list_windows', { on_screen_only: true })).windows
        .filter((w) => w.app_name === BROWSER_APP[tab.browser]).sort((a, b) => (b.z_index ?? 0) - (a.z_index ?? 0));
-@@ -1066,7 +1232,7 @@ function listDownloads(dir) {
+@@ -1066,7 +1245,7 @@ function listDownloads(dir) {
  // --- Main ---
  
  async function main() {
@@ -422,7 +442,7 @@ index e7f1db8..e1c9e1a 100644
    const args = {};
    for (let i = 2; i < process.argv.length; i++) {
      const a = process.argv[i].slice(2);
-@@ -1083,24 +1249,60 @@ async function main() {
+@@ -1083,24 +1262,60 @@ async function main() {
      tasks = tasks.filter((t) => !t.takeover);
    }
    const surface = args.surface || 'fowlbrowser';
@@ -487,7 +507,7 @@ index e7f1db8..e1c9e1a 100644
  
    // --serve: the sites the tasks grade against (forms.json, codex-h2h.json), up before the agents and killed after grading.
    let server = null;
-@@ -1120,8 +1322,11 @@ async function main() {
+@@ -1120,8 +1335,11 @@ async function main() {
    }
  
    // Only browsers with FowlBrowser connected are watched; a task in one that isn't stops the round before it starts.
@@ -501,7 +521,14 @@ index e7f1db8..e1c9e1a 100644
    if (missing.length) {
      console.error(`Not connected: ${missing.join(', ')} (no FowlBrowser socket in ${remote ? `${remote.host}:~/.fowlbrowser` : SOCKET_DIR}). Open the browser with the extension loaded, ` +
        'or pick tasks with --only, or move them to the other browser with --swap.');
-@@ -1138,13 +1343,16 @@ async function main() {
+@@ -1132,19 +1350,22 @@ async function main() {
+   const roundStart = Date.now();
+   const start = await inventory(hosts);
+   const startKeys = new Set(Object.keys(start));
+-  const monitor = await startMonitor(hosts, path.join(out, 'monitor.jsonl'));
++  const monitor = await startMonitor(hosts, path.join(out, 'monitor.jsonl'), { hostObservations: tasks.some(t => surfaceOf(t) === 'sleight-turbo') });
+   console.log(`round of ${tasks.length} agents (${surface}, ${model}, ${effort}${surface === 'fowlbrowser' ? `, mcp ${args.mcp || 'repo'}` : ''}${codexAgent ? `, ${codexAgent.version}` : ''}); output in ${out}`);
+   const acts = new Array(tasks.length).fill(null);
    const runs = await Promise.all(tasks.map(async (task, i) => {
      let done = false;
      const act = task.takeover && takeoverAct(task, hosts, () => done).then((a) => { acts[i] = a; console.log(`${task.name}: ${a.error ? `takeover act failed: ${a.error}` : `took ${a.tab} over at ${time(a.at)}`}`); });
@@ -520,7 +547,7 @@ index e7f1db8..e1c9e1a 100644
    const grades = await Promise.all(tasks.map((t) => t.grade && getJson(t.grade)));
    const sites = await Promise.all(tasks.map((t) => t.site && getJson(t.site.log)));
    sites.forEach((site, i) => site && fs.writeFileSync(path.join(out, tasks[i].name, 'site.json'), JSON.stringify(site, null, 1)));
-@@ -1152,6 +1360,9 @@ async function main() {
+@@ -1152,6 +1373,9 @@ async function main() {
    server?.kill();
  
    // Grade
@@ -530,7 +557,7 @@ index e7f1db8..e1c9e1a 100644
    const journals = tasks.map((t) => readJsonl(path.join(out, t.name, 'journal.jsonl')));
    const transcripts = tasks.map((t) => parseTranscript(readJsonl(path.join(out, t.name, 'events.jsonl')) || []));
    const elicitations = tasks.map((t, i) => elicitationsOf(readJsonl(path.join(out, t.name, 'elicitations.jsonl')) || [], transcripts[i].calls));
-@@ -1181,19 +1392,22 @@ async function main() {
+@@ -1181,19 +1405,23 @@ async function main() {
    const rows = tasks.map((task, i) => {
      const run = runs[i]; const journal = journals[i]; const site = sites[i]; const mySurface = surfaceOf(task);
      const controlled = controlledBy(mySurface, task.name);
@@ -556,23 +583,33 @@ index e7f1db8..e1c9e1a 100644
 -    const tabs = gradeTabs({ task, tabs: run.tabs, atTurnEnd: run.atTurnEnd, afterExit: run.afterExit, startKeys, controlled });
 +    };
 +    const checks = [...(run.inventoryErrors || []), ...Object.entries(checkGrades).flatMap(([column, { problems: list }]) => list.map((p) => `${column} · ${p}`))];
-+    const myFocus = (observed ? focus : []).filter((e) => e.owner === task.name);
++    const focusGrade = gradeFocus({ surface: mySurface, monitor: monitor.log, run, runs, focus });
++    const myFocus = focusGrade.events;
 +    const myFlashes = (observed ? flashes.flashes : []).filter((e) => e.owner === task.name);
 +    const mySound = (observed ? sound : []).filter((e) => e.owner === task.name);
 +    const tabs = observationGrade(mySurface, () => gradeTabs({ task, tabs: run.tabs, atTurnEnd: run.atTurnEnd, afterExit: run.afterExit, startKeys, controlled }));
      const timing = gradeTime({ task, run, journal });
      const tokens = gradeTokens(run);
      const callCell = gradeCalls(transcripts[i], elicitations[i]);
-@@ -1208,7 +1422,7 @@ async function main() {
+@@ -1201,14 +1429,15 @@ async function main() {
+     for (const p of outcome.problems) problems.push(`${task.name} · outcome · ${p}`);
+     for (const p of checks) problems.push(`${task.name} · ${p}`);
+     for (const p of cursor.problems) problems.push(`${task.name} · cursor · ${p}`);
+-    for (const e of myFocus) problems.push(`${task.name} · focus · ${e.text}${toolAt(e.t)}`);
++    if (mySurface === 'sleight-turbo') for (const p of focusGrade.problems) problems.push(`${task.name} · focus · ${p}`);
++    else for (const e of myFocus) problems.push(`${task.name} · focus · ${e.text}${toolAt(e.t)}`);
+     for (const e of myFlashes) problems.push(`${task.name} · flash · ${e.text}${toolAt(e.t)}`);
+     for (const e of mySound) problems.push(`${task.name} · sound · ${e.text}${toolAt(e.t)}`);
+     for (const p of tabs.problems) problems.push(`${task.name} · tabs · ${p}`);
      for (const p of timing.problems) problems.push(`${task.name} · time · ${p}`);
      for (const p of callCell.problems) problems.push(`${task.name} · calls · ${p}`);
      for (const p of [run.turnEndError && `turn end on ${remote.host} failed: ${run.turnEndError}`, run.pullError && `could not pull its record dir: ${run.pullError}`].filter(Boolean)) problems.push(`${task.name} · remote · ${p}`);
 -    return { task, surface: mySurface, journal, outcome, checks, cursor, focus: myFocus, flashes: myFlashes, sound: mySound, tabs, timing, tokens, calls: callCell };
-+    return { task, surface: mySurface, status: 'ran', agentConfig: run.agentConfig, observed, checkGrades, journal, outcome, checks, cursor, focus: myFocus, flashes: myFlashes, sound: mySound, tabs, timing, tokens, calls: callCell };
++    return { task, surface: mySurface, status: 'ran', agentConfig: run.agentConfig, observed, checkGrades, journal, outcome, checks, cursor, focusGrade, focus: myFocus, flashes: myFlashes, sound: mySound, tabs, timing, tokens, calls: callCell };
    });
    const touched = new Set([...journals.flatMap((journal) => (journal || []).map((e) => e.tab).filter(Boolean)),
      ...tasks.flatMap((t, i) => (isCodex(surfaceOf(t)) ? transcripts[i].tabRefs.map((id) => `${t.browser}:${id}`) : surfaceOf(t) === 'devtools' ? [...runs[i].tabs] : []))]);
-@@ -1225,14 +1439,14 @@ async function main() {
+@@ -1225,14 +1454,14 @@ async function main() {
    const created = new Set(tasks.flatMap((t, i) => (isCodex(surfaceOf(t)) ? [...codexCreatedTabs({ browser: t.browser, transcript: transcripts[i], startKeys })]
      : surfaceOf(t) === 'devtools' ? [...runs[i].tabs].filter((k) => !startKeys.has(k)) : [...createdTabs([journals[i]], startKeys)])));
    if (!args['keep-tabs']) {
@@ -589,7 +626,7 @@ index e7f1db8..e1c9e1a 100644
        catch (err) { problems.push(`round · teardown · could not close ${k}: ${err.message}`); }
      }
    }
-@@ -1253,11 +1467,13 @@ async function main() {
+@@ -1253,11 +1482,13 @@ async function main() {
    for (const host of Object.values(hosts)) host.close();
    if (remote) for (const p of await remote.close()) problems.push(`round · remote · ${p}`);
  
@@ -598,7 +635,7 @@ index e7f1db8..e1c9e1a 100644
    const lines = ['| agent | surface | browser | outcome | checks | cursor | focus | flashes | sound | tabs | time | calls | tokens | $ |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
    for (const r of rows) {
 -    lines.push(`| ${r.task.name} | ${r.surface} | ${r.task.browser} | ${r.outcome.cell} | ${cell(r.checks)} | ${r.cursor.cell} | ${cell(r.focus)} | ${cell(r.flashes)} | ${cell(r.sound)} | ${r.tabs.cell} | ${r.timing.cell} | ${r.calls.cell} | ${r.tokens.cell} | ${r.tokens.cost.toFixed(3)} |`);
-+    lines.push(`| ${r.task.name} | ${r.surface} | ${r.task.browser} | ${r.outcome.cell} | ${cell(r.checks)}${!r.observed ? '; handoff/takeover/downloads/kept tabs: not measured' : ''} | ${r.cursor.cell} | ${cell(r.focus, r.observed)} | ${cell(r.flashes, r.observed)} | ${cell(r.sound, r.observed)} | ${r.tabs.cell} | ${r.timing.cell} | ${r.calls.cell} | ${r.tokens.cell} | ${Number.isFinite(r.tokens.cost) ? r.tokens.cost.toFixed(3) : 'not available'} |`);
++    lines.push(`| ${r.task.name} | ${r.surface} | ${r.task.browser} | ${r.outcome.cell} | ${cell(r.checks)}${!r.observed ? '; handoff/takeover/downloads/kept tabs: not measured' : ''} | ${r.cursor.cell} | ${r.focusGrade.cell} | ${cell(r.flashes, r.observed)} | ${cell(r.sound, r.observed)} | ${r.tabs.cell} | ${r.timing.cell} | ${r.calls.cell} | ${r.tokens.cell} | ${Number.isFinite(r.tokens.cost) ? r.tokens.cost.toFixed(3) : 'not available'} |`);
    }
 +  for (const r of unsupported) lines.push(`| ${r.task.name} | ${r.surface} | ${r.task.browser} | not supported | ${r.reason} | n/a | not measured | not measured | not measured | not measured | n/a | n/a | n/a | n/a |`);
 +  fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify([...rows, ...unsupported], null, 2));
