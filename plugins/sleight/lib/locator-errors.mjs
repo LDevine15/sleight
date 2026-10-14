@@ -122,7 +122,7 @@ function coveringElement(block) {
 }
 
 function nextCall(kind) {
-  if (kind === 'strict') return `${READ} and resolve one matching locator`;
+  if (kind === 'strict') return `${READ} and resolve one matching locator. For an observed full label, use getByLabel(label, { exact: true }) and confirm it is unambiguous`;
   if (kind === 'missing') return `${READ} and use a locator that matches now`;
   return READ;
 }

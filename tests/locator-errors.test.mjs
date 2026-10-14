@@ -132,7 +132,7 @@ test('strict diagnostics explicitly report the bounded match listing', () => {
     matches: Array.from({ length: 8 }, (_, i) => ({ tag: 'button', ariaLabel: `Save ${i}` })) });
   const hint = rewriteLocatorFailure(src).split('\n')[0];
   assert.match(hint, /showing 5 of 8 matches; truncated/);
-  assert.equal((hint.match(/exact: true/g) ?? []).length, 5);
+  assert.equal((hint.match(/getByLabel\("/g) ?? []).length, 5);
 });
 
 test('a long label is bounded without suggesting a truncated label as an exact match', () => {
@@ -142,4 +142,12 @@ test('a long label is bounded without suggesting a truncated label as an exact m
   assert.ok(hint.length < 900);
   assert.match(hint, /label truncated/);
   assert.doesNotMatch(hint, /getByLabel\("private/);
+});
+
+test('strict errors without structured diagnostics still name the documented exact-label form', () => {
+  const raw = "Error: strict mode violation: locator('button') resolved to 2 elements:\n  1) <button>Save</button> aka getByRole('button', { name: 'Save' })\n  2) <button>Save as</button> aka getByRole('button', { name: 'Save as' })";
+  const hint = rewriteLocatorFailure(raw).split('\n')[0];
+  assert.match(hint, /getByLabel\(label, \{ exact: true \}\)/);
+  assert.match(hint, /observed full label/);
+  assert.ok(rewriteLocatorFailure(raw).endsWith(raw));
 });
