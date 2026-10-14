@@ -21,7 +21,7 @@ function fixture(t, helpers = {}) {
   t.after(() => adapter.disconnect());
   return { view: adapter.forLease(lease), calls };
 }
-test('P1I installs the approved constructor but cannot construct a node-bound Playwright instance', async t => {
+test('the approved constructor has no generic Runtime constructor escape', async t => {
   const bundle = readFileSync(new URL('../plugins/sleight/vendor/playwright-core/lib/coreBundle.js', import.meta.url), 'utf8');
   const literal = bundle.match(/source5 = ('(?:\\.|[^'\\])*');/)[1];
   const source = runInNewContext(literal, Object.create(null), { timeout: 100 });
@@ -40,19 +40,24 @@ test('P1I installs the approved constructor but cannot construct a node-bound Pl
 for (const [method, params] of [
   ['DOM.setFileInputFiles', { backendNodeId: 2, files: ['/fixture-only'] }],
   ['Page.handleJavaScriptDialog', { accept: false }],
-  ['Input.dispatchMouseEvent', { type: 'mouseWheel', x: 1, y: 1, deltaX: 0, deltaY: 5 }],
 ]) test('unassigned semantic actuator refuses ' + method, async t => {
   const f = fixture(t);
   await assert.rejects(f.view.input(method, params), /SCOPED_COMMAND_DENIED/);
   assert.equal(f.calls.length, 0);
 });
+test('wheel cannot use raw scoped send', async t => {
+  const f = fixture(t);
+  await assert.rejects(f.view.send('Input.dispatchMouseEvent',
+    { type: 'mouseWheel', x: 1, y: 1, deltaX: 0, deltaY: 5 }), /SCOPED_COMMAND_DENIED/);
+  assert.equal(f.calls.length, 0);
+});
 for (const op of [{ op: 'scroll', deltaX: 0, deltaY: 5 }, { op: 'dialog', accept: false }])
-  test(op.op + ' controller barrier proves none before its absent host actuator', async () => {
+  test(op.op + ' controller refuses incomplete semantic identity before input', async () => {
     let preparations = 0;
     const controller = createInputController({ resolve: () => { preparations++; }, authorize() {}, fence() {}, observe() {} });
     const result = await controller.act({ browserIncarnation: 'browser', brokerEpoch: 1, clientSession: 'client', turn: 1,
       leaseGeneration: 1, target: 'target', frame: 'frame', document: 1, origin: lease.origin,
       operationId: 'barrier', sequence: 1, ref: 'rfixture', expect: { kind: 'state', field: 'checked', equals: false }, ...op });
-    assert.equal(result.effect, 'none'); assert.equal(result.code, 'ADAPTER_UNAVAILABLE');
-    assert.equal(preparations, 0);
+    assert.equal(result.effect, 'none'); assert.equal(result.code, 'STALE_REF');
+    assert.equal(preparations, 1);
   });

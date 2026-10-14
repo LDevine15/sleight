@@ -80,9 +80,6 @@ export function createInputController(hooks = {}) {
     const start = deadline.now();
     try {
       if (required.some(k => typeof hooks[k] !== 'function')) throw fault('ADAPTER_UNAVAILABLE');
-      // P1I has no closed wheel/dialog actuator yet. Refuse before marking a
-      // dispatch; sending those through raw CDP would bypass the host contract.
-      if (['scroll', 'dialog'].includes(op.op)) throw fault('ADAPTER_UNAVAILABLE');
       const resolved = await deadline.run(() => hooks.resolve(op));
       if (!sameIdentity(op, resolved ?? {})) throw fault('STALE_REF');
       const check = async () => {
@@ -96,6 +93,8 @@ export function createInputController(hooks = {}) {
       if (blocked.has(targetKey(op)) && op.op !== 'dialog') throw fault('EFFECT_UNKNOWN');
       const session = resolved.rootSession ?? resolved.session;
       if (!session?.sessionId || !resolved.session?.sessionId || !['send', 'on', 'off'].every(k => typeof resolved.session[k] === 'function')) throw fault('ADAPTER_UNAVAILABLE');
+      if (op.op === 'dialog' && (typeof resolved.session.answerDialog !== 'function' ||
+          typeof resolved.dialogId !== 'string' || !/^dialog-[1-9]\d*$/.test(resolved.dialogId))) throw fault('ADAPTER_UNAVAILABLE');
       armed = armEffects(resolved.session, op.frame);
       let point;
       let frameLocal = false;
@@ -143,7 +142,8 @@ export function createInputController(hooks = {}) {
             sent = true;
             entry.receipt = failure(op.operationId, 'EFFECT_UNKNOWN', true);
             return Promise.race([
-              route.input(method, params),
+              method === 'Page.handleJavaScriptDialog' ? route.answerDialog({ dialogId: resolved.dialogId,
+                operation: op.operationId, ...params }) : route.input(method, params),
               armed.barrier.then(() => { throw fault('DIALOG_OPEN'); }),
             ]);
           });

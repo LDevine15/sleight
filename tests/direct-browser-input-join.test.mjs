@@ -29,18 +29,21 @@ function fixture(t, options = {}) {
         case 'DOM.resolveNode': return { object: { objectId: 'object-' + ++sequence } };
         case 'Runtime.callFunctionOn': inspections++; return { result: { value: options.inspect?.(inspections) ?? state } };
         case 'Input.dispatchMouseEvent': case 'Input.dispatchKeyEvent': case 'Input.insertText': return {};
+        case 'Page.handleJavaScriptDialog': return {};
         default: throw Error('Unsupported fake command ' + method);
       }
     } }, { get(obj, key) { if (key in obj || typeof key === 'symbol' || key === 'then') return obj[key]; throw Error('Unsupported fake member ' + key); } });
   const adapter = createScopedAdapter({ session: raw, checkLease: () => live, helpers: fixedInputInspectors ?? {},
-    nodeBinding: id => id === 2 ? { ...lease, backendNodeId: id } : null });
+    nodeBinding: id => id === 2 ? { ...lease, backendNodeId: id } : null,
+    dialogBinding: () => options.dialogDecision });
   const view = adapter.forLease(lease);
   const controller = createInputController({ resolve: async () => {
     const world = await view.send('Page.createIsolatedWorld', { frameId: 'frame', worldName: 'sleight-state', grantUniveralAccess: false });
-    return { ...identity, session: view, backendNodeId: 2, executionContextId: world.executionContextId };
+    return { ...identity, session: view, backendNodeId: 2, executionContextId: world.executionContextId,
+      dialogId: options.dialogDecision?.dialogId };
   },
     authorize: async () => ({ allowed: true }), fence: async () => options.fence?.() ?? identity,
-    observe: async () => ({ matched: true, complete: true, source: 'native', [production ? 'document' : 'documentEpoch']: 1 }) });
+    observe: async () => options.observation ?? ({ matched: true, complete: true, source: 'native', [production ? 'document' : 'documentEpoch']: 1 }) });
   t.after(() => adapter.disconnect());
   return { controller, calls, revoke() { live = false; },
     emit(method, params) { for (const fn of listeners) fn({ sessionId: 'page', method, params }); } };
@@ -67,6 +70,36 @@ test('keyboard commands obey the closed P1I key schema', async t => {
   const commands = f.calls.filter(c => c.method.startsWith('Input.'));
   assert.equal(commands.length, 2);
   assert.equal(Object.hasOwn(commands[0].params, 'windowsVirtualKeyCode'), false);
+});
+test('wheel joins scoped preparation and the closed P1I2 actuator', async t => {
+  const f = fixture(t), result = await f.controller.act(request('wheel', { op: 'scroll', deltaX: 0, deltaY: 120 }));
+  assert.equal(result.effect, 'verified');
+  assert.deepEqual(f.calls.filter(c => c.method.startsWith('Input.')).map(c => c.params),
+    [{ type: 'mouseWheel', x: 11, y: 12, deltaX: 0, deltaY: 120 }]);
+});
+test('dialog answers only the exact private P1I2 event decision', async t => {
+  const f = fixture(t, { dialogDecision: { ...lease, dialogId: 'dialog-1', operation: 'answer', accept: false },
+    observation: { matched: true, complete: true, source: 'native', document: 1 },
+    send(method) { if (method === 'Page.handleJavaScriptDialog') return {}; } });
+  f.emit('Page.javascriptDialogOpening', { type: 'confirm', url: lease.origin, frameId: lease.frame });
+  const result = await f.controller.act(request('answer', { op: 'dialog', accept: false }));
+  assert.equal(result.effect, 'verified');
+  assert.deepEqual(f.calls.filter(c => c.method === 'Page.handleJavaScriptDialog').map(c => c.params), [{ accept: false }]);
+});
+test('dialog without a private event mapping refuses before dispatch', async t => {
+  const f = fixture(t), result = await f.controller.act(request('answer', { op: 'dialog', accept: true }));
+  assert.equal(result.effect, 'none'); assert.equal(result.code, 'ADAPTER_UNAVAILABLE');
+  assert.equal(f.calls.some(c => c.method === 'Page.handleJavaScriptDialog'), false);
+});
+test('uncertain dialog answer is journaled and never replayed', async t => {
+  const f = fixture(t, { dialogDecision: { ...lease, dialogId: 'dialog-1', operation: 'answer', accept: true },
+    send(method) { if (method === 'Page.handleJavaScriptDialog') throw Error('synthetic-secret'); } });
+  f.emit('Page.javascriptDialogOpening', { type: 'confirm', url: lease.origin, frameId: lease.frame });
+  const op = request('answer', { op: 'dialog', accept: true }), result = await f.controller.act(op);
+  assert.equal(result.effect, 'unknown');
+  assert.deepEqual(await f.controller.act(op), result);
+  assert.equal(f.calls.filter(c => c.method === 'Page.handleJavaScriptDialog').length, 1);
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-secret/);
 });
 test('unknown first input is journaled and another ID cannot replay it', async t => {
   const f = fixture(t, { send(method) { if (method.startsWith('Input.')) throw Error('synthetic-secret'); } });
