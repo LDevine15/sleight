@@ -1,6 +1,6 @@
-// Background disposition and hidden modifier idea: FowlBrowser (MIT),
-// 8b689249ba4e33d2626487aad930605c62e2c6a7, mcp/src/popups.mjs.
-// Independently written for Playwright over CDP; no extension or source copied.
+// popupHook and backgroundClick are adapted from FowlBrowser's mcp/src/popups.mjs
+// (MIT, Copyright (c) 2026 Fowl Labs) at 8b689249ba4e33d2626487aad930605c62e2c6a7,
+// rewritten for Playwright over CDP. See THIRD-PARTY-NOTICES.md for the license.
 import { randomUUID } from 'node:crypto';
 
 function deadline(task, ms, message = 'background preparation timed out') {

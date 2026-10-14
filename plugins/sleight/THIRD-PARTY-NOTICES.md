@@ -44,7 +44,31 @@ No additional dependency or native binary is distributed by this semantic join.
 
 ## Turbo v3 background popups
 
-`lib/direct-browser/page.mjs` uses the background disposition and hidden modifier ideas
-studied in FowlBrowser's `mcp/src/popups.mjs`, at
-`8b689249ba4e33d2626487aad930605c62e2c6a7` (MIT, copyright FowlBrowser contributors).
-The sleight authors wrote this code from the design study.
+`popupHook` and `backgroundClick` in `lib/direct-browser/page.mjs` are adapted from FowlBrowser's
+`mcp/src/popups.mjs` at `8b689249ba4e33d2626487aad930605c62e2c6a7`: the hidden modifier masking, the
+wrapped key getters and `getModifierState`, the key swallowing window, the click gate and the teardown.
+They were rewritten for Playwright over CDP. FowlBrowser's license:
+
+```text
+MIT License
+
+Copyright (c) 2026 Fowl Labs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
