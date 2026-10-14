@@ -7,7 +7,7 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
 1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4240 pass, 0 fail, 41 skipped, mod 33/33.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4291 pass, 0 fail, 41 skipped, mod 33/33.
 `~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
 
 The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
@@ -27,16 +27,11 @@ Real-page tests: FowlBrowser's playwright-core 1.64 needs Chromium build 1248, w
 runs skipped or failed to launch before 2026-10-14 ("the installed playwright-core Chromium build is unavailable"). Installed on
 the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and 1 skips. Read the TAP skip reasons at every merge.
 
-Past the cap (owner): BP2-4R4 passed and merged. BP2-1R3 failed, so codex-hdlaw builds BP2-1R4, its pre-approved last round.
-BP2-8R2 parked on two cleanup races, and the owner allowed one last round, BP2-8R3 (codex-hdlaz, 2026-10-14). BP2-12, the
-promotion plan, is dispatched (codex-hdlba). It moves no code, and its wiring items wait until BP2-1R4 and BP2-8R3 merge.
-BP2-1R4 merged (00:35 UTC), and both earlier reviewers' repros pass on it. BP2-8R3 passed review but its real-page popup test was
-wrong (a second `window.open('about:blank', name)` resets the window in Chromium, hook or not), so it waits for the test-only BP2-8T
-(codex-hdlbd). BP2-12's plan merged (`bench/direct-browser2/promotion-plan.md`). It proposed three large wiring items. BP2-P1 is the authenticated
+Past the cap (owner, 2026-10-13 and 14): BP2-1 ended at R4, BP2-4 at R4 and BP2-8 at R3 with the test-only BP2-8T, all merged, so
+every turbo prototype module is in. BP2-12's plan merged (`bench/direct-browser2/promotion-plan.md`). It proposed three large wiring items. BP2-P1 is the authenticated
 broker and a native helper for the trusted UI, and it ends with the bundling inventory (runtime, signing, dependencies) for the owner
-to accept. sleight-arch dispatched it at 00:35 UTC (codex-hdlbf). BP2-P2 moves the semantic modules into the plugin and waits for
-BP2-8R3. BP2-P3 adds the four tools and the relay and skill hooks after P1 and P2. BP2-8T passed its real-page test on sleight-arch's
-run (55 pass) and awaits review.
+to accept. sleight-arch dispatched it at 00:35 UTC (codex-hdlbf). BP2-P2 moves the semantic modules into the plugin. It waited for
+BP2-8R3, and sleight-arch dispatched it at 00:55 UTC (codex-hdlbh). BP2-P3 adds the four tools and the relay and skill hooks after P1 and P2.
 
 AM1's speed map, live with the owner away (2026-10-14). The first run failed every read on the relay's native lease. AM1R2
 (merged 00:45 UTC) fixes that. With it, TextEdit completed every phase, with a 54 ms first read and a 937 ms scroll
@@ -60,7 +55,7 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge as items pass: BP2-8T with BP2-8R3 (then dispatch BP2-P2), PP1, AM1F (then rerun AM1 live), BP2-P1, then P3.
+1. Merge as items pass: PP1, AM1F (then rerun AM1 live), BP2-P1, then P3.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
 3. AM1's live speed map in an away window.
