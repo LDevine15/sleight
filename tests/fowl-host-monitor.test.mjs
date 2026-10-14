@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
+import { swiftModuleCache } from '../bench/swift-cache.mjs';
 
 async function moduleUnderTest() {
   const module = await import('../bench/fowl/host-monitor.mjs').catch(error => {
@@ -120,7 +121,8 @@ test('read-only host observer compiles on macOS without starting observation', {
   if (!existsSync(compiler)) return t.skip('Swift compiler unavailable');
   const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-host-monitor-')));
   const source = new URL('../bench/fowl/host-monitor.swift', import.meta.url).pathname;
-  const result = spawnSync(compiler, ['-module-cache-path', join(dir, 'cache'), source, '-o', join(dir, 'observer')], { encoding: 'utf8', timeout: 120000 });
+  // The shared module cache: a fresh one rebuilds AppKit's modules and passed 120 s at load 33 (2026-10-14).
+  const result = spawnSync(compiler, ['-module-cache-path', swiftModuleCache(), source, '-o', join(dir, 'observer')], { encoding: 'utf8', timeout: 180000 });
   assert.equal(result.status, 0, result.stderr);
   // This mode exits before NSWorkspace, AX or window metadata access.
   const checked = spawnSync(join(dir, 'observer'), ['--self-test'], { encoding: 'utf8', timeout: 10000 });
