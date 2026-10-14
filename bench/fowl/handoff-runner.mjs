@@ -4,6 +4,7 @@ import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, u
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fixtureGradeDescriptor } from '../world/fowl-fixture-grade.mjs';
 import { cleanupNative } from './grade.mjs';
 import { INVOICE_ID, INVOICE_TOTAL, NOTE, ROSTER } from './data.mjs';
 import { modelId } from './accounting.mjs';
@@ -62,10 +63,15 @@ export function findUntitled({ dir, before, started, ended }) {
   return found.sort();
 }
 
-export function runRound({ out, args }) {
+export function runRound({ out, args, fixture }) {
   return new Promise((resolve, reject) => {
     const fd = openSync(out + '.log', 'wx');
-    const child = spawn(join(DIR, 'rounds.sh'), args, { stdio: ['ignore', fd, fd] });
+    let child, gradeFd;
+    try {
+      gradeFd = fixture ? fixtureGradeDescriptor(fixture) : undefined;
+      child = spawn(join(DIR, 'rounds.sh'), args, { stdio: ['ignore', fd, fd, ...(gradeFd === undefined ? [] : [gradeFd])] });
+    } catch (error) { closeSync(fd); throw error; }
+    finally { if (gradeFd !== undefined) closeSync(gradeFd); }
     const interrupt = () => child.kill('SIGINT');
     process.once('SIGINT', interrupt);
     process.once('SIGTERM', interrupt);

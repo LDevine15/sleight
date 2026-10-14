@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..34dbb9e 100644
+index e7f1db8..bd3e0f5 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,6 @@
@@ -88,7 +88,7 @@ index e7f1db8..34dbb9e 100644
    }
    // A form task (task.grade) also needs the site's grade: the cell gets its score, the problems each wrong field.
 -  const form = task.grade ? gradeForm(grade) : null;
-+  const form = task.worldFixture ? require(path.join(SLEIGHT_REPO, 'bench/world/fowl-fixture-grade.mjs')).gradeFixture({ task, site: grade, answer: text })
++  const form = task.worldFixture ? require(path.join(SLEIGHT_REPO, 'bench/world/fowl-fixture-grade.mjs')).gradeFixture({ task, site: grade, answer: text, expected: require(path.join(SLEIGHT_REPO, 'bench/world/fowl-fixture-grade.mjs')).readFixtureExpected(task) })
 +    : task.grade ? gradeForm(grade) : null;
    const ok = problems.length === 0 && (!form || form.ok);
    const cell = [ok ? 'ok' : problems.length ? `FAIL: ${problems.join('; ')}` : 'FAIL', form?.cell].filter(Boolean).join(', ');

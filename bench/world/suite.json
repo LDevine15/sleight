@@ -355,7 +355,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,
@@ -383,7 +383,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,
@@ -411,7 +411,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,
@@ -439,7 +439,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,
@@ -467,7 +467,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,
@@ -495,7 +495,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,
@@ -523,7 +523,7 @@
       "claim": true,
       "support": {
         "sleight": true,
-        "codex": false,
+        "codex": true,
         "cua": true,
         "peekaboo": true,
         "claude-cu": true,

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, closeSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -30,8 +30,9 @@ test('all seven local claims use the same fixture instructions for each direct b
   }
   const suite = JSON.parse(readFileSync(new URL('../bench/world/suite.json', import.meta.url)));
   assert.deepEqual(Object.keys(suite.notRun), ['codex-cu', 'devtools']);
-  assert.ok(suite.browser.every(task => task.support.codex === false));
+  assert.ok(suite.browser.filter(task => !browserKinds.includes(task.task)).every(task => task.support.codex === false));
   for (const task of suite.browser.filter(task => browserKinds.includes(task.task))) {
+    assert.equal(task.support.codex, true);
     assert.equal(task.browserRunner, 'bench/world/fowl-fixtures.mjs');
     assert.equal(task.support['claude-in-chrome'], true);
     assert.equal(task.support['claude-cu'], true);
@@ -44,21 +45,21 @@ test('Fowl fixture grade rejects missing reads, wrong pairs and absent posts des
     const fixture = createBrowserFixture(kind, { nonce: kind, seed: 'fixed' });
     const task = { worldFixture: kind };
     const answer = `Narration\nRESULT: ${JSON.stringify(fixture.expected)}`;
-    assert.equal(gradeFixture({ task, site: fixture, answer }).ok, false);
+    assert.equal(gradeFixture({ task, site: fixture, expected: fixture.expected, answer }).ok, false);
     fixture.views = ['', 'second', 'record/2'];
     if (['file-upload', 'tab-switching', 'form-controls'].includes(kind)) {
-      assert.equal(gradeFixture({ task, site: fixture, answer }).ok, false);
+      assert.equal(gradeFixture({ task, site: fixture, expected: fixture.expected, answer }).ok, false);
       fixture.posted = fixture.expected;
     }
-    assert.deepEqual(gradeFixture({ task, site: fixture, answer }).problems, []);
+    assert.deepEqual(gradeFixture({ task, site: fixture, expected: fixture.expected, answer }).problems, []);
     const wrong = { ...fixture, expected: { wrong: true } };
-    assert.equal(gradeFixture({ task, site: wrong, answer }).ok, false);
+    assert.equal(gradeFixture({ task, site: wrong, expected: wrong.expected, answer }).ok, false);
     assert.equal(gradeFixture({ task, site: { error: 'offline' }, answer }).ok, false);
   }
   const fixture = createBrowserFixture('table-scrape', { nonce: 'table', seed: 'fixed' });
   fixture.views = [''];
   const answer = JSON.stringify({ rows: fixture.expected.rows.map((row, i, rows) => ({ ...row, hours: rows[(i + 1) % rows.length].hours })) });
-  assert.equal(gradeFixture({ task: { worldFixture: 'table-scrape' }, site: fixture, answer }).ok, false);
+  assert.equal(gradeFixture({ task: { worldFixture: 'table-scrape' }, site: fixture, expected: fixture.expected, answer }).ok, false);
 });
 
 test('fixture log reads do not count as agent page views and reject other hosts', async () => {
@@ -71,7 +72,10 @@ test('fixture log reads do not count as agent page views and reject other hosts'
     await handle({ url, method: 'GET', headers: { host } }, res);
     return response;
   };
-  assert.equal((await get('/mdn/api/log')).code, 200);
+  const log = JSON.parse((await get('/mdn/api/log')).body);
+  assert.deepEqual(Object.keys(log).sort(), ['kind', 'views']);
+  assert.equal(log.expected, undefined);
+  assert.equal(log.token, undefined);
   assert.deepEqual(fixture.views, []);
   assert.equal((await get('/mdn/')).code, 200);
   assert.deepEqual(JSON.parse((await get('/mdn/api/log')).body).views, ['']);
@@ -101,7 +105,9 @@ test('fixture rounds clean their owned server on failure and keep task records f
   t.after(() => removeTemp(root));
   let closed = 0, calls = 0;
   const result = await runFixtureClaims({ outRoot: root, arms: ['browser-use'], kinds: ['file-upload', 'local-mdn'],
-    serve: async () => () => { closed++; }, run: async ({ args }) => {
+    serve: async () => () => { closed++; }, run: async ({ args, fixture }) => {
+      assert.ok(fixture.expected);
+      assert.equal(fixture.kind, calls === 0 ? 'file-upload' : 'local-mdn');
       calls++;
       const task = JSON.parse(readFileSync(args[args.indexOf('--tasks') + 1], 'utf8'))[0];
       assert.equal(task.worldFixture, task.name);
@@ -128,4 +134,52 @@ test('both public CLI dry runs emit the complete matrix without touching the req
     assert.equal(plan.length, count);
     assert.equal(existsSync(out), false);
   }
+});
+
+test('coverage is persisted after each round, including interruption, and printed paths omit home', async t => {
+  const { runFixtureClaims } = await load();
+  const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-fowl-fixture-test-')));
+  t.after(() => removeTemp(root));
+  const stamp = 'checkpoint';
+  let calls = 0;
+  const result = await runFixtureClaims({ outRoot: root, stamp, arms: ['browser-use'], kinds: ['local-mdn'], runs: 2,
+    serve: async () => () => {}, run: async () => {
+      if (++calls === 1) throw Error(`fake failure at ${homedir()}/private`);
+      const saved = JSON.parse(readFileSync(join(root, `fixture-coverage-${stamp}.json`)));
+      assert.equal(saved.rows.length, 1);
+      assert.equal(saved.rows[0].code, 1);
+      assert.ok(!JSON.stringify(saved).includes(homedir()));
+      return 130;
+    } });
+  assert.equal(calls, 2);
+  assert.equal(result.rows[1].code, 130);
+  assert.equal(JSON.parse(readFileSync(join(root, `fixture-coverage-${stamp}.json`))).rows.length, 2);
+  const plan = await runFixtureClaims({ outRoot: join(homedir(), 'fixture-plan'), arms: ['browser-use'], kinds: ['local-mdn'], dryRun: true });
+  assert.ok(!JSON.stringify(plan).includes(homedir()));
+});
+
+test('the grader reads its answer key from an inherited descriptor, outside the HTTP log', async t => {
+  const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-fowl-fixture-test-')));
+  t.after(() => removeTemp(root));
+  const fixture = createBrowserFixture('local-mdn', { nonce: 'private', seed: 'fixed' });
+  const { fixtureGradeDescriptor } = await import('../bench/world/fowl-fixture-grade.mjs');
+  const fd = fixtureGradeDescriptor(fixture);
+  try {
+    const result = spawnSync('/bin/sh', ['-c', 'exec /usr/bin/env -i "$@"', 'fixture-grade', process.execPath, '--input-type=module', '-e', `
+      import { readFixtureExpected, gradeFixture } from './bench/world/fowl-fixture-grade.mjs';
+      const task = { worldFixture: 'local-mdn' };
+      const expected = readFixtureExpected(task);
+      const site = { kind: 'local-mdn', views: [''] };
+      if (!gradeFixture({ task, site, expected, answer: JSON.stringify(expected) }).ok) throw Error('private answer failed');
+      if (gradeFixture({ task, site, expected, answer: '{}'}).ok) throw Error('wrong answer passed');
+      if (readFixtureExpected({ worldFixture: 'file-upload' }) !== undefined) throw Error('mismatched key accepted');
+    `], { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', fd] });
+    assert.equal(result.status, 0, result.stderr);
+  } finally { closeSync(fd); }
+});
+
+test('an HTTP snapshot cannot supply the grader answer key', async () => {
+  const { gradeFixture } = await load();
+  const site = { kind: 'local-mdn', views: [''], expected: { code: 123 } };
+  assert.equal(gradeFixture({ task: { worldFixture: 'local-mdn' }, site, answer: '{"code":123}' }).ok, false);
 });

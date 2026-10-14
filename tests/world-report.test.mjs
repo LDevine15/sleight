@@ -325,3 +325,13 @@ test('missing report.md and unequal N warnings appear in the markdown', () => {
     assert.match(renderMarkdown(unequal), /unequal run counts/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a missing native Codex local fixture row remains supported with zero runs', () => {
+  const report = buildReport([
+    run({ task: 'local-mdn', arm: 'sleight' }),
+    run({ task: 'local-wikipedia', arm: 'codex' }),
+  ]);
+  const cell = report.models[0].cells['local-mdn'].codex;
+  assert.equal(cell.runs, 0);
+  assert.equal(cell.supported, true);
+});

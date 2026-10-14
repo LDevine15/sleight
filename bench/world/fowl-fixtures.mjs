@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { browserHandler, browserKinds, createBrowserFixture } from './browser-fixtures.mjs';
 import { browserInstructions } from './tasks.mjs';
 import { matrixOptions, roundArguments } from './fowl-options.mjs';
 import { runRound } from '../fowl/handoff-runner.mjs';
 
-const DIR = dirname(fileURLToPath(import.meta.url));
+const publicResult = result => JSON.parse(JSON.stringify(result).replaceAll(homedir(), '~'));
+
 const ORIGIN = 'http://127.0.0.1:5432';
 export const FIXTURE_ARMS = ['sleight', 'fowl+sleight', 'fowlbrowser', 'playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu', 'browser-use', 'sleight-turbo'];
 export const NOT_RUN = ['codex-cu', 'devtools'].map(arm => ({ arm, status: 'not run', reason: 'Bridge code is not in the repository (owner decision, 2026-10-14)' }));
@@ -25,7 +26,7 @@ export function fixtureHandler(fixture) {
   return (req, res) => {
     if (req.method === 'GET' && req.url === `/${fixture.nonce}/api/log` && req.headers.host === new URL(ORIGIN).host
       && (!req.headers.origin || req.headers.origin === ORIGIN)) {
-      return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(fixture));
+      return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ kind: fixture.kind, views: fixture.views, posted: fixture.posted }));
     }
     return handle(req, res);
   };
@@ -50,6 +51,17 @@ export async function runFixtureClaims({ outRoot = '/tmp/fb-rounds', arms = FIXT
   if (!kinds.length || kinds.some(kind => !browserKinds.includes(kind))) throw Error('Unknown fixture kind');
   if (!['chrome', 'helium'].includes(browser)) throw Error('Unknown browser');
   const rows = [], notRun = NOT_RUN;
+  const result = () => publicResult({ rows, notRun });
+  const checkpoint = () => {
+    const target = join(outRoot, `fixture-coverage-${stamp}.json`);
+    const staging = target + '.' + randomUUID() + '.tmp';
+    try {
+      writeFileSync(staging, JSON.stringify(result(), null, 2), { flag: 'wx' });
+      renameSync(staging, target);
+    } finally {
+      try { unlinkSync(staging); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  };
   if (!options.dryRun) mkdirSync(outRoot, { recursive: true });
   for (let repetition = 1; repetition <= options.runs; repetition++) for (const arm of arms) for (const kind of kinds) {
     const out = join(outRoot, `fixtures-${stamp}-${repetition}-${arm}-${kind}`);
@@ -66,17 +78,16 @@ export async function runFixtureClaims({ outRoot = '/tmp/fb-rounds', arms = FIXT
       if (kind === 'file-upload') writeFileSync(uploadPath, fixture.expected.uploadText, { flag: 'wx' });
       writeFileSync(join(out, 'tasks.json'), JSON.stringify([fixtureTask(fixture, uploadPath, browser)], null, 2), { flag: 'wx' });
       close = await start(fixture);
-      row.code = await run({ out: join(out, 'round'), args, arm });
+      row.code = await run({ out: join(out, 'round'), args, arm, fixture });
     } catch (error) { row.code = 1; row.error = error.message; }
     finally {
       if (close) try { await close(); row.cleanup = 'server closed'; }
       catch (error) { row.code = 1; row.cleanup = error.message; }
     }
-    if (row.code === 130) return { rows, notRun };
+    checkpoint();
+    if (row.code === 130) return result();
   }
-  const result = { rows, notRun };
-  if (!options.dryRun) writeFileSync(join(outRoot, `fixture-coverage-${stamp}.json`), JSON.stringify(result, null, 2), { flag: 'wx' });
-  return result;
+  return result();
 }
 
 export function fixtureOptions(args) {
