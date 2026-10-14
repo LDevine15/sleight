@@ -62,14 +62,13 @@ tests are sleight-arch's), then the bare `npm run check`, push, and `touch claim
 16 at once drove the load to 130 on 2026-10-13 (pause a lane's process group with SIGSTOP in an emergency).
 
 Next steps, in order:
-1. Merge as items pass: AM1E, AM1FR (then rerun AM1 live), BP2-P1 and P2, then dispatch P3.
+1. Merge as items pass: BP2-P1R, then BP2-P1B, BP2-P2 and BP2-P3, all three building in parallel. AM1 is parked until after 1.3.0.
 2. The wiring puts turbo into the plugin, opt-in. Then live qualification in the owner's Chrome "sleight benchmark" profile and Helium:
    the owner turned remote debugging on in both (2026-10-13) and clicks Allow on Chrome's prompt once per browser launch.
-3. AM1's live speed map in an away window.
-4. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
-5. The claim suite with the W8 runner. The Claude in Chrome arm is signed in (Max plan, 2026-10-13); Cua and Peekaboo are installed (2026-10-14),
+3. The turbo gate round (Haiku 5.5, both arms, both orders), then one Opus head-to-head on the owner's account.
+4. The claim suite with the W8 runner. The Claude in Chrome arm is signed in (Max plan, 2026-10-13); Cua and Peekaboo are installed (2026-10-14),
    and the owner granted their permissions.
-6. Release 1.3.0 on the owner's call once all of it is done (CHANGELOG draft in `ledger/claims/R2R/`), then the claim post
+5. Release 1.3.0 on the owner's call once all of it is done (CHANGELOG draft in `ledger/claims/R2R/`), then the claim post
    and the video.
 
 Owner, 2026-10-14: the Electron design's six decisions are approved (LAWS), and EP-1 to EP-7 build after 1.3.0. The away window is

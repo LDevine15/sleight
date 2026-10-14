@@ -98,6 +98,8 @@ belong in [STATE.md](STATE.md).
   partial windows: each sitting means pausing the owner's other projects (owner, 2026-10-11).
 - Build work goes to Codex, Grok and GLM lanes, not Claude subagents, which the owner saves for
   other work (owner, 2026-10-11). sleight-arch reviews, merges and runs the live checks.
+  sleight-arch makes small fixes itself (a few lines, a failing test first), and a Codex lane reviews them before merge like
+  any branch (owner, 2026-10-14). Features still go to lanes.
 - Codex time goes to known problems and enhancements, not benchmark runs (owner, 2026-10-04).
   SUPERSEDED (2026-10-09): "one benchmark pass per merge that changes default behavior". The owner
   now wants several fixes and features batched into each release, with one full pass per release. In

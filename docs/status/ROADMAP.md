@@ -69,6 +69,8 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
 After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
 the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
 the release: keep only what turbo loads, with its notices.
+The AM1 speed map is parked until then too (owner, 2026-10-14). It measures TextEdit and Finder, while VS Code and Word fail fixture
+setup after two fix rounds (AM1E, AM1ER), and the gate doesn't need it.
 Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
 streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
 small tool arguments. Less code per action (higher-level helpers, a small fixed set of verbs) is the lever, to measure first.
