@@ -86,6 +86,9 @@ belong in [STATE.md](STATE.md).
 - Turbo includes `playwright-core` 1.64.0 whole inside the plugin, pinned by hash, with its LICENSE and NOTICE in
   `THIRD-PARTY-NOTICES`, and loads it only when turbo is on (owner, 2026-10-14, for its mature actionability and accessibility
   snapshots on the form cases the engine path lost). The plugin grows from 1.9 MB to about 15 MB. Slimming it is a first priority right after 1.3.0 (ROADMAP).
+- Turbo's native helpers (the peer checker and the menu and approval window) come as source and are compiled on the user's
+  Mac with Apple's command-line tools the first time turbo turns on, as `demonstration.swift` already is. No prebuilt binaries,
+  Developer ID or notarization (owner, 2026-10-14). Without the tools, turbo says so and the engine path keeps working.
 - Browser use is sleight's strongest suit, measured against Codex, and sleight releases with the
   numbers that show it (owner, 2026-10-11, after a Codex-derived browser extension for Claude was teased).
 - Install has two paths (owner, 2026-10-11): with Computer Use already on in ChatGPT or Codex,
