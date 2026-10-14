@@ -4,12 +4,14 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
+import { check, inspectElement } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 const api = await import('../plugins/sleight/lib/direct-browser/v3-context.mjs').catch(e => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e; return {};
 });
 const terms = { item: 'Fixture item', amount: '18.00', payee: 'Fixture shop', method: 'Fixture card', currency: 'USD' };
 const payText = value => 'Pay ' + JSON.stringify(value);
-function fixture(text = payText(terms)) {
+function fixture(text = payText(terms), options = {}) {
   assert.equal(typeof api.createV3Context, 'function', 'trusted v3 context is required');
   let document = {}, origin = 'https://fixture.invalid', payment = true, inputName = 'Resume', ended = false;
   const frame = { url: () => origin + '/checkout' }, state = { snapshotNo: 0, submitUnconfirmed: false };
@@ -18,6 +20,7 @@ function fixture(text = payText(terms)) {
   const handle = {
     ownerFrame: async () => frame, dispose: async () => {},
     async evaluate(fn, arg) {
+      if (fn.name === 'focusCheckedNode') return f.focusOk;
       if (fn.name === 'samePageDocument') return arg === document;
       if (fn.name === 'ownDocument') return document;
       if (fn.name === 'inspectElement') return { ...element, payment, formPayment: payment };
@@ -28,10 +31,11 @@ function fixture(text = payText(terms)) {
   };
   const locator = { elementHandle: async () => handle };
   const binding = api.createV3TurnBinding({ source: 'user', session: 'session', turn: 'turn', id: 'request', text }, () => !ended);
-  const ctx = api.createV3Context({ binding, browser: 'bfixture' });
-  const f = { ctx, binding, handle, state, pageTerms: {},
+  const ctx = api.createV3Context({ binding, browser: 'bfixture', ...options });
+  const f = { ctx, binding, handle, state, pageTerms: {}, focusOk: true,
     target: extra => ({ page: new EventEmitter(), state, locator, ref: 'e1', element: { ...element }, ...extra }),
     navigate() { document = {}; }, changeOrigin() { origin = 'https://other.invalid'; }, end() { ended = true; },
+    heading() { payment = false; Object.assign(element, { tag: 'h2', kind: 'text', submit: false, form: false }); },
     ordinary() { payment = false; Object.assign(element, { tag: 'input', kind: 'text', submit: false, form: false }); },
     file() { payment = false; Object.assign(element, { tag: 'input', kind: 'file', submit: false }); },
     name(value) { inputName = value; },
@@ -151,4 +155,99 @@ test('pinned drag uses ElementHandle actionability without inventing ElementHand
   const source=f.target({page}); assert.equal((await f.ctx.check('drag',source)).verdict,'allow');
   await f.ctx.dragTo(source,{elementHandle:async () => f.handle});
   assert.deepEqual(events,['hover','hover','down','hover','hover','up']); await f.ctx.dispose();
+});
+
+for (const key of ['Enter', 'Space']) test('V10R1 refuses ' + key + ' when the pinned ref cannot retain focus', async () => {
+  const f = fixture('Read only'); f.heading(); f.focusOk = false;
+  const result = await f.ctx.check('press', f.target({key, ref:'e9'}));
+  assert.equal(result.verdict, 'refuse'); await f.ctx.dispose();
+});
+test('V10R1 dispatch never calls ElementHandle.press after checking focus', async () => {
+  const f = fixture('Read only'); f.ordinary(); const keys = [], page = new EventEmitter();
+  Object.assign(f.handle, { press: async () => { throw Error('unsafe refocusing press'); } });
+  page.getByRef = () => ({elementHandle:async () => f.handle, evaluate:async () => ({submit:false,form:false})});
+  page.keyboard = {press:async key => keys.push(key)};
+  let clock = 0;
+  const run = createActionRunner({check, snapshot:async () => ({text:'fixture',number:1}), now:() => clock, sleep:async ms => {clock += ms;}});
+  const result = await run({page,state:f.state},[{do:'press',ref:'e1',key:'Enter'}],f.ctx);
+  assert.deepEqual(keys,['Enter']); assert.doesNotMatch(result.lines[0],/not run|unconfirmed/); await f.ctx.dispose();
+});
+
+for (const kind of ['reload','back','forward']) test('V10R2 ' + kind + ' cannot retry an unknown payment or revisit its document', async () => {
+  const f = fixture(), target = f.target();
+  assert.equal((await f.ctx.check('click',target)).verdict,'allow');
+  for (const pending of [true,false]) {
+    f.state.submitUnconfirmed = pending ? {startedAt:1,snapshotNo:0} : false;
+    const result = await f.ctx.check(kind,{page:target.page,state:f.state});
+    assert.equal(result.verdict,'refuse',kind + ' pending=' + pending);
+  }
+  await f.ctx.dispose();
+});
+
+for (const change of ['same-document','changed-document-and-origin']) test('V10R3 upload request cannot be offered again after transfer: ' + change, async t => {
+  const directory = mkdtempSync(join(realpathSync(tmpdir()),'v3-file-')); t.after(() => rmSync(directory,{recursive:true,force:true}));
+  const path = join(directory,'resume.txt'); writeFileSync(path,'bytes');
+  const f = fixture(`Upload "${path}" to Resume`); f.file(); const first = f.target({paths:[path]});
+  assert.equal((await f.ctx.check('upload',first)).verdict,'allow'); (await f.ctx.stageUploads(first,[path])).cleanup();
+  if (change !== 'same-document') { f.navigate(); f.changeOrigin(); }
+  assert.equal((await f.ctx.check('upload',f.target({paths:[path]}))).verdict,'refuse'); await f.ctx.dispose();
+});
+
+test('V10R4 a checked click cannot preapprove an unrelated later dialog', async () => {
+  const f = fixture(), target = f.target();
+  assert.equal((await f.ctx.check('click',target)).verdict,'allow');
+  assert.equal((await f.ctx.check('click',f.target())).verdict,'confirm');
+  const result = await f.ctx.check('dialog',{page:target.page,state:f.state,type:'confirm',accept:true,
+    message:payText({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'})});
+  assert.equal(result.verdict,'refuse'); await f.ctx.dispose();
+});
+
+test('V10R5 classification uses the associated form for a control outside it', async () => {
+  const { classify } = await import('./direct-browser-rules-fixture.mjs');
+  const element = classify(({Element,HTMLInputElement,HTMLButtonElement}) => {
+    const form = new Element('form'); new HTMLButtonElement('button',{},'Pay now',form);
+    const input = new HTMLInputElement('input'); Object.defineProperty(input,'form',{value:form}); return input;
+  });
+  assert.equal(element.form,true); assert.equal(element.formPayment,true);
+});
+test('V10R5 payment terms follow el.form and exclude an opacity-zero amount decoy', () => {
+  const node = (value,visible=true) => ({localName:'p',innerText:value,textContent:value,
+    getBoundingClientRect:() => ({width:10,height:10}), checkVisibility:() => visible,
+    getAttribute:() => null});
+  const hidden=node('Amount: 18.00',false), shown=node('Amount: 99.00');
+  const root={...node(''),querySelectorAll:selector => selector.includes('amount') ? [hidden,shown] : []};
+  const wrong={querySelectorAll:() => [],innerText:''};
+  const doc={createTreeWalker(node) { let read=false; return {nextNode() { if (read) return null; read=true; return node.innerText ? {parentElement:node,textContent:node.innerText} : null; }}; },defaultView:{location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({visibility:'visible',display:'block'})}};
+  const observed=api.readPaymentPage({ownerDocument:doc,form:root,closest:() => wrong,getAttribute:() => null});
+  assert.equal(observed.page.amount,'99.00');
+});
+
+test('V10R6 dismissing a page dialog before an allowed click remains available', async () => {
+  const f=fixture('Read only'), page=new EventEmitter();
+  const result=await f.ctx.check('dialog',{page,state:f.state,type:'alert',message:'Pay now',accept:false});
+  assert.equal(result.verdict,'allow'); await f.ctx.dispose();
+});
+
+for (const mode of ['own','other-dialog','expired','strict']) test('V10R4 only the initiating input can allow its exact dialog once: ' + mode, async () => {
+  let clock=100; const events=new WeakSet(), presentations=[];
+  const ui={authenticate:e => events.delete(e),present(id,data,choices,deliver) {presentations.push({id,deliver});}};
+  const f=fixture(payText(terms),{now:() => clock,...(mode === 'strict' ? {confirmPayments:'always',ui} : {})});
+  const page=new EventEmitter(), target=f.target({page});
+  if (mode === 'strict') {
+    assert.equal((await f.ctx.check('click',target)).verdict,'confirm');
+    const e={id:presentations[0].id,choice:'once'}; events.add(e); await presentations[0].deliver(e);
+  }
+  assert.equal((await f.ctx.check('click',target)).verdict,'allow');
+  f.ctx.beginInput(target); const dialog={}; f.state.dialog=dialog; page.emit('dialog',dialog); f.ctx.finishInput(target);
+  if (mode === 'other-dialog') f.state.dialog={}; if (mode === 'expired') clock+=5001;
+  const d={page,state:f.state,type:'confirm',accept:true,message:payText({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'})};
+  assert.equal((await f.ctx.check('dialog',d)).verdict,['own','strict'].includes(mode) ? 'allow' : 'refuse');
+  if (['own','strict'].includes(mode)) assert.equal((await f.ctx.check('dialog',d)).verdict,'refuse');
+  await f.ctx.dispose();
+});
+for (const kind of ['reload','back','forward']) test('V10R2 explicit user history request permits exactly one retry: ' + kind, async () => {
+  const commands={reload:'Reload this page',back:'Go back',forward:'Go forward'};
+  const f=fixture(commands[kind]); f.state.submitUnconfirmed={startedAt:1,snapshotNo:0};
+  assert.equal((await f.ctx.check(kind,{state:f.state})).verdict,'allow');
+  assert.equal((await f.ctx.check(kind,{state:f.state})).verdict,'refuse'); await f.ctx.dispose();
 });

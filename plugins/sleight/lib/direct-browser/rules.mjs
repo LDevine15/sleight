@@ -8,6 +8,7 @@ const allow = Object.freeze({ verdict: 'allow' });
 const refuse = message => ({ verdict: 'refuse', message: message + ' Use the engine browser path if needed.' });
 const payments = new WeakMap();
 const captures = new WeakMap();
+const paymentPages = new WeakSet(), historyRequests = new WeakMap();
 const paymentWords = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text ?? '');
 const ordinary = new Set(['read', 'open', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'drag', 'upload',
   'dialog', 'wait', 'back', 'forward', 'reload', 'viewport', 'close', 'keep', 'handoff', 'Target.createTarget']);
@@ -23,7 +24,7 @@ export function inspectElement(el) {
   const words = node => [get(node, 'aria-label'), node.textContent, get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
   const payment = value => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(value);
   const type = inputType(el);
-  const tag = el.localName, role = get(el, 'role'), form = el.closest('form'), rect = el.getBoundingClientRect(), style = getComputedStyle(el);
+  const tag = el.localName, role = get(el, 'role'), form = 'form' in el ? el.form : el.closest('form'), rect = el.getBoundingClientRect(), style = getComputedStyle(el);
   const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
   const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
     form: !!form, connected: el.isConnected, visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
@@ -55,8 +56,11 @@ export function intent(kind, target = {}) {
   return { submit, payment };
 }
 
+export function expirePaymentDialog(ctx) { const bank = payments.get(ctx); if (bank) bank.dialog = undefined; }
+
 export function check(ctx, kind, target = {}) {
   try {
+    if (kind !== 'dialog') expirePaymentDialog(ctx);
     if (!ordinary.has(kind) && kind !== 'submit') return refuse('Background-only operation required.');
     if (kind === 'Target.createTarget') return target.background === true ? allow : refuse('New tabs must use background:true.');
     if (kind === 'press' && target.key?.includes('+') && /(?:Enter|Return|Space| )$/.test(target.key)) return refuse('This activation chord may open a foreground window.');
@@ -81,13 +85,22 @@ export function check(ctx, kind, target = {}) {
     if (kind === 'upload') return user && Array.isArray(target.paths) && target.paths.length && target.paths.length <= 16 &&
       target.paths.every(text) && new Set(target.paths).size === target.paths.length &&
       ctx.files?.check(target.paths, target, user) === true ? allow : refuse('Upload requires exact user-named files and the private files provider.');
+    if (['reload', 'back', 'forward'].includes(kind) && (target.state?.submitUnconfirmed || paymentPages.has(target.state))) {
+      const commands = { reload: /^(?:Please )?Reload (?:this|the) page[.!]?$/i,
+        back: /^(?:Please )?Go back[.!]?$/i, forward: /^(?:Please )?Go forward[.!]?$/i };
+      const used = historyRequests.get(ctx) ?? new Set(), requestKey = user && JSON.stringify([user.session,user.turn,user.id,kind]);
+      if (!user || !commands[kind].test(user.text.trim()) || used.has(requestKey))
+        return refuse('Payment or submit effect is unknown. History navigation needs an explicit user request.');
+      used.add(requestKey); historyRequests.set(ctx,used);
+    }
     if (!risk.payment) return allow;
     const page = target.terms?.page, terms = { item: page?.item, amount: page?.amount, payee: page?.payee, method: target.terms?.method,
       ...(page?.currency !== undefined ? { currency: page.currency } : {}) };
     const ask = () => ({ verdict: 'confirm', terms });
     if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
     let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
-    if (kind === 'dialog' && bank.dialog && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
+    if (kind === 'dialog' && bank.dialog && (ctx.now ?? Date.now)() < bank.dialog.expires &&
+        (!ctx.dialogContinuation || ctx.dialogContinuation(target) === true) && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
       bank.dialog = undefined; return allow;
     }
     if (kind === 'dialog' && target.state.submitUnconfirmed && !sameDocument(bank.dialog, target)) return retry();
@@ -97,7 +110,8 @@ export function check(ctx, kind, target = {}) {
     const strict = (ctx.confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'always';
     if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();
     if (requestKey) bank.used.add(requestKey);
-    bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
+    if (target.state) paymentPages.add(target.state);
+    bank.dialog = kind === 'dialog' ? undefined : { expires: (ctx.now ?? Date.now)() + 5000, session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
     return allow;
   } catch { return refuse('Trusted rule evidence is unavailable.'); }
 }

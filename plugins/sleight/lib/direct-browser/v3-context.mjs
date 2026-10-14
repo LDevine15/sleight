@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent } from './rules.mjs';
+import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 
@@ -38,6 +38,16 @@ export function requestedPayment(message) {
   } catch { return; }
 }
 
+// Focus and its synchronous page handlers run in the same evaluation. Never
+// let a failed focus silently send a key to the previously active control.
+export function focusCheckedNode(el, focus) {
+  if (!el.isConnected) return false;
+  if (focus) HTMLElement.prototype.focus.call(el, { preventScroll: true });
+  let active = el.ownerDocument.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  return active === el;
+}
+
 export function ownDocument(el) { return el.ownerDocument; }
 export function samePageDocument(el, doc) { return el.isConnected && el.ownerDocument === doc; }
 
@@ -46,17 +56,23 @@ export function samePageDocument(el, doc) { return el.isConnected && el.ownerDoc
 // Require one visible exact labeled value per term in the target form/dialog.
 export function readPaymentPage(el) {
   const doc = el.ownerDocument, view = doc.defaultView;
-  const root = el.closest('form,dialog,[role="dialog"]');
+  const root = ('form' in el ? el.form : el.closest('form')) ?? el.closest('dialog,[role="dialog"]');
   const visible = node => {
     const r = node.getBoundingClientRect(), style = view.getComputedStyle(node);
-    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    return r.width > 0 && r.height > 0 && node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
+      style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const visibleText = (node, separator = ' ') => {
+    const walker = doc.createTreeWalker(node, 4), parts = []; let part;
+    while ((part = walker.nextNode())) if (part.parentElement && visible(part.parentElement)) parts.push(part.textContent);
+    return parts.join(separator);
   };
   const field = key => {
     if (!root) return;
     const values = [];
     for (const node of root.querySelectorAll('[data-payment-' + key + '],[itemprop="' + key + '"],[name="' + key + '"],[aria-label="' + key + '" i]')) {
       if (!visible(node)) continue;
-      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : node.innerText;
+      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : visibleText(node);
       const shown = typeof value === 'string' ? value.trim().replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
       const attribute = node.getAttribute('data-payment-' + key);
       if (attribute !== null && attribute.trim() !== shown) return;
@@ -64,7 +80,7 @@ export function readPaymentPage(el) {
     }
     if (!values.length) {
       const label = new RegExp('^' + key + ':\\s*(.+)$', 'i');
-      for (const line of (root.innerText ?? '').split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
+      for (const line of visibleText(root, '\n').split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
     }
     return values.length === 1 && values[0].length <= 4096 ? values[0] : undefined;
   };
@@ -144,7 +160,9 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     try { native.consume(ticket, entry.operation); return true; } catch { return false; }
     finally { consuming = undefined; }
   } });
-  const ruleContext = { session: bound.message.session, turn: bound.message.turn, userMessage: () => {
+  const ruleContext = { now, dialogContinuation: target => dialogOwner?.dialog === target.state?.dialog &&
+      !!dialogOwner?.dialog && now() < dialogOwner.expires,
+    session: bound.message.session, turn: bound.message.turn, userMessage: () => {
     if (!current()) return;
     const page = ruleTarget?.terms?.page;
     const observed = page && { ...page, method: requested?.method };
@@ -168,8 +186,16 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       }
       if (typeof target.page?.on === 'function' && !watched.has(target.page)) {
         const navigate = frame => { const document = documents.get(frame); if (document) document.valid = false; };
-        target.page.on('framenavigated', navigate); watched.set(target.page, navigate);
+        const dialog = value => {
+          if (!dialogOwner?.active || dialogOwner.page !== target.page || now() >= dialogOwner.expires || dialogOwner.dialog) {
+            dialogOwner = undefined; expirePaymentDialog(ruleContext); return;
+          }
+          dialogOwner.dialog = value;
+        };
+        target.page.on('framenavigated', navigate); target.page.on('dialog', dialog);
+        watched.set(target.page, { navigate, dialog });
       }
+      if (target.do === 'press' && !await handle.evaluate(focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
       const observed = await handle.evaluate(readPaymentPage);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
@@ -192,8 +218,10 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       try {
         if (!current()) return refused();
         target.do = kind;
+        if (kind !== 'dialog') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         if (kind === 'dialog') {
-          if (!dialogOwner || !dialogOwner.doc.valid || !target.state || !current()) return refused();
+          if (target.accept === false) { dialogOwner = undefined; expirePaymentDialog(ruleContext); return { verdict: 'allow' }; }
+          if (!dialogOwner?.dialog || target.state?.dialog !== dialogOwner.dialog || now() >= dialogOwner.expires || !dialogOwner.doc.valid || !current()) return refused();
           if (target.page && dialogOwner.page !== target.page) return refused();
           if (new URL(dialogOwner.frame.url()).origin !== dialogOwner.origin) return refused();
           const page = dialogTerms(target.message), record = dialogOwner;
@@ -202,13 +230,30 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
           targets.set(target, record);
         } else if (target.locator) await prepare(target);
         else if (!['wait','back','forward','reload','viewport'].includes(kind)) return refused();
+        else Object.assign(target, { session: bound.message.session, turn: bound.message.turn });
         if (fieldOnly && intent(kind, target).submit) return refused();
         ruleTarget = target;
         const result = check(ruleContext, kind, target);
-        if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind)) dialogOwner = targets.get(target);
+        if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind))
+          dialogOwner = { ...targets.get(target), target, active: false, expires: now() + 5000 };
+        if (kind === 'dialog' && result.verdict === 'allow') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         return result;
       } catch { return refused(); }
       finally { ruleTarget = undefined; }
+    },
+    beginInput(target) { if (dialogOwner?.target === target && current()) dialogOwner.active = true; },
+    finishInput(target) {
+      if (dialogOwner?.target !== target) return;
+      dialogOwner.active = false;
+      if (!dialogOwner.dialog) { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
+    },
+    async pressTarget(target, key, options) {
+      const record = targets.get(target);
+      if (!current() || !record?.doc.valid || !await record.handle.evaluate(samePageDocument, record.doc.handle) ||
+          !await record.handle.evaluate(focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+      // ElementHandle.press focuses again without verifying its recipient.
+      // Use only the owned page keyboard after the checked ref retained focus.
+      return target.page.keyboard.press(key, options);
     },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);
@@ -252,7 +297,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     },
     async dispose() {
       closed = true; native?.revoke();
-      for (const [page, navigate] of watched) page.off('framenavigated', navigate); watched.clear(); tickets.clear(); pending.clear(); offered.clear();
+      for (const [page, handlers] of watched) { page.off('framenavigated', handlers.navigate); page.off('dialog', handlers.dialog); } watched.clear(); tickets.clear(); pending.clear(); offered.clear();
       const receipt = fileProvider.dispose();
       await Promise.allSettled([...held].map(handle => handle.dispose?.())); held.clear(); documents.clear();
       return receipt;

@@ -26,8 +26,8 @@ async function fixture(t, text = 'Read only') {
   const platform = process.platform === 'darwin' ? 'mac-' + process.arch : 'linux64';
   const executablePath = join(homedir(), 'Library/Caches/ms-playwright', 'chromium_headless_shell-' + spec.revision, 'chrome-headless-shell-' + platform, 'chrome-headless-shell');
   assert.ok(existsSync(executablePath), 'pinned headless Chromium required; host tests must not skip');
-  const sockets = new Set();
-  const server = createServer((req, res) => { res.setHeader('content-type','text/html'); res.end(req.url === '/card' ? '<form><label>Card<input autocomplete="cc-number" id="card"></label><button>Continue</button></form>' : html); });
+  const sockets = new Set(); let posts = 0;
+  const server = createServer((req, res) => { if (req.method === 'POST') posts++; res.setHeader('content-type','text/html'); res.end(req.url === '/card' ? '<form><label>Card<input autocomplete="cc-number" id="card"></label><button>Continue</button></form>' : html); });
   server.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
   t.after(async () => { for (const s of sockets) s.destroy(); await new Promise(resolve => server.close(resolve)); t.diagnostic('fixture server and sockets collected'); });
@@ -45,7 +45,7 @@ async function fixture(t, text = 'Read only') {
   const runSteps = createActionRunner({ check, snapshot, now: () => clock, sleep: async ms => { clock += ms; } });
   const fillFields = createFillFields({ check, runSteps, inspectElement });
   const target = (ref, extra = {}) => ({ page, locator:page.getByRef(ref), ref, state:tab.state, ...extra });
-  return { page, ctx, tab, runSteps, fillFields, target, origin, end() { active = false; } };
+  return { page, ctx, tab, runSteps, fillFields, target, origin, posts:() => posts, end() { active = false; } };
 }
 test('real trust join refuses page and tool authority, masked payment controls and final Enter risk', { skip }, async t => {
   const f = await fixture(t);
@@ -82,8 +82,8 @@ test('real upload transfers only exact user-named bytes and rejects a changed do
   const result = await f.runSteps(f.tab,[{do:'upload',ref:'e4',paths:[path]}],f.ctx);
   assert.doesNotMatch(result.lines[0],/not run|effect unconfirmed/);
   assert.equal(await f.page.locator('#e4').evaluate(el => el.files[0].text()),'fixture upload bytes');
-  const target = f.target('e4',{paths:[path]}); assert.equal((await f.ctx.check('upload',target)).verdict,'allow');
-  await f.page.reload(); await assert.rejects(f.ctx.stageUploads(target,[path]));
+  const target = f.target('e4',{paths:[path]}); assert.equal((await f.ctx.check('upload',target)).verdict,'refuse');
+  await f.page.reload(); assert.equal((await f.ctx.check('upload',f.target('e4',{paths:[path]}))).verdict,'refuse');
 });
 test('real checked element cannot be swapped after the final rule check', { skip }, async t => {
   const f = await fixture(t), target = f.target('e2');
@@ -122,4 +122,73 @@ test('real pinned drag uses owned-page mouse input and leaves no held button', {
   const f=await fixture(t), result=await f.runSteps(f.tab,[{do:'drag',ref:'e6',to:'e7'}],f.ctx);
   assert.doesNotMatch(result.lines[0],/not run|effect unconfirmed/);
   assert.equal(await f.page.locator('#e6').getAttribute('data-moved'),'true');
+});
+
+for (const key of ['Enter','Space']) for (const trap of ['heading','redirect'])
+  test('V10R1 real ' + key + ' never activates Pay through ' + trap + ' ref', {skip}, async t => {
+    const f=await fixture(t);
+    await f.page.evaluate(trap => {
+      const pay=document.querySelector('#e1');
+      const node=document.createElement(trap === 'heading' ? 'h2' : 'input'); node.id='e9'; node.textContent='Ordinary heading';
+      if (trap === 'redirect') node.onfocus=() => pay.focus();
+      document.body.append(node); document.querySelector('#e2').focus();
+    },trap);
+    const tabbed=await f.runSteps(f.tab,[{do:'press',key:'Tab'}],f.ctx);
+    assert.doesNotMatch(tabbed.lines[0],/not run|effect unconfirmed/);
+    assert.equal(await f.page.evaluate(() => document.activeElement.id),'e1');
+    const result=await f.runSteps(f.tab,[{do:'press',ref:'e9',key}],f.ctx);
+    assert.match(result.lines[0],/not run/); assert.equal(await f.page.locator('#count').innerText(),'0');
+  });
+test('V10R1 real shadow focus is checked through the focused host and authorized Enter still works', {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.evaluate(() => {const host=document.createElement('div'); document.body.append(host); host.attachShadow({mode:'open'}).innerHTML='<input id="e9">';});
+  const ordinary=await f.runSteps(f.tab,[{do:'press',ref:'e9',key:'ArrowLeft'}],f.ctx);
+  assert.doesNotMatch(ordinary.lines[0],/not run|effect unconfirmed/);
+  assert.equal(await f.page.evaluate(() => document.activeElement.shadowRoot.activeElement.id),'e9');
+  const pay=await f.runSteps(f.tab,[{do:'press',ref:'e1',key:'Enter'}],f.ctx);
+  assert.doesNotMatch(pay.lines[0],/not run|effect unconfirmed/); assert.equal(await f.page.locator('#count').innerText(),'1');
+});
+for (const pending of [true,false]) test('V10R2 real POST payment cannot be replayed through history; pending=' + pending, {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.locator('#payment').evaluate(form => {form.onsubmit=null; form.method='post'; form.action='/charge';});
+  const result=await f.runSteps(f.tab,[{do:'click',ref:'e1'}],f.ctx);
+  assert.doesNotMatch(result.lines[0],/not run|effect unconfirmed/);
+  await f.page.waitForURL('**/charge'); assert.equal(f.posts(),1);
+  f.tab.state.submitUnconfirmed=pending ? {startedAt:1,snapshotNo:0} : false;
+  for (const kind of ['reload','back','forward']) {
+    const refused=await f.runSteps(f.tab,[{do:kind}],f.ctx);
+    assert.match(refused.lines[0],/not run:.*explicit user request/);
+  }
+  assert.equal(f.posts(),1);
+});
+test('V10R5 real external form controls and invisible decoys cannot hide payment terms', {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.evaluate(() => {
+    const form=document.querySelector('#payment'), input=document.querySelector('#e2');
+    input.setAttribute('form','payment'); document.body.append(input);
+    const amount=form.querySelector('[data-payment-amount]'); amount.removeAttribute('data-payment-amount'); amount.textContent='Amount: 99.00';
+    const decoy=document.createElement('p'); decoy.setAttribute('data-payment-amount','18.00'); decoy.style.opacity='0'; decoy.textContent='Amount: 18.00'; form.prepend(decoy);
+  });
+  assert.equal((await f.ctx.check('press',f.target('e2',{key:'Enter'}))).verdict,'confirm');
+  assert.equal(await f.page.locator('#count').innerText(),'0');
+});
+test('V10R4 real initiating payment dialog is one-use and cannot survive later input', {skip}, async t => {
+  const f=await fixture(t,'Pay ' + JSON.stringify(terms));
+  await f.page.evaluate(message => {document.querySelector('#e1').onclick=e => {e.preventDefault(); if(confirm(message)) document.querySelector('#count').textContent++;};},
+    'Pay ' + JSON.stringify({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'}));
+  const click=await f.runSteps(f.tab,[{do:'click',ref:'e1'}],f.ctx); assert.match(click.lines[0],/dialog.*waiting/);
+  const answer=await f.runSteps(f.tab,[{do:'dialog',accept:true}],f.ctx);
+  assert.doesNotMatch(answer.lines[0],/not run|unconfirmed/); assert.equal(await f.page.locator('#count').innerText(),'1');
+  const opened=f.page.waitForEvent('dialog'); const script=f.page.evaluate(message => confirm(message),
+    'Pay ' + JSON.stringify({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'}));
+  const later=await opened; f.tab.state.dialog=later;
+  const denied=await f.runSteps(f.tab,[{do:'dialog',accept:true}],f.ctx); assert.match(denied.lines[0],/not run/);
+  const dismissed=await f.runSteps(f.tab,[{do:'dialog',accept:false}],f.ctx); assert.doesNotMatch(dismissed.lines[0],/not run/);
+  assert.equal(await script,false);
+});
+test('V10R6 real alert before any input can always be dismissed', {skip}, async t => {
+  const f=await fixture(t), opened=f.page.waitForEvent('dialog'), script=f.page.evaluate(() => alert('Fixture alert'));
+  f.tab.state.dialog=await opened;
+  const result=await f.runSteps(f.tab,[{do:'dialog',accept:false}],f.ctx);
+  assert.doesNotMatch(result.lines[0],/not run/); await script;
 });
