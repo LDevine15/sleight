@@ -1,4 +1,4 @@
-// Compact page snapshots for turbo v3. CR1 rewrites closedRoots clean-room.
+// Compact page snapshots for turbo v3, with an independent CR1 closed-root reader.
 const pages = new WeakMap();
 const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const MORE = /^more\d+_\d+$/;
@@ -127,8 +127,53 @@ async function nativeSecrets(page) {
 }
 
 async function closedRoots(page, state) {
-  // CR1: clean-room rewrite pending (queue/CR1.md).
-  throw Error('CR1: closedRoots not implemented');
+  const sections = [], secrets = [], next = new Map();
+  secrets.names = new Set(); secrets.unnamed = false;
+  for await (const { frame, send } of sessionsOf(page)) {
+    const native = sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] }));
+    secrets.push(...native);
+    for (const name of native.names) secrets.names.add(name);
+    secrets.unnamed ||= native.unnamed;
+    const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
+    const stack = [{ node: root, closed: false }], controls = [], backends = new Set();
+    let count = 0;
+    // Walk the DOM, not the host's AX subtree: an ignored host can have an
+    // empty AX query while its closed root still contains usable controls.
+    while (stack.length) {
+      const { node, closed } = stack.pop();
+      if (++count > 50000) throw Error('DOM acquisition budget exceeded');
+      if (!node) throw Error('DOM acquisition unavailable');
+      if (closed && node.nodeType === 1 && node.backendNodeId && !backends.has(node.backendNodeId)) {
+        backends.add(node.backendNodeId); controls.push(node.backendNodeId);
+      }
+      const descendants = (node.children ?? []).map(child => ({ node: child, closed }));
+      for (const shadow of node.shadowRoots ?? []) descendants.push({ node: shadow, closed: closed || shadow.shadowRootType === 'closed' });
+      if (node.contentDocument) descendants.push({ node: node.contentDocument, closed });
+      stack.push(...descendants.reverse());
+    }
+    const refs = new Map(), children = [];
+    let probes = 0;
+    for (const backendNodeId of controls) {
+      if (++probes > 512) throw Error('Closed-root accessibility budget exceeded');
+      const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
+      const node = nodes.find(node => node.backendDOMNodeId === backendNodeId && !node.ignored && CONTROL_ROLE.test(node.role?.value));
+      if (!node) continue;
+      const role = node.role.value, ref = state.closed.get(frame)?.get(backendNodeId) ?? 's' + (++state.shadowNumber);
+      const row = { role, name: node.name?.value ?? '', ref, protected: scalarRole(role) };
+      for (const { name, value } of node.properties ?? []) {
+        if (!['checked', 'disabled', 'expanded', 'pressed', 'selected'].includes(name)) continue;
+        if (value?.value === true || value?.value === 'true') row[name] = true;
+        else if (value?.value === 'mixed') row[name] = 'mixed';
+      }
+      refs.set(backendNodeId, ref); children.push(row);
+    }
+    if (refs.size) next.set(frame, refs);
+    if (children.length) sections.push({ role: 'group', name: 'Closed shadow controls', children });
+  }
+  const current = new Set([...next.values()].flatMap(refs => [...refs.values()]));
+  for (const ref of state.deliveredClosed) if (!current.has(ref)) state.deliveredClosed.delete(ref);
+  state.closed = next;
+  return { sections, secrets };
 }
 
 // V4/V5 can resolve an s ref into an owned frame's CDP backend node. Only refs
