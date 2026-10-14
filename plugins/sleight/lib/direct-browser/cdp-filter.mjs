@@ -7,7 +7,12 @@ import { createRequire } from 'node:module';
 const refuse = () => { throw Error('CDP_COMMAND_REFUSED'); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 512;
-const forbidden = new Set(['Page.bringToFront', 'Target.activateTarget']);
+// Cookie jars, device-bound sessions and download configuration belong to the
+// browser profile/context. A page route cannot scope their URL/domain arguments.
+const forbidden = new Set(['Page.bringToFront', 'Target.activateTarget',
+  'Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Network.getAllCookies',
+  'Network.deleteCookies', 'Network.getCookies', 'Network.setCookie', 'Network.setCookies',
+  'Network.enableDeviceBoundSessions', 'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior']);
 const domains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Accessibility', 'Input',
   'Network', 'Fetch', 'Log', 'Emulation', 'Inspector', 'Debugger', 'Performance']);
 
@@ -15,6 +20,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
   if (!upstream || !id(upstream.sessionId) || !['send', 'on', 'off'].every(name => typeof upstream[name] === 'function') ||
       !Array.isArray(ownedTargets) || !ownedTargets.every(id)) throw Error('CDP_CONNECTION_REQUIRED');
   const owned = new Set(ownedTargets), routes = new Map(), listeners = new Set(), attaching = new Map(), bridges = new Set(), browserRoutes = new Set(), attachmentParents = new Map();
+  const attachments = new Map(), outstanding = new Set(), collectedSessions = new Set();
   let closed = false, autoAttach = false, disposal;
   const root = upstream.sessionId;
   const live = () => { if (closed) throw Error('CDP_FILTER_CLOSED'); };
@@ -25,9 +31,32 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
     for (const [child, route] of routes) if (route.parent === name) removeRoute(child);
     routes.delete(name);
   }
+  // Input authority can disappear before a session is physically detached.
+  // Keep the actual upstream parent, not the virtual browser route, for cleanup.
+  function acquired(name, target, parent = root, virtualParent) {
+    if (collectedSessions.has(name)) return false;
+    if (!attachments.has(name)) attachments.set(name, { target, parent, virtualParent });
+    return true;
+  }
+  function collected(name) {
+    for (const [child, attachment] of attachments) if (attachment.parent === name) collected(child);
+    attachments.delete(name); collectedSessions.add(name); removeRoute(name);
+  }
+  async function detach(name) {
+    const attachment = attachments.get(name);
+    if (!attachment) return true;
+    if (attachment.detaching) return attachment.detaching;
+    attachment.detaching = (async () => {
+      try {
+        await upstream.send('Target.detachFromTarget', { sessionId: name }, attachment.parent);
+        collected(name); return true;
+      } catch { return !attachments.has(name); }
+    })();
+    try { return await attachment.detaching; } finally { attachment.detaching = undefined; }
+  }
   function revoke(target) {
     owned.delete(target);
-    for (const [name, route] of routes) if (route.target === target || route.owner === target) routes.delete(name);
+    for (const [name, route] of routes) if (route.target === target || route.owner === target) removeRoute(name);
   }
   function event(frame) {
     if (closed || !object(frame) || !object(frame.params)) return;
@@ -48,13 +77,15 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       }
       if (routes.has(params.sessionId)) return;
       const virtualParent = parent ? frame.sessionId : attachmentParents.get(info.targetId);
+      if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
       routes.set(params.sessionId, { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent });
       if (virtualParent && !parent) frame = { ...frame, sessionId: virtualParent };
     } else if (frame.method === 'Target.detachedFromTarget') {
-      if (!routes.has(params.sessionId)) return;
-      const detached = routes.get(params.sessionId), target = detached.target;
+      const detached = routes.get(params.sessionId) ?? attachments.get(params.sessionId);
+      if (!detached) return;
+      const target = detached.target;
       if (browserRoutes.has(detached.parent)) frame = { ...frame, sessionId: detached.parent };
-      removeRoute(params.sessionId);
+      collected(params.sessionId);
       frame = { ...frame, params: { ...params, targetId: target } };
     } else if (frame.method.startsWith('Target.')) {
       const target = params.targetInfo?.targetId ?? params.targetId;
@@ -71,19 +102,28 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       if (previous) await previous.catch(() => {});
       live(); checkTarget(target);
       attachmentParents.set(target, virtualParent);
+      let name;
       try {
-        const result = await upstream.send('Target.attachToTarget', { targetId: target, flatten: true });
-        if (closed || !owns(target) || virtualParent && !browserRoutes.has(virtualParent)) {
-          if (id(result?.sessionId)) await upstream.send('Target.detachFromTarget', { sessionId: result.sessionId }).catch(() => {});
-          live(); checkTarget(target); throw Error('CDP_SESSION_NOT_OWNED');
-        }
+        const request = {}; outstanding.add(request);
+        let result;
+        try { result = await upstream.send('Target.attachToTarget', { targetId: target, flatten: true }); }
+        finally { outstanding.delete(request); }
         if (!id(result?.sessionId)) throw Error('CDP_ATTACHMENT_INVALID');
+        name = result.sessionId;
+        if (!acquired(name, target, root, virtualParent)) throw Error('CDP_SESSION_NOT_OWNED');
+        live(); checkTarget(target);
+        if (virtualParent && !browserRoutes.has(virtualParent)) throw Error('CDP_SESSION_NOT_OWNED');
         if (!routes.has(result.sessionId)) {
           const { targetInfo } = await upstream.send('Target.getTargetInfo', { targetId: target });
           live(); checkTarget(target);
+          if (targetInfo?.targetId !== target || targetInfo.type !== 'page') throw Error('CDP_ATTACHMENT_INVALID');
           event({ method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo, waitingForDebugger: false } });
         }
+        if (routes.get(name)?.target !== target) throw Error('CDP_ATTACHMENT_INVALID');
         return result;
+      } catch (error) {
+        if (name) await detach(name);
+        throw error;
       } finally { attachmentParents.delete(target); }
     })();
     attaching.set(target, pending);
@@ -147,13 +187,15 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
         if (method === 'Target.detachFromTarget') {
           if (browserRoutes.has(params.sessionId)) {
             const name = params.sessionId; browserRoutes.delete(name);
-            const children = [...routes].filter(([, child]) => child.parent === name);
-            for (const [child] of children) { removeRoute(child); await upstream.send(method, { sessionId: child }); }
+            const children = [...attachments].filter(([, child]) => child.virtualParent === name && child.parent === root);
+            for (const [child] of children) { removeRoute(child); if (!await detach(child)) throw Error('CDP_DETACH_UNCONFIRMED'); }
             emit({ method: 'Target.detachedFromTarget', params: { sessionId: name } }); return {};
           }
           const child = routes.get(params.sessionId);
           if (!child || !isRoot && child.parent !== route) throw Error('CDP_SESSION_NOT_OWNED');
-          return upstream.send(method, { sessionId: params.sessionId }, isRoot ? root : route);
+          removeRoute(params.sessionId);
+          if (!await detach(params.sessionId)) throw Error('CDP_DETACH_UNCONFIRMED');
+          return {};
         }
         refuse();
       }
@@ -201,12 +243,13 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
     const bridge = Object.freeze({ get endpoint() { return 'ws://127.0.0.1:' + server.address().port + path; },
       close() {
         if (closing) return closing;
-        session.off('event', forward); bridges.delete(bridge);
+        session.off('event', forward);
         closing = (async () => {
           await listening;
           for (const socket of server.clients) socket.terminate();
           await new Promise(resolve => server.close(resolve));
-        })();
+          bridges.delete(bridge);
+        })().catch(error => { closing = undefined; throw error; });
         return closing;
       } });
     bridges.add(bridge);
@@ -217,13 +260,16 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
     } catch (error) { bridges.delete(bridge); throw error; }
   }
   function dispose() {
-    if (closed) return disposal;
-    closed = true; upstream.off('event', event); listeners.clear();
-    const detach = [...routes].filter(([, route]) => route.parent === undefined || browserRoutes.has(route.parent))
-      .map(([name]) => upstream.send('Target.detachFromTarget', { sessionId: name }).then(() => true, () => false));
-    routes.clear(); owned.clear(); browserRoutes.clear();
+    if (disposal) return disposal;
+    if (!closed) {
+      closed = true; upstream.off('event', event); listeners.clear();
+      routes.clear(); owned.clear(); browserRoutes.clear();
+    }
+    const detaching = [...attachments].filter(([, attachment]) => !attachments.has(attachment.parent))
+      .map(([name]) => detach(name));
     const closing = [...bridges].map(bridge => bridge.close().then(() => true, () => false));
-    disposal = Promise.all([...detach, ...closing]).then(results => results.every(Boolean));
+    disposal = Promise.all([...detaching, ...closing]).then(results => results.every(Boolean) && !outstanding.size && !attachments.size && !bridges.size)
+      .finally(() => { disposal = undefined; });
     return disposal;
   }
   return Object.freeze({ session, owns, own, release: revoke, listen, dispose });

@@ -22,16 +22,18 @@ test('real Chromium over filtered CDP hides foreign tabs, owns background create
   assert.ok(existsSync(executable), 'pinned headless Chromium must be installed');
   const { chromium } = await import(new URL('index.mjs', vendor));
   const root = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-v3-cdp-'))));
-  let context, socket, filter, bridge, browser;
+  let context, socket, filter, bridge, browser, filterCollected = false;
   t.after(async () => {
     try {
       await browser?.close();
-      if (filter) assert.equal(await filter.dispose(), true, 'filter routes must detach before raw connection closure');
+      if (filter) { filterCollected = await filter.dispose(); assert.equal(filterCollected, true, 'filter routes must detach before raw connection closure'); }
     } finally {
       await bridge?.close();
       if (socket && socket.readyState !== 3) await new Promise(resolve => { socket.once('close', resolve); socket.terminate(); });
       await context?.close();
       rmSync(root, { recursive: true, force: true });
+      assert.equal(existsSync(root), false);
+      t.diagnostic('Cleanup: browserClosed=true profileDeleted=true socketsClosed=true filterCollected=' + filterCollected);
     }
   });
   context = await chromium.launchPersistentContext(root, { executablePath: executable, headless: true,
@@ -39,6 +41,9 @@ test('real Chromium over filtered CDP hides foreign tabs, owns background create
   const first = context.pages()[0], foreign = await context.newPage();
   await first.setContent('<title>Owned local fixture</title><button>Owned</button>');
   await foreign.setContent('<title>Foreign private fixture</title><button>Private</button>');
+  const cookieURL = 'http://foreign.fixture.invalid';
+  await context.addCookies([{ url: cookieURL, name: 'private-fixture', value: 'retained' }]);
+  const cookies = await context.cookies(cookieURL);
   const ownerCDP = await context.newCDPSession(first);
   const { targetInfo: owner } = await ownerCDP.send('Target.getTargetInfo'); await ownerCDP.detach();
   const port = readFileSync(join(root, 'DevToolsActivePort'), 'utf8').trim().split('\n');
@@ -79,6 +84,13 @@ test('real Chromium over filtered CDP hides foreign tabs, owns background create
   const pageCDP = await browser.contexts()[0].newCDPSession(pages[0]);
   await pageCDP.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await assert.rejects(pageCDP.send('Page.bringToFront'), /CDP_COMMAND_REFUSED/);
+  const beforeGlobal = wire.length;
+  for (const method of ['Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Network.getAllCookies',
+    'Network.deleteCookies', 'Network.getCookies', 'Network.setCookie', 'Network.setCookies',
+    'Network.enableDeviceBoundSessions', 'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior'])
+    await assert.rejects(pageCDP.send(method, { urls: [cookieURL], url: cookieURL }), /CDP_COMMAND_REFUSED/, method);
+  assert.equal(wire.length, beforeGlobal, 'browser profile commands never reach Chromium through the page session');
+  assert.deepEqual(await context.cookies(cookieURL), cookies, 'the foreign fixture cookie remains unchanged');
   await pageCDP.detach(); await rootCDP.send('Target.closeTarget', { targetId });
   assert.equal(filter.owns(targetId), false);
 });
