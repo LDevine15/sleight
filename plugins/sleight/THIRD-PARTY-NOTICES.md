@@ -47,7 +47,16 @@ No additional dependency or native binary is distributed by this semantic join.
 `popupHook` and `backgroundClick` in `lib/direct-browser/page.mjs` are adapted from FowlBrowser's
 `mcp/src/popups.mjs` at `8b689249ba4e33d2626487aad930605c62e2c6a7`: the hidden modifier masking, the
 wrapped key getters and `getModifierState`, the key swallowing window, the click gate and the teardown.
-They were rewritten for Playwright over CDP. FowlBrowser's license:
+They were rewritten for Playwright over CDP.
+
+## Turbo v3 snapshot adaptation
+
+`lib/direct-browser/snapshot.mjs` adapts closed-root discovery from FowlBrowser
+`mcp/src/closedShadow.mjs`, pinned at
+`8b689249ba4e33d2626487aad930605c62e2c6a7`. Sleight changed the frame sessions,
+native redaction, acquisition bounds and ref delivery checks.
+
+Both adaptations are under FowlBrowser's license:
 
 ```text
 MIT License
