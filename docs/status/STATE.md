@@ -3,36 +3,43 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 22:45 UTC, owner checking in by phone)
+## Banner (2026-10-14 22:56 UTC, flushed before the owner's clear)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. Owner (evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3; lanes stay busy, and
-post-release work builds on branches and merges after the tag.
-Pushed: `pane/auto-mode` at the commit holding this banner. Full check 5598 pass, 0 fail, mod 49/49. `~/Projects/sleight` is
-fast-forwarded to it.
+the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3; lanes stay
+busy, and post-release work builds on branches and merges after the tag.
+Pushed: `pane/auto-mode` at the commit holding this banner, with OL1 and OL1R merged. `~/Projects/sleight` is fast-forwarded to it.
+There are 0 open PRs, and public CI is green on 1.2.5.
 
-Turbo v3 (owner's direction, ROADMAP): turbo v1's own CDP layer made 98 of 133 errors as unproved clicks, and model time was 91% of form
-wall time. Opus studied FowlBrowser and turbo (`ledger/opus-turbo-v3-design.md`) and designed our own layer on the bundled Playwright:
-5 always-loaded tools, effects reported as observations, batched steps, whole-form fill, background popups that keep their opener, the
-four rules as one module. It removes 7,638 of 8,814 library lines, 7,217 test lines, bench/direct-browser2, and 6.8 MB of
-playwright-core (plugin about 15.9 to 9.1 MB). Lanes V1 to V7 and V9 build it in parallel against fixed interfaces (queue/V*.md); V8
-removal merges last. V4 is DONE, and V9 waits for V7. Targets per gate round: 26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors,
-0 ToolSearch, 0 focus events.
-- Merged today on v1 (kept as fallback and test source): the popup and read stack (TF2R, TF4, TF2R2, TS2), TG1R2 (with turbo on the
-  engine's browser path stays beside it, owner, LAWS), CH1R and CH1R2 (chess fixture), the guard default and fixes, CI1, a 300 s
-  first-use helper compile. TF3, TF5 and TF6 sit on their branches as reference for v3's V5 lane.
-- Measured on v1 in the headless arm: non-form tasks 4/5 (demoid needs the opener popup), forms 3/4 (checkout fails), form-travel
-  242 s in 99 calls.
+Running through the clear (headless, nohup, they survive it): 13 `codex exec` lanes (launcher `~/Projects/sleight-wt/ledger/start-lane.sh
+<lane> "<START WITH line>"`, template `ledger/lane-prompt-codex.md`, prompts and logs in `ledger/lane-runs/`) and the real-page runner
+(`node scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, log `ledger/lane-runs-runner.log`). A NOTICE at the top of
+LEDGER.md tells lanes two blockers are resolved (group 49357 is gone, and 75e71e6e set the 300 s compile deadline). Restart the runner after
+merging any runner or owned-group fix (a runner keeps the code it started with).
 
-Release readiness (everything besides turbo): CI1 merged. CS3 closes the claim-suite runner gaps (owner: drop the codex-cu and
-devtools bridge arms and say so in the published coverage). RP2 builds the release-pass runner with sleight-arch's stage vectors
-(claims/RP2/ARCH-NOTE.md). OL1R fixes OL1's review findings. RL1 (release notes) waits on `codex/rl1`. Post-release on branches:
-EP-2 DONE, EP-6, Q1-1 DONE, Q1-2 to Q1-4 finishing.
+Turbo v3 (owner's direction, ROADMAP; design `ledger/opus-turbo-v3-design.md`): our own action layer on the bundled Playwright, 5
+always-loaded tools, effects as observations, whole-form fill, background popups that keep their opener, the four rules as one module,
+and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and 6.8 MB of playwright-core. Lanes and branches
+(`private/codex/<id lowercase>`): V1, V2, V4, V5, V6 DONE; V4R, V6R2 DONE and reviewed; V1R DONE; V5R DONE; V3, V1R2, V2R, V5R2 in
+progress; V7 BLOCKED as partial work, waiting on V10 (the trust join sleight-arch defined in queue/V10.md); V9 (bench
+arm) waits for V7. V8 removal goes last. Next: once V1 to V7 and V10 pass review, they go onto one branch. Then V9's arm runs the
+gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
+- v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
+  beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:
+  non-form tasks 4/5, forms 3/4, form-travel 242 s in 99 calls.
+- Turbo-only rounds after TG1R need FowlBrowser's extension socket. Measure from a worktree with `bench/fowl/sleight-surface.patch` and
+  `bench/turbo/setup.mjs` from `c0caa5c9` (memory `lessons-2026-10-14-day`). Never kill a running round (unpriced spend marker).
 
-Owner steps, at the Mac: reload FowlBrowser's extension in Helium (sleight-arch can't, since Helium isn't on the benchmark allowlist);
-run the sleight-arm login (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`);
-turbo's opt-in and Chrome's Allow (by design only a person grants debugger control); the claim-suite checklist
-(`ledger/claim-suite-owner-checklist.md`). API spend for October: $159.72 of $200.
+Release readiness: CI1 merged (public CI). OL1 and OL1R merged (preflights). RL1 release notes DONE and reviewed on `codex/rl1`
+(apply at release). CS3 (claim-suite runner gaps) restarted after a stale compile-gate block. The owner chose to drop the codex-cu and devtools bridge
+arms and say so in the published coverage. RP2 (release-pass
+runner, stage vectors in claims/RP2/ARCH-NOTE.md) is DONE on `codex/rp2`, waiting for review. Post-release on branches, merge after the tag: EP-2, EP-6, Q1-1 DONE;
+Q1-2 to Q1-4 finishing. EP-4 and EP-5 wait for v3's design to settle.
+
+Owner steps at the Mac: reload FowlBrowser's extension in Helium (Helium isn't on the benchmark allowlist, so sleight-arch can't).
+Run the sleight-arm login (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`).
+Click turbo's opt-in and Chrome's Allow (only a person grants debugger control). Work through `ledger/claim-suite-owner-checklist.md`. This session's own
+sleight MCP couldn't start the engine helper after the morning's engine update (fresh clients work). API spend for October: $159.72 of $200.
 
 Next steps, in order:
 1. Review P2; merge P2, P3 and P4 together once P4 passes. Merge SR1A, SR1CPR2 and OG1 as they pass.
