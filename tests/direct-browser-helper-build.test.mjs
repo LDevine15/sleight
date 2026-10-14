@@ -142,7 +142,7 @@ test('Darwin first-use compiler builds both real sources without launching conse
   // this fixture instead of rebuilding AppKit alongside the other test files.
   childProcess.execFile = (command, args, options, callback) => {
     assert.equal(command, '/usr/bin/xcrun');
-    assert.equal(options.timeout, 120000);
+    assert.equal(options.timeout, 300000);
     assert.deepEqual(options.env, { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
     const index = args.indexOf('-module-cache-path');
     const moduleCache = index < 0 ? args.find(arg => arg.startsWith('-fmodules-cache-path=')).split('=')[1] : args[index + 1];
