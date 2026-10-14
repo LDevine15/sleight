@@ -146,10 +146,13 @@ export function popupResult() {
 // External or dynamically loaded scripts cannot prove independence. This
 // private fixed read inspects only the new owned destination document.
 export function popupDestination() {
-  const scripts = Array.from(document.scripts), attributes = Array.from(document.querySelectorAll('[onclick]'));
-  const source = [...scripts.map(s => s.textContent ?? ''), ...attributes.map(n => n.getAttribute('onclick') ?? '')].join('\n');
+  const scripts = Array.from(document.scripts);
+  const handlers = Array.from(document.querySelectorAll('*')).flatMap(node =>
+    Element.prototype.getAttributeNames.call(node).filter(name => /^on/i.test(name))
+      .map(name => Element.prototype.getAttribute.call(node, name) ?? ''));
+  const source = scripts.map(s => s.textContent ?? '').join('\n');
   return { ready: document.readyState !== 'loading', url: window.location.href, title: document.title.slice(0, 512),
-    independent: !scripts.some(s => s.src) &&
+    independent: !handlers.some(text => text.trim()) && !scripts.some(s => s.src) &&
       !/\b(?:opener|postMessage|eval|Function|import|createElement|innerHTML|write|Reflect|Proxy)\b|\b[A-Za-z_$][\w$]*\s*\[/.test(source) };
 }
 

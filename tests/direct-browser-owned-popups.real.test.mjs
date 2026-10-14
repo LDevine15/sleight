@@ -22,7 +22,7 @@ const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'opt-in popup qualifica
     : !existsSync(sourcePath) ? 'the read-only MIT demo source is missing'
       : typeof globalThis.WebSocket !== 'function' ? 'Node built-in WebSocket is missing' : false;
 
-async function fixture(t, route) {
+async function fixture(t, route, destinationHandler) {
   const source = readFileSync(sourcePath, 'utf8');
   const demo = await import('data:text/javascript;base64,' + Buffer.from(source + '\nexport {shopPage};').toString('base64'));
   const profile = trackTemp(mkdtempSync(join(realpathSync(tmpdir()), 'sleight-tf2r-headless-')));
@@ -35,7 +35,11 @@ async function fixture(t, route) {
       response.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}'); return;
     }
     const path = new URL(request.url, 'http://fixture.invalid').pathname;
-    const html = demo.shopPage(path.replace(/^\/shop\/?/, ''), { base: '', cart: [], signedIn: null }, origin);
+    let html = demo.shopPage(path.replace(/^\/shop\/?/, ''), { base: '', cart: [], signedIn: null }, origin);
+    if (path === '/shop/size-guide' && destinationHandler) {
+      html = html.replace('<header>', `<body ${destinationHandler}><header>`);
+      assert.ok(html.includes(`<body ${destinationHandler}>`), 'destination handler fixture was inserted');
+    }
     response.writeHead(html ? 200 : 404, { 'content-type': 'text/html' }).end(html ?? 'missing');
   });
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
@@ -133,4 +137,18 @@ test('real DemoID refuses with the engine path error before source input and nat
   assert.equal(f.wire.calls.some(c => c.method.startsWith('Input.')), false);
   assert.equal(f.wire.calls.filter(c => c.method === 'Target.createTarget').length, 1);
   assert.equal(f.context.pages().length, 2); assert.equal(f.events.some(e => e.kind === 'pointer'), false);
+});
+
+for (const [name, handler] of [
+  ['onload opener', `onload="if (window.opener) window.opener.postMessage('complete', location.origin)"`],
+  ['onerror unknown', `onerror="finishHandshake()"`],
+]) test(`real Size guide destination ${name} handler refuses before source input`, { skip, timeout: 90000 }, async t => {
+  const f = await fixture(t, '/shop/product/harbor', handler), result = await f.click('Size guide');
+  assert.equal(result.error?.code, 'OPENER_REQUIRED', JSON.stringify(result));
+  assert.equal(result.error.effect, 'none');
+  assert.equal(f.wire.calls.some(c => c.method.startsWith('Input.')), false);
+  assert.equal(f.wire.calls.some(c => ['Target.activateTarget', 'Page.bringToFront'].includes(c.method)), false);
+  assert.equal(f.wire.calls.filter(c => c.method === 'Target.createTarget').length, 2);
+  assert.equal(f.context.pages().length, 3, 'only the starter, source and qualified-check target exist');
+  assert.equal(f.events.some(e => e.kind === 'pointer'), false);
 });
