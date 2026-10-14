@@ -81,7 +81,7 @@ const clean = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 24
 const textResult = (text, isError = false) => ({ text, isError });
 
 export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillFields, ctx,
-  deliverSnapshot = (state, capture) => { state.snapshotNo = Math.max(state.snapshotNo, capture.number); return true; }, now = Date.now } = {}) {
+  endpoint, deliverSnapshot = (state, capture) => { state.snapshotNo = Math.max(state.snapshotNo, capture.number); return true; }, now = Date.now } = {}) {
   if (!pages || [snapshot, runSteps, fillFields, deliverSnapshot].some(fn => typeof fn !== 'function')) throw Error('v3 tool dependencies required');
   let ended = false, ending;
   const deliveries = new WeakMap();
@@ -109,6 +109,13 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           return textResult(`${a.do}: ${JSON.stringify(await pages[a.do](a.tab))}`);
         }
         if (request.name === 'browser_open') {
+          if (endpoint) {
+            const target = new URL(a.url), devtools = new URL(endpoint);
+            const port = url => url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? '443' : '80');
+            const local = host => ['127.0.0.1', 'localhost', '[::1]'].includes(host.replace(/\.$/, ''));
+            if (port(target) === port(devtools) && (target.hostname === devtools.hostname || local(target.hostname) && local(devtools.hostname)))
+              throw Error('The selected DevTools endpoint cannot be opened');
+          }
           started = true;
           const { tab } = await pages.openTab({ url: a.url }), entry = pages.tab(tab);
           const header = `${tab} ${clean(await entry.page.title())}\n${clean(entry.page.url())}`;

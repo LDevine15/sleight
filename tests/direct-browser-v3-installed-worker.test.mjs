@@ -10,6 +10,7 @@ function fixture() {
   channel.connected = true; channel.send = frame => frames.push(frame);
   const upstream = { sessionId: 'root' };
   const selected = { selectedBrowser: 'bfixture', session: upstream,
+    endpoint: 'ws://127.0.0.1:9222/devtools/browser/fixture',
     async connect() { events.push('connect'); return upstream; },
     async verifyConnection(value) { return value === upstream; },
     async disconnect() { events.push('disconnect'); return true; },
@@ -24,7 +25,7 @@ function fixture() {
     list: async () => [] };
   const dependencies = { schedule: () => undefined, readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status:'ready', receipt:{} }), selectConnection: async () => selected,
-    createUi: () => ui, loadPlaywright: () => ({ inprocess: { playwright: { chromium: { async connectOverCDP(endpoint, options) {
+    createUi: (_receipt, onLoss) => { ui.loss = onLoss; return ui; }, loadPlaywright: () => ({ inprocess: { playwright: { chromium: { async connectOverCDP(endpoint, options) {
       assert.equal(endpoint, 'private'); assert.equal(options.noDefaults,true);
       return { newBrowserCDPSession: async () => ({}), async close() { events.push('browser-close'); } };
     } } } } }), createPages: () => pages,
@@ -33,6 +34,50 @@ function fixture() {
   return { channel, frames, events, selected, ui, dependencies };
 }
 const settle = async () => { for (let i=0;i<10;i++) await new Promise(resolve => setImmediate(resolve)); };
+const begin = async f => {
+  f.channel.emit('message', { version:3, id:'begin', method:'begin', params:{ turn:'one', text:'read' } });
+  await settle(); assert.equal(f.frames.find(x=>x.id==='begin').result.available,true);
+};
+test('installed open refuses the selected DevTools listener before any page creation', async () => {
+  const f = fixture(); let opens = 0;
+  f.dependencies.createPages = () => ({ endTurn:async()=>({cleanedUp:true}), openTab:async()=>{opens++;throw Error('unexpected open');} });
+  const host = await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  try {
+    await begin(f);
+    for (const [i,url] of ['http://127.0.0.1:9222/json/activate/foreign','http://localhost:9222/json/close/foreign',
+      'http://127.1:9222/json/list','http://2130706433:9222/','http://localhost:9222/'].entries()) {
+      f.channel.emit('message',{version:3,id:'open'+i,method:'call',params:{name:'browser_open',arguments:{url}}});
+      await settle(); const result=f.frames.find(x=>x.id==='open'+i).result.result;
+      assert.equal(result.isError,true); assert.match(result.text,/DevTools/);
+    }
+    assert.equal(opens,0);
+  } finally { await host.close(); }
+});
+for (const cause of ['ui','parent']) test(`installed ${cause} loss releases the connection and panel after begin`, async () => {
+  const f=fixture(); let timerCleared=false;
+  const timer={}; f.dependencies.schedule=()=>timer;
+  f.dependencies.clearSchedule=value=>{assert.equal(value,timer);timerCleared=true;};
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  await begin(f);
+  if(cause==='ui') f.ui.loss(); else {f.channel.connected=false;f.channel.emit('disconnect');}
+  await settle();
+  assert.ok(f.events.includes('disconnect')); assert.ok(f.events.includes('ui-close'));
+  assert.ok(f.events.includes('filter-close')); assert.ok(f.events.includes('listener-close'));
+  assert.equal(timerCleared,true);
+  assert.deepEqual(await host.close(),{revoked:true,cleanup:[]});
+});
+test('installed close during begin waits for the owned startup before disconnecting', async () => {
+  const f=fixture(); let release;
+  f.selected.connect=()=>new Promise(resolve=>{release=()=>{f.events.push('connect');resolve(f.selected.session);};});
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  f.channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read'}});
+  await settle(); const closing=host.close(); await settle();
+  assert.ok(!f.events.includes('disconnect'));
+  release(); assert.deepEqual(await closing,{revoked:true,cleanup:[]});await settle();
+  assert.equal(f.frames.find(x=>x.id==='begin').result.available,false);
+  assert.ok(f.events.indexOf('connect')<f.events.indexOf('disconnect'));
+  assert.ok(!f.events.includes('filter'));
+});
 test('installed join is lazy until a private begin and collects turn resources before its connection', async () => {
   const f = fixture(), host = await startInstalledV3Worker({ channel:f.channel }, f.dependencies);
   assert.equal(f.frames[0].version,3); assert.deepEqual(f.events,[]);
@@ -82,8 +127,10 @@ async function controls(t) {
   let clock = 1000, lost = false, refresh, interval;
   t.mock.method(Date, 'now', () => clock);
   write.on('data', data => views.push(JSON.parse(data.toString())));
-  f.dependencies.createUi = (_receipt, onLoss) => createUiChannel({ read, write,
-    onLoss() { lost = true; onLoss(); } });
+  f.dependencies.createUi = (_receipt, onLoss) => {
+    const channel = createUiChannel({ read, write, onLoss() { lost = true; onLoss(); } });
+    return { ...channel, close() { f.events.push('ui-close'); channel.close(); } };
+  };
   f.dependencies.schedule = (callback, ms) => { refresh = callback; interval = ms; return undefined; };
   const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
   t.after(() => host.close());
@@ -127,7 +174,8 @@ test('installed refreshed control replaces its previous authenticated envelope',
   assert.notEqual(current.id, old.id);
   assert.equal(current.nonce, old.nonce);
   await f.choose(old, 'disconnect');
-  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+  assert.equal(f.lost(), true); assert.ok(f.events.includes('disconnect'));
+  assert.ok(f.events.includes('ui-close'));
 });
 test('installed current control accepts delayed disconnect after replacement', async t => {
   const f = await controls(t); f.advance(60000); f.refresh();
@@ -137,17 +185,20 @@ test('installed current control accepts delayed disconnect after replacement', a
 test('installed controls retain finite expiry', async t => {
   const f = await controls(t), control = f.views[0];
   f.advance(300000); await f.choose(control, 'disconnect');
-  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+  assert.equal(f.lost(), true); assert.ok(f.events.includes('disconnect'));
+  assert.ok(f.events.includes('ui-close'));
 });
 test('installed controls reject a wrong nonce before expiry', async t => {
   const f = await controls(t);
   await f.choose(f.views[0], 'disconnect', 'wrong');
-  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+  assert.equal(f.lost(), true); assert.ok(f.events.includes('disconnect'));
+  assert.ok(f.events.includes('ui-close'));
 });
 
 test('installed controls reject a consumed envelope replay', async t => {
   const f = await controls(t), control = f.views[0];
   await f.choose(control, 'pause'); assert.equal(f.views.at(-1).data.status, 'paused');
   await f.choose(control, 'disconnect');
-  assert.equal(f.lost(), true); assert.ok(!f.events.includes('disconnect'));
+  assert.equal(f.lost(), true); assert.ok(f.events.includes('disconnect'));
+  assert.ok(f.events.includes('ui-close'));
 });
