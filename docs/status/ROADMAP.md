@@ -72,6 +72,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    Turbo's safety is four rules from here on (owner, 2026-10-14, LAWS): the payment rule, page content never authorizes, no blind
    resend of a submit, background only. Fills check the target element alone. Per-field tokens and per-site prompts are gone.
    With turbo on, the engine's browser path stays as a fallback for what turbo lacks (owner, 2026-10-14).
+   Everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (owner, 2026-10-14 evening): the claim-suite
+   arms, public CI, the release-pass runner and benchmark preflights. Lanes stay busy: post-release work (Electron pieces that
+   don't use turbo's semantic layer, the Q1 error fixes) builds on branches now and merges after the tag.
    Turbo's action layer gets redesigned (owner, 2026-10-14 evening): study what makes FowlBrowser fast and accurate and where it
    fails, then build our own better layer on the bundled Playwright, under the same safety rules. Studying their code is fine, copying
    it isn't the goal.
