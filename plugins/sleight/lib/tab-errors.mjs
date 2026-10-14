@@ -61,7 +61,7 @@ export function rewriteTabError(text, { read = false } = {}) {
   if (write) out.push(write);
   else if (/^TypeError: Cannot read properties of (?:null|undefined)\b/m.test(text) &&
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
-    out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties.');
+    out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties. Next read: `await tab.playwright.evaluate(selector => document.querySelector(selector) !== null, observedSelector)`. Use the selector already observed as observedSelector, then keep a null guard around the later property read.');
   }
   return out.join('\n');
 }
