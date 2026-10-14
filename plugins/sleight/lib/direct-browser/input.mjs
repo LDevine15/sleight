@@ -16,7 +16,7 @@ const namedKeys = { Enter: ['Enter', 13], Tab: ['Tab', 9], Escape: ['Escape', 27
 
 function validate(op) {
   if (!op || !ops.has(op.op)) throw fault('INVALID_OPERATION');
-  const common = [...identityKeys, 'operationId', 'sequence', 'ref', 'op', 'expect', 'timeout_ms'];
+  const common = [...identityKeys, 'operationId', 'sequence', 'ref', 'op', 'expect', 'timeout_ms', 'submit'];
   if (Object.keys(op).some(k => ![...common, ...fields[op.op]].includes(k))) throw fault('INVALID_OPERATION');
   for (const key of identityKeys) {
     const value = op[key];
@@ -26,6 +26,7 @@ function validate(op) {
   for (const key of ['operationId', 'ref']) if (typeof op[key] !== 'string' || !/^[\w:-]{1,128}$/.test(op[key])) throw fault('INVALID_OPERATION');
   if (!Number.isSafeInteger(op.sequence) || op.sequence < 1) throw fault('INVALID_OPERATION');
   validateExpectation(op.expect);
+  if (op.submit !== undefined && typeof op.submit !== 'boolean') throw fault('INVALID_OPERATION');
   if (op.op === 'insertText' && (typeof op.text !== 'string' || Buffer.byteLength(op.text) > 64000)) throw fault('INVALID_OPERATION');
   if (op.op === 'key' && (!namedKeys[op.key] || !Number.isInteger(op.modifiers ?? 0) || (op.modifiers ?? 0) < 0
     || (op.modifiers ?? 0) > 15)) throw fault('INVALID_OPERATION');
@@ -37,7 +38,7 @@ function validate(op) {
 
 function sameIdentity(a, b) { return identityKeys.every(key => a[key] === b[key]); }
 function sameRect(a, b) { return a && b && ['x', 'y', 'width', 'height'].every(k => Math.abs(a[k] - b[k]) < 0.25); }
-function targetKey(op) { return JSON.stringify([op.browserIncarnation, op.target]); }
+function targetKey(op) { return JSON.stringify(identityKeys.map(k => op[k])); }
 function operationKey(op) { return JSON.stringify([op.clientSession, op.turn, op.operationId]); }
 function digest(op) { return createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.entries(op).sort()))).digest('hex'); }
 function errorCode(error) {
@@ -67,7 +68,7 @@ function failure(operationId, code, sent = false) {
 export function createInputController(hooks = {}) {
   const journal = hooks.journal ?? new Map();
   if (!journalState.has(journal)) journalState.set(journal, {
-    queues: new Map(), blocked: new Set([...journal.values()].filter(x => x.receipt?.effect === 'unknown').map(x => x.target)),
+    queues: new Map(), blocked: new Set([...journal.values()].filter(x => x.submit && x.receipt?.effect === 'unknown').map(x => x.target)),
   });
   const { queues, blocked } = journalState.get(journal);
   const required = ['resolve', 'authorize', 'fence', 'observe'];
@@ -90,7 +91,7 @@ export function createInputController(hooks = {}) {
         if (!sameIdentity(op, after ?? {})) throw fault('STALE_REF');
       };
       await check();
-      if (blocked.has(targetKey(op)) && op.op !== 'dialog') throw fault('EFFECT_UNKNOWN');
+      if (op.submit && blocked.has(targetKey(op))) throw fault('EFFECT_UNKNOWN');
       const session = resolved.rootSession ?? resolved.session;
       if (!session?.sessionId || !resolved.session?.sessionId || !['send', 'on', 'off'].every(k => typeof resolved.session[k] === 'function')) throw fault('ADAPTER_UNAVAILABLE');
       if (op.op === 'dialog' && (typeof resolved.session.answerDialog !== 'function' ||
@@ -224,13 +225,13 @@ export function createInputController(hooks = {}) {
     if (journal.size >= 4096) return failure(op.operationId, 'JOURNAL_FULL');
     const target = targetKey(op);
     const predecessor = queues.get(target) ?? Promise.resolve();
-    const entry = { fingerprint, target };
+    const entry = { fingerprint, target, submit: op.submit === true };
     const pending = (async () => {
       let receipt;
       try { await deadline.run(() => predecessor); receipt = await execute(op, deadline, entry); }
       catch (error) { receipt = entry.receipt ?? failure(op.operationId, errorCode(error)); }
       entry.receipt = receipt;
-      if (receipt.effect === 'unknown') blocked.add(target);
+      if (op.submit && receipt.effect === 'unknown') blocked.add(target);
       delete entry.pending;
       return receipt;
     })();
@@ -260,7 +261,12 @@ export function createInputController(hooks = {}) {
     }
     return { completed, untouched: [] };
   }
-  return { act: (op, options) => runAct(op, options), batch };
+  return { act: (op, options) => runAct(op, options), batch,
+    // Trusted delivery hook only. A private preparation read is not delivery.
+    deliveredRead(identity) {
+      if (identityKeys.some(k => identity?.[k] === undefined)) return false;
+      return blocked.delete(targetKey(identity));
+    } };
 }
 
 // Fixed isolated-world projection. Never exposed as arbitrary evaluate. Scrolling uses CDP DOM,

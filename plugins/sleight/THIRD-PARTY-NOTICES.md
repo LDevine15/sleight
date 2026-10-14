@@ -33,3 +33,11 @@ These modules contain independently authored sleight code. No FowlBrowser or mon
 Playwright source is copied into these modules. Their production changes join the ref
 identity and closed-root namespace, invalidate in-flight observations on world loss,
 and add inventory verification. The 1.64.0 package pin is separate from the source-study revision.
+
+The reads, input, effects and waits modules retain the reviewed BP2-4R4 and BP2-6R3
+sources. The attachment, popup and download modules retain the merged BP2-8R3/T
+ownership bank. Their production changes bind leased reads and typed input to the
+host, preserve delivered refs, and limit uncertain-submit recovery to a fresh read.
+The new form and user-file providers are original sleight code. They call the
+unchanged pinned Playwright module through the host's closed node interface.
+No additional dependency or native binary is distributed by this semantic join.

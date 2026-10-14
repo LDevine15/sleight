@@ -27,7 +27,7 @@ function fixture(t, options = {}) {
       if (options.send) await options.send(method, params);
       switch (method) {
         case 'Page.enable': case 'Accessibility.enable': case 'Runtime.releaseObject': return {};
-        case 'DOM.getDocument': return { root: { backendNodeId: 1, nodeType: 9, children: [{ backendNodeId: 2, nodeType: 1, childNodeCount: 0 }] } };
+        case 'DOM.getDocument': return { root: options.dom ?? { backendNodeId: 1, nodeType: 9, children: [{ backendNodeId: 2, nodeType: 1, childNodeCount: 0 }] } };
         case 'DOM.describeNode': return { node: { backendNodeId: params.backendNodeId, nodeType: 1, childNodeCount: 0 } };
         case 'Accessibility.getPartialAXTree': return { nodes: structuredClone(nodes.filter(n => n.backendDOMNodeId === params.backendNodeId)) };
         case 'Page.createIsolatedWorld': return { executionContextId: 9 };
@@ -38,7 +38,7 @@ function fixture(t, options = {}) {
     } }, { get(obj, key) { if (key in obj || typeof key === 'symbol' || key === 'then') return obj[key]; throw Error('Unsupported fake member ' + key); } });
   const helper = { version: 1, source: String(inspectControl), sha256: createHash('sha256').update(String(inspectControl)).digest('hex'), parameters: [] };
   const adapter = createScopedAdapter({ session: raw, checkLease: () => live, helpers: fixedReadInspectors ?? { 'control-state': helper },
-    nodeBinding: id => [1, 2].includes(id) ? { ...lease, backendNodeId: id } : null });
+    nodeBinding: id => [1, 2, 3, 4].includes(id) ? { ...lease, backendNodeId: id } : null });
   const reader = new BrowserReads({ identity: production ? identity : legacy, authorize: () => options.allow !== false, timeoutMs: 200,
     ...(options.reader ?? {}) });
   reader.addFrame({ session: adapter.forLease(lease), frameId: identity.frame, document: 1, target: identity.target });
@@ -114,7 +114,7 @@ test('native inspection exceptions scrub AX fallback and hostile error text', as
   assert.deepEqual(result.data.find(r => r.role === 'textbox').state, { unreadable: true });
   assert.doesNotMatch(JSON.stringify(result), /synthetic-secret/);
 });
-test('the actual broker fences every reader command under one logical once grant', async t => {
+test('the actual broker fences every reader command without a site grant', async t => {
   const f = fixture(t), secret = 'a'.repeat(64), user = {}, uid = process.getuid?.() ?? 1000;
   const scope = { browser: 'browser', broker: 1, session: 'client', turn: 'turn', target: 'target', lease: 1,
     frame: 'frame', document: 1, ref: 'ref', origin: identity.origin };
@@ -141,12 +141,23 @@ test('the actual broker fences every reader command under one logical once grant
   t.after(() => broker.shutdown());
   await broker.connect({ userInitiated: true });
   const client = broker.attach({ version: 1, uid, secret, session: 'client', incarnation: 'join-v1' });
-  authority.user(user, 'grant', { session: 'client', origin: identity.origin, mode: 'once' });
   const result = await client.request({ id: 'read', operation: 'browser_read', args: {} });
   assert.equal(result.effect, 'verified'); assert.equal(result.observation.complete, true);
   assert.equal(snapshots, f.calls.length);
   assert.ok(snapshots >= 8);
   const prior = f.calls.length;
-  assert.equal((await client.request({ id: 'again', operation: 'browser_read', args: {} })).effect, 'none');
-  assert.equal(f.calls.length, prior);
+  assert.equal((await client.request({ id: 'again', operation: 'browser_read', args: {} })).effect, 'verified');
+  assert.ok(f.calls.length > prior);
+});
+test('shallow closed-root controls share the delivered ref namespace and retain incomplete sensing', async t => {
+  const f = fixture(t, { dom: { backendNodeId: 1, nodeType: 9, children: [{ backendNodeId: 2, nodeType: 1,
+    shadowRoots: [{ backendNodeId: 3, nodeType: 11, childNodeCount: 1, children: [{ backendNodeId: 4, nodeType: 1, childNodeCount: 0 }] }] }] },
+    state: { ariaOnly: true } });
+  f.nodes[0].childIds = ['2']; f.nodes[1].role.value = 'group'; f.nodes[1].childIds = ['4'];
+  f.nodes.push({ nodeId: '4', backendDOMNodeId: 4, role: { value: 'switch' }, name: { value: 'Two-factor authentication' }, childIds: [],
+    properties: [{ name: 'checked', value: { value: false } }] });
+  const result = await f.reader.read(), control = result.data.find(r => r.role === 'switch');
+  assert.ok(control); assert.equal(control.state.checked, false); assert.equal(result.complete, false);
+  assert.equal(f.reader.acknowledge(result.observation), true);
+  assert.equal(f.reader.resolve(control.ref).backendNodeId, 4);
 });

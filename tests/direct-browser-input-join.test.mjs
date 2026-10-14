@@ -101,14 +101,24 @@ test('uncertain dialog answer is journaled and never replayed', async t => {
   assert.equal(f.calls.filter(c => c.method === 'Page.handleJavaScriptDialog').length, 1);
   assert.doesNotMatch(JSON.stringify(result), /synthetic-secret/);
 });
-test('unknown first input is journaled and another ID cannot replay it', async t => {
+test('unknown ordinary input is journaled without blocking a different ordinary action', async t => {
   const f = fixture(t, { send(method) { if (method.startsWith('Input.')) throw Error('synthetic-secret'); } });
   const first = await f.controller.act(request());
   assert.equal(first.effect, 'unknown');
   assert.deepEqual(await f.controller.act(request()), first);
-  assert.equal((await f.controller.act(request('retry'))).code, 'EFFECT_UNKNOWN');
-  assert.equal(f.calls.filter(c => c.method.startsWith('Input.')).length, 1);
+  assert.equal((await f.controller.act(request('next'))).effect, 'unknown');
+  assert.equal(f.calls.filter(c => c.method.startsWith('Input.')).length, 2);
   assert.doesNotMatch(JSON.stringify(first), /synthetic-secret/);
+});
+test('only an uncertain submit fences another submit until a delivered same-scope read', async t => {
+  const f = fixture(t, { send(method) { if (method.startsWith('Input.')) throw Error('unknown'); } });
+  assert.equal((await f.controller.act(request('submit', { submit: true }))).effect, 'unknown');
+  assert.equal((await f.controller.act(request('submit2', { submit: true }))).code, 'EFFECT_UNKNOWN');
+  assert.equal((await f.controller.act(request('ordinary'))).effect, 'unknown');
+  assert.equal(f.controller.deliveredRead({ ...identity, document: 2 }), false);
+  assert.equal(f.controller.deliveredRead(identity), true);
+  assert.equal((await f.controller.act(request('submit3', { submit: true }))).effect, 'unknown');
+  assert.equal(f.calls.filter(c => c.method.startsWith('Input.')).length, 3);
 });
 for (const phase of [1, 2, 3]) test('stale node during preparation sample ' + phase + ' sends no input', async t => {
   let f;

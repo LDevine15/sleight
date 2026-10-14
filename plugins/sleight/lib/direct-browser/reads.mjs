@@ -22,6 +22,9 @@ export function inspectControl() {
   };
   if (!(element instanceof Element)) return {};
   const state = { standard: true };
+  const labels = element instanceof HTMLInputElement ? Array.from(native(HTMLInputElement, 'labels') ?? []).map(label => label.textContent).join(' ') : '';
+  if (/(?:password|secret|otp|token|one[-_ ]?time[-_ ]?code|cc[-_ ]?(?:number|csc)|card(?: ?number)?|cvv|cvc)/i.test(
+    [attribute('name'), attribute('id'), attribute('autocomplete'), labels].join(' '))) return { protected: true };
   if (element instanceof HTMLInputElement) {
     const type = native(HTMLInputElement, 'type');
     const autocomplete = attribute('autocomplete') ?? '';
@@ -48,7 +51,7 @@ export function inspectControl() {
       state.options.push({ label: bounded(read('label')), value: bounded(read('value')), selected: read('selected'), disabled: read('disabled') });
     }
     state.optionsOmitted = Math.max(0, options.length - state.options.length);
-  } else return { unsupported: true };
+  } else return { ariaOnly: true };
   return state;
 }
 
@@ -86,6 +89,9 @@ async function acquireARIA({ session, frameId, backendNodeId, maxNodes, run }) {
     if (expanded.childNodeCount > (expanded.children?.length ?? 0)) complete = false;
     if (expanded.shadowRoots?.length) complete = false;
     for (const child of expanded.children ?? []) await walk(child, depth + 1);
+    // Explicit shallow closed-root expansion, under the same node/frame budget.
+    // It never promotes closed coverage to whole-page completeness.
+    for (const shadow of expanded.shadowRoots ?? []) await walk(shadow, depth + 1);
   }
   await walk(root);
   // AX children outside this bounded DOM acquisition are omitted, never absence proof.
@@ -118,7 +124,8 @@ function stateOf(node, native) {
     const value = property(node, field);
     if (typeof value === 'boolean' || typeof value === 'number' || ['mixed', 'true', 'false'].includes(value)) state[field] = value;
   }
-  if (typeof node.value?.value === 'string') state.value = text(node.value.value);
+  if (!native.ariaOnly && typeof node.value?.value === 'string') state.value = text(node.value.value);
+  if (native.ariaOnly) state.source = 'ax';
   for (const field of ['checked', 'selected', 'expanded', 'disabled', 'readonly', 'required', 'multiple']) {
     if (typeof native[field] === 'boolean') state[field] = native[field];
   }
