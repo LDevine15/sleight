@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 02:10 UTC)
+## Banner (2026-10-14 23:58 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -28,13 +28,16 @@ no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-
 template step 6). sleight-arch runs one full check per merge. Sonnet-high Claude reviewers take the critical reviews.
 `private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r2, v2r, v4r, v5r2 and v6r2, 1177/1177
 direct-browser tests, plus `9721c126` crediting page.mjs's popup code as adapted from FowlBrowser with the MIT text (a Claude audit of
-all 51 v3 sources found only that file and snapshot.mjs). Reviews at 01:05 UTC 2026-10-15: V1R2, V2R, V4R, V5R2 pass. The FIX items
+all 51 v3 sources found only that file and snapshot.mjs). Reviews by 23:40 UTC: V1R2, V2R, V4R, V5R2 pass. The FIX items
 each have a lane. V10R (in the trust join, Enter or Space could reach a payment button through unverified focus, reload after a payment,
 reusable upload offers, a dialog grant that never expires) is on `codex-v3-v10r`. V3R (snapshot password leak, stalled continuation,
 stale refs, MIT notice) and V9R (census soft failures) are claimed. V7 is on `codex-v3-v7b`, which wires V10's join into the
 installed worker. The load average fell from about 49 to 2.7 within the hour after the switch. V3R passed its re-review and is merged (integration `5dd1eccc`, 1210/1210). V10R's re-review found an iframe focus redirect and a dialog expiry
-shorter than a model turn, queued as V10R2 on lane `codex-v3-v10r2`. V7 (installed worker, `codex/v7b` 5212de62) is DONE and with
-a Claude reviewer. Owner (01:30 UTC): no competitor code in sleight, so LAWS and ROADMAP now say ideas only, written
+shorter than a model turn, queued as V10R2 on lane `codex-v3-v10r2`. A lane review of V10R reproduced two HIGH bypasses on real pages (a page redefines
+the activeElement or form getter in the main world, and a neutral control sends Enter or a click to a card form): queued as
+V10R3 after V10R2, reading authority only from the utility world or CDP. V7 (installed worker, `codex/v7b` 5212de62): a lane
+review found Pause/Disconnect expire at 30 s while the refresh is 60 s (queued as V7R), and a Claude review is running. V9R
+passed its re-review. Owner (01:30 UTC): no competitor code in sleight, so LAWS and ROADMAP now say ideas only, written
 clean-room. `private/cr1-base` (`a9212d4d`) strips the two FowlBrowser-adapted pieces (page.mjs popupHook and backgroundClick,
 snapshot.mjs closedRoots) to stubs, and lane `codex-cr1` rewrites them from the behavior spec in queue/CR1.md without access to
 FowlBrowser or the old versions. CR1 then replaces those files on v3-integration. Next: CR1, V7, V9R and V10R merge into

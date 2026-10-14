@@ -13,7 +13,7 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   `Land-o-Clusters/sleight-dev`. The public repo gets pushes only at release, after public CI passes (a pre-push hook enforces it).
 - Every open-source project of the owner's matches competitors first and does it better, then improves on them, then builds what
   nobody has. Reading competitors' code for ideas is fine, but sleight never adapts or copies it. A lane that never read the source
-  writes the idea from a behavior spec (owner, 2026-10-15). Bundled libraries such as playwright-core are included unmodified, with their
+  writes the idea from a behavior spec (owner, 2026-10-14). Bundled libraries such as playwright-core are included unmodified, with their
   notices. Going public, money, scope changes, and redistributing anything that depends on another vendor's app or engine
   are the owner's calls. The ChatGPT engine dependency is cleared for release.
 - The name is sleight, and its icon is the two-hands image. Branding uses only sleight's own marks.
