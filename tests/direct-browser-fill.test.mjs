@@ -10,7 +10,7 @@ function element(tag = 'INPUT', attrs = {}, value = '') {
     closest: () => null,
     matches: selector => selector === ':disabled' && false };
 }
-function harness(nodes, { check = () => 'allow', mutate, submit, event } = {}) {
+function harness(nodes, { check = () => 'allow', mutate, submit, event, sleep, now } = {}) {
   const listeners = new Map(), input = [], resolve = [];
   const emit = name => { for (const fn of listeners.get(name) ?? []) fn(event ?? page); };
   const locator = node => ({
@@ -35,7 +35,7 @@ function harness(nodes, { check = () => 'allow', mutate, submit, event } = {}) {
     url() { return 'http://fixture.invalid/form'; },
   };
   const tab = { page, state: { snapshotNo: 1, submitUnconfirmed: false } };
-  const fill = createFillFields({ check, runSteps: submit ?? (async () => { throw Error('unexpected submit'); }) });
+  const fill = createFillFields({ check, sleep, now, runSteps: submit ?? (async () => { throw Error('unexpected submit'); }) });
   return { fill: (fields, options = {}) => fill(tab, fields, options, { userMessage: 'fill this form', consent: null, files: [] }),
     input, resolve, listeners, tab, locator, emit };
 }
@@ -265,4 +265,32 @@ test('a noneditable combobox opens its option list and never attempts text fill'
   };
   const r = await h.fill([{ ref: 'e1', value: 'Exact' }]);
   assert.equal(r.rows[0].status, 'set'); assert.equal(node.value, 'Exact'); assert.deepEqual(h.input.map(row => row[0]), ['click']);
+});
+
+test('a dependent disabled select waits for its new options before any selection input', async () => {
+  const node = element('SELECT'); node.disabled = true;
+  node.options = [{ value: '', label: 'Loading', disabled: false, selected: true }];
+  let waits = 0, time = 0;
+  const h = harness({ e1: node }, { now: () => time, sleep: async ms => {
+    time += ms; waits++; node.disabled = false;
+    node.options = [{ value: 'Osaka', label: 'Osaka', disabled: false, selected: false }];
+  } });
+  const r = await h.fill([{ ref: 'e1', value: 'Osaka' }]);
+  assert.equal(r.rows[0].status, 'set'); assert.equal(waits, 1); assert.equal(node.value, 'Osaka');
+  assert.equal(h.input.filter(a => a[0] === 'select').length, 1);
+});
+test('a clipped native radio uses its associated label without attempting or retrying setChecked', async () => {
+  const node = element('INPUT', { type: 'radio' }), label = element('LABEL'); node.labels = [label];
+  node.ownerDocument = { defaultView: { getComputedStyle: () => ({ clip: 'rect(0px, 0px, 0px, 0px)' }) } };
+  let nativeAttempts = 0;
+  const h = harness({ e1: node }, { mutate(n, kind) { if (n === label && kind === 'click') node.checked = true; } });
+  const base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector);
+    loc.setChecked = async () => { nativeAttempts++; throw Error('clipped native radio'); };
+    loc.evaluateHandle = async fn => ({ asElement: () => h.locator(fn(node)), async dispose() {} });
+    return loc;
+  };
+  const r = await h.fill([{ ref: 'e1', value: true }]);
+  assert.equal(r.rows[0].status, 'set'); assert.equal(node.checked, true); assert.equal(nativeAttempts, 0);
+  assert.equal(h.input.filter(a => a[0] === 'click').length, 1);
 });
