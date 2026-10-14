@@ -3,26 +3,28 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 22:56 UTC, flushed before the owner's clear)
+## Banner (2026-10-14 23:15 UTC, re-hydrated after the owner's clear)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3; lanes stay
+the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
 busy, and post-release work builds on branches and merges after the tag.
-Pushed: `pane/auto-mode` at the commit holding this banner, with OL1 and OL1R merged. `~/Projects/sleight` is fast-forwarded to it.
-There are 0 open PRs, and public CI is green on 1.2.5.
+Pushed: `pane/auto-mode` at the commit holding this banner. `~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and
+public CI is green on 1.2.5. The engine updated to 26.1007.71326 (the watch's baseline follows it), and `--doctor` passes with a live read.
 
-Running through the clear (headless, nohup, they survive it): 13 `codex exec` lanes (launcher `~/Projects/sleight-wt/ledger/start-lane.sh
-<lane> "<START WITH line>"`, template `ledger/lane-prompt-codex.md`, prompts and logs in `ledger/lane-runs/`) and the real-page runner
-(`node scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, log `ledger/lane-runs-runner.log`). A NOTICE at the top of
-LEDGER.md tells lanes two blockers are resolved (group 49357 is gone, and 75e71e6e set the 300 s compile deadline). Restart the runner after
-merging any runner or owned-group fix (a runner keeps the code it started with).
+Running (headless, nohup): 11 `codex exec` lanes (launcher `~/Projects/sleight-wt/ledger/start-lane.sh <lane> "<START WITH line>"`,
+template `ledger/lane-prompt-codex.md`, prompts and logs in `ledger/lane-runs/`) and the real-page runner (`node
+scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, log `ledger/lane-runs-runner.log`). Two NOTICEs top LEDGER.md: the
+resolved blockers (group 49357, the 300 s compile deadline) and V10 claimable. Restart the runner after merging any runner or
+owned-group fix (a runner keeps the code it started with). A lane worktree from 2026-10-13 sits inside the main checkout at
+`private/codex/fm1` (registered with git, untracked there). Remove it with `git worktree remove` once FM1's evidence is no longer needed.
 
 Turbo v3 (owner's direction, ROADMAP; design `ledger/opus-turbo-v3-design.md`): our own action layer on the bundled Playwright, 5
 always-loaded tools, effects as observations, whole-form fill, background popups that keep their opener, the four rules as one module,
 and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and 6.8 MB of playwright-core. Lanes and branches
-(`private/codex/<id lowercase>`): V1, V2, V4, V5, V6 DONE; V4R, V6R2 DONE and reviewed; V1R DONE; V5R DONE; V3, V1R2, V2R, V5R2 in
-progress; V7 BLOCKED as partial work, waiting on V10 (the trust join sleight-arch defined in queue/V10.md); V9 (bench
-arm) waits for V7. V8 removal goes last. Next: once V1 to V7 and V10 pass review, they go onto one branch. Then V9's arm runs the
+(`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R DONE and
+reviewed; V2R, V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
+no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
+(bench arm) waits for V7. V8 removal goes last. Next: once V1 to V7 and V10 pass review, they go onto one branch. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
   beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:
@@ -31,15 +33,15 @@ gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at mo
   `bench/turbo/setup.mjs` from `c0caa5c9` (memory `lessons-2026-10-14-day`). Never kill a running round (unpriced spend marker).
 
 Release readiness: CI1 merged (public CI). OL1 and OL1R merged (preflights). RL1 release notes DONE and reviewed on `codex/rl1`
-(apply at release). CS3 (claim-suite runner gaps) restarted after a stale compile-gate block. The owner chose to drop the codex-cu and devtools bridge
-arms and say so in the published coverage. RP2 (release-pass
-runner, stage vectors in claims/RP2/ARCH-NOTE.md) is DONE on `codex/rp2`, waiting for review. Post-release on branches, merge after the tag: EP-2, EP-6, Q1-1 DONE;
-Q1-2 to Q1-4 finishing. EP-4 and EP-5 wait for v3's design to settle.
+(apply at release). CS3 (claim-suite runner gaps) is in progress. The owner chose to drop the codex-cu and devtools bridge
+arms and say so in the published coverage. RP2 (release-pass runner) is DONE on `codex/rp2`; its review V-RP2 says FIX (unknown spend
+admission, unsanitized publication paths), queued as RP2R. Post-release on branches, merge after the tag: EP-2, EP-6, Q1-1, Q1-2 DONE;
+Q1-3 to Q1-17 have pushed branches and are finishing. EP-4 and EP-5 wait for v3's design to settle.
 
 Owner steps at the Mac: reload FowlBrowser's extension in Helium (Helium isn't on the benchmark allowlist, so sleight-arch can't).
 Run the sleight-arm login (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`).
 Click turbo's opt-in and Chrome's Allow (only a person grants debugger control). Work through `ledger/claim-suite-owner-checklist.md`. This session's own
-sleight MCP couldn't start the engine helper after the morning's engine update (fresh clients work). API spend for October: $159.72 of $200.
+sleight MCP couldn't start the engine helper after the morning's engine update (fresh clients work). API spend for October: $159.96 of $200.
 
 Next steps, in order:
 1. Review P2; merge P2, P3 and P4 together once P4 passes. Merge SR1A, SR1CPR2 and OG1 as they pass.
@@ -54,7 +56,7 @@ After 1.3.0 come Electron (EP-1 to EP-7), slimming the plugin, AM1, and the SR1 
 
 Owner items: OpenUsage.app relocked the "Claude Code-credentials" keychain item to its own cdhash again at 05:01 UTC; the owner
 reset the partition list on 2026-10-14 and keeps OpenUsage (it may relock again on a token refresh). CodexBar was moved to the Trash
-and removed from login items on the owner's order (2026-10-14). API spend for October is $157.53 of $200.
+and removed from login items on the owner's order (2026-10-14).
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -157,7 +159,7 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
   The list holds 6 apps of the owner's (TextEdit among them, written 2026-07-26).
 - `~/Library/Caches/sleight-bench/keyboard-taps`: compiled from `bench/keyboard-taps.swift`, lists
   keyboard filter taps. The runner builds it if missing.
-- The watch's baseline (`~/Library/Logs/sleight/watch-engine-version`) is 26.1007.30912 (2026-10-12).
+- The watch's baseline (`~/Library/Logs/sleight/watch-engine-version`) is 26.1007.71326 (checked 2026-10-14).
 - `~/.config/sleight-bench/anthropic-api-key` (0600): the owner's API key for benchmark runs
   (2026-10-10). Spend ledger: `~/Library/Logs/sleight/bench-api-spend.json`.
 - `.git/hooks/pre-push` (shared by every worktree): refuses pushes to the public repo without

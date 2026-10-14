@@ -41,3 +41,10 @@ host, preserve delivered refs, and limit uncertain-submit recovery to a fresh re
 The new form and user-file providers are original sleight code. They call the
 unchanged pinned Playwright module through the host's closed node interface.
 No additional dependency or native binary is distributed by this semantic join.
+
+## Turbo v3 background popups
+
+`lib/direct-browser/page.mjs` uses the background disposition and hidden modifier ideas
+studied in FowlBrowser's `mcp/src/popups.mjs`, at
+`8b689249ba4e33d2626487aad930605c62e2c6a7` (MIT, copyright FowlBrowser contributors).
+The sleight authors wrote this code from the design study.

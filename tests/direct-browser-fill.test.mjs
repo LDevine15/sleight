@@ -294,3 +294,80 @@ test('a clipped native radio uses its associated label without attempting or ret
   assert.equal(r.rows[0].status, 'set'); assert.equal(node.checked, true); assert.equal(nativeAttempts, 0);
   assert.equal(h.input.filter(a => a[0] === 'click').length, 1);
 });
+
+test('submit-capable check fields delegate one physical click and retain the shared retry marker', async () => {
+  const node = element('BUTTON', { role: 'checkbox', type: 'submit' }); node.closest = () => ({});
+  let h, dispatches = 0, delegated = 0;
+  h = harness({ e1: node }, { mutate(n) { n.checked = false; throw Error('dispatch timed out'); },
+    submit: async (tab, steps) => {
+      delegated++; assert.deepEqual(steps, [{ do: 'click', ref: 'e1' }]);
+      if (tab.state.submitUnconfirmed) return { lines: ['1 click e1: not run: submit unconfirmed'], stoppedAt: 1 };
+      tab.state.submitUnconfirmed = { startedAt: 1000, snapshotNo: 1, settledAt: 6000 };
+      try { dispatches++; await tab.page.locator('aria-ref=e1').click(); } catch {}
+      return { lines: ['1 click e1: effect unconfirmed; read before retrying'], stoppedAt: 1 };
+    }
+  });
+  const first = await h.fill([{ ref: 'e1', value: true }]), second = await h.fill([{ ref: 'e1', value: true }]);
+  assert.equal(first.rows[0].status, 'failed'); assert.equal(second.rows[0].status, 'failed');
+  assert.equal(h.input.filter(row => row[0] === 'click').length, 1); assert.equal(dispatches, 1); assert.equal(delegated, 2);
+  assert.ok(h.tab.state.submitUnconfirmed); assert.equal(h.tab.state.snapshotNo, 1);
+});
+test('an existing pending action fences the first field and keeps the suffix untouched', async () => {
+  const h = harness({ e1: element(), e2: element() }); h.tab.state.actionPending = true;
+  const result = await h.fill([{ ref: 'e1', value: 'x' }, { ref: 'e2', value: 'y' }], { submit: 'e9' });
+  assert.deepEqual(result.rows.map(row => row.status), ['failed', 'not reached']);
+  assert.match(result.rows[0].reason, /pending/i); assert.equal(h.input.length, 0); assert.equal(h.resolve.length, 0);
+  assert.equal(result.submitted.status, 'not reached'); assert.equal(h.tab.state.actionPending, true);
+});
+test('input that becomes pending during the final read is fenced before checks consume consent', async () => {
+  const h = harness({ e1: element() }); let inspections = 0, checks = 0;
+  const base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector), evaluate = loc.evaluate;
+    loc.evaluate = async (fn, arg) => { const result = await evaluate(fn, arg); if (++inspections === 3) h.tab.state.actionPending = true; return result; }; return loc;
+  };
+  const fill = createFillFields({ check() { checks++; return { verdict: 'allow' }; }, runSteps: async () => { throw Error('unexpected delegation'); } });
+  const result = await fill(h.tab, [{ ref: 'e1', value: 'x' }], {}, {});
+  assert.equal(result.rows[0].status, 'failed'); assert.equal(checks, 0); assert.equal(h.input.length, 0);
+});
+test('ordinary nonsubmit fields remain usable while a submit only needs a delivered read', async () => {
+  const node = element(), h = harness({ e1: node }); h.tab.state.submitUnconfirmed = { startedAt: 1000, snapshotNo: 1, settledAt: 6000 };
+  const r = await h.fill([{ ref: 'e1', value: 'ordinary' }]);
+  assert.equal(r.rows[0].status, 'set'); assert.equal(node.value, 'ordinary'); assert.ok(h.tab.state.submitUnconfirmed);
+});
+
+test('a direct fill holds its input gate until its exact promise settles', async () => {
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const h = harness({ e1: element() }, { mutate: () => held });
+  const first = h.fill([{ ref: 'e1', value: 'first' }]);
+  while (!h.input.length) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(h.tab.state.actionPending);
+  const second = await h.fill([{ ref: 'e1', value: 'second' }]);
+  assert.equal(second.rows[0].status, 'failed'); assert.equal(h.input.length, 1);
+  release(); const result = await first;
+  assert.equal(result.rows[0].status, 'set'); assert.equal(h.tab.state.actionPending, false);
+});
+test('a settled direct fill cannot clear a replacement pending owner', async () => {
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const h = harness({ e1: element() }, { mutate: () => held });
+  const pending = h.fill([{ ref: 'e1', value: 'first' }]);
+  while (!h.input.length) await new Promise(resolve => setImmediate(resolve));
+  const replacement = {}; h.tab.state.actionPending = replacement;
+  release(); await pending; assert.equal(h.tab.state.actionPending, replacement);
+});
+
+test('a payment submit consumes confirmation only in the delegated physical operation', async () => {
+  const node = element('BUTTON', { role: 'checkbox', type: 'submit' }); node.closest = () => ({});
+  let consumed = 0, clicks = 0;
+  const consume = () => ++consumed === 1 ? { verdict: 'allow' } : { verdict: 'confirm' };
+  const loc = { evaluate: async (fn, arg) => fn(node, arg), click: async () => { clicks++; node.checked = true; } };
+  const page = { on() {}, off() {}, getByRef: () => loc };
+  const fill = createFillFields({ inspectElement: () => ({ tag: 'button', kind: 'button', connected: true,
+    visible: true, enabled: true, submit: true, payment: true, formPayment: true, form: true }),
+    check: consume, runSteps: async (tab, steps) => {
+      assert.deepEqual(steps, [{ do: 'click', ref: 'e1' }]);
+      if (consume().verdict !== 'allow') return { lines: ['1 click e1: not run: payment confirmation required'], stoppedAt: 1 };
+      await loc.click(); return { lines: ['1 click e1: done'], stoppedAt: null };
+    } });
+  const r = await fill({ page, state: { snapshotNo: 1 } }, [{ ref: 'e1', value: true }], {}, {});
+  assert.equal(r.rows[0].status, 'set'); assert.equal(clicks, 1); assert.equal(consumed, 1);
+});

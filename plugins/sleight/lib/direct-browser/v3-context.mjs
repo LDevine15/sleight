@@ -188,7 +188,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
   }
   const ctx = Object.freeze({ session: bound.message.session, turn: bound.message.turn, userMessage: ruleContext.userMessage,
     consent, files, prepareTarget: prepare, paymentTerms: target => targets.get(target) ? target.terms : undefined,
-    async check(kind, target) {
+    async check(kind, target, { fieldOnly = false } = {}) {
       try {
         if (!current()) return refused();
         target.do = kind;
@@ -202,6 +202,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
           targets.set(target, record);
         } else if (target.locator) await prepare(target);
         else if (!['wait','back','forward','reload','viewport'].includes(kind)) return refused();
+        if (fieldOnly && intent(kind, target).submit) return refused();
         ruleTarget = target;
         const result = check(ruleContext, kind, target);
         if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind)) dialogOwner = targets.get(target);

@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { check as ruleCheck, beginSubmit, finishSubmit, captureSnapshot, deliverSnapshot } from './fixtures/direct-browser-v5-rule-contract.mjs';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
 import { createFormsFixtureHandler } from './fixtures/direct-browser-forms-fixture.mjs';
 
@@ -18,7 +19,7 @@ const skip = !live ? 'opt-in real-page qualification belongs to sleight-arch' : 
   ? 'the pinned Chromium build is missing' : !existsSync(join(cache, 'test/forms/site/travel.html'))
     ? 'the read-only demo fixture source is missing' : false;
 
-async function fixture(t, route) {
+async function fixture(t, route, { retryGuard = false } = {}) {
   const posts = [], sockets = new Set(); let browser, origin;
   // Exact MIT FowlBrowser demo fixtures, pinned 8b68924, rendered in memory.
   // This never runs its benchmark runner or changes the cache clone.
@@ -61,7 +62,7 @@ async function fixture(t, route) {
   // V4 and V6 are independent lanes. This explicit fake consumes their fixed
   // interfaces, with actual Playwright input and fixture-only trusted consent.
   // It qualifies V5's strategies, not the sibling rule/action implementation.
-  const check = () => 'allow';
+  const check = retryGuard ? ruleCheck : () => 'allow';
   const ctx = { userMessage: 'Fill the fixture, and pay for the fixture order with the fixture card', consent: null, files: [] };
   const runSteps = async (tab, steps) => {
     for (const step of steps) {
@@ -79,7 +80,21 @@ async function fixture(t, route) {
           await page.waitForTimeout(20);
         }
         if (!found) return { lines: ['1 scroll: not run: bounded search exhausted'], stoppedAt: 1 };
-      } else if (step.do === 'click') await loc.click({ timeout: 1500 });
+      } else if (step.do === 'click') {
+        if (retryGuard) {
+          const element = await loc.evaluate(el => ({ tag: el.localName, role: el.getAttribute('role') || '', kind: 'button',
+            connected: el.isConnected, visible: true, enabled: !el.disabled, submit: el.type === 'submit' && !!el.form,
+            payment: false, form: !!el.form, formPayment: false }));
+          const verdict = ruleCheck(ctx, 'click', { element, state: tab.state });
+          if (verdict.verdict !== 'allow') return { lines: ['1 click: not run: submit unconfirmed'], stoppedAt: 1 };
+          const marker = beginSubmit(tab.state);
+          await loc.click({ timeout: 1500 });
+          await page.waitForTimeout(5000);
+          finishSubmit(tab.state, marker);
+          return { lines: ['1 click: effect unconfirmed; read before retrying'], stoppedAt: 1 };
+        }
+        await loc.click({ timeout: 1500 });
+      }
       else throw Error('fake V4 does not implement ' + step.do);
     }
     return { lines: ['1 action: input sent; fixture observation follows'], stoppedAt: null, observe: undefined };
@@ -176,4 +191,49 @@ test('v3 real autocomplete refuses absent suggestion without submitting', { skip
   const result = await f.fillFields(f.tab, [{ ref: addressRef, value: 'No Such Fixture Street' }], { submit: submitRef }, f.ctx);
   assert.equal(await f.page.locator('#address').inputValue(), 'No Such Fixture Street');
   assert.equal(result.rows[0].status, 'failed'); assert.equal(result.submitted.status, 'not reached'); assert.equal(f.posts.length, 0);
+});
+
+
+test('v5r real submit-toggle refuses resend until a delivered post-settle read', { skip }, async t => {
+  const f = await fixture(t, 'settings', { retryGuard: true });
+  await f.page.setContent(`<form><input id="note" aria-label="Note"><button id="save" type="submit" role="checkbox" aria-checked="false">Save</button></form>
+    <script>window.submissions=0;document.querySelector('form').onsubmit=e=>{e.preventDefault();window.submissions++}</script>`);
+  const save = await f.ref('#save'); await f.page.ariaSnapshot({ mode: 'ai' });
+  const input = [{ ref: save, value: true }];
+  await f.fillFields(f.tab, input, {}, f.ctx);
+  const retry = await f.fillFields(f.tab, input, {}, f.ctx);
+  assert.equal(await f.page.evaluate(() => window.submissions), 1, 'no blind second submit');
+  assert.equal(retry.rows[0].status, 'failed'); assert.ok(f.tab.state.submitUnconfirmed);
+  const note = await f.ref('#note'); await f.page.ariaSnapshot({ mode: 'ai' });
+  const ordinary = await f.fillFields(f.tab, [{ ref: note, value: 'ordinary input remains available' }], {}, f.ctx);
+  assert.equal(ordinary.rows[0].status, 'set'); assert.ok(f.tab.state.submitUnconfirmed);
+  const delivered = captureSnapshot(f.tab.state); await f.page.ariaSnapshot({ mode: 'ai' });
+  assert.equal(deliverSnapshot(f.tab.state, delivered), true); assert.equal(f.tab.state.submitUnconfirmed, false);
+  await f.fillFields(f.tab, input, {}, f.ctx);
+  assert.equal(await f.page.evaluate(() => window.submissions), 2, 'fresh delivered read permits another explicit submit');
+});
+
+test('v5r2 real navigation during final inspection prevents submit delegation', { skip }, async t => {
+  const f = await fixture(t, 'settings');
+  await f.page.setContent('<form><button id="save" type="submit" role="checkbox" aria-checked="false">Save</button><input id="suffix" aria-label="Suffix"></form>');
+  const save = await f.ref('#save'), suffix = await f.ref('#suffix');
+  await f.page.ariaSnapshot({ mode: 'ai' });
+  let inspections = 0, delegated = 0, consumed = 0;
+  const original = f.page.getByRef.bind(f.page);
+  f.page.getByRef = ref => new Proxy(original(ref), { get(target, key) {
+    if (key === 'evaluate') return async (...args) => {
+      const value = await target.evaluate(...args);
+      if (++inspections === 3) await f.page.goto(f.page.url() + '?boundary=1');
+      return value;
+    };
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const fill = createFillFields({ check: () => { consumed++; return 'allow'; },
+    runSteps: async () => { delegated++; return { lines: ['1 click: input sent'], stoppedAt: null }; } });
+  const result = await fill(f.tab, [{ ref: save, value: true }, { ref: suffix, value: 'untouched' }], {}, f.ctx);
+  assert.equal(inspections, 3); assert.equal(delegated, 0); assert.equal(consumed, 0);
+  assert.deepEqual(result.rows.map(row => row.status), ['failed', 'not reached']);
+  assert.match(result.stopped, /new document/); assert.equal(f.posts.length, 0);
+  assert.equal(f.tab.state.submitUnconfirmed, false);
 });

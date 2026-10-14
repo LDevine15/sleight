@@ -78,6 +78,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
       for (let i = 0; i < fields.length && !stopped; i++) {
         const { ref, value } = fields[i]; sent = false;
         try {
+          if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
           if (/^s\d+$/.test(ref)) {
             const step = typeof value === 'boolean' ? { do: value ? 'check' : 'uncheck', ref } :
               Array.isArray(value) ? { do: 'select', ref, values: value } : { do: 'type', ref, text: String(value) };
@@ -99,16 +100,43 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
           if (!state.connected) throw new FieldError('stale ref; read the page');
           if (state.readonly && state.kind !== 'combo') throw new FieldError('readonly picker; use browser_act on its choices');
           const prior = await loc.evaluate(inspectElement, value, options);
+          if (stopped) throw new FieldError(stopped);
           const send = async (action, kind = 'type', locator = loc) => {
             if (stopped) throw new FieldError(stopped);
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
             const element = await locator.evaluate(inspectElement, value, options);
+            if (stopped) throw new FieldError(stopped);
             const target = { ...element, element, prior, tab, page, ref, locator, state: tab.state, do: kind };
+            if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+            const trusted = isV3Context(ctx);
+            if (trusted) await ctx.prepareTarget(target);
+            if (stopped) { if (trusted) await ctx.releaseTarget(target); throw new FieldError(stopped); }
+            if (tab.state.actionPending) { if (trusted) await ctx.releaseTarget(target); throw new FieldError('an earlier input is still pending; wait before filling'); }
+            if (kind === 'click' && (target.element.submit || prior.submit)) {
+              if (trusted) await ctx.releaseTarget(target);
+              if (locator !== loc) throw new FieldError('submit-capable choice needs its own browser_act ref');
+              // V4 classifies, consumes consent once, journals the submit and
+              // retains pending input through its settle. Never pre-consume here.
+              sent = true;
+              const result = await runSteps(tab, [{ do: 'click', ref }], ctx);
+              if (!Array.isArray(result?.lines)) throw new FieldError('guarded submit result unavailable');
+              sent = !result.lines.some(line => /: not run:/.test(line));
+              if (actionFailed(result)) throw new FieldError('submit stopped; read the page before retrying');
+              return result;
+            }
+            const pending = {};
             try {
-              refusal(await (isV3Context(ctx) ? ctx.check(kind, target) : check(ctx, kind, target)));
-              if (!isV3Context(ctx) && kind === 'click' && element.submit) refusal(await check(ctx, 'submit', target));
+              // Private page inspection may await, so repeat both fences after
+              // it. Newly submit-capable choices refuse without consuming consent.
+              refusal(trusted ? await ctx.check(kind, target, { fieldOnly: true }) : check(ctx, kind, target));
               if (stopped) throw new FieldError(stopped);
-              sent = true; return await action(isV3Context(ctx) ? target.locator : locator, target);
-            } finally { if (isV3Context(ctx)) await ctx.releaseTarget(target); }
+              if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+              tab.state.actionPending = pending;
+              sent = true; return await action(trusted ? target.locator : locator, target);
+            } finally {
+              if (tab.state.actionPending === pending) tab.state.actionPending = false;
+              if (trusted) await ctx.releaseTarget(target);
+            }
           };
           if (state.kind === 'file') {
             if (!Array.isArray(value) || !value.length) throw new FieldError('file fields need browser_act upload with user-named paths');
