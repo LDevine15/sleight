@@ -5,7 +5,11 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, lsta
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
+import { swiftModuleCache } from '../bench/swift-cache.mjs';
 import * as host from '../plugins/sleight/lib/direct-browser/host.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -128,10 +132,27 @@ test('peer provider checks again at invocation instead of trusting its earlier p
   await assert.rejects(provider(null), /HOST_PACKAGE_MISMATCH/);
 });
 test('Darwin first-use compiler builds both real sources without launching consent UI', {
-  skip: !(native && existsSync('/usr/bin/xcrun')) && 'Darwin xcrun native helper compiler unavailable',
+  skip: macCommandSkip('xcrun'),
 }, async t => {
   assert.equal(typeof host.prepareNativeHelpers, 'function', 'first-use compiler is missing');
   const root = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-turbo-compile-')))));
+  const execFile = childProcess.execFile, cache = swiftModuleCache();
+  t.after(() => { childProcess.execFile = execFile; syncBuiltinESMExports(); });
+  // Exercise the default compiler and its deadline, but reuse SDK modules in
+  // this fixture instead of rebuilding AppKit alongside the other test files.
+  childProcess.execFile = (command, args, options, callback) => {
+    assert.equal(command, '/usr/bin/xcrun');
+    assert.equal(options.timeout, 300000);
+    assert.deepEqual(options.env, { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
+    const index = args.indexOf('-module-cache-path');
+    const moduleCache = index < 0 ? args.find(arg => arg.startsWith('-fmodules-cache-path=')).split('=')[1] : args[index + 1];
+    assert.ok(moduleCache.startsWith(root + '/cache/'));
+    assert.equal(lstatSync(moduleCache).mode & 0o777, 0o700);
+    const shared = args.map((arg, i) => i === index + 1 && index >= 0 ? cache
+      : arg.startsWith('-fmodules-cache-path=') ? '-fmodules-cache-path=' + cache : arg);
+    return execFile(command, shared, options, callback);
+  };
+  syncBuiltinESMExports();
   const sourceRoot = fileURLToPath(new URL('../plugins/sleight/lib/direct-browser/native/', import.meta.url)).replace(/\/$/, '');
   const inventory = { accepted: true, protocol: 1, helperMode: 'source', node: process.version,
     files: ['peer-host.c', 'consent-host.swift'].map(name => ({ path: 'native/' + name, sha256: hash(readFileSync(join(sourceRoot, name))) })) };

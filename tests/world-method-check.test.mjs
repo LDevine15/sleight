@@ -21,13 +21,13 @@ for (const code of ['await app.getScreenshot()', 'await app.getAXStateAndScreens
   'await app.scroll(1,"down")', 'console.log(JSON.stringify(await app.getAXState()))',
   '(await cua.listWindows()).find(w => w.title === "fixture")', '(await cua.listWindows()).filter(w => w.title)',
   'await cua.listApps()', 'await cua.getState()', 'await app.getAXState()']) {
-  test(`read and control calls preserve drag evidence: ${code}`, () => {
+  test(`read and control calls preserve drag evidence: ${code}`, { skip }, () => {
     assert.deepEqual(dragMethodAudit(claude(code + '; await app.drag({})')), { drag: true, replacement: false, complete: true });
   });
 }
 
 for (const tool of ['js_reset', 'hover', 'open_file', 'ToolSearch']) {
-  test(`ordinary tool preserves drag evidence: ${tool}`, () => {
+  test(`ordinary tool preserves drag evidence: ${tool}`, { skip }, () => {
     const transcript = claude('await app.drag({})') + '\n' + [
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'ordinary', name: tool, input: { query: 'fixture' } }] } },
       { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'ordinary', is_error: false }] } },
@@ -37,7 +37,7 @@ for (const tool of ['js_reset', 'hover', 'open_file', 'ToolSearch']) {
 }
 
 for (const code of ['const r = await app.drag({})', 'let r = await app.drag({})']) {
-  test(`awaited drag result counts in supported statement forms: ${code}`, () => {
+  test(`awaited drag result counts in supported statement forms: ${code}`, { skip }, () => {
     assert.deepEqual(dragMethodAudit(claude(code)), { drag: true, replacement: false, complete: true });
   });
 }
@@ -61,7 +61,7 @@ test('Codex MCP and direct MCP drag actions use the same audit, with incomplete 
 
 for (const code of ['false && await app.drag({})', 'true || await app.drag({})', '1 ?? await app.drag({})',
   'const result = false && await app.drag({})', 'await app?.drag({})']) {
-  test(`a successful tool result does not prove a conditional drag ran: ${code}`, () => {
+  test(`a successful tool result does not prove a conditional drag ran: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude(code)).drag, false);
   });
 }
@@ -69,13 +69,13 @@ for (const code of ['false && await app.drag({})', 'true || await app.drag({})',
 for (const code of ['await app[method]({})', 'await app["drag"]({})', 'await eval("app.drag({})")',
   'await Function("return app.drag({})")()', 'await app.drag.call(app, {})', 'await app.drag.apply(app, [{}])',
   'await app.pressKey(key)', 'await app.keypress({ keys })', 'await app.keypress({ keys: [modifier, "V"] })']) {
-  test(`indirect methods and key arguments leave method evidence incomplete: ${code}`, () => {
+  test(`indirect methods and key arguments leave method evidence incomplete: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude('await app.drag({}); ' + code)).complete, false);
   });
 }
 
 for (const tool of ['read_clipboard', 'get_clipboard', 'execute', 'execute_command']) {
-  test(`tool action words do not misread a read or execute as replacement: ${tool}`, () => {
+  test(`tool action words do not misread a read or execute as replacement: ${tool}`, { skip }, () => {
     const transcript = claude('await app.drag({})') + '\n' + [
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'ordinary', name: tool, input: {} }] } },
       { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'ordinary', is_error: false }] } },
@@ -87,7 +87,7 @@ for (const tool of ['read_clipboard', 'get_clipboard', 'execute', 'execute_comma
 }
 
 for (const tool of ['clipboard_write', 'paste_text', 'cut_text', 'type_text']) {
-  test(`whole write action words still reject replacement: ${tool}`, () => {
+  test(`whole write action words still reject replacement: ${tool}`, { skip }, () => {
     const event = { type: 'item.completed', item: { type: 'mcp_tool_call', tool, arguments: {}, result: {} } };
     assert.equal(dragMethodAudit(JSON.stringify(event)).replacement, true);
   });
@@ -105,7 +105,7 @@ test('an engine error result cannot prove a drag ran', { skip }, () => {
 });
 
 for (const tool of ['notifications', 'turn_ended', 'blocked_app']) {
-  test(`exact Sleight tool names preserve drag evidence: ${tool}`, () => {
+  test(`exact Sleight tool names preserve drag evidence: ${tool}`, { skip }, () => {
     for (const prefix of ['', 'mcp__plugin_sleight_computer__', 'mcp__other__']) {
       const event = { type: 'item.completed', item: { type: 'mcp_tool_call', tool: prefix + tool, arguments: {}, result: {} } };
       assert.equal(dragMethodAudit(claude('await app.drag({})') + '\n' + JSON.stringify(event)).complete, true);
@@ -117,7 +117,7 @@ for (const tool of ['notifications', 'turn_ended', 'blocked_app']) {
 
 for (const code of ['setTimeout(() => {}, 1)', 'clearTimeout(timer)', 'parseInt("1")', 'parseFloat("1.2")',
   'Number("1")', 'String(1)', 'Boolean(1)', 'isNaN("x")', 'isFinite(1)', 'setInterval(() => {}, 1)']) {
-  test(`named JavaScript builtins preserve drag evidence: ${code}`, () => {
+  test(`named JavaScript builtins preserve drag evidence: ${code}`, { skip }, () => {
     assert.deepEqual(dragMethodAudit(claude(code + '; await app.drag({})')), { drag: true, replacement: false, complete: true });
   });
 }
@@ -139,7 +139,7 @@ test('replay does not prove a drag-only method without inspecting its steps', { 
 for (const code of ['x ||= await app.drag({})', 'x &&= await app.drag({})', 'x ??= await app.drag({})',
   'return; await app.drag({})', 'throw new Error("stop"); await app.drag({})',
   'stop: { break stop; await app.drag({}); }', 'stop: { break; await app.drag({}); }']) {
-  test(`skipped or unreachable drags get no credit: ${code}`, () => {
+  test(`skipped or unreachable drags get no credit: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude(code)).drag, false);
   });
 }
@@ -148,7 +148,7 @@ for (const code of ['let app = {drag: async () => {}}; await app.drag({})', 'awa
   'let app = await other.getApp("Fixture"); await app.drag({})',
   'let app = await cua.getApp("Fixture"); app = {drag: async () => {}}; await app.drag({})',
   'if (false) { app = await cua.getApp("Fixture"); } await app.drag({})']) {
-  test(`only an acquired app proves an engine drag: ${code}`, () => {
+  test(`only an acquired app proves an engine drag: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude(code, false, false)).drag, false);
   });
 }
@@ -156,7 +156,7 @@ for (const code of ['let app = {drag: async () => {}}; await app.drag({})', 'awa
 for (const code of ['{ return; } await app.drag({})', '{ throw new Error("stop"); } await app.drag({})',
   'stop: { return; } await app.drag({})', '{ var app = {}; } await app.drag({})',
   'cua = {getApp: async () => ({drag: async () => {}})}; app = await cua.getApp("Fixture"); await app.drag({})']) {
-  test(`nested exits and overwritten engine handles cannot prove a drag: ${code}`, () => {
+  test(`nested exits and overwritten engine handles cannot prove a drag: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude(code)).drag, false);
   });
 }
@@ -174,13 +174,13 @@ test('an acquired app persists across successful calls and loses provenance on r
 });
 
 for (const code of ['await app.insertText("x")', 'await app.customWrite("x")']) {
-  test(`unknown property calls leave evidence incomplete: ${code}`, () => {
+  test(`unknown property calls leave evidence incomplete: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude('await app.drag({}); ' + code)).complete, false);
   });
 }
 
 for (const key of ['super+shift+v', 'shift+Insert', 'Command+Shift+V', 'Control+Alt+X']) {
-  test(`modified cut or paste shortcuts count as replacement: ${key}`, () => {
+  test(`modified cut or paste shortcuts count as replacement: ${key}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude(`await app.drag({}); await app.pressKey(${JSON.stringify(key)})`)).replacement, true);
   });
 }
@@ -199,7 +199,7 @@ for (const code of [
   'try { throw Error("skip"); await app.drag({}); } catch (error) { console.log(error); }',
   'try { await app.drag({}); } finally { return; }',
 ]) {
-  test(`a caught or conditional drag is not proved by overall tool success: ${code}`, () => {
+  test(`a caught or conditional drag is not proved by overall tool success: ${code}`, { skip }, () => {
     assert.equal(dragMethodAudit(claude(code)).drag, false);
   });
 }

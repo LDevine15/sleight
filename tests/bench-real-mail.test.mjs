@@ -7,6 +7,7 @@ import * as mail from '../bench/real-mail.mjs';
 import { mailTasks } from '../bench/tasks-mail.mjs';
 import { runOwned } from '../bench/preapproved-process.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
 
 function context(t) {
   const ctx = { dir: trackTemp(mkdtempSync(join(tmpdir(), 'sleight-mail-'))), nonce: 'mailtest42' };
@@ -268,7 +269,7 @@ test('native dialog stop publishes category and collects exact registered helper
   assert.ok(ctx.pendingAcquisitions.has('mailImport'));
 });
 
-test('native Mail ownership self-test rejects focus-only and ambiguous creation, and requires local destination proof', async () => {
+test('native Mail ownership self-test rejects focus-only and ambiguous creation, and requires local destination proof', { skip: macCommandSkip('xcrun') }, async () => {
   const helper = await mail.mailHelper();
   const result = await runOwned(helper, ['--self-test'], { timeoutMs: 15000 });
   assert.equal(result.exit.code, 0, result.stderr);
@@ -281,7 +282,7 @@ test('native Mail ownership self-test rejects focus-only and ambiguous creation,
   assert.equal(evidence.dialogStops, true);
 });
 
-test('native Mail helper refuses a request without the owner-present boundary before any AX use', async () => {
+test('native Mail helper refuses a request without the owner-present boundary before any AX use', { skip: macCommandSkip('xcrun') }, async () => {
   const helper = await mail.mailHelper();
   const payload = { name: 'Sleight-Mail-nonce', root: '/private/tmp/Sleight-Mail-nonce',
     folders: ['Archive'], control: '/private/tmp/mail-control.json', nonce: 'nonce' };

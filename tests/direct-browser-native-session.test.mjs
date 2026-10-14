@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
+import { macCommandSkip } from './requirements.mjs';
+import { swiftModuleCache } from '../bench/swift-cache.mjs';
 
-const native = process.platform === 'darwin' && existsSync('/usr/bin/xcrun');
-test('native host admits only session-bound opt-in/resume frames without launching UI', { skip: !native && 'Darwin Swift compiler unavailable' }, t => {
+test('native host admits only session-bound opt-in/resume frames without launching UI', { skip: macCommandSkip('xcrun') }, t => {
   const source = readFileSync(new URL('../plugins/sleight/lib/direct-browser/native/consent-host.swift', import.meta.url), 'utf8');
   const functionSource = source.match(/\/\/ BEGIN SESSION FRAME\n([\s\S]*?)\/\/ END SESSION FRAME/);
   assert.ok(functionSource, 'native session decision protocol absent');
@@ -25,7 +26,7 @@ let samples: [Bool] = [
 ]
 print(samples.allSatisfy { $0 } ? "pass" : "fail")
 `);
-  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(dir, 'cache'), swift, '-o', binary], { encoding: 'utf8' });
+  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });
   assert.equal(built.status, 0, built.stderr);
   const run = spawnSync(binary, [], { encoding: 'utf8' }); assert.equal(run.status, 0, run.stderr); assert.equal(run.stdout.trim(), 'pass');
 });

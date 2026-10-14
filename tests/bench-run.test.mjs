@@ -14,11 +14,13 @@ import { webBrowsers } from '../bench/tasks-web.mjs';
 import { WORLD_APPS } from '../bench/world/tasks.mjs';
 import { isNativeArm, nativeArmPlan } from '../bench/world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/world/native-world.mjs';
-import { dragMethodAudit } from '../bench/world/method-check.mjs';
+import { packageSkip } from './requirements.mjs';
+const parserSkip = packageSkip('typescript');
+const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289' } = {}) {
+async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -42,6 +44,9 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
     privateDriverEnvironment, assertPrivateClaudePolicy: () => calls.push('policy audit'),
     DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: () => auth, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
+    CONFIG_DIR: '/isolated/claude',
+    assertLogin: plan => { calls.push(['login preflight', plan]); if (loginError) throw new Error(loginError); },
+    assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
     prepareGenericArm: () => {
       if (preparationError) throw new Error(preparationError);
       return { generic: true, cwd: '/private/tmp/own-arm', args: ['--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence'], env: {}, identity: {}, servers: ['rival'] };
@@ -115,6 +120,30 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
   return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, commands, exitCode: sandbox.process.exitCode };
 }
 
+test('missing isolated login stops before tool discovery or the first task', async () => {
+  const result = await runner({ loginError: 'Not logged in. Fix: isolated auth login', drive: true });
+  assert.equal(result.exitCode, 1);
+  assert.ok(result.logs.some(line => /Not logged in.*Fix: isolated auth login/.test(line)));
+  assert.equal(result.commands.length, 0);
+  assert.equal(result.calls.includes('real run'), false);
+});
+test('extension tasks check socket readiness before tool discovery or task setup', async () => {
+  const result = await runner({ socketError: 'stale extension socket', tasks: [{ id: 'extension', surface: 'extension' }],
+    extraArgs: ['--surfaces', 'browser,computer', '--extension-sites-allowed'] });
+  assert.equal(result.exitCode, 1);
+  assert.ok(result.calls.includes('socket preflight'));
+  assert.equal(result.commands.length, 0);
+  assert.equal(result.calls.includes('real run'), false);
+});
+test('login readiness receives the exact config the arm will run with', async () => {
+  const result = await runner({ base: { CLAUDE_CONFIG_DIR: '/caller/throwaway' }, drive: true });
+  assert.equal(result.error, undefined);
+  const login = result.calls.find(c => Array.isArray(c) && c[0] === 'login preflight');
+  assert.ok(login);
+  assert.equal(login[1].env.CLAUDE_CONFIG_DIR, '/isolated/claude');
+  assert.ok(result.driverOptions.every(options => options.env.CLAUDE_CONFIG_DIR === login[1].env.CLAUDE_CONFIG_DIR));
+});
+
 test('claude-cu drives the retained native fixture through an isolated interactive session', async () => {
   const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true, outcome: { passed: true },
     auth: { mode: 'api', env: { ANTHROPIC_API_KEY: 'unrelated-api-key' }, unset: [] } });
@@ -167,7 +196,7 @@ for (const cause of ['interactive task timeout', 'session exited before confirme
   });
 }
 
-test('claude-cu provides executed drag receipts to the retained method grader', async () => {
+test('claude-cu provides executed drag receipts to the retained method grader', { skip: parserSkip }, async () => {
   const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true,
     tasks: [{ id: 'textedit-window-drag', app: 'TextEdit', prompt: () => 'drag', timeoutMs: 17000 }] });
   assert.equal(result.error, undefined);
@@ -221,7 +250,7 @@ test('only world runs widen the Claude environment filter', async () => {
   assert.ok(world.envs.every(env => !('CLAUDE_CUSTOM_FEATURE' in env)));
 });
 
-test('world paired-window drag requests the method audit for both drivers', async () => {
+test('world paired-window drag requests the method audit for both drivers', { skip: parserSkip }, async () => {
   const result = await runner({ suite: 'world', arm: 'sleight,codex', drive: true, extraArgs: ['--owner-away'],
     tasks: [{ id: 'textedit-window-drag', app: 'TextEdit', prompt: () => 'drag', timeoutMs: 17000 }] });
   assert.equal(result.error, undefined);
