@@ -4,8 +4,8 @@ function run(argv) {
   var request = JSON.parse(argv[0]), started = Date.now(), retained = [], samples = [];
   var wasRunning = false, target = null, pid = null, launched = false, ready = false;
   var expected = request.targetURL, baselineFront, baselineOwnerWindows;
-  var hostStage = 'baseline', windowCount = null;
-  function emit(data) { $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(data) + '\n').dataUsingEncoding($.NSUTF8StringEncoding)); }
+  var hostStage = 'baseline', windowCount = null, startupDeadline = null, cleanupReported = false;
+  function emit(data) { if (data.stage === 'cleanup') cleanupReported = true; $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(data) + '\n').dataUsingEncoding($.NSUTF8StringEncoding)); }
   function wait() { $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.2)); }
   function active() {
     var raw = $.NSString.stringWithContentsOfFileEncodingError(request.control, $.NSUTF8StringEncoding, null);
@@ -20,7 +20,12 @@ function run(argv) {
   function windows() {
     windowCount = null;
     if (!pid) { windowCount = 0; return []; }
-    var read = readAttribute(ObjC.castRefToObject($.AXUIElementCreateApplication(pid)), 'AXWindows');
+    var element = ObjC.castRefToObject($.AXUIElementCreateApplication(pid));
+    var read = readAttribute(element, 'AXWindows');
+    // Only an incomplete launching tree is retried, within the readiness budget.
+    while (read.code === -25204 && startupDeadline !== null && Date.now() < startupDeadline) {
+      active(); sample(); wait(); read = readAttribute(element, 'AXWindows');
+    }
     if (read.code !== 0 || !read.value) {
       var error = new Error('WINDOWS_READ_FAILED'); error.axStatus = read.code; throw error;
     }
@@ -91,7 +96,7 @@ function run(argv) {
       focusChanged: frontBundle !== baselineFront, targetOverOwner: overOwner };
     samples.push(row); emit({ stage: 'sample', sample: row });
   }
-  function cleanup() {
+  function cleanup(recover) {
     var details = { reasons: [], windows: [] }, clean = true;
     function reason(row, code) { if (row.reasons.indexOf(code) < 0) row.reasons.push(code); }
     function present(w, current) { return current.some(function(now) { return same(w, now); }); }
@@ -130,7 +135,11 @@ function run(argv) {
       var current = windows(); recordNew(current, entries); return current;
     }
     try {
+      // A setup timeout has a separate bounded chance to establish fixture ownership for cleanup.
+      if (recover) startupDeadline = Date.now() + 10000;
       var current = windows();
+      startupDeadline = null;
+      if (recover) retain(current);
       if (expected && !retained.length) reason(details, 'FIXTURE_WINDOW_NOT_RETAINED');
       var entries = retained.map(function(w) { return { window: w, retained: true }; });
       current.forEach(function(w) {
@@ -223,17 +232,18 @@ function run(argv) {
       var raw = $.NSString.stringWithContentsOfFileEncodingError(request.control, $.NSUTF8StringEncoding, null);
       var command = raw ? JSON.parse(ObjC.unwrap(raw)).command : '';
       if (command === 'abort') { emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['HOST_ABORTED'], windows: [] } }); return ''; }
-      if (command === 'launched' && !ready) {
+      if ((command === 'launched' || command === 'finish') && !ready) {
         var list = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.bundle);
         if (list.count) {
           target = list.objectAtIndex(0); pid = Number(target.processIdentifier); launched = !wasRunning;
           hostStage = 'retain';
+          if (startupDeadline === null) startupDeadline = Date.now() + 30000;
           retain();
           hostStage = 'ready';
           if (target.isFinishedLaunching) {
             var current = windows();
             retain(current);
-            if (current.length) { ready = true; emit({ stage: 'ready', launched: launched, pid: pid, windowCount: windowCount }); }
+            if (current.length) { ready = true; startupDeadline = null; emit({ stage: 'ready', launched: launched, pid: pid, windowCount: windowCount }); }
           }
         }
       }
@@ -249,6 +259,12 @@ function run(argv) {
     var details = { message: String(error.message || error).slice(0, 500), stage: hostStage, windowCount: windowCount };
     if (error.axStatus !== undefined) details.axStatus = error.axStatus;
     emit({ stage: 'error', error: details });
+    // A failed setup still owns its launched fixture. Keep the observer alive to close it.
+    if (!cleanupReported) {
+      startupDeadline = null;
+      if (pid && hostStage !== 'baseline') cleanup(true);
+      else emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['CLEANUP_FAILED'], windows: [] } });
+    }
     return '';
   }
 }

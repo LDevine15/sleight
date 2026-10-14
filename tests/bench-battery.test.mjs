@@ -254,7 +254,7 @@ function cleanupHost(options = {}) {
     NSFileHandle: { fileHandleWithStandardOutput: { writeData(data) {
       const event = JSON.parse(data); events.push(event);
       if (event.stage === 'armed') { opened = true; command = 'launched'; }
-      if (event.stage === 'ready') command = 'finish';
+      if (event.stage === 'ready' || event.stage === 'error') command = 'finish';
     } } },
     NSURL: { fileURLWithPath: value => ({ absoluteString: pathToFileURL(String(value)).href }) },
     AXUIElementCreateApplication: () => options.strictApplicationRef ? { rawApplication: appElement } : appElement,
@@ -263,10 +263,13 @@ function cleanupHost(options = {}) {
       if (element?.rawApplication) throw new Error('Ref has incompatible type');
       if (element === appElement && name === 'AXWindows') {
         windowReads++;
+        if (options.baselineStatus && !opened && windowReads <= (options.baselineFailures ?? Infinity)) return options.baselineStatus;
         if (options.windowReadFailure && now >= 10000) return -25204;
+        if (opened && options.startupStatus && now < (options.recoverAt ?? Infinity)) return options.startupStatus;
+        if (opened && options.startupFailures && windowReads <= options.startupFailures) return -25204;
         const foreign = (options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
           (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000);
-        out[0] = list([...(opened && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : [])]); return 0;
+        out[0] = list([...((opened || options.baselineWindow) && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : [])]); return 0;
       }
       if (element === foreignWindow && name === 'AXDocument') { out[0] = 'file:///private/tmp/another.txt'; return 0; }
       if (element === secondWindow && !present) return -25202;
@@ -305,7 +308,7 @@ function cleanupHost(options = {}) {
     fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }) };
   const source = readFileSync(new URL('../bench/battery/host.js', import.meta.url), 'utf8');
   runInNewContext(`${source}\nrun([request]);`, { $: dollar, ObjC, Ref: () => [], Date: { now: () => now }, request: JSON.stringify(request) });
-  return { ...events.findLast(e => e.stage === 'cleanup'), events, presses, scripts, terminations, present };
+  return { ...events.findLast(e => e.stage === 'cleanup'), events, presses, scripts, terminations, present, now, windowReads };
 }
 
 test('the application Ref is cast before reading its AXWindows', () => {
@@ -609,7 +612,7 @@ test('owned workspace marker can retain a fresh window without AXDocument, but n
 test('a folder window with an empty document CFString and no sheets closes without quitting its running app', () => {
   const result = cleanupHost({ document: { value: '' }, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique',
     sheetStatus: -25212, wasRunning: true, axCloses: true });
-  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.confirmed, true, JSON.stringify(result.details ?? {}));
   assert.equal(result.presses.length, 1);
   assert.equal(result.present, false);
   assert.equal(result.terminations, 0);
@@ -643,4 +646,85 @@ test('workspace and prepared-container prerequisites refuse before open', async 
     });
     assert.equal(opened, false);
   }
+});
+
+
+test('startup retries late AXWindows until the owned readiness deadline with an injected clock', () => {
+  const result = cleanupHost({ startupFailures: 3, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'error'), false);
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.present, false);
+  assert.equal(result.terminations, 1);
+  assert.ok(result.now >= 400 && result.now < 30000);
+});
+
+test('a persistent late tree fails with its AX status at the readiness deadline and leaves cleanup unconfirmed', () => {
+  const result = cleanupHost({ startupStatus: -25204, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'WINDOWS_READ_FAILED');
+  assert.equal(error.axStatus, -25204);
+  assert.equal(error.stage, 'retain');
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.confirmed, false);
+  assert.ok(result.now >= 30000 && result.now < 100000);
+  assert.equal(result.terminations, 0);
+});
+
+for (const wasRunning of [false, true]) test(`startup failure cleans the exact fixture and ${wasRunning ? 'preserves' : 'quits'} the app`, () => {
+  const result = cleanupHost({ startupStatus: -25204, recoverAt: 30200, wasRunning, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.axStatus, -25204);
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.confirmed, true, JSON.stringify(result.details ?? {}));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.present, false);
+  assert.equal(result.terminations, wasRunning ? 0 : 1);
+});
+
+for (const status of [-25202, -25205, -25212]) test(`AXWindows status ${status} fails immediately without retrying startup`, () => {
+  const result = cleanupHost({ startupStatus: status, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.axStatus, status);
+  assert.equal(result.now, 0);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.terminations, 0);
+});
+
+test('runtime waits for the startup-error cleanup receipt before collecting the host', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  const response = Promise.withResolvers(); let receive, aborted = false;
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/osascript') {
+      receive = options.onStdout;
+      receive('{"stage":"armed","wasRunning":false}\n');
+      options.signal.addEventListener('abort', () => {
+        aborted = true; response.resolve({ exit: { code: 0 }, groupClean: true });
+      });
+      return response.promise;
+    }
+    assert.equal(executable, '/usr/bin/open');
+    receive('{"stage":"error","error":{"message":"WINDOWS_READ_FAILED","stage":"retain","axStatus":-25204,"windowCount":null}}\n');
+    setImmediate(() => {
+      receive('{"stage":"cleanup","confirmed":true,"details":{"reasons":[],"windows":[],"app":{"terminated":true}}}\n');
+      response.resolve({ exit: { code: 0 }, groupClean: true });
+    });
+    return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+  };
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: fixturePath },
+    new AbortController().signal, runProcess), error => {
+    assert.equal(error.hostCleanup.confirmed, true);
+    assert.equal(error.hostCleanup.details.app.terminated, true);
+    return error.message === 'WINDOWS_READ_FAILED';
+  });
+  assert.equal(aborted, false);
+});
+
+
+test('a failed baseline snapshot never closes an existing app or adopts its windows', () => {
+  const result = cleanupHost({ baselineStatus: -25204, baselineFailures: 1, baselineWindow: true, wasRunning: true, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.stage, 'baseline');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.now, 0);
 });
