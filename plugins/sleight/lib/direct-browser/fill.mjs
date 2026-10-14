@@ -99,10 +99,12 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
           if (!state.connected) throw new FieldError('stale ref; read the page');
           if (state.readonly && state.kind !== 'combo') throw new FieldError('readonly picker; use browser_act on its choices');
           const prior = await loc.evaluate(inspectElement, value, options);
+          if (stopped) throw new FieldError(stopped);
           const send = async (action, kind = 'type', locator = loc) => {
             if (stopped) throw new FieldError(stopped);
             if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
             const element = await locator.evaluate(inspectElement, value, options);
+            if (stopped) throw new FieldError(stopped);
             const target = { ...element, element, prior, tab, page, ref, locator, state: tab.state, do: kind };
             if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
             if (kind === 'click' && (element.submit || prior.submit)) {

@@ -212,3 +212,28 @@ test('v5r real submit-toggle refuses resend until a delivered post-settle read',
   await f.fillFields(f.tab, input, {}, f.ctx);
   assert.equal(await f.page.evaluate(() => window.submissions), 2, 'fresh delivered read permits another explicit submit');
 });
+
+test('v5r2 real navigation during final inspection prevents submit delegation', { skip }, async t => {
+  const f = await fixture(t, 'settings');
+  await f.page.setContent('<form><button id="save" type="submit" role="checkbox" aria-checked="false">Save</button><input id="suffix" aria-label="Suffix"></form>');
+  const save = await f.ref('#save'), suffix = await f.ref('#suffix');
+  await f.page.ariaSnapshot({ mode: 'ai' });
+  let inspections = 0, delegated = 0, consumed = 0;
+  const original = f.page.getByRef.bind(f.page);
+  f.page.getByRef = ref => new Proxy(original(ref), { get(target, key) {
+    if (key === 'evaluate') return async (...args) => {
+      const value = await target.evaluate(...args);
+      if (++inspections === 3) await f.page.goto(f.page.url() + '?boundary=1');
+      return value;
+    };
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const fill = createFillFields({ check: () => { consumed++; return 'allow'; },
+    runSteps: async () => { delegated++; return { lines: ['1 click: input sent'], stoppedAt: null }; } });
+  const result = await fill(f.tab, [{ ref: save, value: true }, { ref: suffix, value: 'untouched' }], {}, f.ctx);
+  assert.equal(inspections, 3); assert.equal(delegated, 0); assert.equal(consumed, 0);
+  assert.deepEqual(result.rows.map(row => row.status), ['failed', 'not reached']);
+  assert.match(result.stopped, /new document/); assert.equal(f.posts.length, 0);
+  assert.equal(f.tab.state.submitUnconfirmed, false);
+});
