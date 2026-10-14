@@ -7,7 +7,7 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 Goal (owner, 2026-10-12): a published head-to-head that shows sleight is the fastest computer use plugin for Mac, then release
 1.3.0, the claim post and the video (ROADMAP 0b, docs/design/video-storyboard.md). Read ROADMAP 0b and LAWS first.
-Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4062 pass, 0 fail, 41 skipped, mod 33/33.
+Pushed: `pane/auto-mode` at the commit holding this banner (private); full check 4168 pass, 0 fail, 41 skipped, mod 33/33.
 `~/Projects/sleight` is fast-forwarded to it, there are 0 open PRs, and public CI is green on 1.2.5.
 
 The turn of 2026-10-13: two Haiku 5.5 gate rounds on the engine's browser path put sleight at 23/26 and 21/26 against
@@ -20,7 +20,7 @@ Engine-browser fixes (AS-3, AS-4, FM2, FM3, QT1) are parked: their checks are in
 
 Merged on 2026-10-13, all peer-reviewed by Codex lanes: AS-1R and AS-2R, FS2R, W8R2, FM1, TB1, M3R, T2R7, W3R5, R1, W4R6, AS-5,
 Q1, RS5-1R, RS6-1R, and the turbo and native prototypes under `bench/` (not wired into the plugin yet): BP2-1, BP2-2, BP2-3,
-BP2-4R4, BP2-5, BP2-6R3, BP2-7, BP2-9, BP2-10, BP2-11R, NP-1, NP-2, NP-4R, NP-5R2, NP-6R, NP-7. After the clear: AM1R (`bench/app-speed-map.mjs`, which times app reads without a model.
+BP2-4R4, BP2-5 (with BP2-5T), BP2-6R3, BP2-7, BP2-9, BP2-10, BP2-11R, NP-1, NP-2, NP-3R3, NP-4R, NP-5R2, NP-6R, NP-7. After the clear: AM1R (`bench/app-speed-map.mjs`, which times app reads without a model.
 Every app it names is on the LAWS allowlist, and account apps need `--owner-present`).
 
 Real-page tests: FowlBrowser's playwright-core 1.64 needs Chromium build 1248, which wasn't installed, so `SLEIGHT_LIVE_DOM_TEST=1`
@@ -30,16 +30,21 @@ the owner's OK (2026-10-14). With it, 3419 of 3420 tests pass under the flag and
 Past the cap (owner): BP2-4R4 passed and merged. BP2-1R3 failed, so codex-hdlaw builds BP2-1R4, its pre-approved last round.
 BP2-8R2 parked on two cleanup races, and the owner allowed one last round, BP2-8R3 (codex-hdlaz, 2026-10-14). BP2-12, the
 promotion plan, is dispatched (codex-hdlba). It moves no code, and its wiring items wait until BP2-1R4 and BP2-8R3 merge.
-NP-3R2 passed review but failed the merge check on a 5 ms real-time deadline under load, as did merged BP2-5's forms test. The
-test-only fixes NP-3R3 (DONE, awaiting review) and BP2-5T (claimed) come first. NP-3R2 merges with NP-3R3.
+BP2-8R3 and BP2-1R4 are built and under review (00:20 UTC).
 
-Keychain prompts (owner's complaint, 2026-10-14): lanes on branches older than `scripts/claude-isolated.sh` ran bare `claude
-plugin validate`, which raised paired `/usr/bin/security` prompts. Lanes now start with a throwaway `CLAUDE_CONFIG_DIR`, and
-Both LEDGER.md and the prompt each lane starts from now require it for every check. Lanes started before 00:15 UTC may still raise one until they exit, and
-Deny is safe for them.
+AM1's first live run (2026-10-14 00:00 UTC, owner away and reachable by phone, who said to run local work) failed every trial: the
+relay's native-lease guard refused the harness's read, because it passes the app handle into a helper with no standalone read first.
+AM1R2 (codex-hdlbc) fixes the harness, and the evidence is in `ledger/claims/_evidence-AM1-live/`. The run also kept its bank
+`/private/tmp/sleight-battery-am1-ByX2a7`. Nothing was left open, and sleight-arch released its live lock.
+
+Keychain prompts (owner's complaint, 2026-10-14) had two sources. Lanes on branches older than `scripts/claude-isolated.sh` ran
+bare `claude plugin validate`. Lanes now start with a throwaway `CLAUDE_CONFIG_DIR`, and LEDGER.md and the lane prompt require it.
+The second was Vibe Island, whose 13 Claude Code hooks ran a bridge that read the Claude login with `/usr/bin/security`. On the
+owner's order its hooks are out of `~/.claude/settings.json` (backup `settings.json.before-vibe-island-removal-20261014`), and its
+bridge is renamed `~/.vibe-island/bin/vibe-island-bridge.disabled-20261014`. The app is still installed, because another project benchmarks it.
 
 Lanes (headless `codex exec`, gpt-6.1-sol high; memory `headless-codex-lanes`; logs and prompts in `/private/tmp/claude-501/lanes/`;
-report only through `~/Projects/sleight-wt/ledger/claims/`): codex-hdlaw, hdlax, hdlaz and hdlba at 00:30 UTC. Waiting in
+report only through `~/Projects/sleight-wt/ledger/claims/`): codex-hdlax, hdlba (BP2-12), hdlbb and hdlbc (AM1R2) at 00:20 UTC. Waiting in
 `queue/next/`: NP-8, EP-1 to EP-7 (after 1.3.0), the Q1, IN, AA1 and RS proposals. B1 and Q2-1 are plugin changes held until
 after the 1.3.0 freeze.
 
