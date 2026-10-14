@@ -216,6 +216,99 @@ test('first-off still refuses input after lease expiry or replacement, before an
   }
 });
 
+test('bind sends seven clicks from one capture and retains the final read', async () => {
+  const rows = Array.from({ length: 7 }, (_, i) => `\t${i + 1} button Description: Key ${i + 1}, ID: key-${i + 1}`).join('\n');
+  for (const [options, reads] of [[{}, 8], [{ bind: true }, 2], [{ bind: true, careful: true }, 8]]) {
+    const f = fixture({ strict: true, current: () => tree(expected, rows) });
+    await f.run(Array.from({ length: 7 }, (_, i) => `await app.click(${i + 1});`).join('\n'), options);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, reads);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(f.output.at(-1), GUARD_MARK + tree(expected, rows) + GUARD_END);
+  }
+});
+
+for (const target of ['2', '{ id: "second" }', '{ label: "Second" }', '{ line: "button Second, ID: second" }', '"Second"'])
+  test('bind keeps the capture number for ' + target + ' until a read occurs', async () => {
+    let acted = false;
+    const f = fixture({ strict: true,
+      current: () => tree(expected, acted ? '\t1 button First\n\t2 button Other\n\t3 button Second, ID: second' : '\t1 button First\n\t2 button Second, ID: second'),
+      action: () => { acted = true; } });
+    await f.run(`await app.click(1); await app.click(${target});`, { bind: true });
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [1, 2]);
+  });
+
+for (const line of ['menu button Actions', 'pop up button Choices', 'menu bar item File', 'menu item Save',
+  'link Details', 'tab General', 'disclosure triangle More', 'button Browse…', 'button Browse...'])
+  test('bind reads after the resolved opener ' + line, async () => {
+    const f = fixture({ strict: true, current: () => tree(expected, '\t1 ' + line + ', ID: opener\n\t2 button Next') });
+    await f.run('await app.click({ id: "opener" }); await app.click(2);', { bind: true });
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+  });
+
+for (const key of ['super+o', 'Return', 'Escape', 'Space', 'Tab'])
+  test('bind keeps the read before an element after ' + key, async () => {
+    const f = fixture({ strict: true });
+    await f.run(`await app.pressKey(${JSON.stringify(key)}); await app.click(1);`, { bind: true });
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'pressKey', 'read', 'click', 'read']);
+  });
+
+for (const target of ['{ id: "duplicate" }', '{ label: "Duplicate" }', '{ line: "button Duplicate, ID: duplicate" }', '"Duplicate"'])
+  test('bind reads when the first capture is non-unique for ' + target, async () => {
+    let acted = false;
+    const rows = '\t1 button First\n\t2 button Duplicate, ID: duplicate';
+    const f = fixture({ strict: true, current: () => tree(expected, rows + (acted ? '' : '\n\t3 button Duplicate, ID: duplicate')),
+      action: () => { acted = true; } });
+    await f.run(`await app.click(1); await app.click(${target});`, { bind: true });
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+  });
+
+test('bind checks a computed number against the code read after another action', async () => {
+  let acted = false;
+  const f = fixture({ strict: true, current: () => tree(expected, acted ? '\t1 button First\n\t2 button Other' : '\t1 button First\n\t2 button Second'),
+    action: () => { acted = true; } });
+  await assert.rejects(f.run('const s = await app.getAXState(); const n = Number(/(\\d+) button Second/.exec(s)[1]); await app.click(1); await app.click(n);',
+    { bind: true, literals: [1] }), /element 2 changed since this call read the window/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
+});
+
+test('bind compares literal numbers against explicit reads the call actually took', async () => {
+  let acted = false;
+  const f = fixture({ strict: true, current: () => tree(expected, acted ? '\t1 button First\n\t2 button Other' : '\t1 button First\n\t2 button Second'),
+    action: () => { acted = true; } });
+  await assert.rejects(f.run('await app.click(1); await app.getAXState(); await app.click(2);', { bind: true }), /changed what element 2 is/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
+});
+
+test('bind combines with quiet-edits and first-off and resets on the next call', async () => {
+  const f = fixture({ strict: true, current: () => tree(expected, '\t1 text field Editor\n\t2 button Next') });
+  const options = { bind: true, quietEdits: true, firstOff: true };
+  await f.run('await app.pressKey("super+a"); await app.typeText("x"); await app.click(1); await app.typeText("y"); await app.click(2);', options);
+  assert.deepEqual(f.calls.map(c => c[0]), ['pressKey', 'typeText', 'read', 'click', 'typeText', 'click', 'read']);
+  f.calls.length = 0;
+  await f.run('await app.click(2);', options);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
+});
+
+test('bind preserves the first-action remap when the same literal is repeated', async () => {
+  const f = fixture({ strict: true, current: () => tree(expected, '\t1 button Other\n\t2 button Target, ID: target') });
+  await f.run('await app.click(1); await app.click(1);', { bind: true, literals: [1],
+    seenLines: { 1: 'button Target, ID: target' }, uniqueSeen: [1] });
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [2, 2]);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+});
+
+test('bind follows repeated literals through successive observed remaps', async () => {
+  let clicks = 0;
+  const f = fixture({ strict: true, current: () => tree(expected, '\t1 button Other\n' +
+    (clicks ? '\t2 button Different\n\t3 button Target, ID: target' : '\t2 button Target, ID: target')),
+    action: () => { clicks++; } });
+  await f.run('await app.click(1); await app.getAXState(); await app.click(1); await app.click(1);',
+    { bind: true, literals: [1], seenLines: { 1: 'button Target, ID: target' }, uniqueSeen: [1] });
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [2, 3, 3]);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 3);
+});
+
 const editKeys = ['super+a', 'cmd+c', 'command+x', 'meta+z', 'super+shift+z', 'cmd+b', 'cmd+i', 'cmd+u',
   ...['Left', 'Right', 'Up', 'Down', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].flatMap(key =>
     [key, 'super+' + key, 'alt+shift+' + key, 'ctrl+' + key])];

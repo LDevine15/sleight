@@ -172,6 +172,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.careful = !!update?.careful;
     state.firstOff = !!update?.firstOff && !state.careful && !state.fileOnly && !state.cancelOnly;
     state.quietEdits = !!update?.quietEdits && !state.careful;
+    state.bind = !!update?.bind && !state.careful && !state.fileOnly && !state.cancelOnly;
+    state.binding = undefined;
+    state.boundNumbers = new WeakMap();
     // The previous call's read, when the relay judged it reusable for this call's first action.
     state.prior = update?.prior;
     // Whether this call has acted, and the handle it started on. A call that took no action after the
@@ -255,6 +258,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           return wait({
           read: async () => {
             checkNative();
+            state.binding = undefined;
             const reads = state.reads, reading = {};
             reads.set(proxy, reading); pending = { reads, reading };
             const text = await timedRead(raw, 'wait');
@@ -298,6 +302,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         // and they double as the guard's own read until the next action.
         if (name === 'getAXState') return async (options = {}) => {
           checkNative();
+          state.binding = undefined;
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);
           const text = await raw.getAXState({ ...options, disableDiffing: true, emit: false });
@@ -312,6 +317,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         };
         if (name === 'getAXStateAndScreenshot') return async (options = {}) => {
           checkNative();
+          state.binding = undefined;
           // The combined observation already paid for a full AX walk. Keep its
           // state just as we keep getAXState, until the next action or call.
           const reads = state.reads, reading = {};
@@ -330,6 +336,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         };
         if (name === 'getScreenshot') return async (options = {}) => {
           checkNative();
+          state.binding = undefined;
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);
           // macOS captures AX and pixels together even for a screenshot. Ask
@@ -404,12 +411,36 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // Cmd+Shift+G, then typing a path outran the Open panel without it (textedit-drag, 2026-10-09).
           // Typing, pasting and plain keys change no window, so the action after them goes ahead.
           const before = state.previous.get(proxy);
+          const spec = args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : undefined;
+          const bare = name === 'click' && typeof args[0] === 'string' && !/^\\d+$/.test(args[0]) ? args[0] : undefined;
+          const byId = typeof spec?.id === 'string' || typeof spec?.label === 'string' || typeof spec?.line === 'string' || bare !== undefined;
+          const [kind, target, match] = bare !== undefined ? ['label or ID', bare, hasLabel]
+            : typeof spec?.id === 'string' ? ['ID', spec.id, hasIdentifier]
+            : typeof spec?.label === 'string' ? ['label', spec.label, hasLabel] : ['line', spec?.line, (line, value) => line === value];
+          const findTarget = lines => {
+            let found = [...lines].filter(([, line]) => match(line, target));
+            if (bare !== undefined && !found.length) found = [...lines].filter(([, line]) => hasIdentifier(line, target));
+            if (!found.length && kind !== 'line') found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
+              !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target);
+            return found;
+          };
+          const codeRead = typeof args[0] === 'number' && !byId && state.literals && !state.literals.has(args[0]) ? state.codeReads.get(proxy) : undefined;
+          const literal = typeof args[0] === 'number' && !byId && !codeRead ? args[0] : undefined;
+          if (state.bind && literal !== undefined && state.boundNumbers.get(proxy)?.has(literal)) {
+            args = [state.boundNumbers.get(proxy).get(literal).number, ...args.slice(1)];
+          }
+          // Keep the engine's capture until an opener or the caller's own read replaces it. Unknown
+          // selectors still read; unique selectors use the numbers of the last capture we took.
+          const firstTree = state.callElements.get(proxy);
+          const bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
+            (byId ? findTarget(firstTree).length === 1 : literal !== undefined && firstTree.has(literal));
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
             typeof before.key === 'string' && !before.key.includes('+') && !/^(?:return|enter|escape|esc|tab|space)$/i.test(before.key)) ||
             state.quietEdits && (before.editKey || before.editable && ['typeText', 'paste'].includes(name)));
           let observed;
+          if (text === undefined && bind) text = state.binding.text;
           if (text === undefined && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
             observed = skipFirst ? state.expected : state.callHeaders.get(proxy);
             if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false }) + '\\n');
@@ -426,25 +457,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // app.click({ id: "Seven" }) or ({ label: "Multiply" }): the one element with
           // that AX identifier or label in this read, so numbers an earlier action in
           // the call shifted don't matter.
-          const spec = args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : undefined;
           // ({ line: "Scientific, ID: menuAction:" }) is the element whose whole line, after its number,
           // is exactly that: a replayed step names an element this way when no ID or label is unique.
           // click("Multiply"): the engine takes only numbers or points, and a bare name failed there, so
           // Claude redid the batch over two calls (calculator-click, 2026-10-10). It is the one element
           // with that label, else with that ID.
-          const bare = name === 'click' && typeof args[0] === 'string' && !/^\\d+$/.test(args[0]) ? args[0] : undefined;
-          const byId = typeof spec?.id === 'string' || typeof spec?.label === 'string' || typeof spec?.line === 'string' || bare !== undefined;
           if (byId) {
-            const [kind, value, match] = bare !== undefined ? ['label or ID', bare, hasLabel]
-              : typeof spec.id === 'string' ? ['ID', spec.id, hasIdentifier]
-              : typeof spec.label === 'string' ? ['label', spec.label, hasLabel] : ['line', spec.line, (line, value) => line === value];
-            let found = [...elements(text)].filter(([, line]) => match(line, value));
-            if (bare !== undefined && !found.length) found = [...elements(text)].filter(([, line]) => hasIdentifier(line, value));
             // A read on a busy Mac can drop attributes: "button One" for "button Description: 1,
             // ID: One" (2026-10-09). With no match at all, one bare line named exactly that is it.
-            if (!found.length && kind !== 'line') found = [...elements(text)].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
-              !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === value);
-            if (found.length !== 1) throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(value) + ' in this window. Use an element number or another ID from the window below.');
+            const found = findTarget(elements(text));
+            if (found.length !== 1) throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window. Use an element number or another ID from the window below.');
             args = [found[0][0], ...args.slice(1)];
           }
           // An earlier action in this call can renumber the window (Calculator closes
@@ -455,12 +477,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             ? [...elements(text ?? '')].filter(([, other]) => other === line) : [];
           const goTo = (to, line, why) => {
             nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + to + ', the same ' + JSON.stringify(line) + ': ' + why + '.\\n');
+            if (state.bind && literal !== undefined) {
+              if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
+              state.boundNumbers.get(proxy).set(literal, { number: to, line });
+            }
             args = [to, ...args.slice(1)];
           };
           // A number the code computed from its own read in this call (a match over getAXState) means
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
-          const codeRead = typeof args[0] === 'number' && !byId && state.literals && !state.literals.has(args[0]) ? state.codeReads.get(proxy) : undefined;
           if (codeRead) {
             if (!state.callElements.has(proxy)) state.callElements.set(proxy, elements(text ?? ''));
             const was = codeRead.get(args[0]), now = elements(text ?? '').get(args[0]);
@@ -487,7 +512,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             }
           }
           else if (typeof args[0] === 'number' && !byId) {
-            const was = state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);
+            const was = (state.bind ? state.boundNumbers.get(proxy)?.get(literal)?.line : undefined) ?? state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);
             // Calculator renumbers every button when its first click closes the history, so a batch
             // of numbers from one read went stale and Claude rewrote it as an ID lookup over four calls
             // (calculator-click, 2026-10-10). The element Claude meant is the line it saw: when that
@@ -497,6 +522,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             if (moved.length === 1) {
               nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ': an earlier action in this call renumbered the window.\\n');
               args = [moved[0][0], ...args.slice(1)];
+              if (state.bind && literal !== undefined) {
+                if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
+                state.boundNumbers.get(proxy).set(literal, { number: moved[0][0], line: was });
+              }
             } else if (!sameElement(was, now)) throw stop('sleight stopped before ' + name + '(' + args[0] + '): an earlier action in this call changed what element ' + args[0] + ' is (was ' + JSON.stringify(was ?? 'missing') + ', now ' + JSON.stringify(now ?? 'missing') + '). Use the current numbers in the window below.');
           }
           const cancel = state.fileOnly && isCancel(name, args, text ?? '');
@@ -550,7 +579,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const editKey = modifiers && (/^(?:arrow)?(?:left|right|up|down)$/.test(key ?? '') ||
             keys.length === 1 && ['super', 'cmd', 'command', 'meta'].includes(keys[0]) && ['a', 'c', 'x', 'z', 'b', 'i', 'u'].includes(key) ||
             keys.length === 2 && keys.includes('shift') && keys.some(k => ['super', 'cmd', 'command', 'meta'].includes(k)) && key === 'z');
-          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, modal: text === undefined ? undefined : hasModal(text) });
+          const opens = name === 'click' && (line === undefined || /^(?:menu button|pop up button|menu bar item|menu item|link|tab|disclosure triangle)(?: |$)/i.test(line) ||
+            /(?:…|\\.\\.\\.)(?:,|$)/.test(line)) || name === 'pressKey' &&
+            (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
+          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, opens, modal: text === undefined ? undefined : hasModal(text) });
+          if (text !== undefined) state.binding = { proxy, text };
+          else if (state.binding?.proxy !== proxy) state.binding = undefined;
           const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? args[0] : undefined;
           if (typeof typed === 'string') state.typed.push(typed);
           // A second handle may refer to this same app/window. Every input
