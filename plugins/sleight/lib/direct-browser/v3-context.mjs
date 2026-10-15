@@ -87,30 +87,70 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
   const lum = c => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
   const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
   const effective = node => { let o = 1; for (let n = node; n; n = up(n)) { const s = gs(n); o *= s.opacity === '' ? 1 : Number(s.opacity ?? 1); } return o; };
-  // Every element and open shadow root, once. Past the cap, nothing counts as visible.
-  let everyone, pseudoBoxes, tooMany = false;
+  // Every element and open shadow root, once. Past the cap, nothing counts as visible. ext is the box plus whatever the element
+  // paints outside it (outline, outer shadow, drop-shadow), so a 1px element with a huge outline still counts as a cover.
+  let everyone, pseudoBoxes, tooMany = false, layers;
+  const px = value => { const n = parseFloat(value); return Number.isFinite(n) ? n : 0; };
+  const colorSeen = value => (rgba(value)?.[3] ?? 1) >= 0.1;
+  const outside = s => {
+    let reach = 0;
+    if (s.outlineStyle && s.outlineStyle !== 'none' && px(s.outlineWidth) > 0 && colorSeen(s.outlineColor)) reach = Math.max(reach, px(s.outlineWidth) + Math.max(0, px(s.outlineOffset)));
+    for (const one of String(s.boxShadow ?? 'none').split(/,(?![^(]*\))/)) {
+      if (!one.trim() || one.trim() === 'none' || /inset/.test(one)) continue;
+      const color = /rgba?\([^)]*\)/.exec(one)?.[0]; if (color && !colorSeen(color)) continue;
+      const n = (one.replace(/rgba?\([^)]*\)/, '').match(/-?\d*\.?\d+/g) ?? []).map(Number);
+      reach = Math.max(reach, Math.max(Math.abs(n[0] ?? 0), Math.abs(n[1] ?? 0)) + (n[2] ?? 0) + Math.max(0, n[3] ?? 0));
+    }
+    for (const one of String(s.filter ?? '').matchAll(/drop-shadow\(([^)]*(?:\([^)]*\)[^)]*)*)\)/g))
+      reach = Math.max(reach, (one[1].replace(/rgba?\([^)]*\)/, '').match(/-?\d*\.?\d+/g) ?? []).reduce((sum, v) => sum + Math.abs(Number(v)), 0));
+    return reach;
+  };
   const gather = () => {
     if (everyone) return;
     everyone = [];
     const add = scope => { for (const n of Array.from(read(scope, 'querySelectorAll')?.('*') ?? [])) {
       if (everyone.length > 20000) { tooMany = true; return; }
-      everyone.push({ n, box: read(n, 'getBoundingClientRect')() });
+      const box = read(n, 'getBoundingClientRect')(), reach = outside(gs(n));
+      everyone.push({ n, box, reach, ext: reach ? { left: box.left - reach, top: box.top - reach, right: box.right + reach, bottom: box.bottom + reach } : box });
       const shadow = read(n, 'shadowRoot'); if (shadow) add(shadow); } };
     add(doc);
+    // Top-layer elements (modal dialog, open popover) paint a ::backdrop over everything outside them.
+    layers = [];
+    for (const selector of [':modal', ':popover-open', ':fullscreen']) {
+      let found = []; try { found = Array.from(read(doc, 'querySelectorAll')(selector)); } catch { /* selector unsupported */ }
+      for (const n of found) { const b = gs(n, '::backdrop'); if (!b) continue;
+        if (!rgba(b.backgroundColor) || colorSeen(b.backgroundColor) || (b.backgroundImage && b.backgroundImage !== 'none') || [b.backdropFilter, b.webkitBackdropFilter].some(v => v && v !== 'none')) layers.push(n); }
+    }
   };
-  // Does something painted (background, image, replaced content, inset shadow, border, another element's text) sit at x,y?
-  const painted = (n, box, x, y, inside) => {
+  // What a node paints, whatever the point. Cached: it only depends on style.
+  const infoCache = new Map();
+  const info = n => {
+    if (infoCache.has(n)) return infoCache.get(n);
+    const s = gs(n), tag = read(n, 'localName'), bg = rgba(s.backgroundColor), found = {};
+    found.replaced = ['img', 'canvas', 'svg', 'video', 'picture', 'iframe', 'object', 'embed', 'input', 'textarea', 'select', 'button'].includes(tag);
+    found.fill = !bg || bg[3] >= 0.1 || (s.backgroundImage && s.backgroundImage !== 'none') || [s.backdropFilter, s.webkitBackdropFilter].some(v => v && v !== 'none') || /inset/.test(s.boxShadow ?? '');
+    // In-flow generated content: any text or paint counts. Placed ::before/::after boxes are measured in pseudos().
+    found.generated = ['::before', '::after'].some(which => { const g = gs(n, which); if (!g || !g.content || g.content === 'none' || g.content === 'normal') return false;
+      if (['absolute', 'fixed'].includes(g.position)) return false; // placed boxes are measured in pseudos()
+      const gb = rgba(g.backgroundColor); return g.content.replace(/["'\s]/g, '') !== '' || !gb || gb[3] >= 0.1 || (g.backgroundImage && g.backgroundImage !== 'none') || px(g.borderTopWidth) > 0 || px(g.borderLeftWidth) > 0; });
+    found.placed = ['absolute', 'fixed'].includes(s.position);
+    found.outside = !!(px(s.outlineWidth) > 0 && s.outlineStyle !== 'none' && colorSeen(s.outlineColor)) || outside(s) > 0;
+    found.ownText = (rgba(s.webkitTextFillColor || s.color)?.[3] ?? 1) >= 0.1;
+    infoCache.set(n, found); return found;
+  };
+  // Does something painted (background, image, replaced content, control, generated content, inset shadow, border, outline,
+  // outer shadow, another element's text) sit at x,y?
+  const painted = (n, box, ext, x, y, inside) => {
     if (!shown(n) || effective(n) < 0.1) return false;
-    const s = gs(n), tag = read(n, 'localName');
-    if (['img', 'canvas', 'svg', 'video', 'picture', 'iframe', 'object', 'embed'].includes(tag)) return true;
-    const bg = rgba(s.backgroundColor);
-    if (!bg || bg[3] >= 0.1 || (s.backgroundImage && s.backgroundImage !== 'none') || [s.backdropFilter, s.webkitBackdropFilter].some(v => v && v !== 'none') ||
-        /inset/.test(s.boxShadow ?? '')) return true;
+    const f = info(n), s = gs(n);
+    if (f.outside) return true;
+    if (x < box.left || x > box.right || y < box.top || y > box.bottom) return false;
+    if (f.replaced || f.fill || (!inside || f.placed) && f.generated) return true;
     for (const [w, st, c, near] of [['borderTopWidth', 'borderTopStyle', 'borderTopColor', y - box.top], ['borderBottomWidth', 'borderBottomStyle', 'borderBottomColor', box.bottom - y],
         ['borderLeftWidth', 'borderLeftStyle', 'borderLeftColor', x - box.left], ['borderRightWidth', 'borderRightStyle', 'borderRightColor', box.right - x]])
       if (s[st] !== 'none' && s[st] !== 'hidden' && parseFloat(s[w]) > 0 && near <= parseFloat(s[w]) && (rgba(s[c])?.[3] ?? 1) >= 0.1) return true;
     // Another element's own text under the point could hide or replace the digits.
-    return !inside && Array.from(read(n, 'childNodes')).some(c => read(c, 'nodeType') === 3 && read(c, 'textContent').trim()) && (rgba(s.webkitTextFillColor || s.color)?.[3] ?? 1) >= 0.1;
+    return !inside && f.ownText && Array.from(read(n, 'childNodes')).some(c => read(c, 'nodeType') === 3 && read(c, 'textContent').trim());
   };
   // Absolutely placed ::before/::after boxes that paint anything. Geometry comes from used values; auto or transforms fail closed.
   const pseudos = () => {
@@ -161,7 +201,12 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       const own = range && [...range.getClientRects()];
       rects = own?.length ? own : read(node, 'getClientRects')();
     }
-    let left = 0, top = 0, right = read(view, 'innerWidth'), bottom = read(view, 'innerHeight'), opacity = 1;
+    // Reachable area: the viewport, plus the page below it by scrolling (not left, above or far to the right). Fixed boxes stay in the viewport.
+    const innerW = read(view, 'innerWidth'), innerH = read(view, 'innerHeight'), root = read(doc, 'documentElement');
+    let fixed = false; for (let parent = node; parent; parent = up(parent)) if (gs(parent).position === 'fixed') fixed = true;
+    const scrollX = read(view, 'scrollX') ?? 0, scrollY = read(view, 'scrollY') ?? 0;
+    let left = fixed ? 0 : -scrollX, top = fixed ? 0 : -scrollY, right = innerW, opacity = 1;
+    let bottom = fixed ? innerH : Math.min(Math.max(innerH, read(root, 'scrollHeight') || 0), innerH * 10) - scrollY;
     for (let parent = node; parent; parent = up(parent)) {
       const style = gs(parent);
       opacity *= style.opacity === '' ? 1 : Number(style.opacity ?? 1);
@@ -173,6 +218,20 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       if (rest !== 'none' && rest !== '') return false;
       if ([style.maskImage, style.webkitMaskImage, style.maskBorderSource].some(v => v && v !== 'none') ||
           style.mixBlendMode && style.mixBlendMode !== 'normal') return false;
+      // Text a person could not read as written: mirrored, rotated, bidi-reordered, struck through or outlined heavily.
+      if (style.transform && style.transform !== 'none') {
+        const m = /^matrix(3d)?\(([^)]*)\)$/.exec(style.transform), n = m && m[2].split(',').map(Number);
+        const flat = m && n.every(Number.isFinite) && (m[1] ? n.length === 16 && [2, 3, 6, 7, 8, 9, 11].every(i => Math.abs(n[i]) < 1e-6) && Math.abs(n[10] - 1) < 1e-6 : n.length === 6);
+        const [a, b, c, d] = m && flat ? (m[1] ? [n[0], n[1], n[4], n[5]] : n) : [];
+        if (!flat || !(a * d - b * c > 0.1) || Math.abs(Math.atan2(b, a)) > 0.5) return false;
+      }
+      if (/override/.test(style.unicodeBidi ?? '') || style.writingMode && !/^horizontal/.test(style.writingMode)) return false;
+      const size = parseFloat(style.fontSize) || 16;
+      if (style.textDecorationLine && style.textDecorationLine !== 'none' && colorSeen(style.textDecorationColor)) {
+        const t = String(style.textDecorationThickness ?? 'auto'), thick = t.endsWith('%') ? size * parseFloat(t) / 100 : /^[\d.]/.test(t) ? parseFloat(t) : 0;
+        if (thick >= size * 0.2) return false;
+      }
+      if (px(style.webkitTextStrokeWidth) >= size * 0.1 && colorSeen(style.webkitTextStrokeColor)) return false;
       const box = read(parent, 'getBoundingClientRect')();
       const clips = axis => /^(?:auto|scroll|hidden|clip)$/.test(style['overflow' + axis]) || /(?:paint|strict|content)/.test(style.contain ?? '');
       if (clips('X')) { left = Math.max(left, box.left + read(parent, 'clientLeft')); right = Math.min(right, box.left + read(parent, 'clientLeft') + read(parent, 'clientWidth')); }
@@ -186,6 +245,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const paint = [ink[0], ink[1], ink[2], ink[3] * opacity];
     for (const b of backs) { const a = lum(over(paint, b)) + 0.05, c = lum(b) + 0.05; if (Math.max(a, c) / Math.min(a, c) < 1.5) return false; }
     gather(); if (tooMany) return false;
+    // A modal or popover with a painted ::backdrop hides everything that is not inside it.
+    for (const layer of layers) { let inside = false; for (let a = node; a; a = up(a)) if (a === layer) inside = true; if (!inside) return false; }
     const spots = [];
     for (const r of seen.slice(0, 8)) {
       const l = Math.max(left, r.left), t = Math.max(top, r.top), rr = Math.min(right, r.right), b = Math.min(bottom, r.bottom);
@@ -194,12 +255,12 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     const ancestors = new Set(); for (let n = node; n; n = up(n)) ancestors.add(n);
     const xs = spots.map(p => p[0]), ys = spots.map(p => p[1]), lo = [Math.min(...xs), Math.min(...ys)], hi = [Math.max(...xs), Math.max(...ys)];
-    const near = everyone.filter(({ n, box }) => !ancestors.has(n) && box.width > 0 && box.height > 0 && box.right >= lo[0] && box.left <= hi[0] && box.bottom >= lo[1] && box.top <= hi[1]);
+    const near = everyone.filter(({ n, box, reach, ext }) => !ancestors.has(n) && (reach || box.width > 0 && box.height > 0) && ext.right >= lo[0] && ext.left <= hi[0] && ext.bottom >= lo[1] && ext.top <= hi[1]);
     for (const [x, y] of spots) {
-      for (const { n, box } of near) {
-        if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+      for (const { n, box, ext } of near) {
+        if (x < ext.left || x > ext.right || y < ext.top || y > ext.bottom) continue;
         let inside = false; for (let a = n; a; a = up(a)) if (a === node) { inside = true; break; }
-        if (painted(n, box, x, y, inside)) return false;
+        if (painted(n, box, ext, x, y, inside)) return false;
       }
       for (const { box } of pseudos()) if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) return false;
     }
@@ -220,26 +281,37 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     return parts.join('');
   };
   // LOOSE: every rendered string under the form (offscreen, faint, ::before/::after, input values, open shadow roots, same-origin frames)
-  // plus the activating control's own label.
+  // plus the activating control's own label. An image or canvas is a mark (￼) where a figure we cannot read may sit; a box that
+  // shows area but holds nothing could host a closed shadow root, and what it shows cannot be read, so the read gives up.
   const looseLines = () => {
     const parts = []; let previous, count = 0;
     const push = (text, owner) => {
-      const t = String(text ?? '').replace(/\s+/g, ' ').trim(); if (!t) return;
+      const t = String(text ?? '').normalize('NFKC').replace(/[­​-‏⁠﻿]/g, '').replace(/\s+/g, ' ').trim(); if (!t) return;
       let block = owner; while (block && /^(?:inline(?:-.*)?|contents)$/.test(gs(block).display)) block = up(block);
       if (parts.length) parts.push(previous === block ? ' ' : '\n');
       parts.push(t); previous = block;
     };
-    const pseudo = (n, which) => { const c = gs(n, which)?.content; if (c && c !== 'none' && c !== 'normal') push(c.replace(/^["']|["']$/g, ''), n); };
+    const pseudo = (n, which) => { const c = gs(n, which)?.content; if (/counters?\(/.test(c ?? '')) throw Error('counter content'); if (c && c !== 'none' && c !== 'normal') push(c.replace(/^["']|["']$/g, ''), n); };
+    const media = ['img', 'canvas', 'svg', 'video', 'picture', 'object', 'embed'], hollow = ['img', 'input', 'textarea', 'select', 'canvas', 'video', 'svg', 'iframe', 'object', 'embed', 'br', 'hr', 'wbr', 'meter', 'progress', 'audio', 'button', 'picture', 'source', 'track', 'area', 'col', 'base', 'link', 'meta', 'param', 'script', 'style', 'template', 'noscript', 'slot'];
     const walk = n => {
       if (++count > 20000) throw Error('too many nodes');
       const on = shown(n), tag = read(n, 'localName');
-      // A banner-sized image or canvas can show a total we can't read.
-      if (on && ['img', 'canvas', 'svg', 'video', 'picture', 'object', 'embed'].includes(tag)) { const b = read(n, 'getBoundingClientRect')(); if (b.width >= 100 && b.height >= 16) throw Error('unreadable content'); }
+      if (on && media.includes(tag)) {
+        const b = read(n, 'getBoundingClientRect')();
+        // A banner-sized image or canvas can show a total we can't read; a smaller one is an unknown figure.
+        if (b.width >= 100 && b.height >= 16) throw Error('unreadable content');
+        const alt = read(n, 'getAttribute')('alt');
+        if (alt) push(alt, n); else if (b.width >= (tag === 'svg' ? 50 : 24) && b.height >= (tag === 'svg' ? 12 : 8) && !(tag === 'svg' && (read(n, 'textContent') ?? '').trim())) push('￼', n);
+      }
       if (on) {
         pseudo(n, '::before');
         if (tag === 'input') { if (!/^(?:hidden|password|checkbox|radio|file)$/.test(read(n, 'type'))) push(read(n, 'value'), n); }
         else if (tag === 'textarea') push(read(n, 'value'), n);
         else if (tag === 'select') for (const o of Array.from(read(n, 'selectedOptions') ?? [])) push(read(o, 'textContent'), n);
+        else if (n !== root && !hollow.includes(tag) && !read(n, 'shadowRoot') && !read(n, 'childElementCount') && !(read(n, 'textContent') ?? '').trim()) {
+          const b = read(n, 'getBoundingClientRect')(), g = ['::before', '::after'].some(which => { const c = gs(n, which)?.content; return c && c !== 'none' && c !== 'normal'; });
+          if (b.width >= 24 && b.height >= 8 && !g) throw Error('empty box');
+        }
       }
       if (['select', 'textarea', 'input'].includes(tag)) { if (on) pseudo(n, '::after'); return; }
       const shadow = read(n, 'shadowRoot'); if (shadow) for (const c of Array.from(read(shadow, 'childNodes') ?? [])) if (read(c, 'nodeType') === 1) walk(c);
@@ -253,28 +325,75 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const tag = read(el, 'localName'), isField = ['input', 'select', 'textarea'].includes(tag);
     const own = [read(el, 'getAttribute')('aria-label'), isField ? undefined : read(el, 'textContent'), isField ? undefined : read(el, 'getAttribute')('value'),
       tag === 'input' && /^(?:submit|button|image|reset)$/.test(read(el, 'type')) ? read(el, 'value') : undefined].filter(Boolean);
-    return parts.join('').split('\n').concat(own.map(t => String(t).replace(/\s+/g, ' ').trim()));
+    return parts.join('').split('\n').concat(own.map(t => String(t).normalize('NFKC').replace(/\s+/g, ' ').trim()));
   };
-  // A payable figure follows total/amount/due/pay/price/cost/charge; subtotals, tax, savings, balances and
-  // "before tax" lines are not payable. Every figure on a line is checked, and each line is also joined to the one
-  // before it so a label and figure in different blocks still meet.
-  const conflicts = (lines, amount) => {
+  // Does any rendered figure show a payable amount that differs from `amount`? Each figure gets a role from the words next to it:
+  //   pay   the word just before it (or, for a figure first, just after it) is total/amount/due/pay/price/cost/billed: it must equal the amount.
+  //   sub   a part of the total (subtotal, tax, fee, shipping, discount, "before tax"), or a compound like "tax amount": it may be smaller
+  //         than the amount; a larger one needs a visible discount line at least as large as the gap, else the real total is unknown.
+  //   unit  per/each/unit/payments/monthly: may be smaller than the amount, never larger.
+  //   none  balances, limits, "over $50", "incl. $1.50": not a charge.
+  // Only the words right at the figure decide (back to the last sentence break or colon), so a leading "Includes tax & fees." exempts nothing.
+  // Label, qualifier and figure may sit on three separate lines, so up to three lines are read as one.
+  const conflicts = (lines, strictLines, amount) => {
     const num = value => Number(String(value).replace(/[^\d.]/g, ''));
-    const token = /(?:[$€£¥]\s*|\b(?:USD|EUR|GBP|CAD|AUD)\s*)(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*\.\d{2})\b|(\d[\d,]*(?:\.\d+)?)\s*(?:USD|EUR|GBP|CAD|AUD)\b|(?<=[:=]\s*)(\d[\d,]*(?:\.\d+)?)/gi;
-    const label = /\b(?:total|amount|due|pay(?:ment|able)?|price|cost|charged?|charges|owe[ds]?)\b/i;
-    const before = /\b(?:sub-?\s?total|tax(?:es)?|vat|gst|savings?|saved?|discount|shipping|delivery|tips?|fees?|available|remaining|credit|refund|limit|points|rewards?|coupon|monthly|per|each|unit|item)\b/i;
-    const after = /^\s*(?:tax|vat|savings?|saved|discount|shipping|delivery|tips?|fees?)\b|\b(?:before|excluding|excl|without|pre-?tax)\b/i;
-    const scan = line => {
-      let end = 0;
-      for (const m of line.matchAll(token)) {
-        const seg = line.slice(end, m.index); end = m.index + m[0].length;
-        const found = label.exec(seg); if (!found) continue;
-        if (before.test(seg.slice(0, found.index + found[0].length)) || after.test(seg.slice(found.index + found[0].length))) continue;
-        if (num(m[1] ?? m[2] ?? m[3] ?? m[4]) !== num(amount)) return true;
+    const A = num(amount), eps = 0.005;
+    const figure = /(?:[$€£¥]\s*|\b(?:USD|EUR|GBP|CAD|AUD)\s*)(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*\.\d{2})\b|(\d[\d,]*(?:\.\d+)?)\s*(?:USD|EUR|GBP|CAD|AUD)\b|(?<=[:=]\s*)(\d[\d,]*(?:\.\d+)?)|(￼)/gi;
+    const PAY = /^(?:total|amount|due|pay|payment|payable|price|cost|charge[ds]?|charges|billed|bill|owe[ds]?)$/;
+    const UNIT = /^(?:per|each|ea|unit|units|apiece|x|×|payments|installments?|monthly|weekly|daily|yearly|annually)$/;
+    const PART = /^(?:sub-?\s?total|tax(?:es)?|vat|gst|hst|fees?|shipping|delivery|handling|tips?|surcharge|discounts?|savings?|saved?|coupon|promo|rebate|off|before|excl|excluding|excludes|pretax|without)$/;
+    const CUT = /^(?:discounts?|savings?|saved?|coupon|promo|rebate|off)$/;
+    const QUAL = /^(?:incl|includes?|including|inc|plus|less|minus|after|with|and|from|before|excl|excluding|excludes)$/;
+    const FILL = /^(?:of|is|are|will|be|only|now|today|just|about|approx|approximately|currently|a|an|the|in|usd|eur|gbp|cad|aud)$/;
+    const words = text => (text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*|×/g) ?? []);
+    const trim = text => text.replace(/[\s:=\-–—()\[\]~≈]+$/, '');
+    const role = (left, right) => {
+      const lw = words(left), rw = words(right);
+      let i = lw.length - 1; while (i >= 0 && FILL.test(lw[i])) i--;
+      const rj = rw.findIndex(w => !FILL.test(w)), r0 = rj >= 0 ? rw[rj] : undefined;
+      if (r0 && UNIT.test(r0)) return { kind: 'unit', qualifier: false };
+      if (i >= 0) {
+        const w = lw[i];
+        if (UNIT.test(w)) return { kind: 'unit', qualifier: false };
+        if (PAY.test(w)) return { kind: PART.test(lw[i - 1] ?? '') ? 'sub' : 'pay', qualifier: false };
+        if (PART.test(w)) return { kind: lw.some(x => PAY.test(x)) || /^sub-?total$/.test(w) ? 'sub' : 'none', qualifier: false, cut: CUT.test(w) };
+        return { kind: 'none', qualifier: QUAL.test(w) };
       }
-      return false;
+      if (r0 && PAY.test(r0)) return { kind: rw.slice(rj + 1).some(w => PART.test(w)) ? 'sub' : 'pay', qualifier: false };
+      if (r0 && CUT.test(r0)) return { kind: 'none', cut: true, qualifier: false };
+      return { kind: 'none', qualifier: false };
     };
-    return lines.some((line, i) => scan(line) || i > 0 && scan(lines[i - 1] + ' ' + line));
+    // Every figure of one (joined) text with its role.
+    const figuresOf = text => {
+      const found = []; let start = 0;
+      const all = [...text.matchAll(figure)];
+      all.forEach((m, k) => {
+        let seg = text.slice(start, m.index).replace(figure, ' ');
+        seg = trim(seg); const cut = Math.max(...[...seg.matchAll(/[.;!?:|]/g)].map(x => x.index), -1); seg = seg.slice(cut + 1);
+        const next = all[k + 1], tail = text.slice(m.index + m[0].length, next?.index ?? text.length);
+        const rest = tail.replace(/^[\s)\]]+/, ''), hard = /[.;!?:|]/.exec(rest), right = hard ? rest.slice(0, hard.index) : rest;
+        const r = role(seg, right);
+        found.push({ ...r, at: m.index, value: m[5] ? Infinity : num(m[1] ?? m[2] ?? m[3] ?? m[4]) });
+        if (!r.qualifier) start = m.index + m[0].length;
+      });
+      return found;
+    };
+    const joined = list => list.flatMap((line, i) => [[line], i > 0 && [list[i - 1], line], i > 1 && [list[i - 2], list[i - 1], line]].filter(Boolean).map(from => ({ text: from.join(' '), from })));
+    const prepare = list => list.map(t => String(t).replace(/\b(incl|excl|inc|approx|est|ex|vs)\./gi, '$1'));
+    let cuts;
+    const reconciled = (value, line) => {
+      cuts ??= joined(prepare(strictLines() ?? [])).flatMap(({ text, from }) => figuresOf(text).filter(f => f.cut && Number.isFinite(f.value)).map(f => ({ value: f.value, from })));
+      return cuts.some(d => !d.from.includes(line) && value - d.value <= A + eps);
+    };
+    // The line a figure sits on: the last line that starts at or before it in the joined text.
+    const ownLine = (from, at) => { let pos = 0, own = from[0]; for (const part of from) { if (pos <= at) own = part; pos += part.length + 1; } return own; };
+    return joined(prepare(lines)).some(({ text, from }) => figuresOf(text).some(f => {
+      if (Math.abs(f.value - A) < eps) return false;
+      if (f.kind === 'pay') return true;
+      if (f.kind === 'unit') return f.value > A + eps;
+      if (f.kind === 'sub') return f.value > A + eps && !reconciled(f.value, ownLine(from, f.at));
+      return false;
+    }));
   };
   const field = key => {
     if (!root) return;
@@ -298,7 +417,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     if (key === 'amount' && values.length === 1) {
       // Anything rendered that shows a different payable figure (LOOSE) leaves the terms ambiguous.
-      const lines = looseLines(); if (!lines || conflicts(lines, values[0])) return;
+      const lines = looseLines(); if (!lines || conflicts(lines, () => visibleText(root).split('\n'), values[0])) return;
     }
     return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };

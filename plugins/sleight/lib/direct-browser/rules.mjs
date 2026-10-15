@@ -47,18 +47,16 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
 
 export function intent(kind, target = {}) {
   const key = target.key?.split('+').at(-1), activation = kind === 'press' && ['Enter', 'Return', 'Space', ' '].includes(key);
-  let submit = kind === 'submit', payment = false, plain = kind === 'submit';
+  let submit = kind === 'submit', payment = false;
   for (const el of [target.prior, target.element].filter(Boolean)) {
     const button = el.kind === 'button' || el.role === 'button', link = el.kind === 'link' || el.role === 'link' || el.tag === 'a';
     const sends = kind === 'click' || activation && (['Enter', 'Return'].includes(key) ? button || link || el.submit || el.form && el.tag !== 'textarea' : button);
     const submits = kind === 'submit' || sends && (el.submit || el.payment && (button || link) || el.form && activation);
     submit ||= !!submits;
     payment ||= !!submits && (el.payment === true || el.formPayment === true);
-    plain ||= !!submits && el.scriptButton !== true;
   }
-  if (kind === 'dialog' && target.accept === true) { payment ||= target.element?.payment === true || paymentWords(target.message); submit = payment; plain ||= payment; }
-  // scripted: the only payment evidence is a script-driven button (coupon Apply, Edit) in a payment form.
-  return { submit, payment, scripted: payment && !plain };
+  if (kind === 'dialog' && target.accept === true) { payment ||= target.element?.payment === true || paymentWords(target.message); submit = payment; }
+  return { submit, payment };
 }
 
 export function expirePaymentDialog(ctx) { const bank = payments.get(ctx); if (bank) bank.dialog = undefined; }
@@ -103,8 +101,7 @@ export function check(ctx, kind, target = {}) {
       ...(page?.currency !== undefined ? { currency: page.currency } : {}) };
     const ask = () => ({ verdict: 'confirm', terms });
     if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
-    let bank = payments.get(ctx); if (!bank) { bank = { used: new Set(), scriptedUsed: new Set() }; payments.set(ctx, bank); }
-    bank.scriptedUsed ??= new Set();
+    let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
     if (kind === 'dialog' && bank.dialog &&
         (!ctx.dialogContinuation || ctx.dialogContinuation(target) === true) && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
       bank.dialog = undefined; return allow;
@@ -114,11 +111,10 @@ export function check(ctx, kind, target = {}) {
     const requested = user?.payment && ['item', 'method'].every(key => text(user.payment[key])) &&
       ['item', 'method', 'amount', 'payee', 'currency'].every(key => user.payment[key] === undefined || user.payment[key] === terms[key]);
     const strict = (ctx.confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'always';
-    // A script-driven button may be Apply or Edit: it needs the user's request and never spends the real submit's authority,
-    // but gets its own budget of one activation per request, so a disguised charge button can't be pressed again after each read.
-    if (!(requested && !strict && !bank.used.has(requestKey)) && (risk.scripted || ctx.consent?.consume(terms, target) !== true)) return ask();
-    if (risk.scripted) { if (bank.scriptedUsed.has(requestKey)) return ask(); bank.scriptedUsed.add(requestKey); }
-    else if (requestKey) bank.used.add(requestKey);
+    // One payment activation per user request, whichever kind of control it is: a script-driven button may be Apply or a
+    // disguised charge, so it spends the same budget as the real submit. Past the budget, the user is asked through consume.
+    if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();
+    if (requestKey) bank.used.add(requestKey);
     if (target.state) paymentPages.add(target.state);
     bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
     return allow;
