@@ -205,76 +205,153 @@ export function popupHook() {
   // what the checked element activates (itself, its label's control, its image map's areas) once hover has
   // settled; every trusted press, release and click is then cancelled if that changed or landed elsewhere.
   // Natives are captured here, before page scripts, and registered first so no page listener runs earlier.
-  const getter = (type, name) => Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
+  //
+  // The check fails closed. It calls only natives captured here, uncurried so no page-visible lookup happens
+  // (no Function.prototype.call, Array, String, RegExp or Math method, no Symbol.hasInstance, no own property
+  // on an element or event). Classes are told apart by a native getter's brand check, not by instanceof, and
+  // no page value ever builds a selector. If anything in the check throws, the input is cancelled.
+  //
+  // Key-shield API (window[Symbol.for('sleight.popup3')]), for callers that send trusted input:
+  //   guard(element, token, capMs, { keys }) seals what activating `element` touches and arms the shield for
+  //     capMs; { keys: true } also vetoes keydown, keypress, keyup and submit events (the form's action, method,
+  //     target, enctype, novalidate and default submitter are in the seal). Returns false if it cannot arm.
+  //   verdict(token) returns the veto reason, or undefined if every guarded event matched the seal.
+  //   finish(token) disarms and returns the veto reason, or true.
+  const uncurry = Function.prototype.bind.bind(Function.prototype.call);
+  const getter = (type, name) => {
+    const get = Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
+    return get ? uncurry(get) : () => { throw Error('native ' + name + ' unavailable'); };
+  };
   const textOf = getter(globalThis.Node, 'textContent'), nameOf = getter(Element, 'localName'), connected = getter(globalThis.Node, 'isConnected');
-  const rootOf = globalThis.Node?.prototype.getRootNode, queryAll = Element.prototype.querySelectorAll, queryDoc = globalThis.Document?.prototype.querySelector;
+  const parentElementOf = getter(globalThis.Node, 'parentElement'), listLength = getter(globalThis.NodeList, 'length'), typeOf = getter(Event, 'type');
   const shadowMode = getter(globalThis.ShadowRoot, 'mode'), shadowHost = getter(globalThis.ShadowRoot, 'host');
-  const stopNow = Event.prototype.stopImmediatePropagation;
-  const ids = new WeakMap(); let serial = 0, shield;
-  const ident = node => { if (!ids.has(node)) ids.set(node, ++serial); return ids.get(node); };
-  const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619); return h + ':' + value.length; };
+  const labelOf = getter(HTMLLabelElement, 'control');
+  const controlGetters = [HTMLButtonElement, HTMLInputElement, globalThis.HTMLTextAreaElement, HTMLSelectElement].map(type => [getter(type, 'form'), getter(type, 'type')]);
+  const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryAll = uncurry(Element.prototype.querySelectorAll);
+  const queryDocAll = uncurry(globalThis.Document?.prototype.querySelectorAll), queryFragAll = uncurry(globalThis.DocumentFragment?.prototype.querySelectorAll);
+  const attr = uncurry(getAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
+  const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
+  const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
+  const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
+  let serial = 0, shield;
+  const ident = node => { if (!idsHas(ids, node)) idsSet(ids, node, ++serial); return idsGet(ids, node); };
+  const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = imul(h ^ charCodeAt(value, i), 16777619); return h + ':' + value.length; };
   const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'for', 'usemap'];
-  const formSignature = form => {
-    const parts = [], nodes = queryAll.call(form, 'input,button,iframe,select,textarea');
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i], row = [nameOf.call(node), textOf.call(node)];
-      for (const name of ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form']) row.push(attribute(node, name) ?? '');
-      parts.push(row.join('\u0001'));
-    }
-    return hash(parts.join('\u0002'));
+  const formAttributes = ['action', 'method', 'target', 'enctype', 'novalidate'];
+  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form'];
+  const isElement = node => { try { nameOf(node); return true; } catch { return false; } };
+  // { form, type } for a form-associated button, input, textarea or select; a brand mismatch throws and falls to the next, so no instanceof.
+  const controlOf = node => {
+    for (let i = 0; i < controlGetters.length; i++) { try { return { form: controlGetters[i][0](node), type: controlGetters[i][1](node) }; } catch { /* Not this class. */ } }
+    return null;
   };
-  // Everything the rules read to classify a control: words, type, form owner and that form's controls.
-  const describe = node => {
-    const control = formControls.find(item => node instanceof item.constructor), form = control?.form.call(node);
-    const row = [ident(node), nameOf.call(node), connected.call(node), hash(textOf.call(node)), control ? control.type.call(node) : '', form ? ident(form) + '|' + formSignature(form) : ''];
-    for (const name of attributes) row.push(attribute(node, name) ?? '');
-    return row.join('\u0001');
-  };
-  // HTML label activation: the first label at or above the element forwards to its control unless interactive content sits between.
-  const forwardedOf = element => {
-    for (const node of ancestors(element)) {
-      if (node instanceof labelControl.constructor) return labelControl.control.call(node);
-      if (nativeMatches.call(node, interactive)) return null;
+  const hostOf = node => { try { return shadowHost(rootOf(node)); } catch { return null; } };
+  const parentOf = node => parentElementOf(node) ?? hostOf(node);
+  // A form's default submitter is its first submit button in tree order among the controls it owns (what Enter in a field presses).
+  const submitterOf = form => {
+    let nodes;
+    try { nodes = queryDocAll(rootOf(form), 'button,input'); } catch { nodes = queryFragAll(rootOf(form), 'button,input'); }
+    for (let i = 0; i < listLength(nodes); i++) {
+      const control = controlOf(nodes[i]);
+      if (control?.form === form && (control.type === 'submit' || control.type === 'image')) return nodes[i];
     }
     return null;
   };
-  const areasOf = element => {
-    const name = String(attribute(element, 'usemap') ?? '').replace(/^#/, ''), found = [];
-    const map = name && queryDoc.call(document, 'map[name="' + name.replace(/["\\]/g, '\\$&') + '"]');
-    const areas = map ? queryAll.call(map, 'area') : [];
-    for (let i = 0; i < areas.length; i++) found.push(areas[i]);
-    return found;
+  const formSignature = (form, withSubmitter) => {
+    const submitter = withSubmitter ? submitterOf(form) : null;
+    let parts = (submitter ? ident(submitter) : '') + '\u0002';
+    for (let i = 0; i < formAttributes.length; i++) parts += (attr(form, formAttributes[i]) ?? '') + '\u0001';
+    const nodes = queryAll(form, 'input,button,iframe,select,textarea');
+    for (let i = 0; i < listLength(nodes); i++) {
+      const node = nodes[i];
+      parts += '\u0002' + nameOf(node) + '\u0001' + textOf(node);
+      for (let j = 0; j < rowAttributes.length; j++) parts += '\u0001' + (attr(node, rowAttributes[j]) ?? '');
+    }
+    return hash(parts);
   };
-  const sealed = (element, forwarded, areas) => [describe(element), forwarded ? describe(forwarded) : '', ...areas.map(describe)].join('\u0003');
+  // Everything the rules read to classify a control: words, type, form owner and that form's controls.
+  const describe = (node, withSubmitter) => {
+    const control = controlOf(node), form = control?.form;
+    let row = ident(node) + '\u0001' + nameOf(node) + '\u0001' + connected(node) + '\u0001' + hash(textOf(node)) + '\u0001' + (control ? control.type : '')
+      + '\u0001' + (form ? ident(form) + '|' + formSignature(form, withSubmitter) : '');
+    for (let i = 0; i < attributes.length; i++) row += '\u0001' + (attr(node, attributes[i]) ?? '');
+    return row;
+  };
+  // HTML label activation: the first label at or above the element forwards to its control unless interactive content sits between.
+  const forwardedOf = element => {
+    let node = element;
+    for (let depth = 0; node && depth < 100000; depth++, node = parentOf(node)) {
+      let label = false, control;
+      try { control = labelOf(node); label = true; } catch { /* Not a label. */ }
+      if (label) return control;
+      if (matchesNode(node, interactive)) return null;
+    }
+    return null;
+  };
+  // The image map's areas, as the static list the browser returns. The map name is page data, compared as a string.
+  const areasOf = element => {
+    let name = attr(element, 'usemap') ?? '';
+    if (name.length > 0 && charCodeAt(name, 0) === 35) name = slice(name, 1);
+    if (name.length === 0) return null;
+    const maps = queryDocAll(document, 'map');
+    for (let i = 0; i < listLength(maps); i++) if (attr(maps[i], 'name') === name) return queryAll(maps[i], 'area');
+    return null;
+  };
+  const sealed = (element, forwarded, areas, withSubmitter) => {
+    let value = describe(element, withSubmitter) + '\u0003' + (forwarded ? describe(forwarded, withSubmitter) : '');
+    for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + describe(areas[i], withSubmitter);
+    return value;
+  };
+  const listHas = (list, node) => { for (let i = 0; list && i < listLength(list); i++) if (list[i] === node) return true; return false; };
+  const pathIndex = (path, node) => { for (let i = 0; i < path.length; i++) if (path[i] === node) return i; return -1; };
   // composedPath() from window omits nodes inside a closed shadow root; the outermost closed host stands for them.
   const anchorOf = element => {
     let anchor = element;
-    for (let node = element; node;) {
-      const root = rootOf.call(node);
-      if (!(root instanceof ShadowRoot)) break;
-      node = shadowHost.call(root);
-      if (shadowMode.call(root) === 'closed') anchor = node;
+    for (let node = element, depth = 0; node && depth < 100000; depth++) {
+      const root = rootOf(node);
+      let host;
+      try { host = shadowHost(root); } catch { break; }
+      node = host;
+      if (shadowMode(root) === 'closed') anchor = node;
     }
     return anchor;
   };
+  const pointerType = type => type === 'pointerdown' || type === 'mousedown' || type === 'pointerup' || type === 'mouseup' || type === 'click' || type === 'auxclick' || type === 'dblclick' || type === 'contextmenu';
+  const keyType = type => type === 'keydown' || type === 'keypress' || type === 'keyup' || type === 'submit';
+  const interactiveBetween = (path, at, forwarded) => {
+    for (let i = 0; i < at; i++) if (path[i] !== forwarded && isElement(path[i]) && matchesNode(path[i], interactive)) return true;
+    return false;
+  };
   const inspect = event => {
-    const { element, anchor, forwarded, areas } = shield;
-    if (!connected.call(element)) return 'target left the page';
+    const { element, anchor, forwarded, areas, keys, form, submitter } = shield;
+    if (!connected(element)) return 'target left the page';
     // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
-    const path = composedPath.call(event), at = path.indexOf(anchor);
-    if (at < 0 ? !(forwarded && path.includes(forwarded)) && !areas.includes(path[0]) : anchor === element && path.slice(0, at).some(node => node instanceof Element && node !== forwarded && nativeMatches.call(node, interactive)))
-      return 'the input landed on a different element';
-    return sealed(element, forwardedOf(element), areasOf(element)) === shield.signature ? undefined : 'the checked element changed';
+    const path = pathOf(event), at = pathIndex(path, anchor);
+    if (at < 0) {
+      // Keyboard activation (keys) lands on the form's default submitter or submits the form itself.
+      const elsewhere = !(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0])
+        && !(keys && (form && pathIndex(path, form) >= 0 || submitter && pathIndex(path, submitter) >= 0));
+      if (elsewhere) return 'the input landed on a different element';
+    } else if (anchor === element && interactiveBetween(path, at, forwarded)) return 'the input landed on a different element';
+    return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : 'the checked element changed';
   };
+  // Fail closed: if the check cannot run on this DOM, the input is cancelled.
   const guardEvent = event => {
-    if (!shield || !event.isTrusted || now() >= shield.until) return;
-    const bad = shield.violation ?? inspect(event);
+    const current = shield;
+    if (!current || !event.isTrusted || now() >= current.until) return;
+    let bad;
+    try {
+      const type = typeOf(event);
+      if (!(pointerType(type) || current.keys && keyType(type))) return;
+      bad = current.violation ?? inspect(event);
+    } catch { bad = 'the checked element changed'; }
     if (!bad) return;
-    shield.violation ??= bad;
-    stopNow.call(event); nativePrevent.call(event);
+    current.violation ??= bad;
+    try { stopNow(event); } catch { /* The prevent below still cancels the default. */ }
+    try { cancel(event); } catch { /* Nothing further can be done to this event. */ }
   };
-  const guarded = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu'];
-  for (const type of guarded) add.call(window, type, guardEvent, true);
+  const guarded = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu', 'keydown', 'keypress', 'keyup', 'submit'];
+  for (let i = 0; i < guarded.length; i++) add.call(window, guarded[i], guardEvent, true);
   add.call(window, 'keydown', keyEvent, true);
   add.call(window, 'keyup', keyEvent, true);
   add.call(window, 'click', capture, true);
@@ -286,12 +363,27 @@ export function popupHook() {
     arm = undefined; return true;
   };
   const api = {
-    guard(element, token, capMs) {
-      if (retired.has(token) || !(element instanceof Element) || !connected.call(element) || !Number.isFinite(capMs) || capMs <= 0) return false;
+    // See the key-shield API above. Any throw here reaches the caller as a rejected call, which reads as "page changed".
+    guard(element, token, capMs, { keys = false } = {}) {
+      if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0 || !isElement(element) || !connected(element)) return false;
+      const withKeys = keys === true, control = controlOf(element), form = withKeys ? control?.form ?? null : null;
       const forwarded = forwardedOf(element), areas = areasOf(element);
-      shield = { token, element, anchor: anchorOf(element), forwarded, areas, signature: sealed(element, forwarded, areas), until: now() + capMs };
+      shield = { token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
+        signature: sealed(element, forwarded, areas, withKeys), until: now() + capMs };
       return true;
     },
+    // Scroll the element into view without animation, so the pointer can be moved onto it (the click would scroll anyway).
+    reveal(element) { scrollInto(element, { block: 'nearest', inline: 'nearest', behavior: 'instant' }); },
+    // Resolves after the next frame (or 40 ms if frames are throttled) and one more task, so swaps scheduled by the
+    // pointer's arrival (events, observers, timers, animation frames) land before the seal is taken.
+    settle() {
+      return new Promise(resolve => {
+        let waiting = true;
+        const next = () => { if (waiting) { waiting = false; nativeTimeout(resolve, 0); } };
+        nativeFrame?.(next); nativeTimeout(next, 40);
+      });
+    },
+    verdict(token) { return shield?.token === token ? shield.violation : undefined; },
     prepare(element, token, capMs) {
       if (retired.has(token)) return false;
       if (arm) finish(arm.token);
@@ -335,7 +427,7 @@ export function popupHook() {
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
       remove.call(window, 'click', capture, true);
-      for (const type of guarded) remove.call(window, type, guardEvent, true);
+      for (let i = 0; i < guarded.length; i++) remove.call(window, guarded[i], guardEvent, true);
       shield = undefined;
       for (const restore of replacements.reverse()) restore();
       if (window[key] === api) delete window[key];
@@ -347,7 +439,6 @@ export function popupHook() {
 }
 
 const changedMidClick = 'page changed during the click; read again';
-const dwellMs = 50;
 
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
   const token = randomUUID();
@@ -359,21 +450,25 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
         const hook = window[Symbol.for('sleight.popup3')];
         if (!hook) throw Error('background popup hook unavailable');
-        return hook.prepare(element, token, capMs);
+        const result = hook.prepare(element, token, capMs);
+        hook.reveal(element);
+        return result;
       }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
     const modified = prepared === true || prepared?.kind === 'link';
-    // Hover first so a swap driven by the pointer arriving lands before the final check, then seal what this
-    // click activates. The click callback classifies after this; the hook cancels any input that no longer matches.
-    if (typeof locator.hover === 'function') {
-      // An element with no box (an image-map area) cannot be hovered; the guard below still seals it.
-      try { await locator.hover({ timeout: timeoutMs }); await new Promise(resolve => setTimeout(resolve, dwellMs)); }
-      catch (error) { if (!/element is not visible/.test(error.message)) throw error; }
+    // Move the pointer onto the element first, so a swap the pointer's arrival triggers lands before the seal is
+    // taken, then wait one frame in the page and seal what this click activates. The click callback classifies
+    // after this; the hook cancels any input that no longer matches. An element with no box (an image-map area)
+    // gets no move; the seal still covers it.
+    if (typeof locator.boundingBox === 'function' && tab.page.mouse) {
+      const box = await locator.boundingBox({ timeout: timeoutMs });
+      if (box) await tab.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     }
     try {
-      await deadline(() => locator.evaluate((element, { token, capMs }) => {
+      await deadline(() => locator.evaluate(async (element, { token, capMs }) => {
         const hook = window[Symbol.for('sleight.popup3')];
-        if (!hook?.guard(element, token, capMs)) throw Error('click guard unavailable');
+        await hook.settle();
+        if (!hook.guard(element, token, capMs)) throw Error('click guard unavailable');
         return true;
       }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error(changedMidClick); }
