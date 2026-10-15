@@ -3,32 +3,34 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 03:50 UTC, flushed before the owner's clear and reboot)
+## Banner (2026-10-15 04:40 UTC, owner asleep, Night Shift)
 
-OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight); Night Shift on.
+OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. 1.3.0 waits only on turbo v3's gate. ROADMAP.md is the plan. Read it whole.
 
-Owner, 2026-10-15 before the reboot: all testing runs on the owner's Anthropic account login, never API console credits (LAWS). After
-the reboot the owner sleeps and the box is sleight-arch's all night (live runs allowed). Agree quiet windows with Puddle's architect
-session (`ListAgents`, then `SendMessage`) before heavy runs. Puddle runs heavy Swift tests.
+Owner, 2026-10-15: all testing runs on the owner's Anthropic account login, never API console credits (LAWS). The box is
+sleight-arch's all night (live runs allowed). Puddle holds `/tmp/sleight-hold` for window 1015b from 03:52 UTC (up to about 2 h),
+and full checks wait. Puddle's architect says focused headless agents are fine.
+
+**Owner step before the gate round.** The bench arms `sleight-turbo` and `fowlbrowser` have no login (only `claude-in-chrome` has
+one, per `auth status` at 04:10 UTC). One command logs both in:
+`B=~/.config/sleight-bench/world/arms; for a in sleight-turbo fowlbrowser; do env -i HOME=$HOME USER=$USER PATH=$PATH CLAUDE_CONFIG_DIR=$B/$a/claude-config $B/fowlbrowser/node_modules/.bin/claude auth login; done`
 
 Branches (all on `private`):
-- `pane/auto-mode` at the commit holding this banner. Holds RC1, RC1R, RC1R2 and RC1R3 (`e403ea02`: sleight reconnects after a
-  ChatGPT engine update without a restart, keeps approvals, each round reviewed PASS). Full check 5729 pass, 0 fail, 59 skipped.
-  `~/Projects/sleight` is fast-forwarded to it. 0 open PRs. Public CI green on 1.2.5.
-- `v3-gate` at `883f3bd8` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3 (full check 6214 pass at `1ee4cd57`), two bench fixes
-  (`4c2248b2` runner skips the FowlBrowser socket for turbo, `f4f6899c` bench-only hook refuses engine js that mentions a browser),
-  and TN1 (`883f3bd8`, the turbo skill line names the application, 131 focused tests).
-- `arch/ad1-int` at `145282d1` (`~/Projects/sleight-wt/adfix-int`): the AD1 bank (about 330 adversarial real-page tests) plus the
-  fix branches hyg r2, pop r1, kb r2, pay r3 and the port guard (`arch/ad1-fixes` `437ee306`, reviewed PASS). The keyboard, payment, page-instructions,
-  submit-retry, page-natives and endpoint files pass 398/398 there (before hyg r2). Open review findings for each branch, with repro paths: `ledger/claims/AD1/OPEN-REVIEWS.md`.
-- Fix branches (worktrees `~/Projects/sleight-wt/adfix-<name>`): `arch/ad1-kb` `71e98b7b` FAILED r2, `arch/ad1-pop` `3649e061`
-  FAILED r1, `arch/ad1-pay` `e746de84` FAILED r3, `arch/ad1-hyg` `a1c3ebac` (r1 PASS, r2 unreviewed), `arch/ad1-swap` (r1
-  `b09baf03` 41/41, r2 running at the flush; its agent ends at the clear, so check the branch for a newer commit).
-- Merge after reviews, before the release pass: `codex/cr8` `f9237223` (PASS), `codex/cr9` `b612a753`. After the gate (owner):
-  `codex/v8` `813bca75`, then V8R (queued).
+- `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
+  a restart). Full check 5729 pass, 0 fail, 59 skipped. `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
+- `v3-gate` at `83fbf6b4` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3, the two bench fixes, TN1, and the funding switch
+  (`83fbf6b4`, 113/113 focused). The sleight, turbo, FowlBrowser and computer use arms run on the login. Browser Use needs the API key, so it runs only in a round of its own.
+- `arch/ad1-int` at `5a5265c6` (`~/Projects/sleight-wt/adfix-int`) merges the AD1 bank with the port guard and the fix rounds hyg r2, pop r1,
+  kb r2, pay r3, CR8 and CR9. The bank there passes in full for endpoint (136), keyboard (27), instructions (36), natives (90), payment (90) and
+  submit-retry (26), with timing-and-covering 30/41 until swap merges. Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
+- Fix rounds running as Claude agents (Sonnet high) since 04:15 UTC, records in `ledger/claims/AD1/`: swap r2 (fail-closed shield,
+  latency, key-shield API), pay r4 (B1 to B6; sleight-arch's B5 call: one payment budget per request, scripted and plain share it),
+  pop r2 (A1 to A6), hyg r3 (three lows from the hyg r2 review, which PASSED). kb r3 starts once swap r2 is pushed (it builds on the
+  key-shield API). CR10 is not merged: its premise was disproved (`ledger/claims/CR10/REPORT.md`).
+- After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
 demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.google.Chrome")` launched the owner's Chrome to the front at 02:59:17 UTC
@@ -37,8 +39,7 @@ demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.goog
 test/demo/server.mjs --all" --out <dir> --effort high`.
 
 Next, in order (the box is sleight-arch's overnight):
-1. Switch `bench/fowl/rounds.sh` and `bench/fowl/preflight.mjs` funding to the owner's login for every Claude arm (browser-use
-   needs an API key by design, so name it as not run or ask the owner).
+1. Done 04:20 UTC: funding switched (`83fbf6b4`). Browser Use is named as not run unless the owner funds it.
 2. Fix the AD1 review findings in `ledger/claims/AD1/OPEN-REVIEWS.md` with fresh Sonnet-high agents per branch (kb builds on swap's
    shield), re-review each with real-page repros, merge into `arch/ad1-int`, rerun all seven bank files, merge CR8 and CR9, one
    full check, then merge into v3-gate.
