@@ -639,3 +639,59 @@ test('round 9: honest allow rate over the 36 suite pages, the 20 reviewer pages 
   assert.ok(twenty >= 19 && twelve >= 9, twenty + ' of 20, ' + twelve + ' of 12');
   assert.ok(real + twenty + twelve >= 60, 'together ' + (real + twenty + twelve) + '/68');
 });
+
+// ---------------------------------------------------------------- Round 10
+// Every exemption needs the whole label to be a closed phrase, and the rest of the sentence (across later figures) to be closed too.
+// Fixture pay-r10-labels: the round 9 reviewer's ~110 phrasings (a, b, c, d, e, g, h) and this round's own (n1 to n5), 698 bodies with
+// the outcome each must have (181 allow: the exact closed phrases, the controls and the known limits; 517 ask). Fixture pay-r10-honest:
+// the reviewer's 10 industry pages (honest10, 10/10 allow) and the bisected pieces of them (bis10*, all allow), each with its own amount.
+const fixture10 = name => JSON.parse(readFileSync(new URL('./fixtures/pay-r10-' + name + '.json', import.meta.url), 'utf8'));
+const form10 = body => `<form id=payment>${meta()}${body}<label>Card number<input autocomplete="cc-number"></label><button id=pay>Pay now</button></form>`;
+test('F-A, F-B, F-C, F-D (round 10): 698 closed-label bodies (every charge phrasing of the round 9 review asks; the exact closed phrases allow)', { skip, timeout: 900000 }, async t => {
+  await readCases(t, fixture10('labels').map(([name, body, expect]) => [name, form10(body), expect]));
+});
+test('F-D (round 10): the reviewer\'s 10 industry pages and their 36 bisected pieces allow with their own amounts', { skip, timeout: 300000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  try {
+    for (const [name, html, amount, expect] of fixture10('honest'))
+      await t.test(name, async () => {
+        await page.setContent('<!doctype html><body style="margin:8px"><main>' + html);
+        let read; try { read = (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount; } catch { read = undefined; }
+        assert.equal(read === amount ? 'allow' : 'ask', expect, name + ' read amount=' + read);
+      });
+  } finally { await page.close(); }
+});
+test('F-A (round 10): ten of the reviewer\'s charge phrasings, clicked through the real route, do not reach the network', { skip, timeout: 300000 }, async t => {
+  const T = row7('<b>Total</b>', '<b>$' + amt() + '</b>');
+  const pages = {
+    'F1 Debited and applied: $500.00': '<p>Debited and applied: $500.00</p>' + T,
+    'F1b Service fee applied $500.00': row7('Service fee applied', '$500.00') + T,
+    'A2 Your account will be debited an average of $500.00.': '<p>Your account will be debited an average of $500.00.</p>' + T,
+    'A7 Your card will be captured an average of $500.00': '<p>Your card will be captured an average of $500.00</p>' + T,
+    'E1 Late fee debited from your card: $500.00': '<p>Late fee debited from your card: $500.00</p>' + T,
+    'E2 Cancellation fee captured on your card: $500.00': '<p>Cancellation fee captured on your card: $500.00</p>' + T,
+    'U1 Your account will be debited up to $500.00.': '<p>Your account will be debited up to $500.00.</p>' + T,
+    'M1 Previous balance: $500.00 ($0.00 tax) will be withdrawn from your card.': '<p>Previous balance: $500.00 ($0.00 tax) will be withdrawn from your card.</p>' + T,
+    'LF2 A $500.00 late fee is added within minutes.': '<p>A $500.00 late fee is added within minutes.</p>' + T,
+    'O3 Optional debit: $500.00': '<p>Optional debit: $500.00</p>' + T,
+  };
+  for (const [name, body] of Object.entries(pages))
+    await t.test(name, async t2 => {
+      const r = await payOnce(t2, form(body), 'Pay', { head: '<meta charset="utf-8">' });
+      assert.equal(r.payment, 0, name + ': ' + r.text);
+    });
+});
+test('round 10: honest allow rate over the 36 suite pages, the 20 reviewer pages, the reviewer\'s 12 pages and the 10 industry pages is at least 70/78', { skip, timeout: 180000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  let twenty = 0, twelve = 0, ten = 0;
+  const read = async (html, amount = '18.00') => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === amount; } catch { return false; } };
+  try {
+    for (const [, html] of fixture8('honest-20')) if (await read(html)) twenty++;
+    for (const [name, html] of fixture9) if (/^N(?:[1-9]|1[0-2]) /.test(name) && await read(html)) twelve++;
+    for (const [name, html, amount] of fixture10('honest')) if (/^honest10 /.test(name) && await read(html, amount)) ten++;
+  } finally { await page.close(); }
+  const real = [...outcome.values()].filter(Boolean).length + 2;
+  t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; together ' + (real + twenty + twelve + ten) + '/78');
+  assert.ok(twenty >= 19 && twelve >= 9 && ten >= 10, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10');
+  assert.ok(real + twenty + twelve + ten >= 70, 'together ' + (real + twenty + twelve + ten) + '/78');
+});

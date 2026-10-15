@@ -134,15 +134,36 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   balance" | "$500.00" | "to be charged" in three cells) is not read. The cost is some honest false asks: a settled line
   with a leading item name ("Invoice 88 Previous balance $42.00") or a trailing note ("Paid $42.00 by card on file")
   asks when it is more than the amount.
-- A late or cancellation fee, an "Optional ..." extra and "an average of $25.00 a month" are not a charge at any size, but
-  only when nothing but a period, a code or a date follows the figure, or (for a late fee) the whole sentence is built
-  from the words of a late fee note and names a date ("A $5.00 late fee applies after that date."). "A $500.00 late fee
-  applies now", "Late fee $500.00 applies today" and "From $500.00 today" ask. A sentence that only starts with "If" or
-  "Unless" is not a note ("If you continue, $500.00 will be charged." asks). The label of an unchecked checkbox or radio is
-  skipped unless it has a pay word (total, amount, due, pay, charged), so "I agree to pay $500.00" stays. A figure per
-  hour, night, day or month is a unit price, at most the amount.
-- Honest pages, 60/68 allow (measured 2026-10-15): the 36 realistic pages 32/36, the round 8 reviewer's 20 pages 19/20,
-  the reviewer's 12 pages 9/12 (57/68 before this round). The 8 that ask are two donation pages with a $50 amount chip,
+- A late or cancellation fee, an "Optional ..." extra, "from" / "up to" and a statistic are not a charge at any size, but
+  only as a whole closed label with nothing but a period, a code or a date after the figure: "Late fee", "Late payment fee",
+  "Cancellation fee" or "Penalty"; "Optional" + tip, donation, add-on, gift wrap, insurance, protection, gift, extras,
+  upgrade, warranty or coverage; "Plans from", "Checked bag: from", "Save up to"; "The average gift is", "an average of",
+  "Donors give an average of". The other way in is a one-sentence late fee note in one of 3 closed forms that name a date,
+  a deadline or "unpaid" ("A $5.00 late fee applies after that date.", "If you pay after Oct 30, a $500.00 late fee
+  applies.", "Late fee: $25.00 if unpaid"). "Within 5 minutes" and "if paid" are not anchors. "Late fee debited from your
+  card: $500.00", "Optional debit: $500.00", "Your account will be debited up to $500.00", "Debit from $500.00" and "We
+  collect an average of $500.00" ask. A bare "Late fee: $500.00" or "Optional tip $500.00" row (a checked box too) is
+  allowed at any size, since the closed label is the exemption.
+- A savings word clears a figure only inside a closed phrase. A savings noun (discount, savings, coupon, promo, rebate,
+  cashback, a struck-out price) ends a label. Applied, redeemed, saved, off, available and refund count only alone or
+  straight after such a noun, or after credit, code, offer, points or reward ("Discount applied", "Loyalty points
+  redeemed"). Limit, over and away count only alone or after order, spend, cart or credit ("Orders over"). Was, original,
+  regular and list count only alone. The label (parentheses too) can't contain a money movement word (debit, withdraw,
+  deduct, capture, collect, authorize, hold, taken, card, account, bank) or a pay word, and the rest of the sentence can
+  use only savings words, a code or a date ("off your first order", "(SAVE10)"). "Fee applied", "Debit limit", "Debited
+  and applied" and "Discount: $500.00 deducted from your card" ask. Cost: 2 of 30 honest large-savings phrasings that
+  allowed now ask ("Student discount: $200.00 off, verified by SheerID", "Bundle and save"), and a money-movement word in
+  another language before a savings noun ("Abgebucht discount") is not seen, so it is allowed.
+- A figure's clause is read to the sentence end across later figures, so "Previous balance: $500.00 ($0.00 tax) will be
+  withdrawn from your card." asks. A statement in a separate cell or on the next line is still not read.
+- The discount lines (and tender and settled lines) below a figure are added together to close its gap, so a subtotal
+  of $612.00 with two discounts of $61.20 and $30.60 beside a $520.20 total allows. A gap the discount lines don't close
+  asks. "charge" or "payment" after a fee-type word (tax, carrier, facility, device, booking, usage, convenience...) is a
+  part, so "Taxes and carrier charges", "Facility charge" and "Device payment (18 of 24)" allow when they are at most
+  the amount.
+- Honest pages, 70/78 allow (measured 2026-10-15): the 36 realistic pages 32/36, the round 8 reviewer's 20 pages 19/20,
+  the reviewer's 12 pages 9/12, the round 9 reviewer's 10 industry pages 10/10 (65/78 before this round: those 10 gave
+  5/10). The 8 that ask are two donation pages with a $50 amount chip,
   a dialog with its terms outside the Pay button's form, two pages with euro line items beside a USD total, a
   renewal page that writes the amount attribute twice, a donation with "Total impact $36.00" and a hotel page with
   "Balance due at check-in $102.00". Asking on the last two may be correct.
