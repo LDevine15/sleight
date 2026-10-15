@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'nod
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { startInstalledV3Worker } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
+import { serveV3Worker, startInstalledV3Worker } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 import { createCDPFilter } from '../../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
 
 const vendor = new URL('../../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url);
@@ -82,6 +82,11 @@ export function selectedConnection(endpoint, browser = 'bbench') {
     },
     onConnectionLoss(fn) { losses.add(fn); return () => losses.delete(fn); },
     createFilter() { return createCDPFilter({ session, protectedPort: Number(new URL(endpoint).port) }); } };
+}
+
+// Tests that bring their own page providers serve the five tools directly.
+export function serveBenchWorker({ channel, begin, close }) {
+  return serveV3Worker({ channel, browser: 'bbench', begin, close });
 }
 
 // No person watches a benchmark round, so the consent window shows nothing and accepts no
