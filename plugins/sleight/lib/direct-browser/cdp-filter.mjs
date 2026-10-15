@@ -40,7 +40,7 @@ function guardBrowser(upstream, port, isProtected) {
   if (browserGuards.has(upstream)) return browserGuards.get(upstream);
   // Fetch reports URLs with userinfo, and the debug server speaks plain http even on 443.
   const patterns = ![80, 443].includes(port) ? [{ urlPattern: '*://*:' + port + '/*', requestStage: 'Request' }] :
-    ['127.0.0.1', 'localhost', '*.localhost', 'localhost.', '[::1]', '0.0.0.0', '[::ffff:7f00:1]']
+    ['127.0.0.1', 'localhost', '*.localhost', 'localhost.', '*.localhost.', '[::1]', '0.0.0.0', '[::ffff:7f00:1]']
       .flatMap(host => [host, '*@' + host].map(spelled => ({ urlPattern: (port === 80 ? 'http' : 'https') + '://' + spelled + '/*', requestStage: 'Request' })))
       .concat(port === 443 ? [{ urlPattern: '*://*:443/*', requestStage: 'Request' }] : []);
   const paused = frame => {

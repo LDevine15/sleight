@@ -80,8 +80,9 @@ our own runs. Dates and engine versions are given where they matter.
   (prefetch, prerender, or rules a script inserts) can request the DevTools HTTP endpoint and close another tab through
   `/json/close`. Turbo's Fetch guards never see those requests, and in a 2026-10-15 probe no per-page control stopped them
   (prerendering off, blocked URLs, cache off, data saver). Turning off Chrome's Preload pages setting stopped all three in Chrome,
-  while the headless shell ignored that setting. A browser connected through Chrome's own remote debugging consent, the way turbo
-  connects to the user's browser, answers 404 on `/json/version`, `/json/list`, `/json/close` and `/json/new`, so there it has nothing to reach.
+  while the headless shell ignored that setting. A browser that turned on debugging through Chrome's own remote debugging consent
+  answers 404 on every `/json` endpoint, so there it has nothing to reach. Turbo doesn't check which way the selected browser turned
+  debugging on, so a non-default profile started with `--remote-debugging-port` is exposed.
 - Turbo relies on Chrome refusing page WebSockets to the debug port by their Origin. A Chrome started with
   `--remote-allow-origins=*` would let a page drive another tab that way. sleight doesn't check for that flag.
 
