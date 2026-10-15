@@ -18,9 +18,11 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
 
 1. Finish turbo v3 on `private/v3-gate`, where every reviewed piece is merged and the full check passes. Remaining fixes, each merged
    after its review: V10R4 (trusted reads that page-named elements can't shadow) and CR7 (new-tab submits, links in editable
-   text). CR6 (masking for the whole click, named link targets) is reviewed. The behavior atlas (AT1) is merged. The adversarial page bank (AD1) runs beside it
-   as a Claude agent (Codex lanes are stopped by OpenAI's cyber filter on attack work), and any failure it finds before the gate
-   runs is fixed first.
+   text). CR6 (masking for the whole click, named link targets) is reviewed. The behavior atlas (AT1) is merged.
+   AD1 (the adversarial page bank and its fixes) does not block the gate round (owner, 2026-10-15: it "will never end"). It has a
+   finish line: pay gets one last round with a rule wording can't beat (any money figure above the amount in the user's message asks, no
+   exemptions); kb, pop and the iframe reads get one last review each; a high finding is fixed, and anything that needs a page
+   built to attack sleight goes into `docs/known-problems.md`. AD1 merges into `v3-gate` before the release pass.
    Only fixes that change safety or what the gate measures block it. Rare-case polish (CR8 deferred pointer reads, CR9
    non-editable islands in editors) merges before the release pass, which re-runs the rounds on the final build.
 2. One full check on `v3-gate`, then the gate round with the owner away or headless. It runs Haiku 5.5 on both arms in both

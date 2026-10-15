@@ -43,15 +43,15 @@ demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.goog
 --surface sleight-turbo --model haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid --serve "node
 test/demo/server.mjs --all" --out <dir> --effort high`.
 
-Next, in order (the box is sleight-arch's overnight):
-1. Done 04:20 UTC: funding switched (`83fbf6b4`). Browser Use is named as not run unless the owner funds it.
-2. Fix the AD1 review findings in `ledger/claims/AD1/OPEN-REVIEWS.md` with fresh Sonnet-high agents per branch (kb builds on swap's
-   shield), re-review each with real-page repros, merge into `arch/ad1-int`, rerun all seven bank files, merge CR8 and CR9, one
-   full check, then merge into v3-gate.
-3. Smoke round on the merged v3-gate, then the gate round (Haiku 5.5, both arms, both orders; targets 26/26, at most 575 s, at
-   most 9 errors, 0 ToolSearch, 0 focus events). FowlBrowser's arm drives Helium with windows, allowed overnight. If a step needs
-   the owner (extension reload, a login, a Chrome Allow), stop and leave one command in STATE.
-4. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
+Next, in order (owner, 2026-10-15 12:10 UTC: AD1 "will never end", so it has a finish line and no longer blocks the gate):
+1. Gate round as soon as the two arm logins exist (owner command above): smoke round on v3-gate first, then the gate round (Haiku
+   5.5, both arms, both orders; targets 26/26, at most 575 s, at most 9 errors, 0 ToolSearch, 0 focus events). Full checks wait
+   while Puddle's `/tmp/sleight-hold` exists.
+2. AD1 finish line (ROADMAP item 1): pay gets one last round with a rule wording can't beat (any money figure above the amount in
+   the user's message asks, no exemptions); kb r5, kb6 and pop r5 get their last review; a high finding is fixed, and anything
+   that needs a page built to attack sleight goes into `docs/known-problems.md`. Then one full check on ad1-int and the merge into
+   v3-gate, before the release pass.
+3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 
 After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE. EPV3-1 never
 started because V10R4's dead lane held `v3-join`, now free), the claim suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
