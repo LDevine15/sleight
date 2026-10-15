@@ -34,9 +34,10 @@ function fixture() {
   return { channel, frames, events, selected, ui, dependencies };
 }
 const settle = async () => { for (let i=0;i<10;i++) await new Promise(resolve => setImmediate(resolve)); };
-const begin = async f => {
+const begin = async (f, use = true) => {
   f.channel.emit('message', { version:3, id:'begin', method:'begin', params:{ turn:'one', text:'read' } });
   await settle(); assert.equal(f.frames.find(x=>x.id==='begin').result.available,true);
+  if(use){f.channel.emit('message',{version:3,id:'first-call',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();}
 };
 test('installed open refuses the selected DevTools listener before any page creation', async () => {
   const f = fixture(); let opens = 0;
@@ -66,24 +67,42 @@ for (const cause of ['ui','parent']) test(`installed ${cause} loss releases the 
   assert.equal(timerCleared,true);
   assert.deepEqual(await host.close(),{revoked:true,cleanup:[]});
 });
+test('parent loss retains failed page cleanup evidence while collecting every transport',async()=>{
+  const f=fixture();f.dependencies.createPages=()=>({endTurn:async()=>({cleanedUp:false}),list:async()=>[]});
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);await begin(f);
+  f.channel.connected=false;f.channel.emit('disconnect');await settle();
+  for(const event of ['disconnect','ui-close','filter-close','browser-close','listener-close']) assert.ok(f.events.includes(event),event);
+  assert.ok((await host.closed).cleanup.some(row=>row.resource==='owned-tabs'&&row.status==='retained'));
+});
 test('installed close during begin waits for the owned startup before disconnecting', async () => {
   const f=fixture(); let release;
   f.selected.connect=()=>new Promise(resolve=>{release=()=>{f.events.push('connect');resolve(f.selected.session);};});
   const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
   f.channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read'}});
+  await settle();f.channel.emit('message',{version:3,id:'first-call',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});
   await settle(); const closing=host.close(); await settle();
   assert.ok(!f.events.includes('disconnect'));
   release(); assert.deepEqual(await closing,{revoked:true,cleanup:[]});await settle();
-  assert.equal(f.frames.find(x=>x.id==='begin').result.available,false);
+  assert.match(f.frames.find(x=>x.id==='first-call').result.result.text,/Read state before retrying/);
   assert.ok(f.events.indexOf('connect')<f.events.indexOf('disconnect'));
   assert.ok(!f.events.includes('filter'));
 });
-test('installed join is lazy until a private begin and collects turn resources before its connection', async () => {
+test('retained uploads still collect transport resources and clear on the next cleanup', async () => {
+  const f=fixture(); let retained=true;
+  f.dependencies.createRuntime=async()=>({call:async()=>({text:'fixture',isError:false}),delivered:()=>false,
+    end:async()=>({revoked:true,cleanup:retained?[{resource:'uploads',status:'retained',code:'CLEANUP_UNPROVED'}]:[]})});
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);await begin(f);
+  const first=await host.close();assert.ok(first.cleanup.some(row=>row.resource==='uploads'));
+  for(const event of ['filter-close','browser-close','listener-close']) assert.ok(f.events.includes(event),event);
+  assert.ok(!f.events.includes('disconnect'));retained=false;
+  assert.deepEqual(await host.close(),{revoked:true,cleanup:[]});assert.ok(f.events.includes('disconnect'));
+});
+test('installed join connects on its first browser call and collects turn resources before its connection', async () => {
   const f = fixture(), host = await startInstalledV3Worker({ channel:f.channel }, f.dependencies);
   assert.equal(f.frames[0].version,3); assert.deepEqual(f.events,[]);
   f.channel.emit('message',{ version:3,id:'q1',method:'begin',params:{turn:'turn1',text:'read fixture'} });
   await settle(); assert.equal(f.frames.find(x=>x.id==='q1').result.available,true);
-  assert.deepEqual(f.events,['connect','filter']);
+  assert.deepEqual(f.events,[]);
   f.channel.emit('message',{ version:3,id:'q2',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}} });
   await settle(); assert.equal(f.frames.find(x=>x.id==='q2').result.result.text,'No owned tabs.');
   f.channel.emit('message',{ version:3,id:'q3',method:'end',params:{} });
@@ -102,7 +121,7 @@ test('parent loss during helper startup prevents selected connection and UI crea
 test('failed turn cleanup is retained and blocks a replacement turn', async () => {
   const f = fixture(); f.dependencies.createPages = () => ({ endTurn: async()=>({cleanedUp:false}),list:async()=>[] });
   const host = await startInstalledV3Worker({channel:f.channel},f.dependencies);
-  f.channel.emit('message',{version:3,id:'q1',method:'begin',params:{turn:'one',text:'read'}});await settle();
+  await begin(f);
   f.channel.emit('message',{version:3,id:'q2',method:'end',params:{}});await settle();
   f.channel.emit('message',{version:3,id:'q3',method:'begin',params:{turn:'two',text:'read'}});await settle();
   assert.equal(f.frames.find(x=>x.id==='q3').result.available,false);
@@ -118,7 +137,7 @@ test('installed launcher selects v3 first and keeps v2 as a typed fallback', asy
   assert.equal(await createInstalledBrowserBridge({ v3:async()=>null, v2:async()=>assert.fail('v2 when turbo off') }), null);
   assert.equal(await createInstalledBrowserBridge({ v3:async()=>{throw Error('V3_RUNTIME_UNAVAILABLE');},
     v2:async()=>{events.push('v2');return null;} },code=>events.push(code)),null);
-  assert.deepEqual(events,['V3_RUNTIME_UNAVAILABLE','v2']);
+  assert.deepEqual(events,['v2','V3_RUNTIME_UNAVAILABLE']);
   await assert.rejects(createInstalledBrowserBridge({v3:async()=>{throw Error('HOST_PACKAGE_MISMATCH');},v2:async()=>assert.fail('unsafe fallback') }),/HOST_PACKAGE_MISMATCH/);
 });
 
@@ -158,8 +177,7 @@ for (const choice of ['pause', 'disconnect']) {
 test('installed delayed cleanup retains ownership until collection succeeds', async t => {
   const f = await controls(t); let cleanedUp = false;
   f.dependencies.createPages = () => ({ endTurn: async () => ({ cleanedUp }), list: async () => [] });
-  f.channel.emit('message', { version: 3, id: 'begin', method: 'begin', params: { turn: 'one', text: 'read' } });
-  await settle(); assert.equal(f.frames.find(frame => frame.id === 'begin').result.available, true);
+  await begin(f);
   f.advance(35000); await f.choose(f.views[0], 'pause');
   assert.equal(f.lost(), false);
   const control = f.views.at(-1);
@@ -201,4 +219,22 @@ test('installed controls reject a consumed envelope replay', async t => {
   await f.choose(control, 'disconnect');
   assert.equal(f.lost(), true); assert.ok(f.events.includes('disconnect'));
   assert.ok(f.events.includes('ui-close'));
+});
+
+test('turns without browser calls never connect and a failed first call retries only on a later turn', async () => {
+  const f=fixture();let attempts=0,selections=0;
+  const original=f.selected.connect;
+  f.selected.connect=async()=>{attempts++;if(attempts===1){f.selected.loss();throw Error('SELECTED_CONNECTION_TIMEOUT');}return original();};
+  f.dependencies.selectConnection=async()=>{selections++;return f.selected;};
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  try {
+    await begin(f,false);assert.equal(attempts,0);
+    f.channel.emit('message',{version:3,id:'q1',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
+    assert.match(f.frames.find(x=>x.id==='q1').result.result.text,/Turbo is unavailable.*engine browser path/);
+    f.channel.emit('message',{version:3,id:'q2',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();assert.equal(attempts,1);
+    f.channel.emit('message',{version:3,id:'q3',method:'begin',params:{turn:'two',text:'read'}});await settle();
+    assert.equal(f.frames.find(x=>x.id==='q3').result.available,true);
+    f.channel.emit('message',{version:3,id:'q4',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
+    assert.equal(f.frames.find(x=>x.id==='q4').result.result.text,'No owned tabs.');assert.equal(attempts,2);assert.equal(selections,2);
+  } finally {await host.close();}
 });
