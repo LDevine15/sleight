@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 
@@ -44,17 +46,21 @@ test('benchmark session binds the original task privately through V7 and never a
   assert.deepEqual(await session.close(), { revoked: true, cleanup: [] }); await session.close(); assert.equal(closes, 1);
 });
 
-test('default benchmark worker refuses before browser access and its owned fork exits', { timeout: 15000 }, async () => {
+test('benchmark worker without the pinned headless browser reports unavailable before launching and its fork exits', { timeout: 15000 }, async () => {
   const { createSession } = await load();
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const home = mkdtempSync(join(tmpdir(), 'sleight-v3-nobrowser-'));
   let exited;
-  await assert.rejects(createSession({ origins: [origin], taskMessage: 'Read fixture',
-    forkWorker(path, args, options) {
-      assert.match(String(path), /bench\/turbo\/v3-worker.mjs$/);
-      const child = fork(path, args, options);
-      exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
-      return child;
-    } }), /V3_RUNTIME_UNAVAILABLE/);
-  assert.deepEqual(await exited, { code: 0, signal: null });
+  try {
+    await assert.rejects(createSession({ origins: [origin], taskMessage: 'Read fixture',
+      forkWorker(path, args, options) {
+        assert.match(String(path), /bench\/turbo\/v3-worker.mjs$/);
+        const child = fork(path, args, { ...options, env: { ...options.env, HOME: home } });
+        exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+        return child;
+      } }), /V3_RUNTIME_UNAVAILABLE|BENCH_BROWSER_MISSING/);
+    assert.deepEqual(await exited, { code: 0, signal: null });
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test('invalid fixture/task input never forks and missing cleanup evidence stays unavailable', async () => {

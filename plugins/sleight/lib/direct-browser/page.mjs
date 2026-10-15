@@ -447,7 +447,10 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     finally { await probe.detach(); }
     if (targetInfo?.type === 'page') seen.set(targetInfo.targetId, page);
     const parent = targets.get(targetInfo?.openerId);
-    if (parent && !parent.released) await adopt(page, await identify(page), parent);
+    // A closed opener adopts only a late popup that discovery never reserved (CR4);
+    // otherwise discovery and this event would hand Playwright the same target twice.
+    if (parent && !parent.released && (!parent.closed || !allocations.has(targetInfo.targetId)))
+      await adopt(page, await identify(page), parent);
   })()).catch(() => {});
   context.on('page', heard);
   const idle = async () => { while (tasks.size) await Promise.allSettled([...tasks]); };

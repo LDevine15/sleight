@@ -7,11 +7,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 
-test('default v3 stdio server lists five tools and refuses its production runtime before allocation', { timeout: 20000 }, t => {
+test('v3 stdio server lists five tools and refuses before allocation when the pinned headless browser is missing', { timeout: 20000 }, t => {
   const root = realpathSync(registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-v3-refusal-'))));
   const env = Object.fromEntries(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG'].flatMap(key =>
     typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
   env.SLEIGHT_TURBO_ORIGINS = JSON.stringify(['http://127.0.0.1:5431']);
+  env.HOME = root; // no pinned browser here, so the worker refuses before launching
   env.SLEIGHT_TURBO_TASK = 'Read the owned fixture.';
   env.SLEIGHT_TURBO_METRICS = join(root, 'turbo-metrics.jsonl');
   const requests = [
