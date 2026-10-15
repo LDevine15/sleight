@@ -3,48 +3,48 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 03:05 UTC)
+## Banner (2026-10-15 03:25 UTC)
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. 1.3.0 waits only on turbo v3's gate (owner, 2026-10-14. Reaffirmed 2026-10-14 23:20 UTC). ROADMAP.md was rewritten from an
 item-by-item audit on 2026-10-15 and is the plan. Read it whole.
 
 Branches (all on `private`):
-- `pane/auto-mode` at the commit holding this banner (parent `ab1faa44`). `~/Projects/sleight` is fast-forwarded to it. Release prep
-  is merged there: CI1, OL1, OL1R, CS3+CS3R+CS3R2, RP2+RP2R+RP2R2 (full check 5691 pass, 0 fail, 49 mod). 0 open PRs. Public CI green
-  on 1.2.5.
-- `v3-gate` at `1ee4cd57` (worktree `~/Projects/sleight-wt/v3-int`): every turbo v3 piece that passed review. V1R2, V2R, V4R, V5R2, V6R2, V3R,
-  V7 to V7R5, V9R, V10 to V10R4, CR1 to CR7 (clean-room, audited CLEAN), AT1 (behavior atlas), plus sleight-arch's bench worker and two
-  merge-seam fixes. Full check 6214 pass, 0 fail, 49 mod. Real-page tests that survive V8: 505/507 at `bba01ea5`. The 2 failures were the
-  v2 demo test (hangs. V8R removes it) and a missing export, fixed in `1ee4cd57` (`turbo-v3-arm.real` and `turbo-v3-bench-worker.real`
-  pass 2/2 there).
-- Merge after reviews, before the release pass (rare-case polish, not gate-blocking): `codex/cr8` `f9237223` (reviewed PASS),
-  `codex/cr9` `b612a753` (review: one designMode nit. CR10 then found the real browser contradicts it, STALE, nothing to do).
-- Into 1.3.0: `codex/rc1r` `57079737` (on `codex/rc1` `65246f3a`): sleight reconnects after a ChatGPT engine update without a
-  restart. The Claude review passed it (2026-10-15) with M1 (an app approved by name is asked again after a restore by bundle ID),
-  M2 (the reconnect skips turn_ended) and lows L1, L2, L4. A Claude agent fixes them as RC1R2 in `~/Projects/sleight-wt/rc1r2`
-  (`arch/rc1r2`). RC1R and RC1R2 merge together.
-- Merge right after the gate (owner): `codex/v8` `813bca75` (v1/v2 removal, 15.4 to 8.2 MB, reviewed twice), then V8R (queued:
-  restore canonical() tests, remove `tests/turbo-popup-demo.real.test.mjs` and other v2-only bench files).
-- AD1, the adversarial page bank (about 330 real-page attack tests in `tests/adversarial/`), is rebased onto v3-gate (`codex/ad1`
-  `5eb3b92c`, local). Rerun headless on v3-gate 2026-10-15: 53 failures (endpoint 8, keyboard 6, page-instructions 3, page-natives 10,
-  payment-decoys 12, submit-retry 1, timing-and-covering 13), matching `ledger/claims/AD1/REPORT.md`.
-- `arch/ad1-fixes` (`~/Projects/sleight-wt/adfix`, pushed): the bank plus sleight-arch's fix 1 at `2ff1f086`. A page session's
-  Fetch never sees a popup's first request, so one browser-level `Fetch.enable` per connection, matching only the debug port, now
-  fails it (probe: 6 of 6 popup vectors blocked, 0 hits on the port). The endpoint file passes 136/136, and the filter, port and
-  popup tests pass 107/107. The form POST case was a test bug.
-- Five Sonnet-high Claude agents fix the rest, each in `~/Projects/sleight-wt/adfix-<kb|pop|pay|swap|hyg>` on `arch/ad1-<same>`,
-  focused tests only: kb (keypress focus redirect, v3-context), pop (foreground tabs from timers and spoofed targets, cancelled links,
-  clean-room page.mjs), pay (decoy terms and button-type payment controls), swap (click-time swaps, forwarded activation, covers;
-  clean-room), hyg (page text outside the untrusted label, label-forwarded file chooser). Clean-room briefs forbid competitor code.
+- `pane/auto-mode` at the commit holding this banner. `~/Projects/sleight` is fast-forwarded to it. Release prep is merged there
+  (full check 5691 pass, 0 fail, 49 mod). 0 open PRs. Public CI green on 1.2.5.
+- `v3-gate` at `f4f6899c` (worktree `~/Projects/sleight-wt/v3-int`): each turbo v3 piece that passed review (full check 6214 pass at
+  `1ee4cd57`), plus two bench fixes from the smoke runs (`4c2248b2`, `f4f6899c`, focused tests only so far).
+- Merge after reviews, before the release pass (not gate-blocking): `codex/cr8` `f9237223` (reviewed PASS), `codex/cr9` `b612a753`.
+- Into 1.3.0: RC1R (`codex/rc1r` `57079737`, engine-update reconnect) plus RC1R2 (`arch/rc1r2` `9b55b86b`, worktree
+  `~/Projects/sleight-wt/rc1r2`). Both reviewed PASS. RC1R3 (receipt of the call that triggers a reconnect, a stale handle origin)
+  is in progress there, then all three merge into pane/auto-mode with one full check.
+- Merge right after the gate (owner): `codex/v8` `813bca75` (v1/v2 removal, 15.4 to 8.2 MB), then V8R (queued).
+- AD1, the adversarial page bank (about 330 real-page tests in `tests/adversarial/`), rebased onto v3-gate: 53 failures on
+  v3-gate (endpoint 8, keyboard 6, page-instructions 3, page-natives 10, payment-decoys 12, submit-retry 1, timing 13).
+- `arch/ad1-fixes` (`~/Projects/sleight-wt/adfix`, pushed, `083d2644`): the bank plus sleight-arch's DevTools port guard. One
+  browser-level `Fetch.enable` per connection, matching only the debug port, blocks popups' first requests, which no page session
+  sees (endpoint file 136/136). Review round 1 FAILED it on speculation rules. In round 2, Chrome connected through its remote debugging
+  consent answers 404 on every `/json` endpoint (measured 2026-10-15), so only `--remote-debugging-port` browsers are exposed, in
+  known-problems. Round 2 also fixed the port 443 and userinfo patterns and the stuck-pause fallback. Needs its re-review.
+- Fix branches by Sonnet-high Claude agents, each in `~/Projects/sleight-wt/adfix-<name>` on `arch/ad1-<name>`:
+  hyg (`579c6641`, PASS; round 2 adds labels for dialog and navigation text, opener in the tab list, a file-chooser backstop),
+  kb (round 2 at `71e98b7b` after a FAILED review, keyboard bank 27/27, needs its re-review),
+  pay (`965d1053`, FAILED review: invisible-term and missed-conflict bypasses, coupon buttons use up the confirmation, false asks;
+  round 2 running), pop and swap (clean-room page.mjs, round 1 running).
+- `arch/tn1` (`~/Projects/sleight-wt/tn1`): the turbo skill line names the application, as in "Turbo selects `b...` (Google Chrome)".
+  Measured cause: with only an opaque id, 1 of 2 Haiku runs searched the engine for Chrome first.
+
+Smoke rounds (Haiku 5.5, headless turbo arm, form-travel and demoid, 2026-10-15): the third was ROUND CLEAN (11/11, Robin Vale, no
+focus events, $0.044). The first two found two bench bugs: the runner refused the turbo arm without a FowlBrowser socket, and the arm's
+engine path reached the owner's real Chrome. Demoid called `cua.getApp("com.google.Chrome")`, which launched Chrome to the front
+at 02:59:17 UTC, because `preapproved.json` holds Chrome (always-allow, 2026-10-12). A bench-only PreToolUse hook now refuses engine
+js that mentions a browser. The command needs `--serve "node test/demo/server.mjs --all"` and `--out <dir>`.
 
 Next, to reach the gate:
-1. Review and merge the five AD1 fix branches into `arch/ad1-fixes` (Sonnet-high review for each, plus the bank rerun), then CR8
-   (`f9237223`, reviewed PASS) and CR9 (`b612a753`), then rerun the whole bank and one full check, and merge into v3-gate.
-2. Merge RC1R with RC1R2 after RC1R2's review.
-3. Smoke run, headless, no owner needed: from `~/Projects/sleight-wt/v3-int`, `bench/fowl/rounds.sh --surface sleight-turbo --model
-   haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid` (preflight passed 2026-10-15. A few cents). The gate tasks are
-   `codex-h2h.json`'s local fixtures, not FowlBrowser's public-site `tasks.json`.
+1. Review each AD1 fix round (Sonnet high, real-page repros) and merge the branches into `arch/ad1-fixes`, then CR8 and CR9, the
+   whole bank, one full check, and v3-gate. Merge TN1 after its review.
+2. Merge RC1R, RC1R2 and RC1R3 into pane/auto-mode with one full check.
+3. Rerun the smoke round on the merged v3-gate.
 4. Then ask the owner once for the away window: the gate round (Haiku 5.5, both arms, both orders. FowlBrowser's arm drives Helium,
    so it shows windows). FowlBrowser's extension is installed in Helium (0.1.0, pinned 8b68924, Developer mode on, 2026-10-15).
 5. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
@@ -138,10 +138,10 @@ Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working 
   `npm run watch:install`. It saves the engine's API docs, without sleight's skill since 2026-10-10
   (`~/Library/Logs/sleight/engine-api-26.1007.30912.md` is the latest), and diffs them on an engine
   update. Remove with `npm run watch:remove`.
-- `~/Library/Application Support/sleight/preapproved.json` lists Calculator (owner, 2026-10-04) and
-  Helium (`net.imput.helium` and `Helium`, all `high`). Helium was added on the owner's order on
-  2026-10-05, and the owner kept it with no end date on 2026-10-08. The list before it is
-  `.dev/tools/preapproved.before-helium.json`.
+- `~/Library/Application Support/sleight/preapproved.json` lists Calculator (owner, 2026-10-04), Helium (`net.imput.helium` and
+  `Helium`, owner's order 2026-10-05, kept 2026-10-08) and five always-allow entries from the owner's clicks: `dev.zcode.app`,
+  `com.todesktop.230313mzl4w4u92` (2026-10-11), `com.apple.ScreenContinuity`, `com.anysphere.sand`, `com.google.Chrome` (2026-10-12).
+  The list before Helium is `.dev/tools/preapproved.before-helium.json`.
 - `ComputerUseAllowForbiddenTargets` is on (`defaults write -g`, set by the owner 2026-10-05, kept on
   2026-10-08 so agents can drive terminals for tests). Terminals and OpenAI's apps go through the engine
   for every engine client, Codex included. Off: `defaults delete -g ComputerUseAllowForbiddenTargets`.
