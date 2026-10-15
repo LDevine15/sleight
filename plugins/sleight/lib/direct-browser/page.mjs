@@ -1,6 +1,7 @@
 // Background popup disposition for turbo v3, independently implemented for CR1.
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { endpointURL, endpointTarget, endpointBlock, bindEndpointPage, assertEndpointRead } from './endpoint-guard.mjs';
+import { trustedRead } from './trusted-dom.mjs';
 
 function deadline(task, ms, message = 'background preparation timed out') {
   let timer;
@@ -79,6 +80,15 @@ export function popupHook(options) {
   const editable = getOwn(HTMLElement.prototype, 'isContentEditable').get;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
+  // A link is an HTML a or area with href, or an SVG a with href or xlink:href (href wins). The selector side matches an href in
+  // any namespace, so a link cannot hide behind the xlink spelling; the reading side takes the two spellings the browser follows.
+  const xlinkNamespace = 'http://www.w3.org/1999/xlink', svgNamespace = 'http://www.w3.org/2000/svg';
+  const linkSelector = 'a[*|href],area[href]', controlSelector = linkSelector + ',button,input,label';
+  const getAttributeNS = Element.prototype.getAttributeNS, hasAttributeNS = Element.prototype.hasAttributeNS;
+  const namespaceOf = getOwn(Element.prototype, 'namespaceURI')?.get;
+  const isSvg = node => { try { return (namespaceOf ? namespaceOf.call(node) : node.namespaceURI) === svgNamespace; } catch { return false; } };
+  const hasHref = node => has(node, 'href') || isSvg(node) && hasAttributeNS.call(node, xlinkNamespace, 'href');
+  const hrefOf = node => attribute(node, 'href') ?? (isSvg(node) ? getAttributeNS.call(node, xlinkNamespace, 'href') : null);
   // Brand-checked natives: a node, form or window from another realm (an iframe, a window.open handle) is
   // never an `instanceof` of this realm's constructors, but these getters accept it and reject anything else.
   const nodeProto = globalThis.Node?.prototype ?? {};
@@ -158,7 +168,7 @@ export function popupHook(options) {
   // HTML forms.html#the-label-element: an interactive descendant does
   // not forward label activation. This selector limits label forwarding only;
   // it does not give any of these elements a plain-click exception.
-  const interactive = 'a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),label,select,textarea,video[controls]';
+  const interactive = 'a[*|href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),label,select,textarea,video[controls]';
   // The form and submit control a click or Enter on this node would submit, if any. Enter in another field
   // submits through the form's default button, the first submit control among form.elements.
   const submission = (node, implicit) => {
@@ -421,7 +431,7 @@ export function popupHook(options) {
   const holdsNewContext = node => {
     try {
       node = labelTarget(node);
-      if (nativeMatches.call(node, 'a[href],area[href]')) return !has(node, 'download') && !sameContext(node);
+      if (nativeMatches.call(node, linkSelector)) return !has(node, 'download') && !sameContext(node);
       const found = submission(node, false);
       if (found) return !sameContext(found.form, submitTarget(found.form, found.submitter));
     } catch { return isElement(node); /* Undecidable for an element: hold it. */ }
@@ -431,7 +441,7 @@ export function popupHook(options) {
   const holdsChain = node => {
     for (const candidate of ancestors(node)) {
       let hit = false;
-      try { hit = nativeMatches.call(candidate, 'a[href],area[href],button,input,label'); } catch { /* Not an element. */ }
+      try { hit = nativeMatches.call(candidate, controlSelector); } catch { /* Not an element. */ }
       if (hit) return holdsNewContext(candidate);
     }
     return false;
@@ -453,14 +463,14 @@ export function popupHook(options) {
   const activates = node => {
     try {
       node = labelTarget(node);
-      if (nativeMatches.call(node, 'a[href],area[href]')) return true;
+      if (nativeMatches.call(node, linkSelector)) return true;
       return !!submission(node, false);
     } catch { return isElement(node); /* Undecidable for an element: hold it. */ }
   };
   const activatesChain = node => {
     for (const candidate of ancestors(node)) {
       let hit = false;
-      try { hit = nativeMatches.call(candidate, 'a[href],area[href],button,input,label'); } catch { /* Not an element. */ }
+      try { hit = nativeMatches.call(candidate, controlSelector); } catch { /* Not an element. */ }
       if (hit) return activates(candidate);
     }
     return false;
@@ -485,10 +495,10 @@ export function popupHook(options) {
   const trackable = node => {
     for (const candidate of ancestors(node)) {
       let hit = false;
-      try { hit = nativeMatches.call(candidate, 'a[href],area[href],button,input,label'); } catch { /* Not an element. */ }
+      try { hit = nativeMatches.call(candidate, controlSelector); } catch { /* Not an element. */ }
       if (!hit) continue;
       const target = labelTarget(candidate);
-      if (nativeMatches.call(target, 'a[href],area[href]')) return { node: target };
+      if (nativeMatches.call(target, linkSelector)) return { node: target };
       const found = submission(target, false);
       return found ? { form: found.form, submitter: found.submitter } : undefined;
     }
@@ -541,7 +551,9 @@ export function popupHook(options) {
   // The setters a page uses to change where a link or form goes. After each, a script-started click or submit that is still
   // being dispatched is checked again (flipped); the agent's own click is watched by the observer and the name setter below.
   for (const [constructor, name] of [[globalThis.HTMLAnchorElement, 'target'], [globalThis.HTMLAreaElement, 'target'], [globalThis.HTMLFormElement, 'target'],
-    [globalThis.HTMLBaseElement, 'target'], [globalThis.HTMLButtonElement, 'formTarget'], [globalThis.HTMLInputElement, 'formTarget'], [globalThis.Attr, 'value']]) {
+    [globalThis.HTMLBaseElement, 'target'], [globalThis.HTMLButtonElement, 'formTarget'], [globalThis.HTMLInputElement, 'formTarget'], [globalThis.Attr, 'value'],
+    // An Attr is also written through the Node setters, and a frame named as a target stops naming it when its owner's markup goes.
+    [Node, 'nodeValue'], [Node, 'textContent'], [Element, 'innerHTML'], [Element, 'outerHTML']]) {
     const descriptor = getOwn(constructor?.prototype ?? {}, name);
     if (descriptor?.set && descriptor.configurable) replace(constructor.prototype, name, { ...descriptor, set(value) {
       const result = descriptor.set.call(this, value);
@@ -552,7 +564,10 @@ export function popupHook(options) {
   for (const [owner, name] of [[Element.prototype, 'setAttribute'], [Element.prototype, 'removeAttribute'], [Element.prototype, 'toggleAttribute'],
     [Element.prototype, 'setAttributeNS'], [Element.prototype, 'setAttributeNode'], [Element.prototype, 'setAttributeNodeNS'],
     [globalThis.NamedNodeMap?.prototype, 'setNamedItem'], [globalThis.NamedNodeMap?.prototype, 'setNamedItemNS'],
-    [globalThis.NamedNodeMap?.prototype, 'removeNamedItem'], [globalThis.NamedNodeMap?.prototype, 'removeNamedItemNS']]) {
+    [globalThis.NamedNodeMap?.prototype, 'removeNamedItem'], [globalThis.NamedNodeMap?.prototype, 'removeNamedItemNS'], [Element.prototype, 'removeAttributeNode'],
+    // A frame whose name was the target goes away: the name then means a new window.
+    [Node?.prototype, 'removeChild'], [Node?.prototype, 'replaceChild'], [Element.prototype, 'remove'], [Element.prototype, 'replaceWith'],
+    [Element.prototype, 'replaceChildren'], [Document?.prototype, 'replaceChildren'], [DocumentFragment?.prototype, 'replaceChildren']]) {
     const native = owner?.[name];
     if (typeof native === 'function') replace(owner, name, { configurable: true, writable: true, value() {
       const result = native.apply(this, arguments);
@@ -576,15 +591,15 @@ export function popupHook(options) {
     if (!modified && active()) return;
     for (const node of composedPath.call(event)) {
       let hit = false;
-      try { hit = isElement(node) && nativeMatches.call(node, 'a[href],area[href],button,input,label'); } catch { /* Not an element. */ }
+      try { hit = isElement(node) && nativeMatches.call(node, controlSelector); } catch { /* Not an element. */ }
       if (hit) { if (modified ? activates(node) : holdsNewContext(node)) { held++; nativePrevent.call(event); } return; }
     }
   };
   const linkState = element => {
-    if (!element || !isLinkTag(element) || !has(element, 'href') || has(element, 'download')) return;
+    if (!element || !isLinkTag(element) || !hasHref(element) || has(element, 'download')) return;
     if (sameContext(element)) return;
     let url;
-    try { url = new URL(attribute(element, 'href'), document.baseURI); } catch { return; }
+    try { url = new URL(hrefOf(element), document.baseURI); } catch { return; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
     const target = targetOf(element);
     const rel = attribute(element, 'rel') ?? '';
@@ -592,7 +607,7 @@ export function popupHook(options) {
   };
   const pointerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   // A link that would open a new context, whether or not sleight can decide where.
-  const opensLink = element => isLinkTag(element) && has(element, 'href') && !has(element, 'download') && !sameContext(element);
+  const opensLink = element => isLinkTag(element) && hasHref(element) && !has(element, 'download') && !sameContext(element);
   // Cancel the browser's own open and keep the request for the background tab. Inline handlers that return false
   // are read at dispatch, after pointer handlers may have changed them; a browser cancels internally when one
   // does, so observe that return without calling the handler a second time.
@@ -724,6 +739,7 @@ export function popupHook(options) {
   //     listeners and confirms them.
   //   changed(proof) and watching(proof, on) are the hook's calls to the hooks of other windows and frames it can reach (a
   //     window.name or attribute change in one can re-aim a link another is watching); they return nothing.
+  //   flight(proof) is a new frame's or window's question to the hooks above it: is a script-started click being dispatched there? (boolean)
   const getter = (type, name) => {
     const get = getOwn(type?.prototype ?? {}, name)?.get;
     return get ? uncurry(get) : () => { throw Error('native ' + name + ' unavailable'); };
@@ -736,7 +752,7 @@ export function popupHook(options) {
   const controlGetters = [HTMLButtonElement, HTMLInputElement, globalThis.HTMLTextAreaElement, HTMLSelectElement].map(type => [getter(type, 'form'), getter(type, 'type')]);
   const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryElementAll = uncurry(Element.prototype.querySelectorAll), closest = uncurry(Element.prototype.closest);
   const queryDocAll = uncurry(globalThis.Document?.prototype.querySelectorAll), queryFragAll = uncurry(globalThis.DocumentFragment?.prototype.querySelectorAll);
-  const attr = uncurry(getAttribute), hasAttr = uncurry(hasAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
+  const attrNS = uncurry(getAttributeNS), attr = uncurry(getAttribute), hasAttr = uncurry(hasAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
   const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
   const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeClear = clearTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
   const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
@@ -881,6 +897,7 @@ export function popupHook(options) {
     const control = shieldControlOf(node), form = formOwner(node, control);
     let row = shieldNameOf(node) + SEP + connected(node) + SEP + hash(textOf(node)) + SEP + (control ? control.type : '') + SEP + (form ? hash(formContent(form)) : '');
     for (let i = 0; i < attributes.length; i++) row += SEP + attrOf(node, attributes[i]);
+    row += SEP + (attrNS(node, xlinkNamespace, 'href') ?? ''); // An SVG link's other spelling of href.
     return row + SEP + baseState();
   };
   const digest = node => hash(content(node));
@@ -1022,6 +1039,7 @@ export function popupHook(options) {
     let view = null;
     try { view = shieldViewOf(doc); } catch { /* Not a document; the native call has already thrown. */ }
     try { if (view && view !== window) view[key].reinstall(proofFor('reinstall')); else install(); } catch { install(); }
+    flip(); // The document's frames and links went with the rewrite.
   };
   for (const name of rewriters) {
     const original = documentProto[name];
@@ -1150,7 +1168,7 @@ export function popupHook(options) {
       if (press) {
         // Keyboard activation acts on the focused element only. Enter follows a link and, in a field, submits the
         // form through its default button; Space presses a button and does nothing to a link or a field.
-        if (isLinkTag(element) && has(element, 'href') && !space) {
+        if (isLinkTag(element) && hasHref(element) && !space) {
           if (has(element, 'download')) return false;
           linkElement = element;
           if (sameContext(element)) watch = { kind: 'link', element };
@@ -1167,7 +1185,7 @@ export function popupHook(options) {
           watch = { kind: 'form', ...found };
         }
       } else if (!watch) {
-        linkElement = chain.find(node => isLinkTag(node) && has(node, 'href'));
+        linkElement = chain.find(node => isLinkTag(node) && hasHref(node));
         if (linkElement && isEditable(linkElement)) return false;
         if (linkElement && sameContext(linkElement)) {
           if (has(linkElement, 'download')) return false;
@@ -1200,7 +1218,27 @@ export function popupHook(options) {
     // Another hook (a frame's, a window's) saw something that can re-aim a link or form this hook is watching.
     changed() { changed(); },
     watching(on) { outer = on === true; },
-    take() { const count = held; held = 0; return count; },
+    // Whether a script-started click or submit is being dispatched here or in a window that told this one (a new frame asks at install).
+    flight() { return !!scripted || outer; },
+    // The top window of a tab also collects what the hooks of its frames held, so a page cannot open a tab from a frame unreported.
+    take() {
+      let count = held; held = 0;
+      if (window.parent === window) {
+        const seen = new Set(), pending = childWindows(window);
+        for (let steps = 0; pending.length && steps < 512; steps++) {
+          const context = pending.pop();
+          if (!context || seen.has(context)) continue;
+          seen.add(context);
+          if (!readable(context)) continue;
+          try {
+            const proof = proofFor('take'), text = openAnswer('take', proof, context[key].take(proof));
+            if (text !== undefined && charCodeAt(text, 0) === 100) count += Number(slice(text, 1));
+          } catch { /* Not a hook. */ }
+          pending.push(...childWindows(context));
+        }
+      }
+      return count;
+    },
     off() {
       dead = true;
       if (arm) finish(arm.token);
@@ -1275,6 +1313,7 @@ export function popupHook(options) {
     armed: proof => seal('armed', proof, () => impl.armed(), armedText),
     release: (proof, token) => seal('release', proof, () => impl.release(token), stringText),
     reinstall: proof => seal('reinstall', proof, () => impl.reinstall(), booleanText),
+    flight: proof => seal('flight', proof, () => impl.flight(), booleanText),
   };
   try { defineProperty(window, key, { value: freeze(api), configurable: false, writable: false, enumerable: false }); }
   catch { for (const restore of replacements.reverse()) restore(); return false; }
@@ -1291,6 +1330,16 @@ export function popupHook(options) {
       }
     }
   } catch { /* A cross-origin parent, or none: nothing to inherit. */ }
+  // A frame or window created inside a script-started click's listener missed the watching(true) the click sent, so it asks
+  // the windows above it and the one that opened it, and checks the answer like any other signed answer.
+  try {
+    const above = [window.parent, window.top, openerGetter?.call(window)];
+    for (let i = 0; i < above.length; i++) {
+      const other = above[i];
+      if (!other || other === window) continue;
+      try { const proof = proofFor('flight'); if (openAnswer('flight', proof, other[key].flight(proof)) === 't') outer = true; } catch { /* Not a hook, or cross-origin. */ }
+    }
+  } catch { /* Nothing above to ask. */ }
   return true;
 }
 
@@ -1303,7 +1352,7 @@ export function popupHook(options) {
 // signed): guard and off a boolean, reveal and settle undefined, verdict and finish a string or undefined or true, prepare
 // false, true, { kind: 'link' }, { kind: 'watch' }, { kind: 'form' } or { kind: 'refuse', reason: 'link' | 'form' }, takeRequest undefined,
 // { unavailable: true }, { unavailable: true, lost: true }, { blocked: 'link' | 'form' }, { violation } or { url, target, rel }, take a number,
-// expect true or a string, conclude { bad, landed, passed }, adopt and reinstall a boolean, armed undefined or { token, until, keys }, release a string or undefined. It throws an Error with code HOOK_ANSWER_REFUSED for anything it cannot vouch for.
+// expect true or a string, conclude { bad, landed, passed }, adopt and reinstall a boolean, armed undefined or { token, until, keys }, release a string or undefined, flight a boolean. It throws an Error with code HOOK_ANSWER_REFUSED for anything it cannot vouch for.
 export const newHook = () => Object.freeze({ key: 'k' + randomBytes(16).toString('hex'), secret: randomUUID() });
 // The install expression for a hook: popupHook called with { key, secret } where secret is the secret's bytes as numeric
 // literals (an array of 16 to 64 byte values). The page never holds a string it must convert, and an array or object
@@ -1382,9 +1431,11 @@ async function ownerFrame(locator, page, timeoutMs) {
 }
 
 // A frame whose site differs from the tab's runs no hook here (cross-site frames are separate processes, and the
-// registry's script is on the page target). Same-site frames, about:blank and srcdoc frames always have one, so a frame
-// of those that answers "absent" is not trusted to be hookless: a page can forge that answer, and it would then be left
-// unarmed. Such a frame fails the arm closed instead.
+// registry's script is on the page target). Same-site frames, about:blank and srcdoc frames that can run scripts always
+// have one, so a frame of those that answers "absent" is not trusted to be hookless: a page can forge that answer, and it
+// would then be left unarmed. Such a frame fails the arm closed instead. A frame that cannot run scripts at all (its
+// iframe's sandbox attribute, or an ancestor's, lacks allow-scripts) is hookless by design: nothing in it can forge an
+// answer or run page code, so it needs no hook and does not block the click.
 const siteOf = url => {
   try {
     const { protocol, hostname } = new URL(url);
@@ -1392,6 +1443,14 @@ const siteOf = url => {
     return /^[\d.]+$|:/.test(hostname) ? hostname : hostname.split('.').slice(-2).join('.');
   } catch { return ''; }
 };
+
+// The sandbox attribute of the iframe that holds `frame`, read in the pristine utility world from the parent's side: a string, or
+// null for an iframe with none. Throws when the owner cannot be reached.
+async function ownerSandbox(frame, timeoutMs) {
+  const owner = await deadline(() => frame.frameElement(), timeoutMs, 'frame owner unavailable');
+  try { return await deadline(() => trustedRead(owner, (el, arg, native) => native(el, 'getAttribute')('sandbox')), timeoutMs); }
+  finally { await owner?.dispose?.().catch(() => {}); }
+}
 
 // Every frame Playwright knows except the owner's (same-origin or not, in a shadow root or not, ancestors and
 // siblings included) is armed from Node as foreign: any trusted press or click in it is cancelled, because the
@@ -1402,7 +1461,7 @@ const siteOf = url => {
 // fails the click before it is sent. `release` reaches every frame, retries once, and runs even after errors.
 // Every call to a frame's hook carries a fresh proof and its signed answer is opened with hookOpen; `hook` is the
 // tab's { key, secret } (every frame has the same key and secret).
-export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000, keys = false } = {}) {
+export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000, keys = false, sandboxOf = frame => ownerSandbox(frame, timeoutMs) } = {}) {
   hookOf({ hook });
   const mainFrame = typeof page?.mainFrame === 'function' ? page.mainFrame() : undefined;
   const ownerIs = frame => frame === owner || owner === page && frame === mainFrame;
@@ -1413,6 +1472,22 @@ export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000,
     const here = siteOf(frame.url?.() ?? '');
     return here !== '' && here !== siteOf(mainFrame?.url?.() ?? page?.url?.() ?? '');
   };
+  // True when this frame or an ancestor frame is an iframe whose sandbox attribute lacks allow-scripts. The attribute is read
+  // from the owner's side in the pristine utility world (trustedRead), so page script cannot answer for it. It is asked only
+  // after a frame answered "absent" or could not arm. A frame sandboxed by a CSP header instead (no attribute) is not
+  // detected and fails closed. Any doubt reads as false.
+  const unscripted = new Map();
+  const scriptsOff = frame => {
+    if (!unscripted.has(frame)) unscripted.set(frame, (async () => {
+      for (let at = frame; at && at !== mainFrame && typeof at.parentFrame === 'function' && at.parentFrame(); at = at.parentFrame()) {
+        let value;
+        try { value = await sandboxOf(at); } catch { return false; }
+        if (typeof value === 'string' && !/(^|[\t\n\f\r ])allow-scripts($|[\t\n\f\r ])/i.test(value)) return true;
+      }
+      return false;
+    })());
+    return unscripted.get(frame);
+  };
   // null: the frame has no hook and is allowed to have none. Throws for anything else that is not a verified answer.
   const call = async (frame, method) => {
     const { key } = hook, proof = hookProof(hook, method);
@@ -1422,21 +1497,30 @@ export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000,
       : frame.evaluate(({ key, proof, token }) => window[key] ? window[key].release(proof, token) : 'absent', { key, proof, token }),
     timeoutMs, 'frame unreachable');
     if (answer === 'absent') {
-      if (mayLackHook(frame)) return null;
+      if (mayLackHook(frame) || await scriptsOff(frame)) return null;
       throw Error('background popup hook unavailable');
     }
-    return hookOpen(hook, answer);
+    const opened = hookOpen(hook, answer);
+    // The registry's script also runs in a frame whose scripts are off, but no listener there ever fires (the install probe
+    // fails), so its hook answers that it could not arm. Nothing in such a frame runs page code either: skip it like a hookless one.
+    if (method === 'adopt' && opened === false && await scriptsOff(frame)) return null;
+    return opened;
   };
   const pending = new Set(), late = new Set();
-  let ending = false, failed = false;
+  let ending = false, failed = false, unarmable = false;
   // 'armed', 'skipped' (no hook, or the frame is gone) or 'failed' (a hook that would not arm, or would not answer).
+  // unarmable: a frame failed in a way another try will not mend (it lacks a hook it should have, or its hook refused), as
+  // against one that was slow, so the click's message can say the engine browser path is needed instead of promising a retry.
   const adoptOne = async frame => {
+    let error;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const reply = await call(frame, 'adopt');
+        if (reply !== null && reply !== true) unarmable = true;
         return reply === null ? 'skipped' : reply === true ? 'armed' : 'failed';
-      } catch { if (gone(frame)) return 'skipped'; }
+      } catch (caught) { if (gone(frame)) return 'skipped'; error = caught; }
     }
+    if (hookFailed(error)) unarmable = true;
     return 'failed';
   };
   const onFrame = frame => {
@@ -1461,6 +1545,7 @@ export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000,
     return 'the checked element changed';
   };
   return {
+    get unarmable() { return unarmable; },
     // Arms every other frame; false when one that has a hook could not be armed.
     arm: armAll,
     // Called just before the click is sent: arms again whatever is new or was rewritten since.
@@ -1511,6 +1596,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         { key, proof: hookProof(hook, 'expect'), token, evidence })), timeoutMs).catch(error => hookFailed(error) ? hookUnavailable : undefined),
       others.confirm().catch(() => false)]);
     if (reply === hookUnavailable) return hookUnavailable;
+    if (reply === true && !armed && others.unarmable) return hookUnavailable;
     return reply === true && armed ? true : changedMidClick;
   };
   let cancelled, failure, reported, report;
@@ -1549,7 +1635,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         return hook.guard(guard, element, token, capMs, { press });
       }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 4000, press: !!press }, { timeout: timeoutMs }), timeoutMs), others.arm()]);
       if (hookOpen(hook, armed) !== true) throw Error('click guard unavailable');
-      if (!othersArmed) throw Error('frame unavailable');
+      if (!othersArmed) throw others.unarmable ? Error('background popup hook unavailable') : Error('frame unavailable');
     } catch (error) { throw hookFailed(error) ? failure = Error(hookUnavailable) : Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     tab.background = modified; // Read by the result: a popup after an unmodified click probably took the foreground.
@@ -1633,7 +1719,10 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   const install = async entry => {
     entry.cdp.on('Page.windowOpen', event => {
       entry.windowOpenNo++;
-      if (ownTarget) track(discoverPopups(entry)).catch(() => { entry.popupPending = true; });
+      if (ownTarget) {
+        const discovery = track(discoverPopups(entry)).catch(() => { entry.popupPending = true; });
+        entry.openings.add(discovery); discovery.then(() => entry.openings.delete(discovery));
+      }
     });
     await entry.cdp.send('Page.enable');
     await entry.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -1688,6 +1777,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       closed: page.isClosed(), released: false, queue: Promise.resolve(), openedBySleight: allocations.get(info.targetInfo.targetId)?.bySleight === true,
       canAccessOpener: info.targetInfo.canAccessOpener };
     entry.windowOpenNo = 0;
+    entry.openings = new Set(); // Popup discoveries still running: a tab the page opened late is counted once they settle.
     // The hook's key and secret stay off enumeration, so a tab object that is logged or copied never carries them.
     Object.defineProperty(entry, 'hook', { value: hook, enumerable: false });
     entry.parent = opener;
@@ -1758,7 +1848,14 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     entry.foregroundPopups = 0;
     // A tab the page opened that no click's settling has accounted for (a script that opens a tab after the click's
     // dispatch ended, so it carried no background modifier) is probably in the foreground too.
-    entry.takeForeground = () => {
+    entry.takeForeground = async () => {
+      // A tab the page opened a moment ago may not have been admitted yet: wait, for a short bounded time, for those to settle.
+      if (entry.openings.size) {
+        let timer;
+        await Promise.race([(async () => { await Promise.allSettled([...entry.openings]); await idle(); })().catch(() => {}),
+          new Promise(resolve => { timer = setTimeout(resolve, Math.min(popupWaitMs, 1000)); })]);
+        clearTimeout(timer);
+      }
       let count = entry.foregroundPopups; entry.foregroundPopups = 0;
       for (const notice of entry.popups) {
         if (notice.counted || notice.blocked || !notice.tab) continue;

@@ -272,15 +272,25 @@ Engine behavior that sleight works around or can't change:
   changed link and opens it in the
   background. It cancels a changed form and the result says so. A script-started click, `requestSubmit()` or
   `button.click()` (outside the agent's click) is cancelled while it is dispatched if a listener re-aims it through
-  `window.name` (also a frame's), a `target` or `formTarget` property, `setAttribute` and the other attribute methods, an
-  `Attr` value or `setNamedItem`, from this window's natives or another hooked window's. Re-aiming it by adding a
+  `window.name` (also a frame's), a `target` or `formTarget` property, `setAttribute` and the other attribute methods
+  (`removeAttributeNode` too), an `Attr` value, `nodeValue` or `textContent`, `setNamedItem`, or by removing the frame a target
+  named (`remove`, `removeChild`, `replaceChild`, `replaceWith`, `replaceChildren`, `innerHTML`, `outerHTML`, `textContent`
+  of its parent, `document.open`), from this window's natives or another hooked window's. A frame or window created inside the
+  listener asks the windows above it, when its hook installs, whether a script click is in flight. Re-aiming it by adding a
   `<base target>` element (`append`, `insertAdjacentHTML`) is not seen: the tab comes to the foreground and the result says
   it probably did. A frame that changes its own `name` attribute doesn't rename its window, so that is not a flip.
-  Found 2026-10-14 (AD1); the modifier, name and attribute cases 2026-10-15 (pop round 4).
+  An SVG `a` is a link whether its address is `href` or `xlink:href`; every hold above covers it, and the seal includes the
+  `xlink:href` value. The hold selector matches an `href` in any namespace, so an HTML `a` with a namespaced `href`
+  (which the browser doesn't follow) is held as well.
+  A hold made by a frame's hook is counted by the top window's `take()`, which asks each frame below it with a signed call. The result reports it.
+  Found 2026-10-14 (AD1); the modifier, name and attribute cases 2026-10-15 (pop round 4); SVG links, the remaining writers and frames created in the listener 2026-10-15 (pop round 5).
 - When a page opens a tab outside the dispatch of an agent click (a script click that flipped, a timer), it has no
   background modifier, CDP doesn't say which tab is active, and sleight can't put the previous one back. The result says
   the tab probably took the foreground, with the reason: this click had no modifier, or the page opened it after the
-  click. Measured 2026-10-15 on the pinned Chromium: a tab made with `Target.createTarget` in the background reports
+  click. The click's result waits up to 1 s for a tab whose opening sleight has already heard about to finish being admitted. A
+  page that opens a tab through an unseen `<base target>` flip 300 ms after the click put the line in that click's own result in
+  18 of 20 runs (14 of 20 before the wait), and in the next click's result in the other 2 (20 of 20 by then). A tab that
+  arrives after that, with no opening heard yet, waits for the next click. Measured 2026-10-15 on the pinned Chromium: a tab made with `Target.createTarget` in the background reports
   `visibilityState` `hidden`; once `Emulation.setFocusEmulationEnabled` is on for it (Playwright sends that for every page it
   attaches, and sleight's install does too) it reports `visible`, and `Page.screencastVisibilityChanged` says `visible: true` for
   a background tab. In the test bank every tab, background or not, reports `visible`. No CDP signal separates the tabs,
@@ -317,7 +327,7 @@ Engine behavior that sleight works around or can't change:
   without a hook of its own, could replace its `eval` and read the key and secret from the source. We built no such page. Found 2026-10-15 (AD1 pop round 2).
 - Before a click is sent, turbo v3 seals what the click activates and arms every other frame as foreign. Trusted input that no longer matches the seal is cancelled. Limits of that check (AD1 swap rounds 3 and 4, 2026-10-15):
   - A frame on another site has no hook, because the registry's script is on the page target. The shield skips it, and a click that ends up in it is only reported afterwards, by the landed check.
-  - A same-site frame that answers "no hook" fails the click before it is sent, since a page can fake that answer. A popup's child frames that began before sleight adopted it get the hook installed at adoption. A sandboxed same-site frame that can't run it would block clicks on its page, unmeasured.
+  - A same-site frame that answers "no hook" fails the click before it is sent, since a page can fake that answer. The result says to use the engine browser path. A popup's child frames that began before sleight adopted it get the hook installed at adoption. A frame that can't run scripts (its iframe's `sandbox` attribute, or an ancestor's, lacks `allow-scripts`) doesn't fail it. The registry's script runs there but no listener ever fires, so arming it returns false (or the hook is absent), and nothing in the frame can run page code or forge an answer. The attribute is read from the parent's side in the utility world after a frame gives either reply. A page can change the attribute after the frame loaded, which skips that frame like a cross-site one (the landed check reports it afterwards). A frame sandboxed by a CSP `sandbox` header, with no attribute, isn't recognized and fails the click closed (measured 2026-10-15: `<iframe src>` to a response with `content-security-policy: sandbox`).
   - A click handler registered after the last guarded event can still change the page, and `form.submit()` or `fetch` from a key handler can't be vetoed.
   - A frame the browser creates or navigates between the last confirm and the press arms itself from its parent's state when it is same-origin. One under a cross-origin parent can't.
   - A foreign shield that can't be released (the frame stopped answering) keeps cancelling trusted input in that frame until its hard cap, about 25 s.

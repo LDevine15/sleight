@@ -32,6 +32,7 @@ export function sealDigest(node, read) {
     const control = controlOf(target), form = control ? control.form : Element.prototype.closest.call(target, 'form');
     let row = read(target, 'localName') + sep + read(target, 'isConnected') + sep + hash(read(target, 'textContent')) + sep + (control ? control.type : '') + sep + (form ? hash(formContent(form)) : '');
     for (const name of attributes) row += sep + attr(target, name);
+    row += sep + (Element.prototype.getAttributeNS.call(target, 'http://www.w3.org/1999/xlink', 'href') ?? ''); // An SVG link's other spelling of href.
     const doc = read(target, 'ownerDocument'), bases = Document.prototype.querySelectorAll.call(doc, 'base[target]');
     return row + sep + read(doc, 'baseURI') + sep + read(doc, 'URL') + sep + (bases.length > 0 ? raw(bases[0], 'target') ?? '' : '');
   };
