@@ -194,7 +194,9 @@ test('a click that lands in a cross-site frame is reported as missed, never as d
   const f = await b.start(html, readOnly, { routes: { '/pay-frame': doc('<style>body{margin:0}button{width:100vw;height:100vh}</style><button type="button" onclick="parent.postMessage(1,\'*\')">Frame</button>', '', '', { audit: false }) } });
   await settleFor(600);
   const locator = f.entry.page.locator('#x');
-  await assert.rejects(backgroundClick(f.entry, locator, async () => { await f.entry.page.mouse.click(400, 50); }, { timeoutMs: 2000 }), /did not reach the checked element/);
+  await assert.rejects(backgroundClick(f.entry, locator, async () => { await f.entry.page.mouse.click(400, 50); }, { timeoutMs: 2000 }), /did not reach the checked element|page changed during the click; read again\. The page received no press/);
+  // (The CDP filter now puts the hook into the cross-site frame at the start of its document, so the frame's foreign shield cancels the
+  // click itself; before that the click reached the frame and was only reported as missed afterwards. Neither reads as delivered.)
   await f.entry.page.evaluate(() => { document.activeElement.blur(); document.body.focus(); });
   const quiet = await backgroundClick(f.entry, locator, async () => { await f.entry.page.mouse.click(40, 34); }, { timeoutMs: 2000 }).then(() => 'delivered', error => error.message);
   assert.equal(quiet, 'delivered', 'a click that reaches the checked element is delivered');

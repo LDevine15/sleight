@@ -147,7 +147,7 @@ export async function bank(t, { observeTabs = false } = {}) {
     async open(url) { const result = await call('browser_open', { url }); outputs.push(result.text); return result; },
     async start(html, text = readOnly, { route = '/attack-' + (fixtureNo + 1), routes: extra = {} } = {}) {
       if (runtime) { const receipt = await runtime.end(); assert.deepEqual(receipt.cleanup, []); }
-      registry = createPageRegistry({ browser, session, upstream: raw, ownTarget: filter.own, releaseTarget: filter.release, popupWaitMs: 500 });
+      registry = createPageRegistry({ browser, session, upstream: raw, ownTarget: filter.own, releaseTarget: filter.release, frames: filter.frames, popupWaitMs: 500 });
       const binding = createV3TurnBinding({ source: 'user', session: 'ad1', turn: 'turn-' + (++fixtureNo), id: 'request-' + fixtureNo, text }, () => true);
       runtime = await createV3TurnRuntime({ binding, browser: 'bfixture', pages: registry, snapshot, endpoint, dependencies: { acknowledgeSnapshot } });
       routes.set(route, html);

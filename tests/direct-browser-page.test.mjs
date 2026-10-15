@@ -164,7 +164,7 @@ test('unproved popup preparation refuses before input and disarms a possible lat
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
-function hookFixture({ clock = Date, handle, credentials: given, parent, rewritable = false } = {}) {
+function hookFixture({ clock = Date, handle, credentials: given, parent, rewritable = false, children = [], fresh = false } = {}) {
   class Event {
     get defaultPrevented() { return !!this.nativePrevented; }
     get returnValue() { return !this.nativePrevented; }
@@ -228,7 +228,9 @@ function hookFixture({ clock = Date, handle, credentials: given, parent, rewrita
   }
   const opens = [], window = { listeners: {}, captureListeners: {}, parent, open(...args) { opens.push(args); return handle ?? { real: true }; } };
   const navigator = { userActivation: { isActive: true } };
-  const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
+  // Child windows by index and a native length getter, as a window has them; `fresh` is a document no script has run in yet.
+  if (children.length) { Object.defineProperty(window, 'length', { get: () => children.length }); children.forEach((child, index) => { window[index] = child; }); }
+  const document = { baseURI: 'https://fixture.invalid/', scripts: fresh ? [] : [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   // document.open() erases every listener on its window; a fixture asks for it with `rewritable`.
   class Document {
     open() { window.listeners = {}; window.captureListeners = {}; }
@@ -275,6 +277,68 @@ test('AD1 a child frame inherits its parent\'s armed state only from a signed an
       assert.equal(forged.call('armed'), undefined, name + ' answer arms nothing');
     }
   } finally { parent.call('release', 'tok'); }
+});
+
+// The key path (backgroundClick with keys): locks, resync and the walk over child windows, every call with a proof and every
+// answer signed. A trusted key is a keydown the page's listeners see, cancelled by the lock's own listener.
+const trustedKey = (f, type = 'keydown') => {
+  const event = Object.assign(new f.Event(), { type, key: 'Enter', isTrusted: true, nodes: [] });
+  for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+  return event;
+};
+test('AD1 kb lock: a locked window cancels every trusted key and reports it once released, and refuses a retired token or a bad cap', () => {
+  const f = hookFixture({ fresh: true });
+  assert.equal(f.call('lock', 'k1', 60000), true);
+  const down = trustedKey(f), up = trustedKey(f, 'keyup');
+  assert.ok(down.stopped && down.nativePrevented && up.nativePrevented, 'the keys are cancelled');
+  // (This fixture has no native Event.type getter, so the shield cancels with its fail-closed reason; the real-browser bank checks the deny texts.)
+  assert.equal(typeof f.call('release', 'k1'), 'string', 'the veto is reported');
+  assert.equal(f.call('lock', 'k1', 60000), false, 'a released token is retired');
+  f.call('adopt', 'k2', 60000, false); // (this fixture cannot dispatch the liveness probe, so adopt and guard answer false here)
+  assert.equal(f.call('lock', 'k2', 60000), true, 'a lock replaces a foreign shield of the same token');
+  assert.equal(f.call('release', 'k2'), undefined, 'a key never pressed reports nothing');
+  for (const [name, args] of [['lock', ['k9', 0]], ['lock', ['k9', Infinity]], ['resync', ['k9', -1]]]) assert.equal(f.call(name, ...args), false, name + ' ' + args);
+});
+
+test('AD1 kb walk: tree, lockAll, resyncAll and finishAll visit this window and the children that answer with the hook\'s own signature', () => {
+  const sibling = hookFixture({ fresh: true }), credentials = sibling.credentials;
+  const child = hookFixture({ credentials, fresh: true }), late = hookFixture({ credentials, fresh: false });
+  const parent = hookFixture({ credentials, fresh: true, children: [child.window, late.window] });
+  const tree = parent.call('tree');
+  assert.equal(tree.length, 3);
+  assert.deepEqual(tree.map(node => [node.n, node.fresh]), [[2, true], [0, true], [0, false]]);
+  assert.equal(new Set(tree.map(node => node.id)).size, 3, 'each window has its own id');
+  assert.equal(parent.call('lockAll', 't1', 60000, tree[0].id), true);
+  assert.ok(trustedKey(child).nativePrevented && trustedKey(late).nativePrevented, 'the children are locked');
+  assert.ok(!trustedKey(parent).nativePrevented, 'the skipped window is not');
+  assert.equal(parent.call('resyncAll', 't1', 60000), true);
+  const found = parent.call('finishAll', 't1');
+  assert.deepEqual(found.map(([id]) => id).sort(), [tree[1].id, tree[2].id].sort());
+  assert.ok(found.every(([, reason]) => typeof reason === 'string'));
+  assert.deepEqual(parent.call('finishAll', 't1'), [], 'released windows report nothing the second time');
+});
+
+test('AD1 kb walk: a child that answers with anything but a signed answer for that call is a window with no hook, and arms and releases nothing', () => {
+  const key = hookFixture().credentials.key;
+  const credentials = hookFixture().credentials;
+  const genuine = hookFixture({ credentials, fresh: true });
+  for (const [name, answer] of [
+    ['unsigned', () => 'x.' + '0'.repeat(64) + '.i0'],
+    ['not a string', () => ({ id: 'x', n: 0, fresh: true })],
+    ['signed for another method', proof => genuine.window[key].verdict(hookProof(credentials, 'verdict'), 'tok')],
+    ['throws', () => { throw Error('cross-origin'); }],
+  ]) {
+    const forged = { [key]: { info: answer, lock: () => 't', resync: () => 't', release: () => 'u' } };
+    const parent = hookFixture({ credentials, fresh: true, children: [forged] });
+    assert.deepEqual(parent.call('tree').map(node => node.id === null), [false, true], name);
+    assert.equal(parent.call('lockAll', 't2', 60000, null), false, name + ': a window that cannot be vouched for is not guarded');
+    parent.call('release', 't2');
+  }
+  // A child with no hook object at all is the same; one that throws on access (another origin) is left to its own route.
+  const bare = hookFixture({ credentials, fresh: true, children: [{}] });
+  assert.deepEqual(bare.call('tree').map(node => node.id === null), [false, true]);
+  const hidden = hookFixture({ credentials, fresh: true, children: [new Proxy({}, { get() { throw Error('cross-origin'); } })] });
+  assert.equal(hidden.call('tree').length, 1);
 });
 
 test('CR8 pointer events stay plain when their first modifier read is after dispatch', t => {

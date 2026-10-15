@@ -1,5 +1,6 @@
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { isV3Context } from './v3-context.mjs';
+import { lineBreakRefusal } from './rules.mjs';
 // Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
 class FieldError extends Error {}
@@ -183,6 +184,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             await send(checked => checked.click(options), 'click', candidate);
           } else if (state.kind === 'combo') {
             if (typeof value !== 'string' || !state.controls || /[\r\n\0]/.test(state.controls)) throw new FieldError('combobox needs text and a controlled option list');
+            if (state.editableText && state.tag === 'input' && /[\r\n]/.test(value)) throw new FieldError(lineBreakRefusal);
             if (state.editableText) await send(checked => checked.fill(value, options));
             else await send(checked => checked.click(options), 'click');
             const handle = await loc.elementHandle(options);
@@ -228,6 +230,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             if (!stopped && !(await trustedLocatorRead(loc, inspect, value.toLowerCase())).matched) throw new FieldError('color did not match; read the field');
           } else if (state.kind === 'text') {
             if (!['string', 'number'].includes(typeof value)) throw new FieldError('text fields need a string or number');
+            if (state.tag === 'input' && /[\r\n]/.test(String(value))) throw new FieldError(lineBreakRefusal);
             await send(checked => checked.fill(String(value), options));
             if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) rows[i].note = 'value was formatted or changed by the page; read it if exact text matters';
           } else throw new FieldError('unsupported field kind; use browser_act');

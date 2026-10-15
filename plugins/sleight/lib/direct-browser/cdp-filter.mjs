@@ -172,19 +172,35 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
       if (closed) return; // Late attachments stay private and grant no input route.
       const route = { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent,
-        browserParent: parent ? parent.browserParent : virtualParent };
+        browserParent: parent ? parent.browserParent : virtualParent, type: info.type, scripts: new Map(), live: false };
       attachments.get(params.sessionId).private = route.private;
       routes.set(params.sessionId, route);
       frame = routed(frame, virtualParent);
       if (protectedPort !== undefined) {
         route.ready = (async () => {
-          await upstream.send('Fetch.enable', { patterns: guardPatterns }, params.sessionId);
-          // Install this independently of Playwright, including on every child.
-          // A paused target cannot make its first request before the guard exists.
-          await upstream.send('Target.setAutoAttach', autoAttachParams, params.sessionId);
+          // One burst, then wait for the answers. Commands on a session run in the order sent, so the port guard, the child
+          // auto-attach, the caller's scripts (frames.addScript: in place before the frame's first script runs, which Playwright's
+          // own init scripts do not guarantee) and the resume are ordered without a round trip between them. The pause matters:
+          // the browser replaces an iframe's first target a few milliseconds after creating it, and in 3 of 3 runs with one more
+          // round trip before the resume the replacement never attached to the filter.
+          // Chrome drops a nested frame's pending load when Target.setAutoAttach reaches a session above it a second time, or
+          // from a second session on the same page while that frame loads, and the page then stays "interactive" for good (a
+          // cross-site frame in a cross-site frame: 20 to 22 of 24 loads stuck at depth 2; without the filter or Playwright, a repeat on an
+          // iframe session left 5 to 7 of 30 stuck and none without it). So every session gets it once, and a page gets it
+          // from one session: the first, here, before the page is announced; a later session of the same page (a probe, a
+          // snapshot read, the registry's handle) only when its caller asks, and a repeat from a caller is answered without
+          // sending (see Target.setAutoAttach below). A frame or worker session gets it here, so its children are caught at once.
+          route.autoAttached = !(route.type === 'page' && [...routes.values()].some(other => other !== route && other.target === route.target && other.autoAttached));
+          const sends = [upstream.send('Fetch.enable', { patterns: guardPatterns }, params.sessionId),
+            ...(route.autoAttached ? [upstream.send('Target.setAutoAttach', autoAttachParams, params.sessionId)] : []),
+            ...(route.type === 'iframe' ? installScripts(params.sessionId, route) : [])];
+          const resume = params.waitingForDebugger ? upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId) : undefined;
+          resume?.catch(() => {});
+          await Promise.all(sends);
           if (closed || routes.get(params.sessionId) !== route) return;
           if (!route.private) emit(frame);
-          if (params.waitingForDebugger) await upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId);
+          await resume;
+          route.live = true;
         })();
         route.ready.catch(() => { removeRoute(params.sessionId); detach(params.sessionId).catch(() => {}); });
         return;
@@ -197,8 +213,74 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     if (!parent?.private) emit(frame);
   }
   upstream.on('event', event);
+  // Scripts for the iframe sessions (any depth) of one owned page: owner -> entries. A session gets each entry once, before it
+  // is resumed (new frames) or when the entry is added (frames already running, whose later documents it reaches).
+  const frameScripts = new Map();
+  // Sends the entries this session lacks, in this call (no await before the sends), and returns the pending answers.
+  function installScripts(name, route) {
+    const sent = [];
+    for (const entry of frameScripts.get(route.owner) ?? []) {
+      if (route.scripts.has(entry)) continue;
+      // Without the Page domain enabled on the session, the browser takes the script and never runs it (measured: the hook was
+      // missing from every document it was meant for).
+      if (!route.pageEnabled) { route.pageEnabled = true; const enabled = upstream.send('Page.enable', {}, name); enabled.catch(() => {}); sent.push(enabled); }
+      const pending = upstream.send('Page.addScriptToEvaluateOnNewDocument', { source: entry.source }, name)
+        .then(result => { if (!id(result?.identifier)) throw Error('CDP_FRAME_SCRIPT_FAILED'); return result.identifier; });
+      pending.catch(() => {});
+      route.scripts.set(entry, pending); sent.push(pending);
+    }
+    return sent;
+  }
+  // Private routes are the read-only sessions attach() hands out for an owned page's iframes; they carry no hook and are never counted.
+  const frameRoutes = owner => [...routes].filter(([, route]) => route.type === 'iframe' && route.owner === owner && !route.private);
+  const frames = Object.freeze({
+    // The running iframe sessions of an owned page, at any depth: the frames in other processes.
+    sessions(owner) { live(); checkTarget(owner); return frameRoutes(owner).filter(([, route]) => route.live).map(([name]) => name); },
+    // Install source in every iframe session of the page, now and for every one that attaches before remove() is called.
+    async addScript(owner, source) {
+      live(); checkTarget(owner);
+      if (typeof source !== 'string' || !source) throw Error('CDP_FRAME_SCRIPT_FAILED');
+      const entry = { source }, entries = frameScripts.get(owner) ?? new Set();
+      entries.add(entry); frameScripts.set(owner, entries);
+      const remove = async () => {
+        entries.delete(entry);
+        await Promise.all([...routes].map(async ([name, route]) => {
+          const pending = route.scripts.get(entry);
+          if (pending === undefined) return;
+          route.scripts.delete(entry);
+          const identifier = await pending.catch(() => undefined);
+          if (identifier !== undefined) await upstream.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, name).catch(() => {});
+        }));
+      };
+      try {
+        await Promise.all(frameRoutes(owner).map(([name, route]) => {
+          installScripts(name, route);
+          // A session that is already gone (the browser replaces an iframe's first target at once) has nothing to install.
+          return route.scripts.get(entry)?.catch(error => { if (routes.get(name) === route) throw error; });
+        }));
+      }
+      catch (error) { await remove(); throw error; }
+      return Object.freeze({ remove });
+    },
+    // Evaluate a fixed expression in the main world of the session's top frame; returns its value.
+    async evaluate(owner, name, expression) {
+      live(); checkTarget(owner);
+      const route = routes.get(name);
+      if (!route || route.type !== 'iframe' || route.private || route.owner !== owner || !route.live || typeof expression !== 'string') throw Error('CDP_SESSION_NOT_OWNED');
+      const result = await upstream.send('Runtime.evaluate', { expression, returnByValue: true }, name);
+      if (result?.exceptionDetails) throw Error('CDP_COMMAND_FAILED');
+      return result?.result?.value;
+    },
+  });
+  // The only non-page target the filter attaches to: an iframe that its own auto-attach chain from an owned page's session
+  // delivered (its route has the iframe type and an owner that is still owned). Anything else (another tab, a popup that is
+  // not adopted, a worker, a service worker, the browser) has no such route and is refused before the upstream attach.
+  const ownedFrame = target => [...routes.values()].find(route => route.target === target && route.type === 'iframe' &&
+    !route.private && owned.has(route.owner));
   async function attach(target, virtualParent) {
     checkTarget(target);
+    const frameOwner = owned.has(target) ? undefined : ownedFrame(target)?.owner;
+    if (!owned.has(target) && frameOwner === undefined) throw Error('CDP_ATTACHMENT_INVALID');
     const previous = attaching.get(target);
     const pending = (async () => {
       if (previous) await previous.catch(() => {});
@@ -219,8 +301,26 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         if (!routes.has(result.sessionId)) {
           const { targetInfo } = await upstream.send('Target.getTargetInfo', { targetId: target });
           live(); checkTarget(target);
-          if (targetInfo?.targetId !== target || targetInfo.type !== 'page') throw Error('CDP_ATTACHMENT_INVALID');
-          event({ method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo, waitingForDebugger: false } });
+          if (targetInfo?.targetId !== target) throw Error('CDP_ATTACHMENT_INVALID');
+          if (frameOwner !== undefined) {
+            // A second, private session on an owned page's iframe, for reading (the snapshot scans every frame). Playwright never
+            // sees an attach or detach event for it (it would adopt the iframe's target as a new frame), it takes no child
+            // auto-attach and no hook, and it gets the same port guard as the frame's own session before its first command.
+            if (targetInfo.type !== 'iframe' || ownedFrame(target)?.owner !== frameOwner) throw Error('CDP_ATTACHMENT_INVALID');
+            const route = { target, owner: frameOwner, parent: virtualParent, browserParent: virtualParent, type: 'iframe', private: true,
+              scripts: new Map(), live: false };
+            attachments.get(name).private = true;
+            routes.set(name, route);
+            route.ready = (async () => {
+              if (protectedPort !== undefined) await upstream.send('Fetch.enable', { patterns: guardPatterns }, name);
+              if (closed || routes.get(name) !== route) return;
+              route.live = true;
+            })();
+            route.ready.catch(() => { removeRoute(name); detach(name).catch(() => {}); });
+          } else {
+            if (targetInfo.type !== 'page') throw Error('CDP_ATTACHMENT_INVALID');
+            event({ method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo, waitingForDebugger: false } });
+          }
         }
         if (routes.get(name)?.target !== target) throw Error('CDP_ATTACHMENT_INVALID');
         await routes.get(name).ready;
@@ -265,8 +365,17 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         }
         if (method === 'Target.setAutoAttach') {
           if (typeof params.autoAttach !== 'boolean' || params.flatten !== true) refuse();
-          if (!isRoot) return upstream.send(method, protectedPort !== undefined ? autoAttachParams :
-            { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
+          if (!isRoot && routes.get(route).private) refuse();
+          if (!isRoot && protectedPort !== undefined) {
+            // The parameters are fixed, so a repeat changes nothing the browser keeps, and the repeat itself can stall a
+            // nested frame that is loading (see the burst).
+            const ownedRoute = routes.get(route);
+            if (ownedRoute.autoAttached) return {};
+            ownedRoute.autoAttached = true;
+            try { return await upstream.send(method, autoAttachParams, route); }
+            catch (error) { ownedRoute.autoAttached = false; throw error; }
+          }
+          if (!isRoot) return upstream.send(method, { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
           autoAttach = params.autoAttach;
           if (autoAttach) for (const target of owned) if (![...routes.values()].some(r => r.target === target)) await attach(target);
           return {};
@@ -397,5 +506,5 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       .finally(() => { disposal = undefined; });
     return disposal;
   }
-  return Object.freeze({ session, owns, own, release: revoke, listen, dispose, endpointBlocked: target => endpointTargets.has(target) });
+  return Object.freeze({ session, owns, own, release: revoke, frames, listen, dispose, endpointBlocked: target => endpointTargets.has(target) });
 }

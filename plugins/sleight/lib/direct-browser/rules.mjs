@@ -69,12 +69,32 @@ export function keyClass(key) {
   return { kind: safe ? 'safe' : 'unknown', chord };
 }
 
+// The Playwright spelling of an activation key (Enter or Space, with its modifiers), or undefined for any other key.
+export function activationKey(key) {
+  const { name, chord } = keyClass(key);
+  if (!name) return undefined;
+  if (!chord) return name;
+  const names = { ctrl: 'Control', control: 'Control', cmd: 'Meta', command: 'Meta', meta: 'Meta', option: 'Alt', alt: 'Alt', shift: 'Shift', controlormeta: 'ControlOrMeta' };
+  const modifiers = key.slice(0, key.lastIndexOf('+', key.length - 2)).split('+').map(token => names[token.toLowerCase()]);
+  return [...modifiers, name].join('+');
+}
+
+// Chat apps send with Control+Enter and break a line with Shift+Enter: the only activation chords allowed, and only in a text field.
+export function textChord(key, el) {
+  const modifiers = activationKey(key)?.split('+').slice(0, -1) ?? [];
+  return keyClass(key).name === 'Enter' && modifiers.length === 1 && ['Control', 'Shift'].includes(modifiers[0])
+    && (['input', 'textarea'].includes(el?.tag) && el?.kind === 'text' || el?.role === 'textbox');
+}
+
+// Chrome takes text inserted into a single-line input as implicit submission when it is a lone line break.
+export const lineBreakRefusal = 'A line break in a single-line input acts like pressing Enter. Press Enter on it instead, or use the engine browser path';
+
 export function intent(kind, target = {}) {
   const key = keyClass(target.key).name ?? target.key?.split('+').at(-1), activation = kind === 'press' && ['Enter', 'Space'].includes(key);
   let submit = kind === 'submit', payment = false, plain = kind === 'submit';
   for (const el of [target.prior, target.element].filter(Boolean)) {
     const button = el.kind === 'button' || el.role === 'button', link = el.kind === 'link' || el.role === 'link' || el.tag === 'a';
-    const sends = kind === 'click' || activation && (['Enter', 'Return'].includes(key) ? button || link || el.submit || el.form && el.tag !== 'textarea' : button);
+    const sends = kind === 'click' || activation && (['Enter', 'Return'].includes(key) ? button || link || el.submit || el.form && (el.tag !== 'textarea' || keyClass(target.key).chord) : button);
     const submits = kind === 'submit' || sends && (el.submit || el.payment && (button || link) || el.form && activation);
     submit ||= !!submits;
     payment ||= !!submits && (el.payment === true || el.formPayment === true);
@@ -128,8 +148,8 @@ export function check(ctx, kind, target = {}) {
     if (kind !== 'dialog') expirePaymentDialog(ctx);
     if (!ordinary.has(kind) && kind !== 'submit') return refuse('Background-only operation required.');
     if (kind === 'Target.createTarget') return target.background === true ? allow : refuse('New tabs must use background:true.');
-    if (kind === 'press' && keyClass(target.key).chord && keyClass(target.key).name) return refuse('This activation chord may open a foreground window.');
     const el = target.element;
+    if (kind === 'press' && keyClass(target.key).chord && keyClass(target.key).name && !textChord(target.key, el)) return refuse('This activation chord may open a foreground window. Only Shift+Enter and Control+Enter in a text field are allowed.');
     if (!['read', 'dialog', 'open', 'wait', 'back', 'forward', 'reload', 'viewport', 'close', 'keep', 'handoff'].includes(kind)) {
       if (!el || !text(el.tag)) return refuse('Read the target before input.');
       if (['iframe', 'frame', 'object', 'embed'].includes(el.tag)) return refuse('Use a ref for the child-frame control.');

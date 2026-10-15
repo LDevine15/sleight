@@ -424,7 +424,8 @@ for (const [name, body, use] of [
 test('the handle realm runs the hook, not just a forwarded preventDefault (A1)', { skip, timeout: 90000 }, async t => {
   const { f } = await attack(t, { script: `go.onclick=()=>{const w=window.open('/landed');window.__w=w;
     window.__x=[typeof w[Object.getOwnPropertyNames(w).find(n=>/^k[0-9a-f]{32}$/.test(n))],w.open('/danger','_blank')===null,String(w.HTMLElement.prototype.click).includes('native code')].join()}` });
-  assert.equal(await f.page.evaluate(() => window.__x), 'object,true,false');
+  // The last value is whether the handle realm's click wrapper reads as native: it does, since the hook dresses every native it replaces (keyboard-compat.real).
+  assert.equal(await f.page.evaluate(() => window.__x), 'object,true,true');
   assert.deepEqual(dangerHits(f), []);
   await f.safe({ settle: 300 });
 });

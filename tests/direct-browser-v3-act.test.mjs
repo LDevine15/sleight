@@ -448,3 +448,12 @@ test('AD1 pop4: tabs the page can raise are listed after a click or key press, a
   const failed = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
   assert.doesNotMatch(failed.lines[0], /can be raised/, 'a failed lookup adds nothing and breaks nothing');
 });
+
+test('v3 accepts a literal space and a literal newline as keys, and still rejects an empty or oversized key', async () => {
+  const f = fixture();
+  for (const key of [' ', '\n', '\r']) {
+    const result = await f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {});
+    assert.equal(result.stoppedAt, null, JSON.stringify(key)); assert.ok(f.actions.some(a => a[0] === 'press' && a[2] === key), JSON.stringify(key));
+  }
+  for (const key of ['', 'a'.repeat(101), 1]) await assert.rejects(f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {}), /needs key/);
+});

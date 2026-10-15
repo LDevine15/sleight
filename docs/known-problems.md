@@ -62,14 +62,65 @@ our own runs. Dates and engine versions are given where they matter.
 
 ## Browsers
 
-- Turbo v3 sends Enter and Space as rawKeyDown, char and keyUp. It re-reads the focused element (and its tag, type and form owner)
-  between them, and a window capture listener in sleight's isolated world drops any key event whose target isn't the checked
-  element, in every frame that exists when the key starts. Measured 2026-10-14 on headless Chromium: a page timer pulled in the
-  keydown handler (0, 1, 2, 3, 5 ms and rAF, Enter and Space, 72 runs) clicked Pay 0 times; before the listener the reviewer saw 5/15
-  at 2 ms, 3/15 at 3 ms and 1/15 at 5 ms. Not covered: a frame the page creates after the listener is installed and then focuses
-  inside the same key, and a page handler that changes the checked element's value or label without changing its tag, type or form
-  owner. Keys outside a short list (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete, Backspace, F1-F12,
-  one character, with modifiers) are refused on this path.
+- Turbo v3 sends Enter and Space (and Shift+Enter or Control+Enter in a text field) through the page keyboard inside the click
+  shield: a hook registered before page scripts is armed with the checked element and its form (action, method, target, enctype,
+  default submitter and its formaction and formtarget) before the key goes out. The whole seal must match at the first keydown; from
+  then on only those routing facts must, so a handler that disables its own button or changes its label is not a veto. The hook cancels
+  any keydown, keypress, keyup, click or submit that lands elsewhere or after the routing changed. The key goes down and up in two
+  halves. The other frames are locked, and a deny lock is also put into every document created while the key is in flight, before
+  the page's own scripts (a page-session script for frames in the page's process, a script the CDP filter puts into each frame in
+  another process before resuming it; Playwright's `addInitScript` is not used, because it also runs at once in a document that has
+  already started). A frame in another process (a cross-site or sandboxed iframe) is reached through the filter's own session for
+  it, not through Playwright, which often never attaches such a frame. The filter sends the port guard, the child auto-attach, the
+  hook script and the resume as one burst, because one extra round trip before the resume of an iframe's first target left the
+  frame unattached in 3 of 3 runs, and it turns the Page domain on before adding the script (without it the browser took the
+  script and never ran it). It sends `Target.setAutoAttach` once per session, to a page from its first session only, and answers
+  a caller's repeat without sending it. Chrome drops the pending load of a cross-site frame nested in a cross-site frame when
+  a second one arrives, and the page then stayed "interactive" with `browser_open` waiting its 3 s (22 of 24 loads at depth 2, 23 of 24 at
+  depth 3, and `page.goto` on an open depth-3 page hung in 5 of 20; now 0 of 24, 0 of 24 and 0 of 20). The key asks each frame's hook for its tree (the same-origin windows below it, each with a hook
+  id and the child count from a getter captured before the page's scripts), a frame reached by two routes counts once, and the key
+  goes only when every child the windows count is reached and every hook was there at the start of its document (a hook put in
+  later sits behind the page's own listeners, and such a frame paid in 9 of 36 presses in a repro before the check). A
+  script-created frame whose first navigation is same-origin reuses the window of its empty document, where the commit leaves the
+  hook's listeners registered but dead, so between the halves the key waits (up to 400 ms) for such a navigation to commit and puts
+  the listeners back in every frame. The hook also puts them back after `document.open()`, `write()` or `writeln()` on a loaded
+  document. The outcome says "the key may have activated; read the page" when something was cancelled, because events before the
+  cancelled one were delivered. Enter and Space also go through the click path's popup handling. A link or form that would open a
+  new tab opens in the background, and a flip in the page's own click handler is cancelled and rerouted. Once the key's click or
+  submit has passed the shield, a later key release is only checked against the field it should reach, since it has nothing left to
+  activate and the flip is already handled. Measured on 2026-10-15: 0 payments in 48 inserted-frame presses, 32 same-site navigations,
+  24 re-pointed frames, 40 frame-focus presses, 72 cross-site presses with a keyup payer and the document.open repro, and
+  the key goes through on 48 of 48 first presses on six ordinary pages with cross-site, nested, lazy and sandboxed iframes (it was
+  25 of 48). A keydown handler that changes the default submitter's name or value or a hidden input of the form is vetoed, since
+  the seal includes them. The hook's replacements of `addEventListener`, `Document.prototype.open`, `write`
+  and `writeln` and of the other natives it wraps keep the native's name, length and `toString` text (through a replaced
+  `Function.prototype.toString`), and are methods without a `prototype` property. Every call the key path makes to a
+  hook carries a one-use proof and opens the signed answer, like the click path; the script that locks each new document uses one
+  proof for the whole key (each document accepts it once) and its answer is not read, so a lock that did not take shows only in the
+  later surveys of each frame's tree. A script-less sandboxed frame (a sandbox without `allow-scripts`) fires no listener, so its lock
+  is nominal: nothing in it can run, and the key goes through (6 of 6 with the sandbox frame in the key bank); a native form
+  submission from such a frame with `allow-forms` and an autofocused field is not vetoed, and we have not tried it. Known gaps: a page can still run a capture listener ahead of the hook on a reused window if it gets
+  `addEventListener` from a realm the hook never ran in (a script-less sandboxed frame), registers it before the hook restores its own,
+  and creates and focuses that frame in the roughly 1 ms between the last restore and the key release (not tried); a frame with no
+  hook from the start of its document (a popup that had loaded before sleight adopted it) makes the key refuse with the engine path.
+  A frame that never loads is covered by its empty first document and does not stop the key. A frame
+  whose hook cannot be reached within 1 s makes the key refuse with the engine path; Enter on a button
+  that opens a modal and focuses inside it, or an inline editor that removes itself on Enter, activates but reports "may have
+  activated" because the key is released on another element. A key release that reaches an empty page (the button disabled itself) is
+  cancelled without a report. A div, span or custom element with role=textbox (most chat composers) is refused for every key on this
+  path, because it could hide the real receiver. The refusal tells the model to use the engine path. Text with a line break typed or filled into a
+  single-line input is refused (Chrome submits the form on a bare line break). A textarea takes it. Keys outside a short list
+  (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete,
+  Backspace, F1-F12, one character, with modifiers) are refused on this path; Alt, Meta and other chords with Enter or Space are too.
+- `browser_read` scans every frame in another process through a private read session that the CDP filter attaches to an iframe
+  target of an owned page (one its own auto-attach chain delivered), with the port guard on it first. It attaches to no other
+  target. The filter refuses every other target before any attach goes upstream (other tabs, popups it has not adopted, workers,
+  service workers, the browser target). Before this, any page with a cross-site or sandboxed iframe returned "Snapshot unavailable" (12 of 12 reads failed on
+  pages with 1, 2 and 5 cross-site iframes at 09c4a4c5). Now 12 of 12 succeed, 40 of 40 reads made right after opening pages with
+  five cross-site iframes succeed, and sandboxed iframes (`sandbox`, `allow-same-origin`, `allow-scripts`, both) read 4 of 4
+  each, with passwords and card fields redacted as in a same-origin frame. A read of a 5-iframe page takes about 15 ms against
+  3 ms for a page with none (medians of 20, three runs). A frame the filter has no iframe route for still makes the read fail
+  closed. We have not seen that happen in the runs above, and we don't know how often a slow third-party frame causes it.
 - A page that opens a popup from its own script can still take the screen during a browser session. Since 2026-10-13 sleight opens
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,
   links that need `window.opener`, downloads and anything a script opens, because the engine's read-only page access can't see

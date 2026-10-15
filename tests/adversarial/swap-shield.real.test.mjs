@@ -37,13 +37,13 @@ test('key shield: with { keys: true } an action swapped on keydown cancels the E
 });
 
 test('key shield: a default { keys } of false leaves key events alone, { keys: true } vetoes the same swap', { skip, timeout: 60000 }, async t => {
-  const page = plain('<input id="t" aria-label="Name">', `t.addEventListener('keydown',()=>t.setAttribute('aria-label','Pay $99 now'));`);
+  const page = plain('<input id="t" aria-label="Name">', `t.addEventListener('keydown',()=>t.setAttribute('form','other'));`);
   const b = await bank(t), f = await b.start(page, readOnly);
   assert.equal(await arm(f, '#t'), true);
   await f.page.focus('#t'); await f.page.keyboard.press('a');
   assert.equal(await verdict(f), undefined);
   await finish(f);
-  await f.page.evaluate(() => document.getElementById('t').setAttribute('aria-label', 'Name'));
+  await f.page.evaluate(() => document.getElementById('t').removeAttribute('form'));
   assert.equal(await arm(f, '#t', { keys: true, token: 't2' }), true);
   await f.page.keyboard.press('b');
   assert.equal(await verdict(f, 't2'), 'the checked element changed');

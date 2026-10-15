@@ -3,7 +3,7 @@
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
-import { intent, keyClass, deferRefund, refundableName } from './rules.mjs';
+import { intent, deferRefund, refundableName, lineBreakRefusal } from './rules.mjs';
 import { observeActivity } from './activity.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
@@ -13,6 +13,7 @@ const REF_OPS = new Set('click type select check uncheck hover drag upload'.spli
 const TIMEOUT = 1000;
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const lineBreak = /[\r\n]/;
 const clean = value => String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 240);
 const refOf = value => typeof value === 'string' && /^(?:f\d+)?e\d+$/.test(value) ? value : null;
 async function bounded(task, ms) {
@@ -40,7 +41,7 @@ function validate(steps) {
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
     if (s.ref !== undefined && !refOf(s.ref)) needs('a valid ref');
     if (s.do === 'type' && typeof s.text !== 'string') needs('text');
-    if (s.do === 'press' && (typeof s.key !== 'string' || !s.key.trim() || s.key.length > 100)) needs('key');
+    if (s.do === 'press' && (typeof s.key !== 'string' || !s.key || s.key.length > 100)) needs('key');
     if (s.do === 'select' && (!Array.isArray(s.values) || !s.values.length || s.values.some(v => typeof v !== 'string'))) needs('values');
     if (s.do === 'drag' && !refOf(s.to)) needs('to');
     if (s.do === 'upload' && (!Array.isArray(s.paths) || !s.paths.length || s.paths.some(p => typeof p !== 'string' || !p))) needs('paths');
@@ -97,6 +98,9 @@ function coverDetails(el) {
 function watch(page, state) {
   const pending = new Set(), completed = new Set(), listeners = []; let boundary, dialogResolve, stopped = false;
   const dialogReady = new Promise(resolve => { dialogResolve = resolve; });
+  // Settles when any boundary registers (navigation, new document, dialog, popup, close), so a caller can wait for one event, not a fixed time.
+  let boundaryResolve; const boundaryReady = new Promise(resolve => { boundaryResolve = resolve; });
+  const mark = value => { boundary = value; boundaryResolve(); };
   const stop = () => { stopped = true; for (const [event, fn] of listeners) page.off(event, fn); };
   const on = (event, fn) => {
     const listener = (...args) => { if (!stopped) fn(...args); };
@@ -105,12 +109,12 @@ function watch(page, state) {
   on('request', r => { if (['document', 'xhr', 'fetch', 'script', 'stylesheet'].includes(r.resourceType())) pending.add(r); });
   on('requestfinished', r => { if (pending.delete(r)) completed.add(r); });
   on('requestfailed', r => { pending.delete(r); });
-  on('framenavigated', frame => { if (frame === page.mainFrame()) boundary = { kind: 'navigation' }; });
-  on('load', () => { boundary ??= { kind: 'document' }; });
-  on('dialog', dialog => { state.dialog = dialog; boundary = { kind: 'dialog', dialog }; dialogResolve(boundary); });
-  on('popup', popup => { boundary = { kind: 'popup', popup }; });
-  on('close', () => { boundary = { kind: 'close' }; state.dialog = null; stop(); });
-  return { pending, completed, dialogReady, get boundary() { return boundary; },
+  on('framenavigated', frame => { if (frame === page.mainFrame()) mark({ kind: 'navigation' }); });
+  on('load', () => { if (!boundary) mark({ kind: 'document' }); });
+  on('dialog', dialog => { state.dialog = dialog; mark({ kind: 'dialog', dialog }); dialogResolve(boundary); });
+  on('popup', popup => { mark({ kind: 'popup', popup }); });
+  on('close', () => { mark({ kind: 'close' }); state.dialog = null; stop(); });
+  return { pending, completed, dialogReady, boundaryReady, get boundary() { return boundary; },
     stop };
 }
 
@@ -156,6 +160,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
+        // Chrome treats text inserted into a single-line input as implicit submission when it is a lone line break, so a line
+        // break typed there is an Enter press that skipped the submit checks. Pressing Enter is the one way to send it.
+        if (step.do === 'type' && info.tag === 'input' && lineBreak.test(step.text)) throw Error(lineBreakRefusal);
         const activation = step.do === 'press' ? activationKey(step.key) : null, enter = !!activation;
         let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && activation === 'enter');
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
@@ -194,14 +201,16 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
             started = true; return locator.click({ ...options, ...extra });
           });
-          const pressKey = () => trusted ? ctx.pressTarget(target, step.key, options) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
-          // Enter can follow a link or submit a form into a new tab: arm the popup hook, as a click does.
+          const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
+          // the key also goes through the key shield (armed before the key, every other frame locked), so the gate's verdict and the
+          // key it sends share one seal; `extra.between` lets the shield look at the page between the key going down and coming up.
           if (step.do === 'press' && enter) return backgroundClick(tab, locator, async extra => {
             if (trusted) { await gate(); ctx.beginInput(target); }
             started = true;
             if (extra.modifiers) await page.keyboard.down('ControlOrMeta');
-            return pressKey();
-          }, { press: activation });
+            return pressKey(extra);
+          }, { press: activation, keys: trusted });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           started = true;
           if (step.do === 'type') return locator.fill(step.text, options);
@@ -254,15 +263,13 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const settleUntil = start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            // A navigation can destroy the target just before its event arrives: give the event a moment, then report the read failure.
-            formChanged = await trustedLocatorRead(locator, inspectTarget).then(read => read.formSignature !== info.formSignature, async error => {
-              for (let wait = 0; wait < 5 && !armed.boundary; wait++) await sleep(50);
-              if (armed.boundary) return true;
-              throw error;
-            });
+            // A key can return before the navigation it started has committed, and the node is gone mid-read. Give the
+            // navigation boundary a moment to register; destroyed evidence without one still stops the batch.
+            try { formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature; }
+            catch (error) { await Promise.race([armed.boundaryReady, sleep(150)]); if (!armed.boundary) throw error; }
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
-          await sleep(Math.min(50, settleUntil - now()));
+          await Promise.race([armed.boundaryReady, sleep(Math.min(50, settleUntil - now()))]);
         }
         const boundary = armed.boundary;
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
