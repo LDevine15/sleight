@@ -258,3 +258,13 @@ test('CR2 HTML-AAM and Chromium native control roles remain reachable inside a c
     assert.ok(result.text.split('\n').some(line => line.includes(JSON.stringify(name)) && /\[ref=s\d+\]/.test(line)), name);
   t.diagnostic('cleanup: native-role browser and local server closed by fixture teardown');
 });
+
+test('CR4 real closed select with 600 options returns the select without exhausting candidate probes', { skip }, async t => {
+  const page = await fixture(t, `<custom-controls></custom-controls><script>
+    const root = document.querySelector('custom-controls').attachShadow({mode:'closed'});
+    root.innerHTML = '<select aria-label="Destination">' + Array.from({length:600}, (_, i) => '<option>Choice ' + i + '</option>').join('') + '</select>';
+  </script>`);
+  const result = await snapshot(page);
+  assert.match(result.text, /combobox "Destination".*\[ref=s\d+\]/);
+  t.diagnostic('cleanup: closed-select fixture browser, loopback server and sockets closed by teardown');
+});

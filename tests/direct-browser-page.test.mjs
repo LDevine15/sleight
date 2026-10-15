@@ -27,6 +27,10 @@ function fixture(options = {}) {
       return {};
     }, detach: async () => calls.push(['detach', targetId]) });
     p.goto = async url => { calls.push(['goto', url, targetId]); };
+    p.evaluate = async (_fn, name) => {
+      if (name !== undefined) { p.windowName = name; return name; }
+      return { name: p.windowName ?? '', origin: new URL(p.url()).origin };
+    };
     p.close = async () => { calls.push(['close', targetId]); p.closed = true; p.emit('close'); };
     pages.push(p); context.emit('page', p); return p;
   }
@@ -175,7 +179,33 @@ function hookFixture({ clock = Date } = {}) {
     constructor(localName = 'button', attrs = {}) { Object.assign(this, { localName, attrs, isConnected: true }); }
     getAttribute(name) { return this.attrs[name] ?? null; }
     hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
+    matches() { return !!this.interactive; }
     getRootNode() { return {}; }
+    get isContentEditable() {
+      for (let node = this; node; node = node.parentElement ?? node.getRootNode().host) {
+        if (node.attrs.contenteditable === 'false') return false;
+        if (Object.hasOwn(node.attrs, 'contenteditable')) return true;
+      }
+      return document.designMode === 'on';
+    }
+  }
+  class HTMLButtonElement extends Element {
+    constructor(attrs = {}, form) { super('button', attrs); this.nativeForm = form; }
+    get form() { return this.nativeForm ?? null; }
+    get type() { const type = (this.attrs.type ?? '').toLowerCase(); return ['button', 'reset'].includes(type) ? type : 'submit'; }
+  }
+  class HTMLInputElement extends Element {
+    constructor(attrs = {}, form) { super('input', attrs); this.nativeForm = form; }
+    get form() { return this.nativeForm ?? null; }
+    get type() { return (this.attrs.type ?? 'text').toLowerCase(); }
+  }
+  class HTMLSelectElement extends Element {
+    constructor(attrs = {}) { super('select', attrs); }
+    get multiple() { return Object.hasOwn(this.attrs, 'multiple'); }
+  }
+  class HTMLLabelElement extends Element {
+    constructor(control) { super('label'); this.nativeControl = control; }
+    get control() { return this.nativeControl ?? null; }
   }
   class EventTarget {
     addEventListener(name, fn, capture) {
@@ -188,10 +218,112 @@ function hookFixture({ clock = Date } = {}) {
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   vm.runInNewContext(`(${popupHook})()`, { window, document, navigator,
-    MouseEvent, Element, Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout });
+    MouseEvent, Element, HTMLElement: Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+    Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
   const hook = window[Symbol.for('sleight.popup3')];
-  return { window, document, navigator, hook, Element, MouseEvent, Event, EventTarget, opens };
+  return { window, document, navigator, hook, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+    MouseEvent, Event, EventTarget, opens };
 }
+
+test('CR6 masked events stay plain after dispatch, finish, and another arm', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  try {
+    f.hook.prepare(button, 'first', 1000);
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    const event = Object.assign(new f.MouseEvent(), { nodes: [button], isTrusted: true, control: true, meta: true });
+    for (const fn of f.window.listeners.click) fn(event);
+    t.mock.timers.tick(0);
+    const read = () => [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+    assert.deepEqual(read(), [false, false, false, false]);
+    f.hook.finish('first');
+    assert.deepEqual(read(), [false, false, false, false]);
+    f.hook.prepare(button, 'second', 1000);
+    assert.deepEqual(read(), [false, false, false, false]);
+  } finally { f.hook.off(); }
+});
+
+for (const key of ['Control', 'Meta']) test('CR6 swallows the matching trusted keyup after dispatch: ' + key, t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  const keyEvent = (type, isTrusted = true) => {
+    const event = Object.assign(new f.Event(), { key, type, isTrusted });
+    for (const fn of f.window.listeners[type]) fn(event);
+    return event;
+  };
+  try {
+    f.hook.prepare(button, 'keys', 1000);
+    assert.equal(keyEvent('keydown').stopped, true);
+    const event = Object.assign(new f.MouseEvent(), { nodes: [button], isTrusted: true, control: true });
+    for (const fn of f.window.listeners.click) fn(event);
+    t.mock.timers.tick(0);
+    assert.equal(keyEvent('keyup', false).stopped, undefined);
+    assert.equal(keyEvent('keyup').stopped, true);
+    assert.equal(keyEvent('keyup').stopped, true, 'the explicit cleanup keyup is also hidden until finish');
+    f.hook.finish('keys');
+    assert.equal(keyEvent('keyup').stopped, undefined, 'later unrelated keyups are visible after finish');
+  } finally { f.hook.off(); }
+});
+
+test('CR6 captured link requests retain exact target and rel', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: 'child', rel: 'noopener noreferrer' });
+  try {
+    f.hook.prepare(link, 'link', 1000);
+    for (const fn of f.window.listeners.click) fn(Object.assign(new f.MouseEvent(), { nodes: [link], isTrusted: true }));
+    assert.deepEqual(JSON.parse(JSON.stringify(f.hook.takeRequest('link'))),
+      { url: 'https://fixture.invalid/landed', target: 'child', rel: 'noopener noreferrer' });
+  } finally { f.hook.off(); }
+});
+
+test('CR6 named links reuse only an unchanged owned target and replace released or renamed targets', async () => {
+  const f = fixture();
+  try {
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/start' }), parent = f.registry.tab(tab);
+    const first = await parent.openChild('https://fixture.invalid/first', { target: 'destination', rel: 'noopener' });
+    const again = await parent.openChild('https://fixture.invalid/second', { target: 'destination', rel: 'noopener' });
+    assert.equal(again.tab, first.tab);
+    assert.equal(f.registry.tab(first.tab).page.windowName, 'destination');
+    f.registry.tab(first.tab).page.windowName = 'page-renamed';
+    const replacement = await parent.openChild('https://fixture.invalid/third', { target: 'destination' });
+    assert.notEqual(replacement.tab, first.tab);
+    const kept = f.registry.tab(replacement.tab);
+    await f.registry.keep(replacement.tab);
+    const afterKeep = await parent.openChild('https://fixture.invalid/fourth', { target: 'destination' });
+    assert.notEqual(afterKeep.tab, replacement.tab);
+    assert.equal(kept.released, true);
+    assert.equal(f.calls.filter(call => call[0] === 'Target.createTarget').length, 4);
+  } finally { await f.registry.endTurn(); }
+});
+
+for (const changed of ['origin', 'identity', 'closed']) test('CR6 named link rejects a stale reuse proof: ' + changed, async () => {
+  const f = fixture();
+  try {
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/start' }), parent = f.registry.tab(tab);
+    const first = await parent.openChild('https://fixture.invalid/first', { target: 'destination' });
+    const child = f.registry.tab(first.tab);
+    if (changed === 'origin') child.page.url = () => 'https://other.invalid/';
+    if (changed === 'identity') child.page.info.targetId = 'replaced-target';
+    if (changed === 'closed') await child.page.close();
+    const next = await parent.openChild('https://fixture.invalid/second', { target: 'destination' });
+    assert.notEqual(next.tab, first.tab);
+    assert.equal(f.registry.tab(next.tab).page.windowName, 'destination');
+  } finally { await f.registry.endTurn(); }
+});
+
+test('CR6 a busy named destination refuses before joining its input queue', async () => {
+  const f = fixture(); let release;
+  try {
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/start' }), parent = f.registry.tab(tab);
+    const child = await parent.openChild('https://fixture.invalid/first', { target: 'destination' });
+    const hold = f.registry.enqueue(child.tab, () => new Promise(resolve => { release = resolve; }));
+    await Promise.resolve();
+    const before = f.calls.filter(call => call[0] === 'goto').length;
+    await assert.rejects(parent.openChild('https://fixture.invalid/second', { target: 'destination' }), /named link target is busy/);
+    assert.equal(f.calls.filter(call => call[0] === 'goto').length, before);
+    release(); await hold; release = undefined;
+    assert.equal((await parent.openChild('https://fixture.invalid/second', { target: 'destination' })).tab, child.tab);
+  } finally { release?.(); await f.registry.endTurn(); }
+});
 
 test('CR3 arms every command without inspecting script or listener source', () => {
   const f = hookFixture();
@@ -279,44 +411,55 @@ test('CR2 HTML navigable containers and plugin elements reject focus through ope
   } finally { f.hook.off(); }
 });
 
-test('CR2 HTML input states and ARIA checked/selected widgets keep their own activation', () => {
-  // HTML input.html#attr-input-type (including its text default), forms.html#the-label-element;
-  // WAI-ARIA 1.2 #aria-checked, #aria-selected, #aria-pressed and #widget_roles.
+test('CR5 native controls and ARIA roles without a measured modifier default use masking', () => {
   const f = hookFixture();
   try {
     for (const type of ['', 'invalid', 'hidden', 'text', 'search', 'tel', 'url', 'email', 'password', 'date',
-      'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file'])
-      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), false, type);
+      'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file']) {
+      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), true, type);
+      f.hook.finish('input-' + type);
+    }
     for (const type of ['button', 'submit', 'reset', 'image', 'SUBMIT']) {
       assert.equal(f.hook.prepare(new f.Element('input', { type }), 'button-' + type, 1000), true, type);
       f.hook.finish('button-' + type);
     }
-    for (const tag of ['select', 'option', 'textarea', 'label', 'summary'])
-      assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), false, tag);
+    for (const tag of ['select', 'option', 'textarea', 'label', 'summary']) {
+      assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), true, tag); f.hook.finish(tag);
+    }
     for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio', 'tab',
-      'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar'])
-      assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), false, role);
-    for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']])
-      assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), false, role);
-    for (const tag of ['button', 'input'])
-      assert.equal(f.hook.prepare(new f.Element(tag, { type: 'button', 'aria-pressed': 'false' }), 'toggle-' + tag, 1000), false, tag);
+      'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar']) {
+      assert.equal(f.hook.prepare(new f.Element('div', { role }), 'role-' + role, 1000), true, role); f.hook.finish('role-' + role);
+    }
+    for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']]) {
+      assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), true, role); f.hook.finish(role);
+    }
+    for (const tag of ['button', 'input']) {
+      assert.equal(f.hook.prepare(new f.Element(tag, { type: 'button', 'aria-pressed': 'false' }), 'toggle-' + tag, 1000), true, tag); f.hook.finish('toggle-' + tag);
+    }
     assert.equal(f.hook.prepare(new f.Element('button'), 'popup-button', 1000), true);
   } finally { f.hook.off(); }
 });
 
-test('CR2 measured modifier window covers 5 ms host maximum and expires at 100 ms', t => {
+test('CR4 masking survives 300 ms load until click dispatch completes and respects arm cap', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = hookFixture(), button = new f.Element();
   const mouse = () => Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
   try {
-    f.hook.prepare(button, 'measured', 1000);
+    f.hook.prepare(button, 'loaded', 1000);
     for (const listener of f.window.listeners.keydown)
       listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
-    t.mock.timers.tick(5);
-    assert.equal(mouse().ctrlKey, false);
-    t.mock.timers.tick(94);
-    assert.equal(mouse().ctrlKey, false);
-    t.mock.timers.tick(1);
+    t.mock.timers.tick(300);
+    const click = mouse();
+    for (const listener of f.window.listeners.click) listener(click);
+    assert.equal(click.ctrlKey, false);
+    assert.equal(f.window.open('/loaded', 'loaded').real, true);
+    t.mock.timers.tick(0);
+    assert.equal(mouse().ctrlKey, true);
+    assert.equal(f.window.open('/too-late', 'late'), null);
+    f.hook.prepare(button, 'cap', 1000);
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    t.mock.timers.tick(1000);
     assert.equal(mouse().ctrlKey, true);
   } finally { f.hook.off(); }
 });
@@ -573,19 +716,19 @@ test('a page closing during release is refused instead of acknowledged as kept',
 });
 
 for (const tag of ['textarea', 'select', 'option', 'label', 'input'])
-  test('CR1 leaves form ancestor plain: ' + tag, () => {
+  test('CR5 does not infer a modifier default from an arbitrary ancestor: ' + tag, () => {
     const f = hookFixture(), button = new f.Element();
     button.parentElement = new f.Element(tag);
-    try { assert.equal(f.hook.prepare(button, tag, 1000), false); } finally { f.hook.off(); }
+    try { assert.equal(f.hook.prepare(button, tag, 1000), true); } finally { f.hook.off(); }
   });
 for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio'])
-  test('CR1 leaves checkable shadow ancestor plain: ' + role, () => {
+  test('CR5 custom shadow widget handlers receive masking: ' + role, () => {
     const f = hookFixture(), button = new f.Element();
     button.getRootNode = () => ({ host: new f.Element('custom-control', { role }) });
-    try { assert.equal(f.hook.prepare(button, role, 1000), false); } finally { f.hook.off(); }
+    try { assert.equal(f.hook.prepare(button, role, 1000), true); } finally { f.hook.off(); }
   });
 
-test('CR1 refuses editable and detached nodes, frame focus and retired tokens', () => {
+test('CR7 leaves editable content plain and refuses detached nodes, frame focus and retired tokens', () => {
   const f = hookFixture();
   try {
     assert.equal(f.hook.prepare(new f.Element('div', { contenteditable: '' }), 'editable', 1000), false);
@@ -611,8 +754,8 @@ test('CR1 preparation and modifier masking expire independently', t => {
     const captured = mouse();
     assert.equal(captured.metaKey, false);
     t.mock.timers.tick(1001);
-    assert.equal(captured.metaKey, true, 'even retained event objects stop masking after the active window');
-    assert.equal(mouse().metaKey, true);
+    assert.equal(captured.metaKey, false, 'masking follows dispatch rather than a fixed clock window');
+    assert.equal(mouse().metaKey, false);
     t.mock.timers.tick(2000);
     assert.equal(f.hook.prepare(button, 'expire', 1000), false);
   } finally { f.hook.off(); }
@@ -713,7 +856,7 @@ test('CR1 a handler installed during dispatch makes an uncancelled default unava
   } finally { f.hook.off(); }
 });
 
-test('CR1 a new arm cannot mask an event from a retired click', () => {
+test('CR6 a new arm keeps a retired event masked under its original token', () => {
   const f = hookFixture(), button = new f.Element();
   const keydown = () => {
     for (const listener of f.window.listeners.keydown)
@@ -728,7 +871,7 @@ test('CR1 a new arm cannot mask an event from a retired click', () => {
     assert.equal(second.ctrlKey, true, 'only the first click belongs to the arm');
     f.hook.finish('first');
     f.hook.prepare(button, 'second', 1000); keydown();
-    assert.equal(first.ctrlKey, true, 'an old event cannot join a new arm');
+    assert.equal(first.ctrlKey, false, 'an old event retains its original mask');
     assert.equal(second.ctrlKey, false);
   } finally { f.hook.off(); }
 });
@@ -838,4 +981,195 @@ test('an endpoint redirect rejected by goto still closes and reports only the bl
   }; });
   await assert.rejects(f.registry.openTab({ url: 'https://fixture.invalid/redirect' }), { message: 'blocked: DevTools endpoint' });
   assert.equal(f.pages[0].isClosed(), true);
+});
+
+
+for (const probe of [false, true, { kind: 'link' }]) test('CR4 self-closing click still waits for its popup: ' + JSON.stringify(probe), async () => {
+  const f = clickFixture(probe), checkpoint = {};
+  f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
+  f.entry.popupCheckpoint = () => checkpoint;
+  let settled = false;
+  f.entry.settlePopups = async before => { assert.equal(before, checkpoint); settled = true; };
+  await backgroundClick(f.entry, f.locator, async () => {
+    f.entry.closed = true; throw Error('Target page has been closed');
+  });
+  assert.equal(settled, true);
+});
+
+for (const kind of ['sibling', 'grandchild', 'frame-attribute', 'earlier-popup'])
+test('CR4 existing named context stays plain: ' + kind, () => {
+  const f = hookFixture(), child = { name: 'destination', frames: [] };
+  const top = { name: '', frames: [] }; f.window.top = top;
+  if (kind === 'sibling') top.frames.push(f.window, child);
+  if (kind === 'grandchild') top.frames.push({ name: '', frames: [child] });
+  if (kind === 'frame-attribute') f.document.querySelectorAll = () => [new f.Element('iframe', { name: 'destination' })];
+  try {
+    if (kind === 'earlier-popup') {
+      const button = new f.Element(); f.hook.prepare(button, 'first', 1000);
+      for (const listener of f.window.listeners.keydown)
+        listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+      f.window.open('/first', 'destination'); f.hook.finish('first');
+    }
+    assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'destination' }), 'named', 1000), false);
+  } finally { f.hook.off(); }
+});
+
+test('CR4 late popup adoption retains the closed owned opener', async () => {
+  const f = fixture(), root = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const parent = f.registry.tab(root.tab), page = f.page('closing-child', parent.targetId);
+  await f.registry.idle();
+  const child = f.registry.tab(parent.popups[0].tab);
+  child.page.evaluate = async () => true;
+  await backgroundClick(child, { evaluate: async () => true }, async () => {
+    child.cdp.emit('Page.windowOpen', {});
+    await page.close();
+    setTimeout(() => f.page('survivor', 'closing-child'), 2);
+    throw Error('Target page has been closed');
+  });
+  assert.equal(child.popups.length, 1);
+  assert.equal(f.registry.tab(child.popups[0].tab).opener, child.tab);
+  await f.registry.endTurn();
+});
+
+test('CR4 frame walk passes inaccessible names and documents without inventing a target', () => {
+  const f = hookFixture(), child = { name: 'destination', frames: [] };
+  const opaque = { frames: new Proxy([child], { get(array, key) {
+    if (typeof key === 'string' && !/^(length|\d+)$/.test(key)) throw Error('cross-origin named access');
+    return Reflect.get(array, key);
+  } }) };
+  Object.defineProperties(opaque, { name: { get() { throw Error('cross-origin'); } },
+    document: { get() { throw Error('cross-origin'); } } });
+  f.window.top = { frames: [opaque] };
+  try {
+    assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'destination' }), 'found', 1000), false);
+    assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'unknown' }), 'missing', 1000).kind, 'link');
+  } finally { f.hook.off(); }
+});
+
+for (const [kind, type] of [['button', undefined], ['button', 'invalid'], ['button', 'submit'], ['input', 'submit'], ['input', 'image']])
+  for (const target of ['', '_self', '_blank']) test('CR4 native form owner and type decide submit disposition: ' + [kind, type, target], () => {
+    const f = hookFixture(), form = new f.Element('form', { target });
+    const control = kind === 'button' ? new f.HTMLButtonElement({ type }, form) : new f.HTMLInputElement({ type }, form);
+    const span = new f.Element('span'); span.parentElement = control;
+    // Captured IDL getters and attribute methods must survive later page overrides.
+    Object.defineProperties(control, { form: { get() { throw Error('page form getter'); } },
+      type: { get() { throw Error('page type getter'); } } });
+    control.getAttribute = () => { throw Error('page attribute getter'); };
+    try { assert.equal(f.hook.prepare(span, 'submit', 1000), target === '_blank'); }
+    finally { f.hook.off(); }
+  });
+
+test('CR4 native submit formtarget overrides its form target and non-submit buttons remain commands', () => {
+  const f = hookFixture(), form = new f.Element('form', { target: '_blank' });
+  try {
+    assert.equal(f.hook.prepare(new f.HTMLButtonElement({ formtarget: '_self' }, form), 'self', 1000), false);
+    assert.equal(f.hook.prepare(new f.HTMLButtonElement({ type: 'button' }, form), 'button', 1000), true);
+    f.hook.finish('button');
+    assert.equal(f.hook.prepare(new f.HTMLInputElement({ type: 'reset' }, form), 'reset', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+for (const labelled of [false, true]) for (const row of [
+  { form: '_blank', expected: true },
+  { form: 'new-context', expected: true },
+  { form: '_self', control: '_blank', expected: true },
+  { form: '_blank', control: '', base: '_blank', expected: false },
+  { form: '_blank', control: '_self', expected: false },
+  { base: '_blank', expected: true },
+  { base: 'new-context', expected: true },
+  { form: 'existing-frame', expected: false },
+  { form: 'own-window', expected: false },
+  { base: '_blank', form: '', expected: false },
+]) test('CR7 submit destination precedence, label=' + labelled + ': ' + JSON.stringify(row), () => {
+  const f = hookFixture(), child = {};
+  f.window.name = 'own-window'; f.window.frames = Object.assign([child], { 'existing-frame': child });
+  f.document.querySelector = () => row.base === undefined ? null : new f.Element('base', { target: row.base });
+  const form = new f.Element('form', row.form === undefined ? {} : { target: row.form });
+  const submit = new f.HTMLInputElement({ type: 'submit', ...(row.control === undefined ? {} : { formtarget: row.control }) }, form);
+  const node = labelled ? new f.HTMLLabelElement(submit) : submit;
+  try { assert.equal(f.hook.prepare(node, 'target', 1000), row.expected); }
+  finally { f.hook.off(); }
+});
+
+for (const mode of ['contenteditable', 'shadow', 'designMode']) for (const target of ['_self', '_blank', 'new-context'])
+  test('CR7 link in editable ancestors stays plain: ' + mode + ' ' + target, () => {
+    const f = hookFixture(), editor = new f.Element('div', { contenteditable: '' });
+    const link = new f.Element('a', { href: '/landed', target }), text = new f.Element('span'); text.parentElement = link;
+    if (mode === 'designMode') f.document.designMode = 'on';
+    else if (mode === 'shadow') link.getRootNode = () => ({ host: editor });
+    else link.parentElement = editor;
+    try { assert.equal(f.hook.prepare(text, 'editable-link', 1000), false); }
+    finally { f.hook.off(); }
+  });
+
+for (const multiple of [false, true]) test('CR5 select multiplicity comes from the captured native getter: ' + multiple, () => {
+  const f = hookFixture(), select = new f.HTMLSelectElement(multiple ? { multiple: '' } : {}), option = new f.Element('option');
+  option.parentElement = select;
+  Object.defineProperty(select, 'multiple', { get() { throw Error('page multiple getter'); } });
+  select.getAttribute = () => { throw Error('page attribute getter'); };
+  try {
+    assert.equal(f.hook.prepare(select, 'select', 1000), !multiple); f.hook.finish('select');
+    assert.equal(f.hook.prepare(option, 'option', 1000), !multiple);
+  } finally { f.hook.off(); }
+});
+
+test('CR5 label forwarding uses the captured native control and submit ownership getters', () => {
+  const f = hookFixture(), control = new f.HTMLInputElement({ type: 'submit' }, new f.Element('form'));
+  const label = new f.HTMLLabelElement(control), text = new f.Element('span'); text.parentElement = label;
+  Object.defineProperty(label, 'control', { get() { throw Error('page control getter'); } });
+  try { assert.equal(f.hook.prepare(text, 'label', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+test('CR5 a label does not forward a click on an interactive descendant to its submit control', () => {
+  const f = hookFixture(), submit = new f.HTMLInputElement({ type: 'submit' }, new f.Element('form'));
+  const label = new f.HTMLLabelElement(submit), button = new f.HTMLButtonElement({ type: 'button' });
+  button.parentElement = label; button.interactive = true;
+  button.matches = () => false;
+  try { assert.equal(f.hook.prepare(button, 'nested-command', 1000), true); }
+  finally { f.hook.off(); }
+});
+
+test('CR5 labels for selects do not inherit an option-selection exception', () => {
+  const f = hookFixture(), select = new f.HTMLSelectElement({ multiple: '' }), label = new f.HTMLLabelElement(select);
+  try { assert.equal(f.hook.prepare(label, 'select-label', 1000), true); }
+  finally { f.hook.off(); }
+});
+
+test('CR4 successful link dispatch that observes closure skips takeRequest and still settles', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
+  let settled = false;
+  f.entry.settlePopups = async () => { settled = true; };
+  f.entry.page.evaluate = async fn => {
+    if (String(fn).includes('takeRequest')) throw Error('must not read a closed page');
+  };
+  await backgroundClick(f.entry, f.locator, async () => { f.entry.closed = true; });
+  assert.equal(settled, true);
+});
+
+test('CR4 self-close settles popup readiness against the living opener after native reparenting', async () => {
+  const f = fixture(), root = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const parent = f.registry.tab(root.tab), closing = f.page('closing', parent.targetId);
+  await f.registry.idle();
+  const child = f.registry.tab(parent.popups[0].tab);
+  child.page.evaluate = async () => true;
+  let release, entered;
+  const held = new Promise(resolve => { release = resolve; }), installing = new Promise(resolve => { entered = resolve; });
+  let finished = false;
+  const clicking = backgroundClick(child, { evaluate: async () => true }, async () => {
+    child.cdp.emit('Page.windowOpen', {}); await closing.close();
+    const survivor = f.page('reparented', parent.targetId), send = survivor.cdp.send;
+    survivor.cdp.send = async (method, params) => {
+      if (method === 'Runtime.evaluate') { entered(); await held; }
+      return send(method, params);
+    };
+    throw Error('Target page has been closed');
+  }).then(result => { finished = true; return result; });
+  try {
+    await installing;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(finished, false, 'backgroundClick must await the reparented popup installation');
+  } finally { release(); await clicking; await f.registry.endTurn(); }
+  assert.equal(parent.popups.length, 2);
 });

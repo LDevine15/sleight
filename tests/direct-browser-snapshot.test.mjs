@@ -467,7 +467,7 @@ test('CR1 emits only native controls, flags and protected scalar roles', async (
   assert.doesNotMatch(result.text, /private-|Ignored|Not a control/);
 });
 
-for (const [count, closed, expectedProbes] of [[50001, false, 0], [513, true, 512]])
+for (const [count, closed, expectedProbes] of [[50001, false, 0]])
   test('CR1 refuses bounded native acquisition at ' + count + ' nodes', async () => {
     const children = Array.from({ length: count }, (_, i) => element(i + 1));
     const root = { nodeType: 9, children: closed ? [element(60000, { shadowRoots: [closedRoot(children)] })] : children };
@@ -526,7 +526,7 @@ test('CR3 native tags and role attributes are candidates while inert divs and hi
   const { page, calls } = nativeClosedFixture({ nodeType: 9, children: [element(900, { shadowRoots: [closedRoot(children)] })] }, []);
   await module.snapshot(page);
   assert.deepEqual(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').map(([, params]) => params.backendNodeId),
-    [1, 2, 3, 4, 5, 6, 7, 8, 20]);
+    [1, 2, 3, 4, 6, 7, 8, 20]);
 });
 
 test('CR3 runs up to four frame sessions alongside the aria read and detaches every session', async () => {
@@ -568,4 +568,27 @@ test('snapshot refuses endpoint pages before DOM reads, including pending naviga
     await assert.rejects(module.snapshot(page), /blocked: DevTools endpoint/);
     assert.equal(reads, 0);
   }
+});
+
+test('CR4 closed select with 600 options probes only its select node', async () => {
+  const options = Array.from({ length: 600 }, (_, i) => element(i + 2, { localName: 'option', attributes: ['role', 'option'] }));
+  const root = { nodeType: 9, children: [element(900, { shadowRoots: [closedRoot([
+    element(1, { localName: 'select', children: options }),
+  ])] })] };
+  const { page, calls } = nativeClosedFixture(root, [axControl(1, 'combobox', 'Destination')]);
+  const result = await module.snapshot(page);
+  assert.match(result.text, /combobox "Destination"/);
+  assert.equal(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').length, 1);
+});
+
+test('CR4 closed candidate overflow returns first 512 controls and an omitted-count note', async () => {
+  const children = Array.from({ length: 600 }, (_, i) => element(i + 1));
+  const root = { nodeType: 9, children: [element(900, { shadowRoots: [closedRoot(children)] })] };
+  const nodes = children.map((_, i) => axControl(i + 1, 'button', 'Command ' + i));
+  const { page, calls } = nativeClosedFixture(root, nodes);
+  const result = await module.snapshot(page, { maxChars: 40000 });
+  assert.match(result.text, /Command 0/); assert.match(result.text, /Command 511/);
+  assert.doesNotMatch(result.text, /Command 512/);
+  assert.match(result.text, /88.*(?:omitted|left out)/i);
+  assert.equal(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').length, 512);
 });
