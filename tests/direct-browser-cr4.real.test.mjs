@@ -1,23 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium } from '../plugins/sleight/vendor/playwright-core/index.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
+const require = createRequire(import.meta.url);
+const { inprocess } = require('../plugins/sleight/vendor/playwright-core/lib/coreBundle.js');
 import { createPageRegistry, backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
 
 const pin = JSON.parse(readFileSync(new URL('../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url)))
-  .browsers.find(browser => browser.name === 'chromium-headless-shell');
-const platform = process.platform === 'darwin' ? 'mac-' + process.arch : 'linux64';
-const executablePath = join(homedir(), 'Library/Caches/ms-playwright', 'chromium_headless_shell-' + pin.revision,
-  'chrome-headless-shell-' + platform, 'chrome-headless-shell');
+  .browsers.find(browser => browser.name === 'chromium');
+const executablePath = process.platform === 'darwin'
+  ? join(homedir(), 'Library/Caches/ms-playwright', 'chromium-' + pin.revision, 'chrome-mac-' + process.arch,
+    'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing')
+  : join(homedir(), 'Library/Caches/ms-playwright', 'chromium-' + pin.revision, 'chrome-linux64/chrome');
 const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'real-page qualification belongs to sleight-arch host runner'
   : !existsSync(executablePath) ? 'pinned Chromium headless shell is unavailable' : false;
 
 async function fixture(t, html) {
   const sockets = new Set(), requests = [];
-  let browser, registry;
+  const profile = trackTemp(mkdtempSync(join(realpathSync(tmpdir()), 'sleight-cr4-')));
+  let context, registry;
   const server = createServer(async (request, response) => {
     let body = ''; for await (const chunk of request) body += chunk;
     requests.push({ url: request.url, method: request.method, body });
@@ -28,16 +33,19 @@ async function fixture(t, html) {
   t.after(async () => {
     try {
       if (registry) assert.equal((await registry.endTurn()).cleanedUp, true);
-      await browser?.close();
+      await context?.close();
     } finally {
       for (const socket of sockets) socket.destroy();
       if (server.listening) await new Promise(resolve => server.close(resolve));
+      rmSync(profile, { recursive: true, force: true });
     }
-    t.diagnostic('cleanup: owned browser and pages closed, loopback server and sockets closed; no persistent profile');
+    assert.equal(existsSync(profile), false);
+    t.diagnostic('cleanup: owned browser and pages closed, private profile removed, loopback server and sockets closed');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  browser = await chromium.launch({ headless: true, executablePath });
-  const context = await browser.newContext(), sentinel = await context.newPage();
+  context = await inprocess.playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath,
+    args: ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1'] });
+  const browser = context.browser(), sentinel = context.pages()[0];
   await sentinel.goto('about:blank');
   const before = await sentinel.evaluate(() => document.visibilityState);
   const session = await browser.newBrowserCDPSession();
