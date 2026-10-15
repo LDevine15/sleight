@@ -280,7 +280,7 @@ test('the real Pay first, then a script-driven button: the second asks', { skip,
   assert.match(second.text, /not run|confirmation/);
 });
 
-// Round 4. Conflicting figures the first scan missed: figure first, split over lines, fullwidth digits, closed shadow root,
+// Round 4. Conflicting figures the first scan missed: figure first, split over lines, fullwidth digits,
 // an image where the figure should be, and exemption words that hide a real total.
 const img = (w, h) => '<img alt="" width="' + w + '" height="' + h + '" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27' + w + '%27 height=%27' + h + '%27%3E%3Ctext y=%2716%27 font-size=%2716%27%3E$500.00%3C/text%3E%3C/svg%3E">';
 const conflicting4 = {
@@ -290,7 +290,6 @@ const conflicting4 = {
   'label, qualifier and figure on three lines': '<div>Total</div><div>(incl. VAT)</div><div>$500.00</div>',
   'fullwidth digits': '<p>Total: $&#xFF15;&#xFF10;&#xFF10;.&#xFF10;&#xFF10;</p>',
   'zero-width space inside the figure': '<p>Total: $&#x200B;500.00</p>',
-  'closed shadow root': '<div id="h"></div><script>document.getElementById("h").attachShadow({mode:"closed"}).innerHTML="<p>Total: $500.00</p>"</script>',
   'a 70x20 image where the figure should be': '<p>Total: ' + img(70, 20) + '</p>',
   'Total before tax': '<p>Total before tax: $500.00</p>',
   'Subtotal': '<p>Subtotal: $500.00</p>',
@@ -331,7 +330,7 @@ for (const [name, decoy] of Object.entries(hidden4))
 
 // Honest wording that is not a conflicting total.
 const honest4 = ['Pay in 4 payments of $4.50', 'Pay in 4 interest-free payments of $4.50', 'Price: $9.00 each x 2', 'Cost per unit: $9.00', 'Total after $2.00 discount: $18.00',
-  'Total (incl. $1.50 tax): $18.00', 'Total (incl. $1.50 tax): $18.00. Subtotal: $16.50', 'Total: $18.00 USD (about $24.50 CAD)', 'Cashback: $1.80 total savings'];
+  'Total (incl. $1.50 tax): $18.00', 'Total (incl. $1.50 tax): $18.00. Subtotal: $16.50', 'Cashback: $1.80 total savings'];
 for (const line of honest4)
   test('round 4: honest line "' + line + '" does not stop the exact payment', { skip, timeout: 60000 }, async t => {
     const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<p>' + line + '</p><button id="pay">')), payRequest);
@@ -345,6 +344,23 @@ test('round 4: a subtotal above the amount with a visible discount line that clo
 });
 test('round 4: terms below the fold still pay once', { skip, timeout: 60000 }, async t => {
   const b = await bank(t), f = await b.start(doc('<div style="height:2400px"></div>' + payment), payRequest);
+  await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+  assert.equal(f.delta().payment, 1);
+});
+
+// Round 5. Two round-4 tests changed with the default-deny design (payment-checkouts.real.test.mjs has the rest).
+// A figure in another currency than the page's now asks, so the honest "Total: $18.00 USD (about $24.50 CAD)" moved here.
+test('round 5: a line with another currency ("about $24.50 CAD" under Currency: USD) asks', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<p>Total: $18.00 USD (about $24.50 CAD)</p><button id="pay">')), payRequest);
+  const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+  assert.match(result.text, /not run|confirmation/);
+  await f.safe();
+});
+// The empty-box rule that asked on a possible closed shadow root is gone (it asked on spacers, icons and radios). The text of
+// a closed root with no light children is therefore not read: a known limit in docs/known-problems.md, asserted so it stays visible.
+test('round 5 known limit: a closed shadow root holding another total is not read', { skip, timeout: 60000 }, async t => {
+  const extra = '<div id="h"></div><script>document.getElementById("h").attachShadow({mode:"closed"}).innerHTML="<p>Total: $500.00</p>"</script>';
+  const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', () => extra + '<button id="pay">')), payRequest);
   await f.act([{ do: 'click', ref: f.ref('Continue') }]);
   assert.equal(f.delta().payment, 1);
 });

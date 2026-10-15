@@ -3,7 +3,7 @@
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
-import { intent } from './rules.mjs';
+import { intent, refundPayment } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
@@ -237,7 +237,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
         if (submit && state.submitUnconfirmed === submit) {
           if (boundary?.kind === 'navigation' || boundary?.kind === 'document' || formChanged || armed.completed.size) state.submitUnconfirmed = false;
-          else submit.settledAt = now();
+          else {
+            submit.settledAt = now();
+            // Nothing happened: no navigation, document, dialog or popup, no form change, no request started or finished.
+            if (!boundary && !formChanged && !armed.pending.size) { if (trusted) ctx.refund(target); else refundPayment(ctx, target); }
+          }
         }
         const outcome = boundary?.kind === 'navigation' ? 'navigated to ' + clean(page.url()) + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
+import { check, inspectElement, intent, expirePaymentDialog, refundPayment } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 
@@ -237,6 +237,14 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       if (clips('X')) { left = Math.max(left, box.left + read(parent, 'clientLeft')); right = Math.min(right, box.left + read(parent, 'clientLeft') + read(parent, 'clientWidth')); }
       if (clips('Y')) { top = Math.max(top, box.top + read(parent, 'clientTop')); bottom = Math.min(bottom, box.top + read(parent, 'clientTop') + read(parent, 'clientHeight')); }
     }
+    // A painted fixed layer the size of the viewport (loading overlay, open fixed dialog) covers every spot the page can scroll to.
+    gather(); if (tooMany) return false;
+    if (!fixed) {
+      const mine = new Set(); for (let a = node; a; a = up(a)) mine.add(a);
+      const veil = everyone.some(({ n, box }) => !mine.has(n) && box.left <= 2 && box.top <= 2 && box.right >= innerW - 2 && box.bottom >= innerH - 2 &&
+        gs(n).position === 'fixed' && shown(n) && effective(n) >= 0.1 && (info(n).fill || info(n).replaced));
+      if (veil) { top = Math.max(top, 0); bottom = Math.min(bottom, innerH); }
+    }
     const seen = [...rects].filter(r => Math.min(right, r.right) - Math.max(left, r.left) >= 4 && Math.min(bottom, r.bottom) - Math.max(top, r.top) >= 4);
     if (!seen.length) return false;
     const own = gs(node), ink = rgba(own.webkitTextFillColor || own.color);
@@ -281,43 +289,43 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     return parts.join('');
   };
   // LOOSE: every rendered string under the form (offscreen, faint, ::before/::after, input values, open shadow roots, same-origin frames)
-  // plus the activating control's own label. An image or canvas is a mark (￼) where a figure we cannot read may sit; a box that
-  // shows area but holds nothing could host a closed shadow root, and what it shows cannot be read, so the read gives up.
+  // plus the activating control's own label. An image or canvas outside a control is a mark (￼) where a figure we cannot read may sit.
+  // Known limits: a figure drawn as a CSS background image, or held in a closed shadow root with no text, is not seen.
   const looseLines = () => {
     const parts = []; let previous, count = 0;
     const push = (text, owner) => {
-      const t = String(text ?? '').normalize('NFKC').replace(/[­​-‏⁠﻿]/g, '').replace(/\s+/g, ' ').trim(); if (!t) return;
+      let t = String(text ?? '').normalize('NFKC').replace(/[­​-‏⁠﻿]/g, '').replace(/\s+/g, ' ').trim(); if (!t) return;
+      // A struck-out price is the old price ("was").
+      for (let a = owner; a; a = up(a)) if (['del', 's', 'strike'].includes(read(a, 'localName')) || /line-through/.test(gs(a).textDecorationLine ?? '')) { t = 'was ' + t; break; }
       let block = owner; while (block && /^(?:inline(?:-.*)?|contents)$/.test(gs(block).display)) block = up(block);
       if (parts.length) parts.push(previous === block ? ' ' : '\n');
       parts.push(t); previous = block;
     };
     const pseudo = (n, which) => { const c = gs(n, which)?.content; if (/counters?\(/.test(c ?? '')) throw Error('counter content'); if (c && c !== 'none' && c !== 'normal') push(c.replace(/^["']|["']$/g, ''), n); };
-    const media = ['img', 'canvas', 'svg', 'video', 'picture', 'object', 'embed'], hollow = ['img', 'input', 'textarea', 'select', 'canvas', 'video', 'svg', 'iframe', 'object', 'embed', 'br', 'hr', 'wbr', 'meter', 'progress', 'audio', 'button', 'picture', 'source', 'track', 'area', 'col', 'base', 'link', 'meta', 'param', 'script', 'style', 'template', 'noscript', 'slot'];
-    const walk = n => {
+    const media = ['img', 'canvas', 'svg', 'video', 'picture', 'object', 'embed'];
+    const controlled = n => { const tag = read(n, 'localName'), role = read(n, 'getAttribute')('role'); return ['button', 'a', 'summary', 'select'].includes(tag) || ['button', 'link', 'tab', 'menuitem'].includes(role); };
+    const walk = (n, inControl = false) => {
       if (++count > 20000) throw Error('too many nodes');
       const on = shown(n), tag = read(n, 'localName');
+      inControl ||= controlled(n);
       if (on && media.includes(tag)) {
         const b = read(n, 'getBoundingClientRect')();
-        // A banner-sized image or canvas can show a total we can't read; a smaller one is an unknown figure.
+        // A banner-sized image or canvas can show a total we can't read; a smaller one outside a control is a mark: it may hold a figure.
         if (b.width >= 100 && b.height >= 16) throw Error('unreadable content');
         const alt = read(n, 'getAttribute')('alt');
-        if (alt) push(alt, n); else if (b.width >= (tag === 'svg' ? 50 : 24) && b.height >= (tag === 'svg' ? 12 : 8) && !(tag === 'svg' && (read(n, 'textContent') ?? '').trim())) push('￼', n);
+        if (alt) push(alt, n); else if (!inControl && b.width >= (tag === 'svg' ? 50 : 24) && b.height >= (tag === 'svg' ? 12 : 8) && !(tag === 'svg' && (read(n, 'textContent') ?? '').trim())) push('￼', n);
       }
       if (on) {
         pseudo(n, '::before');
         if (tag === 'input') { if (!/^(?:hidden|password|checkbox|radio|file)$/.test(read(n, 'type'))) push(read(n, 'value'), n); }
         else if (tag === 'textarea') push(read(n, 'value'), n);
         else if (tag === 'select') for (const o of Array.from(read(n, 'selectedOptions') ?? [])) push(read(o, 'textContent'), n);
-        else if (n !== root && !hollow.includes(tag) && !read(n, 'shadowRoot') && !read(n, 'childElementCount') && !(read(n, 'textContent') ?? '').trim()) {
-          const b = read(n, 'getBoundingClientRect')(), g = ['::before', '::after'].some(which => { const c = gs(n, which)?.content; return c && c !== 'none' && c !== 'normal'; });
-          if (b.width >= 24 && b.height >= 8 && !g) throw Error('empty box');
-        }
       }
       if (['select', 'textarea', 'input'].includes(tag)) { if (on) pseudo(n, '::after'); return; }
-      const shadow = read(n, 'shadowRoot'); if (shadow) for (const c of Array.from(read(shadow, 'childNodes') ?? [])) if (read(c, 'nodeType') === 1) walk(c);
-      if (tag === 'iframe') { try { const body = read(read(n, 'contentDocument'), 'body'); if (body) walk(body); } catch { /* cross-origin */ } }
+      const shadow = read(n, 'shadowRoot'); if (shadow) for (const c of Array.from(read(shadow, 'childNodes') ?? [])) if (read(c, 'nodeType') === 1) walk(c, inControl);
+      if (tag === 'iframe') { try { const body = read(read(n, 'contentDocument'), 'body'); if (body) walk(body, inControl); } catch { /* cross-origin */ } }
       for (const c of Array.from(read(n, 'childNodes') ?? [])) {
-        if (read(c, 'nodeType') === 1) walk(c); else if (read(c, 'nodeType') === 3 && on) push(read(c, 'textContent'), n);
+        if (read(c, 'nodeType') === 1) walk(c, inControl); else if (read(c, 'nodeType') === 3 && on) push(read(c, 'textContent'), n);
       }
       if (on) pseudo(n, '::after');
     };
@@ -327,73 +335,136 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       tag === 'input' && /^(?:submit|button|image|reset)$/.test(read(el, 'type')) ? read(el, 'value') : undefined].filter(Boolean);
     return parts.join('').split('\n').concat(own.map(t => String(t).normalize('NFKC').replace(/\s+/g, ' ').trim()));
   };
-  // Does any rendered figure show a payable amount that differs from `amount`? Each figure gets a role from the words next to it:
-  //   pay   the word just before it (or, for a figure first, just after it) is total/amount/due/pay/price/cost/billed: it must equal the amount.
-  //   sub   a part of the total (subtotal, tax, fee, shipping, discount, "before tax"), or a compound like "tax amount": it may be smaller
-  //         than the amount; a larger one needs a visible discount line at least as large as the gap, else the real total is unknown.
-  //   unit  per/each/unit/payments/monthly: may be smaller than the amount, never larger.
-  //   none  balances, limits, "over $50", "incl. $1.50": not a charge.
-  // Only the words right at the figure decide (back to the last sentence break or colon), so a leading "Includes tax & fees." exempts nothing.
-  // Label, qualifier and figure may sit on three separate lines, so up to three lines are read as one.
-  const conflicts = (lines, strictLines, amount) => {
-    const num = value => Number(String(value).replace(/[^\d.]/g, ''));
-    const A = num(amount), eps = 0.005;
-    const figure = /(?:[$€£¥]\s*|\b(?:USD|EUR|GBP|CAD|AUD)\s*)(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*\.\d{2})\b|(\d[\d,]*(?:\.\d+)?)\s*(?:USD|EUR|GBP|CAD|AUD)\b|(?<=[:=]\s*)(\d[\d,]*(?:\.\d+)?)|(￼)/gi;
-    const PAY = /^(?:total|amount|due|pay|payment|payable|price|cost|charge[ds]?|charges|billed|bill|owe[ds]?)$/;
-    const UNIT = /^(?:per|each|ea|unit|units|apiece|x|×|payments|installments?|monthly|weekly|daily|yearly|annually)$/;
-    const PART = /^(?:sub-?\s?total|tax(?:es)?|vat|gst|hst|fees?|shipping|delivery|handling|tips?|surcharge|discounts?|savings?|saved?|coupon|promo|rebate|off|before|excl|excluding|excludes|pretax|without)$/;
-    const CUT = /^(?:discounts?|savings?|saved?|coupon|promo|rebate|off)$/;
-    const QUAL = /^(?:incl|includes?|including|inc|plus|less|minus|after|with|and|from|before|excl|excluding|excludes)$/;
-    const FILL = /^(?:of|is|are|will|be|only|now|today|just|about|approx|approximately|currently|a|an|the|in|usd|eur|gbp|cad|aud)$/;
-    const words = text => (text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*|×/g) ?? []);
-    const trim = text => text.replace(/[\s:=\-–—()\[\]~≈]+$/, '');
-    const role = (left, right) => {
-      const lw = words(left), rw = words(right);
-      let i = lw.length - 1; while (i >= 0 && FILL.test(lw[i])) i--;
-      const rj = rw.findIndex(w => !FILL.test(w)), r0 = rj >= 0 ? rw[rj] : undefined;
-      if (r0 && UNIT.test(r0)) return { kind: 'unit', qualifier: false };
-      if (i >= 0) {
-        const w = lw[i];
-        if (UNIT.test(w)) return { kind: 'unit', qualifier: false };
-        if (PAY.test(w)) return { kind: PART.test(lw[i - 1] ?? '') ? 'sub' : 'pay', qualifier: false };
-        if (PART.test(w)) return { kind: lw.some(x => PAY.test(x)) || /^sub-?total$/.test(w) ? 'sub' : 'none', qualifier: false, cut: CUT.test(w) };
-        return { kind: 'none', qualifier: QUAL.test(w) };
-      }
-      if (r0 && PAY.test(r0)) return { kind: rw.slice(rj + 1).some(w => PART.test(w)) ? 'sub' : 'pay', qualifier: false };
-      if (r0 && CUT.test(r0)) return { kind: 'none', cut: true, qualifier: false };
-      return { kind: 'none', qualifier: false };
+  // Does any rendered figure show a payable amount that differs from `amount`? Default-deny: every money figure gets a role from
+  // its own label, and a figure that differs from the amount asks unless its role clears it.
+  //   pay     total/amount/due/price/charge/billing...: must equal the amount.
+  //   part    a part of the total (subtotal, tax, fee, shipping, "incl.") or any other label, such as an item name: at most the
+  //           amount, unless a visible discount line on another line closes the gap.
+  //   unit    per/each/payments/monthly: at most the amount.
+  //   exempt  not a charge (discount, savings, was, balance, available, limit, over, away, points): any size, but only next to it.
+  //   none    no label at all: asks.
+  // The label is the words just before the figure on its line. Filler ("now", "only", "A$"), parenthetical notes and ":" "|" "...."
+  // do not hide it. A figure that stands alone on its line takes the label above it (the label cell of a table, flex, grid, dl or
+  // float row), looking up to four lines back. A figure first on its line and unlabelled reads the words after it ("$9.00 each").
+  // A symbol or code that differs from the page's currency asks. A mark (image or canvas that may hold a figure) asks unless its
+  // row has an ordinary word and no pay or part word.
+  const conflicts = (lines, strictLines, amount, pageCurrency) => {
+    const CODES = 'USD|EUR|GBP|CAD|AUD|NZD|JPY|CNY|INR|CHF|SEK|NOK|DKK|MXN|BRL|HKD|SGD|KRW|RUB|PLN|CZK|TRY|ZAR|AED|SAR|THB|ILS|PHP|IDR|VND|NGN|TWD';
+    const SIGNS = '€£¥₹₩₽₺₪฿₫₱₦', NUM = '\\d(?:[\\d.,]*\\d)?';
+    const figure = new RegExp(
+      `(?:\\b(${CODES})\\s*)?((?:US|CA|AU|NZ|HK|SG|MX|NT|A|C|S|R)?\\$|[${SIGNS}]|Rs\\.?)\\s*(${NUM})(?:\\s*(${CODES})(?![A-Za-z]))?` +
+      `|\\b(${CODES})\\s*(${NUM})` +
+      `|(?<![\\w.,])(${NUM})\\s*(${CODES}(?![A-Za-z])|[${SIGNS}]|dollars?\\b|euros?\\b|pounds?\\b|bucks\\b)` +
+      `|(?<![\\w.,])(\\d[\\d,]*[.,]\\d{2})(?!\\d)` +
+      `|(?<![\\w.,])(${NUM})` +
+      `|(￼)` +
+      `|\\b((?:(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|and)[\\s-]+)+)(dollars?|euros?|pounds?|bucks)\\b`, 'giu');
+    const SYMBOL = { '$': '$', 'US$': 'USD', 'CA$': 'CAD', 'C$': 'CAD', 'AU$': 'AUD', 'A$': 'AUD', 'NZ$': 'NZD', 'HK$': 'HKD', 'SG$': 'SGD', 'S$': 'SGD',
+      'MX$': 'MXN', 'NT$': 'TWD', 'R$': 'BRL', '€': 'EUR', '£': 'GBP', '¥': '¥', '₹': 'INR', '₩': 'KRW', '₽': 'RUB', '₺': 'TRY', '₪': 'ILS',
+      '฿': 'THB', '₫': 'VND', '₱': 'PHP', '₦': 'NGN', 'rs': 'Rs', 'rs.': 'Rs', 'dollar': '$', 'dollars': '$', 'euro': 'EUR', 'euros': 'EUR',
+      'pound': 'GBP', 'pounds': 'GBP', 'buck': '$', 'bucks': '$' };
+    const GENERIC = { '$': ['USD', 'CAD', 'AUD', 'NZD', 'HKD', 'SGD', 'MXN', 'TWD'], '¥': ['JPY', 'CNY'], 'Rs': ['INR', 'PKR', 'LKR', 'NPR'] };
+    const same = (a, b) => !a || !b || a === b || !!GENERIC[a]?.includes(b) || !!GENERIC[b]?.includes(a);
+    const set = words => new Set(words.split(' '));
+    const PAY = set('total amount due pay paying payment payable price cost charge charged charges charging billed billing bill owe owed owes invoice invoiced');
+    const UNIT = set('per each ea unit units apiece × x payments installment installments instalment instalments monthly weekly daily yearly annually quarterly month months mo week weeks wk year yr day days');
+    const PART = set('sub subtotal tax taxes vat gst hst fee fees shipping delivery handling freight postage tip tips gratuity surcharge duty duties levy item items service processing packaging insurance deposit installation before excl excluding excludes pretax without incl includes including inc plus less minus after with');
+    const CUT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed');
+    const EXEMPT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed credit credits balance available limit minimum maximum min max over above away points point pts reward rewards value valued worth was original orig regular reg list msrp compare retail threshold earn earned cashback refund refunded');
+    const FILL = set('of is are will be only now today just about approx approximately currently a an the in on at for to your you re our we my this that it its s then also final full overall est estimated usd eur gbp cad aud');
+    const CONNECT = set('or and to');
+    const QUAL = set('incl includes including inc plus less minus after with before excl excluding excludes without');
+    const COUNTED = /^(?:items?|pcs|pieces?|units?|qty|x|×|days?|hours?|mins?|minutes?|years?|months?|weeks?|payments?|installments?|points?|pts|interest|percent|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|st|nd|rd|th)$/i;
+    const eps = 0.005;
+    const parse = raw => {
+      let s = String(raw).replace(/\s/g, '');
+      const comma = s.lastIndexOf(','), dot = s.lastIndexOf('.');
+      if (comma >= 0 && dot >= 0) s = comma > dot ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+      else if (comma >= 0) s = /,\d{2}$/.test(s) && s.indexOf(',') === comma ? s.replace(',', '.') : s.replace(/,/g, '');
+      else if ((s.match(/\./g) ?? []).length > 1) s = s.replace(/\./g, '');
+      return Number(s);
     };
-    // Every figure of one (joined) text with its role.
-    const figuresOf = text => {
-      const found = []; let start = 0;
-      const all = [...text.matchAll(figure)];
-      all.forEach((m, k) => {
-        let seg = text.slice(start, m.index).replace(figure, ' ');
-        seg = trim(seg); const cut = Math.max(...[...seg.matchAll(/[.;!?:|]/g)].map(x => x.index), -1); seg = seg.slice(cut + 1);
-        const next = all[k + 1], tail = text.slice(m.index + m[0].length, next?.index ?? text.length);
-        const rest = tail.replace(/^[\s)\]]+/, ''), hard = /[.;!?:|]/.exec(rest), right = hard ? rest.slice(0, hard.index) : rest;
-        const r = role(seg, right);
-        found.push({ ...r, at: m.index, value: m[5] ? Infinity : num(m[1] ?? m[2] ?? m[3] ?? m[4]) });
-        if (!r.qualifier) start = m.index + m[0].length;
+    const A = parse(String(amount).replace(/[^\d.,]/g, ''));
+    const words = text => text.toLowerCase().match(/\p{L}+|×/gu) ?? [];
+    const digit = ch => { const c = ch.codePointAt(0); let z = c; while (/\p{Nd}/u.test(String.fromCodePoint(z - 1))) z--; return String((c - z) % 10); };
+    const norm = text => String(text).normalize('NFKC').replace(/[­​-‏⁠﻿]/g, '').replace(/\p{Nd}/gu, d => /[0-9]/.test(d) ? d : digit(d))
+      .replace(/\b(incl|excl|inc|approx|est|ex|vs|no)\./gi, '$1').replace(/\.{2,}|…|_{2,}|-{3,}|[·•]/g, ' ').replace(/\s+/g, ' ').trim();
+    const unparen = text => { let t = text; for (let before; before !== t;) { before = t; t = t.replace(/\([^()]*\)|\[[^\[\]]*\]/g, ' '); } return t; };
+    const lastBreak = text => Math.max(...[...text.matchAll(/[.;!?](?=\s|$)/g)].map(x => x.index), -1);
+    const before = text => { const t = unparen(text); return t.slice(lastBreak(t) + 1); };
+    const after = text => { const t = unparen(text.replace(/^[\s)\]]+/, '')), hard = /[.;!?](?=\s|$)/.exec(t); return hard ? t.slice(0, hard.index) : t; };
+    const sig = text => words(text).filter(w => !FILL.has(w));
+    // The role of a label, read from its significant words (the nearest word decides).
+    const classify = list => {
+      const w = list.at(-1), hasPay = list.some(x => PAY.has(x));
+      if (UNIT.has(w)) return { kind: 'unit' };
+      if (PAY.has(w)) { const p = list.at(-2); return PART.has(p) || EXEMPT.has(p) ? { kind: 'part', cut: CUT.has(p) } : { kind: 'pay' }; }
+      if (PART.has(w)) return { kind: 'part' };
+      if (EXEMPT.has(w)) return { kind: hasPay ? 'part' : 'exempt', cut: CUT.has(w) };
+      if (!hasPay && list.some(x => EXEMPT.has(x))) return { kind: 'exempt' };
+      return { kind: 'part', unknown: true };
+    };
+    const analyze = rawLines => {
+      const list = rawLines.map(norm), found = [];
+      const hasFigure = list.map(t => [...t.matchAll(figure)].some(m => m[10] === undefined));
+      const labelAbove = i => {
+        for (let j = i - 1; j >= 0 && j >= i - 4; j--) {
+          if (!/\p{L}/u.test(list[j]) || hasFigure[j]) continue;
+          const s = sig(before(list[j])); if (s.length) return { ...classify(s), adjacent: j === i - 1 };
+        }
+      };
+      list.forEach((text, i) => {
+        const all = [...text.matchAll(figure)];
+        const alone = !/\p{L}/u.test(text.replace(figure, ' '));
+        let start = 0, previous;
+        all.forEach((m, k) => {
+          const bare = m[10] !== undefined, mark = m[11] !== undefined, spelled = m[12] !== undefined;
+          const raw = m[3] ?? m[6] ?? m[7] ?? m[9] ?? m[10];
+          const next = all[k + 1], seg = text.slice(start, m.index), tail = text.slice(m.index + m[0].length, next?.index ?? text.length);
+          const lw = words(before(seg)), ls = lw.filter(w => !FILL.has(w)), rs = sig(after(tail)), r0 = rs[0];
+          let role, via = 'none';
+          if (previous && !ls.length && lw.every(w => CONNECT.has(w))) { role = previous.role; via = 'inherit'; }
+          else if (ls.length) {
+            role = classify(ls); via = 'left';
+            if (role.unknown && r0 && PAY.has(r0)) { role = { kind: 'pay' }; via = 'left+right'; }
+            else if (role.unknown && r0 && EXEMPT.has(r0)) role = { kind: 'exempt' };
+          } else if (r0) {
+            if (PAY.has(r0)) role = { kind: 'pay' }; else if (EXEMPT.has(r0)) role = { kind: 'exempt', cut: CUT.has(r0) };
+            else if (PART.has(r0) || UNIT.has(r0)) role = classify([r0]);
+            via = 'right';
+          }
+          if (!role && alone && !mark) { role = labelAbove(i); via = 'above'; if (role && role.kind === 'exempt' && !role.adjacent) role = { ...role, kind: 'part' }; }
+          if (r0 && UNIT.has(r0) && role && role.kind !== 'exempt') role = { kind: 'unit' };
+          role ??= { kind: 'none' };
+          // A bare number counts only straight after a pay word ("Total 500", "Total: 500"), and not as a count or a date.
+          if (bare && (via !== 'left' || role.kind !== 'pay' || COUNTED.test(words(after(tail))[0] ?? '') || /^\s*%/.test(tail))) return;
+          const suffix = m[8] ?? m[13], code = m[1] ?? m[4] ?? m[5] ?? (suffix && /^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
+          const sign = m[2] ?? (suffix && !/^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
+          const cur = code ? code.toUpperCase() : sign ? SYMBOL[sign] ?? SYMBOL[sign.toUpperCase()] ?? SYMBOL[sign.toLowerCase()] : undefined;
+          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, mark, text };
+          found.push(entry); previous = entry;
+          // "Total after $2.00 discount: $500.00": a qualifier figure does not end the label of the figure that follows.
+          if (!(via === 'left' && QUAL.has(ls.at(-1)))) start = m.index + m[0].length;
+        });
       });
       return found;
     };
-    const joined = list => list.flatMap((line, i) => [[line], i > 0 && [list[i - 1], line], i > 1 && [list[i - 2], list[i - 1], line]].filter(Boolean).map(from => ({ text: from.join(' '), from })));
-    const prepare = list => list.map(t => String(t).replace(/\b(incl|excl|inc|approx|est|ex|vs)\./gi, '$1'));
     let cuts;
-    const reconciled = (value, line) => {
-      cuts ??= joined(prepare(strictLines() ?? [])).flatMap(({ text, from }) => figuresOf(text).filter(f => f.cut && Number.isFinite(f.value)).map(f => ({ value: f.value, from })));
-      return cuts.some(d => !d.from.includes(line) && value - d.value <= A + eps);
+    const reconciled = f => {
+      cuts ??= analyze(strictLines() ?? []).filter(x => x.role.cut && !x.mark && Number.isFinite(x.value));
+      return cuts.some(d => d.text !== f.text && f.value - d.value <= A + eps);
     };
-    // The line a figure sits on: the last line that starts at or before it in the joined text.
-    const ownLine = (from, at) => { let pos = 0, own = from[0]; for (const part of from) { if (pos <= at) own = part; pos += part.length + 1; } return own; };
-    return joined(prepare(lines)).some(({ text, from }) => figuresOf(text).some(f => {
+    const figures = analyze(lines);
+    const reference = /^[A-Za-z]{3}$/.test(pageCurrency ?? '') ? pageCurrency.toUpperCase() : figures.find(f => !f.mark && f.cur && Math.abs(f.value - A) < eps)?.cur;
+    return figures.some(f => {
+      const kind = f.role.kind;
+      if (f.mark) return !(kind === 'exempt' || kind === 'part' && f.role.unknown);
+      if (kind !== 'exempt' && !same(f.cur, reference)) return true;
       if (Math.abs(f.value - A) < eps) return false;
-      if (f.kind === 'pay') return true;
-      if (f.kind === 'unit') return f.value > A + eps;
-      if (f.kind === 'sub') return f.value > A + eps && !reconciled(f.value, ownLine(from, f.at));
-      return false;
-    }));
+      if (kind === 'unit') return f.value > A + eps;
+      if (kind === 'part') return f.value > A + eps && !reconciled(f);
+      return kind !== 'exempt';
+    });
   };
   const field = key => {
     if (!root) return;
@@ -417,7 +488,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     if (key === 'amount' && values.length === 1) {
       // Anything rendered that shows a different payable figure (LOOSE) leaves the terms ambiguous.
-      const lines = looseLines(); if (!lines || conflicts(lines, () => visibleText(root).split('\n'), values[0])) return;
+      const lines = looseLines(); if (!lines || conflicts(lines, () => visibleText(root).split('\n'), values[0], field('currency'))) return;
     }
     return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };
@@ -587,6 +658,8 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       } catch { return refused(); }
       finally { ruleTarget = undefined; }
     },
+    // The action settled with no effect at all: the payment activation it spent goes back to the request's budget.
+    refund(target) { if (current() && dialogOwner?.target === target && refundPayment(ruleContext, target)) { dialogOwner = undefined; expirePaymentDialog(ruleContext); } },
     beginInput(target) { if (dialogOwner?.target === target && current()) dialogOwner.active = true; },
     finishInput(target) {
       if (dialogOwner?.target !== target) return;

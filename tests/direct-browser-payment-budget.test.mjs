@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { check } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { check, refundPayment } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // One payment activation per user request, whichever kind of control (scripted type=button or plain submit),
 // and a scripted control can be approved through the same consent path as any other.
@@ -34,4 +34,27 @@ test('a new request has a new budget', () => {
   assert.equal(check(ctx, 'click', target(false)).verdict, 'confirm');
   ctx.id = 'b';
   assert.equal(check(ctx, 'click', target(false)).verdict, 'allow');
+});
+
+// A scripted activation that settled with no effect (Apply, a quantity stepper, Remove) gives its budget back.
+test('a refunded activation gives the request its payment budget back', () => {
+  const ctx = ctxFor(named), apply = target(true);
+  assert.equal(check(ctx, 'click', apply).verdict, 'allow');
+  assert.equal(refundPayment(ctx, apply), true);
+  assert.equal(refundPayment(ctx, apply), false);
+  assert.deepEqual([false, false].map(scripted => check(ctx, 'click', target(scripted)).verdict), ['allow', 'confirm']);
+});
+test('a plain submit and an activation that did not spend the budget cannot refund it', () => {
+  const ctx = ctxFor(named, () => true), first = target(false), second = target(true);
+  assert.equal(check(ctx, 'click', first).verdict, 'allow');
+  assert.equal(check(ctx, 'click', second).verdict, 'allow');
+  assert.equal(refundPayment(ctx, second), false);
+  assert.equal(refundPayment(ctx, first), false); // a plain submit keeps what it spent
+});
+test('a refund never reaches another request', () => {
+  const ctx = { userMessage: () => ({ source: 'user', id: ctx.id, text: 'pay', session: 's', turn: 't', payment: named }), consent: { consume: () => false }, id: 'a' };
+  const one = target(true); assert.equal(check(ctx, 'click', one).verdict, 'allow');
+  ctx.id = 'b'; assert.equal(check(ctx, 'click', target(false)).verdict, 'allow');
+  assert.equal(refundPayment(ctx, one), true);
+  assert.equal(check(ctx, 'click', target(false)).verdict, 'confirm');
 });

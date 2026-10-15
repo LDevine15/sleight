@@ -76,6 +76,17 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - A web page's tree is capped in a result, but the first browser result of a session, with the engine's docs,
   still came to 55,450 characters on one article, over the 45,000 sleight aims for.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
+- The turbo v3 payment read treats any visible money figure that differs from the amount in the user's message as a
+  reason to ask, unless its own label marks it as a part (tax, delivery, discount, per unit, installment). Measured
+  2026-10-15 on 20 checkout pages: 18 allow the exact payment. The 2 that ask are a donation page with preset chips
+  larger than that amount, and a dialog whose terms are outside the Pay button's own nested form. An image of 24x8
+  or more with no ordinary word in its row asks too, so a decorative `alt=""` image can cause a false ask.
+- The same read doesn't see a total drawn as a CSS background image, held in a closed shadow root with no text,
+  set only in an `aria-label` or `title`, shown in a cross-origin iframe, or placed outside the form element.
+  Page text that a person can't read is never accepted as the payment terms, but these are not read at all.
+- An Apply, quantity stepper, Remove or "Show order summary" button gives the request's one payment activation back
+  when it settles with no navigation, form change or request. A slow request that finishes after the 5 s settle
+  window would not be counted, so a second payment could then go through without asking.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.

@@ -59,6 +59,18 @@ export function intent(kind, target = {}) {
   return { submit, payment };
 }
 
+// A script-driven control (not a submit button) whose activation settled with no navigation, form change, network request, dialog
+// or popup charged nothing (Apply, a quantity stepper, Remove, "Show order summary"), so it gives back the request's one payment
+// activation. A real submit button keeps what it spent whatever the page showed.
+export function refundPayment(ctx, target) {
+  const spent = target?.paymentSpent, bank = payments.get(ctx);
+  if (!spent || !bank || target.element?.scriptButton !== true) return false;
+  target.paymentSpent = undefined;
+  if (!spent.fresh) return false;
+  bank.used.delete(spent.requestKey); bank.dialog = undefined;
+  return true;
+}
+
 export function expirePaymentDialog(ctx) { const bank = payments.get(ctx); if (bank) bank.dialog = undefined; }
 
 export function check(ctx, kind, target = {}) {
@@ -114,6 +126,8 @@ export function check(ctx, kind, target = {}) {
     // One payment activation per user request, whichever kind of control it is: a script-driven button may be Apply or a
     // disguised charge, so it spends the same budget as the real submit. Past the budget, the user is asked through consume.
     if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();
+    // Remember what this activation spent so a click that turns out to do nothing can give it back (refundPayment).
+    target.paymentSpent = requestKey ? { requestKey, fresh: !bank.used.has(requestKey) } : undefined;
     if (requestKey) bank.used.add(requestKey);
     if (target.state) paymentPages.add(target.state);
     bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
