@@ -187,6 +187,14 @@ function hookFixture({ clock = Date } = {}) {
     get form() { return this.nativeForm ?? null; }
     get type() { return (this.attrs.type ?? 'text').toLowerCase(); }
   }
+  class HTMLSelectElement extends Element {
+    constructor(attrs = {}) { super('select', attrs); }
+    get multiple() { return Object.hasOwn(this.attrs, 'multiple'); }
+  }
+  class HTMLLabelElement extends Element {
+    constructor(control) { super('label'); this.nativeControl = control; }
+    get control() { return this.nativeControl ?? null; }
+  }
   class EventTarget {
     addEventListener(name, fn, capture) {
       (this.listeners[name] ??= new Set()).add(fn);
@@ -198,9 +206,11 @@ function hookFixture({ clock = Date } = {}) {
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   vm.runInNewContext(`(${popupHook})()`, { window, document, navigator,
-    MouseEvent, Element, HTMLButtonElement, HTMLInputElement, Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
+    MouseEvent, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+    Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
   const hook = window[Symbol.for('sleight.popup3')];
-  return { window, document, navigator, hook, Element, HTMLButtonElement, HTMLInputElement, MouseEvent, Event, EventTarget, opens };
+  return { window, document, navigator, hook, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+    MouseEvent, Event, EventTarget, opens };
 }
 
 test('CR3 arms every command without inspecting script or listener source', () => {
@@ -289,27 +299,28 @@ test('CR2 HTML navigable containers and plugin elements reject focus through ope
   } finally { f.hook.off(); }
 });
 
-test('CR2 HTML input states and ARIA checked/selected widgets keep their own activation', () => {
-  // HTML input.html#attr-input-type (including its text default), forms.html#the-label-element;
-  // WAI-ARIA 1.2 #aria-checked, #aria-selected, #aria-pressed and #widget_roles.
+test('CR5 native controls and ARIA roles without a measured modifier default use masking', () => {
   const f = hookFixture();
   try {
     for (const type of ['', 'invalid', 'hidden', 'text', 'search', 'tel', 'url', 'email', 'password', 'date',
       'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file'])
-      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), false, type);
+      { assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), true, type); f.hook.finish('input-' + type); }
     for (const type of ['button', 'submit', 'reset', 'image', 'SUBMIT']) {
       assert.equal(f.hook.prepare(new f.Element('input', { type }), 'button-' + type, 1000), true, type);
       f.hook.finish('button-' + type);
     }
-    for (const tag of ['select', 'option', 'textarea', 'label', 'summary'])
-      assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), false, tag);
+    for (const tag of ['select', 'option', 'textarea', 'label', 'summary']) {
+      assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), true, tag); f.hook.finish(tag);
+    }
     for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio', 'tab',
       'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar'])
-      assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), false, role);
-    for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']])
-      assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), false, role);
-    for (const tag of ['button', 'input'])
-      assert.equal(f.hook.prepare(new f.Element(tag, { type: 'button', 'aria-pressed': 'false' }), 'toggle-' + tag, 1000), false, tag);
+      { assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), true, role); f.hook.finish(role); }
+    for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']]) {
+      assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), true, role); f.hook.finish(role);
+    }
+    for (const tag of ['button', 'input']) {
+      assert.equal(f.hook.prepare(new f.Element(tag, { type: 'button', 'aria-pressed': 'false' }), 'toggle-' + tag, 1000), true, tag); f.hook.finish('toggle-' + tag);
+    }
     assert.equal(f.hook.prepare(new f.Element('button'), 'popup-button', 1000), true);
   } finally { f.hook.off(); }
 });
@@ -590,22 +601,22 @@ test('a page closing during release is refused instead of acknowledged as kept',
 });
 
 for (const tag of ['textarea', 'select', 'option', 'label', 'input'])
-  test('CR1 leaves form ancestor plain: ' + tag, () => {
+  test('CR5 does not infer a modifier default from an arbitrary ancestor: ' + tag, () => {
     const f = hookFixture(), button = new f.Element();
     button.parentElement = new f.Element(tag);
-    try { assert.equal(f.hook.prepare(button, tag, 1000), false); } finally { f.hook.off(); }
+    try { assert.equal(f.hook.prepare(button, tag, 1000), true); } finally { f.hook.off(); }
   });
 for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio'])
-  test('CR1 leaves checkable shadow ancestor plain: ' + role, () => {
+  test('CR5 custom shadow widget handlers receive masking: ' + role, () => {
     const f = hookFixture(), button = new f.Element();
     button.getRootNode = () => ({ host: new f.Element('custom-control', { role }) });
-    try { assert.equal(f.hook.prepare(button, role, 1000), false); } finally { f.hook.off(); }
+    try { assert.equal(f.hook.prepare(button, role, 1000), true); } finally { f.hook.off(); }
   });
 
-test('CR1 refuses editable and detached nodes, frame focus and retired tokens', () => {
+test('CR5 masks editable content, refuses detached nodes, frame focus and retired tokens', () => {
   const f = hookFixture();
   try {
-    assert.equal(f.hook.prepare(new f.Element('div', { contenteditable: '' }), 'editable', 1000), false);
+    assert.equal(f.hook.prepare(new f.Element('div', { contenteditable: '' }), 'editable', 1000), true);
     const detached = new f.Element(); detached.isConnected = false;
     assert.equal(f.hook.prepare(detached, 'detached', 1000), false);
     f.hook.finish('late');
@@ -821,7 +832,7 @@ for (const [kind, type] of [['button', undefined], ['button', 'invalid'], ['butt
     Object.defineProperties(control, { form: { get() { throw Error('page form getter'); } },
       type: { get() { throw Error('page type getter'); } } });
     control.getAttribute = () => { throw Error('page attribute getter'); };
-    try { assert.equal(f.hook.prepare(span, 'submit', 1000), target === '_blank'); }
+    try { assert.equal(f.hook.prepare(span, 'submit', 1000), false); }
     finally { f.hook.off(); }
   });
 
@@ -833,6 +844,25 @@ test('CR4 native submit formtarget overrides its form target and non-submit butt
     f.hook.finish('button');
     assert.equal(f.hook.prepare(new f.HTMLInputElement({ type: 'reset' }, form), 'reset', 1000), true);
   } finally { f.hook.off(); }
+});
+
+for (const multiple of [false, true]) test('CR5 select multiplicity comes from the captured native getter: ' + multiple, () => {
+  const f = hookFixture(), select = new f.HTMLSelectElement(multiple ? { multiple: '' } : {}), option = new f.Element('option');
+  option.parentElement = select;
+  Object.defineProperty(select, 'multiple', { get() { throw Error('page multiple getter'); } });
+  select.getAttribute = () => { throw Error('page attribute getter'); };
+  try {
+    assert.equal(f.hook.prepare(select, 'select', 1000), !multiple); f.hook.finish('select');
+    assert.equal(f.hook.prepare(option, 'option', 1000), !multiple);
+  } finally { f.hook.off(); }
+});
+
+test('CR5 label forwarding uses the captured native control and submit ownership getters', () => {
+  const f = hookFixture(), control = new f.HTMLInputElement({ type: 'submit' }, new f.Element('form'));
+  const label = new f.HTMLLabelElement(control), text = new f.Element('span'); text.parentElement = label;
+  Object.defineProperty(label, 'control', { get() { throw Error('page control getter'); } });
+  try { assert.equal(f.hook.prepare(text, 'label', 1000), false); }
+  finally { f.hook.off(); }
 });
 
 test('CR4 successful link dispatch that observes closure skips takeRequest and still settles', async () => {

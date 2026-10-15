@@ -8,7 +8,7 @@ import { fixture, controls, skip } from './fixtures/cr4-real.mjs';
 
 // HTML activation: input.html, form-elements.html, interactive-elements.html,
 // interaction.html#activation-behavior; text selection: w3c.github.io/uievents/.
-const cases = [];
+const cases = [], receipts = [];
 const add = (name, html, options = {}) => cases.push({ name, html, selector: '#go', differs: false, plain: false, ...options });
 for (const method of ['GET', 'POST']) for (const [kind, control] of Object.entries(controls))
   for (const target of ['_self', '_blank']) add(`${method} ${kind} ${target}`,
@@ -44,7 +44,7 @@ add('anchor without href', '<a id="go">No href</a>');
 add('anchor', '<a id="go" href="/landed">Navigate</a>', { differs: true, plain: true, navigates: true });
 add('draggable anchor', '<a id="go" draggable="true" href="/landed">Navigate</a>', { differs: true, plain: true, navigates: true });
 add('area', '<img usemap="#map" width="80" height="40" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"><map name="map"><area id="go" shape="rect" coords="0,0,80,40" href="/landed"></map>',
-  { differs: true, plain: true, navigates: true });
+  { differs: true, plain: true, navigates: true, area: true });
 add('iframe link', '<iframe src="/frame"></iframe>', { frame: true, differs: true, plain: true, navigates: true });
 add('popover button', '<button id="go" popovertarget="field">Toggle</button><div id="field" popover>Popup</div>');
 add('dialog command', '<button id="go" commandfor="field" command="show-modal">Show</button><dialog id="field">Dialog</dialog>');
@@ -75,6 +75,7 @@ async function state(page, context, chooser, start) {
 }
 
 for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, timeout: 60000 }, async t => {
+  const receipt = { name: row.name, completed: false }; receipts.push(receipt);
   const f = await fixture(t, row.html, { '/frame': '<a id="go" href="/landed">Frame link</a>' });
   const page = f.entry.page, startURL = page.url(), outcomes = {}, choices = [];
   let chooser = 0;
@@ -84,13 +85,23 @@ for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, time
     chooser = 0;
     const requestStart = f.requests.length;
     const locator = (row.frame ? page.frameLocator('iframe') : page).locator(row.selector);
-    const click = options => row.double ? locator.dblclick({ ...options, timeout: 5000 }) : locator.click({ ...options, timeout: 5000 });
+    const click = async options => {
+      // <area> has no CSS box. Send real input over its image-map coordinates.
+      if (row.area) {
+        const box = await page.locator('img').boundingBox();
+        try {
+          if (options.modifiers?.length) await page.keyboard.down('ControlOrMeta');
+          return await page.mouse.click(box.x + 40, box.y + 20);
+        } finally { await page.keyboard.up('ControlOrMeta'); }
+      }
+      return row.double ? locator.dblclick({ ...options, timeout: 5000 }) : locator.click({ ...options, timeout: 5000 });
+    };
     if (mode === 'background') await backgroundClick(f.entry, locator, options => { choices.push(options); return click(options); }, { timeoutMs: 5000 });
     else await click({ modifiers: mode === 'modified' ? ['ControlOrMeta'] : [] });
-    if (row.navigates) await assert.doesNotReject(async () => {
+    if (row.navigates) {
       await page.waitForFunction(() => location.pathname === '/landed' || [...document.querySelectorAll('iframe')].some(f => f.contentWindow.location.pathname === '/landed'),
         undefined, { timeout: 300 }).catch(() => {});
-    });
+    }
     // Include native navigation/new target commit, not just the synchronous handler.
     await new Promise(resolve => setTimeout(resolve, 150));
     outcomes[mode] = await state(page, f.context, chooser, f.requests.slice(requestStart));
@@ -99,8 +110,16 @@ for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, time
     }
   }
   t.diagnostic(JSON.stringify({ name: row.name, nativeDiffers: row.differs, outcomes, choices }));
+  Object.assign(receipt, { completed: true, differs: JSON.stringify(outcomes.plain) !== JSON.stringify(outcomes.modified),
+    choices, sameResult: JSON.stringify(outcomes.background) === JSON.stringify(outcomes.plain),
+    changes: Object.keys(outcomes.plain).filter(key => JSON.stringify(outcomes.plain[key]) !== JSON.stringify(outcomes.modified[key])) });
   assert.equal(JSON.stringify(outcomes.plain) !== JSON.stringify(outcomes.modified), row.differs || !!row.scriptDiffers,
     'pin the measured native default table (script modifier handling is identified separately)');
   assert.deepEqual(choices, [row.plain ? {} : { modifiers: ['ControlOrMeta'] }], 'only measured native defaults take plain input');
   assert.deepEqual(outcomes.background, outcomes.plain, 'masked background input preserves the plain result');
+});
+
+test('CR5 full modifier table receipt', { skip }, t => {
+  for (const receipt of receipts) t.diagnostic('table ' + JSON.stringify(receipt));
+  assert.equal(receipts.length, cases.length);
 });
