@@ -245,9 +245,9 @@ test('clicking a label that forwards to the file input must not open the native 
 for (const [name, open] of [['input.click()', `f1.click()`], ['input.showPicker()', `f1.showPicker()`]])
   test(`a page script calling ${name} on a file input is suppressed and reported`, { skip, timeout: 90000 }, async t => {
     const p = files(t), b = await bank(t);
-    const f = await b.start(doc(`<button id="b" type="button">Attach</button><input type="file" id="f1" hidden>`, `b.onclick=()=>{${open}}`), `Upload "${p.resume}" to Resume`);
+    const f = await b.start(doc(`<button id="b" type="button">Attach</button><input type="file" id="f1" aria-label="Resume" style="position:absolute;opacity:0;width:1px;height:1px">`, `b.onclick=()=>{${open}}`), `Upload "${p.resume}" to Resume`);
     const result = await f.act([{ do: 'click', ref: f.ref('Attach') }]);
-    assert.match(result.text, /a file picker opened and was suppressed, use an upload step/, result.text);
+    assert.match(result.text, /file picker opened and was suppressed, use an upload step/, result.text);
     assert.equal(f.delta().upload, 0);
     await f.safe();
   });
