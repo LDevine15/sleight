@@ -220,17 +220,18 @@ export function popupHook() {
       if (arm) finish(arm.token);
       if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
+      // The native getter inherits editability, including false islands inside
+      // editors. Checking ancestors would discard that non-editable boundary.
+      if (document.designMode === 'on' || element instanceof HTMLElement && editable.call(element)) return false;
       const chain = ancestors(element);
       for (const [index, node] of chain.entries()) {
-        // In editable text a plain link click places the caret. The native
-        // getter includes inherited contenteditable and document designMode.
-        if (node instanceof HTMLElement && editable.call(node)) return false;
         if (plainControl(node)) return false;
         // A label can forward activation to a submit control outside its tree.
         if (node instanceof labelControl.constructor && !chain.slice(0, index).some(child => nativeMatches.call(child, interactive))
           && submits(labelControl.control.call(node))) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
+      if (linkElement instanceof HTMLElement && editable.call(linkElement)) return false;
       if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
       arm = { element, token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, handlers: [] };
