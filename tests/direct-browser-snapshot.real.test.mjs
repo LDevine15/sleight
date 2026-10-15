@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from '../plugins/sleight/vendor/playwright-core/index.mjs';
 import { snapshot, closedRefBinding, acknowledgeSnapshot, snapshotRefBinding } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
-import { createFormsFixtureHandler } from './fixtures/direct-browser-forms-fixture.mjs';
+import { censusFixture } from './fixtures/cr3-forms.mjs';
 
 const live = process.env.SLEIGHT_LIVE_DOM_TEST === '1';
 const pin = JSON.parse(readFileSync(new URL('../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url)))
@@ -16,7 +16,6 @@ const executablePath = join(homedir(), 'Library/Caches/ms-playwright', 'chromium
   'chrome-headless-shell-' + platform, 'chrome-headless-shell');
 const skip = !live ? 'real-page qualification belongs to sleight-arch host runner'
   : !existsSync(executablePath) ? 'pinned Chromium headless shell is unavailable' : false;
-const siteRoot = join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser/test/forms/site');
 
 async function fixture(t, html, routes = {}) {
   const sockets = new Set();
@@ -149,34 +148,37 @@ test('real fixture size census stays below 15K for open, action diff and find', 
   assert.ok(first.text.length + small.text.length + found.text.length <= 15000);
 });
 
-for (const route of ['travel', 'settings', 'checkout']) test(`real ${route} fixture snapshot size census`, {
-  skip: skip || !existsSync(join(siteRoot, route + '.html')) && 'read-only MIT form fixture source is unavailable',
-}, async t => {
-  const sockets = new Set();
-  const server = createServer(createFormsFixtureHandler({ route, siteRoot, origin: () => origin, posts: [] }));
-  server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const origin = 'http://127.0.0.1:' + server.address().port;
-  t.after(() => { for (const socket of sockets) socket.destroy(); return new Promise(resolve => server.close(resolve)); });
-  const browser = await chromium.launch({ headless: true, executablePath });
-  t.after(() => browser.close());
-  const page = await browser.newPage();
-  if (route === 'checkout') await page.route('**/payment.html?*', request => request.fulfill({
-    contentType: 'text/html', body: readFileSync(join(siteRoot, 'payment.html'), 'utf8') }));
-  await page.goto(origin + '/' + route);
+for (const route of ['travel', 'settings', 'checkout']) test(`CR3 authored ${route} form with 40 controls and long-list census`, { skip }, async t => {
+  const { html, routes } = censusFixture(route);
+  const page = await fixture(t, html, routes);
+  await page.waitForLoadState('load');
+  assert.ok(await page.locator('input,select,textarea,button').count() >= 40, 'census fixture must have at least 40 controls');
+  assert.ok(await page.locator('li').count() >= 60, 'census must include a long list');
+  if (route === 'checkout') assert.equal(await page.frames()[1].getByRole('textbox', { name: 'Number', exact: true }).count(), 1);
   const first = await snapshot(page);
-  const field = page.locator('input[type="text"],input:not([type]),textarea').first();
-  await field.fill('Fixture census');
+  assert.ok(first.text.length >= 2000, 'census must exercise at least 2K snapshot characters');
+  assert.doesNotMatch(first.text, /4111|08\/30|: "123"/);
+  if (route === 'checkout') assert.match(first.text, /textbox "Number" \[ref=f\d+e\d+\]: "\[redacted\]"/);
+  await page.locator('input').first().fill('Fixture census');
   const action = await snapshot(page, { since: first.number });
   const found = await snapshot(page, { find: 'Fixture census' });
   assert.match(found.text, /Fixture census/);
   const chars = { open: first.text.length, act: action.text.length, read: found.text.length,
     total: first.text.length + action.text.length + found.text.length };
-  console.log('V3 ' + route + ' fixture census ' + JSON.stringify(chars));
+  t.diagnostic('CR3 authored fixture census ' + JSON.stringify({ route, ...chars }));
   assert.ok(first.text.length <= 8000 && action.text.length <= 8000 && found.text.length <= 8000);
-  assert.ok(chars.total <= 15000, 'fixture open + action diff + find target is 15K');
+  assert.ok(chars.total <= 15000);
 });
 
+test('CR3 real 600 inert closed-root divs do not consume the control probe budget', { skip }, async t => {
+  const page = await fixture(t, `<custom-controls></custom-controls><script>
+    document.querySelector('custom-controls').attachShadow({mode:'closed'}).innerHTML =
+      '<div></div>'.repeat(600) + '<button>Only command</button>';
+  </script>`);
+  const result = await snapshot(page);
+  assert.match(result.text, /button "Only command" \[ref=s\d+\]/);
+  t.diagnostic('cleanup: 600-div fixture browser and server closed by fixture teardown');
+});
 
 for (const value of [' alpha  beta ', ' alpha\u200B  be\u00ADta ', '\talpha\n\nbeta\t'])
   test('V3R real normalized password with neutral name is masked', {skip}, async t=>{
@@ -210,4 +212,49 @@ test('V3R real document navigation never retargets the old public Buy ref', {ski
   assert.notEqual(current,ref);assert.throws(()=>snapshotRefBinding(page,current),/delivered|read/i);
   assert.equal(acknowledgeSnapshot(page,next.number),true);assert.throws(()=>snapshotRefBinding(page,ref),/stale|read/i);
   await snapshotRefBinding(page,current).click();assert.equal(await page.evaluate(()=>window.deleted),1);
+});
+
+test('CR1 real nested ignored hosts in an in-process frame expose native flags and retire refs', { skip }, async t => {
+  const page = await fixture(t, '<main><iframe src="/frame"></iframe></main>', {
+    '/frame': `<custom-outer></custom-outer><script>
+      const outer = document.querySelector('custom-outer').attachShadow({mode:'closed'});
+      outer.innerHTML = '<custom-inner></custom-inner>';
+      const inner = outer.querySelector('custom-inner').attachShadow({mode:'closed'});
+      inner.innerHTML = '<button role="checkbox" aria-checked="mixed">Nested choice</button><input aria-label="Private field" value="closed-value">';
+      window.removeControls = () => outer.replaceChildren();
+    </script>`,
+  });
+  await page.frames()[1].waitForLoadState();
+  const first = await snapshot(page);
+  assert.match(first.text, /checkbox "Nested choice" \[checked="mixed"\] \[ref=s\d+\]/);
+  assert.match(first.text, /textbox "Private field".*redacted/);
+  assert.doesNotMatch(first.text, /closed-value/);
+  const ref = /checkbox.*\[ref=(s\d+)\]/.exec(first.text)[1];
+  assert.equal(closedRefBinding(page, ref).frame, page.mainFrame());
+  await page.frames()[1].evaluate(() => window.removeControls());
+  await snapshot(page);
+  assert.throws(() => closedRefBinding(page, ref), /stale/i);
+  t.diagnostic('cleanup: fixture browser and loopback server are closed by fixture teardown');
+});
+
+test('CR2 HTML-AAM and Chromium native control roles remain reachable inside a closed root', { skip, timeout: 90000 }, async t => {
+  // https://www.w3.org/TR/html-aam-1.0/ and Chromium AXNodeObject native role mapping.
+  const types = ['button', 'submit', 'reset', 'image', 'text', 'search', 'tel', 'url', 'email', 'password',
+    'date', 'datetime-local', 'month', 'week', 'time', 'number', 'range', 'color', 'checkbox', 'radio', 'file'];
+  const inputs = types.map(type => `<input type="${type}" aria-label="Native ${type}"${['checkbox', 'radio'].includes(type)
+    ? ' value="fixture-choice-value"' : ''}>`).join('');
+  const controls = inputs + '<button>Native button element</button><textarea aria-label="Native textarea"></textarea>'
+    + '<select aria-label="Native select"><option>One</option></select>'
+    + '<select multiple aria-label="Native multiple"><option>Two</option></select>'
+    + '<a href="/next">Native link</a><details open><summary>Native summary</summary><p>Details content</p></details>';
+  const page = await fixture(t, '<custom-controls></custom-controls><script>'
+    + 'document.querySelector("custom-controls").attachShadow({mode:"closed"}).innerHTML = '
+    + JSON.stringify(controls) + ';</script>');
+  const result = await snapshot(page, { maxChars: 40000 });
+  const rows = result.text.split('\n').filter(line => /"Native /.test(line));
+  t.diagnostic('CR2 observed native control roles ' + JSON.stringify(rows));
+  for (const name of [...types.map(type => 'Native ' + type), 'Native button element', 'Native textarea',
+    'Native select', 'Native multiple', 'Native link', 'Native summary'])
+    assert.ok(result.text.split('\n').some(line => line.includes(JSON.stringify(name)) && /\[ref=s\d+\]/.test(line)), name);
+  t.diagnostic('cleanup: native-role browser and local server closed by fixture teardown');
 });

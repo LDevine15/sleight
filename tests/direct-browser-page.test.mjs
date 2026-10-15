@@ -134,7 +134,7 @@ function clickFixture(probe) {
 test('same-tab links receive an ordinary Playwright click', async () => {
   const f = clickFixture(false);
   const value = await backgroundClick(f.entry, f.locator, async options => { f.calls.push(['click', options]); return 'landed'; });
-  assert.equal(value, 'landed'); assert.deepEqual(f.calls, [['click', {}]]);
+  assert.equal(value, 'landed'); assert.deepEqual(f.calls, [['click', {}], ['disarm']]);
 });
 
 test('popup-intent click carries background modifier, then always releases and disarms', async () => {
@@ -156,7 +156,7 @@ test('unproved popup preparation refuses before input and disarms a possible lat
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
-function hookFixture() {
+function hookFixture({ clock = Date } = {}) {
   class Event {
     get defaultPrevented() { return !!this.nativePrevented; }
     get returnValue() { return !this.nativePrevented; }
@@ -185,18 +185,147 @@ function hookFixture() {
     removeEventListener(name, fn) { this.listeners[name]?.delete(fn); this.captureListeners[name]?.delete(fn); }
   }
   const opens = [], window = { listeners: {}, captureListeners: {}, open(...args) { opens.push(args); return { real: true }; } };
+  const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
-  vm.runInNewContext(`(${popupHook})()`, { window, document, navigator: { userActivation: { isActive: true } },
-    MouseEvent, Element, Event, EventTarget, URL, setTimeout, clearTimeout });
+  vm.runInNewContext(`(${popupHook})()`, { window, document, navigator,
+    MouseEvent, Element, Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout });
   const hook = window[Symbol.for('sleight.popup3')];
-  return { window, document, hook, Element, MouseEvent, opens };
+  return { window, document, navigator, hook, Element, MouseEvent, Event, EventTarget, opens };
 }
+
+test('CR3 arms every command without inspecting script or listener source', () => {
+  const f = hookFixture();
+  try {
+    Object.defineProperty(f.document, 'scripts', { get() { throw Error('source inspection is forbidden'); } });
+    assert.equal(f.hook.prepare(new f.Element(), 'external-handler', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+for (const attrs of [{ rel: 'noopener' }, { target: '_self', rel: 'noreferrer' },
+  { target: 'content', rel: 'noopener' }, { target: '_parent' }, { target: '_top' }])
+test('CR3 same-context link stays plain: ' + JSON.stringify(attrs), () => {
+  const f = hookFixture(), child = {}; f.window.frames = Object.assign([child], { content: child });
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', ...attrs }), 'same', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+for (const target of ['_blank', 'new-context']) test('CR3 independent link target is captured: ' + target, () => {
+  const f = hookFixture();
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target }), 'new', 1000)?.kind, 'link'); }
+  finally { f.hook.off(); }
+});
+
+test('CR3 base target selects an existing context without treating rel as a new window', () => {
+  const f = hookFixture(), child = {}; f.window.frames = Object.assign([child], { content: child });
+  f.document.querySelector = () => new f.Element('base', { target: 'content' });
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', rel: 'noopener' }), 'base', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+test('CR3 built-in Window properties are not existing named frame contexts', () => {
+  const f = hookFixture(); f.window.frames = Object.assign([], { top: f.window });
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'top' }), 'builtin', 1000)?.kind, 'link'); }
+  finally { f.hook.off(); }
+});
+
+test('CR3 captures composedPath and Date.now before page wrappers can change masking', () => {
+  let now = 10;
+  const clock = { now: () => now }, f = hookFixture({ clock }), button = new f.Element();
+  try {
+    f.hook.prepare(button, 'native', 1000);
+    f.Event.prototype.composedPath = () => [];
+    clock.now = () => 1e9;
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    now += 5;
+    const event = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+    assert.equal(event.ctrlKey, false);
+  } finally { f.hook.off(); }
+});
+
+test('CR3 preparation arm outlasts the actionability timeout by one second', async () => {
+  const f = clickFixture(true); let cap;
+  f.locator.evaluate = async (_fn, args) => { cap = args.capMs; return true; };
+  await backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 2000 });
+  assert.equal(cap, 3000);
+});
+
+test('CR3 a link-kind self-close returns closure without evaluating takeRequest', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
+  let requestReads = 0;
+  f.entry.page.evaluate = async fn => {
+    if (String(fn).includes('takeRequest')) { requestReads++; throw Error('page closed'); }
+  };
+  const result = await backgroundClick(f.entry, f.locator, async () => {
+    f.entry.closed = true; throw Error('Target page has been closed');
+  });
+  assert.deepEqual(result, { closed: true, opener: 'parent' });
+  assert.equal(requestReads, 0);
+});
+
+test('CR2 HTML navigable containers and plugin elements reject focus through open shadow roots', () => {
+  // HTML document-sequences.html#navigable-container and iframe-embed-object.html;
+  // obsolete.html#frames and WICG fenced-frame/#fenced-frame-element extend the set.
+  const f = hookFixture();
+  try {
+    for (const tag of ['iframe', 'object', 'embed', 'frame', 'fencedframe']) {
+      const focused = new f.Element(tag);
+      f.document.activeElement = { shadowRoot: { activeElement: { shadowRoot: { activeElement: focused } } } };
+      assert.throws(() => f.hook.prepare(new f.Element(), tag, 1000), /frame|focus/i);
+    }
+    f.document.activeElement = { shadowRoot: { activeElement: new f.Element('input') } };
+    assert.equal(f.hook.prepare(new f.Element(), 'ordinary-focus', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+test('CR2 HTML input states and ARIA checked/selected widgets keep their own activation', () => {
+  // HTML input.html#attr-input-type (including its text default), forms.html#the-label-element;
+  // WAI-ARIA 1.2 #aria-checked, #aria-selected, #aria-pressed and #widget_roles.
+  const f = hookFixture();
+  try {
+    for (const type of ['', 'invalid', 'hidden', 'text', 'search', 'tel', 'url', 'email', 'password', 'date',
+      'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file'])
+      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), false, type);
+    for (const type of ['button', 'submit', 'reset', 'image', 'SUBMIT']) {
+      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'button-' + type, 1000), true, type);
+      f.hook.finish('button-' + type);
+    }
+    for (const tag of ['select', 'option', 'textarea', 'label', 'summary'])
+      assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), false, tag);
+    for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio', 'tab',
+      'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar'])
+      assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), false, role);
+    for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']])
+      assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), false, role);
+    for (const tag of ['button', 'input'])
+      assert.equal(f.hook.prepare(new f.Element(tag, { type: 'button', 'aria-pressed': 'false' }), 'toggle-' + tag, 1000), false, tag);
+    assert.equal(f.hook.prepare(new f.Element('button'), 'popup-button', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+test('CR2 measured modifier window covers 5 ms host maximum and expires at 100 ms', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  const mouse = () => Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+  try {
+    f.hook.prepare(button, 'measured', 1000);
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    t.mock.timers.tick(5);
+    assert.equal(mouse().ctrlKey, false);
+    t.mock.timers.tick(94);
+    assert.equal(mouse().ctrlKey, false);
+    t.mock.timers.tick(1);
+    assert.equal(mouse().ctrlKey, true);
+  } finally { f.hook.off(); }
+});
 
 test('serialized popup hook hides only the prepared trusted click and strips window sizing', () => {
   const f = hookFixture(), button = new f.Element();
   try {
     assert.equal(f.hook.prepare(button, 'click', 1000), true);
-    const key = { key: 'Control', type: 'keydown', isTrusted: true };
+    const key = Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true });
     for (const listener of f.window.listeners.keydown) listener(key);
     assert.equal(key.stopped, true);
     const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true, meta: false });
@@ -441,4 +570,165 @@ test('a page closing during release is refused instead of acknowledged as kept',
   const result = await f.registry.endTurn();
   assert.equal(result.cleanedUp, true);
   assert.equal(result.rows.find(row => row.tab === tab).kept, false);
+});
+
+for (const tag of ['textarea', 'select', 'option', 'label', 'input'])
+  test('CR1 leaves form ancestor plain: ' + tag, () => {
+    const f = hookFixture(), button = new f.Element();
+    button.parentElement = new f.Element(tag);
+    try { assert.equal(f.hook.prepare(button, tag, 1000), false); } finally { f.hook.off(); }
+  });
+for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio'])
+  test('CR1 leaves checkable shadow ancestor plain: ' + role, () => {
+    const f = hookFixture(), button = new f.Element();
+    button.getRootNode = () => ({ host: new f.Element('custom-control', { role }) });
+    try { assert.equal(f.hook.prepare(button, role, 1000), false); } finally { f.hook.off(); }
+  });
+
+test('CR1 refuses editable and detached nodes, frame focus and retired tokens', () => {
+  const f = hookFixture();
+  try {
+    assert.equal(f.hook.prepare(new f.Element('div', { contenteditable: '' }), 'editable', 1000), false);
+    const detached = new f.Element(); detached.isConnected = false;
+    assert.equal(f.hook.prepare(detached, 'detached', 1000), false);
+    f.hook.finish('late');
+    assert.equal(f.hook.prepare(new f.Element(), 'late', 1000), false);
+    for (const localName of ['iframe', 'frame', 'fencedframe', 'object', 'embed']) {
+      f.document.activeElement = new f.Element(localName);
+      assert.throws(() => f.hook.prepare(new f.Element(), localName, 1000), /frame|focus/i);
+    }
+  } finally { f.hook.off(); }
+});
+
+test('CR1 preparation and modifier masking expire independently', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  const mouse = () => Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true, meta: true });
+  try {
+    f.hook.prepare(button, 'expire', 3000);
+    assert.equal(mouse().ctrlKey, true);
+    for (const listener of f.window.listeners.keydown) listener(Object.assign(new f.Event(), { key: 'Meta', type: 'keydown', isTrusted: true }));
+    const captured = mouse();
+    assert.equal(captured.metaKey, false);
+    t.mock.timers.tick(1001);
+    assert.equal(captured.metaKey, true, 'even retained event objects stop masking after the active window');
+    assert.equal(mouse().metaKey, true);
+    t.mock.timers.tick(2000);
+    assert.equal(f.hook.prepare(button, 'expire', 1000), false);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 window opening needs an arm while same-context names remain native', () => {
+  const f = hookFixture();
+  try {
+    for (const target of ['_self', '_parent', '_top']) assert.equal(f.window.open('/same', target).real, true);
+    assert.equal(f.window.open('/popup', '_blank'), null);
+    f.hook.prepare(new f.Element(), 'active', 1000);
+    for (const listener of f.window.listeners.keydown) listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    f.window.open('/popup', 'named', 'left=10,noreferrer,top=20,noopener=yes,width=100');
+    assert.deepEqual(f.opens.at(-1), ['/popup', 'named', 'noreferrer,noopener=yes']);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 changed link destinations refuse a stale captured default', () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/first' });
+  try {
+    f.hook.prepare(link, 'changed', 1000);
+    const event = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(event);
+    link.attrs.href = '/second';
+    assert.equal(f.hook.takeRequest('changed').unavailable, true);
+    assert.equal(event.returnValue, true);
+    event.returnValue = false;
+    assert.equal(event.defaultPrevented, true);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 teardown preserves a later replacement of window.open', () => {
+  const f = hookFixture(), replacement = () => 'page replacement';
+  f.window.open = replacement;
+  f.hook.off();
+  assert.equal(f.window.open, replacement);
+});
+
+test('CR1 preparation timeout sends no input, retires the late token and disarms', async () => {
+  const f = clickFixture(false);
+  f.locator.evaluate = () => new Promise(() => {});
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => f.calls.push(['click']), { timeoutMs: 5 }),
+    /background popup preparation failed; use the engine browser path/);
+  assert.deepEqual(f.calls, [['disarm']]);
+});
+
+test('CR1 unavailable link default and missing registry never replay input', async () => {
+  for (const request of [{ unavailable: true }, { url: 'https://fixture.invalid/' }]) {
+    const f = clickFixture({ kind: 'link' });
+    f.entry.page.evaluate = async () => request;
+    await assert.rejects(backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options])),
+      request.url ? /owned page registry/ : /link default changed or was not captured/);
+    assert.equal(f.calls.filter(call => call[0] === 'click').length, 1);
+    assert.equal(f.calls.filter(call => call[0] === 'up').length, 1);
+  }
+});
+
+test('CR3 same-context links stay plain without source inspection even with registered handlers', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/checkout' });
+  link.listeners = {}; link.captureListeners = {};
+  try {
+    f.EventTarget.prototype.addEventListener.call(link, 'click', () => window.open('/popup'));
+    assert.equal(f.hook.prepare(link, 'registered', 1000), false);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 no live user activation means no window, including during an armed click', () => {
+  const f = hookFixture(), button = new f.Element();
+  try {
+    f.hook.prepare(button, 'activation', 1000);
+    for (const listener of f.window.listeners.keydown) listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    f.navigator.userActivation.isActive = false;
+    assert.equal(f.window.open('/popup', '_blank'), null);
+    assert.deepEqual(f.opens, []);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 observes an inline cancellation installed after preparation and before dispatch', () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  try {
+    f.hook.prepare(link, 'late-handler', 1000);
+    link.onclick = () => false;
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    link.onclick(click);
+    assert.equal(f.hook.takeRequest('late-handler'), undefined);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 a handler installed during dispatch makes an uncancelled default unavailable', () => {
+  const f = hookFixture(), link = new f.Element('a', { target: '_blank', href: '/shipping' });
+  try {
+    f.hook.prepare(link, 'during-dispatch', 1000);
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    link.onclick = () => {};
+    assert.equal(f.hook.takeRequest('during-dispatch').unavailable, true);
+  } finally { f.hook.off(); }
+});
+
+test('CR1 a new arm cannot mask an event from a retired click', () => {
+  const f = hookFixture(), button = new f.Element();
+  const keydown = () => {
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+  };
+  try {
+    f.hook.prepare(button, 'first', 1000); keydown();
+    const first = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+    for (const listener of f.window.captureListeners.click) listener(first);
+    assert.equal(first.ctrlKey, false);
+    const second = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+    assert.equal(second.ctrlKey, true, 'only the first click belongs to the arm');
+    f.hook.finish('first');
+    f.hook.prepare(button, 'second', 1000); keydown();
+    assert.equal(first.ctrlKey, true, 'an old event cannot join a new arm');
+    assert.equal(second.ctrlKey, false);
+  } finally { f.hook.off(); }
 });

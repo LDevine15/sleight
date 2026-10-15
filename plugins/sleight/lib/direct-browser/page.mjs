@@ -1,6 +1,4 @@
-// popupHook and backgroundClick are adapted from FowlBrowser's mcp/src/popups.mjs
-// (MIT, Copyright (c) 2026 Fowl Labs) at 8b689249ba4e33d2626487aad930605c62e2c6a7,
-// rewritten for Playwright over CDP. See THIRD-PARTY-NOTICES.md for the license.
+// Background popup disposition for turbo v3, independently implemented for CR1.
 import { randomUUID } from 'node:crypto';
 
 function deadline(task, ms, message = 'background preparation timed out') {
@@ -13,238 +11,231 @@ function deadline(task, ms, message = 'background preparation timed out') {
 // MAIN world, before page scripts. Every name stays inside this function so it
 // can be serialized. The hook controls disposition, never grants authority.
 export function popupHook() {
+  // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable-container
+  // and iframe-embed-object.html, obsolete.html#frames; fenced frames:
+  // https://wicg.github.io/fenced-frame/#fenced-frame-element. Do not cross documents.
+  const CR2_NESTED_DOCUMENT = focus => {
+    while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
+    return /^(iframe|object|embed|frame|fencedframe)$/.test(focus?.localName);
+  };
+  // HTML input.html#attr-input-type, forms.html#the-label-element and
+  // interactive-elements.html#the-summary-element (same HTML base URL).
+  // https://www.w3.org/TR/wai-aria-1.2/#widget_roles and #aria-selected:
+  // value/selection controls stay plain; command buttons and links may open windows.
+  const CR2_OWN_ACTIVATION = node => {
+    if (node.localName === 'input') return node.hasAttribute('aria-pressed')
+      || !/^(button|submit|reset|image)$/i.test(node.getAttribute('type') ?? 'text');
+    if (node.localName === 'button' && node.hasAttribute('aria-pressed')) return true;
+    if (/^(textarea|select|option|label|summary)$/.test(node.localName)) return true;
+    const roles = (node.getAttribute('role') ?? '').toLowerCase().split(/\s+/);
+    return roles.some(role => /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio|tab|treeitem|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/.test(role)
+      || role === 'button' && node.hasAttribute('aria-pressed')
+      || /^(gridcell|row|rowheader|columnheader)$/.test(role) && node.hasAttribute('aria-selected'));
+  };
+  // Host receipts cr2-timing-20261015-0005 and cr2-qualification-20261015-0014:
+  // 20 ControlOrMeta clicks each, maxima 0.7 and 5 ms. Round max*2+50 ms upward
+  // to 100 ms; arm.until remains the harder cap.
+  const CR2_MODIFIER_WINDOW_MS = 100;
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
-  const apply = Reflect.apply, originalOpen = window.open;
-  const listen = EventTarget.prototype.addEventListener, unlisten = EventTarget.prototype.removeEventListener;
-  const path = Event.prototype.composedPath, stop = Event.prototype.stopImmediatePropagation;
-  const event = Event.prototype, prevent = event.preventDefault;
-  const preventedDescriptor = Object.getOwnPropertyDescriptor(event, 'defaultPrevented');
-  const returnDescriptor = Object.getOwnPropertyDescriptor(event, 'returnValue');
-  const mouse = MouseEvent.prototype;
-  const descriptors = ['ctrlKey', 'metaKey'].map(name => [name, Object.getOwnPropertyDescriptor(mouse, name)]);
-  const modifierState = mouse.getModifierState;
-  const decided = new WeakMap(), retired = new Set(), requests = new Map(), clicks = new WeakMap();
-  let armed, timer;
-  const restoreHandlers = bindings => {
-    let unchanged = true;
-    for (const binding of bindings ?? []) {
-      if (binding.restored) continue;
-      if (binding.wrapper && binding.node.onclick === binding.wrapper) binding.node.onclick = binding.original;
-      else if (!binding.called && binding.node.onclick !== binding.original) unchanged = false;
-      binding.restored = true;
+  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
+  const nativeOpen = window.open, nativePrevent = Event.prototype.preventDefault;
+  const composedPath = Event.prototype.composedPath, now = Date.now;
+  const prevented = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented');
+  const returnValue = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
+  const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
+  let arm;
+  const replace = (object, name, descriptor) => {
+    const before = Object.getOwnPropertyDescriptor(object, name);
+    Object.defineProperty(object, name, descriptor);
+    replacements.push(() => {
+      const current = Object.getOwnPropertyDescriptor(object, name);
+      if (current?.value !== descriptor.value || current?.get !== descriptor.get || current?.set !== descriptor.set) return;
+      if (before) Object.defineProperty(object, name, before);
+      else delete object[name];
+    });
+  };
+  const ancestors = element => {
+    const result = [];
+    for (let node = element; node && !result.includes(node); node = node.parentElement ?? node.getRootNode?.().host) result.push(node);
+    return result;
+  };
+  const live = () => arm && now() < arm.until;
+  const active = () => live() && now() < arm.modifierUntil;
+  const matches = event => event.isTrusted && composedPath.call(event).includes(arm.element);
+  const hide = event => {
+    if (!active()) return false;
+    if (masked.has(event)) return masked.get(event) === arm.token;
+    if (arm.clicked || !matches(event)) return false;
+    masked.set(event, arm.token); return true;
+  };
+  for (const name of ['ctrlKey', 'metaKey']) {
+    const descriptor = Object.getOwnPropertyDescriptor(MouseEvent.prototype, name);
+    replace(MouseEvent.prototype, name, { ...descriptor, get() { return hide(this) ? false : descriptor.get.call(this); } });
+  }
+  const modifierState = MouseEvent.prototype.getModifierState;
+  replace(MouseEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
+    return (name === 'Control' || name === 'Meta') && hide(this) ? false : modifierState.call(this, name);
+  } });
+  replace(Event.prototype, 'preventDefault', { configurable: true, writable: true, value() {
+    const record = events.get(this);
+    if (record && this.cancelable !== false) record.cancelled = true;
+    return nativePrevent.call(this);
+  } });
+  replace(Event.prototype, 'defaultPrevented', { ...prevented, get() {
+    return events.has(this) ? events.get(this).cancelled : prevented.get.call(this);
+  } });
+  replace(Event.prototype, 'returnValue', { ...returnValue, get() {
+    return events.has(this) ? !events.get(this).cancelled : returnValue.get.call(this);
+  }, set(value) {
+    const record = events.get(this);
+    if (record && !value && this.cancelable !== false) record.cancelled = true;
+    return returnValue.set.call(this, value);
+  } });
+  const open = function(url, target, features) {
+    if (/^_(self|parent|top)$/i.test(String(target))) return nativeOpen.apply(this, arguments);
+    if (!active() || !navigator.userActivation?.isActive) return null;
+    const kept = String(features ?? '').split(',').map(value => value.trim()).filter(value => /^(noopener|noreferrer)(?:=|$)/i.test(value));
+    return nativeOpen.call(this, url, target, kept.join(','));
+  };
+  replace(window, 'open', { configurable: true, writable: true, value: open });
+  const keyEvent = event => {
+    if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
+    if (event.type === 'keydown' && !arm.modifierUntil) arm.modifierUntil = Math.min(arm.until, now() + CR2_MODIFIER_WINDOW_MS);
+    if (!active()) return;
+    event.stopImmediatePropagation();
+  };
+  const targetOf = element => element.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+  const sameContext = element => {
+    const target = targetOf(element);
+    if (!target || /^_(self|parent|top)$/i.test(target) || target === window.name) return true;
+    if (target.toLowerCase() === '_blank') return false;
+    const frames = window.frames, named = frames?.[target];
+    for (let i = 0; i < (frames?.length ?? 0); i++) if (frames[i] === named) return true;
+    return false;
+  };
+  const linkState = element => {
+    if (!element || !['a', 'area'].includes(element.localName) || !element.hasAttribute('href') || element.hasAttribute('download')) return;
+    if (sameContext(element)) return;
+    let url;
+    try { url = new URL(element.getAttribute('href'), document.baseURI); } catch { return; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
+    const target = targetOf(element);
+    const rel = element.getAttribute('rel') ?? '';
+    return { url: url.href, signature: JSON.stringify([url.href, target, rel]) };
+  };
+  const capture = event => {
+    if (!live() || arm.clicked || !matches(event)) return;
+    if (active()) masked.set(event, arm.token);
+    arm.clicked = event;
+    if (!arm.link) return;
+    const record = { cancelled: prevented.get.call(event), event, signature: arm.link.signature, url: arm.link.url };
+    events.set(event, record); arm.request = record;
+    nativePrevent.call(event);
+    // Read the actual handlers at dispatch, after pointer handlers may have
+    // changed them. A browser internally cancels when an inline handler returns
+    // false, so observe that return without calling the handler a second time.
+    for (const node of [...ancestors(arm.element), document, window]) {
+      const before = node.onclick;
+      let wrapper = before;
+      if (typeof before === 'function') {
+        wrapper = function(event) {
+          const result = before.apply(this, arguments);
+          if (result === false && events.has(event)) events.get(event).cancelled = true;
+          return result;
+        };
+        node.onclick = wrapper;
+      }
+      arm.handlers.push({ node, before, wrapper });
     }
-    return unchanged;
   };
-  const dropRequest = token => {
-    const request = requests.get(token);
-    if (request) { requests.delete(token); clicks.delete(request.event); }
-    return request;
-  };
+  add.call(window, 'keydown', keyEvent, true);
+  add.call(window, 'keyup', keyEvent, true);
+  add.call(window, 'click', capture, true);
   const finish = token => {
-    if (token) retired.add(token);
-    const request = dropRequest(token ?? armed?.token);
-    restoreHandlers(request?.bindings);
-    if (armed && token && armed.token !== token) return;
-    restoreHandlers(armed?.bindings);
-    armed = undefined; clearTimeout(timer);
+    retired.add(token);
+    if (arm?.token !== token) return true;
+    clearTimeout(arm.timer);
+    for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
+    arm = undefined; return true;
   };
-  const preventDefault = function () {
-    const request = clicks.get(this);
-    if (request) request.cancelled = true;
-    return apply(prevent, this, []);
-  };
-  const defaultPrevented = function () {
-    return clicks.get(this)?.cancelled ?? apply(preventedDescriptor.get, this, []);
-  };
-  const returnValue = function () {
-    const request = clicks.get(this);
-    return request ? !request.cancelled : apply(returnDescriptor.get, this, []);
-  };
-  const setReturnValue = function (value) {
-    const request = clicks.get(this);
-    if (request && !value) request.cancelled = true;
-    return apply(returnDescriptor.set, this, [value]);
-  };
-  event.preventDefault = preventDefault;
-  Object.defineProperty(event, 'defaultPrevented', { ...preventedDescriptor, get: defaultPrevented });
-  Object.defineProperty(event, 'returnValue', { ...returnDescriptor, get: returnValue, set: setReturnValue });
-  const masked = event => {
-    if (!decided.has(event)) decided.set(event, !!(event.isTrusted && armed?.active &&
-      Date.now() < armed.until && apply(path, event, []).includes(armed.element)));
-    return decided.get(event);
-  };
-  const getters = descriptors.map(([name, descriptor]) => {
-    const getter = function () { return apply(descriptor.get, this, []) && !masked(this); };
-    Object.defineProperty(mouse, name, { ...descriptor, get: getter });
-    return [name, descriptor, getter];
-  });
-  const getModifierState = function (name) {
-    return apply(modifierState, this, [name]) && !(['Meta', 'Control'].includes(name) && masked(this));
-  };
-  mouse.getModifierState = getModifierState;
-  const keyboard = event => {
-    if (!armed || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
-    if (event.type === 'keydown') { armed.active = true; armed.until = Date.now() + 1000; }
-    if (armed.active) apply(stop, event, []);
-  };
-  for (const type of ['keydown', 'keyup']) apply(listen, window, [type, keyboard, true]);
-  const defaultLink = link => {
-    const target = link.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
-    if (!/^_blank$/i.test(target) && !/\b(?:noopener|noreferrer)\b/i.test(link.getAttribute('rel') ?? '')) return;
-    if (!target || /^_(?:self|parent|top)$/i.test(target) || link.hasAttribute('download')) return;
-    try {
-      const url = new URL(link.getAttribute('href'), document.baseURI);
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
-      return { url: url.href };
-    } catch { /* A page URL is never a grant to another protocol. */ }
-  };
-  const linkCapture = event => {
-    if (!armed?.link || !event.isTrusted || !apply(path, event, []).includes(armed.element) || !defaultLink(armed.link)) return;
-    const request = { event, link: armed.link, bindings: armed.bindings,
-      cancelled: apply(preventedDescriptor.get, event, []) };
-    clicks.set(event, request); requests.set(armed.token, request);
-    // Suppress the browser default before a page can stop bubbling. Page code
-    // sees its own cancellation state; its handlers still run exactly once.
-    apply(prevent, event, []);
-  };
-  apply(listen, window, ['click', linkCapture, true]);
-  const open = function (url, name, features) {
-    // Same browsing context navigation keeps native semantics. New windows must
-    // consume the background click's trusted activation; never create a window.
-    if (/^_(?:self|parent|top)$/i.test(String(name))) return apply(originalOpen, this, arguments);
-    if (!armed?.active || Date.now() >= armed.until || !navigator.userActivation?.isActive) return null;
-    // Keep security features, discard popup sizing and window-position features.
-    const safeFeatures = String(features ?? '').split(',').filter(value => /^\s*(?:noopener|noreferrer)(?:\s*=|\s*$)/i.test(value)).join(',');
-    return apply(originalOpen, this, [url, name, safeFeatures]);
-  };
-  window.open = open;
-  window[key] = {
+  const api = {
     prepare(element, token, capMs) {
-      if (retired.has(token) || !element.isConnected) return false;
-      let node = element, link;
-      const handlers = [], nodes = [];
-      while (node instanceof Element) {
-        nodes.push(node);
-        if (['a', 'area'].includes(node.localName)) link = node;
-        if (typeof node.onclick === 'function') handlers.push(Function.prototype.toString.call(node.onclick));
-        if (node.isContentEditable || ['textarea', 'select', 'option', 'label'].includes(node.localName) ||
-          node.localName === 'input' && node.type !== 'button' ||
-          /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio)$/.test(node.getAttribute('role') ?? '')) return false;
-        node = node.parentElement ?? node.getRootNode().host;
+      if (retired.has(token)) return false;
+      if (arm) finish(arm.token);
+      if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
+      if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
+      const chain = ancestors(element);
+      for (const node of chain) {
+        const editable = node.getAttribute('contenteditable');
+        if (node.isContentEditable || editable !== null && /^(|true|plaintext-only)$/i.test(editable)
+          || CR2_OWN_ACTIVATION(node)) return false;
       }
-      const handlerSource = handlers.join('\n');
-      const source = handlerSource + '\n' + Array.from(document.scripts, script => script.textContent).join('\n');
-      const target = link?.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
-      const opens = /\b(?:window\s*\.\s*open|open\s*\()/.test(source);
-      if (link && (!target || /^_(?:self|top|parent)$/i.test(target)) && !/\bwindow\s*\.\s*open\s*\(/.test(handlerSource)) return false;
-      const independent = link && !/\bwindow\s*\.\s*open\s*\(/.test(handlerSource) &&
-        (/^_blank$/i.test(target) || /\b(?:noopener|noreferrer)\b/i.test(link.getAttribute('rel') ?? ''));
-      if (!opens && !target && !Array.from(document.scripts).some(script => script.src)) return false;
-      if (/^(iframe|frame|fencedframe|object|embed)$/.test(document.activeElement?.localName ?? ''))
-        throw Error('background popup preparation needs focus outside a frame');
-      finish(); armed = { element, token, active: false, until: 0, ...(independent ? { link } : {}) };
-      if (independent && defaultLink(link)) {
-        armed.bindings = [];
-        for (const node of [...nodes, document, window]) {
-          const binding = { node, original: node.onclick, called: false };
-          armed.bindings.push(binding);
-          if (typeof binding.original !== 'function') continue;
-          binding.wrapper = function (...args) {
-            binding.called = true;
-            const result = apply(binding.original, this, args), request = clicks.get(args[0]);
-            if (result === false && request) request.cancelled = true;
-            return result;
-          };
-          node.onclick = binding.wrapper;
-          if (node.onclick !== binding.wrapper) throw Error('background link handler could not be prepared');
-        }
-      }
-      timer = setTimeout(() => finish(token), capMs);
-      return independent ? { kind: 'link' } : true;
+      const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && node.hasAttribute('href'));
+      if (linkElement && sameContext(linkElement)) return false;
+      const link = linkState(linkElement);
+      arm = { element, token, until: now() + capMs, modifierUntil: 0, link, linkElement, handlers: [] };
+      arm.timer = setTimeout(() => finish(token), capMs);
+      return link ? { kind: 'link' } : true;
     },
     takeRequest(token) {
-      const request = dropRequest(token);
-      if (!request) return { unavailable: true };
-      const unchanged = restoreHandlers(request.bindings);
-      if (request.cancelled) return;
-      return unchanged ? defaultLink(request.link) ?? { unavailable: true } : { unavailable: true };
+      if (!live() || arm.token !== token || !arm.request || arm.taken) return { unavailable: true };
+      arm.taken = true;
+      if (arm.request.cancelled) return;
+      const current = linkState(arm.linkElement);
+      if (!arm.element.isConnected || current?.signature !== arm.request.signature
+        || arm.handlers.some(({ node, wrapper }) => node.onclick !== wrapper)) return { unavailable: true };
+      return { url: arm.request.url };
     },
     finish,
     off() {
-      finish();
-      if (window.open === open) window.open = originalOpen;
-      for (const [name, descriptor, getter] of getters)
-        if (Object.getOwnPropertyDescriptor(mouse, name)?.get === getter) Object.defineProperty(mouse, name, descriptor);
-      if (mouse.getModifierState === getModifierState) mouse.getModifierState = modifierState;
-      if (event.preventDefault === preventDefault) event.preventDefault = prevent;
-      if (Object.getOwnPropertyDescriptor(event, 'defaultPrevented')?.get === defaultPrevented)
-        Object.defineProperty(event, 'defaultPrevented', preventedDescriptor);
-      if (Object.getOwnPropertyDescriptor(event, 'returnValue')?.get === returnValue)
-        Object.defineProperty(event, 'returnValue', returnDescriptor);
-      for (const type of ['keydown', 'keyup']) apply(unlisten, window, [type, keyboard, true]);
-      apply(unlisten, window, ['click', linkCapture, true]);
-      delete window[key]; return true;
+      if (arm) finish(arm.token);
+      remove.call(window, 'keydown', keyEvent, true);
+      remove.call(window, 'keyup', keyEvent, true);
+      remove.call(window, 'click', capture, true);
+      for (const restore of replacements.reverse()) restore();
+      if (window[key] === api) delete window[key];
+      return true;
     },
   };
+  window[key] = api;
   return true;
 }
 
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
-  const token = randomUUID(), page = tab.page;
-  const before = tab.popupCheckpoint?.();
-  const disarm = () => deadline(() => page.evaluate(token => {
-    window[Symbol.for('sleight.popup3')]?.finish(token); return true;
-  }, token), timeoutMs);
-  let prepared;
-  const clickOnce = async options => {
-    try { return await click(options); }
-    catch (error) {
-      if (/Target page, context or browser has been closed/.test(error.message) && tab.closed && tab.parent && !tab.parent.page.isClosed())
-        return { closed: true, opener: tab.opener };
-      throw error;
-    }
-  };
-  const backgroundInput = async () => {
-    try { return await clickOnce({ modifiers: ['ControlOrMeta'] }); }
-    finally {
-      // A failed click may leave Playwright's modifier held. Never replay input.
-      await deadline(() => page.keyboard.up('ControlOrMeta'), timeoutMs).catch(() => {});
-    }
-  };
+  const token = randomUUID();
+  const disarm = () => tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.finish(token), token);
   try {
-    prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
-      const hook = window[Symbol.for('sleight.popup3')];
-      if (!hook) throw Error('background popup hook is missing');
-      return hook.prepare(element, token, capMs);
-    }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
-  } catch {
-    await disarm().catch(() => {});
-    throw Error('background popup preparation failed; use the engine browser path');
-  }
-  if (prepared?.kind === 'link') {
+    let prepared;
     try {
-      // Capture suppresses the native default even if page handlers stop
-      // bubbling. Open its uncancelled destination through the owned registry.
-      const result = await backgroundInput();
-      const request = await page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token), token);
+      prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
+        const hook = window[Symbol.for('sleight.popup3')];
+        if (!hook) throw Error('background popup hook unavailable');
+        return hook.prepare(element, token, capMs);
+      }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+    } catch { throw Error('background popup preparation failed; use the engine browser path'); }
+    const modified = prepared === true || prepared?.kind === 'link';
+    const checkpoint = tab.popupCheckpoint?.();
+    let result;
+    try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}); }
+    catch (error) {
+      if ((tab.closed || tab.page.isClosed?.()) && tab.parent && !tab.parent.page.isClosed()
+        && /target.*closed/i.test(error.message)) result = { closed: true, opener: tab.opener };
+      else throw error;
+    } finally { if (modified) await tab.page.keyboard.up('ControlOrMeta').catch(() => {}); }
+    if (result?.closed === true) return result;
+    if (prepared?.kind === 'link') {
+      const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
+        (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
-      if (request) {
+      if (request?.url) {
         if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
         await tab.openChild(request.url);
       }
-      await tab.settlePopups?.(before);
-      return result;
-    } finally { await disarm().catch(() => {}); }
-  }
-  if (prepared !== true) {
-    const result = await clickOnce({}); await tab.settlePopups?.(before); return result;
-  }
-  let result;
-  try { result = await backgroundInput(); }
-  finally { await disarm().catch(() => {}); }
-  await tab.settlePopups?.(before);
-  return result;
+    }
+    await tab.settlePopups?.(checkpoint);
+    return result;
+  } finally { await disarm().catch(() => {}); }
 }
 
 // browser is the Playwright connection through V1's CDP filter; session is the

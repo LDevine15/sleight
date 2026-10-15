@@ -28,6 +28,13 @@ async function fixture(t) {
       events.push(JSON.parse(body)); response.end('ok'); return;
     }
     const route = new URL(request.url, 'http://fixture.invalid').pathname;
+    if (route === '/external.js') {
+      response.writeHead(200, { 'content-type': 'text/javascript' });
+      response.end(`document.querySelector('button').addEventListener('click', event => {
+        window.clickState = {ctrl:event.ctrlKey,meta:event.metaKey}; window.open('/size', 'external-child');
+      });`);
+      return;
+    }
     // A different host spelling makes the identity popup cross-origin without
     // another fixed port. Every resource stays on this owned loopback fixture.
     const identity = origin?.replace('127.0.0.1', 'localhost');
@@ -46,6 +53,14 @@ async function fixture(t) {
         });</script>`,
       '/authorize': `<button type="button" onclick="window.opener.postMessage({name:'Fixture User'}, '${origin}'); window.close()">Continue</button>`,
       '/sentinel': '<h1>User page</h1>',
+      '/external': '<button>External command</button><script src="/external.js"></script>',
+      '/plain': `<button>Plain command</button><script>document.querySelector('button').onclick = event => {
+        window.clickState = {ctrl:event.ctrlKey,meta:event.metaKey}; window.handled = (window.handled || 0) + 1;
+      };</script>`,
+      '/same-bare': '<a href="/checkout" rel="noopener">Continue here</a>',
+      '/same-self': '<a href="/checkout" target="_self" rel="noreferrer">Continue here</a>',
+      '/same-named': '<iframe name="content" src="/sentinel"></iframe><a href="/checkout" target="content" rel="noopener">Continue here</a>',
+      '/same-base': '<base target="content"><iframe name="content" src="/sentinel"></iframe><a href="/checkout" rel="noopener">Continue here</a>',
     };
     response.writeHead(pages[route] ? 200 : 404, { 'content-type': 'text/html' });
     response.end(`<html><head><title>${route}</title></head><body>${pages[route] ?? 'missing'}<script>
@@ -153,3 +168,35 @@ test('real v3 keep and handoff remove hooks and survive turn-end cleanup', { ski
   assert.equal(f.context.pages().length, 3);
   assert.equal(kept.isClosed(), false); assert.equal(handed.isClosed(), false);
 });
+
+for (const kind of ['external', 'plain']) test('CR3 real ' + kind + ' command preserves plain page modifiers and focus', { skip, timeout: 90000 }, async t => {
+  const f = await fixture(t), { tab } = await f.open('/' + kind), entry = f.registry.tab(tab);
+  const nextPage = kind === 'external' ? f.context.waitForEvent('page', { timeout: 5000 }) : undefined;
+  const locator = entry.page.getByRole('button');
+  const clicks = [];
+  await backgroundClick(entry, locator, options => { clicks.push(options); return locator.click({ ...options, timeout: 3000 }); });
+  const child = await nextPage;
+  await child?.waitForLoadState('load'); await f.registry.idle();
+  assert.deepEqual(await entry.page.evaluate(() => window.clickState), { ctrl: false, meta: false });
+  assert.deepEqual(clicks, [{ modifiers: ['ControlOrMeta'] }]);
+  if (kind === 'plain') assert.equal(await entry.page.evaluate(() => window.handled), 1);
+  assert.equal((await f.registry.list()).length, kind === 'external' ? 2 : 1);
+  await f.focusUnchanged();
+  assert.equal((await f.registry.endTurn()).cleanedUp, true);
+  assert.equal(f.context.pages().length, 1);
+});
+
+for (const kind of ['bare', 'self', 'named', 'base']) test('CR3 real same-context rel link navigates its existing context: ' + kind,
+  { skip, timeout: 90000 }, async t => {
+    const f = await fixture(t), { tab } = await f.open('/same-' + kind), entry = f.registry.tab(tab);
+    const framed = kind === 'named' || kind === 'base';
+    const target = framed ? entry.page.frames()[1] : entry.page;
+    await target.waitForLoadState('load');
+    const navigated = target.waitForURL('**/checkout');
+    const locator = entry.page.getByRole('link', { name: 'Continue here' }), clicks = [];
+    await backgroundClick(entry, locator, options => { clicks.push(options); return locator.click({ ...options, timeout: 3000 }); });
+    await navigated;
+    assert.deepEqual(clicks, [{}]);
+    assert.equal((await f.registry.list()).length, 1);
+    await f.focusUnchanged();
+  });

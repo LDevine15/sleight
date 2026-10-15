@@ -20,6 +20,31 @@ function nativeSnapshot(secrets) {
     textBoxes: { layoutIndex: [], bounds: [], start: [], length: [] } }] };
 }
 
+// A CDP-shaped capture of the same pierced DOM fixture, including closed-root
+// markers and native attributes. Production must decide from this capture.
+function capturedDOM(root, secrets = []) {
+  const capture = nativeSnapshot(secrets), { strings } = capture;
+  const indices = new Map(strings.map((value, index) => [value, index]));
+  const intern = value => {
+    if (!indices.has(value)) { indices.set(value, strings.length); strings.push(value); }
+    return indices.get(value);
+  };
+  const nodes = { parentIndex: [], nodeType: [], nodeName: [], nodeValue: [], backendNodeId: [], attributes: [],
+    shadowRootType: { index: [], value: [] } };
+  const visit = (node, parentIndex = -1) => {
+    const index = nodes.nodeName.length;
+    nodes.parentIndex.push(parentIndex); nodes.nodeType.push(node.nodeType);
+    nodes.nodeName.push(intern((node.localName ?? (node.nodeType === 9 ? '#document' : '#document-fragment')).toUpperCase()));
+    nodes.nodeValue.push(intern('')); nodes.backendNodeId.push(node.backendNodeId ?? 0);
+    nodes.attributes.push((node.attributes ?? []).map(intern));
+    if (node.shadowRootType) { nodes.shadowRootType.index.push(index); nodes.shadowRootType.value.push(intern(node.shadowRootType)); }
+    for (const child of [...node.children ?? [], ...node.shadowRoots ?? [], ...node.contentDocument ? [node.contentDocument] : []]) visit(child, index);
+  };
+  visit(root);
+  capture.documents.push({ nodes });
+  return capture;
+}
+
 function fixture(tree, secrets = []) {
   const page = new EventEmitter();
   const frame = { evaluate: async () => secrets };
@@ -192,7 +217,7 @@ function closedFixture({ emptyHostQuery = false } = {}) {
   base.page.context = () => ({ newCDPSession: async () => ({
     send: async (method, params) => {
       if (method === 'DOM.getDocument') return { root };
-      if (method === 'DOMSnapshot.captureSnapshot') return nativeSnapshot(['closed-secret']);
+      if (method === 'DOMSnapshot.captureSnapshot') return capturedDOM(root, ['closed-secret']);
       if (method === 'Accessibility.queryAXTree') return { nodes: emptyHostQuery ? [] : structuredClone(nodes) };
       if (method === 'Accessibility.getPartialAXTree') return { nodes: structuredClone(nodes.filter(node => node.backendDOMNodeId === params.backendNodeId)) };
       if (method === 'DOM.resolveNode') return { object: { objectId: String(params.backendNodeId) } };
@@ -366,13 +391,166 @@ test('V3R: navigation cannot retarget a delivered ref, even after the next snaps
   assert.throws(()=>module.snapshotRefBinding(page,'e2'),/snapshot|read/i);
 });
 
-test('V3R: adapted closed-root code ships the pinned full MIT license', async()=>{
-  const {readFileSync}=await import('node:fs'); const {createHash}=await import('node:crypto');
-  const source=readFileSync(new URL('../plugins/sleight/lib/direct-browser/snapshot.mjs',import.meta.url),'utf8');
-  assert.match(source,/adapted from\s*\/\/ FowlBrowser mcp\/src\/closedShadow\.mjs/);
-  const notice=readFileSync(new URL('../plugins/sleight/THIRD-PARTY-NOTICES.md',import.meta.url),'utf8');
-  assert.match(notice,/Copyright \(c\) 2026 Fowl Labs/);
-  const license=/## Turbo v3 snapshot adaptation[\s\S]*?```text\n([\s\S]*?)```/.exec(notice)?.[1];
-  assert.ok(license,'the complete pinned license is required');
-  assert.equal(createHash('sha256').update(license).digest('hex'),'e384db36e8cc3024ce7e44168e7c345aa6cf58a95f30a7cef729a259363ce667');
+test('CR1 keeps the clean-room declaration without an adaptation claim', async () => {
+  const { readFileSync } = await import('node:fs');
+  const notice = readFileSync(new URL('../plugins/sleight/THIRD-PARTY-NOTICES.md', import.meta.url), 'utf8');
+  const section = notice.split('## Turbo v3 background popups and closed roots')[1];
+  assert.match(section, /No FowlBrowser code is included/);
+  assert.doesNotMatch(section, /adapted from|Copyright/);
+});
+
+function nativeClosedFixture(root, axNodes) {
+  const f = fixture([]), calls = [];
+  const frame = f.page.mainFrame();
+  f.page.context = () => ({ newCDPSession: async () => ({
+    async send(method, params) {
+      calls.push([method, params]);
+      if (method === 'DOMSnapshot.captureSnapshot') return capturedDOM(root);
+      if (method === 'DOM.getDocument') return { root };
+      if (method === 'Accessibility.getPartialAXTree') {
+        assert.equal(params.fetchRelatives, false);
+        return { nodes: structuredClone(axNodes.filter(node => node.backendDOMNodeId === params.backendNodeId)) };
+      }
+      throw Error('unsupported CDP call: ' + method);
+    }, detach: async () => calls.push(['detach']),
+  }) });
+  return { ...f, calls, frame };
+}
+const closedRoot = children => ({ nodeType: 11, shadowRootType: 'closed', children });
+const element = (backendNodeId, extra = {}) => ({ nodeType: 1, localName: 'button', backendNodeId, ...extra });
+const axControl = (backendDOMNodeId, role, name, extra = {}) => ({ backendDOMNodeId, role: { value: role }, name: { value: name }, ...extra });
+
+test('CR2 WAI-ARIA 1.2 widget roles and Chromium native input mappings expose operable closed controls', async () => {
+  // w3.org/TR/wai-aria-1.2/#widget_roles; Chromium AXNodeObject::NativeRoleIgnoringAria.
+  const roles = ['button', 'checkbox', 'gridcell', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option',
+    'radio', 'scrollbar', 'searchbox', 'separator', 'slider', 'spinbutton', 'switch', 'tab', 'textbox', 'treeitem',
+    'combobox', 'grid', 'listbox', 'menu', 'menubar', 'radiogroup', 'tablist', 'tree', 'treegrid',
+    'ColorWell', 'Date', 'DateTime', 'InputTime', 'DisclosureTriangle', 'DisclosureTriangleGrouped'];
+  const excluded = ['progressbar', 'tabpanel', 'group', 'generic', 'paragraph', 'separator'];
+  const all = [...roles, ...excluded];
+  const nodes = all.map((role, i) => axControl(i + 1, role, 'Control ' + i,
+    role === 'separator' && i < roles.length ? { properties: [{ name: 'focusable', value: { value: true } }] } : {}));
+  const root = { nodeType: 9, children: [element(100, { shadowRoots: [closedRoot(all.map((_, i) => element(i + 1)))] })] };
+  const { page } = nativeClosedFixture(root, nodes);
+  const result = await module.snapshot(page, { maxChars: 40000 });
+  for (let i = 0; i < roles.length; i++) assert.ok(result.text.includes('"Control ' + i + '"'), roles[i]);
+  for (let i = roles.length; i < all.length; i++) assert.ok(!result.text.includes('"Control ' + i + '"'), all[i]);
+});
+
+test('CR1 probes nested closed controls and same-process frame documents without host AX data', async () => {
+  const root = { nodeType: 9, children: [element(10, { contentDocument: { nodeType: 9, children: [element(20, {
+    shadowRoots: [closedRoot([element(21, { shadowRoots: [closedRoot([element(22)])] })])],
+  })] } })] };
+  const { page, calls, frame } = nativeClosedFixture(root, [axControl(21, 'generic', ''), axControl(22, 'switch', 'Nested')]);
+  const result = await module.snapshot(page);
+  const ref = /switch "Nested" \[ref=(s\d+)\]/.exec(result.text)?.[1];
+  assert.ok(ref); assert.equal(module.closedRefBinding(page, ref).frame, frame);
+  assert.deepEqual(calls.filter(call => call[0] === 'Accessibility.getPartialAXTree').map(call => call[1].backendNodeId), [21, 22]);
+});
+
+test('CR1 emits only native controls, flags and protected scalar roles', async () => {
+  const children = Array.from({ length: 7 }, (_, i) => element(i + 1));
+  const root = { nodeType: 9, children: [element(20, { shadowRoots: [closedRoot(children)] })] };
+  const { page } = nativeClosedFixture(root, [
+    axControl(1, 'button', 'State', { properties: ['disabled', 'expanded', 'selected'].map(name => ({ name, value: { value: true } }))
+      .concat([{ name: 'pressed', value: { value: 'mixed' } }]) }),
+    axControl(2, 'checkbox', 'Choice', { properties: [{ name: 'checked', value: { value: 'mixed' } }] }),
+    axControl(3, 'textbox', 'Field', { value: { value: 'private-text' } }),
+    axControl(4, 'searchbox', 'Search', { value: { value: 'private-search' } }),
+    axControl(5, 'combobox', 'Combo', { value: { value: 'private-combo' } }),
+    axControl(6, 'button', 'Ignored', { ignored: true }), axControl(7, 'paragraph', 'Not a control'),
+  ]);
+  const result = await module.snapshot(page);
+  assert.match(result.text, /button "State" \[disabled\] \[expanded\] \[pressed="mixed"\] \[selected\]/);
+  assert.match(result.text, /checkbox "Choice" \[checked="mixed"\]/);
+  for (const name of ['Field', 'Search', 'Combo']) assert.match(result.text, new RegExp('"' + name + '".*redacted'));
+  assert.doesNotMatch(result.text, /private-|Ignored|Not a control/);
+});
+
+for (const [count, closed, expectedProbes] of [[50001, false, 0], [513, true, 512]])
+  test('CR1 refuses bounded native acquisition at ' + count + ' nodes', async () => {
+    const children = Array.from({ length: count }, (_, i) => element(i + 1));
+    const root = { nodeType: 9, children: closed ? [element(60000, { shadowRoots: [closedRoot(children)] })] : children };
+    const { page, calls } = nativeClosedFixture(root, []);
+    await assert.rejects(module.snapshot(page), /Snapshot unavailable/);
+    assert.equal(calls.filter(call => call[0] === 'Accessibility.getPartialAXTree').length, expectedProbes);
+    assert.equal(calls.at(-1)[0], 'detach');
+  });
+
+test('CR1 backend numbers are isolated by frame and retire when a frame disappears', async () => {
+  const { page } = nativeClosedFixture({ nodeType: 9, children: [element(10, { shadowRoots: [closedRoot([element(1)])] })] },
+    [axControl(1, 'button', 'Per frame')]);
+  const main = page.mainFrame(), child = {};
+  page.frames = () => [main, child];
+  const first = await module.snapshot(page);
+  const refs = [...first.text.matchAll(/button "Per frame" \[ref=(s\d+)\]/g)].map(match => match[1]);
+  assert.equal(refs.length, 2); assert.notEqual(refs[0], refs[1]);
+  assert.equal(module.closedRefBinding(page, refs[1]).frame, child);
+  page.frames = () => [main];
+  await module.snapshot(page);
+  assert.throws(() => module.closedRefBinding(page, refs[1]), /stale/i);
+  assert.equal(module.closedRefBinding(page, refs[0]).frame, main);
+});
+
+test('CR3 captures each frame once and omits pierced DOM and AX work without closed roots', async () => {
+  const { page } = fixture([{ role: 'button', name: 'Continue', ref: 'e1' }]);
+  const context = page.context(), calls = [];
+  page.context = () => ({ newCDPSession: async frame => {
+    calls.push('attach');
+    const session = await context.newCDPSession(frame), send = session.send;
+    session.send = (method, params) => { calls.push(method); return send(method, params); };
+    session.detach = async () => { calls.push('detach'); };
+    return session;
+  } });
+  await module.snapshot(page);
+  assert.deepEqual(calls, ['attach', 'DOMSnapshot.captureSnapshot', 'detach']);
+});
+
+test('CR3 600 closed-root divs spend only one candidate probe and expose the button', async () => {
+  const children = Array.from({ length: 600 }, (_, i) => element(i + 1, { localName: 'div' }));
+  children.push(element(601));
+  const { page, calls } = nativeClosedFixture({ nodeType: 9, children: [element(900, { shadowRoots: [closedRoot(children)] })] },
+    [axControl(601, 'button', 'Only command')]);
+  const result = await module.snapshot(page);
+  assert.match(result.text, /button "Only command" \[ref=s\d+\]/);
+  assert.deepEqual(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').map(([, params]) => params.backendNodeId), [601]);
+  assert.equal(calls.filter(([method]) => method === 'DOMSnapshot.captureSnapshot').length, 1);
+  assert.equal(calls.filter(([method]) => method === 'DOM.getDocument').length, 1);
+});
+
+test('CR3 native tags and role attributes are candidates while inert divs and hidden inputs are not', async () => {
+  const tags = ['button', 'input', 'textarea', 'select', 'option', 'a', 'area', 'summary'];
+  const children = tags.map((localName, i) => element(i + 1, { localName, attributes: ['href', '/next'] }));
+  children.push(element(20, { localName: 'div', attributes: ['role', 'switch'] }),
+    element(21, { localName: 'div' }), element(22, { localName: 'input', attributes: ['type', 'hidden'] }));
+  const { page, calls } = nativeClosedFixture({ nodeType: 9, children: [element(900, { shadowRoots: [closedRoot(children)] })] }, []);
+  await module.snapshot(page);
+  assert.deepEqual(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').map(([, params]) => params.backendNodeId),
+    [1, 2, 3, 4, 5, 6, 7, 8, 20]);
+});
+
+test('CR3 runs up to four frame sessions alongside the aria read and detaches every session', async () => {
+  const { page } = fixture([]), frames = Array.from({ length: 6 }, () => ({}));
+  let active = 0, peak = 0, ariaStarted = false, captures = 0, detaches = 0, releasing = false;
+  const held = [];
+  page.frames = () => frames; page.mainFrame = () => frames[0];
+  page.ariaSnapshotJSON = async () => { ariaStarted = true; return []; };
+  page.context = () => ({ newCDPSession: async () => {
+    active++; peak = Math.max(peak, active);
+    return { send: async method => {
+      assert.equal(method, 'DOMSnapshot.captureSnapshot'); captures++;
+      if (!releasing) await new Promise(resolve => held.push(resolve));
+      return nativeSnapshot([]);
+    }, detach: async () => { active--; detaches++; } };
+  } });
+  const pending = module.snapshot(page);
+  try {
+    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(ariaStarted, true); assert.equal(captures, 4); assert.equal(peak, 4);
+  } finally {
+    releasing = true;
+    for (const release of held.splice(0)) release();
+    await pending.catch(() => {});
+  }
+  assert.equal(captures, 6); assert.equal(detaches, 6); assert.equal(active, 0); assert.equal(peak, 4);
 });

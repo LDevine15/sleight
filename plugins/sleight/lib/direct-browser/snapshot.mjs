@@ -1,7 +1,4 @@
-// Compact snapshot code by sleight. Closed-root discovery adapted from
-// FowlBrowser mcp/src/closedShadow.mjs (MIT), Copyright (c) 2026 Fowl Labs,
-// 8b689249ba4e33d2626487aad930605c62e2c6a7. Changed for owned frame sessions,
-// native redaction, bounded acquisition and delivered-ref resolution.
+// Compact page snapshots for turbo v3, with an independent CR1 closed-root reader.
 const pages = new WeakMap();
 const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const MORE = /^more\d+_\d+$/;
@@ -9,7 +6,12 @@ const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|exp
 const TIMEOUT = 3000;
 const scalarRole = role => /^(textbox|searchbox|combobox)$/.test(role);
 const normalized = value => String(value ?? '').replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
-const CONTROL_ROLE = /^(textbox|searchbox|button|link|checkbox|radio|combobox|menuitem|tab|switch|slider|option)$/;
+// https://www.w3.org/TR/wai-aria-1.2/#widget_roles: operable widgets and
+// composites. Exclude read-only progressbar and the tabpanel content container;
+// separator needs native focusability below. Chromium's AXNodeObject native
+// mapping adds color/date/time and summary controls (details itself is a group):
+// https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/modules/accessibility/ax_node_object.cc
+const CONTROL_ROLE = /^(button|checkbox|gridcell|link|menuitem|menuitemcheckbox|menuitemradio|option|radio|scrollbar|searchbox|separator|slider|spinbutton|switch|tab|textbox|treeitem|combobox|grid|listbox|menu|menubar|radiogroup|tablist|tree|treegrid|ColorWell|Date|DateTime|InputTime|DisclosureTriangle|DisclosureTriangleGrouped)$/;
 
 async function bounded(action) {
   let timer;
@@ -105,95 +107,97 @@ function scrub(value, secrets) {
   return text.replace(/(?:\d[ -]?){12,19}/g, '[redacted]');
 }
 
-async function* sessionsOf(page) {
-  for (const frame of page.frames()) {
-    let session;
-    try { session = await bounded(() => page.context().newCDPSession(frame)); }
-    catch (error) {
-      // Playwright 1.64.0: in-process child frames have no separate target.
-      // Their contentDocument is included in their parent's pierced DOM tree.
-      if (frame !== page.mainFrame() && /This frame does not have a separate CDP session, it is a part of the parent frame's session/.test(error.message)) continue;
-      throw error;
+// Each owned frame session has one native capture. In-process children are
+// already included in their parent's capture and pierced DOM document.
+async function sessionsOf(page, read) {
+  const frames = page.frames(), results = new Array(frames.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < frames.length) {
+      const index = cursor++, frame = frames[index];
+      let session;
+      try { session = await bounded(() => page.context().newCDPSession(frame)); }
+      catch (error) {
+        if (frame !== page.mainFrame() && /This frame does not have a separate CDP session, it is a part of the parent frame's session/.test(error.message)) continue;
+        throw error;
+      }
+      try { results[index] = await read({ frame, send: (method, params = {}) => bounded(() => session.send(method, params)) }); }
+      finally { await bounded(() => session.detach()); }
     }
-    try { yield { frame, send: (method, params = {}) => bounded(() => session.send(method, params)) }; }
-    finally { await bounded(() => session.detach()); }
-  }
+  };
+  // Drain all workers even on failure so their sessions are detached before
+  // another snapshot can start. Result order is frame order, not reply order.
+  const settled = await Promise.allSettled(Array.from({ length: Math.min(4, frames.length) }, worker));
+  const failed = settled.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+  return results.filter(Boolean);
 }
 
-async function nativeSecrets(page) {
-  const secrets = []; secrets.names = new Set(); secrets.unnamed = false;
-  for await (const { send } of sessionsOf(page)) {
-    const native = sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] }));
-    secrets.push(...native); for (const name of native.names) secrets.names.add(name); secrets.unnamed ||= native.unnamed;
+function closedCandidates({ strings, documents }) {
+  const controls = new Set();
+  let hasClosed = false, count = 0;
+  for (const { nodes } of documents) {
+    count += nodes.nodeName.length;
+    if (count > 50000) throw Error('DOM acquisition budget exceeded');
+    const roots = new Set((nodes.shadowRootType?.index ?? []).filter((_, i) => strings[nodes.shadowRootType.value[i]] === 'closed'));
+    hasClosed ||= roots.size > 0;
+    const closed = [];
+    for (let index = 0; index < nodes.nodeName.length; index++) {
+      closed[index] = roots.has(index) || closed[nodes.parentIndex[index]] === true;
+      if (!closed[index] || nodes.nodeType[index] !== 1 || !nodes.backendNodeId[index]) continue;
+      const attributes = {}, raw = nodes.attributes[index] ?? [];
+      for (let i = 0; i < raw.length; i += 2) attributes[strings[raw[i]]] = strings[raw[i + 1]];
+      const tag = strings[nodes.nodeName[index]];
+      const native = /^(BUTTON|TEXTAREA|SELECT|OPTION|SUMMARY)$/.test(tag)
+        || tag === 'INPUT' && attributes.type?.toLowerCase() !== 'hidden'
+        || /^(A|AREA)$/.test(tag) && Object.hasOwn(attributes, 'href')
+        || Object.hasOwn(attributes, 'contenteditable') && /^(|true|plaintext-only)$/i.test(attributes.contenteditable);
+      if (native || Object.hasOwn(attributes, 'role')) controls.add(nodes.backendNodeId[index]);
+    }
   }
-  return secrets;
+  return { hasClosed, controls };
 }
 
 async function closedRoots(page, state) {
-  const sections = [], secrets = [], observed = new Set();
+  const results = await sessionsOf(page, async ({ frame, send }) => {
+    const capture = await send('DOMSnapshot.captureSnapshot', { computedStyles: [] });
+    const secrets = sensitiveValues(capture), { hasClosed, controls } = closedCandidates(capture);
+    const children = [], refs = new Map();
+    if (hasClosed) {
+      // Enable the DOM agent only when native data proves a closed root exists.
+      // This also makes backend nodes available to per-control AX probes.
+      await send('DOM.getDocument', { depth: -1, pierce: true });
+      let probes = 0;
+      for (const backendNodeId of controls) {
+        if (++probes > 512) throw Error('Closed-root accessibility budget exceeded');
+        const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
+        const node = nodes.find(node => node.backendDOMNodeId === backendNodeId && !node.ignored && CONTROL_ROLE.test(node.role?.value)
+          && (node.role.value !== 'separator' || node.properties?.some(property => property.name === 'focusable' && property.value?.value === true)));
+        if (!node) continue;
+        const role = node.role.value, ref = state.closed.get(frame)?.get(backendNodeId) ?? 's' + (++state.shadowNumber);
+        const row = { role, name: node.name?.value ?? '', ref, protected: scalarRole(role) };
+        for (const { name, value } of node.properties ?? []) {
+          if (!['checked', 'disabled', 'expanded', 'pressed', 'selected'].includes(name)) continue;
+          if (value?.value === true || value?.value === 'true') row[name] = true;
+          else if (value?.value === 'mixed') row[name] = 'mixed';
+        }
+        refs.set(backendNodeId, ref); children.push(row);
+      }
+    }
+    return { frame, secrets, refs, children };
+  });
+  const sections = [], secrets = [], next = new Map();
   secrets.names = new Set(); secrets.unnamed = false;
-  for await (const { frame, send } of sessionsOf(page)) {
-    const native = sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] }));
-    secrets.push(...native); for (const name of native.names) secrets.names.add(name); secrets.unnamed ||= native.unnamed;
-    const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
-    const hosts = [], inside = new Set(), candidates = new Set();
-    let count = 0;
-    const walk = (node, closed = false) => {
-      if (++count > 50000) throw Error('DOM acquisition budget exceeded');
-      if (closed && node.backendNodeId) {
-        inside.add(node.backendNodeId);
-        const attributes = node.attributes ?? [];
-        const role = attributes.indexOf('role');
-        if (node.nodeType === 1 && (['button', 'input', 'textarea', 'select', 'option', 'a', 'summary'].includes(node.localName)
-          || role >= 0 && attributes[role + 1].split(/\s+/).some(value => CONTROL_ROLE.test(value)))) candidates.add(node.backendNodeId);
-      }
-      for (const shadow of node.shadowRoots ?? []) {
-        const hidden = shadow.shadowRootType === 'closed';
-        if (hidden && !closed) hosts.push(node.backendNodeId);
-        walk(shadow, closed || hidden);
-      }
-      for (const child of node.children ?? []) walk(child, closed);
-      if (node.contentDocument) walk(node.contentDocument, closed);
-      // OOPIFs have no contentDocument here and use a separate Frame session.
-    };
-    walk(root);
-    let refs = state.closed.get(frame);
-    if (!refs) state.closed.set(frame, refs = new Map());
-    const children = [], acquired = [];
-    for (const backendNodeId of hosts) {
-      const { nodes } = await send('Accessibility.queryAXTree', { backendNodeId });
-      acquired.push(...nodes);
-    }
-    // An ignored custom-element host can have an empty queryAXTree subtree,
-    // even while native AX exposes its closed-root button. Probe only control
-    // candidates from the pierced DOM, using their own backend IDs.
-    const present = new Set(acquired.filter(node => !node.ignored && CONTROL_ROLE.test(node.role?.value)).map(node => node.backendDOMNodeId));
-    const missing = [...candidates].filter(id => !present.has(id));
-    if (missing.length > 512) throw Error('Closed-root acquisition budget exceeded');
-    for (const backendNodeId of missing) {
-      const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
-      acquired.push(...nodes.filter(node => node.backendDOMNodeId === backendNodeId));
-    }
-    for (const node of acquired) {
-      const id = node.backendDOMNodeId;
-      if (node.ignored || !inside.has(id) || !CONTROL_ROLE.test(node.role?.value)) continue;
-      let ref = refs.get(id);
-      if (!ref) refs.set(id, ref = 's' + (++state.shadowNumber));
-      if (observed.has(ref)) continue;
-      observed.add(ref);
-      const props = Object.fromEntries((node.properties ?? []).map(prop => [prop.name, prop.value?.value]));
-      const row = { role: node.role.value, name: node.name?.value ?? '', ref,
-        protected: /^(textbox|searchbox|combobox)$/.test(node.role.value) };
-      for (const flag of ['checked', 'disabled', 'expanded', 'pressed', 'selected']) {
-        if (props[flag] === true || props[flag] === 'true') row[flag] = true;
-        else if (props[flag] === 'mixed') row[flag] = 'mixed';
-      }
-      children.push(row);
-    }
-    if (children.length) sections.push({ role: 'group', name: 'Inside closed shadow roots', children });
+  for (const result of results) {
+    secrets.push(...result.secrets);
+    for (const name of result.secrets.names) secrets.names.add(name);
+    secrets.unnamed ||= result.secrets.unnamed;
+    if (result.refs.size) next.set(result.frame, result.refs);
+    if (result.children.length) sections.push({ role: 'group', name: 'Closed shadow controls', children: result.children });
   }
-  for (const refs of state.closed.values()) for (const [id, ref] of refs) if (!observed.has(ref)) refs.delete(id);
-  for (const ref of state.deliveredClosed) if (!observed.has(ref)) state.deliveredClosed.delete(ref);
+  const current = new Set([...next.values()].flatMap(refs => [...refs.values()]));
+  for (const ref of state.deliveredClosed) if (!current.has(ref)) state.deliveredClosed.delete(ref);
+  state.closed = next;
   return { sections, secrets };
 }
 
@@ -360,11 +364,12 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
   state.busy = true;
   const generation = state.generation, url = page.url();
   try {
-    const secrets = await nativeSecrets(page);
-    const tree = await bounded(() => page.ariaSnapshotJSON({ mode: 'ai', timeout: TIMEOUT }));
-    const closed = await closedRoots(page, state);
-    secrets.push(...closed.secrets);
-    for (const name of closed.secrets.names) secrets.names.add(name); secrets.unnamed ||= closed.secrets.unnamed;
+    const acquired = await Promise.allSettled([
+      bounded(() => page.ariaSnapshotJSON({ mode: 'ai', timeout: TIMEOUT })), closedRoots(page, state),
+    ]);
+    const failed = acquired.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+    const tree = acquired[0].value, closed = acquired[1].value, secrets = closed.secrets;
     publicRefs(tree, state);
     const rows = rowsOf([...tree, ...closed.sections], secrets);
     if (generation !== state.generation || url !== page.url()) throw Error('Page changed; try browser_read again.');
