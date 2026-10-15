@@ -91,7 +91,7 @@ test('the browser-level guard on port 80 matches loopback hosts only', async t =
   t.after(() => filter.dispose());
   await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
   const patterns = f.calls.find(row => row.method === 'Fetch.enable' && row.route === 'root').params.patterns.map(row => row.urlPattern);
-  assert.ok(patterns.includes('http://127.0.0.1/*') && patterns.includes('http://*.localhost/*') && patterns.includes('http://*@127.0.0.1/*'));
+  assert.ok(patterns.includes('http://127.0.0.1/*') && patterns.includes('http://*.localhost/*') && patterns.includes('http://*@127.0.0.1/*') && patterns.includes('http://*.localhost./*'));
   assert.ok(!patterns.some(pattern => /^\*|:\/\/\*\//.test(pattern)), 'no pattern pauses every request: ' + patterns);
 });
 test('the browser-level guard on port 443 also matches plain http on :443', async t => {
