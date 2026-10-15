@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 13:29 UTC, owner awake)
+## Banner (2026-10-15 13:32 UTC, owner awake)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
@@ -15,9 +15,11 @@ Owner, 2026-10-15: all testing runs on the owner's Anthropic account login, neve
 sleight-arch's all night (live runs allowed). Puddle holds `/tmp/sleight-hold` for window 1015b from 03:52 UTC (up to about 2 h),
 and full checks wait. Puddle's architect says focused headless agents are fine.
 
-**Owner step before the gate round.** The bench arms `sleight-turbo` and `fowlbrowser` have no login (only `claude-in-chrome` has
-one, per `auth status` at 04:10 UTC). One command logs both in:
-`B=~/.config/sleight-bench/world/arms; for a in sleight-turbo fowlbrowser; do env -i HOME=$HOME USER=$USER PATH=$PATH CLAUDE_CONFIG_DIR=$B/$a/claude-config $B/fowlbrowser/node_modules/.bin/claude auth login; done`
+**Gate round status.** The owner logged in both bench arms at 13:28 UTC (both Max, checked). The turbo smoke round on v3-gate
+`83fbf6b4` on the account login was ROUND CLEAN at 13:33 UTC: form-travel 11/11 in 104 s, demoid "Robin Vale" in 17 s, focus ok,
+3 errors, every event `claude-haiku-5-5` with `apiKeySource` none (`~/Library/Caches/sleight-bench/runs/smoke-20261015T133030Z`).
+The gate round waits on the owner: FowlBrowser's extension reloaded in Chrome's "sleight benchmark" profile and in Helium (preflight
+says it isn't reachable in Chrome), and an away window of about 60 minutes, since FowlBrowser's arm shows windows.
 
 Branches (all on `private`):
 - `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
