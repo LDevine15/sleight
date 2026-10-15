@@ -96,6 +96,16 @@ focuses.push({ name: 'hover dispatches mouseenter without focusing', html: '<but
     await page.locator('#go').click({ modifiers: mod }); await page.locator('#x').hover();
     return page.evaluate(() => ({ active: document.activeElement.id, entered: window.entered }));
   }, want: { active: 'go', entered: true } });
+focuses.push({ name: 'viewport resize changes CSS media match', html: '<button id=go>Prepare</button>',
+  run: async (page, mod) => {
+    await page.locator('#go').click({ modifiers: mod }); await page.setViewportSize({ width: 390, height: 844 });
+    return page.evaluate(() => ({ width: innerWidth, height: innerHeight, mobile: matchMedia('(max-width:400px)').matches }));
+  }, want: { width: 390, height: 844, mobile: true } });
+focuses.push({ name: 'waitFor visible follows a delayed DOM reveal', html: '<button id=go onclick="setTimeout(()=>x.hidden=false,50)">Reveal</button><div id=x hidden>Visible later</div>',
+  run: async (page, mod) => {
+    await page.locator('#go').click({ modifiers: mod }); await page.locator('#x').waitFor({ state: 'visible' });
+    return { visible: await page.locator('#x').isVisible() };
+  }, want: { visible: true } });
 
 const popupState = async (page, context) => {
   const others = context.pages().filter(p => p !== page);
@@ -124,11 +134,18 @@ popupRows.push({ name: 'window.open named target reuses one context', html: `<bu
     await child.waitForURL('**/landed'); await page.locator('#go').click({ modifiers: mod }); await pause(150);
     return popupState(page, context);
   }, want: { current: 'fixture', popups: [{ path: '/landed', opener: true, name: 'atlas-child' }] } });
+popupRows.push({ name: 'named link reuses its target only on plain click', html: '<a id=go href=/landed target=atlas-child>Open</a>',
+  run: async (page, mod, { context }) => {
+    const ready = context.waitForEvent('page'); await page.locator('#go').click({ modifiers: mod }); const child = await ready;
+    await child.waitForURL('**/landed'); await page.locator('#go').click({ modifiers: mod }); await pause(150);
+    return popupState(page, context);
+  }, want: { current: 'fixture', popups: [{ path: '/landed', opener: true, name: 'atlas-child' }] },
+  modified: { current: 'fixture', popups: [{ path: '/landed', opener: false, name: '' }, { path: '/landed', opener: false, name: '' }] } });
 for (const [name, attrs, opener, childName] of [
   ['link blank implicit noopener', 'target=_blank', false, ''],
   ['link blank rel opener', 'target=_blank rel=opener', true, ''],
   ['link named', 'target=atlas-child', true, 'atlas-child'],
-  ['link named rel noopener', 'target=atlas-child rel=noopener', false, ''],
+  ['link named rel noopener', 'target=atlas-child rel=noopener', false, 'atlas-child'],
   ['link blank noreferrer', 'target=_blank rel=noreferrer', false, ''],
 ]) popupRows.push({ name, html: `<a id=go href=/landed ${attrs}>Open</a>`,
   run: async (page, mod, { context }) => {

@@ -7,8 +7,8 @@ const typing = [
   ['IME-free ASCII', '<input id=x>', 'plain text', 'plain text'],
   ['emoji surrogate pair', '<input id=x>', 'A😀B', 'A😀B'],
   ['emoji grapheme sequence', '<textarea id=x></textarea>', '👩🏽‍💻', '👩🏽‍💻'],
-  ['input strips LF', '<input id=x>', 'a\nb', 'ab'],
-  ['input strips CRLF', '<input id=x>', 'a\r\nb', 'ab'],
+  ['input converts LF to space', '<input id=x>', 'a\nb', 'a b'],
+  ['input converts CRLF to space', '<input id=x>', 'a\r\nb', 'a b'],
   ['textarea preserves LF', '<textarea id=x></textarea>', 'a\nb', 'a\nb'],
   ['textarea normalizes CRLF', '<textarea id=x></textarea>', 'a\r\nb', 'a\nb'],
   ['fill respects maxlength', '<input id=x maxlength=3>', 'abcdef', 'abc'],
@@ -19,7 +19,7 @@ const typing = [
   run: async (page, mod) => {
     await page.locator('#x').click({ modifiers: mod }); await page.locator('#x').fill(text);
     return { value: await page.locator('#x').inputValue(), ...await counts(page) };
-  }, want: { value, input: 1, change: 0 } }));
+  }, want: { value, input: name.startsWith('textarea') ? 3 : 1, change: 0 } }));
 typing.push({ name: 'pressSequentially emits per-character input', html: '<input id=x maxlength=3>' + events,
   run: async (page, mod) => {
     await page.locator('#x').click({ modifiers: mod }); await page.locator('#x').pressSequentially('abcd');
@@ -36,6 +36,20 @@ for (const [name, attrs] of [['readonly fill refuses', 'readonly'], ['disabled f
     await page.locator('#go').click({ modifiers: mod });
     return { rejected: await rejected(() => page.locator('#x').fill('new')), value: await page.locator('#x').inputValue(), ...await counts(page) };
   }, want: { rejected: true, value: 'old', input: 0, change: 0 } });
+typing.push({ name: 'contenteditable fill replaces text', html: '<div id=x contenteditable>old</div>' + events,
+  run: async (page, mod) => {
+    await page.locator('#x').click({ modifiers: mod }); await page.locator('#x').fill('new 😀');
+    return { text: await page.locator('#x').textContent(), ...await counts(page) };
+  }, want: { text: 'new 😀', input: 1, change: 0 } });
+for (const [name, html, key, value, input] of [
+  ['input Enter does not insert newline', '<input id=x value=ab>', 'Enter', 'ab', 0],
+  ['textarea Enter inserts newline', '<textarea id=x>ab</textarea>', 'Enter', 'ab\n', 1],
+  ['Backspace removes whole emoji', '<input id=x value="A😀">', 'Backspace', 'A', 1],
+]) typing.push({ name, html: html + events,
+  run: async (page, mod) => {
+    await page.locator('#x').click({ modifiers: mod }); await page.locator('#x').press('End'); await page.locator('#x').press(key);
+    return { value: await page.locator('#x').inputValue(), ...await counts(page) };
+  }, want: { value, input, change: 0 } });
 
 const selectMarkup = `<button id=go>Prepare</button><select id=x SIZE MULTIPLE>
   <option value=a selected>A</option><optgroup label=Group><option value=b>B</option>
@@ -46,14 +60,16 @@ const selects = [
   ['single API takes first of many', false, ['a', 'b'], ['a']],
   ['multiple API clears selection', true, [], []],
   ['optgroup label selection', false, { label: 'B' }, ['b']],
-  ['disabled option API', false, ['c'], ['c']],
-  ['disabled optgroup API', false, ['d'], ['d']],
+  ['disabled option API refuses', false, ['c'], ['a']],
+  ['disabled optgroup API refuses', false, ['d'], ['a']],
 ].map(([name, multiple, values, want]) => ({ name,
   html: selectMarkup.replace('SIZE', '').replace('MULTIPLE', multiple ? 'multiple' : '') + events,
   run: async (page, mod) => {
-    await page.locator('#go').click({ modifiers: mod }); await page.locator('#x').selectOption(values);
-    return { selected: await selected(page), ...await counts(page) };
-  }, want: { selected: want, input: 1, change: 1 } }));
+    await page.locator('#go').click({ modifiers: mod });
+    const refused = await rejected(() => page.locator('#x').selectOption(values));
+    return { rejected: refused, selected: await selected(page), ...await counts(page) };
+  }, want: { rejected: name.startsWith('disabled'), selected: want,
+    input: name.startsWith('disabled') ? 0 : 1, change: name.startsWith('disabled') ? 0 : 1 } }));
 for (const multiple of [false, true]) selects.push({ name: multiple ? 'multiple option click default' : 'single option click default',
   html: selectMarkup.replace('SIZE', 'size=4').replace('MULTIPLE', multiple ? 'multiple' : '') + events,
   run: async (page, mod) => {
@@ -87,6 +103,11 @@ checks.push({ name: 'label click clears indeterminate', html: '<label id=x><inpu
     await page.locator('#x').click({ modifiers: mod });
     return { ...await page.locator('input').evaluate(el => ({ checked: el.checked, indeterminate: el.indeterminate })), ...await counts(page) };
   }, want: { checked: true, indeterminate: false, input: 1, change: 1 } });
+checks.push({ name: 'radio click selects and deselects sibling', html: '<input id=first type=radio name=g checked><input id=x type=radio name=g>' + events,
+  run: async (page, mod) => {
+    await page.locator('#x').click({ modifiers: mod });
+    return page.evaluate(() => ({ first: first.checked, second: x.checked }));
+  }, want: { first: false, second: true } });
 
 const drags = [{ name: 'HTML5 dragTo dispatches accepted drop', html: `<button id=go>Prepare</button>
   <div id=from draggable=true style="width:100px;height:60px;background:gray">Source</div>

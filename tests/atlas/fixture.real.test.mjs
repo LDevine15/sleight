@@ -63,6 +63,10 @@ export async function atlas(t, groups) {
             const actual = await row.run(page, mod, { context, origin, path });
             rows.push({ case: row.name, click: mod.length ? 'ControlOrMeta' : 'plain', outcome: actual });
             assert.deepEqual(actual, mod.length && row.modified !== undefined ? row.modified : row.want);
+          } catch (error) {
+            t.diagnostic('AT1 failure ' + JSON.stringify({ group, case: row.name, click: mod.length ? 'ControlOrMeta' : 'plain',
+              error: String(error.message).replaceAll(homedir(), '~') }));
+            throw error;
           } finally {
             // Includes every popup, pending action and beforeunload document in this row.
             const pages = context.pages(); await context.close();
