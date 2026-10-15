@@ -29,6 +29,31 @@ function fetchMatch(pattern, params) {
 }
 const domains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Accessibility', 'Input',
   'Network', 'Fetch', 'Log', 'Emulation', 'Inspector', 'Debugger', 'Performance']);
+// A page session's Fetch can't pause a popup's first request: the browser makes
+// the popup and sends its navigation before any session can attach to it. So
+// each upstream connection also gets one browser-level Fetch guard, shared by
+// its filters and kept for the connection's life. Its patterns match only the
+// selected port (loopback hosts when that port is 80 or 443), so no other
+// request from the user's tabs is paused.
+const browserGuards = new WeakMap();
+function guardBrowser(upstream, port, isProtected) {
+  if (browserGuards.has(upstream)) return browserGuards.get(upstream);
+  const patterns = ![80, 443].includes(port) ? [{ urlPattern: '*://*:' + port + '/*', requestStage: 'Request' }] :
+    ['127.0.0.1', 'localhost', '*.localhost', 'localhost.', '[::1]', '0.0.0.0', '[::ffff:7f00:1]']
+      .map(host => ({ urlPattern: (port === 80 ? 'http' : 'https') + '://' + host + '/*', requestStage: 'Request' }));
+  const paused = frame => {
+    if (frame?.sessionId !== undefined || frame?.method !== 'Fetch.requestPaused' || !id(frame.params?.requestId)) return;
+    const blocked = isProtected(frame.params.request?.url);
+    upstream.send(blocked ? 'Fetch.failRequest' : 'Fetch.continueRequest',
+      { requestId: frame.params.requestId, ...(blocked ? { errorReason: 'BlockedByClient' } : {}) }).catch(() => {});
+  };
+  upstream.on('event', paused);
+  const ready = upstream.send('Fetch.enable', { patterns }).then(() => {}, error => {
+    upstream.off('event', paused); browserGuards.delete(upstream); throw error;
+  });
+  browserGuards.set(upstream, ready);
+  return ready;
+}
 
 export function createCDPFilter({ session: upstream, ownedTargets = [], protectedPort } = {}) {
   if (!upstream || !id(upstream.sessionId) || !['send', 'on', 'off'].every(name => typeof upstream[name] === 'function') ||
@@ -175,6 +200,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     const pending = (async () => {
       if (previous) await previous.catch(() => {});
       live(); checkTarget(target);
+      if (protectedPort !== undefined) { await guardBrowser(upstream, protectedPort, protectedUrl); live(); checkTarget(target); }
       attachmentParents.set(target, virtualParent);
       let name;
       try {

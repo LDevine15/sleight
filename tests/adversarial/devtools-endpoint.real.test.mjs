@@ -96,7 +96,8 @@ for (const [name, build] of Object.entries(clicks)) for (const [kind, payload] o
       const tab = /^(t\w+)/.exec(row)?.[1];
       if (tab && tab !== f.tab) { const read = await f.call('browser_read', { tab }); t.diagnostic('read popup ' + read.text.slice(0, 80).replace(/\n/g, ' | ')); b.outputs.push(read.text); }
     }
-    await afterwards(b, f, name.includes('307') || name === 'form POST' ? { allow: { post: 1 } } : {});
+    // Only the 307 form posts to the fixture first. A direct form POST targets the endpoint, which the server never sees.
+    await afterwards(b, f, name.includes('307') ? { allow: { post: 1 } } : {});
   });
 
 // Opening the endpoint directly, in every spelling a model might be handed.

@@ -69,6 +69,31 @@ test('selected-port guard precedes page exposure, fails private requests and sur
   assert.ok(f.calls.some(row=>row.method==='Fetch.enable'&&row.route==='child'));
   assert.ok(!f.calls.some(row=>row.method==='Fetch.enable'&&row.route==='foreign'));
 });
+test('a browser-level port guard precedes the first attachment and catches popups no page session sees', async t => {
+  const f = fixture(), create = await factory();
+  const first = create({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  const second = create({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => Promise.all([first.dispose(), second.dispose()]));
+  await first.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  await second.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const root = f.calls.filter(row => row.method === 'Fetch.enable' && row.route === 'root');
+  assert.equal(root.length, 1, 'one browser guard per connection');
+  assert.deepEqual(root[0].params.patterns, [{ urlPattern: '*://*:9222/*', requestStage: 'Request' }]);
+  assert.ok(f.calls.indexOf(root[0]) < f.calls.findIndex(row => row.method === 'Target.attachToTarget'));
+  // A popup's first navigation pauses at the browser session, with no sessionId.
+  f.emit({ method: 'Fetch.requestPaused', params: { requestId: 'popup', resourceType: 'Document', request: { url: 'http://127.0.0.1:9222/json/close/foreign' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls.filter(row => row.params.requestId === 'popup').map(row => [row.method, row.route, row.params.errorReason]),
+    [['Fetch.failRequest', 'root', 'BlockedByClient']]);
+});
+test('the browser-level guard on port 80 matches loopback hosts only', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 80 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const patterns = f.calls.find(row => row.method === 'Fetch.enable' && row.route === 'root').params.patterns.map(row => row.urlPattern);
+  assert.ok(patterns.includes('http://127.0.0.1/*') && patterns.includes('http://*.localhost/*'));
+  assert.ok(!patterns.some(pattern => /^\*|:\/\/\*\//.test(pattern)), 'no pattern pauses every request: ' + patterns);
+});
 for (const method of ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds', 'Browser.setContentsSize',
   'Browser.close', 'Browser.crash', 'Browser.grantPermissions', 'Browser.resetPermissions', 'Browser.setPermission',
   'Target.sendMessageToTarget', 'Target.createBrowserContext', 'Target.disposeBrowserContext', 'Target.exposeDevToolsProtocol']) {
