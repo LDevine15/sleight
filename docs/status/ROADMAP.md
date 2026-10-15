@@ -29,6 +29,7 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
    ToolSearch calls, 0 focus events.
 3. One Opus head-to-head on the owner's account.
+   Before the release pass: `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS).
 4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB), then the release
    pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
 5. Then the claim post (owner publishes) and the launch video (sleight-arch builds it from the measured claim).

@@ -33,7 +33,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Always allow. The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
   about the `ComputerUseAllowForbiddenTargets` switch.
 - When the user's own message names what to pay and with what, that payment counts as confirmed, including the page's own confirm
-  dialog. Any other payment asks. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking.
+  dialog. Any other payment asks. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` lets a user opt
+  out of the one confirmation for a purchase they asked for in their own message (owner, 2026-10-15: fully autonomous users
+  shouldn't be stopped). Only the user sets it. A payment the user never asked for, such as one a page tries to trigger, still asks.
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (46/98 measured).
