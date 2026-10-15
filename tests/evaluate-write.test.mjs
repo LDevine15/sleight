@@ -258,3 +258,43 @@ for (const expression of ["fetch\n+ fetch('/fixture')","fetch\n?.('/fixture')","
   const code=`await tab.playwright.evaluate(fetch => ${expression})`;
   assert.equal(evaluateWrite(code),undefined);const h=harness(t);h.call(1,code);assert.equal(h.sent.length,1);
 });
+
+for (const [name, expression, fields] of [
+  ['private field', 'this.#value', '#value = 1;'],
+  ['super property', 'super.value', ''],
+]) for (const global of ["fetch('/fixture');", 'fetch = () => 1;']) {
+  test(`Q1-2R3 class-context helper does not shadow a following global: ${name}, ${global}`, t => {
+    const code = `await tab.playwright.evaluate(() => {
+      class Box extends Object { ${fields} run() {
+        const identity = fetch => ${expression}
+        ${global}
+      }}
+      new Box().run(); return document.title;
+    });`;
+    assert.equal(typeof new Function('return async () => {' + code + '}'), 'function');
+    assert.match(evaluateWrite(code) ?? '', /fetch cannot run there/);
+    const h = harness(t); h.call(1, code);
+    assert.equal(h.sent.length, 0); assert.equal(h.replies[0].result.isError, true);
+  });
+}
+for (const [name, expression, fields] of [
+  ['private field', 'this.#value', '#value = 1;'],
+  ['private multiline', "this.#value\n+ fetch('/local')", '#value = 1;'],
+  ['super property', 'super.toString', ''],
+  ['super multiline', "super.toString\n.call(fetch('/local'))", ''],
+  ['unicode private field', "this.#café\n+ fetch('/local')", '#café = 1;'],
+  ['private tagged template', 'this.#value\n`local`', '#value = value => value;'],
+]) test('Q1-2R3 class-local expression retains its parameter scope: ' + name, t => {
+  const code = `await tab.playwright.evaluate(() => {
+    class Box extends Object { ${fields} run() { const identity = fetch => ${expression}; return identity; } }
+    return new Box().run();
+  });`;
+  assert.equal(typeof new Function('return async () => {' + code + '}'), 'function');
+  assert.equal(evaluateWrite(code), undefined);
+  const h = harness(t); h.call(1, code);
+  assert.equal(h.sent.length, 1); assert.ok(h.sent[0].params.arguments.code.includes(code));
+});
+test('Q1-2R3 boundary parsing never executes the surrounding program', () => {
+  const code = "throw Error('outer code ran'); await tab.playwright.evaluate(() => { const identity = fetch => fetch\nfetch('/fixture'); });";
+  assert.match(evaluateWrite(code) ?? '', /fetch cannot run there/);
+});

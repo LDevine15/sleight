@@ -170,11 +170,13 @@ function parameterScopes(ts, source) {
       if (!depth && i + 1 < end && /[\r\n\u2028\u2029]/.test(source.slice(ts[i].at, ts[i + 1].at))) candidates.push(i + 1);
     }
     // The JS parser distinguishes ASI from a multiline call, property, operator
-    // or tagged template. Compile only: never invoke a page callback or value.
+    // or tagged template. Keep class/private/super context by parenthesizing
+    // the candidate in the original program. Compile only, never invoke it.
     // Choose the longest complete expression before a possible statement break.
     for (const candidate of candidates.sort((a, b) => b - a)) {
-      const expression = source.slice(ts[start].at, ts[candidate]?.at ?? ts.endAt ?? source.length);
-      try { new Function('return async () => (' + expression + '\n);'); return candidate; } catch {}
+      const at = ts[start].at, endAt = ts[candidate]?.at ?? ts.endAt ?? source.length;
+      const program = source.slice(0, at) + '(' + source.slice(at, endAt) + '\n)\n' + source.slice(endAt);
+      try { new Function('return async () => {\n' + program + '\n}'); return candidate; } catch {}
     }
     return end;
   };
