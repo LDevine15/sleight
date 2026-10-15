@@ -551,14 +551,31 @@ export function popupHook(options) {
   // on an element or event). Classes are told apart by a native getter's brand check, not by instanceof, and
   // no page value ever builds a selector. If anything in the check throws, the input is cancelled.
   //
+  // What the seal covers: each node's words, attributes, form owner and that form's controls, plus the
+  // document's base URL, URL and base target (a relative action or href resolves through them). Trusted input
+  // that arrives after the soft cap (capMs) is cancelled, not passed; a separate hard cap (4 x capMs + 5 s) only
+  // drops a shield nobody finished. Every other frame is armed as foreign from Node (frameShield): any trusted press or
+  // click in it is cancelled, because the sealed element is not there; a same-origin frame created while armed arms
+  // itself at document start. document.open() and document.write erase a window's listeners, so they are wrapped to
+  // add them again, and `reinstall` does the same on request.
+  //
   // Key-shield API (window[key], the key the controller passed to popupHook), for callers that send trusted input.
   // Every method takes a proof from hookProof(hook, method) as its first argument, one proof per call; the rest follow:
   //   guard(proof, element, token, capMs, { keys, press }) seals what activating `element` touches and arms the shield for
   //     capMs; { keys: true } also vetoes keydown, keypress, keyup and submit events (the form's action, method,
-  //     target, enctype, novalidate and default submitter are in the seal). { press: true } lets the click the browser makes on the
-  //     form's default button, or the form's submit, count as landing on `element` without checking key events. Returns false if it cannot arm.
+  //     target, enctype, novalidate and the default submitter's own attributes are in the seal; a key event must
+  //     reach the field itself, a submit event must name the sealed submitter). { press: true } lets the click the
+  //     browser makes on the form's default button count as landing on `element` without checking key events, and
+  //     the landed check is not made for it (a key press may produce no click). Returns false if it cannot arm.
   //   verdict(proof, token) returns the veto reason, or undefined if every guarded event matched the seal.
   //   finish(proof, token) disarms and returns the veto reason, or true.
+  //   expect(proof, token, evidence) compares the digests of what the rules read with the seal: true, or a veto reason.
+  //   conclude(proof, token) is finish with { bad, landed, passed }: landed is false if no trusted press or click
+  //     reached the sealed element's document, undefined if the shield is gone (the document changed); passed is true
+  //     if any guarded event was delivered to the page's listeners (false: the page saw no press, release or click).
+  //   adopt(proof, token, capMs, keys) arms this frame as foreign; release(proof, token) disarms it and returns its
+  //     veto, if any; armed(proof) tells a new child frame what its parent holds; reinstall(proof) re-adds the
+  //     listeners and confirms them.
   const getter = (type, name) => {
     const get = getOwn(type?.prototype ?? {}, name)?.get;
     return get ? uncurry(get) : () => { throw Error('native ' + name + ' unavailable'); };
@@ -566,13 +583,14 @@ export function popupHook(options) {
   const textOf = getter(globalThis.Node, 'textContent'), shieldNameOf = getter(Element, 'localName'), connected = getter(globalThis.Node, 'isConnected');
   const parentElementOf = getter(globalThis.Node, 'parentElement'), listLength = getter(globalThis.NodeList, 'length'), typeOf = getter(Event, 'type');
   const shadowMode = getter(globalThis.ShadowRoot, 'mode'), shadowHost = getter(globalThis.ShadowRoot, 'host');
-  const labelOf = getter(HTMLLabelElement, 'control');
+  const labelOf = getter(HTMLLabelElement, 'control'), baseURIOf = getter(globalThis.Node, 'baseURI'), urlOf = getter(globalThis.Document, 'URL');
+  const submitterOfEvent = getter(globalThis.SubmitEvent, 'submitter');
   const controlGetters = [HTMLButtonElement, HTMLInputElement, globalThis.HTMLTextAreaElement, HTMLSelectElement].map(type => [getter(type, 'form'), getter(type, 'type')]);
-  const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryElementAll = uncurry(Element.prototype.querySelectorAll);
+  const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryElementAll = uncurry(Element.prototype.querySelectorAll), closest = uncurry(Element.prototype.closest);
   const queryDocAll = uncurry(globalThis.Document?.prototype.querySelectorAll), queryFragAll = uncurry(globalThis.DocumentFragment?.prototype.querySelectorAll);
-  const attr = uncurry(getAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
+  const attr = uncurry(getAttribute), hasAttr = uncurry(hasAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
   const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
-  const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
+  const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeClear = clearTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
   const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
   // Proofs. SHA-256 and HMAC written with typed arrays and operators only: a page cannot reach any step of them.
   // The constants come from the cube roots of the first 64 primes, the start state from the square roots of the first 8.
@@ -663,16 +681,25 @@ export function popupHook(options) {
   let dead = false;
   let serial = 0, shield;
   const ident = node => { if (!idsHas(ids, node)) idsSet(ids, node, ++serial); return idsGet(ids, node); };
+  // The same digest runs in the rules' own reader (seal-digest.mjs), so the words the rules classified can be
+  // compared with the words that were sealed. Keep the two in step.
   const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = imul(h ^ charCodeAt(value, i), 16777619); return h + ':' + value.length; };
-  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'for', 'usemap'];
+  const SEP = '\u0001';
+  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate', 'for', 'usemap'];
   const formAttributes = ['action', 'method', 'target', 'enctype', 'novalidate'];
-  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form'];
+  // Boolean attributes are sealed by presence, not value: formnovalidate="" and no attribute differ.
+  const isBoolean = name => name === 'disabled' || name === 'formnovalidate' || name === 'novalidate';
+  const attrOf = (node, name) => isBoolean(name) ? (hasAttr(node, name) ? '+' : '-') : attr(node, name) ?? '';
+  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form', 'title', 'alt', 'src'];
+  const changedReason = 'the checked element changed', elsewhereReason = 'the input landed on a different element', lateReason = 'the input arrived after the shield expired';
   const shieldIsElement = node => { try { shieldNameOf(node); return true; } catch { return false; } };
   // { form, type } for a form-associated button, input, textarea or select; a brand mismatch throws and falls to the next, so no instanceof.
   const shieldControlOf = node => {
     for (let i = 0; i < controlGetters.length; i++) { try { return { form: controlGetters[i][0](node), type: controlGetters[i][1](node) }; } catch { /* Not this class. */ } }
     return null;
   };
+  // A control's form owner (form= included), or the nearest form around any other element.
+  const formOwner = (node, control) => control ? control.form : closest(node, 'form');
   const hostOf = node => { try { return shadowHost(rootOf(node)); } catch { return null; } };
   const shieldParentOf = node => parentElementOf(node) ?? hostOf(node);
   // A form's default submitter is its first submit button in tree order among the controls it owns (what Enter in a field presses).
@@ -685,25 +712,39 @@ export function popupHook(options) {
     }
     return null;
   };
-  const formSignature = (form, withSubmitter) => {
-    const submitter = withSubmitter ? submitterOf(form) : null;
-    let parts = (submitter ? ident(submitter) : '') + '\u0002';
-    for (let i = 0; i < formAttributes.length; i++) parts += (attr(form, formAttributes[i]) ?? '') + '\u0001';
+  // Relative actions and hrefs resolve through these, and an unset target falls back to the first base target.
+  const baseState = () => {
+    const bases = queryDocAll(document, 'base[target]');
+    return baseURIOf(document) + SEP + urlOf(document) + SEP + (listLength(bases) > 0 ? attr(bases[0], 'target') ?? '' : '');
+  };
+  const formContent = form => {
+    let parts = '';
+    for (let i = 0; i < formAttributes.length; i++) parts += attrOf(form, formAttributes[i]) + SEP;
     const nodes = queryElementAll(form, 'input,button,iframe,select,textarea');
     for (let i = 0; i < listLength(nodes); i++) {
       const node = nodes[i];
-      parts += '\u0002' + shieldNameOf(node) + '\u0001' + textOf(node);
-      for (let j = 0; j < rowAttributes.length; j++) parts += '\u0001' + (attr(node, rowAttributes[j]) ?? '');
+      parts += '\u0002' + shieldNameOf(node) + SEP + textOf(node);
+      for (let j = 0; j < rowAttributes.length; j++) parts += SEP + (attr(node, rowAttributes[j]) ?? '');
     }
-    return hash(parts);
+    return parts;
   };
-  // Everything the rules read to classify a control: words, type, form owner and that form's controls.
-  const describe = (node, withSubmitter) => {
-    const control = shieldControlOf(node), form = control?.form;
-    let row = ident(node) + '\u0001' + shieldNameOf(node) + '\u0001' + connected(node) + '\u0001' + hash(textOf(node)) + '\u0001' + (control ? control.type : '')
-      + '\u0001' + (form ? ident(form) + '|' + formSignature(form, withSubmitter) : '');
-    for (let i = 0; i < attributes.length; i++) row += '\u0001' + (attr(node, attributes[i]) ?? '');
-    return row;
+  // Everything the rules read to classify a node: words, type, form owner and that form's controls, base state. No identity.
+  const content = node => {
+    const control = shieldControlOf(node), form = formOwner(node, control);
+    let row = shieldNameOf(node) + SEP + connected(node) + SEP + hash(textOf(node)) + SEP + (control ? control.type : '') + SEP + (form ? hash(formContent(form)) : '');
+    for (let i = 0; i < attributes.length; i++) row += SEP + attrOf(node, attributes[i]);
+    return row + SEP + baseState();
+  };
+  const digest = node => hash(content(node));
+  // Content plus which node it is and which form owns it.
+  const describe = node => {
+    const form = formOwner(node, shieldControlOf(node));
+    return ident(node) + SEP + (form ? ident(form) : '') + SEP + content(node);
+  };
+  // The default submitter by identity and by its own attributes (formaction, formtarget, ...).
+  const submitterPart = element => {
+    const form = shieldControlOf(element)?.form, submitter = form ? submitterOf(form) : null;
+    return submitter ? ident(submitter) + SEP + content(submitter) : '';
   };
   // HTML label activation: the first label at or above the element forwards to its control unless interactive content sits between.
   const forwardedOf = element => {
@@ -726,9 +767,16 @@ export function popupHook(options) {
     return null;
   };
   const sealed = (element, forwarded, areas, withSubmitter) => {
-    let value = describe(element, withSubmitter) + '\u0003' + (forwarded ? describe(forwarded, withSubmitter) : '');
-    for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + describe(areas[i], withSubmitter);
-    return value;
+    let value = describe(element) + '\u0003' + (forwarded ? describe(forwarded) : '');
+    for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + describe(areas[i]);
+    return withSubmitter ? value + '\u0004' + submitterPart(element) : value;
+  };
+  // Native media controls handle their own presses without dispatching them to the page, so for those a missing
+  // press says nothing about where the click went.
+  const swallowsInput = element => {
+    let node = element;
+    for (let depth = 0; node && depth < 100000; depth++, node = shieldParentOf(node)) if (matchesNode(node, 'audio[controls],video[controls]')) return true;
+    return false;
   };
   const listHas = (list, node) => { for (let i = 0; list && i < listLength(list); i++) if (list[i] === node) return true; return false; };
   const pathIndex = (path, node) => { for (let i = 0; i < path.length; i++) if (path[i] === node) return i; return -1; };
@@ -750,41 +798,88 @@ export function popupHook(options) {
     for (let i = 0; i < at; i++) if (path[i] !== forwarded && shieldIsElement(path[i]) && matchesNode(path[i], interactive)) return true;
     return false;
   };
-  const inspect = event => {
+  const inspect = (event, type) => {
     const { element, anchor, forwarded, areas, keys, activation, form, submitter } = shield;
     if (!connected(element)) return 'target left the page';
-    // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
-    const path = pathOf(event), at = pathIndex(path, anchor);
-    if (at < 0) {
-      // Keyboard activation (keys, or a press the caller made: activation) lands on the form's default submitter or submits the form itself.
-      const elsewhere = !(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0])
-        && !((keys || activation) && (form && pathIndex(path, form) >= 0 || submitter && pathIndex(path, submitter) >= 0));
-      if (elsewhere) return 'the input landed on a different element';
-    } else if (anchor === element && interactiveBetween(path, at, forwarded)) return 'the input landed on a different element';
-    return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : 'the checked element changed';
+    const path = pathOf(event);
+    if (keys && type === 'submit') {
+      // The submit event names the button that submitted; it must be the one that was sealed (null when no button).
+      if (!(form && pathIndex(path, form) >= 0) || submitterOfEvent(event) !== submitter) return elsewhereReason;
+    } else if (keys && !pointerType(type)) {
+      // A key lands on the focused element; it must be the field itself, not another control of the same form.
+      if (pathIndex(path, anchor) < 0) return elsewhereReason;
+    } else {
+      // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
+      // Enter in a field (keys, or a press the caller made: activation) clicks the form's default submitter, which must be the sealed one.
+      const at = pathIndex(path, anchor);
+      if (at < 0) {
+        if (!(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0]) && !((keys || activation) && submitter && pathIndex(path, submitter) >= 0)) return elsewhereReason;
+      } else if (anchor === element && interactiveBetween(path, at, forwarded)) return elsewhereReason;
+    }
+    return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : changedReason;
   };
   // Fail closed: if the check cannot run on this DOM, the input is cancelled.
   const guardEvent = event => {
     const current = shield;
-    if (!current || !event.isTrusted || now() >= current.until) return;
+    if (!current || !event.isTrusted) return;
     let bad;
     try {
       const type = typeOf(event);
       if (!(pointerType(type) || current.keys && keyType(type))) return;
-      bad = current.violation ?? inspect(event);
-    } catch { bad = 'the checked element changed'; }
+      if (current.violation) bad = current.violation;
+      else if (now() >= current.until) bad = lateReason;
+      else if (current.foreign) bad = elsewhereReason;
+      else {
+        bad = inspect(event, type);
+        if (!bad) {
+          current.passed = true;
+          if (type === 'pointerdown' || type === 'mousedown' || type === 'click') current.landed = true;
+        }
+      }
+    } catch { bad = changedReason; }
     if (!bad) return;
     current.violation ??= bad;
     try { stopNow(event); } catch { /* The prevent below still cancels the default. */ }
     try { cancel(event); } catch { /* Nothing further can be done to this event. */ }
   };
   const guarded = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu', 'keydown', 'keypress', 'keyup', 'submit'];
-  for (let i = 0; i < guarded.length; i++) add.call(window, guarded[i], guardEvent, true);
-  add.call(window, 'keydown', keyEvent, true);
-  add.call(window, 'keyup', keyEvent, true);
-  for (const type of pointerEvents) add.call(window, type, capture, true);
-  add.call(window, 'click', guard, true);
-  add.call(window, 'submit', submitted, true);
+  // document.open() (and a document.write that opens implicitly) erases every listener on the window, so the
+  // listeners are added by a function that can run again: add is idempotent for the same callback, and a re-add
+  // lands before any listener the page registers afterwards. A private event type tells whether they are present.
+  const dispatchNow = uncurry(EventTarget.prototype.dispatchEvent), NativeEvent = Event, random = Math.random;
+  const liveProbe = 'sleight-' + random().toString(36).slice(2) + random().toString(36).slice(2);
+  let alive = false;
+  const onProbe = () => { alive = true; };
+  const install = () => {
+    if (dead) return false;
+    for (let i = 0; i < guarded.length; i++) add.call(window, guarded[i], guardEvent, true);
+    add.call(window, 'keydown', keyEvent, true);
+    add.call(window, 'keyup', keyEvent, true);
+    for (const type of pointerEvents) add.call(window, type, capture, true);
+    add.call(window, 'click', guard, true);
+    add.call(window, 'submit', submitted, true);
+    add.call(window, liveProbe, onProbe, true);
+    alive = false;
+    try { dispatchNow(window, new NativeEvent(liveProbe)); } catch { /* Reported as not alive. */ }
+    return alive;
+  };
+  install();
+  // Natives for the rewriters, captured before page scripts. The listeners are re-added for the window of the
+  // document that was rewritten, which can belong to another realm (a parent calling its own prototype's open).
+  const documentProto = globalThis.Document?.prototype;
+  const rewriters = ['open', 'write', 'writeln'].filter(name => typeof documentProto?.[name] === 'function');
+  const shieldViewOf = getter(globalThis.Document, 'defaultView'), reflectApply = Reflect.apply;
+  const afterRewrite = doc => {
+    let view = null;
+    try { view = shieldViewOf(doc); } catch { /* Not a document; the native call has already thrown. */ }
+    try { if (view && view !== window) view[key].reinstall(proofFor('reinstall')); else install(); } catch { install(); }
+  };
+  for (const name of rewriters) {
+    const original = documentProto[name];
+    replace(documentProto, name, { configurable: true, writable: true, value: { [name]() {
+      try { return reflectApply(original, this, arguments); } finally { afterRewrite(this); }
+    } }[name] });
+  }
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
@@ -793,15 +888,79 @@ export function popupHook(options) {
     for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
     arm = undefined; return true;
   };
+  const dropShield = current => {
+    nativeClear(current.drop);
+    if (shield === current) shield = undefined;
+  };
+  const holdShield = (current, capMs) => {
+    // Hard cap: well past the soft cap, only to drop a shield nobody finished.
+    current.drop = nativeTimeout(() => { if (shield === current) shield = undefined; }, capMs * 4 + 5000);
+    return current;
+  };
+  // Disarms this frame's shield and reports the first veto, whether a press or click landed on the sealed
+  // element's document, and whether any guarded event passed (so the page's own handlers saw part of the click).
+  // The other frames are armed and released from Node over every frame Playwright knows (see frameShield).
+  // All three properties are always own properties of the result, so reading them reaches nothing a page can define.
+  const conclude = token => {
+    const current = shield?.token === token && !shield.foreign ? shield : undefined;
+    const bad = current?.violation;
+    if (current) dropShield(current);
+    finish(token);
+    return { bad, landed: current?.reports ? current.landed : undefined, passed: current ? current.passed : undefined };
+  };
   const impl = {
     // See the key-shield API above. Any throw here reaches the caller as a rejected call, which reads as "page changed".
     guard(element, token, capMs, { keys = false, press = false } = {}) {
       if (retired.has(token) || !isFinite(capMs) || capMs <= 0 || !shieldIsElement(element) || !connected(element)) return false;
       const withKeys = keys === true, activation = press === true, control = shieldControlOf(element), form = withKeys || activation ? control?.form ?? null : null;
       const forwarded = forwardedOf(element), areas = areasOf(element);
-      shield = { token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, activation, form, submitter: form ? submitterOf(form) : null,
-        signature: sealed(element, forwarded, areas, withKeys), until: now() + capMs };
-      return true;
+      const parts = [digest(element), forwarded ? digest(forwarded) : ''];
+      for (let i = 0; areas && i < listLength(areas); i++) parts[parts.length] = digest(areas[i]);
+      const until = now() + capMs;
+      shield = holdShield({ token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, activation, form, submitter: form ? submitterOf(form) : null,
+        parts, signature: sealed(element, forwarded, areas, withKeys), until, landed: false, passed: false, reports: !activation && !swallowsInput(element) }, capMs);
+      return install();
+    },
+    // A frame that is not the checked element's: any trusted press or click here (and key, with { keys }) is
+    // cancelled until the shield is released or its cap passes. Called from Node for every frame but the owner's,
+    // and again before the click (idempotent for one token); a frame created while armed calls it on itself.
+    // Returns true only when the listeners are confirmed present.
+    adopt(token, capMs, keys = false) {
+      if (retired.has(token) || !isFinite(capMs) || capMs <= 0) return false;
+      if (shield && (!shield.foreign || shield.token !== token)) {
+        if (!shield.foreign) return false;
+        dropShield(shield); shield = undefined;
+      }
+      shield ??= holdShield({ foreign: true, token, keys: keys === true, until: now() + capMs, landed: false, passed: false }, capMs);
+      return install();
+    },
+    armed() { return shield ? { token: shield.token, until: shield.until, keys: shield.keys === true } : undefined; },
+    // Node releases a frame's foreign shield (the token is retired, so a late adopt of it is refused) and reads its veto.
+    release(token) {
+      retired.add(token);
+      const current = shield?.token === token && shield.foreign ? shield : undefined;
+      if (!current) return undefined;
+      dropShield(current);
+      return current.violation;
+    },
+    // Re-adds the listeners (a document rewrite erased them); true when they are confirmed present.
+    reinstall() { return install(); },
+    // What the rules read, as digests taken in the same step as their read, must equal what was sealed.
+    expect(token, evidence) {
+      const current = shield;
+      if (!current || current.foreign || current.token !== token) return changedReason;
+      let bad = current.violation;
+      if (!bad && now() >= current.until) bad = lateReason;
+      if (!bad && !install()) bad = changedReason;
+      if (!bad) {
+        const parts = current.parts, given = evidence?.areas;
+        let same = evidence?.element === parts[0] && (evidence?.forwarded ?? '') === parts[1] && given?.length === parts.length - 2;
+        for (let i = 0; same && i < given.length; i++) same = given[i] === parts[i + 2];
+        if (!same) bad = changedReason;
+      }
+      if (!bad) return true;
+      current.violation ??= bad;
+      return bad;
     },
     // Scroll the element into view without animation, so the pointer can be moved onto it (the click would scroll anyway).
     reveal(element) { scrollInto(element, { block: 'nearest', inline: 'nearest', behavior: 'instant' }); },
@@ -812,7 +971,7 @@ export function popupHook(options) {
       const next = () => { if (waiting) { waiting = false; nativeTimeout(done, 0); } };
       nativeFrame?.(next); nativeTimeout(next, 40);
     },
-    verdict(token) { return shield && shield.token === token ? shield.violation : undefined; },
+    verdict(token) { return shield?.token === token ? shield.violation : undefined; },
     prepare(element, token, capMs, press) {
       if (retired.has(token)) return false;
       held = 0;
@@ -886,11 +1045,8 @@ export function popupHook(options) {
       return { url: arm.request.url, target: arm.request.target, rel: arm.request.rel };
     },
     // A blocked input reports why, so the caller never mistakes a cancelled click for a delivered one.
-    finish(token) {
-      const bad = shield && shield.token === token ? shield.violation : undefined;
-      if (shield && shield.token === token) shield = undefined;
-      finish(token); return bad ?? true;
-    },
+    finish(token) { return conclude(token).bad ?? true; },
+    conclude,
     cancel(event) { cancelEvent(event); },
     take() { const count = held; held = 0; return count; },
     off() {
@@ -900,6 +1056,7 @@ export function popupHook(options) {
       remove.call(window, 'keyup', keyEvent, true);
       for (const type of pointerEvents) remove.call(window, type, capture, true);
       remove.call(window, 'click', guard, true);
+      remove.call(window, liveProbe, onProbe, true);
       for (let i = 0; i < guarded.length; i++) remove.call(window, guarded[i], guardEvent, true);
       shield = undefined;
       remove.call(window, 'submit', submitted, true);
@@ -924,8 +1081,28 @@ export function popupHook(options) {
     return 'q' + value.url + NUL + value.target + NUL + value.rel;
   };
   const stringText = value => typeof value === 'string' ? 's' + value : value === undefined ? 'u' : 't';
+  const triText = value => value === true ? 't' : value === false ? 'f' : 'u';
+  // conclude: 'c', landed and passed as t/f/u, then 's' and the veto or 'u'. Its fields are always own properties.
+  const concludeText = value => 'c' + triText(value.landed) + triText(value.passed) + (typeof value.bad === 'string' ? 's' + value.bad : 'u');
+  const armedText = value => value === undefined ? 'u' : 'a' + value.token + NUL + String(value.until) + NUL + (value.keys === true ? 't' : 'f');
   const seal = (method, proof, run, text) => { const nonce = verify(method, proof); return sign(method, nonce, text(run())); };
   const nothing = () => 'u';
+  // The same check hookOpen makes in the controller, for an answer another window's copy of this hook gave to a call
+  // made here: the text if nonce and tag are right for that proof and method, else undefined. Natives and primitives only.
+  const equalText = (a, b) => {
+    let difference = a.length ^ b.length;
+    for (let i = 0; i < a.length && i < b.length; i++) difference |= charCodeAt(a, i) ^ charCodeAt(b, i);
+    return difference === 0;
+  };
+  const openAnswer = (method, proof, answer) => {
+    if (typeof answer !== 'string') return undefined;
+    const nonce = slice(proof, 0, indexOf(proof, '.')), start = nonce.length + 1;
+    if (slice(answer, 0, start) !== nonce + '.') return undefined;
+    const rest = slice(answer, start), dot = indexOf(rest, '.');
+    if (dot < 0) return undefined;
+    const text = slice(rest, dot + 1);
+    return equalText(slice(rest, 0, dot), hmacHex(method + ':' + nonce + ':' + text)) ? text : undefined;
+  };
   const api = {
     guard: (proof, element, token, capMs, options) => seal('guard', proof, () => impl.guard(element, token, capMs, options), booleanText),
     reveal: (proof, element) => seal('reveal', proof, () => impl.reveal(element), nothing),
@@ -937,9 +1114,28 @@ export function popupHook(options) {
     cancel: (proof, event) => { verify('cancel', proof); impl.cancel(event); },
     take: (proof) => seal('take', proof, () => impl.take(), count => 'd' + count),
     off: proof => seal('off', proof, () => impl.off(), booleanText),
+    expect: (proof, token, evidence) => seal('expect', proof, () => impl.expect(token, evidence), stringText),
+    conclude: (proof, token) => seal('conclude', proof, () => impl.conclude(token), concludeText),
+    adopt: (proof, token, capMs, keys) => seal('adopt', proof, () => impl.adopt(token, capMs, keys), booleanText),
+    armed: proof => seal('armed', proof, () => impl.armed(), armedText),
+    release: (proof, token) => seal('release', proof, () => impl.release(token), stringText),
+    reinstall: proof => seal('reinstall', proof, () => impl.reinstall(), booleanText),
   };
   try { defineProperty(window, key, { value: freeze(api), configurable: false, writable: false, enumerable: false }); }
   catch { for (const restore of replacements.reverse()) restore(); return false; }
+  // A frame created while its parent is guarded starts armed. The parent's answer is checked here against the shared
+  // secret, like the controller checks one, so a window that is not this hook cannot arm or disarm this frame.
+  try {
+    const parent = window.parent;
+    if (parent !== window) {
+      const proof = proofFor('armed'), text = openAnswer('armed', proof, parent[key].armed(proof));
+      if (text !== undefined && charCodeAt(text, 0) === 97) {
+        const first = indexOf(text, NUL), second = indexOf(text, NUL, first + 1);
+        const until = Number(slice(text, first + 1, second)), keys = slice(text, second + 1) === 't';
+        if (first > 0 && second > first && until > now()) impl.adopt(slice(text, 1, first), until - now(), keys);
+      }
+    }
+  } catch { /* A cross-origin parent, or none: nothing to inherit. */ }
   return true;
 }
 
@@ -951,7 +1147,8 @@ export function popupHook(options) {
 // page that replaced the evaluate machinery, and returns the decoded value (what the method returned before answers were
 // signed): guard and off a boolean, reveal and settle undefined, verdict and finish a string or undefined or true, prepare
 // false, true, { kind: 'link' }, { kind: 'watch' }, { kind: 'form' } or { kind: 'refuse', reason: 'link' | 'form' }, takeRequest undefined,
-// { unavailable: true }, { unavailable: true, lost: true }, { blocked: 'link' | 'form' }, { violation } or { url, target, rel }, take a number. It throws an Error with code HOOK_ANSWER_REFUSED for anything it cannot vouch for.
+// { unavailable: true }, { unavailable: true, lost: true }, { blocked: 'link' | 'form' }, { violation } or { url, target, rel }, take a number,
+// expect true or a string, conclude { bad, landed, passed }, adopt and reinstall a boolean, armed undefined or { token, until, keys }, release a string or undefined. It throws an Error with code HOOK_ANSWER_REFUSED for anything it cannot vouch for.
 export const newHook = () => Object.freeze({ key: 'k' + randomBytes(16).toString('hex'), secret: randomUUID() });
 // The install expression for a hook: popupHook called with { key, secret } where secret is the secret's bytes as numeric
 // literals (an array of 16 to 64 byte values). The page never holds a string it must convert, and an array or object
@@ -980,6 +1177,16 @@ export function hookOpen(hook, answer) {
   const expected = createHmac('sha256', hook.secret).update(method + ':' + nonce + ':' + text).digest('hex');
   if (tag.length !== expected.length || !timingSafeEqual(Buffer.from(tag), Buffer.from(expected))) throw refused();
   issued.get(hook).delete(nonce);
+  if (method === 'conclude') {
+    if (!/^c[tfu][tfu][su]/.test(text)) throw refused();
+    const tri = letter => letter === 't' ? true : letter === 'f' ? false : undefined;
+    return { bad: text[3] === 's' ? text.slice(4) : undefined, landed: tri(text[1]), passed: tri(text[2]) };
+  }
+  if (method === 'armed' && text !== 'u') {
+    const [token, until, keys, ...extra] = text.slice(1).split('\0');
+    if (text[0] !== 'a' || extra.length || keys === undefined || !Number.isFinite(Number(until))) throw refused();
+    return { token, until: Number(until), keys: keys === 't' };
+  }
   if (text === 'u') return undefined;
   if (text === 't' || text === 'f') return text === 't';
   if (text === 'link' || text === 'form' || text === 'watch') return { kind: text };
@@ -998,21 +1205,160 @@ const hookOf = tab => {
   return hook;
 };
 
-const changedMidClick = 'page changed during the click; read again';
+// A cancelled click reaches the model as one of these. The guard cancels the browser input in the page; whether a
+// retry is safe depends on whether any press, release or click was delivered to the page's listeners first
+// (a page can act on pointerdown or mousedown), which the hook reports as `passed`.
+export const changedMidClick = 'page changed during the click; read again. The page received no press, release or click, so a fresh read and one retry is safe.';
+export const changedAfterPress = 'page changed during the click; the page had already received part of it.';
+const missedClick = 'the click did not reach the checked element and may have landed somewhere else; read the page before trying again';
 const hookUnavailable = 'background popup hook did not answer; use the engine browser path';
 // A refused proof, an answer the controller cannot verify, a missing or switched-off hook: the page may be hostile or the
 // hook gone, and reading the page again will not help, so the model is sent to the engine browser path.
 const hookFailed = error => error?.code === 'HOOK_ANSWER_REFUSED'
   || /background popup hook (refused the call|unavailable|is off|answer refused)/.test(String(error?.message));
 
+// The frame that owns the element: the guard lives in that frame's hook, so it is the frame to disarm and read.
+async function ownerFrame(locator, page, timeoutMs) {
+  try {
+    const pinned = typeof locator.ownerFrame === 'function';
+    const handle = pinned ? locator : typeof locator.elementHandle === 'function' ? await locator.elementHandle({ timeout: timeoutMs }) : undefined;
+    try { return (await handle?.ownerFrame()) ?? page; } finally { if (!pinned) await handle?.dispose().catch(() => {}); }
+  } catch { return page; }
+}
+
+// A frame whose site differs from the tab's runs no hook here (cross-site frames are separate processes, and the
+// registry's script is on the page target). Same-site frames, about:blank and srcdoc frames always have one, so a frame
+// of those that answers "absent" is not trusted to be hookless: a page can forge that answer, and it would then be left
+// unarmed. Such a frame fails the arm closed instead.
+const siteOf = url => {
+  try {
+    const { protocol, hostname } = new URL(url);
+    if (protocol !== 'http:' && protocol !== 'https:') return '';
+    return /^[\d.]+$|:/.test(hostname) ? hostname : hostname.split('.').slice(-2).join('.');
+  } catch { return ''; }
+};
+
+// Every frame Playwright knows except the owner's (same-origin or not, in a shadow root or not, ancestors and
+// siblings included) is armed from Node as foreign: any trusted press or click in it is cancelled, because the
+// sealed element is not there. Frames created or navigated while armed are armed again as the events arrive (and a
+// same-origin one also arms itself at document start); `confirm` re-arms them all just before the click, which also
+// repairs a document.open() that erased a frame's listeners. A frame the hook never reached (cross-site frames run no
+// hook here) is skipped and only reported afterwards by the landed check; a frame that has a hook but cannot be armed
+// fails the click before it is sent. `release` reaches every frame, retries once, and runs even after errors.
+// Every call to a frame's hook carries a fresh proof and its signed answer is opened with hookOpen; `hook` is the
+// tab's { key, secret } (every frame has the same key and secret).
+export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000, keys = false } = {}) {
+  hookOf({ hook });
+  const mainFrame = typeof page?.mainFrame === 'function' ? page.mainFrame() : undefined;
+  const ownerIs = frame => frame === owner || owner === page && frame === mainFrame;
+  // A closed tab's frames are not marked detached, so a closed page counts as gone too.
+  const gone = frame => frame.isDetached?.() || frame.page?.().isClosed?.();
+  const others = () => (typeof page?.frames === 'function' ? page.frames() : []).filter(frame => !ownerIs(frame) && !frame.isDetached?.());
+  const mayLackHook = frame => {
+    const here = siteOf(frame.url?.() ?? '');
+    return here !== '' && here !== siteOf(mainFrame?.url?.() ?? page?.url?.() ?? '');
+  };
+  // null: the frame has no hook and is allowed to have none. Throws for anything else that is not a verified answer.
+  const call = async (frame, method) => {
+    const { key } = hook, proof = hookProof(hook, method);
+    const answer = await deadline(() => method === 'adopt'
+      ? frame.evaluate(({ key, proof, token, capMs, keys }) => window[key] ? window[key].adopt(proof, token, capMs, keys) : 'absent',
+        { key, proof, token, capMs, keys: keys === true })
+      : frame.evaluate(({ key, proof, token }) => window[key] ? window[key].release(proof, token) : 'absent', { key, proof, token }),
+    timeoutMs, 'frame unreachable');
+    if (answer === 'absent') {
+      if (mayLackHook(frame)) return null;
+      throw Error('background popup hook unavailable');
+    }
+    return hookOpen(hook, answer);
+  };
+  const pending = new Set(), late = new Set();
+  let ending = false, failed = false;
+  // 'armed', 'skipped' (no hook, or the frame is gone) or 'failed' (a hook that would not arm, or would not answer).
+  const adoptOne = async frame => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const reply = await call(frame, 'adopt');
+        return reply === null ? 'skipped' : reply === true ? 'armed' : 'failed';
+      } catch { if (gone(frame)) return 'skipped'; }
+    }
+    return 'failed';
+  };
+  const onFrame = frame => {
+    if (ownerIs(frame)) return;
+    // Once release has started, a frame that appears or navigates is only released again, never armed.
+    if (ending) { late.add(frame); return; }
+    const task = adoptOne(frame).then(result => { if (result === 'failed') failed = true; }, () => { failed = true; });
+    pending.add(task); task.then(() => pending.delete(task));
+  };
+  page?.on?.('framenavigated', onFrame);
+  page?.on?.('frameattached', onFrame);
+  const armAll = async () => {
+    await Promise.all([...pending]);
+    const results = await Promise.all(others().map(adoptOne));
+    return !failed && results.every(result => result !== 'failed');
+  };
+  const releaseOne = async frame => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { const reason = await call(frame, 'release'); return typeof reason === 'string' ? reason : undefined; }
+      catch { if (gone(frame)) return undefined; }
+    }
+    return 'the checked element changed';
+  };
+  return {
+    // Arms every other frame; false when one that has a hook could not be armed.
+    arm: armAll,
+    // Called just before the click is sent: arms again whatever is new or was rewritten since.
+    confirm: armAll,
+    // Releases every frame (also those created while the first pass ran) and returns the first veto, if any.
+    async release() {
+      ending = true;
+      await Promise.allSettled([...pending]);
+      const done = new Set();
+      let bad;
+      try {
+        for (let pass = 0; pass < 4; pass++) {
+          const frames = others().filter(frame => !done.has(frame) || late.has(frame));
+          late.clear();
+          if (!frames.length) break;
+          for (const frame of frames) done.add(frame);
+          for (const reason of await Promise.all(frames.map(releaseOne))) bad ??= reason;
+        }
+      } finally { page?.off?.('framenavigated', onFrame); page?.off?.('frameattached', onFrame); }
+      return bad;
+    },
+  };
+}
+
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false } = {}) {
   const token = randomUUID(), hook = hookOf(tab), { key } = hook;
+  let frame = tab.page, completed = false, others;
+  // Concludes the owner frame's shield and releases every other frame; each runs even if the other throws.
   // 'absent' stands for no hook in the document the click left behind; a page can fake it, which only fails the call.
   const disarm = async () => {
-    const answer = await tab.page.evaluate(({ key, proof, token }) => window[key] ? window[key].finish(proof, token) : 'absent', { key, proof: hookProof(hook, 'finish'), token });
-    return answer === 'absent' ? undefined : hookOpen(hook, answer);
+    const [own, rest] = await Promise.allSettled([
+      frame.evaluate(({ key, proof, token }) => window[key] ? window[key].conclude(proof, token) : 'absent', { key, proof: hookProof(hook, 'conclude'), token }),
+      others?.release() ?? Promise.resolve(undefined)]);
+    // A click that closed its own tab leaves nothing to veto in the other frames.
+    const closed = tab.closed || tab.page.isClosed?.();
+    const elsewhere = rest.status === 'fulfilled' && !closed ? rest.value : undefined;
+    let report = {}, refused = false;
+    if (own.status === 'fulfilled' && own.value !== 'absent') {
+      try { report = hookOpen(hook, own.value); }
+      catch (error) { if (!hookFailed(error)) throw error; refused = true; }
+    }
+    return { bad: report.bad ?? elsewhere, landed: report.landed, passed: report.passed, refused };
   };
-  let cancelled, failure, reported;
+  // The click callback calls this once the rules have read the element, before it spends any authority.
+  const verify = async evidence => {
+    const [reply, armed] = await Promise.all([
+      deadline(async () => hookOpen(hook, await frame.evaluate(({ key, proof, token, evidence }) => window[key].expect(proof, token, evidence),
+        { key, proof: hookProof(hook, 'expect'), token, evidence })), timeoutMs).catch(error => hookFailed(error) ? hookUnavailable : undefined),
+      others.confirm().catch(() => false)]);
+    if (reply === hookUnavailable) return hookUnavailable;
+    return reply === true && armed ? true : changedMidClick;
+  };
+  let cancelled, failure, reported, report;
   try {
     let prepared;
     try {
@@ -1028,6 +1374,8 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       ? 'Enter would open this link in a new tab, and sleight cannot check where it goes; click the link instead'
       : 'Enter would submit this form into a new tab; click its submit button instead');
     const modified = prepared === true || prepared?.kind === 'link';
+    frame = await ownerFrame(locator, tab.page, timeoutMs);
+    others = frameShield(tab.page, frame, { hook, token, capMs: timeoutMs + 4000, timeoutMs });
     // Move the pointer onto the element first, so a swap the pointer's arrival triggers lands before the seal is
     // taken, then wait one frame in the page and seal what this click activates. The click callback classifies
     // after this; the hook cancels any input that no longer matches. An element with no box (an image-map area)
@@ -1037,18 +1385,21 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       if (box) await tab.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     }
     try {
-      // Enter in a field makes the browser click the form's default button: for a press that click is the press working.
-      const armed = await deadline(() => locator.evaluate(async (element, { key, settle, guard, token, capMs, press }) => {
+      // The shield outlives the click timeout: a click delayed by a busy page is still checked, and one that
+      // arrives after this cap is cancelled. The other frames are armed in the same step. Enter in a field makes the
+      // browser click the form's default button: for a press that click is the press working.
+      const [armed, othersArmed] = await Promise.all([deadline(() => locator.evaluate(async (element, { key, settle, guard, token, capMs, press }) => {
         const hook = window[key];
         await hook.settle(settle);
         return hook.guard(guard, element, token, capMs, { press });
-      }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 1000, press: !!press }, { timeout: timeoutMs }), timeoutMs);
+      }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 4000, press: !!press }, { timeout: timeoutMs }), timeoutMs), others.arm()]);
       if (hookOpen(hook, armed) !== true) throw Error('click guard unavailable');
+      if (!othersArmed) throw Error('frame unavailable');
     } catch (error) { throw hookFailed(error) ? failure = Error(hookUnavailable) : Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     tab.background = modified; // Read by the result: a popup after an unmodified click probably took the foreground.
     let result;
-    try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}); }
+    try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}, verify); }
     catch (error) {
       if ((tab.closed || tab.page.isClosed?.()) && tab.parent && !tab.parent.page.isClosed()
         && /target.*closed/i.test(error.message)) result = { closed: true, opener: tab.opener };
@@ -1057,9 +1408,9 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     if (result?.closed !== true && !tab.closed && !tab.page.isClosed?.() && (prepared?.kind === 'link' || prepared?.kind === 'watch')) {
       // A plain click on a watched link or form often navigates, which destroys the arm with the document: that
       // is the click working, not a default that changed. Only the evaluate may fail that way; a refused or forged
-      // answer still throws.
+      // answer still throws. The arm lives in the frame that owns the element.
       let answer;
-      try { answer = await tab.page.evaluate(({ key, proof, token }) => window[key] ? window[key].takeRequest(proof, token) : 'absent',
+      try { answer = await frame.evaluate(({ key, proof, token }) => window[key] ? window[key].takeRequest(proof, token) : 'absent',
         { key, proof: hookProof(hook, 'takeRequest'), token }); }
       catch (error) { if (prepared.kind !== 'watch') throw error; }
       const request = answer === undefined ? undefined : answer === 'absent' ? { unavailable: true, lost: true } : hookOpen(hook, answer);
@@ -1075,6 +1426,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       }
     }
     await tab.settlePopups?.(checkpoint, { background: modified });
+    completed = result?.closed !== true && !tab.closed && !tab.page.isClosed?.();
     return result;
   } catch (error) {
     if (failure || !hookFailed(error)) throw error;
@@ -1082,14 +1434,16 @@ export async function backgroundClick(tab, locator, click = options => locator.c
   } finally {
     // A hook that cannot vouch for its own answer, or refused the call, may have vetoed the input: say so rather than
     // report a click delivered. A page that navigated away or closed just ends the evaluate, which is not a veto.
-    let verdict;
-    try { verdict = await disarm(); }
-    catch (error) { if (error?.code === 'HOOK_ANSWER_REFUSED' || /background popup hook refused/.test(error?.message)) cancelled ??= 'the page hook did not answer'; }
-    cancelled ??= typeof verdict === 'string' ? verdict : undefined;
-    // The guard cancelled the input: say so instead of reporting a delivered click. An error already on its way out
-    // that names the hook (refused proof, unavailable hook) or the change the page made (a flipped link or form) is clearer than
-    // this and stays.
-    if (cancelled && !failure && !reported) throw Error(changedMidClick);
+    try { report = await disarm(); } catch { report = {}; }
+    if (report.refused) cancelled ??= 'the page hook did not answer';
+    cancelled ??= report.bad;
+    // The guard cancelled the input: say so instead of reporting a delivered click. A retry is safe only when the hook
+    // confirms that no press, release or click reached the page before the veto. An error already on its way out that
+    // names the hook (refused proof, unavailable hook) or the change the page made (a flipped link or form) is clearer
+    // than this and stays.
+    if (cancelled && !failure && !reported) throw Error(report.passed === false ? changedMidClick : changedAfterPress);
+    // A click was sent and no press or click reached the sealed element's document: it went somewhere else.
+    if (completed && report.landed === false && !failure && !reported) throw Error(missedClick);
   }
 }
 
@@ -1134,7 +1488,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     entry.script = identifier;
     const result = await entry.cdp.send('Runtime.evaluate', { expression: source, returnByValue: true });
     if (result.exceptionDetails) throw Error('background popup hook installation failed');
-    if (result.result?.value === true) return;
+    if (result.result?.value === true) { await hookFrames(entry, source); return; }
     // The install refused because the property is taken. That is fine when the occupant is this registry's own hook,
     // which a window.open handle's first document runs before the handle reaches the page; it must prove it by signing
     // an answer with the secret. Anything else (a stale or planted object) leaves the tab without a hook.
@@ -1142,6 +1496,18 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     let genuine = false;
     try { genuine = !probe.exceptionDetails && typeof probe.result?.value === 'string' && probe.result.value !== 'absent' && hookOpen(entry.hook, probe.result.value) === undefined; } catch { /* Not the hook's answer. */ }
     if (!genuine) throw Error('background popup hook installation failed');
+    await hookFrames(entry, source);
+  };
+  // A page adopted after it loaded (a popup) has child frames that began before the registry's script was registered. Give
+  // the same-site ones the hook too, so the controller can arm them: frameShield treats a same-site frame with no hook
+  // as a failure, since a page can fake that answer. Cross-site frames are separate processes and stay hookless.
+  const hookFrames = async (entry, source) => {
+    const here = siteOf(entry.page.url()), main = entry.page.mainFrame?.();
+    for (const frame of entry.page.frames?.() ?? []) {
+      const site = siteOf(frame.url?.() ?? '');
+      if (frame === main || (site !== '' && site !== here)) continue;
+      try { await frame.evaluate(source); } catch { /* Gone, or cannot run it: arming this frame will fail closed. */ }
+    }
   };
   const removeHook = async entry => {
     if (entry.script) {

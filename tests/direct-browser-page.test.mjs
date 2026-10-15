@@ -19,7 +19,7 @@ function fixture(options = {}) {
     p.isClosed = () => p.closed;
     p.url = () => 'https://fixture.invalid/' + targetId;
     p.title = async () => targetId;
-    p.frames = () => [{ evaluate: async () => 'absent' }];
+    p.frames = () => [{ evaluate: async () => 'absent', url: () => 'https://cross-site.invalid/' }];
     p.keyboard = { up: async key => calls.push(['up', key]) };
     p.cdp = Object.assign(new EventEmitter(), { async send(method, params) {
       calls.push([method, params, targetId]);
@@ -164,7 +164,7 @@ test('unproved popup preparation refuses before input and disarms a possible lat
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
-function hookFixture({ clock = Date, handle } = {}) {
+function hookFixture({ clock = Date, handle, credentials: given, parent } = {}) {
   class Event {
     get defaultPrevented() { return !!this.nativePrevented; }
     get returnValue() { return !this.nativePrevented; }
@@ -226,10 +226,10 @@ function hookFixture({ clock = Date, handle } = {}) {
     observe() { this.observing = true; }
     disconnect() { this.disconnected = true; }
   }
-  const opens = [], window = { listeners: {}, captureListeners: {}, open(...args) { opens.push(args); return handle ?? { real: true }; } };
+  const opens = [], window = { listeners: {}, captureListeners: {}, parent, open(...args) { opens.push(args); return handle ?? { real: true }; } };
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
-  const credentials = newHook();
+  const credentials = given ?? newHook();
   const context = vm.createContext({ window, document, navigator,
     MouseEvent, Element, HTMLElement: Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     Event, EventTarget, MutationObserver, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
@@ -248,6 +248,26 @@ function hookFixture({ clock = Date, handle } = {}) {
   return { window, document, navigator, hook, raw, call, credentials, context, installed, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     MouseEvent, Event, EventTarget, opens, observers };
 }
+
+// A frame created while its parent is armed reads the parent's state at install; the answer must be the hook's own.
+test('AD1 a child frame inherits its parent\'s armed state only from a signed answer', () => {
+  const parent = hookFixture();
+  parent.call('adopt', 'tok', 60000, false);
+  try {
+    const child = hookFixture({ credentials: parent.credentials, parent: parent.window });
+    try { assert.equal(child.call('armed')?.token, 'tok', 'a genuine parent arms the child'); } finally { child.call('release', 'tok'); }
+    const until = Date.now() + 60000, key = parent.credentials.key;
+    for (const [name, answer] of [
+      ['unsigned', 'x.' + '0'.repeat(64) + '.atok\0' + until + '\0f'],
+      ['not a string', { token: 'tok', until, keys: false }],
+      ['signed for another method', parent.window[key].verdict(hookProof(parent.credentials, 'verdict'), 'tok')],
+      ['right nonce, wrong tag', proof => proof.slice(0, proof.indexOf('.')) + '.' + '0'.repeat(64) + '.atok\0' + until + '\0f'],
+    ]) {
+      const forged = hookFixture({ credentials: parent.credentials, parent: { [key]: { armed: proof => typeof answer === 'function' ? answer(proof) : answer } } });
+      assert.equal(forged.call('armed'), undefined, name + ' answer arms nothing');
+    }
+  } finally { parent.call('release', 'tok'); }
+});
 
 test('CR8 pointer events stay plain when their first modifier read is after dispatch', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
@@ -450,7 +470,8 @@ test('CR3 captures composedPath and Date.now before page wrappers can change mas
 
 test('CR3 preparation arm outlasts the actionability timeout by one second', async () => {
   const f = clickFixture(true); let cap;
-  f.locator.evaluate = async (fn, args) => { cap = args.capMs; return hookAnswer(f.entry.hook, fn, args, { prepare: true }); };
+  // The first call is the preparation arm; the shield sealed afterwards outlasts the click by four seconds.
+  f.locator.evaluate = async (fn, args) => { cap ??= args.capMs; return hookAnswer(f.entry.hook, fn, args, { prepare: true }); };
   await backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 2000 });
   assert.equal(cap, 3000);
 });
@@ -905,7 +926,7 @@ test('a refused proof or unavailable hook sends the model to the engine path fro
     break_(f);
     // The finish that follows is refused too: the clearer error must win over "page changed".
     const finish = f.entry.page.evaluate;
-    f.entry.page.evaluate = async (fn, arg) => /\.finish\(/.test(String(fn)) ? refuse() : finish(fn, arg);
+    f.entry.page.evaluate = async (fn, arg) => /\.conclude\(/.test(String(fn)) ? refuse() : finish(fn, arg);
     await assert.rejects(backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options])),
       error => /use the engine browser path/.test(error.message) && !/read again/.test(error.message), stage);
   }
@@ -915,8 +936,14 @@ test('a refused proof or unavailable hook sends the model to the engine path fro
   await assert.rejects(backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 5 }), /page changed during the click; read again/);
   // A vetoed click still reads as changed.
   const g = clickFixture(true);
-  g.entry.page.evaluate = async (fn, arg) => hookAnswer(g.entry.hook, fn, arg, { verdict: 'the checked element changed' });
+  g.entry.page.evaluate = async (fn, arg) => hookAnswer(g.entry.hook, fn, arg, { verdict: 'the checked element changed', passed: false });
   await assert.rejects(backgroundClick(g.entry, g.locator, async () => {}), /page changed during the click; read again/);
+  // The page saw part of the click, or the hook could not say: the retry is not known to be safe.
+  for (const passed of [true, undefined]) {
+    const h = clickFixture(true);
+    h.entry.page.evaluate = async (fn, arg) => hookAnswer(h.entry.hook, fn, arg, { verdict: 'the checked element changed', passed });
+    await assert.rejects(backgroundClick(h.entry, h.locator, async () => {}), /page changed during the click; the page had already received part of it/);
+  }
 });
 
 test('CR1 unavailable link default and missing registry never replay input', async () => {

@@ -1,3 +1,4 @@
+import { sealDigest } from './seal-digest.mjs';
 // Playwright 1.64.0 is pinned and runs in-process, including when its browser
 // transport uses CDP. The client bridge resolves the exact held node; the server
 // adopts it into that frame's utility world without consulting page JavaScript.
@@ -51,8 +52,10 @@ function nativeReader() {
   };
 }
 
+// Readers get the native reader and sealDigest (seal-digest.mjs), so a read can carry the digest of the
+// same node it classified, taken in the same synchronous step.
 function expression(reader) {
-  return '([el, arg]) => (' + reader.toString() + ')(el, arg, (' + nativeReader.toString() + ')())';
+  return '([el, arg]) => (' + reader.toString() + ')(el, arg, (' + nativeReader.toString() + ')(), (' + sealDigest.toString() + '))';
 }
 
 export async function trustedRead(handle, reader, arg) {

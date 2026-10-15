@@ -18,7 +18,7 @@ const sameDocument = (a, b) => ['session', 'turn', 'document', 'origin'].every(k
 
 // Closure-free: pass to locator.evaluate in the target's own frame. Page words
 // can only increase risk. Read visible text, aria-label and input value together.
-export function inspectElement(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+export function inspectElement(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }, seal) {
   const get = (node, key) => Element.prototype.getAttribute.call(node, key) ?? '';
   const inputType = node => node instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(node).toLowerCase() : '';
   const words = node => [get(node, 'aria-label'), read(node, 'textContent'), get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
@@ -45,6 +45,8 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
   // Any script-driven button in a payment form (div[role=button], button type=button) can charge: its handler is invisible here.
   if (button && state.formPayment && !state.submit && get(el, 'type').toLowerCase() !== 'reset') { state.submit = true; state.scriptButton = true; }
   if (state.submit && state.formPayment) state.payment = true;
+  // Digest of the same node in the same step, for the click shield to compare with what it sealed.
+  if (typeof seal === 'function') state.seal = seal(el, read);
   return state;
 }
 

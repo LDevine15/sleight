@@ -65,7 +65,7 @@ test('the key is no Symbol, the property is frozen and hidden, and the methods r
   assert.equal(found.enumerable, false);
   assert.deepEqual(found.descriptor, { configurable: false, writable: false, enumerable: false });
   assert.equal(found.frozen, true);
-  assert.deepEqual(found.methods, ['cancel', 'finish', 'guard', 'off', 'prepare', 'reveal', 'settle', 'take', 'takeRequest', 'verdict']);
+  assert.deepEqual(found.methods, ['adopt', 'armed', 'cancel', 'conclude', 'expect', 'finish', 'guard', 'off', 'prepare', 'reinstall', 'release', 'reveal', 'settle', 'take', 'takeRequest', 'verdict']);
   assert.ok(found.refusals.every(message => /refused the call/.test(message)), JSON.stringify(found.refusals));
   assert.ok(found.forged.every(message => /refused the call/.test(message)), JSON.stringify(found.forged));
   assert.equal(found.same, true);
@@ -232,10 +232,17 @@ test('a page that forges the guard answer as armed does not make a click that wa
   assert.match(r.result.text, /not run|unconfirmed|changed|guard/i);
 });
 
-test('a page that forges the finish answer cannot hide that the hook refused the call', opts, async t => {
-  const r = await attack(t, { body: LINK, steps: click('open docs'), script: forgeEval('/\\.finish\\(/', 'true') });
+test('a page that forges the finish or conclude answer cannot hide that the hook refused the call', opts, async t => {
+  const r = await attack(t, { body: LINK, steps: click('open docs'), script: forgeEval('/\\.(finish|conclude)\\(/', 'true') });
   background(r);
   assert.match(r.result.text, /page changed during the click|unconfirmed|not run/i);
+});
+
+// The swap checks go through the hook too, so a forged answer to any of them must read as "the hook did not answer".
+test('a page that forges the expect answer as "true" does not let a click through the seal check', opts, async t => {
+  const r = await attack(t, { body: LINK, steps: click('open docs'), script: forgeEval('/\\.expect\\(/', 'true') });
+  assert.equal(r.hits.includes('/landed'), false, 'nothing opened: ' + r.result.text.split('\n')[0]);
+  assert.match(r.result.text, /not run: .*hook did not answer; use the engine browser path/i);
 });
 
 // Round 2: the hook's HMAC must touch nothing a page can redefine. The first version read the secret through

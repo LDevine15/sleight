@@ -19,6 +19,9 @@ export const openDeep = (f, value) => typeof value === 'string' && signed.test(v
 // Run `code` (see hookExpression) in the page and return what the hook answered, decoded.
 export const callHook = async (f, code) => openDeep(f, await f.page.evaluate(hookExpression(f, code)));
 
+// The same in a Playwright frame (a child frame of f.page).
+export const callHookIn = async (f, frame, code) => openDeep(f, await frame.evaluate(hookExpression(f, code)));
+
 // A function-form call for page.evaluate(fn, arg): fn receives { key, proofs } with one proof per method named.
 export const hookArgs = (f, ...methods) => ({ key: hookOf(f).key, proofs: Object.fromEntries(methods.map(name => [name, proofFor(f, name)])) });
 
@@ -31,11 +34,17 @@ export const hookState = (page, hook) => page.evaluate(({ key, proof }) => {
 
 // Unit-test fakes stand in for the page, so they answer as the hook would: a signed answer for the call the controller made.
 // answerFor(hook, method, proof, value) signs `value` for `proof`; hookAnswer picks the method from what the controller sent
-// (fn is the function handed to evaluate, arg its argument) and answers with values.prepare, .guard, .request, .verdict, .take.
+// (fn is the function handed to evaluate, arg its argument) and answers with values.prepare, .guard, .request, .verdict, .take,
+// .landed, .passed (conclude), .expect, .adopt, .release.
 import { createHmac } from 'node:crypto';
 const textOf = (method, value) => {
   if (method === 'prepare') return value === true ? 't' : value === false ? 'f' : value.kind === 'refuse' ? 'refuse-' + value.reason : value.kind;
-  if (method === 'guard' || method === 'off') return value ? 't' : 'f';
+  if (method === 'guard' || method === 'off' || method === 'adopt' || method === 'reinstall') return value ? 't' : 'f';
+  if (method === 'conclude') {
+    const tri = flag => flag === true ? 't' : flag === false ? 'f' : 'u';
+    return 'c' + tri(value?.landed) + tri(value?.passed) + (typeof value?.bad === 'string' ? 's' + value.bad : 'u');
+  }
+  if (method === 'armed') return value === undefined ? 'u' : 'a' + value.token + '\0' + value.until + '\0' + (value.keys ? 't' : 'f');
   if (method === 'takeRequest') {
     if (value === undefined) return 'u';
     if (value.violation) return 's' + value.violation;
@@ -43,7 +52,7 @@ const textOf = (method, value) => {
     if (value.unavailable) return value.lost ? 'l' : 'n';
     return 'q' + value.url + '\0' + (value.target ?? '') + '\0' + (value.rel ?? '');
   }
-  if (method === 'finish' || method === 'verdict') return typeof value === 'string' ? 's' + value : value === undefined ? 'u' : 't';
+  if (method === 'finish' || method === 'verdict' || method === 'expect' || method === 'release') return typeof value === 'string' ? 's' + value : value === undefined ? 'u' : 't';
   if (method === 'take') return 'd' + value;
   return 'u';
 };
@@ -56,6 +65,10 @@ export function hookAnswer(hook, fn, arg, values = {}) {
   if (arg?.guard) return answerFor(hook, 'guard', arg.guard, values.guard ?? true);
   const source = String(fn);
   if (/\.finish\(/.test(source)) return answerFor(hook, 'finish', arg.proof, values.verdict ?? true);
+  if (/\.conclude\(/.test(source)) return answerFor(hook, 'conclude', arg.proof, { bad: typeof values.verdict === 'string' ? values.verdict : undefined, landed: values.landed, passed: values.passed });
+  if (/\.expect\(/.test(source)) return answerFor(hook, 'expect', arg.proof, values.expect ?? true);
+  if (/\.adopt\(/.test(source)) return answerFor(hook, 'adopt', arg.proof, values.adopt ?? true);
+  if (/\.release\(/.test(source)) return answerFor(hook, 'release', arg.proof, values.release);
   if (/\.takeRequest\(/.test(source)) return answerFor(hook, 'takeRequest', arg.proof, values.request);
   if (/\.take\(/.test(source)) return answerFor(hook, 'take', arg.proof, values.take ?? 0);
   if (/\.off\(/.test(source)) return answerFor(hook, 'off', arg.proof, true);

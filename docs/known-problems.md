@@ -288,3 +288,14 @@ Engine behavior that sleight works around or can't change:
   makes the install fail, and that tab is not adopted. The source for a handle's first document goes to that window's `eval`
   once, and only if the window is not hooked yet. A same-origin window the page controls, never opened through the hook and
   without a hook of its own, could replace its `eval` and read the key and secret from the source. We built no such page. Found 2026-10-15 (AD1 pop round 2).
+- Before a click is sent, turbo v3 seals what the click activates and arms every other frame as foreign. Trusted input that no longer matches the seal is cancelled. Limits of that check (AD1 swap rounds 3 and 4, 2026-10-15):
+  - A frame on another site has no hook, because the registry's script is on the page target. The shield skips it, and a click that ends up in it is only reported afterwards, by the landed check.
+  - A same-site frame that answers "no hook" fails the click before it is sent, since a page can fake that answer. A popup's child frames that began before sleight adopted it get the hook installed at adoption. A sandboxed same-site frame that can't run it would block clicks on its page, unmeasured.
+  - A click handler registered after the last guarded event can still change the page, and `form.submit()` or `fetch` from a key handler can't be vetoed.
+  - A frame the browser creates or navigates between the last confirm and the press arms itself from its parent's state when it is same-origin. One under a cross-origin parent can't.
+  - A foreign shield that can't be released (the frame stopped answering) keeps cancelling trusted input in that frame until its hard cap, about 25 s.
+  - A frame with a hook that doesn't answer within the timeout fails the click before it is sent. Not measured on pages with many slow frames.
+  - The digests from the rules' read go to the hook as an evaluate argument, which a page that replaces Playwright's machinery can alter, so `expect` can miss a swap made between the seal and the rules' read. The press-time check still compares the whole seal.
+  - The runner without a v3 context (`act.mjs` alone) reads the element before the seal and has no digest tie.
+  - Background-tab timer throttling of the 40 ms fallback in `settle()` is unmeasured (it needs a headed window).
+  - On 12 ordinary pages, 8 fresh clicks each, 64/96 clicks went through the first time and 96/96 after one retry. The pages that cancel the first click (four of the 12) change the checked element on mousedown or in a focus handler, or replace it on its first pointerover or the next frame. A scroll-spy page with a button 3,000 px down reported "Trusted turn or target evidence is unavailable" 8/8 on 2026-10-15, before and after round 4. We haven't found why.
