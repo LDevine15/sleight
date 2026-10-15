@@ -32,19 +32,20 @@ export function popupHook() {
     multiple: Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'multiple').get };
   const labelControl = { constructor: HTMLLabelElement,
     control: Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get };
-  // HTML form-elements.html#the-label-element: an interactive descendant does
+  // HTML forms.html#the-label-element: an interactive descendant does
   // not forward label activation. This selector limits label forwarding only;
   // it does not give any of these elements a plain-click exception.
   const interactive = 'a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),label,select,textarea,video[controls]';
   // CR5's real modifier table measures native submission and multiple-select
   // selection as modifier-sensitive. ARIA and editable content have no native
   // modifier default; their handlers receive the masked background click.
-  const plainControl = node => {
-    if (node instanceof selectControl.constructor && selectControl.multiple.call(node)) return true;
+  const submits = node => {
     for (const control of formControls) if (node instanceof control.constructor
       && control.form.call(node) && /^(submit|image)$/.test(control.type.call(node))) return true;
     return false;
   };
+  const plainControl = node => submits(node)
+    || node instanceof selectControl.constructor && selectControl.multiple.call(node);
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
@@ -212,7 +213,7 @@ export function popupHook() {
         if (plainControl(node)) return false;
         // A label can forward activation to a submit control outside its tree.
         if (node instanceof labelControl.constructor && !chain.slice(0, index).some(child => nativeMatches.call(child, interactive))
-          && plainControl(labelControl.control.call(node))) return false;
+          && submits(labelControl.control.call(node))) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;
