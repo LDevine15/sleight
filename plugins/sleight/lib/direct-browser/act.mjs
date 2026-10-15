@@ -54,7 +54,7 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
   const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
     /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
     read(node, 'localName') === 'iframe' || (read(node, 'localName') === 'button' || read(node, 'type') === 'submit') && payment(words(node)));
-  const submit = !!(button && (read(el, 'type') === 'submit' && form || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
+  const submit = !!(button && (read(el, 'type') === 'submit' && form || form && formPayment && read(el, 'type') !== 'reset' || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
   let hash = 2166136261;
   if (form) {
     const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');

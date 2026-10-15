@@ -39,6 +39,8 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
     return (read(node, 'localName') === 'button' || ['submit', 'image'].includes(inputType(node))) && payment(words(node));
   });
   if ((button || state.kind === 'link') && state.payment) state.submit = true;
+  // Any script-driven button in a payment form (div[role=button], button type=button) can charge: its handler is invisible here.
+  if (button && state.formPayment && type !== 'reset') state.submit = true;
   if (state.submit && state.formPayment) state.payment = true;
   return state;
 }
