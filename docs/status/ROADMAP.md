@@ -78,6 +78,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    arms, public CI, the release-pass runner and benchmark preflights. Lanes stay busy: post-release work (Electron pieces that
    don't use turbo's semantic layer, the Q1 error fixes) builds on branches now and merges after the tag.
    The v1/v2 turbo removal (V8) is built now, in parallel, and merges right after the gate round (owner, 2026-10-14 night).
+   Owner (2026-10-15): sleight is to be the most thorough computer use plugin there is, in measured facts. Standing test banks
+   start now beside the gate work: a browser behavior atlas (AT1, what Chromium does for every action turbo takes) and an
+   adversarial page bank (AD1, every attack found so far plus new classes), both run on the host runner.
    Turbo's action layer gets redesigned (owner, 2026-10-14 evening): study what makes FowlBrowser fast and accurate and where it
    fails, then build our own better layer on the bundled Playwright, under the same safety rules. Studying their code is fine, copying
    it isn't the goal.
