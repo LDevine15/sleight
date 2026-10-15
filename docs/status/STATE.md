@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 10:40 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 13:29 UTC, owner awake)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
@@ -24,12 +24,11 @@ Branches (all on `private`):
   a restart). Full check 5729 pass, 0 fail, 59 skipped. `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
 - `v3-gate` at `83fbf6b4` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3, the two bench fixes, TN1, and the funding switch
   (`83fbf6b4`, 113/113 focused). The sleight, turbo, FowlBrowser and computer use arms run on the login. Browser Use needs the API key, so it runs only in a round of its own.
-- `arch/ad1-int` at `fbacda8c` (`~/Projects/sleight-wt/adfix-int`) holds the AD1 bank, the port guard, hyg, CR8, CR9, swap r4,
-  pop r4 and the hook-key hardening (random key and secret, frozen hook, one-use HMAC proofs). Its bank files pass in full, page-natives
-  244 and swap-shield 63 among them. Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
-- AD1 rounds (Claude agents, Sonnet high), one fresh reviewer per round with real-page repros; status in
-  `ledger/claims/AD1/OPEN-REVIEWS.md`. Swap passed after r4. Pop r4 is under review as integrated. Pay is on r11 (closed phrases,
-  70/78 honest pages at r10). Kb r5 is under review (Enter now works on 48/48 pages with cross-site iframes).
+- `arch/ad1-int` at `2ae67b9c` (`~/Projects/sleight-wt/adfix-int`) holds the AD1 bank, the port guard, hyg, CR8, CR9, swap r4,
+  pop r4, the final payment check (owner's choice A: any figure above the user's amount asks; 50/98 honest checkouts allowed) and
+  the hook-key hardening. Its bank files pass in full. Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
+- AD1 finish line (ROADMAP item 1). Pay is done and merged. Kb is done (nested ad frames 0/24 stuck, was 20/24) and is being merged
+  into ad1-int with the iframe reads. Pop r5 runs and gets one last review. Status in `ledger/claims/AD1/OPEN-REVIEWS.md`.
 - sleight-arch's call, 2026-10-15: turbo's `browser_read` failed on most pages with cross-site iframes (9/12 before kb r5, 12/12
   after), because the CDP filter refuses iframe targets and the snapshot fails closed. The filter will attach to iframe children of
   owned pages, with the same port and endpoint guards, so the snapshot can scan and redact them (`arch/ad1-kb6`, running).
