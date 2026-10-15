@@ -19,29 +19,29 @@ function order(el) {
   return [...el.children].map(label);
 }
 
-function inspect(el, expected) {
-  const attr = name => el.getAttribute(name), tag = el.tagName.toLowerCase(), role = attr('role') ?? '';
-  const type = tag === 'input' ? el.type : '';
-  const checked = typeof el.checked === 'boolean' ? el.checked : ['true', 'false'].includes(attr('aria-checked')) ? attr('aria-checked') === 'true' : null;
+function inspect(el, expected, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  const attr = name => read(el, 'getAttribute')(name), tag = read(el, 'tagName').toLowerCase(), role = attr('role') ?? '';
+  const type = tag === 'input' ? read(el, 'type') : '';
+  const checked = typeof read(el, 'checked') === 'boolean' ? read(el, 'checked') : ['true', 'false'].includes(attr('aria-checked')) ? attr('aria-checked') === 'true' : null;
   const kind = tag === 'select' ? 'select' : type === 'file' ? 'file' : type === 'color' ? 'color' : type === 'range' || role === 'slider' ? 'range' :
     ['checkbox', 'radio'].includes(type) || ['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(role) ? 'check' :
-    ['ul', 'ol'].includes(tag) && [...el.children].every(n => n.getAttribute('draggable') === 'true') ? 'reorder' :
+    ['ul', 'ol'].includes(tag) && [...read(el, 'children')].every(n => read(n, 'getAttribute')('draggable') === 'true') ? 'reorder' :
     role === 'listbox' ? 'listbox' : role === 'combobox' || attr('aria-autocomplete') === 'list' ? 'combo' :
-    ['input', 'textarea'].includes(tag) || el.isContentEditable ? 'text' : 'custom';
-  const text = String(el.value ?? el.textContent ?? ''), form = el.closest('form');
-  const words = [attr('aria-label'), el.textContent, attr('value')].join(' ');
+    ['input', 'textarea'].includes(tag) || read(el, 'isContentEditable') ? 'text' : 'custom';
+  const text = String(read(el, 'value') ?? read(el, 'textContent') ?? ''), form = read(el, 'closest')('form');
+  const words = [attr('aria-label'), read(el, 'textContent'), attr('value')].join(' ');
   const payment = /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(words);
   const button = tag === 'button' || role === 'button' || ['submit', 'button', 'reset'].includes(type);
   const submit = !!(type === 'submit' || button && form && attr('type') !== 'button' && attr('type') !== 'reset' || button && payment);
-  const rect = el.getBoundingClientRect?.(), style = el.ownerDocument?.defaultView?.getComputedStyle(el);
-  return { kind, type, tag, role, editableText: !el.readOnly && (tag === 'input' || tag === 'textarea' || el.isContentEditable), submit, payment, form: !!form, formPayment: payment, enabled: !el.disabled && attr('aria-disabled') !== 'true',
-    hiddenLabel: ['checkbox', 'radio'].includes(type) && !!el.labels?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
-    visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: el.isConnected, readonly: !!el.readOnly, disabled: !!el.disabled || attr('aria-disabled') === 'true',
-    controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!el.multiple,
+  const rect = read(el, 'getBoundingClientRect')?.(), style = read(read(read(el, 'ownerDocument'), 'defaultView'), 'getComputedStyle')?.(el);
+  return { kind, type, tag, role, editableText: !read(el, 'readOnly') && (tag === 'input' || tag === 'textarea' || read(el, 'isContentEditable')), submit, payment, form: !!form, formPayment: payment, enabled: !read(el, 'disabled') && attr('aria-disabled') !== 'true',
+    hiddenLabel: ['checkbox', 'radio'].includes(type) && !!read(el, 'labels')?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
+    visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: read(el, 'isConnected'), readonly: !!read(el, 'readOnly'), disabled: !!read(el, 'disabled') || attr('aria-disabled') === 'true',
+    controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!read(el, 'multiple'),
     matched: text === String(expected),
-    min: el.min || attr('aria-valuemin') || '0', max: el.max || attr('aria-valuemax') || '100', step: el.step || '1',
-    number: Number(type === 'range' ? el.value : attr('aria-valuenow')),
-    options: kind === 'select' ? [...el.options].map(o => ({ value: o.value, label: o.label, disabled: o.disabled || !!o.parentElement?.disabled, selected: o.selected })) : undefined };
+    min: read(el, 'min') || attr('aria-valuemin') || '0', max: read(el, 'max') || attr('aria-valuemax') || '100', step: read(el, 'step') || '1',
+    number: Number(type === 'range' ? read(el, 'value') : attr('aria-valuenow')),
+    options: kind === 'select' ? [...read(el, 'options')].map(o => ({ value: read(o, 'value'), label: read(o, 'label'), disabled: read(o, 'disabled') || !!read(read(o, 'parentElement'), 'disabled'), selected: read(o, 'selected') })) : undefined };
 }
 
 function validate(fields, submit) {

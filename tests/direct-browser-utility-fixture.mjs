@@ -9,7 +9,7 @@ export function utilityLocator(locator) {
     return { _frame: { utilityContext: async () => ({ world: 'utility',
       async evaluateExpression(source, options, args) {
         assert.equal(options.isFunction, true);
-        const match = /^\(\[el, arg\]\) => \(([\s\S]*)\)\(el, arg\)$/.exec(source);
+        const match = /^\(\[el, arg\]\) => \(([\s\S]*?)\)\(el, arg, \(function nativeReader\(/.exec(source);
         assert.ok(match, 'only the trusted reader template is supported');
         return locator.evaluate(runInNewContext('(' + match[1] + ')'), args[1]);
       },

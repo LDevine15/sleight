@@ -41,65 +41,66 @@ export function requestedPayment(message) {
 
 // Focus and its synchronous page handlers run in the same evaluation. Never
 // let a failed focus silently send a key to the previously active control.
-export function focusCheckedNode(el, focus) {
-  if (!el.isConnected) return false;
+export function focusCheckedNode(el, focus, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  if (!read(el, 'isConnected')) return false;
   if (focus) HTMLElement.prototype.focus.call(el, { preventScroll: true });
   try {
     // A closed root hides its real receiver behind activeElement's host. DOM
     // evidence cannot distinguish that host from an ordinary focusable div.
     // Refuse opaque potential hosts; an open root exposes the receiver below.
-    const opaqueHost = !el.shadowRoot && (el.localName.includes('-') ||
-      ['article','aside','blockquote','body','div','footer','h1','h2','h3','h4','h5','h6','header','main','nav','p','section','span'].includes(el.localName));
+    const opaqueHost = !read(el, 'shadowRoot') && (read(el, 'localName').includes('-') ||
+      ['article','aside','blockquote','body','div','footer','h1','h2','h3','h4','h5','h6','header','main','nav','p','section','span'].includes(read(el, 'localName')));
     if (opaqueHost) return false;
     let node = el;
     for (;;) {
-      const doc = node.ownerDocument, view = doc.defaultView;
-      let active = doc.activeElement;
-      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      const doc = read(node, 'ownerDocument'), view = read(doc, 'defaultView');
+      let active = read(doc, 'activeElement');
+      while (read(read(active, 'shadowRoot'), 'activeElement')) active = read(read(active, 'shadowRoot'), 'activeElement');
       if (active !== node) return false;
-      const frame = view.frameElement;
-      if (!frame) return view === view.top;
-      if (!frame.isConnected) return false;
+      const frame = read(view, 'frameElement');
+      if (!frame) return view === read(view, 'top');
+      if (!read(frame, 'isConnected')) return false;
       node = frame;
     }
   } catch { return false; }
 }
 
-export function ownDocument(el) { return el.ownerDocument; }
-export function samePageDocument(el, doc) { return el.isConnected && el.ownerDocument === doc; }
+export function ownDocument(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'ownerDocument'); }
+export function samePageDocument(el, doc, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'isConnected') && read(el, 'ownerDocument') === doc; }
 
 // All names are local so Playwright can serialize this read into the target's
 // frame. Page metadata is an observation only; it can never supply the method.
 // Require one visible exact labeled value per term in the target form/dialog.
-export function readPaymentPage(el) {
-  const doc = el.ownerDocument, view = doc.defaultView;
-  const root = ('form' in el ? el.form : el.closest('form')) ?? el.closest('dialog,[role="dialog"]');
-  const visible = (node, rects = node.getClientRects()) => {
-    if (!node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
-    let left = 0, top = 0, right = view.innerWidth, bottom = view.innerHeight, opacity = 1;
-    for (let parent = node; parent; parent = parent.parentElement ?? parent.getRootNode?.().host) {
-      const style = view.getComputedStyle(parent);
+export function readPaymentPage(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  const doc = read(el, 'ownerDocument'), view = read(doc, 'defaultView');
+  const associated = read(el, 'form');
+  const root = (associated === undefined ? read(el, 'closest')('form') : associated) ?? read(el, 'closest')('dialog,[role="dialog"]');
+  const visible = (node, rects = read(node, 'getClientRects')()) => {
+    if (!read(node, 'checkVisibility')({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+    let left = 0, top = 0, right = read(view, 'innerWidth'), bottom = read(view, 'innerHeight'), opacity = 1;
+    for (let parent = node; parent; parent = read(parent, 'parentElement') ?? read(read(parent, 'getRootNode')?.(), 'host')) {
+      const style = read(view, 'getComputedStyle')(parent);
       opacity *= style.opacity === '' ? 1 : Number(style.opacity ?? 1);
       if (opacity < 0.1 || style.visibility === 'hidden' || style.display === 'none' ||
           style.clipPath && style.clipPath !== 'none' || style.clip && style.clip !== 'auto') return false;
-      const box = parent.getBoundingClientRect();
+      const box = read(parent, 'getBoundingClientRect')();
       const clips = axis => /^(?:auto|scroll|hidden|clip)$/.test(style['overflow' + axis]) || /(?:paint|strict|content)/.test(style.contain ?? '');
-      if (clips('X')) { left = Math.max(left, box.left + parent.clientLeft); right = Math.min(right, box.left + parent.clientLeft + parent.clientWidth); }
-      if (clips('Y')) { top = Math.max(top, box.top + parent.clientTop); bottom = Math.min(bottom, box.top + parent.clientTop + parent.clientHeight); }
+      if (clips('X')) { left = Math.max(left, box.left + read(parent, 'clientLeft')); right = Math.min(right, box.left + read(parent, 'clientLeft') + read(parent, 'clientWidth')); }
+      if (clips('Y')) { top = Math.max(top, box.top + read(parent, 'clientTop')); bottom = Math.min(bottom, box.top + read(parent, 'clientTop') + read(parent, 'clientHeight')); }
     }
     return [...rects].some(r => Math.min(right, r.right) - Math.max(left, r.left) >= 4 && Math.min(bottom, r.bottom) - Math.max(top, r.top) >= 4);
   };
   const visibleText = node => {
-    const walker = doc.createTreeWalker(node, 5), parts = []; let part, previous;
-    while ((part = walker.nextNode())) if (part.nodeType === 1) {
-      if (part.localName === 'br') { parts.push('\n'); previous = undefined; }
-    } else if (part.parentElement) {
-      const range = doc.createRange(); range.selectNodeContents(part);
-      if (!part.textContent.trim() || !visible(part.parentElement, range.getClientRects())) continue;
-      let block = part.parentElement;
-      while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(view.getComputedStyle(block).display)) block = block.parentElement;
+    const walker = read(doc, 'createTreeWalker')(node, 5), parts = []; let part, previous;
+    while ((part = walker.nextNode())) if (read(part, 'nodeType') === 1) {
+      if (read(part, 'localName') === 'br') { parts.push('\n'); previous = undefined; }
+    } else if (read(part, 'parentElement')) {
+      const range = read(doc, 'createRange')(); range.selectNodeContents(part);
+      if (!read(part, 'textContent').trim() || !visible(read(part, 'parentElement'), range.getClientRects())) continue;
+      let block = read(part, 'parentElement');
+      while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(read(view, 'getComputedStyle')(block).display)) block = read(block, 'parentElement');
       if (parts.length) parts.push(previous === block ? ' ' : '\n');
-      parts.push(part.textContent.trim()); previous = block;
+      parts.push(read(part, 'textContent').trim()); previous = block;
     }
     return parts.join('');
   };
@@ -107,14 +108,14 @@ export function readPaymentPage(el) {
     if (!root) return;
     const values = [], hidden = [];
     const valueOf = value => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
-    for (const node of root.querySelectorAll('[data-payment-' + key + '],[itemprop="' + key + '"],[name="' + key + '"],[aria-label="' + key + '" i]')) {
-      const attribute = node.getAttribute('data-payment-' + key);
+    for (const node of read(root, 'querySelectorAll')('[data-payment-' + key + '],[itemprop="' + key + '"],[name="' + key + '"],[aria-label="' + key + '" i]')) {
+      const attribute = read(node, 'getAttribute')('data-payment-' + key);
       if (!visible(node)) {
         // Hidden candidates can contradict evidence, never supply authority.
-        hidden.push(valueOf(attribute), valueOf(['input','select','textarea'].includes(node.localName) ? node.value : node.textContent));
+        hidden.push(valueOf(attribute), valueOf(['input','select','textarea'].includes(read(node, 'localName')) ? read(node, 'value') : read(node, 'textContent')));
         continue;
       }
-      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : visibleText(node);
+      const value = ['input', 'select', 'textarea'].includes(read(node, 'localName')) ? read(node, 'value') : visibleText(node);
       const shown = valueOf(value);
       if (attribute !== null && attribute.trim() !== shown) return;
       if (shown) values.push(shown);
@@ -126,9 +127,9 @@ export function readPaymentPage(el) {
     return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };
   const page = Object.fromEntries(['item', 'amount', 'payee', 'currency'].map(key => [key, field(key)]).filter(([,value]) => value !== undefined));
-  const labels = el.labels ? [...el.labels].map(label => label.innerText.trim()).filter(Boolean) : [];
-  const name = el.getAttribute('aria-label') || (labels.length === 1 ? labels[0] : '');
-  return { origin: view.location.origin, page, name };
+  const labels = read(el, 'labels') ? [...read(el, 'labels')].map(label => read(label, 'innerText').trim()).filter(Boolean) : [];
+  const name = read(el, 'getAttribute')('aria-label') || (labels.length === 1 ? labels[0] : '');
+  return { origin: read(view, 'location').origin, page, name };
 }
 
 function dialogTerms(message) {

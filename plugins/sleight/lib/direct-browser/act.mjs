@@ -44,21 +44,22 @@ function validate(steps) {
 
 // Only risk classification and a comparison fingerprint cross this boundary.
 // Form values never enter an outcome line or a snapshot through this reader.
-export function inspectTarget(el) {
-  const words = node => [node.getAttribute('aria-label'), node.textContent, node.getAttribute('value')].filter(Boolean).join(' ');
+export function inspectTarget(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  const words = node => [read(node, 'getAttribute')('aria-label'), read(node, 'textContent'), read(node, 'getAttribute')('value')].filter(Boolean).join(' ');
   const payment = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text);
-  const form = 'form' in el ? el.form : el.closest('form'), tag = el.localName, role = el.getAttribute('role'), name = words(el).trim().slice(0, 100);
-  const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(el.type) || role === 'button';
-  const formPayment = !!form && [...form.querySelectorAll('input,button,iframe')].some(node =>
-    /^cc-/i.test(node.getAttribute('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(node.id + ' ' + node.getAttribute('name')) ||
-    node.localName === 'iframe' || (node.localName === 'button' || node.type === 'submit') && payment(words(node)));
-  const submit = !!(button && (el.type === 'submit' && form || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
+  const associated = read(el, 'form');
+  const form = associated === undefined ? read(el, 'closest')('form') : associated, tag = read(el, 'localName'), role = read(el, 'getAttribute')('role'), name = words(el).trim().slice(0, 100);
+  const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(read(el, 'type')) || role === 'button';
+  const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
+    /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
+    read(node, 'localName') === 'iframe' || (read(node, 'localName') === 'button' || read(node, 'type') === 'submit') && payment(words(node)));
+  const submit = !!(button && (read(el, 'type') === 'submit' && form || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
   let hash = 2166136261;
   if (form) {
-    const content = form.textContent + [...form.querySelectorAll('input,select,textarea')].map(n => [n.value, n.checked, n.selectedIndex].join(':')).join('|');
+    const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');
     for (let i = 0; i < content.length; i++) hash = Math.imul(hash ^ content.charCodeAt(i), 16777619);
   }
-  return { name, tag, role, kind: button ? 'button' : ['file', 'color'].includes(el.type) ? el.type : tag === 'select' ? 'select' : 'text', button, form: !!form, submit, payment: payment(name) || submit && formPayment,
+  return { name, tag, role, kind: button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit, payment: payment(name) || submit && formPayment,
     formPayment, formSignature: form ? hash : null };
 }
 
@@ -225,7 +226,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const settleUntil = start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            try { formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature; } catch {}
+            formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature;
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
           await sleep(Math.min(50, settleUntil - now()));
