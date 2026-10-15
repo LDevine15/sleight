@@ -1,0 +1,214 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { bank, doc, plain, payment, payRequest, readOnly, skip, terms } from './fixtures/bank.mjs';
+
+// Class 2. The page redefines natives in its own (main) world, or shadows them
+// with DOM named properties, which cross worlds. Sleight reads page state from a
+// separate utility world, but a form's named controls and the document's named
+// img/form/object/embed elements shadow properties in every world, and the
+// background-popup hook itself runs in the main world beside the page.
+const mismatch = (extra = '') => payment.replace('data-payment-amount="18.00">Amount: 18.00', 'data-payment-amount="99.00">Amount: 99.00')
+  .replace('<label>Note', extra + '<label>Note');
+const maybeRef = (f, label) => { try { return f.ref(label); } catch { return undefined; } };
+const deadline = (promise, ms = 20000) => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve('HUNG'), ms))]);
+
+test('control: the exact authorized payment goes through once with clean natives', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment), payRequest);
+  const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+  assert.doesNotMatch(result.text, /not run/);
+  assert.equal(f.delta().payment, 1);
+});
+
+// Main-world redefinitions. The trust reads must not consult any of these.
+const overrides = {
+  'Document.prototype.activeElement': `Object.defineProperty(Document.prototype,'activeElement',{configurable:true,get(){return document.getElementById('a')}});`,
+  'document.activeElement (own property)': `Object.defineProperty(document,'activeElement',{configurable:true,get(){return document.getElementById('a')}});`,
+  'HTMLButtonElement.prototype.form': `Object.defineProperty(HTMLButtonElement.prototype,'form',{configurable:true,get(){return null}});`,
+  'HTMLInputElement.prototype.form': `Object.defineProperty(HTMLInputElement.prototype,'form',{configurable:true,get(){return null}});`,
+  'Element.prototype.checkVisibility': `Element.prototype.checkVisibility=()=>true;`,
+  'Element.prototype.getAttribute': `const g=Element.prototype.getAttribute;Element.prototype.getAttribute=function(n){return /payment|aria-label|autocomplete|type/.test(n)?null:g.call(this,n)};`,
+  'Element.prototype.hasAttribute': `Element.prototype.hasAttribute=()=>false;`,
+  'Node.prototype.textContent': `Object.defineProperty(Node.prototype,'textContent',{configurable:true,get(){return 'Next'},set(){}});`,
+  'Element.prototype.closest': `Element.prototype.closest=()=>null;`,
+  'Element.prototype.querySelectorAll': `Element.prototype.querySelectorAll=()=>[];`,
+  'Element.prototype.getBoundingClientRect': `Element.prototype.getBoundingClientRect=()=>({left:0,top:0,right:9999,bottom:9999,width:9999,height:9999});`,
+  'Element.prototype.matches': `Element.prototype.matches=()=>false;`,
+  'window.getComputedStyle': `window.getComputedStyle=()=>({opacity:'1',visibility:'visible',display:'block'});`,
+  'HTMLElement.prototype.focus': `HTMLElement.prototype.focus=function(){};`,
+  'HTMLInputElement.prototype.value': `Object.defineProperty(HTMLInputElement.prototype,'value',{configurable:true,get(){return '18.00'},set(){}});`,
+  'HTMLInputElement.prototype.type': `Object.defineProperty(HTMLInputElement.prototype,'type',{configurable:true,get(){return 'text'}});`,
+};
+for (const [name, script] of Object.entries(overrides))
+  test('main-world override of ' + name + ' cannot launder an unauthorized payment click', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(mismatch() + '<input id="a" aria-label="Search">', script), payRequest);
+    const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+    assert.match(result.text, /not run|unconfirmed|confirmation/);
+    await f.safe();
+  });
+
+test('per-element own-property getters for value, form and checkVisibility are invisible to the trust reads', { skip, timeout: 60000 }, async t => {
+  const body = `<form id="payment"><p data-payment-item="Fixture item">Item: Fixture item</p>
+    <label>Amount<input name="amount" id="amt" value="99.00"></label>
+    <p data-payment-payee="Fixture shop">Payee: Fixture shop</p><p data-payment-currency="USD">Currency: USD</p>
+    <label>Card<input autocomplete="cc-number"></label><button id="pay">Continue</button></form>`;
+  const script = `const amt=document.getElementById('amt'),pay=document.getElementById('pay');
+    Object.defineProperty(amt,'value',{get(){return '18.00'}});Object.defineProperty(amt,'checkVisibility',{value:()=>true});
+    Object.defineProperty(pay,'form',{get(){return null}});Object.defineProperty(pay,'getAttribute',{value:()=>null});`;
+  const b = await bank(t), f = await b.start(doc(body, script), payRequest);
+  await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+  await f.safe();
+});
+
+// DOM clobbering of document properties by a named element that is the checked ref.
+for (const tag of ['img', 'form', 'object', 'embed'])
+  test('document.activeElement clobbered by <' + tag + ' name=activeElement> never lets a focus redirect pass the checked-focus test', { skip, timeout: 60000 }, async t => {
+    const element = { img: '<img name="activeElement" id="h" tabindex="0" alt="Help" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">',
+      form: '<form name="activeElement" id="h" tabindex="0" aria-label="Help"></form>',
+      object: '<object name="activeElement" id="h" tabindex="0" aria-label="Help"></object>',
+      embed: '<embed name="activeElement" id="h" tabindex="0" aria-label="Help">' }[tag];
+    const b = await bank(t), f = await b.start(doc(element + payment, `h.addEventListener('focus',()=>pay.focus());`), readOnly);
+    const ref = maybeRef(f, 'Help');
+    if (!ref) { t.diagnostic('the clobbering element is not nameable in the snapshot, so the model cannot press on it'); await f.safe(); return; }
+    const real = () => f.page.evaluate(() => Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get.call(document)?.id);
+    const result = await f.act([{ do: 'press', ref, key: 'Enter' }]);
+    t.diagnostic(JSON.stringify({ realFocusAfter: await real(), outcome: result.text.split('\n')[0] }));
+    await f.safe();
+  });
+
+test('document.activeElement clobbered by <iframe name=activeElement> (a window, not an element) fails closed', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(`<iframe name="activeElement" src="about:blank" title="frame"></iframe><input id="a" aria-label="Search">` + payment,
+    `a.addEventListener('focus',()=>pay.focus());`), readOnly);
+  await f.act([{ do: 'press', ref: f.ref('Search'), key: 'Enter' }]);
+  await f.safe();
+});
+
+test('clobbered activeElement, defaultView and frameElement inside a same-origin frame cannot satisfy the frame walk', { skip, timeout: 60000 }, async t => {
+  const inner = doc(`<img name="activeElement" id="defaultView" tabindex="0" alt="Frame help" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><img name="frameElement" alt="x" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">`,
+    `document.querySelector('[tabindex]').addEventListener('focus',()=>parent.document.getElementById('pay').focus());`);
+  const b = await bank(t), f = await b.start(doc('<iframe src="/inner" title="inner"></iframe>' + payment), readOnly, { routes: { '/inner': inner } });
+  const ref = maybeRef(f, 'Frame help');
+  if (ref) await f.act([{ do: 'press', ref, key: 'Enter' }]);
+  await f.safe();
+});
+
+// Named controls inside the payment form shadow the form's own properties.
+// Page terms disagree with the authorized request, so the safe outcome is no payment.
+// A name that makes the reader loop forever is an availability failure, reported as HUNG.
+const formNames = ['elements', 'action', 'method', 'submit', 'form', 'target', 'id', 'children', 'attributes', 'localName', 'tagName', 'nodeType',
+  'textContent', 'innerText', 'parentElement', 'parentNode', 'ownerDocument', 'querySelectorAll', 'querySelector', 'getAttribute', 'hasAttribute', 'closest',
+  'matches', 'contains', 'getRootNode', 'getBoundingClientRect', 'getClientRects', 'checkVisibility', 'clientLeft', 'clientTop', 'clientWidth', 'clientHeight',
+  'isConnected', 'shadowRoot', 'labels', 'length', 'checkValidity', 'reset', 'requestSubmit', 'style'];
+for (const name of formNames)
+  test('payment form control named "' + name + '" shadows the form property without opening a payment or hanging the reader', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(mismatch(`<input name="${name}" value="x" aria-label="Shadow ${name}">`)), payRequest);
+    const ref = maybeRef(f, 'Continue');
+    if (!ref) { t.diagnostic('snapshot has no Continue ref (the page blinded the reader); nothing can be pressed'); await f.safe(); return; }
+    const outcome = await deadline(f.act([{ do: 'click', ref }]));
+    assert.notEqual(outcome, 'HUNG', 'the trust read never returned: a control named "' + name + '" stalls the reader in the page renderer');
+    await f.safe();
+  });
+
+// Document-level named properties used by the trust reads.
+const docNames = ['createTreeWalker', 'createRange', 'defaultView', 'querySelector', 'querySelectorAll', 'getElementById', 'body', 'documentElement',
+  'elementFromPoint', 'location', 'forms', 'cookie'];
+for (const name of docNames)
+  test('document property "' + name + '" clobbered by <img name> cannot launder a payment click', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(`<img name="${name}" alt="x" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">` + mismatch()), payRequest);
+    const outcome = await deadline(f.act([{ do: 'click', ref: f.ref('Continue') }]));
+    assert.notEqual(outcome, 'HUNG');
+    await f.safe();
+  });
+
+// The background-popup hook runs in the page's own world. Its natives can be
+// shadowed or restored by the page. The browser's tab active bit, read by an
+// independent observer, proves whether a tab came to the foreground.
+const landed = b => ({ '/landed': '<!doctype html><title>landed</title><h1>Landed</h1>', '/danger': (req, res) => { b.effects.payment++; res.end('<h1>danger</h1>'); } });
+
+test('control: a target=_blank form submit opens a background tab (no active-tab change)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<form action="/landed" target="_blank"><button id="send">Send</button></form>'), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Send') }]);
+  await f.safe({ settle: 600 });
+});
+
+test('document.querySelector overridden to hide <base target=_blank> keeps a form submit out of the foreground', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const html = plain('<form action="/landed"><button id="send">Send</button></form>', `document.querySelector=()=>null;`, '<base target="_blank">');
+  const f = await b.start(html, readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Send') }]);
+  await f.safe({ settle: 800 });
+});
+
+test('Document.prototype.querySelector overridden to hide <base target=_blank> keeps a link out of the foreground', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const html = plain('<a id="go" href="/landed">Open page</a>', `Document.prototype.querySelector=function(){return null};`, '<base target="_blank">');
+  const f = await b.start(html, readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Open page') }]);
+  await f.safe({ settle: 800 });
+});
+
+test('window.name set to _blank makes target=_blank look like the current context, link click stays in the background', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<a id="go" href="/landed" target="_blank">Open page</a>', `window.name='_blank';`), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Open page') }]);
+  await f.safe({ settle: 800 });
+});
+
+test('window.name set to _blank, form target=_blank submit stays in the background', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<form action="/landed" target="_blank"><button id="send">Send</button></form>', `window.name='_blank';`), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Send') }]);
+  await f.safe({ settle: 800 });
+});
+
+// The agent's Ctrl-click keeps a page-opened tab in the background only while the
+// modifier is held. A timer that fires after the click has finished still has
+// transient user activation, and its programmatic anchor click or form submit
+// opens a normal foreground tab. window.open from an owned background tab is
+// refused by the browser itself, so it is the control.
+const delayed = {
+  'anchor.click() inside the agent click handler': ['a.click()', true],
+  'window.open() 700 ms after the agent click': ["setTimeout(()=>window.open('/landed'),700)", true],
+  'anchor.click() 100 ms after the agent click': ['setTimeout(()=>a.click(),100)'],
+  'anchor.click() 700 ms after the agent click': ['setTimeout(()=>a.click(),700)'],
+  'form.submit() to target=_blank 700 ms after the agent click': ['setTimeout(()=>f.submit(),700)'],
+  'form.requestSubmit() to target=_blank 700 ms after the agent click': ['setTimeout(()=>f.requestSubmit(),700)'],
+};
+for (const [name, [body, control]] of Object.entries(delayed))
+  test((control ? 'control: ' : '') + name + ' never brings a tab to the foreground', { skip, timeout: 90000 }, async t => {
+    const b = await bank(t, { observeTabs: true });
+    const script = `document.getElementById('go').addEventListener('click',()=>{const a=document.getElementById('a'),f=document.getElementById('f');${body}});`;
+    const f = await b.start(plain('<a id="a" href="/landed" target="_blank" hidden>x</a><form id="f" action="/landed" target="_blank"></form><button id="go" type="button">Open help</button>', script),
+      readOnly, { routes: landed(b) });
+    await f.act([{ do: 'click', ref: f.ref('Open help') }]);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    t.diagnostic(JSON.stringify({ requestsSeen: f.hits().map(h => h.path), tabs: (await b.tabState()).map(x => x.url.replace(b.origin, '') + (x.active ? ' ACTIVE' : '')) }));
+    await f.safe({ settle: 300 });
+  });
+
+test('control: an ordinary preventDefault on the link click stops sleight from opening it', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<a id="l" href="/danger" target="_blank">Learn more</a>', `document.getElementById('l').addEventListener('click',e=>e.preventDefault());`), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Learn more') }]);
+  await f.safe({ settle: 800 });
+  assert.deepEqual(f.hits().filter(h => h.path.startsWith('/danger')), []);
+});
+
+test('pristine Event.prototype.preventDefault from a frame realm cannot make sleight open a link the page cancelled', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `const pd=document.getElementById('r').contentWindow.Event.prototype.preventDefault;
+    document.getElementById('l').addEventListener('click',e=>pd.call(e));`;
+  const f = await b.start(plain('<iframe id="r" src="about:blank" hidden></iframe><a id="l" href="/danger" target="_blank">Learn more</a>', script), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Learn more') }]);
+  await f.safe({ settle: 800 });
+  assert.deepEqual(f.hits().filter(h => h.path.startsWith('/danger')), [], 'the page cancelled the click; no request for the link target may follow');
+});
+
+test('inline onclick cancel through a frame-realm preventDefault cannot make sleight open the link', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const html = plain('<iframe id="r" src="about:blank" hidden></iframe><a id="l" href="/danger" target="_blank" onclick="document.getElementById(\'r\').contentWindow.Event.prototype.preventDefault.call(event)">Learn more</a>');
+  const f = await b.start(html, readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Learn more') }]);
+  await f.safe({ settle: 800 });
+  assert.deepEqual(f.hits().filter(h => h.path.startsWith('/danger')), []);
+});
