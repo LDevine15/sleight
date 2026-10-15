@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 07:30 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 09:10 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
@@ -27,9 +27,10 @@ Branches (all on `private`):
   swap r2, pop r3, and the hook-key hardening (random key and secret, frozen hook, one-use HMAC proofs). The bank there passes in
   full (571 tests in 9 files, hook-key 43 and natives 151 among them). Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
 - AD1 fix rounds (Claude agents, Sonnet high), one fresh reviewer per round with real-page repros. Status per branch is in
-  `ledger/claims/AD1/OPEN-REVIEWS.md`. Swap r4 and kb r4 are under review, pay r8 is fixing two medium findings, and pop r3 is
-  under review as integrated. Each later round merges into ad1-int with the hook-key API. Claude Code's safety classifier stopped
-  the adversarial half of the hook-key review; its correctness, cost and fail-closed half passed.
+  `ledger/claims/AD1/OPEN-REVIEWS.md`. Swap passed after r4 plus a one-line fix by sleight-arch (`12e4c81c`: 0 payments in about
+  1,000 attack clicks) and is being merged into ad1-int with the hook-key API. Pay is on r10 (closed positive phrases only, 60/68
+  honest pages allowed at r9), kb on r5 (Enter refused on pages with cross-site iframes), pop on r4 (from ad1-int). Claude Code's
+  safety classifier stopped the adversarial half of the hook-key review; its correctness, cost and fail-closed half passed.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
