@@ -215,6 +215,7 @@ export function popupHook() {
   //   guard(element, token, capMs, { keys }) seals what activating `element` touches and arms the shield for
   //     capMs; { keys: true } also vetoes keydown, keypress, keyup and submit events (the form's action, method,
   //     target, enctype, novalidate and default submitter are in the seal). Returns false if it cannot arm.
+  //   lock(token, capMs) vetoes every trusted key in a frame that does not hold the checked element.
   //   verdict(token) returns the veto reason, or undefined if every guarded event matched the seal.
   //   finish(token) disarms and returns the veto reason, or true.
   const uncurry = Function.prototype.bind.bind(Function.prototype.call);
@@ -323,14 +324,17 @@ export function popupHook() {
     return false;
   };
   const inspect = event => {
-    const { element, anchor, forwarded, areas, keys, form, submitter } = shield;
+    const { element, anchor, forwarded, areas, keys, form, submitter, deny } = shield;
+    // A locked frame (not the checked one) lets no key through.
+    if (deny) return 'the key landed in a frame that was not checked';
     if (!connected(element)) return 'target left the page';
     // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
-    const path = pathOf(event), at = pathIndex(path, anchor);
+    const path = pathOf(event), at = pathIndex(path, anchor), type = typeOf(event);
     if (at < 0) {
-      // Keyboard activation (keys) lands on the form's default submitter or submits the form itself.
-      const elsewhere = !(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0])
-        && !(keys && (form && pathIndex(path, form) >= 0 || submitter && pathIndex(path, submitter) >= 0));
+      // Keyboard activation lands on the form's default submitter (click) or submits the form itself (submit).
+      // A key event itself must land on the checked element, never merely somewhere inside its form.
+      const resulting = keys && (type === 'submit' ? !!form && path[0] === form : type === 'click' && !!submitter && pathIndex(path, submitter) >= 0);
+      const elsewhere = !(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0]) && !resulting;
       if (elsewhere) return 'the input landed on a different element';
     } else if (anchor === element && interactiveBetween(path, at, forwarded)) return 'the input landed on a different element';
     return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : 'the checked element changed';
@@ -370,6 +374,13 @@ export function popupHook() {
       const forwarded = forwardedOf(element), areas = areasOf(element);
       shield = { token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
         signature: sealed(element, forwarded, areas, withKeys), until: now() + capMs };
+      return true;
+    },
+    // Veto every trusted key in this frame until finish(token) or capMs: for a frame other than the one holding the checked
+    // element, which a page script could move focus into. Registered at document start like guard(), so no page listener is earlier.
+    lock(token, capMs) {
+      if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0) return false;
+      shield = { token, element: document.documentElement, keys: true, deny: true, until: now() + capMs };
       return true;
     },
     // Scroll the element into view without animation, so the pointer can be moved onto it (the click would scroll anyway).
@@ -497,6 +508,48 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     cancelled ??= typeof verdict === 'string' ? verdict : undefined;
     // The guard cancelled the input: say so instead of reporting a delivered click.
     if (cancelled) throw Error(changedMidClick);
+  }
+}
+
+const keyMessage = reason => reason + '. The key may have activated; read the page before deciding, and do not resend it';
+
+// Arms the key shield around a trusted Enter or Space (with Shift or Control in a text field) and then calls send().
+// The hook is registered at document start, so no page listener runs before it, and the seal is taken before the key
+// is sent: every keydown, keypress, keyup, click and submit is checked against the sealed element and its form (action,
+// method, target, enctype, default submitter). Any other frame is locked, so a page script cannot move focus into it
+// to take the key. The verdict is read after send(); a veto means events after it were stopped, earlier ones may not have been.
+export async function backgroundKey(tab, locator, send, { timeoutMs = 1000 } = {}) {
+  const token = randomUUID(), capMs = timeoutMs + 3000;
+  const arg = { token, capMs };
+  const settle = (work, ms = timeoutMs) => deadline(work, ms);
+  const finishAll = () => Promise.all(tab.page.frames().map(frame => settle(() => frame.evaluate(arg => {
+    const result = window[Symbol.for('sleight.popup3')]?.finish(arg.token);
+    return typeof result === 'string' ? result : undefined;
+  }, arg)).catch(() => undefined)));
+  try {
+    try {
+      await settle(() => locator.evaluate((element, { token, capMs }) => {
+        const hook = window[Symbol.for('sleight.popup3')];
+        if (!hook?.guard(element, token, capMs, { keys: true })) throw Error('key guard unavailable');
+        return true;
+      }, arg, { timeout: timeoutMs }));
+    } catch { throw Error('background key guard unavailable; use the engine browser path'); }
+    const owner = typeof locator.ownerFrame === 'function' ? await locator.ownerFrame() : undefined;
+    await Promise.all(tab.page.frames().filter(frame => frame !== owner).map(async frame => {
+      try {
+        // A frame the start-of-document script did not reach (a separate process) gets the hook now, late.
+        if (!await settle(() => frame.evaluate(() => !!window[Symbol.for('sleight.popup3')]))) await settle(() => frame.evaluate(popupHook));
+        if (!await settle(() => frame.evaluate(({ token, capMs }) => window[Symbol.for('sleight.popup3')]?.lock(token, capMs) === true, arg))) throw Error('not lockable');
+      } catch {
+        if (frame.isDetached()) return;
+        throw Error('a frame could not be guarded before the key; use the engine browser path');
+      }
+    }));
+    return await send();
+  } finally {
+    const verdicts = await finishAll().catch(() => []);
+    const reason = verdicts.find(value => typeof value === 'string');
+    if (reason) throw Error(keyMessage(reason));
   }
 }
 

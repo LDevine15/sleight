@@ -3,7 +3,7 @@
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
-import { intent, keyClass } from './rules.mjs';
+import { intent, keyClass, activationKey } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
@@ -30,7 +30,7 @@ function validate(steps) {
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
     if (s.ref !== undefined && !refOf(s.ref)) needs('a valid ref');
     if (s.do === 'type' && typeof s.text !== 'string') needs('text');
-    if (s.do === 'press' && (typeof s.key !== 'string' || !s.key.trim() || s.key.length > 100)) needs('key');
+    if (s.do === 'press' && (typeof s.key !== 'string' || !s.key || s.key.length > 100)) needs('key');
     if (s.do === 'select' && (!Array.isArray(s.values) || !s.values.length || s.values.some(v => typeof v !== 'string'))) needs('values');
     if (s.do === 'drag' && !refOf(s.to)) needs('to');
     if (s.do === 'upload' && (!Array.isArray(s.paths) || !s.paths.length || s.paths.some(p => typeof p !== 'string' || !p))) needs('paths');
@@ -124,7 +124,7 @@ function ruleMessage(result) {
 
 // Dependencies are the other v3 lanes' fixed interfaces. Injecting them keeps unit
 // and host-runner tests independent while those modules are built in parallel.
-export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), actionTimeoutMs = 7000, now = Date.now, sleep = pause } = {}) {
+export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), backgroundKey = (tab, locator, send) => send(), actionTimeoutMs = 7000, now = Date.now, sleep = pause } = {}) {
   if (typeof check !== 'function' || typeof snapshot !== 'function') throw Error('action runner needs check and snapshot');
   return async function runSteps(tab, steps, ctx = {}) {
     validate(steps);
@@ -174,6 +174,10 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (step.do === 'click') return backgroundClick(tab, locator, async extra => {
             if (trusted) { await gate(); ctx.beginInput(target); }
             started = true; return locator.click({ ...options, ...extra });
+          });
+          // Enter and Space: the key shield is armed first, so the gate's verdict and the key it sends share one seal.
+          if (trusted && step.do === 'press' && activationKey(step.key)) return backgroundKey(tab, locator, async () => {
+            await gate(); ctx.beginInput(target); started = true; return ctx.pressTarget(target, step.key, options);
           });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           started = true;
@@ -227,7 +231,10 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const settleUntil = start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature;
+            // A key can return before the navigation it started has committed, and the node is gone mid-read. Give the
+            // navigation boundary a moment to register; destroyed evidence without one still stops the batch.
+            try { formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature; }
+            catch (error) { await sleep(150); if (!armed.boundary) throw error; }
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
           await sleep(Math.min(50, settleUntil - now()));
@@ -296,8 +303,8 @@ let defaultRunner;
 export async function runSteps(tab, steps, ctx) {
   if (!isV3Context(ctx)) throw Error('TRUSTED_TURN_REQUIRED');
   if (!defaultRunner) {
-    const [{ check }, { snapshot }, { backgroundClick }] = await Promise.all([import('./rules.mjs'), import('./snapshot.mjs'), import('./page.mjs')]);
-    defaultRunner = createActionRunner({ check, snapshot, backgroundClick });
+    const [{ check }, { snapshot }, { backgroundClick, backgroundKey }] = await Promise.all([import('./rules.mjs'), import('./snapshot.mjs'), import('./page.mjs')]);
+    defaultRunner = createActionRunner({ check, snapshot, backgroundClick, backgroundKey });
   }
   return defaultRunner(tab, steps, ctx);
 }

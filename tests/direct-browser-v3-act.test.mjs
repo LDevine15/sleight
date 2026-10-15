@@ -381,3 +381,12 @@ test('v3 destroyed form evidence stops the batch after dispatched submit', async
   assert.equal(f.actions.length, 1);
   assert.ok(f.tab.state.submitUnconfirmed);
 });
+
+test('v3 accepts a literal space and a literal newline as keys, and still rejects an empty or oversized key', async () => {
+  const f = fixture();
+  for (const key of [' ', '\n', '\r']) {
+    const result = await f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {});
+    assert.equal(result.stoppedAt, null, JSON.stringify(key)); assert.ok(f.actions.some(a => a[0] === 'press' && a[2] === key), JSON.stringify(key));
+  }
+  for (const key of ['', 'a'.repeat(101), 1]) await assert.rejects(f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {}), /needs key/);
+});

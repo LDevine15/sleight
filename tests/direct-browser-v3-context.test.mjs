@@ -21,7 +21,6 @@ function fixture(text = payText(terms), options = {}) {
     ownerFrame: async () => frame, dispose: async () => {},
     async evaluate(fn, arg) {
       if (fn.name === 'focusCheckedNode') return f.focusOk;
-      if (fn.name === 'keyGuard') return arg.op === 'verify' || 0;
       if (fn.name === 'samePageDocument') return arg === document;
       if (fn.name === 'ownDocument') return document;
       if (fn.name === 'inspectTarget') return { ...element, name: 'Continue', payment, formPayment: payment };
@@ -183,14 +182,13 @@ test('V10R1 dispatch never calls ElementHandle.press after checking focus', asyn
   const f = fixture('Read only'); f.ordinary(); const keys = [], page = new EventEmitter();
   Object.assign(f.handle, { press: async () => { throw Error('unsafe refocusing press'); } });
   page.getByRef = () => ({elementHandle:async () => f.handle, evaluate:async () => ({submit:false,form:false})});
-  // Enter goes out as separate CDP key events with a focus re-read before the keypress, never page.keyboard.press.
+  // Enter goes out through the owned page keyboard under the key shield (backgroundKey), never ElementHandle.press.
   page.keyboard = {press:async key => keys.push(key)};
   page.frames = () => [];
-  page.context = () => ({newCDPSession:async () => ({send:async (method,params) => keys.push(method + ':' + params.type), detach:async () => {}})});
   let clock = 0;
   const run = createActionRunner({check, snapshot:async () => ({text:'fixture',number:1}), now:() => clock, sleep:async ms => {clock += ms;}});
   const result = await run({page,state:f.state},[{do:'press',ref:'e1',key:'Enter'}],f.ctx);
-  assert.deepEqual(keys,['Input.dispatchKeyEvent:rawKeyDown','Input.dispatchKeyEvent:char','Input.dispatchKeyEvent:keyUp']); assert.doesNotMatch(result.lines[0],/not run|unconfirmed/); await f.ctx.dispose();
+  assert.deepEqual(keys,['Enter']); assert.doesNotMatch(result.lines[0],/not run|unconfirmed/); await f.ctx.dispose();
 });
 
 for (const kind of ['reload','back','forward']) test('V10R2 ' + kind + ' cannot retry an unknown payment or revisit its document', async () => {
