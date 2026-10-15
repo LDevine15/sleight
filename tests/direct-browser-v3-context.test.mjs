@@ -26,6 +26,7 @@ function fixture(text = payText(terms), options = {}) {
       if (fn.name === 'ownDocument') return document;
       if (fn.name === 'inspectTarget') return { ...element, name: 'Continue', payment, formPayment: payment };
       if (fn.name === 'inspectElement') return { ...element, payment, formPayment: payment };
+      if (fn.name === 'forwardInfo') return { label: false, areas: [] };
       if (fn.name === 'readPaymentPage') return { origin, page: { ...terms, ...f.pageTerms }, name: inputName };
       throw Error('unsupported page reader: ' + fn.name);
     },

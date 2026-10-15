@@ -60,6 +60,13 @@ export async function trustedRead(handle, reader, arg) {
   return utility.evaluateExpression(expression(reader), { isFunction: true }, [node, arg]);
 }
 
+// For a node trustedHandle returned: it is already the server-side handle, in the same frame's utility world.
+export async function trustedReadNode(node, reader, arg) {
+  const utility = await node?._frame?.utilityContext?.();
+  if (utility?.world !== 'utility' || typeof utility.evaluateExpression !== 'function') throw Error('TRUSTED_DOM_REQUIRED');
+  return utility.evaluateExpression(expression(reader), { isFunction: true }, [node, arg]);
+}
+
 export async function trustedHandle(handle, reader) {
   const { node, utility } = await utilityFor(handle);
   return utility.evaluateExpressionHandle(expression(reader), { isFunction: true }, [node, undefined]);

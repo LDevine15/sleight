@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { trustedRead, trustedHandle } from './trusted-dom.mjs';
+import { trustedRead, trustedReadNode, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
 import { check, inspectElement, intent, expirePaymentDialog, keyClass } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
@@ -92,6 +92,58 @@ export function keyGuard(el, arg, read = (node, key) => { const value = node?.[k
 
 export function ownDocument(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'ownerDocument'); }
 export function samePageDocument(el, doc, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'isConnected') && read(el, 'ownerDocument') === doc; }
+
+// A click can activate something other than the element named by the ref. HTML label activation: the first
+// label at or above the element forwards to its control unless interactive content sits between. Closure-free
+// readers (they run in the target's utility world); the control is then classified like any other element.
+export function labelForward(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  for (let node = el; node; node = read(node, 'parentElement') ?? read(read(node, 'getRootNode')?.(), 'host')) {
+    if (read(node, 'localName') === 'label') return read(node, 'control') ?? null;
+    if (read(node, 'matches')('a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) return null;
+  }
+  return null;
+}
+// One cheap read per check: whether a label forwards, and the text of every area of an image map. The point
+// under the pointer is unknown here, so every area of the map counts: alt, label, title and resolved href.
+export function forwardInfo(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  let label = false;
+  for (let node = el; node; node = read(node, 'parentElement') ?? read(read(node, 'getRootNode')?.(), 'host')) {
+    if (read(node, 'localName') === 'label') { label = !!read(node, 'control'); break; }
+    if (read(node, 'matches')('a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) break;
+  }
+  const usemap = read(el, 'localName') === 'img' ? read(el, 'getAttribute')('usemap') : null, areas = [];
+  if (usemap) {
+    const doc = read(el, 'ownerDocument'), name = usemap.replace(/^#/, '');
+    for (const map of read(doc, 'querySelectorAll')('map')) {
+      if (read(map, 'getAttribute')('name') !== name) continue;
+      for (const area of read(map, 'querySelectorAll')('area')) {
+        let href = read(area, 'getAttribute')('href') ?? '';
+        try { href = new URL(href, read(doc, 'baseURI')).href; } catch {}
+        areas.push([read(area, 'getAttribute')('alt'), read(area, 'getAttribute')('aria-label'), read(area, 'getAttribute')('title'), href].filter(Boolean).join(' '));
+      }
+      break;
+    }
+  }
+  return { label, areas };
+}
+// Same words as rules.mjs paymentWords, for area text that inspectElement cannot read.
+const paymentText = /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i;
+// Fold what a click also activates into the classification of the element: it is a submit or payment if the
+// forwarded control or any area of its map is, and a picker opener if the control opens a picker.
+async function foldForwarded(handle, element) {
+  const { label, areas } = await trustedRead(handle, forwardInfo);
+  if (label) {
+    const forwarded = await trustedHandle(handle, labelForward);
+    try {
+      const control = forwarded.asElement?.();
+      if (!control) throw Error('TRUSTED_TARGET_REQUIRED');
+      const other = await trustedReadNode(control, inspectElement);
+      for (const key of ['submit', 'payment', 'formPayment']) element[key] = element[key] || other[key];
+      if (['file', 'color', 'select'].includes(other.kind)) element.kind = other.kind;
+    } finally { try { await forwarded.dispose?.(); } catch {} }
+  }
+  if (areas.some(words => paymentText.test(words))) { element.payment = true; element.submit = true; }
+}
 
 // All names are local so Playwright can serialize this read into the target's
 // frame. Page metadata is an observation only; it can never supply the method.
@@ -281,6 +333,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
       const element = await trustedRead(handle, inspectElement);
+      await foldForwarded(handle, element);
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: observed.origin,
         element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, method: requested?.method },
