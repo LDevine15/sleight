@@ -21,6 +21,26 @@ export function popupHook() {
   };
   const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
   const nativeMatches = Element.prototype.matches;
+  // composedPath() seen from window leaves out nodes inside a closed shadow root, so the outermost closed host stands
+  // for them. A host is open exactly when its own shadowRoot is the root the node reports.
+  const nativeGetter = (type, name) => { try { return Object.getOwnPropertyDescriptor(type.prototype, name).get; } catch { return undefined; } };
+  const rootOfNode = typeof Node === 'function' ? Node.prototype.getRootNode : undefined;
+  const nodeKind = typeof Node === 'function' ? nativeGetter(Node, 'nodeType') : undefined;
+  const hostOfRoot = typeof ShadowRoot === 'function' ? nativeGetter(ShadowRoot, 'host') : undefined;
+  const openRootOf = nativeGetter(Element, 'shadowRoot');
+  const anchorOf = element => {
+    let anchor = element;
+    if (!rootOfNode || !nodeKind || !hostOfRoot || !openRootOf) return anchor;
+    try {
+      for (let node = element, depth = 0; node && depth < 1000; depth++) {
+        const root = rootOfNode.call(node);
+        if (nodeKind.call(root) !== 11) break;
+        node = hostOfRoot.call(root);
+        if (openRootOf.call(node) !== root) anchor = node;
+      }
+    } catch { /* an unreadable chain leaves the element itself as the anchor */ }
+    return anchor;
+  };
   const editable = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable').get;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
@@ -77,7 +97,7 @@ export function popupHook() {
   };
   const live = () => arm && now() < arm.until;
   const active = () => live() && arm.masking;
-  const matches = event => event.isTrusted && composedPath.call(event).includes(arm.element);
+  const matches = event => event.isTrusted && composedPath.call(event).some(node => node === arm.element || node === arm.anchor);
   const hide = event => {
     // The token was bound while this event matched its arm. Retirement changes
     // which new events can be masked, never a retained event's modifier values.
@@ -230,7 +250,7 @@ export function popupHook() {
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
-      arm = { element, token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, handlers: [] };
+      arm = { element, anchor: anchorOf(element), token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       return link ? { kind: 'link' } : true;
     },

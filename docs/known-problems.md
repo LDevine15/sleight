@@ -240,3 +240,26 @@ Engine behavior that sleight works around or can't change:
 - The `viewport` step restores the size by setting the size the tab had before the first override. The tab then has an explicit
   size that matches the old window and doesn't follow later window resizes. A tab kept or handed off with an override still set keeps
   that size.
+
+## Turbo closed shadow roots
+
+- Controls inside closed shadow roots (refs `s1`, `s2`) take click, check, uncheck, type, select and key presses through the same
+  pinned-node path as other refs. They resolve from the snapshot's CDP backend node into a Playwright element handle, which depends on
+  the pinned in-process Playwright 1.64.0 internals (`closed-handle.mjs`). A Playwright upgrade can break that handle; the failure is
+  the message "Closed-root actions need the in-process browser connection", and `tests/direct-browser-closed-handle.test.mjs` shows it.
+- `browser_fill` on a closed-root combobox, listbox or reorderable list can't search for its options, because Playwright locators can't
+  enter a closed root. Use `browser_act` click on the option refs from the read. Not measured on a real closed-root combobox.
+- A key press on a closed-root element that isn't a button or an input needs CDP's answer that the element hosts no closed root itself.
+  Without that answer (the node was resolved some other way) the press is refused, because a focused closed host looks the same as its
+  inner receiver from the page.
+- Payment terms (item, amount, payee) are read from the nearest form or dialog around the control, climbing from the closed root to
+  its host. The text walk doesn't enter shadow roots, so terms shown inside a different closed root should not be read, and
+  that Pay button should need confirmation even when the user's message names the exact payment (from the code, not measured).
+  Measured on 4 fixtures: terms in the button's own closed form and in the page form beside its host were both read (2026-10-15).
+- A page that swaps the clicked control on mousedown gets the matching pointerup and mouseup on the new control, and no click. The
+  closed-root and light-DOM controls behave the same (2 fixtures, 2026-10-15), because Playwright's hit-target check covers only the
+  first event of a click. A swap when the pointer arrives is caught in both: the new control received 0 events in 2 of 2 fixtures.
+- The read blanks a closed-root text field's current value wherever the same characters appear on the page. After typing "o" into a
+  closed-root field, "Account controls" read as "Acc[redacted]unt c[redacted]ntr[redacted]ls" (2026-10-15). Checkbox, radio and button
+  values no longer do this (a checkbox's default "on" blanked every "on" before 2026-10-15).
+

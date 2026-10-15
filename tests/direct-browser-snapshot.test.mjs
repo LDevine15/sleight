@@ -203,21 +203,31 @@ test('long values cannot trap a continuation on a single oversized row', async (
   assert.match((await module.snapshot(page, { ref, maxChars: 1000 })).text, /"End"/);
 });
 
-function closedFixture({ emptyHostQuery = false } = {}) {
+function closedFixture({ emptyHostQuery = false, checkbox = false } = {}) {
   const base = fixture([{ role: 'main', ref: 'e1' }]);
   let nodes = [{ nodeId: 'switch', backendDOMNodeId: 30, role: { value: 'switch' }, name: { value: 'Secure mode' },
     properties: [{ name: 'checked', value: { value: true } }] },
-  { nodeId: 'password', backendDOMNodeId: 31, role: { value: 'textbox' }, name: { value: 'Password' }, value: { value: 'closed-secret' } }];
+  { nodeId: 'password', backendDOMNodeId: 31, role: { value: 'textbox' }, name: { value: 'Password' }, value: { value: 'closed-secret' } },
+  ...checkbox ? [{ nodeId: 'box', backendDOMNodeId: 32, role: { value: 'checkbox' }, name: { value: 'Newsletter' } }] : []];
   const root = { nodeType: 9, children: [{ nodeType: 1, backendNodeId: 20, localName: 'custom-control', shadowRoots: [
     { nodeType: 11, shadowRootType: 'closed', children: [
       { nodeType: 1, localName: 'button', backendNodeId: 30 },
       { nodeType: 1, localName: 'input', backendNodeId: 31, attributes: ['type', 'password'] },
+      ...checkbox ? [{ nodeType: 1, localName: 'input', backendNodeId: 32, attributes: ['type', 'checkbox'] }] : [],
     ] },
   ] }] };
   base.page.context = () => ({ newCDPSession: async () => ({
     send: async (method, params) => {
       if (method === 'DOM.getDocument') return { root };
-      if (method === 'DOMSnapshot.captureSnapshot') return capturedDOM(root, ['closed-secret']);
+      if (method === 'DOMSnapshot.captureSnapshot') {
+        const capture = capturedDOM(root, ['closed-secret']);
+        if (checkbox) {
+          // Chromium reports a checkbox's value attribute ("on" by default) as its input value too.
+          const { nodes } = capture.documents.at(-1), at = nodes.backendNodeId.indexOf(32);
+          capture.strings.push('on'); nodes.inputValue = { index: [at], value: [capture.strings.length - 1] };
+        }
+        return capture;
+      }
       if (method === 'Accessibility.queryAXTree') return { nodes: emptyHostQuery ? [] : structuredClone(nodes) };
       if (method === 'Accessibility.getPartialAXTree') return { nodes: structuredClone(nodes.filter(node => node.backendDOMNodeId === params.backendNodeId)) };
       if (method === 'DOM.resolveNode') return { object: { objectId: String(params.backendNodeId) } };
@@ -241,6 +251,16 @@ test('closed-root controls get stable refs, flags and redacted values', async ()
   const second = await module.snapshot(page);
   assert.match(second.text, new RegExp('switch.*ref=' + ref));
   assert.match((await module.snapshot(page, { ref })).text, /Secure mode/);
+});
+
+test('a closed-root checkbox value is a label, not a secret that blanks the same letters elsewhere', async () => {
+  const { page, set } = closedFixture({ checkbox: true });
+  set([{ nodeId: 'box', backendDOMNodeId: 32, role: { value: 'checkbox' }, name: { value: 'Newsletter' } }]);
+  const tree = [{ role: 'heading', ref: 'e2', name: 'Notification controls', text: 'Notification controls on sale' }];
+  page.ariaSnapshotJSON = async () => structuredClone(tree);
+  const result = await module.snapshot(page);
+  assert.match(result.text, /Notification controls on sale/);
+  assert.match(result.text, /checkbox "Newsletter" \[ref=s\d+\]/);
 });
 
 test('an ignored closed-root host cannot hide its native actionable descendants', async () => {

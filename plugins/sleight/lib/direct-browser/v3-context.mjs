@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedHandle } from './trusted-dom.mjs';
+import { closedDetails } from './closed-handle.mjs';
 import { canonical } from './authority.mjs';
 import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
@@ -41,22 +42,38 @@ export function requestedPayment(message) {
 
 // Focus and its synchronous page handlers run in the same evaluation. Never
 // let a failed focus silently send a key to the previously active control.
-export function focusCheckedNode(el, focus, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+// options is true/false (focus first or not) or { focus, hostsRoot }. hostsRoot is the Node side's CDP evidence about
+// whether el itself hosts a closed shadow root; page-side DOM cannot tell a closed host from a plain focusable div.
+export function focusCheckedNode(el, options, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  const { focus, hostsRoot } = typeof options === 'object' && options !== null ? options : { focus: options };
   if (!read(el, 'isConnected')) return false;
   if (focus) HTMLElement.prototype.focus.call(el, { preventScroll: true });
   try {
     // A closed root hides its real receiver behind activeElement's host. DOM
     // evidence cannot distinguish that host from an ordinary focusable div.
     // Refuse opaque potential hosts; an open root exposes the receiver below.
-    const opaqueHost = !read(el, 'shadowRoot') && (read(el, 'localName').includes('-') ||
+    // The CDP evidence that el hosts no closed root replaces that guess.
+    const opaqueHost = hostsRoot !== false && !read(el, 'shadowRoot') && (read(el, 'localName').includes('-') ||
       ['article','aside','blockquote','body','div','footer','h1','h2','h3','h4','h5','h6','header','main','nav','p','section','span'].includes(read(el, 'localName')));
     if (opaqueHost) return false;
     let node = el;
     for (;;) {
       const doc = read(node, 'ownerDocument'), view = read(doc, 'defaultView');
+      // Focus inside this node's own open root would retarget to this node, so look for it directly.
+      if (read(read(node, 'shadowRoot'), 'activeElement')) return false;
       let active = read(doc, 'activeElement');
       while (read(read(active, 'shadowRoot'), 'activeElement')) active = read(read(active, 'shadowRoot'), 'activeElement');
-      if (active !== node) return false;
+      if (active !== node) {
+        // The descent above cannot enter a closed root. A root is readable from a node inside it, open or closed, so
+        // each tree on the way up must report exactly this level as its active element, up to the document.
+        if (typeof read(node, 'getRootNode') !== 'function') return false;
+        for (let level = node;;) {
+          const root = read(level, 'getRootNode')();
+          if (read(root, 'activeElement') !== level) return false;
+          if (read(root, 'nodeType') !== 11) break;
+          level = read(root, 'host');
+        }
+      }
       const frame = read(view, 'frameElement');
       if (!frame) return view === read(view, 'top');
       if (!read(frame, 'isConnected')) return false;
@@ -73,8 +90,24 @@ export function samePageDocument(el, doc, read = (node, key) => { const value = 
 // Require one visible exact labeled value per term in the target form/dialog.
 export function readPaymentPage(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   const doc = read(el, 'ownerDocument'), view = read(doc, 'defaultView');
-  const associated = read(el, 'form');
-  const root = (associated === undefined ? read(el, 'closest')('form') : associated) ?? read(el, 'closest')('dialog,[role="dialog"]');
+  // Form ownership stops at a shadow root, but a control in one still acts for the form around its host. Climb host by host.
+  const enclosing = (node, selector) => {
+    for (let at = node; at;) {
+      const found = read(at, 'closest')(selector);
+      if (found) return found;
+      const root = read(at, 'getRootNode')?.();
+      at = root && read(root, 'nodeType') === 11 ? read(root, 'host') : null;
+    }
+    return null;
+  };
+  const formOf = () => {
+    const owner = read(el, 'form');
+    if (owner) return owner;
+    if (owner === undefined) return enclosing(el, 'form');
+    const root = read(el, 'getRootNode')?.();
+    return root && read(root, 'nodeType') === 11 ? enclosing(read(root, 'host'), 'form') : owner;
+  };
+  const root = formOf() ?? enclosing(el, 'dialog,[role="dialog"]');
   const visible = (node, rects = read(node, 'getClientRects')()) => {
     if (!read(node, 'checkVisibility')({ checkOpacity: true, checkVisibilityCSS: true })) return false;
     let left = 0, top = 0, right = read(view, 'innerWidth'), bottom = read(view, 'innerHeight'), opacity = 1;
@@ -246,13 +279,14 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         for (const [event, handler] of Object.entries(handlers)) target.page.on(event, handler);
         watched.set(target.page, handlers);
       }
-      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
+      const closed = closedDetails(handle);
+      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, { focus: true, hostsRoot: closed?.hostsRoot })) throw Error('CHECKED_FOCUS_REQUIRED');
       const observed = await trustedRead(handle, readPaymentPage);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
       const identity = { browserIncarnation: browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
         leaseGeneration: 1, target: doc.id, frame: doc.id, document: doc.id, origin: observed.origin };
-      const record = { handle, doc, frame, page: target.page, identity, origin: observed.origin, name: observed.name, ref: target.ref };
+      const record = { handle, doc, frame, page: target.page, identity, origin: observed.origin, name: observed.name, ref: target.ref, closed };
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
       const element = await trustedRead(handle, inspectElement);
@@ -301,7 +335,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     async pressTarget(target, key, options) {
       const record = targets.get(target);
       if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
-          !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+          !await trustedRead(record.handle, focusCheckedNode, { focus: false, hostsRoot: record.closed?.hostsRoot }) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
       // ElementHandle.press focuses again without verifying its recipient.
       // Use only the owned page keyboard after the checked ref retained focus.
       return target.page.keyboard.press(key, options);

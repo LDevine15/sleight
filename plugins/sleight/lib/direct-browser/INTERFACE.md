@@ -181,5 +181,8 @@ returned text reaches the client.
 Snapshots install `page.getByRef` for the V4/V5 action path. It resolves ordinary refs with `snapshotRefBinding(page, ref)`, which
 returns the locator for the underlying Playwright aria-ref. It refuses stale
 refs and refs from an undelivered snapshot with a browser_read hint. Closed
-sN refs continue through `closedRefBinding`. A raw aria-ref selector bypasses
+sN refs continue through `closedRefBinding`; `page.getByRef('sN')` returns a
+locator whose `elementHandle()` resolves that backend node into a Playwright
+handle (`closed-handle.mjs`), so the trusted reads, pinned click and key
+presses treat it like any other ref. A raw aria-ref selector bypasses
 this generation check and is only for tests of the Playwright read itself.

@@ -1,4 +1,5 @@
 import { assertEndpointRead } from './endpoint-guard.mjs';
+import { closedLocator } from './closed-handle.mjs';
 // Compact page snapshots for turbo v3, with an independent CR1 closed-root reader.
 const pages = new WeakMap();
 const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
@@ -31,12 +32,11 @@ function stateOf(page) {
       refBank: new Map(), deliveredRefs: new Set(), pending: new Map(), nextRef: 0 };
     pages.set(page, state);
     if (typeof page.locator === 'function') {
-      const closedResolver = typeof page.getByRef === 'function' ? page.getByRef.bind(page) : undefined;
       Object.defineProperty(page, 'getByRef', { configurable: true, value(ref) {
         if (/^s\d+$/.test(ref)) {
+          // A closed-root control resolves from its CDP backend node on every use, never through a page-side query.
           closedRefBinding(page, ref);
-          if (!closedResolver) throw Error('Closed-root action provider is unavailable; use the engine browser path.');
-          return closedResolver(ref);
+          return closedLocator(() => closedRefBinding(page, ref));
         }
         return snapshotRefBinding(page, ref);
       } });
@@ -94,7 +94,9 @@ function sensitiveValues({ strings, documents }) {
     for (const column of [nodes.inputValue, nodes.textValue]) {
       for (const [i, index] of (column?.index ?? []).entries()) {
         const value = strings[column.value[i]];
-        if (value && protectedNodes.has(index)) values.push(value);
+        // A checkbox's "on" is a label, not a secret, and as a scrub term it would blank every "on" in the page.
+        const label = strings[nodes.nodeName[index]] === 'INPUT' && /^(checkbox|radio|button|submit|reset|image)$/i.test(attrs(index).type ?? '');
+        if (value && protectedNodes.has(index) && !label) values.push(value);
       }
     }
   }

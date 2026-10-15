@@ -24,8 +24,24 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
   const words = node => [get(node, 'aria-label'), read(node, 'textContent'), get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
   const payment = value => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(value);
   const type = inputType(el);
-  const associated = read(el, 'form');
-  const tag = read(el, 'localName'), role = get(el, 'role'), form = associated === undefined ? read(el, 'closest')('form') : associated, rect = read(el, 'getBoundingClientRect')(), style = getComputedStyle(el);
+  // Form ownership stops at a shadow root, but a control in one still acts for the form around its host. Climb host by host.
+  const enclosing = (node, selector) => {
+    for (let at = node; at;) {
+      const found = read(at, 'closest')(selector);
+      if (found) return found;
+      const root = read(at, 'getRootNode')?.();
+      at = root && read(root, 'nodeType') === 11 ? read(root, 'host') : null;
+    }
+    return null;
+  };
+  const formOf = () => {
+    const owner = read(el, 'form');
+    if (owner) return owner;
+    if (owner === undefined) return enclosing(el, 'form');
+    const root = read(el, 'getRootNode')?.();
+    return root && read(root, 'nodeType') === 11 ? enclosing(read(root, 'host'), 'form') : owner;
+  };
+  const tag = read(el, 'localName'), role = get(el, 'role'), form = formOf(), rect = read(el, 'getBoundingClientRect')(), style = getComputedStyle(el);
   const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
   const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
     form: !!form, connected: read(el, 'isConnected'), visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',

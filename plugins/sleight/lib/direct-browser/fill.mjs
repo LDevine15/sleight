@@ -28,7 +28,17 @@ function inspect(el, expected, read = (node, key) => { const value = node?.[key]
     ['ul', 'ol'].includes(tag) && [...read(el, 'children')].every(n => read(n, 'getAttribute')('draggable') === 'true') ? 'reorder' :
     role === 'listbox' ? 'listbox' : role === 'combobox' || attr('aria-autocomplete') === 'list' ? 'combo' :
     ['input', 'textarea'].includes(tag) || read(el, 'isContentEditable') ? 'text' : 'custom';
-  const text = String(read(el, 'value') ?? read(el, 'textContent') ?? ''), form = read(el, 'closest')('form');
+  // Form ownership stops at a shadow root, but a control in one still acts for the form around its host. Climb host by host.
+  const enclosing = (node, selector) => {
+    for (let at = node; at;) {
+      const found = read(at, 'closest')(selector);
+      if (found) return found;
+      const root = read(at, 'getRootNode')?.();
+      at = root && read(root, 'nodeType') === 11 ? read(root, 'host') : null;
+    }
+    return null;
+  };
+  const text = String(read(el, 'value') ?? read(el, 'textContent') ?? ''), form = enclosing(el, 'form');
   const words = [attr('aria-label'), read(el, 'textContent'), attr('value')].join(' ');
   const payment = /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(words);
   const button = tag === 'button' || role === 'button' || ['submit', 'button', 'reset'].includes(type);
@@ -81,8 +91,12 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
         try {
           if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
           if (/^s\d+$/.test(ref)) {
+            // A closed-root select takes its option as a string too, so ask the pinned node what kind of control it is.
+            const kind = typeof value === 'boolean' || Array.isArray(value) || typeof page.getByRef !== 'function' ? undefined :
+              (await trustedLocatorRead(page.getByRef(ref), inspect, value).catch(() => ({}))).kind;
             const step = typeof value === 'boolean' ? { do: value ? 'check' : 'uncheck', ref } :
-              Array.isArray(value) ? { do: 'select', ref, values: value } : { do: 'type', ref, text: String(value) };
+              Array.isArray(value) ? { do: 'select', ref, values: value } :
+              kind === 'select' ? { do: 'select', ref, values: [String(value)] } : { do: 'type', ref, text: String(value) };
             const result = await runSteps(tab, [step], ctx);
             sent = !result?.lines?.some(line => /: not run:/.test(line));
             if (actionFailed(result)) throw new FieldError('closed-root field stopped; read the page');

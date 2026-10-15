@@ -13,7 +13,7 @@ const TIMEOUT = 1000;
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const clean = value => String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 240);
-const refOf = value => typeof value === 'string' && /^(?:f\d+)?e\d+$/.test(value) ? value : null;
+const refOf = value => typeof value === 'string' && /^(?:(?:f\d+)?e\d+|s\d+)$/.test(value) ? value : null;
 async function bounded(task, ms) {
   let timer;
   try {
@@ -50,8 +50,24 @@ function validate(steps) {
 export function inspectTarget(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   const words = node => [read(node, 'getAttribute')('aria-label'), read(node, 'textContent'), read(node, 'getAttribute')('value')].filter(Boolean).join(' ');
   const payment = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text);
-  const associated = read(el, 'form');
-  const form = associated === undefined ? read(el, 'closest')('form') : associated, tag = read(el, 'localName'), role = read(el, 'getAttribute')('role'), name = words(el).trim().slice(0, 100);
+  // Form ownership stops at a shadow root, but a control in one still acts for the form around its host. Climb host by host.
+  const enclosing = (node, selector) => {
+    for (let at = node; at;) {
+      const found = read(at, 'closest')(selector);
+      if (found) return found;
+      const root = read(at, 'getRootNode')?.();
+      at = root && read(root, 'nodeType') === 11 ? read(root, 'host') : null;
+    }
+    return null;
+  };
+  const formOf = () => {
+    const owner = read(el, 'form');
+    if (owner) return owner;
+    if (owner === undefined) return enclosing(el, 'form');
+    const root = read(el, 'getRootNode')?.();
+    return root && read(root, 'nodeType') === 11 ? enclosing(read(root, 'host'), 'form') : owner;
+  };
+  const form = formOf(), tag = read(el, 'localName'), role = read(el, 'getAttribute')('role'), name = words(el).trim().slice(0, 100);
   const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(read(el, 'type')) || role === 'button';
   const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
     /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
