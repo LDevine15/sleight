@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bank, plain, readOnly, skip } from './fixtures/bank.mjs';
+import { callHook, hookArgs, openDeep } from './fixtures/hook.mjs';
 
 // The input shield in the page hook (guard, verdict, finish) driven directly with trusted input from the
 // harness's own Playwright. Part one is the key-shield API a keyboard path arms before it sends a key.
 // Part two is a hostile page: the check must read only natives captured before page scripts, and when it
 // cannot decide it must cancel the input. delivered() counts what reached the page, from the independent server.
-const arm = (f, selector, { keys = false, ms = 3000, token = 't1' } = {}) =>
-  f.page.evaluate(({ selector, keys, ms, token }) => window[Symbol.for('sleight.popup3')].guard(document.querySelector(selector), token, ms, { keys }), { selector, keys, ms, token });
-const verdict = (f, token = 't1') => f.page.evaluate(token => window[Symbol.for('sleight.popup3')].verdict(token), token);
-const finish = (f, token = 't1') => f.page.evaluate(token => window[Symbol.for('sleight.popup3')].finish(token), token);
+const arm = async (f, selector, { keys = false, ms = 3000, token = 't1' } = {}) => openDeep(f, await f.page.evaluate(({ selector, keys, ms, token, key, proofs }) =>
+  window[key].guard(proofs.guard, document.querySelector(selector), token, ms, { keys }), { selector, keys, ms, token, ...hookArgs(f, 'guard') }));
+const verdict = async (f, token = 't1') => openDeep(f, await f.page.evaluate(({ token, key, proofs }) => window[key].verdict(proofs.verdict, token), { token, ...hookArgs(f, 'verdict') }));
+const finish = async (f, token = 't1') => openDeep(f, await f.page.evaluate(({ token, key, proofs }) => window[key].finish(proofs.finish, token), { token, ...hookArgs(f, 'finish') }));
 // Hostile pages replace the array helpers Playwright serializes arguments with, so these send an expression, not an argument.
-const run = (f, code) => f.page.evaluate(`(() => { const api = window[Symbol.for('sleight.popup3')]; return ${code}; })()`);
+const run = (f, code) => callHook(f, code);
 const armHere = (f, selector, options = '') => run(f, `api.guard(document.querySelector(${JSON.stringify(selector)}), 't1', 3000${options})`);
 const verdictHere = f => run(f, `api.verdict('t1')`);
 const settle = () => new Promise(resolve => setTimeout(resolve, 250));
@@ -102,12 +103,11 @@ test('key shield: finish disarms, a wrong token neither reads nor ends it, and a
 
 test('key shield: bad arguments arm nothing, and a new guard replaces the old one', { skip, timeout: 60000 }, async t => {
   const b = await bank(t), f = await b.start(plain(form(), swapAction + record), readOnly);
-  const outcomes = await f.page.evaluate(() => {
-    const api = window[Symbol.for('sleight.popup3')], field = document.getElementById('t');
-    const detached = document.createElement('button');
+  const outcomes = await callHook(f, `(() => {
+    const field = document.getElementById('t'), detached = document.createElement('button');
     return [api.guard(detached, 'x1', 1000), api.guard(document.createTextNode('x'), 'x2', 1000), api.guard(window, 'x3', 1000), api.guard(null, 'x4', 1000),
       api.guard(field, 'x5', 0), api.guard(field, 'x6', NaN), api.guard(field, 'x7', 1000, { keys: true }), api.guard(field, 'x8', 1000), api.verdict('x7')];
-  });
+  })()`);
   assert.deepEqual(outcomes, [false, false, false, false, false, false, true, true, undefined]);
 });
 
@@ -187,7 +187,7 @@ test('a target that leaves the page, replaced by a lookalike at the same place, 
 
 test('a target removed before arming cannot be armed', { skip, timeout: 60000 }, async t => {
   const b = await bank(t), f = await b.start(plain(button, ''), readOnly);
-  const armed = await f.page.evaluate(() => { const x = document.getElementById('b'); x.remove(); return window[Symbol.for('sleight.popup3')].guard(x, 'gone', 1000); });
+  const armed = await callHook(f, `(() => { const x = document.getElementById('b'); x.remove(); return api.guard(x, 'gone', 1000); })()`);
   assert.equal(armed, false);
 });
 

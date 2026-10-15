@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { chromium } from '../plugins/sleight/vendor/playwright-core/index.mjs';
 import { snapshot } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
-import { popupHook, backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { popupHook, backgroundClick, newHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
 
 const pin = JSON.parse(readFileSync(new URL('../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url)))
   .browsers.find(browser => browser.name === 'chromium-headless-shell');
@@ -61,9 +61,10 @@ test('CR3 measures 20 snapshot reads per shape and 20 plain prepare+click calls'
       assert.match(result.text, /Snapshot/); assert.doesNotMatch(result.text, /fixture-secret/);
     });
   }
-  await page.goto(origin + '/click'); await page.evaluate(popupHook);
+  const hook = newHook();
+  await page.goto(origin + '/click'); assert.equal(await page.evaluate(`(${popupHook})(${JSON.stringify(hook)})`), true);
   const locator = page.getByRole('button', { name: 'Increment' });
-  await measure('plainClick', () => backgroundClick({ page }, locator));
+  await measure('plainClick', () => backgroundClick({ page, hook }, locator));
   assert.deepEqual(await page.evaluate(() => ({ count: window.count, modifiers: window.modifiers })),
     { count: 21, modifiers: [false, false] });
   t.diagnostic('CR3 latency ' + JSON.stringify({ platform: process.platform, arch: process.arch, measurements }));

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { hookState } from './adversarial/fixtures/hook.mjs';
 import { fixture, controls, skip } from './fixtures/cr4-real.mjs';
 
 for (const stop of [false, true]) test('CR4 real 300 ms main-thread load keeps modifiers hidden and popup background, stop=' + stop,
@@ -43,7 +44,7 @@ test('CR4 real popup opened by a self-closing child is ready before backgroundCl
   let ready = false; survivor.ready.then(() => { ready = true; });
   await Promise.resolve();
   assert.equal(ready, true, 'popup preparation is already complete when backgroundClick returns');
-  assert.equal(await survivor.page.evaluate(() => !!window[Symbol.for('sleight.popup3')]), true);
+  assert.equal(await hookState(survivor.page, survivor.hook), 'live');
   assert.equal(result?.closed === true || result === undefined, true);
   assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
 });

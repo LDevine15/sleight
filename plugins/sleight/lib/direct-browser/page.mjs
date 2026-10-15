@@ -1,5 +1,5 @@
 // Background popup disposition for turbo v3, independently implemented for CR1.
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { endpointURL, endpointTarget, endpointBlock, bindEndpointPage, assertEndpointRead } from './endpoint-guard.mjs';
 
 function deadline(task, ms, message = 'background preparation timed out') {
@@ -11,7 +11,29 @@ function deadline(task, ms, message = 'background preparation timed out') {
 
 // MAIN world, before page scripts. Every name stays inside this function so it
 // can be serialized. The hook controls disposition, never grants authority.
-export function popupHook() {
+//
+// popupHook({ key, secret }): the controller picks a random property name and a random secret per page registry
+// and writes both into the install source, so a page can find neither before the hook runs. The api lives at
+// window[key] as a frozen, non-configurable, non-writable, non-enumerable value, so a page cannot replace, delete or
+// redefine it. A page can still list the property and call the methods, so every method takes a proof as its first
+// argument: HMAC-SHA-256(secret, method + ':' + nonce) as 'nonce.tag', checked against the secret held in this
+// closure, valid once, and good for that one method. A page that reads the proof off a call (Playwright hands its
+// arguments through page-reachable code) can burn it, which fails that call closed, and can do nothing more with it.
+// If the property already exists the install returns false and changes nothing (a page or a stale install got there
+// first), and the controller must treat that document as having no hook.
+export function popupHook(options) {
+  const { key, secret } = options !== null && typeof options === 'object' ? options : {};
+  if (typeof key !== 'string' || key.length === 0 || typeof secret !== 'string' || secret.length < 16 || secret.length > 64) return false;
+  // Every global this hook reads after install is captured here, before page scripts, so a page that replaces or
+  // deletes window.Element, window.Object, window.Set and the rest cannot change what the hook sees. These locals
+  // shadow the page-visible names for everything below.
+  const { Object, Function, Symbol, Math, Number, String, Error, Set, WeakMap, Promise, URL, JSON, Date, RegExp, Array,
+    Element, HTMLElement, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement, HTMLTextAreaElement,
+    HTMLFormElement, Event, EventTarget, MouseEvent, KeyboardEvent, Node, Document, DocumentFragment, ShadowRoot, NodeList,
+    Window, Uint8Array, Uint32Array, setTimeout, clearTimeout, navigator } = globalThis;
+  const { defineProperty, getOwnPropertyDescriptor: getOwn, freeze } = Object, isFinite = Number.isFinite, stringify = JSON.stringify;
+  const randomValues = globalThis.crypto?.getRandomValues?.bind(globalThis.crypto), nativeRandom = Math.random;
+  if (getOwn(window, key)) return false;
   // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable-container
   // and iframe-embed-object.html, obsolete.html#frames; fenced frames:
   // https://wicg.github.io/fenced-frame/#fenced-frame-element. Do not cross documents.
@@ -23,26 +45,25 @@ export function popupHook() {
   const nativeMatches = Element.prototype.matches;
   // Target decisions read only natives captured here, before any page script: a page can
   // redefine document.querySelector, window.name or window.frames, never these references.
-  const getOwn = Object.getOwnPropertyDescriptor;
   const nativeQuery = globalThis.Document?.prototype.querySelector, nativeQueryAll = globalThis.Document?.prototype.querySelectorAll;
   const query = (root, selector) => (nativeQuery ?? root.querySelector).call(root, selector);
   const queryAll = (root, selector) => (nativeQueryAll ?? root.querySelectorAll).call(root, selector);
   const nameGetter = getOwn(window, 'name')?.get, openerGetter = getOwn(window, 'opener')?.get, framesGetter = getOwn(window, 'frames')?.get;
   const nameOf = context => nameGetter ? nameGetter.call(context) : context.name;
   const framesOf = context => framesGetter ? framesGetter.call(context) : context.frames;
-  const editable = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable').get;
+  const editable = getOwn(HTMLElement.prototype, 'isContentEditable').get;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
   // Capture native IDL getters before page scripts. Form ownership includes
   // controls outside a form using form=id; button's missing/invalid type is submit.
   const formControls = [HTMLButtonElement, HTMLInputElement].map(constructor => ({
-    constructor, form: Object.getOwnPropertyDescriptor(constructor.prototype, 'form').get,
-    type: Object.getOwnPropertyDescriptor(constructor.prototype, 'type').get,
+    constructor, form: getOwn(constructor.prototype, 'form').get,
+    type: getOwn(constructor.prototype, 'type').get,
   }));
   const selectControl = { constructor: HTMLSelectElement,
-    multiple: Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'multiple').get };
+    multiple: getOwn(HTMLSelectElement.prototype, 'multiple').get };
   const labelControl = { constructor: HTMLLabelElement,
-    control: Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get };
+    control: getOwn(HTMLLabelElement.prototype, 'control').get };
   // HTML forms.html#the-label-element: an interactive descendant does
   // not forward label activation. This selector limits label forwarding only;
   // it does not give any of these elements a plain-click exception.
@@ -59,13 +80,11 @@ export function popupHook() {
   };
   const plainControl = node => submits(node)
     || node instanceof selectControl.constructor && selectControl.multiple.call(node);
-  const key = Symbol.for('sleight.popup3');
-  if (window[key]) return true;
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
   const nativeOpen = window.open, nativePrevent = Event.prototype.preventDefault;
   const composedPath = Event.prototype.composedPath, now = Date.now;
-  const prevented = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented');
-  const returnValue = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
+  const prevented = getOwn(Event.prototype, 'defaultPrevented');
+  const returnValue = getOwn(Event.prototype, 'returnValue');
   const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
   const openedWindows = [];
   const dispatch = EventTarget.prototype.dispatchEvent, elementQueryAll = Element.prototype.querySelectorAll;
@@ -75,12 +94,12 @@ export function popupHook() {
   // Script-started openings held since the last agent step, so the result can say so.
   let held = 0, arm;
   const replace = (object, name, descriptor) => {
-    const before = Object.getOwnPropertyDescriptor(object, name);
-    Object.defineProperty(object, name, descriptor);
+    const before = getOwn(object, name);
+    defineProperty(object, name, descriptor);
     replacements.push(() => {
-      const current = Object.getOwnPropertyDescriptor(object, name);
+      const current = getOwn(object, name);
       if (current?.value !== descriptor.value || current?.get !== descriptor.get || current?.set !== descriptor.set) return;
-      if (before) Object.defineProperty(object, name, before);
+      if (before) defineProperty(object, name, before);
       else delete object[name];
     });
   };
@@ -101,7 +120,7 @@ export function popupHook() {
     masked.set(event, arm.token); return true;
   };
   for (const name of ['ctrlKey', 'metaKey']) {
-    const descriptor = Object.getOwnPropertyDescriptor(MouseEvent.prototype, name);
+    const descriptor = getOwn(MouseEvent.prototype, name);
     replace(MouseEvent.prototype, name, { ...descriptor, get() { return hide(this) ? false : descriptor.get.call(this); } });
   }
   const modifierState = MouseEvent.prototype.getModifierState;
@@ -111,7 +130,7 @@ export function popupHook() {
   // Enter pressed with the modifier held (a keyboard-started link or form) hides it the same way.
   if (globalThis.KeyboardEvent) {
     for (const name of ['ctrlKey', 'metaKey']) {
-      const descriptor = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, name);
+      const descriptor = getOwn(KeyboardEvent.prototype, name);
       replace(KeyboardEvent.prototype, name, { ...descriptor, get() { return hide(this) ? false : descriptor.get.call(this); } });
     }
     const keyModifierState = KeyboardEvent.prototype.getModifierState;
@@ -142,7 +161,7 @@ export function popupHook() {
   const coverInitialDocument = opened => {
     try {
       const prototype = opened.Event.prototype, original = prototype.preventDefault;
-      Object.defineProperty(prototype, 'preventDefault', { configurable: true, writable: true, value() {
+      defineProperty(prototype, 'preventDefault', { configurable: true, writable: true, value() {
         const result = original.apply(this, arguments);
         cancelEvent(this);
         return result;
@@ -236,7 +255,7 @@ export function popupHook() {
     }
     return found;
   };
-  const forward = event => { for (const context of realms()) try { context[key]?.cancel(event); } catch { /* Not a hook. */ } };
+  const forward = event => { for (const context of realms()) try { context[key]?.cancel(proofFor('cancel'), event); } catch { /* Not a hook. */ } };
   // A realm is hooked when its preventDefault reaches this hook. A page cannot fake that without the native
   // function, which only an unhooked realm still holds.
   const hooked = context => {
@@ -319,7 +338,7 @@ export function popupHook() {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
     const target = targetOf(element);
     const rel = attribute(element, 'rel') ?? '';
-    return { url: url.href, target, rel, signature: JSON.stringify([url.href, target, rel]) };
+    return { url: url.href, target, rel, signature: stringify([url.href, target, rel]) };
   };
   const pointerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   const capture = event => {
@@ -364,15 +383,16 @@ export function popupHook() {
   // on an element or event). Classes are told apart by a native getter's brand check, not by instanceof, and
   // no page value ever builds a selector. If anything in the check throws, the input is cancelled.
   //
-  // Key-shield API (window[Symbol.for('sleight.popup3')]), for callers that send trusted input:
-  //   guard(element, token, capMs, { keys }) seals what activating `element` touches and arms the shield for
+  // Key-shield API (window[key], the key the controller passed to popupHook), for callers that send trusted input.
+  // Every method takes a proof from hookProof(hook, method) as its first argument, one proof per call; the rest follow:
+  //   guard(proof, element, token, capMs, { keys }) seals what activating `element` touches and arms the shield for
   //     capMs; { keys: true } also vetoes keydown, keypress, keyup and submit events (the form's action, method,
   //     target, enctype, novalidate and default submitter are in the seal). Returns false if it cannot arm.
-  //   verdict(token) returns the veto reason, or undefined if every guarded event matched the seal.
-  //   finish(token) disarms and returns the veto reason, or true.
+  //   verdict(proof, token) returns the veto reason, or undefined if every guarded event matched the seal.
+  //   finish(proof, token) disarms and returns the veto reason, or true.
   const uncurry = Function.prototype.bind.bind(Function.prototype.call);
   const getter = (type, name) => {
-    const get = Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
+    const get = getOwn(type?.prototype ?? {}, name)?.get;
     return get ? uncurry(get) : () => { throw Error('native ' + name + ' unavailable'); };
   };
   const textOf = getter(globalThis.Node, 'textContent'), localNameOf = getter(Element, 'localName'), connected = getter(globalThis.Node, 'isConnected');
@@ -386,6 +406,79 @@ export function popupHook() {
   const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
   const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
   const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
+  // Proofs. SHA-256 and HMAC written with typed arrays and operators only: a page cannot reach any step of them.
+  // The constants come from the cube roots of the first 64 primes, the start state from the square roots of the first 8.
+  const sha = (() => {
+    const K = new Uint32Array(64), IV = new Uint32Array(8), floor = Math.floor, pow = Math.pow;
+    for (let n = 2, found = 0; found < 64; n++) {
+      let prime = true;
+      for (let d = 2; d * d <= n; d++) if (n % d === 0) { prime = false; break; }
+      if (!prime) continue;
+      const fraction = (value) => (value - floor(value)) * 4294967296;
+      K[found] = floor(fraction(pow(n, 1 / 3)));
+      if (found < 8) IV[found] = floor(fraction(pow(n, 1 / 2)));
+      found++;
+    }
+    const w = new Uint32Array(64), h = new Uint32Array(8);
+    return bytes => {
+      const length = bytes.length, total = ((length + 9 + 63) >> 6) << 6, data = new Uint8Array(total);
+      for (let i = 0; i < length; i++) data[i] = bytes[i];
+      data[length] = 0x80;
+      const bits = length * 8;
+      data[total - 4] = bits >>> 24; data[total - 3] = bits >>> 16; data[total - 2] = bits >>> 8; data[total - 1] = bits;
+      for (let i = 0; i < 8; i++) h[i] = IV[i];
+      for (let offset = 0; offset < total; offset += 64) {
+        for (let i = 0; i < 16; i++) w[i] = (data[offset + 4 * i] << 24) | (data[offset + 4 * i + 1] << 16) | (data[offset + 4 * i + 2] << 8) | data[offset + 4 * i + 3];
+        for (let i = 16; i < 64; i++) {
+          const x = w[i - 15], y = w[i - 2];
+          w[i] = (w[i - 16] + (((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3)) + w[i - 7] + (((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10))) | 0;
+        }
+        let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], q = h[7];
+        for (let i = 0; i < 64; i++) {
+          const t1 = (q + (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+          const t2 = ((((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+          q = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += q;
+      }
+      const digest = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) digest[i] = h[i >> 2] >>> (24 - 8 * (i & 3));
+      return digest;
+    };
+  })();
+  const hexDigits = '0123456789abcdef';
+  const bytesOf = text => { const bytes = new Uint8Array(text.length); for (let i = 0; i < text.length; i++) bytes[i] = charCodeAt(text, i); return bytes; };
+  const secretBytes = bytesOf(secret);
+  const hmacHex = text => {
+    const message = bytesOf(text), inner = new Uint8Array(64 + message.length), outer = new Uint8Array(96);
+    for (let i = 0; i < 64; i++) { const k = i < secretBytes.length ? secretBytes[i] : 0; inner[i] = k ^ 0x36; outer[i] = k ^ 0x5c; }
+    for (let i = 0; i < message.length; i++) inner[64 + i] = message[i];
+    const digest = sha(inner);
+    for (let i = 0; i < 32; i++) outer[64 + i] = digest[i];
+    const tag = sha(outer);
+    let hex = '';
+    for (let i = 0; i < 32; i++) hex += hexDigits[tag[i] >> 4] + hexDigits[tag[i] & 15];
+    return hex;
+  };
+  const indexOf = uncurry(String.prototype.indexOf), usedNonces = new Set(), setHas = uncurry(Set.prototype.has), setAdd = uncurry(Set.prototype.add);
+  // A nonce only has to be unique among the proofs this realm has accepted; the tag is what cannot be forged.
+  let instance = '';
+  if (randomValues) { const bytes = new Uint8Array(12); randomValues(bytes); for (let i = 0; i < 12; i++) instance += hexDigits[bytes[i] >> 4] + hexDigits[bytes[i] & 15]; }
+  else instance = String(nativeRandom()).slice(2, 14);
+  let proofs = 0;
+  const proofFor = method => { const nonce = instance + '-' + ++proofs; return nonce + '.' + hmacHex(method + ':' + nonce); };
+  const verify = (method, proof) => {
+    if (dead && method !== 'off') throw Error('background popup hook is off');
+    const dot = typeof proof === 'string' ? indexOf(proof, '.') : -1;
+    if (dot < 1 || proof.length > 256) throw Error('background popup hook refused the call');
+    const nonce = slice(proof, 0, dot), expected = hmacHex(method + ':' + nonce), given = slice(proof, dot + 1);
+    let difference = expected.length ^ given.length;
+    for (let i = 0; i < expected.length && i < given.length; i++) difference |= charCodeAt(expected, i) ^ charCodeAt(given, i);
+    if (difference !== 0 || setHas(usedNonces, nonce)) throw Error('background popup hook refused the call');
+    setAdd(usedNonces, nonce);
+    return nonce;
+  };
+  let dead = false;
   let serial = 0, shield;
   const ident = node => { if (!idsHas(ids, node)) idsSet(ids, node, ++serial); return idsGet(ids, node); };
   const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = imul(h ^ charCodeAt(value, i), 16777619); return h + ':' + value.length; };
@@ -516,10 +609,10 @@ export function popupHook() {
     for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
     arm = undefined; return true;
   };
-  const api = {
+  const impl = {
     // See the key-shield API above. Any throw here reaches the caller as a rejected call, which reads as "page changed".
     guard(element, token, capMs, { keys = false } = {}) {
-      if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0 || !isElement(element) || !connected(element)) return false;
+      if (retired.has(token) || !isFinite(capMs) || capMs <= 0 || !isElement(element) || !connected(element)) return false;
       const withKeys = keys === true, control = controlOf(element), form = withKeys ? control?.form ?? null : null;
       const forwarded = forwardedOf(element), areas = areasOf(element);
       shield = { token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
@@ -530,20 +623,18 @@ export function popupHook() {
     reveal(element) { scrollInto(element, { block: 'nearest', inline: 'nearest', behavior: 'instant' }); },
     // Resolves after the next frame (or 40 ms if frames are throttled) and one more task, so swaps scheduled by the
     // pointer's arrival (events, observers, timers, animation frames) land before the seal is taken.
-    settle() {
-      return new Promise(resolve => {
-        let waiting = true;
-        const next = () => { if (waiting) { waiting = false; nativeTimeout(resolve, 0); } };
-        nativeFrame?.(next); nativeTimeout(next, 40);
-      });
+    settle(done) {
+      let waiting = true;
+      const next = () => { if (waiting) { waiting = false; nativeTimeout(done, 0); } };
+      nativeFrame?.(next); nativeTimeout(next, 40);
     },
-    verdict(token) { return shield?.token === token ? shield.violation : undefined; },
+    verdict(token) { return shield && shield.token === token ? shield.violation : undefined; },
     prepare(element, token, capMs, press) {
       if (retired.has(token)) return false;
       held = 0;
       if (arm) finish(arm.token);
       if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
-      if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
+      if (!(element instanceof Element) || !element.isConnected || !isFinite(capMs) || capMs <= 0) return false;
       // The native getter inherits editability, including false islands inside
       // editors. Checking ancestors would discard that non-editable boundary.
       if (document.designMode === 'on' || element instanceof HTMLElement && editable.call(element)) return false;
@@ -578,13 +669,14 @@ export function popupHook() {
     },
     // A blocked input reports why, so the caller never mistakes a cancelled click for a delivered one.
     finish(token) {
-      const bad = shield?.token === token ? shield.violation : undefined;
-      if (shield?.token === token) shield = undefined;
+      const bad = shield && shield.token === token ? shield.violation : undefined;
+      if (shield && shield.token === token) shield = undefined;
       finish(token); return bad ?? true;
     },
-    cancel: cancelEvent,
+    cancel(event) { cancelEvent(event); },
     take() { const count = held; held = 0; return count; },
     off() {
+      dead = true;
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
@@ -593,30 +685,108 @@ export function popupHook() {
       for (let i = 0; i < guarded.length; i++) remove.call(window, guarded[i], guardEvent, true);
       shield = undefined;
       for (const restore of replacements.reverse()) restore();
-      if (window[key] === api) delete window[key];
       return true;
     },
   };
-  window[key] = api;
+  // What a caller gets back is signed too: 'nonce.tag.text', the tag an HMAC of method, the call's nonce and the text
+  // under the secret, so a page that forges or replays a return value (Playwright carries returns through code the page
+  // can replace) cannot pass for the hook. The text is built here from fixed shapes, never by JSON.stringify, which a
+  // page can steer through Object.prototype.toJSON. hookOpen in the controller checks the tag and decodes the text.
+  const NUL = String.fromCharCode(0);
+  const sign = (method, nonce, text) => nonce + '.' + hmacHex(method + ':' + nonce + ':' + text) + '.' + text;
+  const booleanText = value => value === true ? 't' : 'f';
+  const preparedText = value => value === true ? 't' : value === false ? 'f' : value.kind === 'link' ? 'link' : 'form';
+  const requestText = value => {
+    if (value === undefined) return 'u';
+    if (getOwn(value, 'violation')) return 's' + value.violation;
+    if (getOwn(value, 'unavailable')) return 'n';
+    return 'q' + value.url + NUL + value.target + NUL + value.rel;
+  };
+  const stringText = value => typeof value === 'string' ? 's' + value : value === undefined ? 'u' : 't';
+  const seal = (method, proof, run, text) => { const nonce = verify(method, proof); return sign(method, nonce, text(run())); };
+  const nothing = () => 'u';
+  const api = {
+    guard: (proof, element, token, capMs, options) => seal('guard', proof, () => impl.guard(element, token, capMs, options), booleanText),
+    reveal: (proof, element) => seal('reveal', proof, () => impl.reveal(element), nothing),
+    settle: proof => { const nonce = verify('settle', proof); return new Promise(resolve => impl.settle(() => resolve(sign('settle', nonce, 'u')))); },
+    verdict: (proof, token) => seal('verdict', proof, () => impl.verdict(token), stringText),
+    prepare: (proof, element, token, capMs, press) => seal('prepare', proof, () => impl.prepare(element, token, capMs, press), preparedText),
+    takeRequest: (proof, token) => seal('takeRequest', proof, () => impl.takeRequest(token), requestText),
+    finish: (proof, token) => seal('finish', proof, () => impl.finish(token), stringText),
+    cancel: (proof, event) => { verify('cancel', proof); impl.cancel(event); },
+    take: (proof) => seal('take', proof, () => impl.take(), count => 'd' + count),
+    off: proof => seal('off', proof, () => impl.off(), booleanText),
+  };
+  try { defineProperty(window, key, { value: freeze(api), configurable: false, writable: false, enumerable: false }); }
+  catch { for (const restore of replacements.reverse()) restore(); return false; }
   return true;
 }
+
+// The controller's side of the hook's proof. hook is { key, secret } as popupHook received it (build the pair with
+// newHook()). hookProof(hook, method) returns the first argument for one call of that method, for example
+//   window[hook.key].guard(proof, element, token, capMs, { keys: true })
+// Make a proof per call, never reuse one, and send it only to the method it names. The hook answers with a signed string;
+// hookOpen(hook, answer) checks the signature, which proves the answer came from the hook for that very call and not from a
+// page that replaced the evaluate machinery, and returns the decoded value (what the method returned before answers were
+// signed): guard and off a boolean, reveal and settle undefined, verdict and finish a string or undefined or true, prepare
+// false, true, { kind: 'link' } or { kind: 'form' }, takeRequest undefined, { unavailable: true }, { violation } or
+// { url, target, rel }, take a number. It throws an Error with code HOOK_ANSWER_REFUSED for anything it cannot vouch for.
+export const newHook = () => Object.freeze({ key: 'k' + randomBytes(16).toString('hex'), secret: randomUUID() });
+const issued = new WeakMap();
+export function hookProof(hook, method) {
+  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string' || typeof method !== 'string') throw Error('background popup hook unavailable');
+  const nonce = randomBytes(12).toString('hex');
+  if (!issued.has(hook)) issued.set(hook, new Map());
+  const calls = issued.get(hook);
+  calls.set(nonce, method);
+  if (calls.size > 4096) calls.delete(calls.keys().next().value);
+  return nonce + '.' + createHmac('sha256', hook.secret).update(method + ':' + nonce).digest('hex');
+}
+export function hookOpen(hook, answer) {
+  const refused = () => Object.assign(Error('background popup hook answer refused'), { code: 'HOOK_ANSWER_REFUSED' });
+  const first = typeof answer === 'string' ? answer.indexOf('.') : -1, second = first < 0 ? -1 : answer.indexOf('.', first + 1);
+  if (second < 0) throw refused();
+  const nonce = answer.slice(0, first), tag = answer.slice(first + 1, second), text = answer.slice(second + 1);
+  const method = issued.get(hook)?.get(nonce);
+  if (method === undefined) throw refused();
+  const expected = createHmac('sha256', hook.secret).update(method + ':' + nonce + ':' + text).digest('hex');
+  if (tag.length !== expected.length || !timingSafeEqual(Buffer.from(tag), Buffer.from(expected))) throw refused();
+  issued.get(hook).delete(nonce);
+  if (text === 'u') return undefined;
+  if (text === 't' || text === 'f') return text === 't';
+  if (text === 'link' || text === 'form') return { kind: text };
+  if (text === 'n') return { unavailable: true };
+  if (/^d\d+$/.test(text)) return Number(text.slice(1));
+  if (text[0] === 's') return method === 'takeRequest' ? { violation: text.slice(1) } : text.slice(1);
+  if (text[0] === 'q') { const [url, target, rel, ...extra] = text.slice(1).split('\0'); if (extra.length || rel === undefined) throw refused(); return { url, target, rel }; }
+  throw refused();
+}
+const hookOf = tab => {
+  const hook = tab?.hook;
+  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string') throw Error('background popup hook unavailable');
+  return hook;
+};
 
 const changedMidClick = 'page changed during the click; read again';
 
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false } = {}) {
-  const token = randomUUID();
-  const disarm = () => tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.finish(token), token);
+  const token = randomUUID(), hook = hookOf(tab), { key } = hook;
+  // 'absent' stands for no hook in the document the click left behind; a page can fake it, which only fails the call.
+  const disarm = async () => {
+    const answer = await tab.page.evaluate(({ key, proof, token }) => window[key] ? window[key].finish(proof, token) : 'absent', { key, proof: hookProof(hook, 'finish'), token });
+    return answer === 'absent' ? undefined : hookOpen(hook, answer);
+  };
   let cancelled;
   try {
     let prepared;
     try {
-      prepared = await deadline(() => locator.evaluate((element, { token, capMs, press }) => {
-        const hook = window[Symbol.for('sleight.popup3')];
+      prepared = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, prepare, reveal, token, capMs, press }) => {
+        const hook = window[key];
         if (!hook) throw Error('background popup hook unavailable');
-        const result = hook.prepare(element, token, capMs, press);
-        hook.reveal(element);
+        const result = hook.prepare(prepare, element, token, capMs, press);
+        hook.reveal(reveal, element);
         return result;
-      }, { token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs);
+      }, { key, prepare: hookProof(hook, 'prepare'), reveal: hookProof(hook, 'reveal'), token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs));
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
     if (prepared?.kind === 'form') throw Error('Enter would submit this form into a new tab; click its submit button instead');
     const modified = prepared === true || prepared?.kind === 'link';
@@ -629,12 +799,12 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       if (box) await tab.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     }
     try {
-      await deadline(() => locator.evaluate(async (element, { token, capMs }) => {
-        const hook = window[Symbol.for('sleight.popup3')];
-        await hook.settle();
-        if (!hook.guard(element, token, capMs)) throw Error('click guard unavailable');
-        return true;
-      }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+      const armed = await deadline(() => locator.evaluate(async (element, { key, settle, guard, token, capMs }) => {
+        const hook = window[key];
+        await hook.settle(settle);
+        return hook.guard(guard, element, token, capMs);
+      }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+      if (hookOpen(hook, armed) !== true) throw Error('click guard unavailable');
     } catch { throw Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     let result;
@@ -645,8 +815,9 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       else throw error;
     } finally { if (modified) await tab.page.keyboard.up('ControlOrMeta').catch(() => {}); }
     if (result?.closed !== true && !tab.closed && !tab.page.isClosed?.() && prepared?.kind === 'link') {
-      const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
-        (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
+      const answer = await tab.page.evaluate(({ key, proof, token }) => window[key] ? window[key].takeRequest(proof, token) : 'absent',
+        { key, proof: hookProof(hook, 'takeRequest'), token });
+      const request = answer === 'absent' ? { unavailable: true } : hookOpen(hook, answer);
       if (request?.violation) { cancelled = request.violation; return result; }
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
       if (request?.url) {
@@ -657,7 +828,11 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     await tab.settlePopups?.(checkpoint);
     return result;
   } finally {
-    const verdict = await disarm().catch(() => {});
+    // A hook that cannot vouch for its own answer, or refused the call, may have vetoed the input: say so rather than
+    // report a click delivered. A page that navigated away or closed just ends the evaluate, which is not a veto.
+    let verdict;
+    try { verdict = await disarm(); }
+    catch (error) { if (error?.code === 'HOOK_ANSWER_REFUSED' || /background popup hook refused/.test(error?.message)) cancelled ??= 'the page hook did not answer'; }
     cancelled ??= typeof verdict === 'string' ? verdict : undefined;
     // The guard cancelled the input: say so instead of reporting a delivered click.
     if (cancelled) throw Error(changedMidClick);
@@ -672,6 +847,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     throw Error('approved browser connection required');
   if (ownTarget !== undefined && (typeof ownTarget !== 'function' || typeof upstream?.send !== 'function'))
     throw Error('trusted popup admission needs the upstream CDP connection');
+  const hook = newHook();
   const records = new Map(), targets = new Map(), metadata = new WeakMap(), seen = new Map(), allocations = new Map(), tasks = new Set(), blockedTargets = new Set();
   const namedChildren = new Map();
   const queued = new WeakMap();
@@ -698,19 +874,22 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     });
     await entry.cdp.send('Page.enable');
     await entry.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    const { identifier } = await entry.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${popupHook})()` });
+    const source = `(${popupHook})(${JSON.stringify({ key: entry.hook.key, secret: entry.hook.secret })})`;
+    const { identifier } = await entry.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source });
     if (!identifier) throw Error('background popup hook installation failed');
     entry.script = identifier;
-    const result = await entry.cdp.send('Runtime.evaluate', { expression: `(${popupHook})()`, returnByValue: true });
+    const result = await entry.cdp.send('Runtime.evaluate', { expression: source, returnByValue: true });
     if (result.exceptionDetails || result.result?.value !== true) throw Error('background popup hook installation failed');
   };
   const removeHook = async entry => {
     if (entry.script) {
       await entry.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.script }); entry.script = null;
     }
-    if (!entry.page.isClosed()) for (const frame of entry.page.frames()) await frame.evaluate(() => {
-      return window[Symbol.for('sleight.popup3')]?.off() ?? true;
-    });
+    if (!entry.page.isClosed()) for (const frame of entry.page.frames()) {
+      // One proof per frame: each document keeps its own record of the proofs it has accepted.
+      const answer = await frame.evaluate(({ key, proof }) => window[key] ? window[key].off(proof) : 'absent', { key: entry.hook.key, proof: hookProof(entry.hook, 'off') });
+      if (answer !== 'absent' && hookOpen(entry.hook, answer) !== true) throw Error('background popup hook would not switch off');
+    }
   };
   const adopt = async (page, info, opener) => {
     if (blockedTargets.has(info.targetInfo.targetId)) return;
@@ -725,6 +904,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       state: { snapshotNo: 0, submitUnconfirmed: false }, opener: opener?.tab, popups: [], popupWaitMs, endpoint,
       closed: page.isClosed(), released: false, queue: Promise.resolve() };
     entry.windowOpenNo = 0;
+    // The hook's key and secret stay off enumeration, so a tab object that is logged or copied never carries them.
+    Object.defineProperty(entry, 'hook', { value: hook, enumerable: false });
     entry.parent = opener;
     // A window the page itself opened by that name (window.open) is reused like one this registry named.
     const namedPopup = async (opener, name) => {
@@ -775,7 +956,10 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       return deadline(() => track(opening), timeoutMs, 'background named open pending; do not retry before cleanup');
     };
     // Script-started openings the hook held since the last agent step (a count, never page text).
-    entry.takeHeld = () => deadline(() => page.evaluate(() => window[Symbol.for('sleight.popup3')]?.take?.() ?? 0), timeoutMs);
+    entry.takeHeld = async () => {
+      const answer = await deadline(() => page.evaluate(({ key, proof }) => window[key] ? window[key].take(proof) : 'absent', { key: hook.key, proof: hookProof(hook, 'take') }), timeoutMs);
+      return answer === 'absent' ? 0 : hookOpen(hook, answer);
+    };
     entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length,
       ...(entry.parent ? { opener: { tab: entry.parent.tab, windows: entry.parent.windowOpenNo, popups: entry.parent.popups.length } } : {}) });
     entry.settlePopups = async before => {

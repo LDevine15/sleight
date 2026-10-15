@@ -258,5 +258,15 @@ Engine behavior that sleight works around or can't change:
   Script-started openings (`a.click()`, `form.submit()`, `requestSubmit()`, `dispatchEvent` of a click on a detached link)
   are held, not opened in the background, and the result says so. Enter on a focused link opens it in the background.
   Enter in or on a form that submits to a new tab is refused with a pointer to the submit button, because Ctrl+Enter
-  doesn't submit a form. A page can still overwrite `window[Symbol.for('sleight.popup3')]` with its own object during a
-  click and steer the captured request. Found 2026-10-14 (AD1).
+  doesn't submit a form. Found 2026-10-14 (AD1).
+- In turbo v3, the popup hook is a random window property, frozen and non-configurable, and every call to it
+  carries a one-use proof made with a per-registry secret. Its answers are signed with the same secret. A page that
+  replaces, deletes or redefines the property, calls `off()`, or replaces `window.eval` or `Array.prototype.slice` to
+  read or forge what Playwright carries (35 real-browser cases in `hook-key.real.test.mjs`) cannot switch the hook
+  off, steer a request, or get a foreground tab. It can read the proof off an evaluate argument and use it first, which
+  fails that one click closed ("preparation failed"), so a page can stop turbo v3 from clicking anything on it. The hook
+  also reads its globals from copies taken before page scripts, so replacing `window.Element` and the rest changes
+  nothing; replacing the prototypes behind them (`Element.prototype.localName`, `Set.prototype.has`, `Array.prototype`
+  methods) is still unmeasured outside the swap shield, which reads only natives it captured. A same-origin window the
+  page opens keeps the opener's key and secret, so a page that plants a property at that key before the hook installs
+  makes the install fail, and that tab is not adopted. Found 2026-10-15 (AD1 pop round 2).

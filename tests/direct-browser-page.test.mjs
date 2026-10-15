@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
-import { createPageRegistry, backgroundClick, popupHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { hookAnswer } from './adversarial/fixtures/hook.mjs';
+import { createPageRegistry, backgroundClick, popupHook, hookProof, hookOpen, newHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
 
 function fixture(options = {}) {
   const calls = [], pages = [], context = new EventEmitter();
@@ -17,7 +18,7 @@ function fixture(options = {}) {
     p.isClosed = () => p.closed;
     p.url = () => 'https://fixture.invalid/' + targetId;
     p.title = async () => targetId;
-    p.frames = () => [{ evaluate: async () => true }];
+    p.frames = () => [{ evaluate: async () => 'absent' }];
     p.keyboard = { up: async key => calls.push(['up', key]) };
     p.cdp = Object.assign(new EventEmitter(), { async send(method, params) {
       calls.push([method, params, targetId]);
@@ -28,6 +29,7 @@ function fixture(options = {}) {
     }, detach: async () => calls.push(['detach', targetId]) });
     p.goto = async url => { calls.push(['goto', url, targetId]); };
     p.evaluate = async (_fn, name) => {
+      if (name && typeof name === 'object' && 'proof' in name) return 'absent';
       if (name !== undefined) { p.windowName = name; return name; }
       return { name: p.windowName ?? '', origin: new URL(p.url()).origin };
     };
@@ -130,8 +132,9 @@ test('invalid URLs allocate nothing', async () => {
 
 function clickFixture(probe) {
   const calls = [], entry = { page: { keyboard: { up: async key => calls.push(['up', key]) },
-    evaluate: async () => { calls.push(['disarm']); return true; } }, popups: [], popupWaitMs: 1 };
-  const locator = { evaluate: async () => probe };
+    evaluate: async (fn, arg) => { calls.push(['disarm']); return hookAnswer(entry.hook, fn, arg); } }, popups: [], popupWaitMs: 1 };
+  Object.defineProperty(entry, 'hook', { value: newHook(), enumerable: false });
+  const locator = { evaluate: async (fn, arg) => hookAnswer(entry.hook, fn, arg, { prepare: probe }) };
   return { calls, entry, locator };
 }
 
@@ -218,11 +221,20 @@ function hookFixture({ clock = Date } = {}) {
   const opens = [], window = { listeners: {}, captureListeners: {}, open(...args) { opens.push(args); return { real: true }; } };
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
-  vm.runInNewContext(`(${popupHook})()`, { window, document, navigator,
+  const credentials = newHook();
+  const context = vm.createContext({ window, document, navigator,
     MouseEvent, Element, HTMLElement: Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
-  const hook = window[Symbol.for('sleight.popup3')];
-  return { window, document, navigator, hook, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+  const installed = vm.runInContext(`(${popupHook})(${JSON.stringify(credentials)})`, context);
+  const raw = window[credentials.key];
+  // Each call carries its own proof, as the controller sends it; tests that look at the proof use raw.
+  const hook = Object.fromEntries(['guard', 'reveal', 'settle', 'verdict', 'prepare', 'takeRequest', 'finish', 'cancel', 'take', 'off']
+    .map(name => [name, (...args) => {
+      const answer = raw[name](hookProof(credentials, name), ...args);
+      if (name === 'cancel') return answer;
+      return answer && typeof answer.then === 'function' ? answer.then(value => hookOpen(credentials, value)) : hookOpen(credentials, answer);
+    }]));
+  return { window, document, navigator, hook, raw, credentials, context, installed, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     MouseEvent, Event, EventTarget, opens };
 }
 
@@ -427,7 +439,7 @@ test('CR3 captures composedPath and Date.now before page wrappers can change mas
 
 test('CR3 preparation arm outlasts the actionability timeout by one second', async () => {
   const f = clickFixture(true); let cap;
-  f.locator.evaluate = async (_fn, args) => { cap = args.capMs; return true; };
+  f.locator.evaluate = async (fn, args) => { cap = args.capMs; return hookAnswer(f.entry.hook, fn, args, { prepare: true }); };
   await backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 2000 });
   assert.equal(cap, 3000);
 });
@@ -436,8 +448,9 @@ test('CR3 a link-kind self-close returns closure without evaluating takeRequest'
   const f = clickFixture({ kind: 'link' });
   f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
   let requestReads = 0;
-  f.entry.page.evaluate = async fn => {
+  f.entry.page.evaluate = async (fn, arg) => {
     if (String(fn).includes('takeRequest')) { requestReads++; throw Error('page closed'); }
+    return hookAnswer(f.entry.hook, fn, arg);
   };
   const result = await backgroundClick(f.entry, f.locator, async () => {
     f.entry.closed = true; throw Error('Target page has been closed');
@@ -542,7 +555,7 @@ test('serialized popup hook leaves same-tab links plain and restores native meth
   assert.equal(f.window.open('/self', '_self').real, true);
   assert.equal(f.hook.off(), true);
   assert.notEqual(f.window.open, nativeOpen);
-  assert.equal(f.window[Symbol.for('sleight.popup3')], undefined);
+  assert.throws(() => f.hook.prepare(link, 'after-off', 1000), /hook is off/);
   const event = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link], control: true });
   assert.equal(event.ctrlKey, true);
   assert.equal(f.window.listeners.keydown.size, 0);
@@ -574,8 +587,8 @@ test('turn end closes an allocated target even when Playwright never produces it
 test('popup click waits for delayed owned adoption after windowOpen without delaying ordinary clicks', async () => {
   const f = fixture(), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
   const entry = f.registry.tab(tab);
-  entry.page.evaluate = async () => true;
-  await backgroundClick(entry, { evaluate: async () => true }, async () => {
+  entry.page.evaluate = async (fn, arg) => hookAnswer(entry.hook, fn, arg);
+  await backgroundClick(entry, { evaluate: async (fn, arg) => hookAnswer(entry.hook, fn, arg) }, async () => {
     entry.cdp.emit('Page.windowOpen', { url: 'https://fixture.invalid/popup' });
     setTimeout(() => f.page('delayed-popup', 'target-1'), 2);
   });
@@ -603,7 +616,7 @@ test('filtered popup is admitted from trusted CDP opener metadata before Playwri
 
 test('a noopener link dispatches once and opens its captured default destination in the background', async () => {
   const f = clickFixture({ kind: 'link' });
-  f.entry.page.evaluate = async () => ({ url: 'https://fixture.invalid/shipping' });
+  f.entry.page.evaluate = async (fn, arg) => hookAnswer(f.entry.hook, fn, arg, { request: { url: 'https://fixture.invalid/shipping' } });
   f.entry.openChild = async url => f.calls.push(['openChild', url]);
   await backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options]));
   assert.deepEqual(f.calls.filter(c => ['click', 'openChild'].includes(c[0])), [
@@ -613,7 +626,7 @@ test('a noopener link dispatches once and opens its captured default destination
 
 test('a prepared new-tab link carries background disposition even if page handlers stop bubbling', async () => {
   const f = clickFixture({ kind: 'link' });
-  f.entry.page.evaluate = async () => undefined;
+  f.entry.page.evaluate = async (fn, arg) => hookAnswer(f.entry.hook, fn, arg, { request: undefined });
   await backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options]));
   assert.deepEqual(f.calls.find(call => call[0] === 'click'), ['click', { modifiers: ['ControlOrMeta'] }]);
   assert.equal(f.calls.filter(call => call[0] === 'click').length, 1);
@@ -855,7 +868,7 @@ test('CR1 preparation timeout sends no input, retires the late token and disarms
 test('CR1 unavailable link default and missing registry never replay input', async () => {
   for (const request of [{ unavailable: true }, { url: 'https://fixture.invalid/' }]) {
     const f = clickFixture({ kind: 'link' });
-    f.entry.page.evaluate = async () => request;
+    f.entry.page.evaluate = async (fn, arg) => hookAnswer(f.entry.hook, fn, arg, { request });
     await assert.rejects(backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options])),
       request.url ? /owned page registry/ : /link default changed or was not captured/);
     assert.equal(f.calls.filter(call => call[0] === 'click').length, 1);
@@ -1096,8 +1109,8 @@ test('CR4 late popup adoption retains the closed owned opener', async () => {
   const parent = f.registry.tab(root.tab), page = f.page('closing-child', parent.targetId);
   await f.registry.idle();
   const child = f.registry.tab(parent.popups[0].tab);
-  child.page.evaluate = async () => true;
-  await backgroundClick(child, { evaluate: async () => true }, async () => {
+  child.page.evaluate = async (fn, arg) => hookAnswer(child.hook, fn, arg);
+  await backgroundClick(child, { evaluate: async (fn, arg) => hookAnswer(child.hook, fn, arg) }, async () => {
     child.cdp.emit('Page.windowOpen', {});
     await page.close();
     setTimeout(() => f.page('survivor', 'closing-child'), 2);
@@ -1247,8 +1260,9 @@ test('CR4 successful link dispatch that observes closure skips takeRequest and s
   f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
   let settled = false;
   f.entry.settlePopups = async () => { settled = true; };
-  f.entry.page.evaluate = async fn => {
+  f.entry.page.evaluate = async (fn, arg) => {
     if (String(fn).includes('takeRequest')) throw Error('must not read a closed page');
+    return hookAnswer(f.entry.hook, fn, arg);
   };
   await backgroundClick(f.entry, f.locator, async () => { f.entry.closed = true; });
   assert.equal(settled, true);
@@ -1259,11 +1273,11 @@ test('CR4 self-close settles popup readiness against the living opener after nat
   const parent = f.registry.tab(root.tab), closing = f.page('closing', parent.targetId);
   await f.registry.idle();
   const child = f.registry.tab(parent.popups[0].tab);
-  child.page.evaluate = async () => true;
+  child.page.evaluate = async (fn, arg) => hookAnswer(child.hook, fn, arg);
   let release, entered;
   const held = new Promise(resolve => { release = resolve; }), installing = new Promise(resolve => { entered = resolve; });
   let finished = false;
-  const clicking = backgroundClick(child, { evaluate: async () => true }, async () => {
+  const clicking = backgroundClick(child, { evaluate: async (fn, arg) => hookAnswer(child.hook, fn, arg) }, async () => {
     child.cdp.emit('Page.windowOpen', {}); await closing.close();
     const survivor = f.page('reparented', parent.targetId), send = survivor.cdp.send;
     survivor.cdp.send = async (method, params) => {
@@ -1278,4 +1292,111 @@ test('CR4 self-close settles popup readiness against the living opener after nat
     assert.equal(finished, false, 'backgroundClick must await the reparented popup installation');
   } finally { release(); await clicking; await f.registry.endTurn(); }
   assert.equal(parent.popups.length, 2);
+});
+
+// The controller's proof: HMAC-SHA-256 written in the hook with typed arrays only, checked against node:crypto.
+test('hook proofs: each proof works once and only for its method, and a refused call does not burn it', () => {
+  const f = hookFixture(), call = (name, ...args) => f.raw[name](hookProof(f.credentials, name), ...args);
+  try {
+    assert.equal(f.installed, true);
+    for (let round = 0; round < 40; round++) {
+      const proof = hookProof(f.credentials, 'take');
+      assert.equal(hookOpen(f.credentials, f.raw.take(proof)), 0, 'a fresh proof is accepted');
+      assert.throws(() => f.raw.take(proof), /refused the call/, 'the same proof is not accepted twice');
+    }
+    const forTake = hookProof(f.credentials, 'take');
+    assert.throws(() => f.raw.finish(forTake, 'x'), /refused the call/, 'a proof made for take does not call finish');
+    assert.equal(hookOpen(f.credentials, f.raw.take(forTake)), 0, 'a refused call does not burn the proof');
+    assert.throws(() => f.raw.take(hookProof(newHook(), 'take')), /refused the call/, 'a proof made with another secret is refused');
+    for (const bad of [undefined, null, 7, {}, '', '.', 'a.', '.b', 'abc', 'a.' + '0'.repeat(64), forTake.slice(0, -1), hookProof(f.credentials, 'take') + '0'])
+      assert.throws(() => f.raw.take(bad), /refused the call/, String(bad));
+    assert.ok(call('take'));
+  } finally { f.hook.off(); }
+});
+
+test('hook answers: the tag is the HMAC of method, nonce and text, so the typed-array SHA-256 is exact for many lengths', async () => {
+  const { createHmac } = await import('node:crypto');
+  const f = hookFixture();
+  try {
+    for (const length of [1, 2, 3, 30, 31, 32, 33, 40, 41, 42, 55, 56, 57, 63, 64, 65, 100, 120]) {
+      const nonce = Array.from({ length }, (_, i) => 'abcdefghijklmnopqrstuvwxyz0123456789'[(i * 7 + length) % 36]).join('');
+      const tag = createHmac('sha256', f.credentials.secret).update('take:' + nonce).digest('hex');
+      const answer = f.raw.take(nonce + '.' + tag), [echoed, answerTag, ...text] = answer.split('.');
+      assert.equal(echoed, nonce); assert.equal(text.join('.'), 'd0');
+      assert.equal(answerTag, createHmac('sha256', f.credentials.secret).update('take:' + nonce + ':d0').digest('hex'), 'nonce length ' + length);
+    }
+    // A long answer: the request text carries a URL of several kilobytes.
+    const proof = hookProof(f.credentials, 'prepare'), link = new f.Element('a', { href: '/' + 'p'.repeat(5000), target: '_blank' });
+    assert.deepEqual(hookOpen(f.credentials, f.raw.prepare(proof, link, 'long', 1000)), { kind: 'link' });
+    for (const fn of f.window.listeners.click) fn(Object.assign(new f.MouseEvent(), { nodes: [link], isTrusted: true }));
+    assert.equal(hookOpen(f.credentials, f.raw.takeRequest(hookProof(f.credentials, 'takeRequest'), 'long')).url.length, 'https://fixture.invalid/'.length + 5000);
+  } finally { f.hook.off(); }
+});
+
+test('hook answers: hookOpen refuses a forged, replayed, re-labelled or unissued answer', () => {
+  const f = hookFixture();
+  try {
+    const open = answer => hookOpen(f.credentials, answer);
+    const proof = hookProof(f.credentials, 'take'), answer = f.raw.take(proof);
+    const [nonce, tag, text] = answer.split('.');
+    for (const forged of [undefined, null, 5, '', 'x', nonce + '.' + tag, nonce + '.' + '0'.repeat(64) + '.' + text, nonce + '.' + tag + '.d9', 'unissued.' + tag + '.' + text, answer + 'x'])
+      assert.throws(() => open(forged), error => error.code === 'HOOK_ANSWER_REFUSED', String(forged));
+    assert.equal(open(answer), 0);
+    assert.throws(() => open(answer), error => error.code === 'HOOK_ANSWER_REFUSED', 'an answer opens once');
+    // An answer for one method does not pass as the answer to a call of another.
+    const offProof = hookProof(f.credentials, 'verdict'), takeAnswer = f.raw.take(hookProof(f.credentials, 'take'));
+    assert.throws(() => open(takeAnswer.replace(/^[^.]+/, offProof.split('.')[0])), error => error.code === 'HOOK_ANSWER_REFUSED');
+    assert.equal(open(f.raw.verdict(offProof, 'none')), undefined);
+  } finally { f.hook.off(); }
+});
+
+test('hook install: an existing property at the key fails closed and changes nothing', () => {
+  const credentials = newHook(), opens = [], real = () => 'native';
+  const window = { open: real, listeners: {}, addEventListener() { opens.push('listener'); } }, planted = { prepare() { return false; } };
+  Object.defineProperty(window, credentials.key, { value: planted });
+  const context = vm.createContext({ window, document: { baseURI: 'https://fixture.invalid/' }, navigator: {}, URL, Date, setTimeout, clearTimeout });
+  assert.equal(vm.runInContext(`(${popupHook})(${JSON.stringify(credentials)})`, context), false);
+  assert.equal(window.open, real, 'no native was replaced');
+  assert.deepEqual(opens, [], 'no listener was added');
+  assert.equal(window[credentials.key], planted);
+});
+
+test('hook install: no options, a short secret or an empty key install nothing', () => {
+  for (const options of [undefined, null, {}, { key: 'k', secret: 'short' }, { key: '', secret: 'x'.repeat(36) }, { key: 'k', secret: 'x'.repeat(65) }, { key: 7, secret: 'x'.repeat(36) }]) {
+    const window = { open() {}, listeners: {} };
+    const context = vm.createContext({ window, document: {}, navigator: {}, URL, Date, setTimeout, clearTimeout });
+    assert.equal(vm.runInContext(`(${popupHook})(${JSON.stringify(options)})`, context), false, JSON.stringify(options));
+    assert.deepEqual(Object.keys(window).sort(), ['listeners', 'open']);
+  }
+});
+
+test('hook install: the api is frozen and non-configurable, and off() switches the methods off for good', () => {
+  const f = hookFixture(), descriptor = Object.getOwnPropertyDescriptor(f.window, f.credentials.key);
+  assert.deepEqual({ ...descriptor, value: undefined }, { value: undefined, writable: false, enumerable: false, configurable: false });
+  assert.equal(Object.isFrozen(f.raw), true);
+  assert.throws(() => { 'use strict'; f.window[f.credentials.key] = {}; });
+  assert.equal(f.hook.off(), true);
+  assert.equal(f.window[f.credentials.key], f.raw, 'the property stays');
+  assert.throws(() => f.hook.take(), /hook is off/);
+  assert.equal(f.hook.off(), true, 'off is idempotent');
+});
+
+// popupHook reads these after install, so a page that replaces or deletes them must change nothing.
+for (const mode of ['replace', 'delete']) test('hook globals: ' + mode + ' of every global in the page does not change what prepare, takeRequest and the window.open hold decide', () => {
+  const sweepAll = `(() => { const junk = function() { return null; };
+    for (const name of Object.getOwnPropertyNames(globalThis)) { if (name === 'window' || name === 'document' || name === 'globalThis') continue;
+      try { ${mode === 'replace' ? 'globalThis[name] = junk' : 'delete globalThis[name]'}; } catch {} } })()`;
+  const run = sweep => {
+    const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: '_blank' }), button = new f.Element('button'), same = new f.Element('a', { href: '/x' });
+    if (sweep) vm.runInContext(sweepAll, f.context);
+    try {
+      const kinds = [f.hook.prepare(link, 'a', 1000)?.kind, f.hook.prepare(button, 'b', 1000), f.hook.prepare(same, 'c', 1000)];
+      f.hook.finish('c');
+      f.hook.prepare(link, 'd', 1000);
+      for (const fn of f.window.listeners.click ?? []) fn(Object.assign(new f.MouseEvent(), { nodes: [link], isTrusted: true }));
+      const request = f.hook.takeRequest('d');
+      return { kinds, held: f.window.open('/danger', '_blank'), request: request && { url: request.url, target: request.target }, take: f.hook.take() };
+    } finally { f.hook.off(); }
+  };
+  assert.deepEqual(run(true), run(false));
 });

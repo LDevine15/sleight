@@ -372,7 +372,7 @@ test('a preventDefault taken from an iframe the page then removed still stops th
 test('a forged hook object on a window handle does not hide that window from the cancel check (A1)', { skip, timeout: 90000 }, async t => {
   const b = await bank(t, { observeTabs: true });
   const script = `go.onclick=()=>{const w=window.__w=window.open('/landed','w');window.__nat=w.Event.prototype.preventDefault;
-      w.Event.prototype.preventDefault=function(){return top.Event.prototype.preventDefault.call(this)};w[Symbol.for('sleight.popup3')]={cancel(){}};};
+      w.Event.prototype.preventDefault=function(){return top.Event.prototype.preventDefault.call(this)};const K=Object.getOwnPropertyNames(window).find(n=>/^k[0-9a-f]{32}$/.test(n));Object.defineProperty(w,K,{value:{cancel(){}},configurable:true});};
     document.getElementById('l').addEventListener('click',e=>window.__nat.call(e));`;
   const f = await b.start(plain('<button id="go" type="button">Go</button><a id="l" href="/danger" target="_blank">Learn more</a>', script), readOnly, { routes: landed(b) });
   await f.act([{ do: 'click', ref: f.ref('Go') }]);
