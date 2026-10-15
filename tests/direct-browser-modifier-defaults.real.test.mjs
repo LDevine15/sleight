@@ -26,6 +26,17 @@ add('external form owner', '<form id="owner" action="/landed"></form><button id=
 add('label checkbox', '<label id="go" for="field">Toggle</label><input id="field" type="checkbox">');
 add('label submit', '<label id="go" for="field">Send</label><form action="/landed"><input id="field" type="submit"></form>',
   { differs: true, plain: true, navigates: true });
+for (const [name, control] of [
+  ['button', '<button id="go" type="button">Command</button>'],
+  ['input', '<input id="go" type="checkbox">'],
+  ['textarea', '<textarea id="go">Text</textarea>'],
+  ['select', '<select id="go" size="3"><option>First</option><option>Second</option></select>'],
+  ['details', '<details><summary id="go">More</summary>Details</details>'],
+  ['audio', '<audio id="go" controls></audio>'],
+  ['video', '<video id="go" controls width="240" height="120"></video>'],
+  ['anchor', '<a id="go" href="/landed" target="_blank">Link</a>'],
+]) add('submit label containing interactive ' + name,
+  `<form action="/landed"><input id="send" type="submit" hidden></form><label for="send">${control}</label>`);
 for (const multiple of [false, true]) {
   const html = `<select id="list" ${multiple ? 'multiple' : ''} size="4"><option selected>First</option><option id="go">Second</option><option>Third</option></select>`;
   add((multiple ? 'multiple' : 'single') + ' option', html, { differs: multiple, plain: multiple });
@@ -96,6 +107,10 @@ for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, time
       }
       return row.double ? locator.dblclick({ ...options, timeout: 5000 }) : locator.click({ ...options, timeout: 5000 });
     };
+    const focusBefore = await f.sentinel.evaluate(() => {
+      window.focusEvents = 0; window.onfocus = () => window.focusEvents++;
+      return { focused: document.hasFocus(), visibility: document.visibilityState };
+    });
     if (mode === 'background') await backgroundClick(f.entry, locator, options => { choices.push(options); return click(options); }, { timeoutMs: 5000 });
     else await click({ modifiers: mode === 'modified' ? ['ControlOrMeta'] : [] });
     if (row.navigates) {
@@ -105,6 +120,10 @@ for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, time
     // Include native navigation/new target commit, not just the synchronous handler.
     await new Promise(resolve => setTimeout(resolve, 150));
     outcomes[mode] = await state(page, f.context, chooser, f.requests.slice(requestStart));
+    if (mode === 'background') {
+      assert.deepEqual(await f.sentinel.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState })), focusBefore);
+      assert.equal(await f.sentinel.evaluate(() => window.focusEvents), 0);
+    }
     for (const child of f.context.pages()) if (child !== page && child !== f.sentinel) {
       await child.waitForLoadState('domcontentloaded'); await child.close();
     }
