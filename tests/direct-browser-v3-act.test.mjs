@@ -382,3 +382,23 @@ test('v3 destroyed form evidence stops the batch after dispatched submit', async
   assert.equal(f.actions.length, 1);
   assert.ok(f.tab.state.submitUnconfirmed);
 });
+
+for (const [name, background, pageOpened, expected] of [
+  ['an unmodified click and a tab the page opened', false, true, /probably took the foreground/],
+  ['an unmodified click and a tab sleight opened', false, false, /opened background tab/],
+  ['a click with the background modifier', true, true, /opened background tab/],
+]) test(`AD1 backstop: the popup outcome for ${name}`, async () => {
+  const f = fixture({ onClick: page => page.emit('popup', { url: () => 'https://example.invalid/popup', isClosed: () => false }) });
+  f.tab.background = background; f.tab.pageOpened = () => pageOpened;
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], expected);
+});
+
+test('AD1 backstop: a popup counted at settle time is reported once, without a popup event', async () => {
+  const f = fixture(); let counted = 1;
+  f.tab.takeForeground = () => { const count = counted; counted = 0; return count; };
+  const first = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(first.lines[0], /probably took the foreground/);
+  const second = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.doesNotMatch(second.lines[0], /foreground/);
+});

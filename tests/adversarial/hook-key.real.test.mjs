@@ -326,3 +326,43 @@ test('a proof the hook refuses fails closed and says "use the engine browser pat
   const r = await f.act([{ do: 'click', ref: f.ref('Go') }]);
   assert.equal(await clicked(), 1, r.text.split('\n')[0]);
 });
+
+// pop round 3 puts the whole hook into a window.open handle's first document, with the key and secret in the source it
+// evals. That source is built inside the hook at install; these cases check the handle still gets the hook when the page
+// has replaced what a naive builder would call, and that a page whose policy blocks eval never sees the secret.
+test('a window.open handle gets the hook whatever the page replaced before it opened the handle', opts, async t => {
+  const r = await attack(t, {
+    script: `${FIND}
+      String=function(){return 'x'};String.fromCharCode=()=>'x';Function.prototype.toString=()=>'function(){}';
+      Array.prototype.join=()=>'';JSON.stringify=()=>'{}';Number.prototype.toString=()=>'0';
+      String.prototype.concat=()=>'';String.prototype.charCodeAt=()=>0;String.prototype.indexOf=()=>-1;Array.isArray=()=>false;
+      go.onclick=()=>{const w=window.open('/landed');window.__x=typeof w[K]+','+(w.open('/danger','_blank')===null)}`,
+    wait: 1200 });
+  assert.equal(await r.f.page.evaluate(() => window.__x), 'object,true', r.result.text.split('\n')[0]);
+  assert.deepEqual(dangerHits(r), []);
+  await r.f.safe({ settle: 200, tabs: false, allow: {} });
+});
+
+test('a page whose policy blocks eval gets no hook in the handle, falls back, and the honest click still opens in the background', opts, async t => {
+  const r = await attack(t, {
+    head: `<meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'">`, body: LINK,
+    script: `${FIND}
+      go.onclick=()=>{const w=window.open('/landed');window.__x=typeof w[K]+','+!!w}`,
+    steps: f => [{ do: 'click', ref: f.ref('Go') }], wait: 1200 });
+  assert.equal(await r.f.page.evaluate(() => window.__x), 'undefined,true', 'eval was blocked in the handle, so nothing installed there');
+  assert.deepEqual(dangerHits(r), []);
+  const honest = await r.f.act([{ do: 'click', ref: r.f.ref('open docs') }]);
+  assert.match(honest.text, /background/, honest.text.split('\n')[0]);
+  await r.f.safe({ settle: 200, tabs: false, allow: {} });
+});
+
+test('a tab whose first document already runs this registry\'s hook (the handle install) is adopted', opts, async t => {
+  const r = await attack(t, { script: `go.onclick=()=>{window.__w=window.open('about:blank')}`, wait: 1000 });
+  const child = (await r.f.registry.list()).find(row => row.opener === r.f.tab);
+  assert.ok(child, 'the about:blank window was adopted: ' + r.result.text.split('\n')[0]);
+  const entry = r.f.registry.tab(child.tab), page = entry.page;
+  await entry.ready; // rejects when the hook install failed
+  assert.equal(await hookState(page, r.f.entry.hook), 'live', 'its first document answers to the registry hook');
+  assert.equal(await page.evaluate(() => window.opener === null), false);
+  await r.f.safe({ settle: 200, tabs: false, allow: {} });
+});

@@ -23,6 +23,14 @@ async function bounded(task, ms) {
   } finally { clearTimeout(timer); }
 }
 
+// A key that activates the focused element, by what the page sees: every spelling of Enter (the numpad one and
+// the \r and \n characters included) is Enter, and Space is Space. A chord such as Shift+Enter ends in its key.
+const ENTER_KEYS = new Set(['enter', 'numpadenter', 'return', '\r', '\n']), SPACE_KEYS = new Set(['space', ' ', 'spacebar']);
+export function activationKey(key) {
+  const last = String(key).split('+').pop().toLowerCase();
+  return ENTER_KEYS.has(last) ? 'enter' : SPACE_KEYS.has(last) ? 'space' : null;
+}
+
 function validate(steps) {
   if (!Array.isArray(steps) || !steps.length || steps.length > 12) throw Error('steps needs 1 to 12 operations');
   for (const s of steps) {
@@ -146,8 +154,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
-        const enter = step.do === 'press' && !!keyClass(step.key).name;
-        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && keyClass(step.key).name === 'Enter');
+        const activation = step.do === 'press' ? activationKey(step.key) : null, enter = !!activation;
+        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && activation === 'enter');
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
           paths: step.paths, submit: !!submits, payment: !!submits && (info.payment || info.formPayment),
           ...(step.do === 'dialog' ? { type: state.dialog.type(), message: state.dialog.message(), accept: step.accept } : {}) };
@@ -188,7 +196,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             started = true;
             if (extra.modifiers) await page.keyboard.down('ControlOrMeta');
             return pressKey();
-          }, { press: true });
+          }, { press: activation });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           started = true;
           if (step.do === 'type') return locator.fill(step.text, options);
@@ -258,10 +266,15 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           else submit.settledAt = now();
         }
         const popupTab = tab.popups?.slice(popupFrom).find(row => row.tab && !row.blocked)?.tab, navPath = boundary?.kind === 'navigation' ? pathOf(page.url()) : '';
+        // A tab the page opened during a click without the background modifier is probably in the foreground.
+        const clicked = ['click', 'press'].includes(step.do);
+        const foregroundTabs = clicked ? (await tab.takeForeground?.() ?? 0) + (boundary?.kind === 'popup' && tab.background === false
+          && tab.pageOpened?.(boundary.popup) === true ? 1 : 0) : 0;
         const outcome = boundary?.kind === 'navigation' ? 'navigated, address (untrusted page content): ' + originOf(page.url()) + navPath + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'
           : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} is waiting; message (untrusted page content): "${clean(boundary.dialog.message())}"`
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
+            : foregroundTabs > 0 ? 'opened a tab that probably took the foreground (this click carried no background modifier, and sleight cannot tell which tab was active before); opener below: ' + originOf(boundary.popup.url())
             : `opened background tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (opener ${tab.tab ?? 'this tab'})`
           : boundary?.kind === 'close' ? 'tab closed'
           : popupTab ? `opened background tab ${popupTab} (opener ${tab.tab ?? 'this tab'}); the opener's page is below`
@@ -269,8 +282,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
         // A script that opens a tab after the input (a timer, a fetch) is held in the background, never silently.
-        const heldOpenings = ['click', 'press'].includes(step.do) ? await tab.takeHeld?.().catch(() => 0) : 0;
-        lines.push(label + ': ' + outcome + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
+        const heldOpenings = clicked ? await tab.takeHeld?.().catch(() => 0) : 0;
+        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' ? '. A tab the page opened probably took the foreground' : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();

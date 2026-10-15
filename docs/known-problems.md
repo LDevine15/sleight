@@ -251,19 +251,33 @@ Engine behavior that sleight works around or can't change:
   aren't tracked, and a name the call assigns isn't restored.
 - Turbo v3 reports a new-tab link click as unconfirmed when a same-origin window it can get at has a `preventDefault`
   that doesn't reach the hook: a window handle that stayed unhooked or whose `Event` the page replaced. Hooked iframes, openers
-  and `window.open` handles forward their `preventDefault` to the clicked page, so a plain `about:blank` or `srcdoc`
-  iframe no longer blocks the click. A native `preventDefault` taken from an unhooked same-origin window would still
-  cancel behind sleight. We found none: a window's first document is covered when `open` returns, a forged hook object
-  on a handle is caught by a probe, and 21 new page-natives cases pass.
-  Script-started openings (`a.click()`, `form.submit()`, `requestSubmit()`, `dispatchEvent` of a click on a detached link)
-  are held, not opened in the background, and the result says so. Enter on a focused link opens it in the background.
-  Enter in or on a form that submits to a new tab is refused with a pointer to the submit button, because Ctrl+Enter
-  doesn't submit a form. Found 2026-10-14 (AD1).
+  and `window.open` handles forward `preventDefault` and a `returnValue = false` cancel to the clicked page. A window's first
+  document gets the whole hook (not only `preventDefault`) before `open` returns, so a function the page saves from a handle
+  is the hooked one. That install runs `eval` in the new window on source text containing the hook's key and secret, built
+  inside the hook from natives it captured. On a page whose content security policy blocks `eval` it fails,
+  only the forwarded `preventDefault` remains, and natives saved from such a handle are not hooked.
+  Script-started openings (`a.click()`, `form.submit()`, `requestSubmit()`, `dispatchEvent` of a click, in the page, in a
+  closed shadow root or from another frame's natives) are held, not opened in the background, and the result says so.
+  Enter (every spelling) on a focused link opens it in the background. Enter on a link whose address sleight can't check
+  (credentials in the URL, `about:blank`, `mailto:`) and Enter in or on a form that submits to a new tab (decided from the
+  form's elements and the control's own `form` and `formtarget`) are refused, because Ctrl+Enter doesn't submit a form
+  and a plain Enter would raise the tab. A click on the same link still works.
+  A link or form that a listener changes after the hook decided it was plain (`a.target = '_blank'` in the link's own
+  click handler) is caught for the agent's click and for Enter. A change made before the click happens (in a `pointerdown`
+  listener) is stopped by the dispatch guard instead, and the result reads "page changed during the click". The hook cancels a
+  changed link and opens it in the
+  background. It cancels a changed form and the result says so. A script-started click on such a link (`a.click()` from a timer, from another
+  button's handler) can still flip the target between the hook's check and the browser acting on it, and the tab comes
+  to the foreground (the review's `V3j` and `V3k` still do after this change). Found 2026-10-14 (AD1).
+- When a page opens a tab during a click without the background modifier (a flip the hook missed), CDP doesn't say
+  which tab is active, and sleight can't put the previous one back. The result says the tab probably took the foreground.
+  We haven't measured it in a headed browser. In the headless Chromium of the test bank, `document.visibilityState`
+  is `visible` for background tabs too. The report comes from the click, not from the tab.
 - In turbo v3, the popup hook is a random window property, frozen and non-configurable, and every call to it
   carries a one-use proof made with a per-registry secret. Its answers are signed with the same secret. A page that
   replaces, deletes or redefines the property, calls `off()`, or replaces `window.eval` or `Array.prototype.slice` to
   read or forge what Playwright carries (40 real-browser cases in `hook-key.real.test.mjs`) cannot switch the hook
-  off, steer a request, or get a foreground tab. The proof code reads nothing a page can redefine: the secret is
+  off, steer a request, or get a foreground tab. The proof code doesn't read anything a page can redefine: the secret is
   injected as byte values, and no typed array length, prototype method or Math function is called after install
   (round 1 read the secret through `%TypedArray%.prototype.length`, which a page could redefine to copy it). It can read the proof off an evaluate argument and use it first, which
   fails that one click closed ("preparation failed"), so a page can stop turbo v3 from clicking anything on it. The hook
@@ -271,4 +285,6 @@ Engine behavior that sleight works around or can't change:
   nothing; replacing the prototypes behind them (`Element.prototype.localName`, `Set.prototype.has`, `Array.prototype`
   methods) is still unmeasured outside the swap shield, which reads only natives it captured. A same-origin window the
   page opens keeps the opener's key and secret, so a page that plants a property at that key before the hook installs
-  makes the install fail, and that tab is not adopted. Found 2026-10-15 (AD1 pop round 2).
+  makes the install fail, and that tab is not adopted. The source for a handle's first document goes to that window's `eval`
+  once, and only if the window is not hooked yet. A same-origin window the page controls, never opened through the hook and
+  without a hook of its own, could replace its `eval` and read the key and secret from the source. We built no such page. Found 2026-10-15 (AD1 pop round 2).

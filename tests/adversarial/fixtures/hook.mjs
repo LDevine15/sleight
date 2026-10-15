@@ -34,12 +34,13 @@ export const hookState = (page, hook) => page.evaluate(({ key, proof }) => {
 // (fn is the function handed to evaluate, arg its argument) and answers with values.prepare, .guard, .request, .verdict, .take.
 import { createHmac } from 'node:crypto';
 const textOf = (method, value) => {
-  if (method === 'prepare') return value === true ? 't' : value === false ? 'f' : value.kind;
+  if (method === 'prepare') return value === true ? 't' : value === false ? 'f' : value.kind === 'refuse' ? 'refuse-' + value.reason : value.kind;
   if (method === 'guard' || method === 'off') return value ? 't' : 'f';
   if (method === 'takeRequest') {
     if (value === undefined) return 'u';
     if (value.violation) return 's' + value.violation;
-    if (value.unavailable) return 'n';
+    if (value.blocked) return 'b' + value.blocked;
+    if (value.unavailable) return value.lost ? 'l' : 'n';
     return 'q' + value.url + '\0' + (value.target ?? '') + '\0' + (value.rel ?? '');
   }
   if (method === 'finish' || method === 'verdict') return typeof value === 'string' ? 's' + value : value === undefined ? 'u' : 't';
