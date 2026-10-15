@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 00:33 UTC)
+## Banner (2026-10-15 00:43 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -58,7 +58,12 @@ authority reads to the utility world. A Claude review then found DOM clobbering 
 Chromium 1248, and only multi-select options and links also change with Cmd, so CR4 (lane `codex-cr4`) keeps submits in place and
 masks by event, and CR5 (queued after CR4) replaces the role list with that measured rule. `private/v3-gate` (sleight-arch, worktree
 `~/Projects/sleight-wt/v3-int`) merges every turbo tip (v7r3, v10r3, v9r, cr3) with two seam fixes; its full check passed 6115, 0 fail,
-49 mod at `6235142f`. V7R4, V10R4, CR4 and CR5 merge into it as they pass, then V8. Next: CR1, V7, V9R and V10R merge into
+49 mod at `6235142f`. V7R4, V10R4, CR4 and CR5 merge into it as they pass, then V8. V7R4 hit a real limit: page-scoped auto-attach doesn't pause native
+popups, and browser-wide auto-attach would touch the user's tabs. sleight-arch's call: never attach to tabs sleight doesn't own;
+close any adopted popup on the DevTools port before a read (measured: navigating there displays the user's tab list, while a fetch fails);
+document workers as a limit. Lane `codex-v3-v7r4b` finishes it. AT1 (behavior atlas) and AD1 (adversarial page bank) run in lanes.
+Claude Desktop's newest build is v2.37337.1 (2026-10-13; background computer use since 2026-09-02, fixes through October): the claim
+suite's arm for Claude's own computer use runs on that build or newer. Next: CR1, V7, V9R and V10R merge into
 v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8 merges.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
