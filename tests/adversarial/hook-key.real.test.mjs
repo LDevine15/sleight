@@ -65,7 +65,7 @@ test('the key is no Symbol, the property is frozen and hidden, and the methods r
   assert.equal(found.enumerable, false);
   assert.deepEqual(found.descriptor, { configurable: false, writable: false, enumerable: false });
   assert.equal(found.frozen, true);
-  assert.deepEqual(found.methods, ['cancel', 'finish', 'guard', 'off', 'prepare', 'reveal', 'settle', 'take', 'takeRequest', 'verdict']);
+  assert.deepEqual(found.methods, ['cancel', 'changed', 'finish', 'guard', 'off', 'prepare', 'reveal', 'settle', 'take', 'takeRequest', 'verdict', 'watching']);
   assert.ok(found.refusals.every(message => /refused the call/.test(message)), JSON.stringify(found.refusals));
   assert.ok(found.forged.every(message => /refused the call/.test(message)), JSON.stringify(found.forged));
   assert.equal(found.same, true);

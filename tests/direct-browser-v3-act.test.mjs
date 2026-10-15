@@ -402,3 +402,36 @@ test('AD1 backstop: a popup counted at settle time is reported once, without a p
   const second = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
   assert.doesNotMatch(second.lines[0], /foreground/);
 });
+
+for (const [name, background, backgroundPopup, expected, notExpected] of [
+  ['a modified click and a popup no settling classified as background (a script opened it later)', true, false, /probably took the foreground \(the page opened it after a click, outside the background handling/, /opened background tab/],
+  ['a modified click and a popup its settling classified as background', true, true, /opened background tab/, /probably took the foreground/],
+]) test(`AD1 pop4: the popup outcome for ${name}`, async () => {
+  const f = fixture({ onClick: page => page.emit('popup', { url: () => 'https://example.invalid/popup', isClosed: () => false }) });
+  f.tab.background = background; f.tab.pageOpened = () => true; f.tab.popupIsBackground = () => backgroundPopup;
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], expected);
+  assert.doesNotMatch(result.lines[0], notExpected);
+});
+
+test('AD1 pop4: a popup counted late says why, and a modified click is not blamed for it', async () => {
+  const f = fixture(); f.tab.background = true; f.tab.takeForeground = () => 1;
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /A tab the page opened probably took the foreground \(the page opened it after a click, outside the background handling\)/);
+  assert.doesNotMatch(result.lines[0], /carried no background modifier|had no background modifier/);
+});
+
+test('AD1 pop4: tabs the page can raise are listed after a click or key press, and only then', async () => {
+  const f = fixture(); f.tab.raisablePopups = async () => ['t7', 't9'];
+  const clicked = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(clicked.lines[0], /Tabs t7, t9 \(opened by this page, another origin\) can be raised to the foreground by the page at any time, and sleight cannot block or detect that/);
+  f.tab.raisablePopups = async () => ['t7'];
+  const single = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(single.lines[0], /Tab t7 \(opened by this page, another origin\) can be raised/);
+  f.tab.raisablePopups = async () => [];
+  const none = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.doesNotMatch(none.lines[0], /can be raised/);
+  f.tab.raisablePopups = async () => { throw Error('closed'); };
+  const failed = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.doesNotMatch(failed.lines[0], /can be raised/, 'a failed lookup adds nothing and breaks nothing');
+});

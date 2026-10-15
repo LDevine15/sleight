@@ -262,17 +262,42 @@ Engine behavior that sleight works around or can't change:
   (credentials in the URL, `about:blank`, `mailto:`) and Enter in or on a form that submits to a new tab (decided from the
   form's elements and the control's own `form` and `formtarget`) are refused, because Ctrl+Enter doesn't submit a form
   and a plain Enter would raise the tab. A click on the same link still works.
+  A synthetic click with Shift, Ctrl, Meta, Alt or a non-primary button (an `auxclick` too) on a link, an image-map
+  area or a submit control is held wherever it is, including inside the agent's own click, because the browser takes the
+  new window, tab or download from the event itself. A synthetic click that can't be cancelled is held on a new-tab link too.
   A link or form that a listener changes after the hook decided it was plain (`a.target = '_blank'` in the link's own
-  click handler) is caught for the agent's click and for Enter. A change made before the click happens (in a `pointerdown`
+  click handler, or `window.name` renamed so a named target stops matching) is caught for the agent's click and for Enter.
+  A change made before the click happens (in a `pointerdown`
   listener) is stopped by the dispatch guard instead, and the result reads "page changed during the click". The hook cancels a
   changed link and opens it in the
-  background. It cancels a changed form and the result says so. A script-started click on such a link (`a.click()` from a timer, from another
-  button's handler) can still flip the target between the hook's check and the browser acting on it, and the tab comes
-  to the foreground (the review's `V3j` and `V3k` still do after this change). Found 2026-10-14 (AD1).
-- When a page opens a tab during a click without the background modifier (a flip the hook missed), CDP doesn't say
-  which tab is active, and sleight can't put the previous one back. The result says the tab probably took the foreground.
-  We haven't measured it in a headed browser. In the headless Chromium of the test bank, `document.visibilityState`
-  is `visible` for background tabs too. The report comes from the click, not from the tab.
+  background. It cancels a changed form and the result says so. A script-started click, `requestSubmit()` or
+  `button.click()` (outside the agent's click) is cancelled while it is dispatched if a listener re-aims it through
+  `window.name` (also a frame's), a `target` or `formTarget` property, `setAttribute` and the other attribute methods, an
+  `Attr` value or `setNamedItem`, from this window's natives or another hooked window's. Re-aiming it by adding a
+  `<base target>` element (`append`, `insertAdjacentHTML`) is not seen: the tab comes to the foreground and the result says
+  it probably did. A frame that changes its own `name` attribute doesn't rename its window, so that is not a flip.
+  Found 2026-10-14 (AD1); the modifier, name and attribute cases 2026-10-15 (pop round 4).
+- When a page opens a tab outside the dispatch of an agent click (a script click that flipped, a timer), it has no
+  background modifier, CDP doesn't say which tab is active, and sleight can't put the previous one back. The result says
+  the tab probably took the foreground, with the reason: this click had no modifier, or the page opened it after the
+  click. Measured 2026-10-15 on the pinned Chromium: a tab made with `Target.createTarget` in the background reports
+  `visibilityState` `hidden`; once `Emulation.setFocusEmulationEnabled` is on for it (Playwright sends that for every page it
+  attaches, and sleight's install does too) it reports `visible`, and `Page.screencastVisibilityChanged` says `visible: true` for
+  a background tab. In the test bank every tab, background or not, reports `visible`. No CDP signal separates the tabs,
+  so the report comes from the click and from popups that no click's settling accounted for.
+- A page can raise a window it opened from another origin by calling `focus()` on the handle, an OAuth "Sign in again"
+  button for one, and sleight can neither stop nor detect it. Measured 2026-10-15: the opener's `w.focus()` on a cross-origin
+  popup made it the active tab (the test bank reads the browser's own tab list). The popup's own document, with the
+  hook installed and `focus` wrapped, saw no `focus` call and no `focus`, `blur`, `visibilitychange`, `pagehide` or `resize`
+  event, the same as the control without the call, so no code in that document can see it. The opener's `w.focus` is
+  the browser's cross-origin accessor, so replacing `Window.prototype.focus` doesn't reach it, and returning a wrapper from
+  `window.open` would break `event.source === popup`. In the browser, `focus()` on a window the incumbent opened doesn't need a user
+  gesture, so no gesture check helps, and CDP has no command that refuses or reverses it. Calling `Target.activateTarget`
+  on another tab afterwards would need to know which tab was active, and CDP doesn't say. Same-origin windows run the hook,
+  whose `focus` does nothing for a top-level window. After every click and key press the result lists the tabs the page opened
+  from another origin that are still open ("can be raised to the foreground by the page, and sleight cannot block or detect that").
+  It lists them whether or not the page called `focus()`. A window opened with `noopener` (the default for a `target=_blank`
+  link) or one that dropped its opener gives the page no handle, so it isn't listed.
 - In turbo v3, the popup hook is a random window property, frozen and non-configurable, and every call to it
   carries a one-use proof made with a per-registry secret. Its answers are signed with the same secret. A page that
   replaces, deletes or redefines the property, calls `off()`, or replaces `window.eval` or `Array.prototype.slice` to
