@@ -381,7 +381,7 @@ test('F3 (round 6): balance, value, worth and credit alone do not clear a figure
   await readCases(t, [
     ...asking.map(text => ['ask: ' + text, P(text), 'ask']),
     ['allow: Available balance: $500.00', P('Available balance: $500.00'), 'allow'],
-    ['allow: Remaining balance: $500.00 (known: exempt beside "remaining")', P('Remaining balance: $500.00'), 'allow'],
+    ['ask: Remaining balance: $500.00 (round 12: "remaining" without a wallet word names what is still payable)', P('Remaining balance: $500.00'), 'ask'],
     ['allow: Gift card balance: $500.00', P('Gift card balance: $500.00'), 'allow'],
     ['allow: Points value: $5.00', P('Points value: $5.00'), 'allow'],
     ['allow: You save $482.00 off', P('You save $482.00 off'), 'allow'],
@@ -767,4 +767,74 @@ test('round 11: honest allow rate over the 36 suite pages, 20 + 12 + 10 reviewer
   t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; new 10: ' + fresh + '; together ' + total + '/88, with the 2 holds counted as correct asks ' + (total + 2) + '/88');
   assert.ok(twenty >= 19 && twelve >= 9 && ten >= 10, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10');
   assert.ok(total + 2 >= 77, 'together ' + total + '/88');
+});
+
+// ---------------------------------------------------------------- Round 12
+// F-A2: the closed-label check and the deny list run on EVERY exempt label (not only those with a savings noun): all words must be in a closed
+// vocabulary, one foreign or unknown word makes the figure a plain part, with or without a minus sign (the gross reconcile and the minus-sign
+// exception for an unclosed label are gone), and a code after "code/promo/coupon/voucher/offer" ("code SAVE10") is blanked, never read as "save".
+// F-B2: a checked box or radio, or an aria-checked, aria-pressed or aria-selected element, marks every money figure in its row (the nearest
+// ancestor that holds a figure, shadow trees and slotted labels included, never the form or a block that holds the Pay control) and the inline
+// run after it. F-E2: under a deposit pair a part whose label or sentence says charged, billed, debited, withdrawn, taken, card... still asks.
+// F-H: an exempt label that follows a sentence that is not savings talk, or a line that says money is charged, is a plain part.
+// F-G (closed lists): "Welcome offer" with a minus sign, "(covers ... up to $X)" after a price within the amount, a coverage limit or deductible
+// beside an insurance premium, and "renews each week at $X plus shipping" are notes. Fixture pay-r12-labels: the round 11 reviewer's fam1, fam2,
+// fam3, fam3b, fam4, fam4b, fam4c, fam5 and fam6 probes (569 bodies) and this round's own (88). Fixture pay-r12-honest: the reviewer's 10 new honest pages.
+const fixture12 = name => JSON.parse(readFileSync(new URL('./fixtures/pay-r12-' + name + '.json', import.meta.url), 'utf8'));
+test('F-A2, F-B2, F-E2, F-H, F-G (round 12): 657 bodies (every charge phrasing of the round 11 review asks; closed phrases, controls and the known limits allow)', { skip, timeout: 900000 }, async t => {
+  await readCases(t, fixture12('labels').map(([name, body, expect]) => [name, form10(body), expect]));
+});
+test('F-G (round 12): the reviewer\'s 10 new honest pages read with their own amounts (6/10 allow; the e-book bundle, the pet insurance with an unclosed "Multi-pet discount" label, the moving company and the wedding installment ask)', { skip, timeout: 300000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  try {
+    for (const [name, html, amount, expect] of fixture12('honest'))
+      await t.test(name, async () => {
+        await page.setContent('<!doctype html><body style="margin:8px"><main>' + html);
+        let read; try { read = (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount; } catch { read = undefined; }
+        assert.equal(read === amount ? 'allow' : 'ask', expect, name + ' read amount=' + read);
+      });
+  } finally { await page.close(); }
+});
+test('F-A2, F-B2, F-E2 (round 12): the reviewer\'s 13 charge pages and 2 controls, clicked through the real route, do not reach the network', { skip, timeout: 600000 }, async t => {
+  const T = row7('<b>Total</b>', '<b>$' + amt() + '</b>');
+  const X = '$500.00', D = row7('Deposit due now', '$' + amt());
+  const pages = {
+    'R1 Outstanding after code SAVE10': row7('Outstanding after code SAVE10', X) + T,
+    'R2 Balance with code SAVE20': row7('Balance with code SAVE20', X) + T,
+    'R3 Remaining after code WELCOME-SAVE': row7('Remaining after code WELCOME-SAVE', X) + T,
+    'R4 After code SAVE10': row7('After code SAVE10', X) + T,
+    'R5 Zu zahlen code applied': row7('Zu zahlen code applied', X) + T,
+    'R6 Montant prélevé points redeemed': row7('Montant prélevé points redeemed', X) + T,
+    'R7 Abgebucht offer redeemed': row7('Abgebucht offer redeemed', X) + T,
+    'R8 table row checked Optional insurance': `<table><tr><td><input type=checkbox checked></td><td>Optional insurance</td><td>${X}</td></tr></table>` + T,
+    'R9 form-check box, price in its own column': `<div style="display:flex"><div><input type=checkbox checked id=bx><label for=bx>Optional insurance</label></div><div style="margin-left:20px">${X}</div></div>` + T,
+    'R10 aria-pressed Optional insurance': `<button type=button aria-pressed=true>Optional insurance ${X}</button>` + T,
+    'R11 span-wrapped box row': `<div class=row><span><input type=checkbox checked></span> <span>Optional insurance</span> <span>${X}</span></div>` + T,
+    'R12 deposit, Service fee charged now, Estimated total': D + '<p>Service fee $500.00 charged now</p>' + row7('Estimated total', '$2,000.00'),
+    'R13 deposit, Card fee, Estimated total': D + row7('Card fee', X) + row7('Estimated total', '$2,000.00'),
+    'R14 control: a plain Service fee $500.00': row7('Service fee', X) + T,
+    'R15 control: Zu zahlen discount $500.00': row7('Zu zahlen discount', X) + T,
+  };
+  for (const [name, body] of Object.entries(pages))
+    await t.test(name, async t2 => {
+      const r = await payOnce(t2, form(body), 'Pay', { head: '<meta charset="utf-8">' });
+      assert.equal(r.payment, 0, name + ': ' + r.text);
+    });
+});
+test('round 12: honest allow rate over the 36 suite pages, 20 + 12 + 10 + 10 reviewer pages and the 20 pages of rounds 11 and 12 is at least 85/98 (the two holds count as correct asks)', { skip, timeout: 240000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  let twenty = 0, twelve = 0, ten = 0, fresh = 0, newest = 0;
+  const read = async (html, amount = '18.00') => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === amount; } catch { return false; } };
+  try {
+    for (const [, html] of fixture8('honest-20')) if (await read(html)) twenty++;
+    for (const [name, html] of fixture9) if (/^N(?:[1-9]|1[0-2]) /.test(name) && await read(html)) twelve++;
+    for (const [name, html, amount] of fixture10('honest')) if (/^honest10 /.test(name) && await read(html, amount)) ten++;
+    for (const [, html, amount] of fixture11('honest')) if (await read(html, amount)) fresh++;
+    for (const [, html, amount] of fixture12('honest')) if (await read(html, amount)) newest++;
+  } finally { await page.close(); }
+  const real = [...outcome.values()].filter(Boolean).length + 2;
+  const total = real + twenty + twelve + ten + fresh + newest;
+  t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; round 11 new 10: ' + fresh + '; round 12 new 10: ' + newest + '; together ' + total + '/98, with the 2 holds counted as correct asks ' + (total + 2) + '/98');
+  assert.ok(twenty >= 19 && twelve >= 9 && ten >= 10 && newest >= 6, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10, ' + newest + ' of 10');
+  assert.ok(total + 2 >= 85, 'together ' + total + '/98');
 });
