@@ -1,5 +1,5 @@
 import { assertEndpointRead, endpointURL, endpointBlock } from './endpoint-guard.mjs';
-import { originOf } from './output-hygiene.mjs'; // a page picks its title and URL path, so trusted lines carry only the origin
+import { originOf, chooserNote } from './output-hygiene.mjs'; // a page picks its title and URL path, so trusted lines carry only the origin
 // v3's five eagerly advertised tools. No generic JavaScript or authority fields.
 const object = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = { type: 'string', maxLength: 65536 };
@@ -94,10 +94,13 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
     await assertEndpointRead(entry.page, endpoint);
     return { ...value, capturedAt };
   };
-  const finish = (text, entry, observed) => {
+  // A file chooser a page opens after its step returned is reported on the next result; delivered() commits the count.
+  const finish = async (lines, body, entry, observed) => {
+    const chooser = ended ? null : await chooserNote(entry.state);
+    const text = [...lines, ...(chooser ? [chooser.note.replace(/^a/, 'A') + '.'] : []), ...(body === undefined ? [] : [body])].join('\n');
     const result = textResult(text);
-    if (!ended && observed && Number.isSafeInteger(observed.number)) deliveries.set(result, { state: entry.state,
-      capture: { page: entry.page, state: entry.state, number: observed.number, capturedAt: observed.capturedAt }, text });
+    if (!ended && (chooser || observed && Number.isSafeInteger(observed.number))) deliveries.set(result, { state: entry.state, chooser,
+      capture: observed && Number.isSafeInteger(observed.number) ? { page: entry.page, state: entry.state, number: observed.number, capturedAt: observed.capturedAt } : null, text });
     return result;
   };
   return Object.freeze({ tools: () => browserTools(browser),
@@ -118,7 +121,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           const { tab } = await pages.openTab({ url: a.url }), entry = pages.tab(tab);
           await assertEndpointRead(entry.page, endpoint);
           const header = `${tab} ${originOf(entry.page.url())}\nTitle (untrusted page content): ${clean(await entry.page.title())}`;
-          try { const observed = await capture(entry, { maxChars: 8000 }); return finish(header + '\n' + observed.text, entry, observed); }
+          try { const observed = await capture(entry, { maxChars: 8000 }); return await finish([header], observed.text, entry, observed); }
           catch (error) { if (error.message === endpointBlock) throw error; return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
         }
         return await pages.enqueue(a.tab, async entry => {
@@ -130,7 +133,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           if (request.name === 'browser_read') {
             const options = { ...(a.ref === undefined ? {} : { ref: a.ref }), ...(a.find === undefined ? {} : { find: a.find }), maxChars: a.max_chars ?? 8000 };
             const observed = await capture(entry, options);
-            return finish(observed.text, entry, observed);
+            return await finish([], observed.text, entry, observed);
           }
           started = true;
           if (request.name === 'browser_act') {
@@ -143,7 +146,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
               catch { observed = undefined; lines.push('Read unavailable; use browser_read before retrying.'); }
             }
             if (a.observe === 'none') observed = undefined;
-            return finish([...lines, ...(observed ? [observed.text] : [])].join('\n'), entry, observed);
+            return await finish(lines, observed?.text, entry, observed);
           }
           const result = await fillFields(entry, a.fields, { submit: a.submit }, privateContext);
           await assertEndpointRead(entry.page, endpoint);
@@ -152,7 +155,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           if (result.submitted) lines.push('submit: ' + clean(result.submitted.status), ...(result.submitted.lines ?? []));
           let observed;
           try { observed = await capture(entry, { since: entry.state.snapshotNo || undefined, maxChars: 8000 }); } catch { lines.push('Read unavailable; use browser_read before retrying.'); }
-          return finish([...lines, ...(observed ? [observed.text] : [])].join('\n'), entry, observed);
+          return await finish(lines, observed?.text, entry, observed);
         });
       } catch (error) {
         if (error.message === endpointBlock) return textResult(endpointBlock, true);
@@ -163,7 +166,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
     delivered(result) {
       const record = deliveries.get(result); deliveries.delete(result);
       if (!record || ended || result.isError || result.text !== record.text) return false;
-      return deliverSnapshot(record.state, record.capture) === true;
+      if (record.chooser) { record.state.chooserReported = record.chooser.chooser; record.state.hiddenReported = record.chooser.hidden; }
+      return !!record.capture && deliverSnapshot(record.state, record.capture) === true;
     },
     end() {
       ended = true;

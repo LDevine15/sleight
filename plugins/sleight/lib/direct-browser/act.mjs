@@ -172,7 +172,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           staging = trusted ? await ctx.stageUploads(target, step.paths) : await stageUserUploads(ctx.files, step.paths, step.ref);
           if (!Array.isArray(staging?.payloads) || !staging.payloads.length) throw Error('user-named file staging required');
         }
-        guardChooser(page, state); const popupFrom = tab.popups?.length ?? 0, choosers = state.chooser ?? 0;
+        guardChooser(page, state); const popupFrom = tab.popups?.length ?? 0;
         armed = watch(page, state); const start = now();
         const options = { timeout: TIMEOUT };
         const perform = async () => {
@@ -244,7 +244,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           else submit.settledAt = now();
         }
         const popupTab = tab.popups?.slice(popupFrom).find(row => row.tab && !row.blocked)?.tab, navPath = boundary?.kind === 'navigation' ? pathOf(page.url()) : '';
-        const outcome = boundary?.kind === 'navigation' ? 'navigated to ' + originOf(page.url()) + (navPath ? ', path (untrusted page content): ' + navPath : '') + ' (new page below)'
+        const outcome = boundary?.kind === 'navigation' ? 'navigated, address (untrusted page content): ' + originOf(page.url()) + navPath + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'
           : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} is waiting; message (untrusted page content): "${clean(boundary.dialog.message())}"`
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
@@ -254,7 +254,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : typeof result === 'string' ? result
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
-        lines.push(label + ': ' + outcome + ((state.chooser ?? 0) > choosers ? '; a file picker opened and was suppressed, use an upload step with the user-named file' : ''));
+        lines.push(label + ': ' + outcome);
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();
