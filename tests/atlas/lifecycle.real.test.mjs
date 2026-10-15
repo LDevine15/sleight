@@ -165,6 +165,17 @@ for (const method of ['get', 'post']) for (const target of ['_self', '_blank', '
       popups: target === '_self' ? [] : [{ path: '/landed', opener: target !== '_blank', name: target === 'atlas-child' ? target : '' }] },
     modified: { current: 'fixture', popups: [{ path: '/landed', opener: false, name: '' }] } });
 }
+popupRows.push({ name: 'form targets an existing named iframe', html: `<iframe name=atlas-frame src=/initial></iframe>
+  <form action=/landed target=atlas-frame><button id=go>Submit</button></form>`,
+  run: async (page, mod, { context }) => {
+    const frame = page.frames().find(frame => frame.name() === 'atlas-frame');
+    await frame.waitForURL('**/initial');
+    const ready = mod.length ? context.waitForEvent('page') : frame.waitForURL('**/landed*');
+    await page.locator('#go').click({ modifiers: mod }); const child = await ready;
+    if (mod.length) await child.waitForURL('**/landed*');
+    return { ...await popupState(page, context), frame: new URL(frame.url()).pathname };
+  }, want: { current: 'fixture', popups: [], frame: '/landed' },
+  modified: { current: 'fixture', popups: [{ path: '/landed', opener: false, name: '' }], frame: '/initial' } });
 
 const navigation = [
   ['pushState keeps document', "history.pushState({n:1},'', '/history')", '/history', true],

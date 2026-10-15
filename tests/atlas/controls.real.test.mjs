@@ -122,6 +122,23 @@ const drags = [{ name: 'HTML5 dragTo dispatches accepted drop', html: `<button i
 drags.push({ ...drags[0], name: 'HTML5 drop requires cancelled dragover',
   html: drags[0].html.replace("if(type==='dragover')e.preventDefault();", ''),
   want: { dropped: undefined, events: ['dragstart', 'dragenter', 'dragover', 'dragend'] } });
+// Match v3-context.mjs's trusted primitive: pinned handles, two endpoint
+// hovers after mouse.down, and mouse.up in finally. No synthetic drag events.
+for (const accepted of [true, false]) drags.push({
+  name: accepted ? 'trusted pinned-handle drag drops payload' : 'trusted pinned-handle drag needs cancelled dragover',
+  html: accepted ? drags[0].html : drags[1].html,
+  run: async (page, mod) => {
+    await page.locator('#go').click({ modifiers: mod });
+    const source = await page.locator('#from').elementHandle(), destination = await page.locator('#to').elementHandle();
+    let down = false;
+    try {
+      await destination.hover(); await source.hover(); await page.mouse.down(); down = true;
+      await destination.hover(); await destination.hover();
+    } finally {
+      if (down) await page.mouse.up(); await source.dispose(); await destination.dispose();
+    }
+    return page.evaluate(() => ({ dropped: window.dropped, events: [...new Set(dragEvents)] }));
+  }, want: accepted ? drags[0].want : drags[1].want });
 drags.push({ name: 'pointer drag dispatches pointer sequence', html: `<button id=go>Prepare</button>
   <div id=x style="width:100px;height:100px;touch-action:none;background:gray"></div>
   <script>window.pointerEvents=[];x.onpointerdown=e=>{x.setPointerCapture(e.pointerId);pointerEvents.push('down')};

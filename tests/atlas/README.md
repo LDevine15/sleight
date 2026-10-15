@@ -89,6 +89,8 @@ values, selected options, popup names, opener relationships and document identit
 | --- | --- | --- |
 | HTML5 accepted drop | dragstart, dragenter, dragover, drop, dragend; payload received | Same |
 | HTML5 uncancelled dragover | Same sequence without drop; no payload | Same |
+| Trusted pinned-handle drag, cancelled dragover | Repeated endpoint hover delivers the payload | Same |
+| Trusted pinned-handle drag, uncancelled dragover | Drag events without drop or payload | Same |
 | Pointer drag | down, three pressed moves, up | Same |
 | Range pointer drag | Value 100, 4/1 | Same |
 | Range midpoint click | Value 50, 1/1 | Same |
@@ -157,6 +159,7 @@ values, selected options, popup names, opener relationships and document identit
 | GET or POST form, self | Current document navigates | One unnamed child, no opener; current stays |
 | GET or POST form, blank | One unnamed child, no opener | Same |
 | GET or POST form, named | One named child with opener | One unnamed child, no opener |
+| Form targeting existing named iframe | Frame navigates, current document remains | Child navigates, frame remains unchanged |
 
 ## Navigation
 
