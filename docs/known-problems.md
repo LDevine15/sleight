@@ -67,21 +67,34 @@ our own runs. Dates and engine versions are given where they matter.
   default submitter and its formaction and formtarget) before the key goes out. The whole seal must match at the first keydown; from
   then on only those routing facts must, so a handler that disables its own button or changes its label is not a veto. The hook cancels
   any keydown, keypress, keyup, click or submit that lands elsewhere or after the routing changed. The key goes down and up in two
-  halves. The other frames are locked, and a deny lock is also put into every document created while the key is in flight (Playwright
-  init script, before the page's own scripts, including frames in another process). A script-created frame whose first navigation is
-  same-origin reuses the window of its empty document, where the commit leaves the hook's listeners registered but dead, so
-  between the halves the key waits (up to 400 ms) for such a navigation to commit and puts the listeners back in every frame. The
-  hook also puts them back after `document.open()`, `write()` or `writeln()` on a loaded document. The outcome says "the key may have
-  activated; read the page" when something was cancelled, because events before the cancelled one were delivered. Measured on
-  2026-10-15: 0 payments in 48 inserted-frame presses (document.write and srcdoc, Enter and Space), 32 same-site navigations, 24
-  re-pointed frames, 40 cross-site and same-site frame-focus presses, and the document.open repro. 23 of 24 ordinary uses return a
-  clean outcome. Known gaps: the hook is a plain
+  halves. The other frames are locked, and a deny lock is also put into every document created while the key is in flight, before
+  the page's own scripts (a page-session script for frames in the page's process, a script the CDP filter puts into each frame in
+  another process before resuming it; Playwright's `addInitScript` is not used, because it also runs at once in a document that has
+  already started). A frame in another process (a cross-site or sandboxed iframe) is reached through the filter's own session for
+  it, not through Playwright, which often never attaches such a frame. The filter sends the port guard, the child auto-attach, the
+  hook script and the resume as one burst, because one extra round trip before the resume of an iframe's first target left the
+  frame unattached in 3 of 3 runs, and it turns the Page domain on before adding the script (without it the browser took the
+  script and never ran it). The key asks each frame's hook for its tree (the same-origin windows below it, each with a hook
+  id and the child count from a getter captured before the page's scripts), a frame reached by two routes counts once, and the key
+  goes only when every child the windows count is reached and every hook was there at the start of its document (a hook put in
+  later sits behind the page's own listeners, and such a frame paid in 9 of 36 presses in a repro before the check). A
+  script-created frame whose first navigation is same-origin reuses the window of its empty document, where the commit leaves the
+  hook's listeners registered but dead, so between the halves the key waits (up to 400 ms) for such a navigation to commit and puts
+  the listeners back in every frame. The hook also puts them back after `document.open()`, `write()` or `writeln()` on a loaded
+  document. The outcome says "the key may have activated; read the page" when something was cancelled, because events before the
+  cancelled one were delivered. Measured on 2026-10-15: 0 payments in 48 inserted-frame presses, 32 same-site navigations,
+  24 re-pointed frames, 40 frame-focus presses, 72 cross-site presses with a keyup payer and the document.open repro, and
+  the key goes through on 48 of 48 first presses on six ordinary pages with cross-site, nested, lazy and sandboxed iframes (it was
+  25 of 48). A keydown handler that changes the default submitter's name or value or a hidden input of the form is vetoed, since
+  the seal includes them. The hook's replacements of `addEventListener`, `Document.prototype.open`, `write`
+  and `writeln` and of the other natives it wraps keep the native's name, length and `toString` text (through a replaced
+  `Function.prototype.toString`), and are methods without a `prototype` property. Known gaps: the hook is a plain
   assignment on `window[Symbol.for('sleight.popup3')]`, so a page that overwrites it before the key may turn arming into a no-op
   (a separate branch replaces the lookup); a page can still run a capture listener ahead of the hook on a reused window if it gets
   `addEventListener` from a realm the hook never ran in (a script-less sandboxed frame), registers it before the hook restores its own,
-  and creates and focuses that frame in the roughly 1 ms between the last restore and the key release (not tried); a frame with no hook from the start of its document (it loaded before the page was adopted) makes the key refuse with the engine path, as
-  does a frame in another process that Playwright has not attached within 1 s (2 of 8 fresh pages with one cross-site iframe on 2026-10-15, cause not isolated;
-  the CDP filter resumes such a frame without waiting for Playwright's init scripts). A frame
+  and creates and focuses that frame in the roughly 1 ms between the last restore and the key release (not tried); a frame with no
+  hook from the start of its document (a popup that had loaded before sleight adopted it) makes the key refuse with the engine path.
+  A frame that never loads is covered by its empty first document and does not stop the key. A frame
   that never finishes loading, or whose hook cannot be armed within 1 s, makes the key refuse with the engine path; Enter on a button
   that opens a modal and focuses inside it, or an inline editor that removes itself on Enter, activates but reports "may have
   activated" because the key is released on another element. A key release that reaches an empty page (the button disabled itself) is
@@ -90,6 +103,13 @@ our own runs. Dates and engine versions are given where they matter.
   single-line input is refused (Chrome submits the form on a bare line break). A textarea takes it. Keys outside a short list
   (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete,
   Backspace, F1-F12, one character, with modifiers) are refused on this path; Alt, Meta and other chords with Enter or Space are too.
+- `browser_read` on a page with a cross-site or sandboxed iframe that Playwright knows returns "Snapshot unavailable" with the
+  advice to retry or use the engine. The snapshot opens a CDP session for each frame, and the CDP filter refuses to attach to an
+  iframe target (`CDP_ATTACHMENT_INVALID`). It fails closed on purpose: a frame it cannot scan might hold values it would have
+  redacted. Measured on 2026-10-15 with one page and 1, 2 or 5 cross-site iframes, four reads each: 9 of 12 failed at dfa6d47d,
+  where Playwright often never knew the frame and the read then worked without it. 12 of 12 fail now, because Playwright knows
+  those frames every time. A key press without a ref (on the focused field) works on those pages. Not fixed: letting the filter attach
+  to the iframe targets of an owned page is a decision for the snapshot owner.
 - A page that opens a popup from its own script can still take the screen during a browser session. Since 2026-10-13 sleight opens
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,
   links that need `window.opener`, downloads and anything a script opens, because the engine's read-only page access can't see

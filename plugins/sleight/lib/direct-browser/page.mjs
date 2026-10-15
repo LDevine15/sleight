@@ -50,6 +50,7 @@ export function popupHook() {
   };
   const plainControl = node => submits(node)
     || node instanceof selectControl.constructor && selectControl.multiple.call(node);
+  const uncurry = Function.prototype.bind.bind(Function.prototype.call);
   const key = Symbol.for('sleight.popup3');
   // A hook already on this window may have lost its listeners (a document that reused the window); put them back.
   if (window[key]) { try { window[key].reattach?.(); } catch { /* A stale hook has no listeners to restore. */ } return true; }
@@ -61,8 +62,21 @@ export function popupHook() {
   const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
   const namedWindows = new Map();
   let arm;
+  // A replaced native keeps the original's name and length and answers Function.prototype.toString with the original's text, and
+  // each wrapper is a method (no prototype property), so a page that inspects it sees what it would have seen without the hook.
+  const reflectApply = Reflect.apply, nativeToString = Function.prototype.toString;
+  const looks = new WeakMap(), looksHas = uncurry(WeakMap.prototype.has), looksGet = uncurry(WeakMap.prototype.get), looksSet = uncurry(WeakMap.prototype.set);
+  const look = (wrapper, original) => {
+    if (typeof wrapper !== 'function' || typeof original !== 'function') return;
+    try {
+      Object.defineProperty(wrapper, 'length', { value: original.length, configurable: true });
+      Object.defineProperty(wrapper, 'name', { value: original.name, configurable: true });
+      looksSet(looks, wrapper, reflectApply(nativeToString, original, []));
+    } catch { /* A wrapper that cannot be dressed is still a working wrapper. */ }
+  };
   const replace = (object, name, descriptor) => {
     const before = Object.getOwnPropertyDescriptor(object, name);
+    if (before) for (const part of ['value', 'get', 'set']) look(descriptor[part], before[part]);
     Object.defineProperty(object, name, descriptor);
     replacements.push(() => {
       const current = Object.getOwnPropertyDescriptor(object, name);
@@ -110,14 +124,14 @@ export function popupHook() {
     if (record && !value && this.cancelable !== false) record.cancelled = true;
     return returnValue.set.call(this, value);
   } });
-  const open = function(url, target, features) {
+  const open = { open(url, target, features) {
     if (/^_(self|parent|top)$/i.test(String(target))) return nativeOpen.apply(this, arguments);
     if (!active() || !navigator.userActivation?.isActive) return null;
     const kept = String(features ?? '').split(',').map(value => value.trim()).filter(value => /^(noopener|noreferrer)(?:=|$)/i.test(value));
     const opened = nativeOpen.call(this, url, target, kept.join(','));
     if (opened && target && !String(target).startsWith('_')) namedWindows.set(String(target), opened);
     return opened;
-  };
+  } }.open;
   replace(window, 'open', { configurable: true, writable: true, value: open });
   const keyEvent = event => {
     if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
@@ -219,7 +233,6 @@ export function popupHook() {
   //   lock(token, capMs) vetoes every trusted key in a frame that does not hold the checked element.
   //   verdict(token) returns the veto reason, or undefined if every guarded event matched the seal.
   //   finish(token) disarms and returns the veto reason, or true.
-  const uncurry = Function.prototype.bind.bind(Function.prototype.call);
   const getter = (type, name) => {
     const get = Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
     return get ? uncurry(get) : () => { throw Error('native ' + name + ' unavailable'); };
@@ -242,6 +255,7 @@ export function popupHook() {
   // After the first keydown the key seal keeps only what decides where activation goes: words, values and disabled state are
   // what a handler legitimately changes (a login button that disables itself, a chat box synced by a framework), so they drop out.
   const routingAttributes = ['href', 'target', 'type', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate', 'for', 'usemap'];
+  const dataAttributes = ['name', 'value'];
   const formAttributes = ['action', 'method', 'target', 'enctype', 'novalidate'];
   const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate'];
   const isElement = node => { try { nameOf(node); return true; } catch { return false; } };
@@ -261,6 +275,15 @@ export function popupHook() {
       if (control?.form === form && (control.type === 'submit' || control.type === 'image')) return nodes[i];
     }
     return null;
+  };
+  const hiddenData = form => {
+    let nodes, row = '';
+    try { nodes = queryDocAll(rootOf(form), 'input'); } catch { nodes = queryFragAll(rootOf(form), 'input'); }
+    for (let i = 0; i < listLength(nodes); i++) {
+      const control = controlOf(nodes[i]);
+      if (control?.form === form && control.type === 'hidden') row += '\u0004' + (attr(nodes[i], 'name') ?? '') + '\u0001' + (attr(nodes[i], 'value') ?? '');
+    }
+    return row;
   };
   const formSignature = (form, withSubmitter) => {
     const submitter = withSubmitter ? submitterOf(form) : null;
@@ -292,6 +315,9 @@ export function popupHook() {
       row += '\u0001' + ident(form) + '|' + (submitter ? ident(submitter) : '');
       for (let i = 0; i < formAttributes.length; i++) row += '\u0001' + (attr(form, formAttributes[i]) ?? '');
       for (let i = 0; submitter && i < routingAttributes.length; i++) row += '\u0001' + (attr(submitter, routingAttributes[i]) ?? '');
+      // What the request carries that the page chose: the submitter's own name and value, and the form's hidden inputs.
+      for (let i = 0; submitter && i < dataAttributes.length; i++) row += '\u0001' + (attr(submitter, dataAttributes[i]) ?? '');
+      row += hiddenData(form);
     }
     for (let i = 0; i < routingAttributes.length; i++) row += '\u0001' + (attr(node, routingAttributes[i]) ?? '');
     return row;
@@ -399,6 +425,10 @@ export function popupHook() {
   // does nothing. The document the listeners were added for tells a reused window (a new document) from a settled one, whose
   // listeners must keep their place ahead of the page's.
   const lengthOf = uncurry(Object.getOwnPropertyDescriptor(window, 'length')?.get ?? (() => 0));
+  const nonce = String(Math.random()) + ':' + now();
+  // A hook put into a document after its scripts ran sits behind the page's own listeners and cannot veto what they do. At the
+  // start of a document no script element has been parsed yet; a late one finds scripts already there.
+  const fresh = (() => { try { return document.scripts.length === 0; } catch { return false; } })();
   let closed = false, attachedTo;
   const attach = () => {
     if (closed) return;
@@ -411,11 +441,11 @@ export function popupHook() {
   const reattach = force => { if (force || attachedTo !== document) attach(); };
   attach();
   // A page could rewrite itself in a keydown handler and take the key unguarded, and the other frame's document may be the one opened.
-  const reflectApply = Reflect.apply, viewOf = getter(globalThis.Document, 'defaultView'), readyOf = getter(globalThis.Document, 'readyState');
+  const viewOf = getter(globalThis.Document, 'defaultView'), readyOf = getter(globalThis.Document, 'readyState');
   for (const name of ['open', 'write', 'writeln']) {
     const native = globalThis.Document?.prototype?.[name];
     if (typeof native !== 'function') continue;
-    replace(Document.prototype, name, { configurable: true, writable: true, value: function() {
+    replace(Document.prototype, name, { configurable: true, writable: true, value: { [name]() {
       // write() on a document still being parsed appends to it; on a loaded one it opens it first, which erases the listeners.
       let opens = name === 'open';
       try { opens ||= readyOf(this) !== 'loading'; } catch { /* Not a document: the native call throws below. */ }
@@ -427,14 +457,35 @@ export function popupHook() {
         } catch { /* A document without a window has no listeners to restore. */ }
       }
       return result;
-    } });
+    } }[name] });
   }
   // A page that registers a capture listener on a reused window before anything restores ours would run first, so a
   // registration on the window while a guard is armed restores ours before it is recorded.
-  replace(EventTarget.prototype, 'addEventListener', { configurable: true, writable: true, value: function() {
+  replace(EventTarget.prototype, 'addEventListener', { configurable: true, writable: true, value: { addEventListener() {
     if (this === window && shield) reattach();
     return reflectApply(add, this, arguments);
-  } });
+  } }.addEventListener });
+  replace(Function.prototype, 'toString', { configurable: true, writable: true, value: { toString() {
+    return looksHas(looks, this) ? looksGet(looks, this) : reflectApply(nativeToString, this, arguments);
+  } }.toString });
+  // This window and the descendants script can reach (same-origin). A child this window counts but cannot reach (another origin) is
+  // reached through its own route instead; one it reaches without a hook is reported to fn as null.
+  const subtree = fn => {
+    const seen = [];
+    const visit = (win, hook, depth) => {
+      for (let i = 0; i < seen.length; i++) if (seen[i] === win) return;
+      if (depth > 64) { fn(null, win); return; }
+      seen[seen.length] = win;
+      fn(hook, win);
+      const count = hook.childFrames();
+      for (let i = 0; i < count; i++) {
+        let child, found;
+        try { child = win[i]; found = child[key]; } catch { continue; }
+        if (found && typeof found.childFrames === 'function') visit(child, found, depth + 1); else fn(null, child);
+      }
+    };
+    visit(window, api, 0);
+  };
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
@@ -519,8 +570,17 @@ export function popupHook() {
       finish(token); return bad ?? true;
     },
     // How many child frames this window has, in any process, from the native getter captured before page scripts (the page can
-    // replace window.length). Playwright may not know a frame in another process yet.
+    // replace window.length).
     childFrames() { return lengthOf(window); },
+    // Which window this hook sits in, so one frame reached by two routes (Playwright and a CDP session) is counted once.
+    id() { return nonce; },
+    // Every window from this one down that script can reach, as { id, n, fresh } (id null: a window with no hook), and the same walk
+    // for the calls the key makes. A frame in another process has its own session and is reached by that.
+    tree() { const out = []; subtree(hook => { out[out.length] = hook ? { id: hook.id(), n: hook.childFrames(), fresh: hook.fresh() } : { id: null, n: 0, fresh: false }; }); return out; },
+    fresh() { return fresh; },
+    lockAll(token, capMs, skip) { let ok = true; subtree(hook => { if (!hook) ok = false; else if (hook.id() !== skip && hook.lock(token, capMs) !== true) ok = false; }); return ok; },
+    resyncAll(token, capMs) { let ok = true; subtree(hook => { if (!hook || hook.resync(token, capMs) !== true) ok = false; }); return ok; },
+    finishAll(token) { const out = []; subtree(hook => { if (hook) { const reason = hook.finish(token); if (typeof reason === 'string') out[out.length] = [hook.id(), reason]; } }); return out; },
     reattach,
     off() {
       closed = true;
@@ -620,7 +680,7 @@ export async function backgroundKey(tab, locator, send, { timeoutMs = 1000, sett
   const token = randomUUID(), capMs = timeoutMs + 3000, until = Date.now() + capMs;
   const arg = { token, capMs };
   const settle = (work, ms = timeoutMs) => deadline(work, ms);
-  let owner, lockScript, unguarded = false;
+  let owner, lockScript, frameLock, unguarded = false;
   const cdp = tab.cdp, track = { dirty: false, pending: new Set(), wake: undefined };
   const wake = () => { const resolve = track.wake; track.wake = undefined; resolve?.(); };
   const events = {
@@ -634,26 +694,68 @@ export async function backgroundKey(tab, locator, send, { timeoutMs = 1000, sett
       if (event.reason === 'initialFrameNavigation' && event.url !== 'about:blank') track.pending.add(event.frameId);
     },
   };
-  const finishAll = () => Promise.all(tab.page.frames().map(frame => settle(() => frame.evaluate(arg => {
-    const result = window[Symbol.for('sleight.popup3')]?.finish(arg.token);
-    return typeof result === 'string' ? result : undefined;
+  // Every frame of the page, reached by every route there is: Playwright's frames, and the frames in other processes that the CDP
+  // filter holds a session for (Playwright often never attaches those). Each answers with its hook's tree: the windows from it
+  // down that script can reach, each with a hook id and the number of children it has (counted by a getter captured before the
+  // page's scripts). A frame reached by two routes answers with the same hook id and counts once. A hook counts only if it was
+  // there at the start of its document: one put in later sits behind the page's own listeners and vetoes nothing they do.
+  const call = (name, ...args) => `window[Symbol.for('sleight.popup3')]?.${name}(${args.map(value => JSON.stringify(value)).join(',')})`;
+  const sessions = () => { try { return tab.frames?.sessions() ?? []; } catch { return []; } };
+  const gone = context => context.frame ? context.frame.isDetached() : !sessions().includes(context.name);
+  let ownerId = null;
+  const survey = async () => {
+    const contexts = [
+      ...tab.page.frames().map(frame => ({ frame, run: source => frame.evaluate(source) })),
+      ...sessions().map(name => ({ name, run: source => tab.frames.evaluate(name, source) })),
+    ];
+    await Promise.all(contexts.map(async context => {
+      try { context.info = await settle(() => context.run(call('tree'))); } catch { context.info = undefined; }
+      context.valid = Array.isArray(context.info) && context.info.length > 0 && context.info.every(node => node.id !== null && node.fresh === true);
+      if (context.frame !== undefined && context.frame === owner && context.valid) ownerId = context.info[0].id;
+    }));
+    const byId = new Map(), unreached = [];
+    for (const context of contexts) {
+      context.owner = context.valid && ownerId !== null && context.info.some(node => node.id === ownerId);
+      if (!context.valid) { if (!gone(context)) unreached.push(context); continue; }
+      for (const node of context.info) byId.set(node.id, byId.get(node.id) ?? { n: node.n, owner: node.id === ownerId });
+    }
+    return { contexts, unique: [...byId.values()], unreached };
+  };
+  const finishAll = async () => {
+    const { contexts } = await survey().catch(() => ({ contexts: [] }));
+    const answers = await Promise.all(contexts.filter(context => context.valid).map(async context => {
+      try { return await settle(() => context.run(call('finishAll', token))); } catch { return undefined; }
+    }));
     // The frame holding the checked element may have been navigated by the key (a search form): its new document blocks the
     // release of the key, which is not an activation.
-  }, arg)).then(reason => reason === keyReleased && frame === owner ? undefined : reason).catch(() => undefined)));
-  const resync = () => Promise.all(tab.page.frames().map(async frame => {
-    try {
-      if (!await settle(() => frame.evaluate(arg => window[Symbol.for('sleight.popup3')]?.resync(arg.token, arg.capMs) === true, arg))) throw Error('no hook at document start');
-    } catch { if (!frame.isDetached() && frame !== owner) unguarded = true; }
-  }));
-  // A frame in another process is known to the page before Playwright has its session. One Playwright cannot reach cannot be locked.
-  const sameFrames = async ms => {
+    return answers.flatMap(value => Array.isArray(value) ? value : [])
+      .filter(([id, reason]) => !(reason === keyReleased && id === ownerId)).map(([, reason]) => reason);
+  };
+  const walkAll = async (found, source, onFail) => {
+    await Promise.all(found.contexts.filter(context => context.valid).map(async context => {
+      let value;
+      try { value = await settle(() => context.run(source)); } catch { value = undefined; }
+      if (value !== true && !gone(context)) onFail(context);
+    }));
+  };
+  // The checked frame keeps its seal; every other window below any route is locked. A lock that does not take means the frame is not
+  // guarded.
+  const lockAll = found => walkAll(found, `${call('lockAll', token, capMs, ownerId)} === true`, () => { throw Error('a frame could not be guarded before the key; use the engine browser path'); });
+  // Restores a reused window's listeners and locks every document that is not the checked one; a frame that cannot be reached
+  // or locked (and is not the checked frame) means the key may have been taken unguarded.
+  const resync = async found => {
+    if (found.unreached.some(context => !context.owner)) unguarded = true;
+    await walkAll(found, `${call('resyncAll', token, capMs)} === true`, context => { if (!context.owner) unguarded = true; });
+  };
+  // A frame in another process is known to the page before anything can reach it, and one that nothing reaches cannot be locked.
+  // Resolves to the frames once every frame the windows count has been reached, or to undefined when that does not happen in ms.
+  const reached = async ms => {
     for (const waitUntil = Date.now() + ms; ; await new Promise(resolve => setTimeout(resolve, 25))) {
       try {
-        const frames = tab.page.frames();
-        const counts = await Promise.all(frames.map(frame => settle(() => frame.evaluate(() => window[Symbol.for('sleight.popup3')]?.childFrames() ?? -1))));
-        if (counts.every(count => count >= 0) && 1 + counts.reduce((sum, count) => sum + count, 0) <= frames.length) return true;
-      } catch { return false; }
-      if (Date.now() >= waitUntil) return false;
+        const found = await survey();
+        if (!found.unreached.length && 1 + found.unique.reduce((sum, entry) => sum + entry.n, 0) <= found.unique.length) return found;
+      } catch { return undefined; }
+      if (Date.now() >= waitUntil) return undefined;
     }
   };
   // Called with the key down. A round trip to the page first, so every frame event its handlers caused has arrived.
@@ -664,8 +766,8 @@ export async function backgroundKey(tab, locator, send, { timeoutMs = 1000, sett
       while (track.pending.size && Date.now() < waitUntil) await new Promise(resolve => { track.wake = resolve; setTimeout(wake, Math.max(1, waitUntil - Date.now())); });
       if (!track.dirty) return;
       track.dirty = false;
-      if (!await sameFrames(settleMs)) unguarded = true;
-      await resync();
+      const found = await reached(settleMs);
+      if (found) await resync(found); else unguarded = true;
     }
   };
   try {
@@ -677,30 +779,25 @@ export async function backgroundKey(tab, locator, send, { timeoutMs = 1000, sett
       }, arg, { timeout: timeoutMs }));
     } catch { throw Error('background key guard unavailable; use the engine browser path'); }
     owner = typeof locator.ownerFrame === 'function' ? await locator.ownerFrame() : undefined;
-    if (typeof tab.page.addInitScript === 'function') {
-      try {
-        lockScript = await settle(() => tab.page.addInitScript(`(${popupHook})();{const hook=window[Symbol.for('sleight.popup3')];` +
-          `hook?.lock(${JSON.stringify(token)},${until}-Date.now());}`));
-      } catch { throw Error('a document created by the key could not be guarded; use the engine browser path'); }
-    }
-    if (!await sameFrames(timeoutMs)) throw Error('a frame could not be guarded before the key; use the engine browser path');
-    await Promise.all(tab.page.frames().filter(frame => frame !== owner).map(async frame => {
-      try {
-        // A hook that was not there at the start of the document sits behind the page's own listeners, so such a frame is not guarded.
-        if (!await settle(() => frame.evaluate(() => !!window[Symbol.for('sleight.popup3')]))) throw Error('no hook at document start');
-        if (!await settle(() => frame.evaluate(({ token, capMs }) => window[Symbol.for('sleight.popup3')]?.lock(token, capMs) === true, arg))) throw Error('not lockable');
-      } catch {
-        if (frame.isDetached()) return;
-        throw Error('a frame could not be guarded before the key; use the engine browser path');
-      }
-    }));
+    const lockSource = `(${popupHook})();{const hook=window[Symbol.for('sleight.popup3')];hook?.lock(${JSON.stringify(token)},${until}-Date.now());}`;
+    // A document created while the key is in flight starts under the lock: through the page session in the frames that share its
+    // process, through the CDP filter in the frames in other processes. Not through Playwright's addInitScript, which runs its
+    // scripts at once in a frame whose document has already started and so puts a hook there behind the page's own listeners.
+    try {
+      if (tab.cdp?.send) lockScript = (await settle(() => tab.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: lockSource }))).identifier;
+      if (tab.frames) frameLock = await settle(() => tab.frames.addScript(lockSource));
+    } catch { throw Error('a document created by the key could not be guarded; use the engine browser path'); }
+    const found = await reached(timeoutMs);
+    if (!found) throw Error('a frame could not be guarded before the key; use the engine browser path');
+    try { await lockAll(found); } catch { throw Error('a frame could not be guarded before the key; use the engine browser path'); }
     if (cdp?.on) for (const [name, handler] of Object.entries(events)) cdp.on(name, handler);
     const result = await send({ between: cdp?.on ? between : undefined });
     if (unguarded) throw Error('a frame created by the key could not be guarded; use the engine browser path');
     return result;
   } finally {
     if (cdp?.off) for (const [name, handler] of Object.entries(events)) cdp.off(name, handler);
-    if (lockScript) await settle(() => lockScript.dispose()).catch(() => {});
+    if (lockScript) await settle(() => tab.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: lockScript })).catch(() => {});
+    if (frameLock) await settle(() => frameLock.remove()).catch(() => {});
     const verdicts = await finishAll().catch(() => []);
     const reason = verdicts.find(value => typeof value === 'string');
     if (reason) throw Error(keyMessage(reason));
@@ -709,12 +806,14 @@ export async function backgroundKey(tab, locator, send, { timeoutMs = 1000, sett
 
 // browser is the Playwright connection through V1's CDP filter; session is the
 // approved root CDP {send,on,off,sessionId}. Existing pages are never acquired.
-export function createPageRegistry({ browser, session, context = browser?.contexts()[0], upstream, ownTarget, releaseTarget,
+export function createPageRegistry({ browser, session, context = browser?.contexts()[0], upstream, ownTarget, releaseTarget, frames,
   endpoint, endpointBlocked, timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
   if (!context || typeof session?.send !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('approved browser connection required');
   if (ownTarget !== undefined && (typeof ownTarget !== 'function' || typeof upstream?.send !== 'function'))
     throw Error('trusted popup admission needs the upstream CDP connection');
+  if (frames !== undefined && !['sessions', 'addScript', 'evaluate'].every(name => typeof frames?.[name] === 'function'))
+    throw Error('approved frame sessions required');
   const records = new Map(), targets = new Map(), metadata = new WeakMap(), seen = new Map(), allocations = new Map(), tasks = new Set(), blockedTargets = new Set();
   const namedChildren = new Map();
   const queued = new WeakMap();
@@ -746,15 +845,19 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     entry.script = identifier;
     const result = await entry.cdp.send('Runtime.evaluate', { expression: `(${popupHook})()`, returnByValue: true });
     if (result.exceptionDetails || result.result?.value !== true) throw Error('background popup hook installation failed');
-    // The page session's script does not reach a frame in another process (a cross-site iframe); Playwright's init script
-    // does, before that frame's own scripts, so the key lock finds the hook at the start of every document.
-    if (typeof entry.page.addInitScript === 'function') entry.frameScript = await entry.page.addInitScript(popupHook);
+    // The page session's script does not reach a frame in another process (a cross-site iframe). The filter puts the hook at the
+    // start of every document in such a frame, before that frame is resumed. Playwright's addInitScript is not used: it runs its
+    // scripts at once in a frame whose document has already started, which puts the hook behind the page's own listeners.
+    if (entry.frames) entry.frameHook = await entry.frames.addScript(`(${popupHook})()`);
   };
   const removeHook = async entry => {
     if (entry.script) {
       await entry.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.script }); entry.script = null;
     }
-    if (entry.frameScript) { await entry.frameScript.dispose(); entry.frameScript = null; }
+    if (entry.frameHook) { await entry.frameHook.remove(); entry.frameHook = null; }
+    if (entry.frames) for (const name of entry.frames.sessions()) {
+      await entry.frames.evaluate(name, "window[Symbol.for('sleight.popup3')]?.off() ?? true").catch(() => {});
+    }
     if (!entry.page.isClosed()) for (const frame of entry.page.frames()) await frame.evaluate(() => {
       return window[Symbol.for('sleight.popup3')]?.off() ?? true;
     });
@@ -773,6 +876,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       closed: page.isClosed(), released: false, queue: Promise.resolve() };
     entry.windowOpenNo = 0;
     entry.parent = opener;
+    if (frames) entry.frames = { sessions: () => frames.sessions(entry.targetId), addScript: source => frames.addScript(entry.targetId, source),
+      evaluate: (name, expression) => frames.evaluate(entry.targetId, name, expression) };
     entry.openChild = (url, { target = '', rel = '' } = {}) => {
       // Never resolve a page-supplied name against arbitrary browser targets.
       // Only this registry's allocations can acquire or reuse a link name.

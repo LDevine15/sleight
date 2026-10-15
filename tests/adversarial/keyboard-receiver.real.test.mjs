@@ -323,15 +323,20 @@ test('a key sent into the page field with focus moved into another frame is veto
   await f.safe();
 });
 
-test('a frame that never finishes loading cannot be guarded: Enter is refused with the engine path and nothing is sent', { skip, timeout: 60000 }, async t => {
-  const b = await bank(t), f = await b.start(doc('<input id="a" aria-label="Search"><iframe src="/hang"></iframe>', keyLog), 'Search', { routes: { '/hang': () => {} } });
-  await new Promise(resolve => setTimeout(resolve, 600));
-  await f.page.evaluate(() => document.getElementById('a').focus());
-  const started = Date.now(), result = await f.act([{ do: 'press', key: 'Enter' }]);
-  t.diagnostic('hanging frame: ' + (Date.now() - started) + ' ms, ' + result.text.split('\n')[0]);
-  assert.match(result.text, /engine browser path/);
-  assert.deepEqual(await f.page.evaluate(() => window.__e), []);
-});
+// A frame that never finishes loading has only its empty first document, which carries the hook from its start like any other,
+// so it is locked and the key goes through. The frame can start loading while the key is in flight (a response that arrives late):
+// that document starts under the lock too (the re-pointed and inserted frame tests above).
+for (const [name, host] of [['same-site', '127.0.0.1'], ['cross-site', 'localhost']])
+  test('a ' + name + ' frame that never finishes loading is locked, and the key to the page field is delivered', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), port = new URL(b.origin).port;
+    const f = await b.start(doc('<input id="a" aria-label="Search"><iframe src="http://' + host + ':' + port + '/hang"></iframe>', keyLog), 'Search', { routes: { '/hang': () => {} } });
+    await new Promise(resolve => setTimeout(resolve, 600));
+    await f.page.evaluate(() => document.getElementById('a').focus());
+    const started = Date.now(), result = await f.act([{ do: 'press', key: 'Enter' }]);
+    t.diagnostic('hanging frame: ' + (Date.now() - started) + ' ms, ' + result.text.split('\n')[0]);
+    assert.doesNotMatch(result.text.split('\n')[0], /not run|may have activated/);
+    assert.deepEqual(await f.page.evaluate(() => window.__e), ['keydown:Enter:', 'keypress:Enter:', 'keyup:Enter:']);
+  });
 
 for (const [name, host] of [['same-site', '127.0.0.1'], ['cross-site', 'localhost']])
   test('a ' + name + ' frame that stops propagation and holds Pay cannot take the key when the field moves focus into it', { skip, timeout: 90000 }, async t => {
