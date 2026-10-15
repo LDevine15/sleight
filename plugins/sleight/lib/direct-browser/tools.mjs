@@ -1,3 +1,4 @@
+import { assertEndpointRead, endpointURL, endpointBlock } from './endpoint-guard.mjs';
 // v3's five eagerly advertised tools. No generic JavaScript or authority fields.
 const object = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = { type: 'string', maxLength: 65536 };
@@ -87,7 +88,9 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
   const deliveries = new WeakMap();
   const capture = async (entry, options) => {
     if (entry.state.actionPending || entry.state.dialog) throw Error('input or dialog pending; wait or explicitly answer the dialog');
+    await assertEndpointRead(entry.page, endpoint);
     const capturedAt = now(), value = await snapshot(entry.page, options);
+    await assertEndpointRead(entry.page, endpoint);
     return { ...value, capturedAt };
   };
   const finish = (text, entry, observed) => {
@@ -109,21 +112,19 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           return textResult(`${a.do}: ${JSON.stringify(await pages[a.do](a.tab))}`);
         }
         if (request.name === 'browser_open') {
-          if (endpoint) {
-            const target = new URL(a.url), devtools = new URL(endpoint);
-            const port = url => url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? '443' : '80');
-            const local = host => /^(?:127\.\d+\.\d+\.\d+|0\.0\.0\.0|localhost|.+\.localhost|\[(?:::|::1|::ffff:[\da-f:]+)\])$/.test(host.replace(/\.$/, ''));
-            if (port(target) === port(devtools) && (target.hostname === devtools.hostname || local(target.hostname) && local(devtools.hostname)))
-              throw Error('The selected DevTools endpoint cannot be opened');
-          }
+          if (endpointURL(a.url, endpoint)) throw Error(endpointBlock);
           started = true;
           const { tab } = await pages.openTab({ url: a.url }), entry = pages.tab(tab);
+          await assertEndpointRead(entry.page, endpoint);
           const header = `${tab} ${clean(await entry.page.title())}\n${clean(entry.page.url())}`;
           try { const observed = await capture(entry, { maxChars: 8000 }); return finish(header + '\n' + observed.text, entry, observed); }
-          catch { return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
+          catch (error) { if (error.message === endpointBlock) throw error; return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
         }
         return await pages.enqueue(a.tab, async entry => {
           if (ended) throw Error('turn ended');
+          await assertEndpointRead(entry.page, endpoint);
+          const popupStart = entry.popups?.length ?? 0;
+          const blocked = () => entry.popups?.slice(popupStart).filter(row => row.blocked).map(() => endpointBlock) ?? [];
           const privateContext = typeof ctx === 'function' ? ctx(entry) : ctx;
           if (request.name === 'browser_read') {
             const options = { ...(a.ref === undefined ? {} : { ref: a.ref }), ...(a.find === undefined ? {} : { find: a.find }), maxChars: a.max_chars ?? 8000 };
@@ -133,7 +134,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           started = true;
           if (request.name === 'browser_act') {
             const result = await runSteps(entry, a.steps, privateContext);
-            const lines = [...result.lines];
+            await assertEndpointRead(entry.page, endpoint);
+            const lines = [...result.lines, ...blocked().filter(line => !result.lines.includes(line))];
             let observed = result.observe;
             if (a.observe === 'full' && observed) {
               try { observed = await capture(entry, { maxChars: 8000 }); }
@@ -143,13 +145,16 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
             return finish([...lines, ...(observed ? [observed.text] : [])].join('\n'), entry, observed);
           }
           const result = await fillFields(entry, a.fields, { submit: a.submit }, privateContext);
+          await assertEndpointRead(entry.page, endpoint);
           const lines = result.rows.map(row => `${clean(row.ref)}: ${clean(row.status)}${row.reason ? ': ' + clean(row.reason) : ''}`);
+          lines.push(...blocked());
           if (result.submitted) lines.push('submit: ' + clean(result.submitted.status), ...(result.submitted.lines ?? []));
           let observed;
           try { observed = await capture(entry, { since: entry.state.snapshotNo || undefined, maxChars: 8000 }); } catch { lines.push('Read unavailable; use browser_read before retrying.'); }
           return finish([...lines, ...(observed ? [observed.text] : [])].join('\n'), entry, observed);
         });
       } catch (error) {
+        if (error.message === endpointBlock) return textResult(endpointBlock, true);
         return textResult(started ? 'Operation outcome is unconfirmed. Read current state before deciding what remains; do not replay input blindly. Use the engine browser path if needed.'
           : clean(error.message) + '. Use the engine browser path if needed.', !started);
       }

@@ -92,7 +92,7 @@ test('port guard continues false matches and protects related targets before the
       assert.equal(reads,before,'no endpoint snapshot reached the model');
       assert.doesNotMatch(JSON.stringify(await pages.list()),/json\/list|webSocketDebuggerUrl|Foreign untouched/);
       assert.equal(await foreign.evaluate(()=>document.hasFocus()),focused);
-      await assert.rejects(snapshot(popup),/blocked: DevTools endpoint/);
+      assert.equal((await pages.list()).length,1,'blocked popup has no model-visible tab handle');
     }finally{assert.deepEqual(await dispatcher.end(),{revoked:true,cleanup:[]});await popup?.close();await session.detach();}
   });
   await t.test('site-isolated iframe cannot fetch the port',async()=>{

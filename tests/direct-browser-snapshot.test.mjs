@@ -376,3 +376,18 @@ test('V3R: adapted closed-root code ships the pinned full MIT license', async()=
   assert.ok(license,'the complete pinned license is required');
   assert.equal(createHash('sha256').update(license).digest('hex'),'e384db36e8cc3024ce7e44168e7c345aa6cf58a95f30a7cef729a259363ce667');
 });
+
+test('snapshot refuses endpoint pages before DOM reads, including pending navigation', async () => {
+  const { bindEndpointPage } = await import('../plugins/sleight/lib/direct-browser/endpoint-guard.mjs');
+  for (const pending of [false, true]) {
+    const { page } = fixture([{ role: 'text', text: 'private endpoint data' }]);
+    if (!pending) page.url = () => 'http://alias.invalid:9222/json/list';
+    let reads = 0;
+    page.ariaSnapshotJSON = async () => { reads++; throw Error('endpoint DOM must not be read'); };
+    bindEndpointPage(page, 'ws://127.0.0.1:9222/devtools/browser/private', {
+      send: async method => { assert.equal(method, 'Target.getTargetInfo'); return { targetInfo: { url: page.url(), ...(pending ? { pendingUrl: 'http://localhost:9222/json/list' } : {}) } }; },
+    });
+    await assert.rejects(module.snapshot(page), /blocked: DevTools endpoint/);
+    assert.equal(reads, 0);
+  }
+});

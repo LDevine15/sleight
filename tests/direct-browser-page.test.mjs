@@ -442,3 +442,24 @@ test('a page closing during release is refused instead of acknowledged as kept',
   assert.equal(result.cleanedUp, true);
   assert.equal(result.rows.find(row => row.tab === tab).kept, false);
 });
+
+test('endpoint popup adoption closes before hook installation, for any host spelling or pending URL', async () => {
+  for (const info of [{ url: 'http://alias.invalid:9222/json/list' }, { url: 'about:blank', pendingUrl: 'http://localhost:9222/json/list' }]) {
+    const f = fixture({ endpoint: 'ws://127.0.0.1:9222/devtools/browser/private' });
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+    const popup = f.page('endpoint-child', 'target-1'); Object.assign(popup.info, info);
+    await f.registry.idle();
+    assert.equal(popup.closed, true);
+    assert.equal(f.calls.some(c => c[0] === 'Runtime.evaluate' && c[2] === 'endpoint-child'), false);
+    assert.equal(f.registry.tab(tab).popups.at(-1).blocked, true);
+    assert.equal((await f.registry.list()).length, 1);
+    assert.equal((await f.registry.endTurn()).cleanedUp, true);
+  }
+});
+
+test('background link allocation refuses the endpoint port before creating a page', async () => {
+  const f = fixture({ endpoint: 'ws://127.0.0.1:9222/devtools/browser/private' });
+  await assert.rejects(f.registry.openTab({ url: 'http://alias.invalid:9222/json/list' }), /blocked: DevTools endpoint/);
+  assert.equal(f.pages.length, 0);
+  await f.registry.endTurn();
+});
