@@ -3,51 +3,47 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 03:25 UTC)
+## Banner (2026-10-15 03:50 UTC, flushed before the owner's clear and reboot)
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. 1.3.0 waits only on turbo v3's gate (owner, 2026-10-14. Reaffirmed 2026-10-14 23:20 UTC). ROADMAP.md was rewritten from an
-item-by-item audit on 2026-10-15 and is the plan. Read it whole.
+the video. 1.3.0 waits only on turbo v3's gate. ROADMAP.md is the plan. Read it whole.
+
+Owner, 2026-10-15 before the reboot: all testing runs on the owner's Anthropic account login, never API console credits (LAWS). After
+the reboot the owner sleeps and the box is sleight-arch's all night (live runs allowed). Agree quiet windows with Puddle's architect
+session (`ListAgents`, then `SendMessage`) before heavy runs. Puddle runs heavy Swift tests.
 
 Branches (all on `private`):
-- `pane/auto-mode` at the commit holding this banner. `~/Projects/sleight` is fast-forwarded to it. Release prep is merged there
-  (full check 5691 pass, 0 fail, 49 mod). 0 open PRs. Public CI green on 1.2.5.
-- `v3-gate` at `f4f6899c` (worktree `~/Projects/sleight-wt/v3-int`): each turbo v3 piece that passed review (full check 6214 pass at
-  `1ee4cd57`), plus two bench fixes from the smoke runs (`4c2248b2`, `f4f6899c`, focused tests only so far).
-- Merge after reviews, before the release pass (not gate-blocking): `codex/cr8` `f9237223` (reviewed PASS), `codex/cr9` `b612a753`.
-- Into 1.3.0: RC1R (`codex/rc1r` `57079737`, engine-update reconnect) plus RC1R2 (`arch/rc1r2` `9b55b86b`, worktree
-  `~/Projects/sleight-wt/rc1r2`). Both reviewed PASS. RC1R3 (receipt of the call that triggers a reconnect, a stale handle origin)
-  is in progress there, then all three merge into pane/auto-mode with one full check.
-- Merge right after the gate (owner): `codex/v8` `813bca75` (v1/v2 removal, 15.4 to 8.2 MB), then V8R (queued).
-- AD1, the adversarial page bank (about 330 real-page tests in `tests/adversarial/`), rebased onto v3-gate: 53 failures on
-  v3-gate (endpoint 8, keyboard 6, page-instructions 3, page-natives 10, payment-decoys 12, submit-retry 1, timing 13).
-- `arch/ad1-fixes` (`~/Projects/sleight-wt/adfix`, pushed, `083d2644`): the bank plus sleight-arch's DevTools port guard. One
-  browser-level `Fetch.enable` per connection, matching only the debug port, blocks popups' first requests, which no page session
-  sees (endpoint file 136/136). Review round 1 FAILED it on speculation rules. In round 2, Chrome connected through its remote debugging
-  consent answers 404 on every `/json` endpoint (measured 2026-10-15), so only `--remote-debugging-port` browsers are exposed, in
-  known-problems. Round 2 also fixed the port 443 and userinfo patterns and the stuck-pause fallback. Needs its re-review.
-- Fix branches by Sonnet-high Claude agents, each in `~/Projects/sleight-wt/adfix-<name>` on `arch/ad1-<name>`:
-  hyg (`579c6641`, PASS; round 2 adds labels for dialog and navigation text, opener in the tab list, a file-chooser backstop),
-  kb (round 2 at `71e98b7b` after a FAILED review, keyboard bank 27/27, needs its re-review),
-  pay (`965d1053`, FAILED review: invisible-term and missed-conflict bypasses, coupon buttons use up the confirmation, false asks;
-  round 2 running), pop and swap (clean-room page.mjs, round 1 running).
-- `arch/tn1` (`~/Projects/sleight-wt/tn1`): the turbo skill line names the application, as in "Turbo selects `b...` (Google Chrome)".
-  Measured cause: with only an opaque id, 1 of 2 Haiku runs searched the engine for Chrome first.
+- `pane/auto-mode` at the commit holding this banner. Holds RC1, RC1R, RC1R2 and RC1R3 (`e403ea02`: sleight reconnects after a
+  ChatGPT engine update without a restart, keeps approvals, each round reviewed PASS). Full check 5729 pass, 0 fail, 59 skipped.
+  `~/Projects/sleight` is fast-forwarded to it. 0 open PRs. Public CI green on 1.2.5.
+- `v3-gate` at `883f3bd8` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3 (full check 6214 pass at `1ee4cd57`), two bench fixes
+  (`4c2248b2` runner skips the FowlBrowser socket for turbo, `f4f6899c` bench-only hook refuses engine js that mentions a browser),
+  and TN1 (`883f3bd8`, the turbo skill line names the application, 131 focused tests).
+- `arch/ad1-int` at `145282d1` (`~/Projects/sleight-wt/adfix-int`): the AD1 bank (about 330 adversarial real-page tests) plus the
+  fix branches hyg r2, pop r1, kb r2, pay r3 and the port guard (`arch/ad1-fixes` `437ee306`, reviewed PASS). The keyboard, payment, page-instructions,
+  submit-retry, page-natives and endpoint files pass 398/398 there (before hyg r2). Open review findings for each branch, with repro paths: `ledger/claims/AD1/OPEN-REVIEWS.md`.
+- Fix branches (worktrees `~/Projects/sleight-wt/adfix-<name>`): `arch/ad1-kb` `71e98b7b` FAILED r2, `arch/ad1-pop` `3649e061`
+  FAILED r1, `arch/ad1-pay` `e746de84` FAILED r3, `arch/ad1-hyg` `a1c3ebac` (r1 PASS, r2 unreviewed), `arch/ad1-swap` (r1
+  `b09baf03` 41/41, r2 running at the flush; its agent ends at the clear, so check the branch for a newer commit).
+- Merge after reviews, before the release pass: `codex/cr8` `f9237223` (PASS), `codex/cr9` `b612a753`. After the gate (owner):
+  `codex/v8` `813bca75`, then V8R (queued).
 
-Smoke rounds (Haiku 5.5, headless turbo arm, form-travel and demoid, 2026-10-15): the third was ROUND CLEAN (11/11, Robin Vale, no
-focus events, $0.044). The first two found two bench bugs: the runner refused the turbo arm without a FowlBrowser socket, and the arm's
-engine path reached the owner's real Chrome. Demoid called `cua.getApp("com.google.Chrome")`, which launched Chrome to the front
-at 02:59:17 UTC, because `preapproved.json` holds Chrome (always-allow, 2026-10-12). A bench-only PreToolUse hook now refuses engine
-js that mentions a browser. The command needs `--serve "node test/demo/server.mjs --all"` and `--out <dir>`.
+Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
+demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.google.Chrome")` launched the owner's Chrome to the front at 02:59:17 UTC
+(`preapproved.json` holds Chrome as always-allow). The bench hook now refuses that. Command: from v3-int, `bench/fowl/rounds.sh
+--surface sleight-turbo --model haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid --serve "node
+test/demo/server.mjs --all" --out <dir> --effort high`.
 
-Next, to reach the gate:
-1. Review each AD1 fix round (Sonnet high, real-page repros) and merge the branches into `arch/ad1-fixes`, then CR8 and CR9, the
-   whole bank, one full check, and v3-gate. Merge TN1 after its review.
-2. Merge RC1R, RC1R2 and RC1R3 into pane/auto-mode with one full check.
-3. Rerun the smoke round on the merged v3-gate.
-4. Then ask the owner once for the away window: the gate round (Haiku 5.5, both arms, both orders. FowlBrowser's arm drives Helium,
-   so it shows windows). FowlBrowser's extension is installed in Helium (0.1.0, pinned 8b68924, Developer mode on, 2026-10-15).
-5. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
+Next, in order (the box is sleight-arch's overnight):
+1. Switch `bench/fowl/rounds.sh` and `bench/fowl/preflight.mjs` funding to the owner's login for every Claude arm (browser-use
+   needs an API key by design, so name it as not run or ask the owner).
+2. Fix the AD1 review findings in `ledger/claims/AD1/OPEN-REVIEWS.md` with fresh Sonnet-high agents per branch (kb builds on swap's
+   shield), re-review each with real-page repros, merge into `arch/ad1-int`, rerun all seven bank files, merge CR8 and CR9, one
+   full check, then merge into v3-gate.
+3. Smoke round on the merged v3-gate, then the gate round (Haiku 5.5, both arms, both orders; targets 26/26, at most 575 s, at
+   most 9 errors, 0 ToolSearch, 0 focus events). FowlBrowser's arm drives Helium with windows, allowed overnight. If a step needs
+   the owner (extension reload, a login, a Chrome Allow), stop and leave one command in STATE.
+4. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 
 After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE. EPV3-1 never
 started because V10R4's dead lane held `v3-join`, now free), the claim suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
@@ -56,8 +52,9 @@ How work runs now: lanes run focused tests only (LEDGER NOTICE 3), sleight-arch 
 when faster (LAWS), Claude reviewers (Sonnet high) review every safety, release and clean-room item, and lane reviews add real-page
 repros. Competitor code is never adapted (LAWS): CR items get a similarity audit, and lanes that read FowlBrowser can't review them.
 
-The real-page runner (`node scripts/live-dom-runner.mjs`, pid 39609) has run from `~/Projects/sleight` since 2026-10-14 20:40
-UTC. No Codex lane is running. Claude agents end at a clear, and their worktrees and pushed branches remain.
+The real-page runner (`node scripts/live-dom-runner.mjs`, pid 39609, from `~/Projects/sleight` since 2026-10-14 20:40 UTC) ends
+at the owner's reboot. Restart it with `nohup node scripts/live-dom-runner.mjs` from `~/Projects/sleight` if a real-page test needs it.
+No Codex lane is running. Claude agents end at the clear, and their worktrees and pushed branches remain.
 
 The owner's steps at the Mac are Chrome's Allow during the gate, the sleight-arm login if the preflight says it lapsed
 (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`), and
@@ -108,8 +105,8 @@ Optional: `sleight-mcp setup` in a fresh macOS user (README says it's untested t
 private` sends pushes to `Land-o-Clusters/sleight-dev`, and a pre-push hook refuses the public repo
 without `SLEIGHT_RELEASE_PUSH=1`. Public `origin/pane/auto-mode` stays at `332e3ca`.
 
-**Benchmark.** Claude arms run on the owner's API key, Haiku 5.5 at high, capped at $200 a month
-(LAWS). `--surfaces browser,computer` runs the real suite with the extension browser API. Chains of
+**Benchmark.** Claude arms run on the owner's Anthropic account login, Haiku 5.5 at high (LAWS, 2026-10-15). `bench/fowl/rounds.sh`
+still sends non-Opus models to the API key: switch it to the login first. `--surfaces browser,computer` runs the real suite with the extension browser API. Chains of
 live runs live in `.dev/passes/`. Compare A/Bs with `node .dev/tools/ab-compare.mjs <log>.log`.
 
 Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working branch.

@@ -41,8 +41,8 @@ Post-release work builds on branches now and merges after the tag (owner, 2026-1
 1. Electron on turbo v3: EPV3-1 to EPV3-8 (`ledger/electron-v3-plan.md`), carrying over EP-2's cleanup and EP-6's build
    qualification. EPV3-1 is in a lane, and the rest follow in the plan's order.
 2. The full claim suite comes before the parity battery (owner, 2026-10-15). It runs every arm on the same tasks (Claude in Chrome, Claude's own computer use on the newest Claude Desktop,
-   FowlBrowser, Codex, LCU, Cua, Peekaboo), median and p90 over at least 5 runs, published with failures. API spend counts
-   against the $200 monthly cap ($159.96 used in October).
+   FowlBrowser, Codex, LCU, Cua, Peekaboo), median and p90 over at least 5 runs, published with failures. Runs use the owner's
+   Anthropic account login, not API credits (owner, 2026-10-15).
 3. The Q1 error-message fixes. Q1-1 to Q1-6 are reviewed, and Q1-7 to Q1-17 have branches that need review.
 4. Speed. The measured gap to FowlBrowser on Haiku 5.5 is mostly time before the first action (67%) and result size (3x larger),
    with code streaming 26% (`ledger/opus-less-code-report.md`), so those come first. Turbo's five tools already cut code per action

@@ -57,8 +57,11 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   (owner, 2026-10-15), within reason.
 - Lanes run only the tests for what they changed, and sleight-arch runs the full check once per merge. Full checks in every lane
   loaded the Mac enough to hold up the owner's other projects (owner, 2026-10-14).
-- Benchmark Claude arms run on the owner's API key, from the $200 monthly credit, and stop at $200. Opus arms run on the owner's
-  Claude account. Incremental runs use Haiku.
+- SUPERSEDED (owner, 2026-10-15): benchmark Claude arms ran on the owner's API key, from the $200 monthly credit.
+- All testing and every benchmark Claude arm run on the owner's Anthropic account login, never the API console credits. The account
+  has quota now (owner, 2026-10-15). Incremental runs use Haiku.
+- The owner's other project (Puddle) runs heavy Swift tests on the same Mac. Before long or heavy runs, sleight-arch agrees quiet
+  windows with Puddle's architect session by message, and both honor `/tmp/sleight-hold`.
 
 ## Protecting the owner and their Mac
 
