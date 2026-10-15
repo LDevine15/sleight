@@ -37,7 +37,7 @@ test('turbo arm offers the engine companion and the installed turbo skill before
   assert.equal(engine.env.SLEIGHT_SKILL, 'none', 'the combined prompt supplies the skill once');
   assert.ok(setup.allowed.split(',').includes('mcp__plugin_sleight_computer__js'));
   assert.equal(setup.allowed.split(',').length, 8);
-  const browserRules = readFileSync(join(root, 'plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md'), 'utf8').trimEnd().replace('{browser}', fixtureTask.browser ?? 'bbench');
+  const browserRules = readFileSync(join(root, 'plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md'), 'utf8').trimEnd().replace('{browser}', 'bbench');
   const installed = skillRules(undefined, {}).replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, browserRules + '\n');
   assert.ok(setup.promptPrefix.includes(installed), 'native rules and production turbo browser rules are preserved together');
   assert.match(setup.promptPrefix, /Never translate refs or handles between paths/);

@@ -2,7 +2,6 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { browserTools } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
 import { worldAgentSetup } from '../world/arms/browser.mjs';
-import { benchBrowser } from './v3-protocol.mjs';
 
 export const SURFACE = 'sleight-turbo';
 export const MEASUREMENT = 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded';
@@ -28,8 +27,8 @@ export function fixtureOrigins(task) {
 }
 export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
   const origins = fixtureOrigins(task); if (origins.length) fixturePolicy(origins);
-  // The owned browser takes the task's browser name, so the agent finds it where the installed surface would put it.
-  const browser = benchBrowser({ SLEIGHT_TURBO_BROWSER: task.browser });
+  // Like the installed surface, the arm shows an opaque browser id, never the task's browser name.
+  const browser = 'bbench';
   // Keep setup synchronous for the pinned runner's require(). launch.mjs has
   // top-level await, so read its same skill body without importing the launcher.
   const rules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/'
@@ -48,7 +47,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
       env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none' } },
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
-      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_BROWSER: browser, SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
+      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
     allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',

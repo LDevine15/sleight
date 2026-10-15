@@ -8,10 +8,10 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const browserCall = /\b(listBrowsers|getBrowser|createBrowserTab|getTab|listTabs|chrome|chromium|helium|safari|firefox|brave|arc|edge|opera|vivaldi)\b/i;
-export function decide(input, browser = 'chrome') {
+export function decide(input, browser = 'bbench') {
   if (input?.tool_name !== 'mcp__plugin_sleight_computer__js' || !browserCall.test(String(input.tool_input?.code ?? ''))) return null;
   return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny',
-    permissionDecisionReason: `In this benchmark, ${browser} is the sleight-turbo browser. Use the mcp__sleight-turbo__browser_* tools for web pages; ` +
+    permissionDecisionReason: `In this benchmark, the task's browser is turbo's ${browser}. Use the mcp__sleight-turbo__browser_* tools for web pages; ` +
       'engine calls that reach real browsers are off here.' } };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

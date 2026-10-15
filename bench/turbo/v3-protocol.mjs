@@ -1,10 +1,7 @@
 import { browserTools, validateToolCall } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
-// The arm names the owned browser after the task's browser, as the installed
-// surface names the user's real one. Other callers keep 'bbench'.
-export const benchBrowser = (env = process.env) => /^[a-z][a-z0-9-]{0,31}$/.test(env.SLEIGHT_TURBO_BROWSER ?? '') ? env.SLEIGHT_TURBO_BROWSER : 'bbench';
 // Bench transport only. The production v3 surface supplies the entire catalog,
 // validation and dispatch. Do not reserialize its plain-text MCP result as JSON.
-export function createProtocol({ output = process.stdout, start, tools = browserTools(benchBrowser()), validate = input => validateToolCall(input, benchBrowser()) } = {}) {
+export function createProtocol({ output = process.stdout, start, tools = browserTools('bbench'), validate = input => validateToolCall(input, 'bbench') } = {}) {
   if (!Array.isArray(tools) || typeof validate !== 'function' || typeof start !== 'function') throw Error('V3 interface required');
   let session, starting, queue = Promise.resolve(), closing = false, cleanup;
   const send = value => new Promise((resolve, reject) => {
