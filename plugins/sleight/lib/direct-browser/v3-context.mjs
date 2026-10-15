@@ -80,13 +80,14 @@ export function labelForward(el, unused, read = (node, key) => { const value = n
 }
 // One cheap read per check: whether a label forwards, and the text of every area of an image map. The point
 // under the pointer is unknown here, so every area of the map counts: alt, label, title and resolved href.
-export function forwardInfo(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+export function forwardInfo(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }, seal) {
   let label = false;
   for (let node = el; node; node = read(node, 'parentElement') ?? read(read(node, 'getRootNode')?.(), 'host')) {
     if (read(node, 'localName') === 'label') { label = !!read(node, 'control'); break; }
     if (read(node, 'matches')('a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) break;
   }
-  const usemap = read(el, 'localName') === 'img' ? read(el, 'getAttribute')('usemap') : null, areas = [];
+  // The hook seals the areas of any element's usemap map; the words count for an img, the digests for every element.
+  const usemap = read(el, 'getAttribute')('usemap'), areas = [], seals = [];
   if (usemap) {
     const doc = read(el, 'ownerDocument'), name = usemap.replace(/^#/, '');
     for (const map of read(doc, 'querySelectorAll')('map')) {
@@ -94,30 +95,34 @@ export function forwardInfo(el, unused, read = (node, key) => { const value = no
       for (const area of read(map, 'querySelectorAll')('area')) {
         let href = read(area, 'getAttribute')('href') ?? '';
         try { href = new URL(href, read(doc, 'baseURI')).href; } catch {}
-        areas.push([read(area, 'getAttribute')('alt'), read(area, 'getAttribute')('aria-label'), read(area, 'getAttribute')('title'), href].filter(Boolean).join(' '));
+        if (read(el, 'localName') === 'img') areas.push([read(area, 'getAttribute')('alt'), read(area, 'getAttribute')('aria-label'), read(area, 'getAttribute')('title'), href].filter(Boolean).join(' '));
+        if (typeof seal === 'function') seals.push(seal(area, read));
       }
       break;
     }
   }
-  return { label, areas };
+  return { label, areas, seals };
 }
 // Same words as rules.mjs paymentWords, for area text that inspectElement cannot read.
 const paymentText = /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i;
 // Fold what a click also activates into the classification of the element: it is a submit or payment if the
 // forwarded control or any area of its map is, and a picker opener if the control opens a picker.
 async function foldForwarded(handle, element) {
-  const { label, areas } = await trustedRead(handle, forwardInfo);
+  const { label, areas, seals } = await trustedRead(handle, forwardInfo);
+  const evidence = { forwarded: '', areas: seals ?? [] };
   if (label) {
     const forwarded = await trustedHandle(handle, labelForward);
     try {
       const control = forwarded.asElement?.();
       if (!control) throw Error('TRUSTED_TARGET_REQUIRED');
-      const other = await trustedReadNode(control, inspectElement);
+      const { seal, ...other } = await trustedReadNode(control, inspectElement);
+      evidence.forwarded = seal;
       for (const key of ['submit', 'payment', 'formPayment']) element[key] = element[key] || other[key];
       if (['file', 'color', 'select'].includes(other.kind)) element.kind = other.kind;
     } finally { try { await forwarded.dispose?.(); } catch {} }
   }
   if (areas.some(words => paymentText.test(words))) { element.payment = true; element.submit = true; }
+  return evidence;
 }
 
 // All names are local so Playwright can serialize this read into the target's
@@ -307,11 +312,11 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       const record = { handle, doc, frame, page: target.page, identity, origin: observed.origin, name: observed.name, ref: target.ref };
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
-      const element = await trustedRead(handle, inspectElement);
-      await foldForwarded(handle, element);
+      const { seal, ...element } = await trustedRead(handle, inspectElement);
+      const sealEvidence = { element: seal, ...await foldForwarded(handle, element) };
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: observed.origin,
-        element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, method: requested?.method },
+        sealEvidence, element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, method: requested?.method },
         submit: intent(target.do ?? 'click', { ...target, element }).submit });
       return record;
     } catch (error) { held.delete(handle); await handle.dispose().catch(() => {}); throw error; }
@@ -335,6 +340,11 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         } else if (target.locator) await prepare(target);
         else if (!['wait','back','forward','reload','viewport'].includes(kind)) return refused();
         else Object.assign(target, { session: bound.message.session, turn: bound.message.turn });
+        // A click that was sealed in the page: the words the rules just read must be the words that were sealed.
+        if (kind === 'click' && target.locator && typeof target.verifySeal === 'function') {
+          const verdict = await target.verifySeal(target.sealEvidence);
+          if (verdict !== true) return { verdict: 'refuse', message: typeof verdict === 'string' ? verdict : 'page changed during the click; read again' };
+        }
         if (fieldOnly && intent(kind, target).submit) return refused();
         ruleTarget = target;
         const result = check(ruleContext, kind, target);

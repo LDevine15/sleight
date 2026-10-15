@@ -171,8 +171,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         armed = watch(page, state); const start = now();
         const options = { timeout: TIMEOUT };
         const perform = async () => {
-          if (step.do === 'click') return backgroundClick(tab, locator, async extra => {
-            if (trusted) { await gate(); ctx.beginInput(target); }
+          if (step.do === 'click') return backgroundClick(tab, locator, async (extra, verifySeal) => {
+            // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
+            if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
             started = true; return locator.click({ ...options, ...extra });
           });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
@@ -263,7 +264,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             }
           } catch {}
         }
-        lines.push(label + ': ' + (started ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
+        // The shield cancelled the input before the page saw the click (backgroundClick says so); nothing was sent.
+        const cancelledByGuard = step.do === 'click' && /^page changed during the click; read again/.test(error.message);
+        lines.push(label + ': ' + (started && !cancelledByGuard ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;

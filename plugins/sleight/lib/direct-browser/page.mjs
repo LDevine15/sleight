@@ -211,12 +211,22 @@ export function popupHook() {
   // on an element or event). Classes are told apart by a native getter's brand check, not by instanceof, and
   // no page value ever builds a selector. If anything in the check throws, the input is cancelled.
   //
+  // What the seal covers: each node's words, attributes, form owner and that form's controls, plus the
+  // document's base URL, URL and base target (a relative action or href resolves through them). Trusted input
+  // that arrives after the soft cap (capMs) is cancelled, not passed; a separate hard cap (4 x capMs + 5 s) only
+  // drops a shield nobody finished. Same-origin child frames are armed as foreign: any trusted press or click in them is
+  // cancelled, because the sealed element is not there; a frame created while armed inherits that.
+  //
   // Key-shield API (window[Symbol.for('sleight.popup3')]), for callers that send trusted input:
   //   guard(element, token, capMs, { keys }) seals what activating `element` touches and arms the shield for
   //     capMs; { keys: true } also vetoes keydown, keypress, keyup and submit events (the form's action, method,
-  //     target, enctype, novalidate and default submitter are in the seal). Returns false if it cannot arm.
+  //     target, enctype, novalidate and the default submitter's own attributes are in the seal; a key event must
+  //     reach the field itself, a submit event must name the sealed submitter). Returns false if it cannot arm.
   //   verdict(token) returns the veto reason, or undefined if every guarded event matched the seal.
   //   finish(token) disarms and returns the veto reason, or true.
+  //   expect(token, evidence) compares the digests of what the rules read with the seal: true, or a veto reason.
+  //   conclude(token) is finish with { bad, landed }: landed is false if no trusted press or click reached the
+  //     sealed element's document, undefined if the shield is gone (the document changed).
   const uncurry = Function.prototype.bind.bind(Function.prototype.call);
   const getter = (type, name) => {
     const get = Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
@@ -225,26 +235,34 @@ export function popupHook() {
   const textOf = getter(globalThis.Node, 'textContent'), nameOf = getter(Element, 'localName'), connected = getter(globalThis.Node, 'isConnected');
   const parentElementOf = getter(globalThis.Node, 'parentElement'), listLength = getter(globalThis.NodeList, 'length'), typeOf = getter(Event, 'type');
   const shadowMode = getter(globalThis.ShadowRoot, 'mode'), shadowHost = getter(globalThis.ShadowRoot, 'host');
-  const labelOf = getter(HTMLLabelElement, 'control');
+  const labelOf = getter(HTMLLabelElement, 'control'), baseURIOf = getter(globalThis.Node, 'baseURI'), urlOf = getter(globalThis.Document, 'URL');
+  const submitterOfEvent = getter(globalThis.SubmitEvent, 'submitter');
   const controlGetters = [HTMLButtonElement, HTMLInputElement, globalThis.HTMLTextAreaElement, HTMLSelectElement].map(type => [getter(type, 'form'), getter(type, 'type')]);
-  const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryAll = uncurry(Element.prototype.querySelectorAll);
+  const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryAll = uncurry(Element.prototype.querySelectorAll), closest = uncurry(Element.prototype.closest);
   const queryDocAll = uncurry(globalThis.Document?.prototype.querySelectorAll), queryFragAll = uncurry(globalThis.DocumentFragment?.prototype.querySelectorAll);
   const attr = uncurry(getAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
   const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
-  const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
+  const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeClear = clearTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
+  const frameCount = uncurry(Object.getOwnPropertyDescriptor(window, 'length')?.get ?? (() => 0));
   const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
   let serial = 0, shield;
   const ident = node => { if (!idsHas(ids, node)) idsSet(ids, node, ++serial); return idsGet(ids, node); };
+  // The same digest runs in the rules' own reader (seal-digest.mjs), so the words the rules classified can be
+  // compared with the words that were sealed. Keep the two in step.
   const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = imul(h ^ charCodeAt(value, i), 16777619); return h + ':' + value.length; };
-  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'for', 'usemap'];
+  const SEP = '\u0001';
+  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate', 'for', 'usemap'];
   const formAttributes = ['action', 'method', 'target', 'enctype', 'novalidate'];
-  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form'];
+  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form', 'title', 'alt', 'src'];
+  const changedReason = 'the checked element changed', elsewhereReason = 'the input landed on a different element', lateReason = 'the input arrived after the shield expired';
   const isElement = node => { try { nameOf(node); return true; } catch { return false; } };
   // { form, type } for a form-associated button, input, textarea or select; a brand mismatch throws and falls to the next, so no instanceof.
   const controlOf = node => {
     for (let i = 0; i < controlGetters.length; i++) { try { return { form: controlGetters[i][0](node), type: controlGetters[i][1](node) }; } catch { /* Not this class. */ } }
     return null;
   };
+  // A control's form owner (form= included), or the nearest form around any other element.
+  const formOwner = (node, control) => control ? control.form : closest(node, 'form');
   const hostOf = node => { try { return shadowHost(rootOf(node)); } catch { return null; } };
   const parentOf = node => parentElementOf(node) ?? hostOf(node);
   // A form's default submitter is its first submit button in tree order among the controls it owns (what Enter in a field presses).
@@ -257,25 +275,39 @@ export function popupHook() {
     }
     return null;
   };
-  const formSignature = (form, withSubmitter) => {
-    const submitter = withSubmitter ? submitterOf(form) : null;
-    let parts = (submitter ? ident(submitter) : '') + '\u0002';
-    for (let i = 0; i < formAttributes.length; i++) parts += (attr(form, formAttributes[i]) ?? '') + '\u0001';
+  // Relative actions and hrefs resolve through these, and an unset target falls back to the first base target.
+  const baseState = () => {
+    const bases = queryDocAll(document, 'base[target]');
+    return baseURIOf(document) + SEP + urlOf(document) + SEP + (listLength(bases) > 0 ? attr(bases[0], 'target') ?? '' : '');
+  };
+  const formContent = form => {
+    let parts = '';
+    for (let i = 0; i < formAttributes.length; i++) parts += (attr(form, formAttributes[i]) ?? '') + SEP;
     const nodes = queryAll(form, 'input,button,iframe,select,textarea');
     for (let i = 0; i < listLength(nodes); i++) {
       const node = nodes[i];
-      parts += '\u0002' + nameOf(node) + '\u0001' + textOf(node);
-      for (let j = 0; j < rowAttributes.length; j++) parts += '\u0001' + (attr(node, rowAttributes[j]) ?? '');
+      parts += '\u0002' + nameOf(node) + SEP + textOf(node);
+      for (let j = 0; j < rowAttributes.length; j++) parts += SEP + (attr(node, rowAttributes[j]) ?? '');
     }
-    return hash(parts);
+    return parts;
   };
-  // Everything the rules read to classify a control: words, type, form owner and that form's controls.
-  const describe = (node, withSubmitter) => {
-    const control = controlOf(node), form = control?.form;
-    let row = ident(node) + '\u0001' + nameOf(node) + '\u0001' + connected(node) + '\u0001' + hash(textOf(node)) + '\u0001' + (control ? control.type : '')
-      + '\u0001' + (form ? ident(form) + '|' + formSignature(form, withSubmitter) : '');
-    for (let i = 0; i < attributes.length; i++) row += '\u0001' + (attr(node, attributes[i]) ?? '');
-    return row;
+  // Everything the rules read to classify a node: words, type, form owner and that form's controls, base state. No identity.
+  const content = node => {
+    const control = controlOf(node), form = formOwner(node, control);
+    let row = nameOf(node) + SEP + connected(node) + SEP + hash(textOf(node)) + SEP + (control ? control.type : '') + SEP + (form ? hash(formContent(form)) : '');
+    for (let i = 0; i < attributes.length; i++) row += SEP + (attr(node, attributes[i]) ?? '');
+    return row + SEP + baseState();
+  };
+  const digest = node => hash(content(node));
+  // Content plus which node it is and which form owns it.
+  const describe = node => {
+    const form = formOwner(node, controlOf(node));
+    return ident(node) + SEP + (form ? ident(form) : '') + SEP + content(node);
+  };
+  // The default submitter by identity and by its own attributes (formaction, formtarget, ...).
+  const submitterPart = element => {
+    const form = controlOf(element)?.form, submitter = form ? submitterOf(form) : null;
+    return submitter ? ident(submitter) + SEP + content(submitter) : '';
   };
   // HTML label activation: the first label at or above the element forwards to its control unless interactive content sits between.
   const forwardedOf = element => {
@@ -298,9 +330,16 @@ export function popupHook() {
     return null;
   };
   const sealed = (element, forwarded, areas, withSubmitter) => {
-    let value = describe(element, withSubmitter) + '\u0003' + (forwarded ? describe(forwarded, withSubmitter) : '');
-    for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + describe(areas[i], withSubmitter);
-    return value;
+    let value = describe(element) + '\u0003' + (forwarded ? describe(forwarded) : '');
+    for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + describe(areas[i]);
+    return withSubmitter ? value + '\u0004' + submitterPart(element) : value;
+  };
+  // Native media controls handle their own presses without dispatching them to the page, so for those a missing
+  // press says nothing about where the click went.
+  const swallowsInput = element => {
+    let node = element;
+    for (let depth = 0; node && depth < 100000; depth++, node = parentOf(node)) if (matchesNode(node, 'audio[controls],video[controls]')) return true;
+    return false;
   };
   const listHas = (list, node) => { for (let i = 0; list && i < listLength(list); i++) if (list[i] === node) return true; return false; };
   const pathIndex = (path, node) => { for (let i = 0; i < path.length; i++) if (path[i] === node) return i; return -1; };
@@ -322,29 +361,42 @@ export function popupHook() {
     for (let i = 0; i < at; i++) if (path[i] !== forwarded && isElement(path[i]) && matchesNode(path[i], interactive)) return true;
     return false;
   };
-  const inspect = event => {
+  const inspect = (event, type) => {
     const { element, anchor, forwarded, areas, keys, form, submitter } = shield;
     if (!connected(element)) return 'target left the page';
-    // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
-    const path = pathOf(event), at = pathIndex(path, anchor);
-    if (at < 0) {
-      // Keyboard activation (keys) lands on the form's default submitter or submits the form itself.
-      const elsewhere = !(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0])
-        && !(keys && (form && pathIndex(path, form) >= 0 || submitter && pathIndex(path, submitter) >= 0));
-      if (elsewhere) return 'the input landed on a different element';
-    } else if (anchor === element && interactiveBetween(path, at, forwarded)) return 'the input landed on a different element';
-    return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : 'the checked element changed';
+    const path = pathOf(event);
+    if (keys && type === 'submit') {
+      // The submit event names the button that submitted; it must be the one that was sealed (null when no button).
+      if (!(form && pathIndex(path, form) >= 0) || submitterOfEvent(event) !== submitter) return elsewhereReason;
+    } else if (keys && !pointerType(type)) {
+      // A key lands on the focused element; it must be the field itself, not another control of the same form.
+      if (pathIndex(path, anchor) < 0) return elsewhereReason;
+    } else {
+      // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
+      // Enter in a field clicks the form's default submitter, which must be the sealed one.
+      const at = pathIndex(path, anchor);
+      if (at < 0) {
+        if (!(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0]) && !(keys && submitter && pathIndex(path, submitter) >= 0)) return elsewhereReason;
+      } else if (anchor === element && interactiveBetween(path, at, forwarded)) return elsewhereReason;
+    }
+    return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : changedReason;
   };
   // Fail closed: if the check cannot run on this DOM, the input is cancelled.
   const guardEvent = event => {
     const current = shield;
-    if (!current || !event.isTrusted || now() >= current.until) return;
+    if (!current || !event.isTrusted) return;
     let bad;
     try {
       const type = typeOf(event);
       if (!(pointerType(type) || current.keys && keyType(type))) return;
-      bad = current.violation ?? inspect(event);
-    } catch { bad = 'the checked element changed'; }
+      if (current.violation) bad = current.violation;
+      else if (now() >= current.until) bad = lateReason;
+      else if (current.foreign) bad = elsewhereReason;
+      else {
+        bad = inspect(event, type);
+        if (!bad && (type === 'pointerdown' || type === 'mousedown' || type === 'click')) current.landed = true;
+      }
+    } catch { bad = changedReason; }
     if (!bad) return;
     current.violation ??= bad;
     try { stopNow(event); } catch { /* The prevent below still cancels the default. */ }
@@ -362,15 +414,93 @@ export function popupHook() {
     for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
     arm = undefined; return true;
   };
+  // Same-origin child frames, through the hook each one installed. A cross-origin frame throws and is skipped.
+  const framesOf = () => {
+    const found = [];
+    let count = 0;
+    try { count = frameCount(window); } catch { return found; }
+    for (let i = 0; i < count; i++) { try { const hook = window[i][key]; if (hook) found[found.length] = hook; } catch { /* Cross-origin frame. */ } }
+    return found;
+  };
+  const armFrames = until => {
+    const frames = framesOf();
+    for (let i = 0; i < frames.length; i++) { try { frames[i].adopt(until); } catch { /* A frame that cannot be armed is reported by landed(). */ } }
+  };
+  const dropShield = current => {
+    nativeClear(current.drop);
+    if (shield === current) shield = undefined;
+  };
+  const holdShield = (current, capMs) => {
+    // Hard cap: well past the soft cap, only to drop a shield nobody finished.
+    current.drop = nativeTimeout(() => { if (shield === current) shield = undefined; }, capMs * 4 + 5000);
+    return current;
+  };
+  // Disarms the shield and every frame it armed; reports the first veto and whether a press or click landed.
+  const conclude = token => {
+    const current = shield?.token === token ? shield : undefined;
+    let bad = current?.violation;
+    if (current) {
+      const frames = framesOf();
+      for (let i = 0; i < frames.length; i++) { try { const reason = frames[i].release(); bad ??= reason; } catch { bad ??= changedReason; } }
+      dropShield(current);
+    }
+    finish(token);
+    return { bad, landed: current?.reports ? current.landed : undefined };
+  };
   const api = {
     // See the key-shield API above. Any throw here reaches the caller as a rejected call, which reads as "page changed".
     guard(element, token, capMs, { keys = false } = {}) {
       if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0 || !isElement(element) || !connected(element)) return false;
       const withKeys = keys === true, control = controlOf(element), form = withKeys ? control?.form ?? null : null;
       const forwarded = forwardedOf(element), areas = areasOf(element);
-      shield = { token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
-        signature: sealed(element, forwarded, areas, withKeys), until: now() + capMs };
+      const parts = [digest(element), forwarded ? digest(forwarded) : ''];
+      for (let i = 0; areas && i < listLength(areas); i++) parts[parts.length] = digest(areas[i]);
+      const until = now() + capMs;
+      shield = holdShield({ token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
+        parts, signature: sealed(element, forwarded, areas, withKeys), until, landed: false, reports: !swallowsInput(element) }, capMs);
+      armFrames(until);
       return true;
+    },
+    // A frame under a guarded document: any trusted press or click here is cancelled until `until`.
+    adopt(until) {
+      if (typeof until !== 'number' || shield && !shield.foreign) return false;
+      if (shield) dropShield(shield);
+      shield = holdShield({ foreign: true, until, landed: false }, (until > now() ? until - now() : 0));
+      armFrames(until);
+      return true;
+    },
+    armedUntil() { return shield?.until; },
+    peek() {
+      if (!shield?.foreign) return undefined;
+      let bad = shield.violation;
+      const frames = framesOf();
+      for (let i = 0; i < frames.length; i++) { try { bad ??= frames[i].peek(); } catch { /* Skip. */ } }
+      return bad;
+    },
+    release() {
+      const current = shield;
+      if (!current?.foreign) return undefined;
+      let bad = current.violation;
+      const frames = framesOf();
+      for (let i = 0; i < frames.length; i++) { try { bad ??= frames[i].release(); } catch { bad ??= changedReason; } }
+      dropShield(current);
+      return bad;
+    },
+    // What the rules read, as digests taken in the same step as their read, must equal what was sealed.
+    expect(token, evidence) {
+      const current = shield;
+      if (!current || current.foreign || current.token !== token) return changedReason;
+      let bad = current.violation;
+      if (!bad && now() >= current.until) bad = lateReason;
+      if (!bad) {
+        const parts = current.parts, given = evidence?.areas;
+        let same = evidence?.element === parts[0] && (evidence?.forwarded ?? '') === parts[1] && given?.length === parts.length - 2;
+        for (let i = 0; same && i < given.length; i++) same = given[i] === parts[i + 2];
+        if (!same) bad = changedReason;
+      }
+      if (!bad) return true;
+      current.violation ??= bad;
+      return bad;
     },
     // Scroll the element into view without animation, so the pointer can be moved onto it (the click would scroll anyway).
     reveal(element) { scrollInto(element, { block: 'nearest', inline: 'nearest', behavior: 'instant' }); },
@@ -383,7 +513,13 @@ export function popupHook() {
         nativeFrame?.(next); nativeTimeout(next, 40);
       });
     },
-    verdict(token) { return shield?.token === token ? shield.violation : undefined; },
+    verdict(token) {
+      if (shield?.token !== token) return undefined;
+      let bad = shield.violation;
+      const frames = framesOf();
+      for (let i = 0; i < frames.length; i++) { try { bad ??= frames[i].peek(); } catch { /* Skip. */ } }
+      return bad;
+    },
     prepare(element, token, capMs) {
       if (retired.has(token)) return false;
       if (arm) finish(arm.token);
@@ -417,11 +553,8 @@ export function popupHook() {
       return { url: arm.request.url, target: arm.request.target, rel: arm.request.rel };
     },
     // A blocked input reports why, so the caller never mistakes a cancelled click for a delivered one.
-    finish(token) {
-      const bad = shield?.token === token ? shield.violation : undefined;
-      if (shield?.token === token) shield = undefined;
-      finish(token); return bad ?? true;
-    },
+    finish(token) { return conclude(token).bad ?? true; },
+    conclude,
     off() {
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
@@ -434,16 +567,39 @@ export function popupHook() {
       return true;
     },
   };
+  try {
+    // A frame created while its parent is guarded starts armed.
+    const parent = window.parent, until = parent !== window ? parent[key]?.armedUntil?.() : undefined;
+    if (typeof until === 'number' && until > now()) api.adopt(until);
+  } catch { /* Cross-origin parent. */ }
   window[key] = api;
   return true;
 }
 
-const changedMidClick = 'page changed during the click; read again';
+// A cancelled click reaches the model as this text. The guard cancels the browser input before the page's
+// click handlers run, so a fresh read and one retry is safe.
+const changedMidClick = 'page changed during the click; read again. The click was cancelled before it activated anything, so a fresh read and one retry is safe.';
+const missedClick = 'the click did not reach the checked element and may have landed somewhere else; read the page before trying again';
+
+// The frame that owns the element: the guard lives in that frame's hook, so it is the frame to disarm and read.
+async function ownerFrame(locator, page, timeoutMs) {
+  try {
+    const pinned = typeof locator.ownerFrame === 'function';
+    const handle = pinned ? locator : typeof locator.elementHandle === 'function' ? await locator.elementHandle({ timeout: timeoutMs }) : undefined;
+    try { return (await handle?.ownerFrame()) ?? page; } finally { if (!pinned) await handle?.dispose().catch(() => {}); }
+  } catch { return page; }
+}
 
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
   const token = randomUUID();
-  const disarm = () => tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.finish(token), token);
-  let cancelled;
+  let frame = tab.page, completed = false;
+  const disarm = () => frame.evaluate(token => window[Symbol.for('sleight.popup3')]?.conclude(token), token);
+  // The click callback calls this once the rules have read the element, before it spends any authority.
+  const verify = async evidence => {
+    const reply = await deadline(() => frame.evaluate(({ token, evidence }) => window[Symbol.for('sleight.popup3')].expect(token, evidence), { token, evidence }), timeoutMs).catch(() => undefined);
+    return reply === true ? true : changedMidClick;
+  };
+  let cancelled, report;
   try {
     let prepared;
     try {
@@ -456,6 +612,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
     const modified = prepared === true || prepared?.kind === 'link';
+    frame = await ownerFrame(locator, tab.page, timeoutMs);
     // Move the pointer onto the element first, so a swap the pointer's arrival triggers lands before the seal is
     // taken, then wait one frame in the page and seal what this click activates. The click callback classifies
     // after this; the hook cancels any input that no longer matches. An element with no box (an image-map area)
@@ -465,23 +622,25 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       if (box) await tab.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     }
     try {
+      // The shield outlives the click timeout: a click delayed by a busy page is still checked, and one that
+      // arrives after this cap is cancelled.
       await deadline(() => locator.evaluate(async (element, { token, capMs }) => {
         const hook = window[Symbol.for('sleight.popup3')];
         await hook.settle();
         if (!hook.guard(element, token, capMs)) throw Error('click guard unavailable');
         return true;
-      }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+      }, { token, capMs: timeoutMs + 4000 }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     let result;
-    try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}); }
+    try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}, verify); }
     catch (error) {
       if ((tab.closed || tab.page.isClosed?.()) && tab.parent && !tab.parent.page.isClosed()
         && /target.*closed/i.test(error.message)) result = { closed: true, opener: tab.opener };
       else throw error;
     } finally { if (modified) await tab.page.keyboard.up('ControlOrMeta').catch(() => {}); }
     if (result?.closed !== true && !tab.closed && !tab.page.isClosed?.() && prepared?.kind === 'link') {
-      const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
+      const request = await frame.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
         (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
       if (request?.violation) { cancelled = request.violation; return result; }
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
@@ -491,12 +650,15 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       }
     }
     await tab.settlePopups?.(checkpoint);
+    completed = result?.closed !== true && !tab.closed && !tab.page.isClosed?.();
     return result;
   } finally {
-    const verdict = await disarm().catch(() => {});
-    cancelled ??= typeof verdict === 'string' ? verdict : undefined;
+    report = await disarm().catch(() => {});
+    cancelled ??= typeof report === 'string' ? report : report?.bad;
     // The guard cancelled the input: say so instead of reporting a delivered click.
     if (cancelled) throw Error(changedMidClick);
+    // A click was sent and no press or click reached the sealed element's document: it went somewhere else.
+    if (completed && report?.landed === false) throw Error(missedClick);
   }
 }
 

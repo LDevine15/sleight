@@ -377,7 +377,8 @@ test('CR3 captures composedPath and Date.now before page wrappers can change mas
 
 test('CR3 preparation arm outlasts the actionability timeout by one second', async () => {
   const f = clickFixture(true); let cap;
-  f.locator.evaluate = async (_fn, args) => { cap = args.capMs; return true; };
+  // The first call is the preparation arm; the shield sealed afterwards outlasts the click by four seconds.
+  f.locator.evaluate = async (_fn, args) => { cap ??= args.capMs; return true; };
   await backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 2000 });
   assert.equal(cap, 3000);
 });

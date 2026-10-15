@@ -82,7 +82,7 @@ test('key shield: the form owner of the field moved on keydown cancels the Enter
   assert.equal(submitted(f), 0);
 });
 
-test('key shield: finish disarms, a wrong token neither reads nor ends it, and an expired shield stops vetoing', { skip, timeout: 60000 }, async t => {
+test('key shield: finish disarms, a wrong token neither reads nor ends it, and input past the cap is cancelled', { skip, timeout: 60000 }, async t => {
   const b = await bank(t), f = await b.start(plain(form(), swapAction + record), readOnly);
   assert.equal(await arm(f, '#t', { keys: true, token: 'a' }), true);
   assert.equal(await verdict(f, 'other'), undefined);
@@ -96,8 +96,10 @@ test('key shield: finish disarms, a wrong token neither reads nor ends it, and a
   assert.equal(await arm(g, '#t', { keys: true, ms: 30, token: 'b' }), true);
   await new Promise(resolve => setTimeout(resolve, 80));
   await press(g);
-  assert.equal(await verdict(g, 'b'), undefined, 'past its cap the shield does not veto');
-  assert.equal(submitted(g), 1);
+  // F4: an expired shield that nobody finished is a late click, not a free pass.
+  assert.equal(await verdict(g, 'b'), 'the input arrived after the shield expired', 'past its cap the input is cancelled');
+  assert.equal(submitted(g), 0);
+  assert.equal(await finish(g, 'b'), 'the input arrived after the shield expired');
 });
 
 test('key shield: bad arguments arm nothing, and a new guard replaces the old one', { skip, timeout: 60000 }, async t => {
@@ -201,4 +203,165 @@ test('an image map whose name holds selector syntax is matched as a string and i
   await settle();
   assert.equal(await verdict(f), 'the checked element changed');
   assert.equal(b.hits.filter(hit => hit.path.startsWith('/charge')).length, 0);
+});
+
+// ---- Round 3 -----------------------------------------------------------------------------------------------
+
+// F4: the cap is soft. A click that arrives after it is cancelled, whatever the page did in between.
+test('a pointer click that arrives after the cap is cancelled, even when nothing changed', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(button, ''), readOnly);
+  assert.equal(await arm(f, '#b', { ms: 30 }), true);
+  await new Promise(resolve => setTimeout(resolve, 120));
+  await clickIt(f);
+  assert.equal(await verdict(f), 'the input arrived after the shield expired');
+  assert.equal(delivered(f), 0);
+  assert.equal(await finish(f), 'the input arrived after the shield expired');
+});
+
+// F4: a shield nobody finishes is dropped by the hard cap, not left cancelling input for the rest of the page's life.
+test('a shield that is never finished is dropped by the hard cap, so later input is not cancelled', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(button, ''), readOnly);
+  assert.equal(await arm(f, '#b', { ms: 30 }), true);
+  await f.page.evaluate(() => new Promise(resolve => setTimeout(resolve, 5300)));
+  await clickIt(f);
+  assert.equal(await verdict(f), undefined, 'the shield was dropped');
+  assert.equal(delivered(f), 1);
+});
+
+// F3: expect() ties what the rules read to what was sealed.
+test('expect: digests equal to the sealed ones pass, any other digest cancels the click that follows', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(button, ''), readOnly);
+  const sealedParts = async () => f.page.evaluate(() => {
+    const api = window[Symbol.for('sleight.popup3')];
+    api.guard(document.getElementById('b'), 'e1', 3000);
+    return api.expect('e1', { element: 'nothing', forwarded: '', areas: [] });
+  });
+  assert.equal(await sealedParts(), 'the checked element changed');
+  await clickIt(f);
+  assert.equal(delivered(f), 0, 'a click after a failed expect is cancelled');
+  assert.equal(await finish(f, 'e1'), 'the checked element changed');
+});
+
+test('expect: a wrong token, a foreign shield and missing evidence all fail closed', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(button, ''), readOnly);
+  const out = await f.page.evaluate(() => {
+    const api = window[Symbol.for('sleight.popup3')], el = document.getElementById('b');
+    api.guard(el, 'e2', 3000);
+    return [api.expect('other', { element: 'x', forwarded: '', areas: [] }), api.expect('e2'), api.expect('e2', {}), api.expect('e2', { element: 1, forwarded: '', areas: [] })];
+  });
+  assert.deepEqual(out, ['the checked element changed', 'the checked element changed', 'the checked element changed', 'the checked element changed']);
+});
+
+// F5: a relative action resolves through <base>, so the seal covers the document's base URL, URL and base target.
+const baseForm = `<form id="f" action="ok" method="post"><input id="t" name="q" aria-label="Query"><button id="b" type="submit" aria-label="Next">Next</button></form>`;
+const baseRoutes = b => ({ '/charge/ok': (req, res) => { b.effects.payment++; res.end('charged'); }, '/ok': (req, res) => res.end('fine') });
+const baseSwaps = {
+  'a base href inserted': `const x=document.createElement('base');x.href='/charge/';document.head.append(x);`,
+  'a base target inserted': `const x=document.createElement('base');x.target='_blank';document.head.append(x);`,
+  'history.pushState': `history.pushState({}, '', '/charge/');`,
+};
+for (const [name, swap] of Object.entries(baseSwaps)) {
+  test('pointer: ' + name + ' on mousedown cancels the submit', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(plain(baseForm, `b.addEventListener('mousedown',()=>{${swap}});`), readOnly, { routes: baseRoutes(b) });
+    assert.equal(await arm(f, '#b'), true);
+    await clickIt(f);
+    assert.equal(await verdict(f), 'the checked element changed');
+    assert.equal(b.hits.filter(hit => hit.path.startsWith('/charge')).length, 0);
+  });
+  test('keys: ' + name + ' on keydown cancels the Enter', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(plain(baseForm, `t.addEventListener('keydown',()=>{${swap}});` + record), readOnly, { routes: baseRoutes(b) });
+    assert.equal(await arm(f, '#t', { keys: true }), true);
+    await press(f);
+    assert.equal(await verdict(f), 'the checked element changed');
+    assert.equal(b.hits.filter(hit => hit.path.startsWith('/charge')).length, 0);
+  });
+}
+
+// F6: the default submitter is sealed by its own attributes, the submit event names the sealed submitter,
+// and a key must reach the field itself.
+const keyForm = (extra = '') => `<form id="f" action="/ok" method="post"><input id="t" name="q"><button id="b" type="submit">Go</button><button id="alt" type="submit" formaction="/charge">Alt</button>${extra}</form>`;
+const keyAttacks = {
+  'formaction set on the default submitter in keydown': { script: `t.addEventListener('keydown',()=>b.setAttribute('formaction','/charge'));` },
+  'formaction set on the default submitter in keypress': { script: `t.addEventListener('keypress',()=>b.setAttribute('formaction','/charge'));` },
+  'formtarget set on the default submitter': { script: `t.addEventListener('keydown',()=>b.setAttribute('formtarget','_blank'));` },
+  'formmethod set on the default submitter': { script: `t.addEventListener('keydown',()=>b.setAttribute('formmethod','get'));` },
+  'requestSubmit with another submitter from keydown': { script: `t.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();f.requestSubmit(alt)}});` },
+  'requestSubmit with another submitter from keypress': { script: `t.addEventListener('keypress',e=>{if(e.key==='Enter'){e.preventDefault();f.requestSubmit(alt)}});` },
+  'form.action changed from keypress': { script: `t.addEventListener('keypress',()=>{f.action='/charge'});` },
+};
+for (const [name, { script }] of Object.entries(keyAttacks))
+  test('key shield: ' + name + ' is vetoed and nothing reaches /charge', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(plain(keyForm(), script + record), readOnly);
+    assert.equal(await arm(f, '#t', { keys: true }), true);
+    await press(f);
+    assert.ok(await verdict(f), 'a veto names a reason');
+    assert.equal(b.hits.filter(hit => hit.path.startsWith('/charge')).length, 0);
+    assert.equal(submitted(f), 0);
+  });
+
+for (const [name, focus] of Object.entries({ 'another button in the same form': 'pay', 'a button outside the form': 'out' }))
+  test('key shield: focus moved to ' + name + ' before Enter does not run that button', { skip, timeout: 60000 }, async t => {
+    const html = keyForm(`<button id="pay" type="button" onclick="record('payment')">Hidden pay</button>`) + `<button id="out" type="button" onclick="record('payment')">Outside pay</button>`;
+    const b = await bank(t), f = await b.start(plain(html, record), readOnly);
+    await f.page.focus('#t');
+    assert.equal(await arm(f, '#t', { keys: true }), true);
+    await f.page.evaluate(id => document.getElementById(id).focus(), focus);
+    await f.page.keyboard.press('Enter'); await settle();
+    assert.ok(await verdict(f), 'a veto names a reason');
+    assert.equal(f.delta().payment, 0);
+  });
+
+test('key shield: a quiet form still submits with its sealed submitter, and the verdict stays empty', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(keyForm(), record), readOnly);
+  assert.equal(await arm(f, '#t', { keys: true }), true);
+  await press(f);
+  assert.equal(await verdict(f), undefined);
+  assert.equal(submitted(f), 1);
+});
+
+test('key shield: a form with no submit button still submits implicitly with its null submitter', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain('<form id="f" action="/ok" method="post"><input id="t" name="q"></form>', record), readOnly);
+  assert.equal(await arm(f, '#t', { keys: true }), true);
+  await press(f);
+  assert.equal(await verdict(f), undefined);
+  assert.equal(submitted(f), 1);
+});
+
+// F2: same-origin child frames are armed as foreign.
+const frameDoc = '<style>body{margin:0}button{width:100vw;height:100vh}</style><button type="button" onclick="record(\'payment\')">Pay now</button>';
+const cover = `<style>.box{position:relative;width:160px;height:48px;margin:10px}.fill{position:absolute;inset:0;width:100%;height:100%;border:0}</style>`;
+test('a same-origin iframe shown after arming receives no click, and the guard reports it', { skip, timeout: 60000 }, async t => {
+  const html = `${cover}<div class="box"><button id="b" class="fill" type="button" aria-label="Close ad">Close ad</button><iframe id="fr" class="fill" src="/pay-frame" style="opacity:0;z-index:2;visibility:hidden"></iframe></div>`;
+  const b = await bank(t), f = await b.start(plain(html, `b.addEventListener('pointermove',()=>{fr.style.visibility='visible'});`), readOnly, { routes: { '/pay-frame': plain(frameDoc) } });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(await arm(f, '#b'), true);
+  await f.page.evaluate(() => { document.getElementById('fr').style.visibility = 'visible'; });
+  await f.page.mouse.click(40, 34); await settle();
+  assert.equal(await verdict(f), 'the input landed on a different element');
+  assert.equal(f.delta().payment, 0);
+  assert.equal(await finish(f), 'the input landed on a different element');
+});
+
+test('a same-origin iframe created while armed starts armed too', { skip, timeout: 60000 }, async t => {
+  const html = `${cover}<div class="box" id="c"><button id="b" class="fill" type="button" aria-label="Close ad">Close ad</button></div>`;
+  const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/pay-frame': plain(frameDoc) } });
+  assert.equal(await arm(f, '#b'), true);
+  await f.page.evaluate(() => new Promise(resolve => {
+    const q = document.createElement('iframe'); q.className = 'fill'; q.src = '/pay-frame'; q.style.cssText = 'z-index:2;opacity:0';
+    q.onload = resolve; document.getElementById('c').append(q);
+  }));
+  await f.page.mouse.click(40, 34); await settle();
+  assert.equal(await verdict(f), 'the input landed on a different element');
+  assert.equal(f.delta().payment, 0);
+});
+
+test('a child frame released by finish stops cancelling', { skip, timeout: 60000 }, async t => {
+  const html = `${cover}<div class="box"><button id="b" class="fill" type="button" aria-label="Close ad">Close ad</button></div><iframe id="fr" src="/pay-frame" style="width:200px;height:60px"></iframe>`;
+  const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/pay-frame': plain(frameDoc) } });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(await arm(f, '#b'), true);
+  assert.equal(await finish(f), true);
+  const frame = f.page.frames().find(x => x !== f.page.mainFrame());
+  await frame.click('button', { timeout: 3000 }); await settle();
+  assert.equal(f.delta().payment, 1, 'after finish the frame takes input again');
 });
