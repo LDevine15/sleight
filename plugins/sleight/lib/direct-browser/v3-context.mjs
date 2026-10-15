@@ -9,6 +9,9 @@ const bindings = new WeakMap(), contexts = new WeakSet();
 const text = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 4096;
 const refused = () => ({ verdict: 'refuse', message: 'Trusted turn or target evidence is unavailable. Use the engine browser path.' });
 const equal = (a, b) => canonical(a) === canonical(b);
+const FOCUS_MOVED = 'focus moved while the key was being sent, so the key was stopped before it could activate another element. Read the page again before deciding; do not resend the key';
+const ACTIVATION_KEYS = { Enter: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' }, Return: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' },
+  Space: { key: ' ', code: 'Space', vk: 32, text: ' ' }, ' ': { key: ' ', code: 'Space', vk: 32, text: ' ' } };
 export const isV3Context = ctx => !!ctx && contexts.has(ctx);
 
 // Called only by the inherited worker's begin handler. No model-facing endpoint
@@ -147,7 +150,7 @@ function dialogTerms(message) {
 export function createV3Context({ binding, browser, ui, confirmPayments, now = Date.now } = {}) {
   const bound = bindings.get(binding);
   if (!bound || !text(browser)) throw Error('TRUSTED_TURN_REQUIRED');
-  const requested = requestedPayment(bound.message.text), documents = new Map(), targets = new WeakMap(), held = new Set();
+  const requested = requestedPayment(bound.message.text), documents = new Map(), targets = new WeakMap(), held = new Set(), cdpSessions = new Map();
   const watched = new Map();
   const uploads = new WeakMap(), offered = new Map(), tickets = new Map(), pending = new Map();
   let closed = false, live, sequence = 0, dialogOwner;
@@ -304,7 +307,27 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
           !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
       // ElementHandle.press focuses again without verifying its recipient.
       // Use only the owned page keyboard after the checked ref retained focus.
-      return target.page.keyboard.press(key, options);
+      const activation = ACTIVATION_KEYS[key];
+      if (!activation) {
+        if (/(?:^|\+)(?:Enter|Return|Space)$|\+ $/.test(key)) throw Error('CHECKED_FOCUS_REQUIRED'); // chords are refused upstream
+        return target.page.keyboard.press(key, options);
+      }
+      // keyDown with text is keydown plus keypress in one CDP command, so a page
+      // keydown handler can move focus before the keypress that activates. Send
+      // them apart and re-read the receiver (isolated world, immune to page getter
+      // overrides) before each event that can activate: keypress (Enter, submit),
+      // keyup (Space). On a move, stop without releasing the key onto the new element.
+      const cdp = cdpSessions.get(target.page) ?? await target.page.context().newCDPSession(target.page);
+      cdpSessions.set(target.page, cdp);
+      const send = (type, extra) => cdp.send('Input.dispatchKeyEvent', { type, key: activation.key, code: activation.code,
+        windowsVirtualKeyCode: activation.vk, ...extra });
+      const receiver = async () => {
+        if (!current() || !record.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
+            !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error(FOCUS_MOVED);
+      };
+      await send('rawKeyDown');
+      await receiver(); await send('char', { text: activation.text, unmodifiedText: activation.text });
+      await receiver(); await send('keyUp');
     },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);
@@ -349,6 +372,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     async dispose() {
       closed = true; native?.revoke();
       for (const [page, handlers] of watched) for (const [event, handler] of Object.entries(handlers)) page.off(event, handler);
+      await Promise.allSettled([...cdpSessions.values()].map(cdp => cdp.detach())); cdpSessions.clear();
       watched.clear(); tickets.clear(); pending.clear(); offered.clear();
       const receipt = fileProvider.dispose();
       await Promise.allSettled([...held].map(handle => handle.dispose?.())); held.clear(); documents.clear();

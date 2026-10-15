@@ -62,6 +62,9 @@ our own runs. Dates and engine versions are given where they matter.
 
 ## Browsers
 
+- Turbo v3 sends Enter and Space as three key events (keydown, keypress or char, keyup) and re-reads the focused element before the
+  keypress and before the keyup. A page timer that moves focus in the gap between that read and the next event is not covered, since the
+  page keeps running between CDP commands. Closed on 2026-10-14: a synchronous keydown handler that moves focus to Pay (6 of 6 bank cases).
 - A page that opens a popup from its own script can still take the screen during a browser session. Since 2026-10-13 sleight opens
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,
   links that need `window.opener`, downloads and anything a script opens, because the engine's read-only page access can't see
