@@ -8,7 +8,7 @@ import { createV3Context, createV3TurnBinding } from '../plugins/sleight/lib/dir
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { check } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 const skip=process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'review real-page proof runs through sleight-arch host runner' : false;
-async function fixture(t) {
+async function fixture(t, text = 'Read only. Do not pay.') {
   const {chromium}=await import('../plugins/sleight/vendor/playwright-core/index.mjs');
   const spec=JSON.parse(readFileSync(new URL('../plugins/sleight/vendor/playwright-core/browsers.json',import.meta.url))).browsers.find(b=>b.name==='chromium-headless-shell');
   const platform=process.platform==='darwin' ? 'mac-'+process.arch : 'linux64';
@@ -24,7 +24,7 @@ async function fixture(t) {
   t.after(async()=>{await browser.close();t.diagnostic('owned headless Chromium closed');});
   const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);
   page.getByRef=ref=>page.locator('#'+ref);
-  const binding=createV3TurnBinding({source:'user',session:'session',turn:'turn',id:'read-request',text:'Read only. Do not pay.'},()=>true);
+  const binding=createV3TurnBinding({source:'user',session:'session',turn:'turn',id:'read-request',text},()=>true);
   const ctx=createV3Context({binding,browser:'bfixture'});t.after(()=>ctx.dispose());
   let clock=Date.now();
   const run=createActionRunner({check,snapshot:async()=>({text:'untrusted fixture',number:1}),now:()=>clock,sleep:async ms=>{clock+=ms;}});
@@ -50,4 +50,60 @@ test('review: page form getter cannot remove the native owning payment form', {s
   const count=await f.page.locator('#count').innerText();
   t.diagnostic(JSON.stringify({lines:result.lines,count,submitUnconfirmed:!!f.tab.state.submitUnconfirmed}));
   assert.equal(count,'0','native associated card-form submit must require payment authority');
+});
+
+for (const prototype of [false, true]) test('review: focus on an unfocusable label cannot spoof the native receiver; prototype=' + prototype, {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(prototype => {
+    const label=document.createElement('label'); label.id='e8'; label.textContent='Ordinary label'; document.querySelector('main').prepend(label);
+    document.querySelector('#e1').focus();
+    Object.defineProperty(prototype ? Document.prototype : document,'activeElement',{configurable:true,get:()=>label});
+  },prototype);
+  const result=await f.run(f.tab,[{do:'press',ref:'e8',key:'Enter'}],f.ctx);
+  assert.match(result.lines[0],/not run:/);
+  assert.equal(await f.page.locator('#count').innerText(),'0');
+});
+for (const external of [false, true]) test('review: prototype form getter cannot conceal native payment ownership; external=' + external, {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(external => {
+    const button=document.querySelector('#e1');
+    if(external) { button.setAttribute('form','payment'); document.querySelector('main').append(button); }
+    Object.defineProperty(HTMLButtonElement.prototype,'form',{configurable:true,get:()=>null});
+  },external);
+  const result=await f.run(f.tab,[{do:'click',ref:'e1'}],f.ctx);
+  assert.match(result.lines[0],/not run:.*confirmation required/);
+  assert.equal(await f.page.locator('#count').innerText(),'0');
+});
+test('review: main-world attribute and text prototypes cannot hide payment classification', {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(() => {
+    const button=document.querySelector('#e1'); document.querySelector('main').append(button); button.textContent='Pay now';
+    Object.defineProperty(Node.prototype,'textContent',{configurable:true,get:()=> 'Continue'});
+    Element.prototype.getAttribute=function(){return null;};
+  });
+  const result=await f.run(f.tab,[{do:'click',ref:'e1'}],f.ctx);
+  assert.match(result.lines[0],/not run:.*confirmation required/);
+  assert.equal(await f.page.locator('#count').innerText(),'0');
+});
+test('review: main-world terms and visibility getters cannot grant the requested amount', {skip}, async t => {
+  const terms={item:'Fixture item',amount:'18.00',payee:'Fixture shop',method:'Fixture card',currency:'USD'};
+  const f=await fixture(t,'Pay '+JSON.stringify(terms));
+  await f.page.evaluate(() => {
+    const form=document.querySelector('form');
+    for(const [key,value] of Object.entries({item:'Fixture item',amount:'19.00',payee:'Fixture shop',currency:'USD'})) {
+      const node=document.createElement('p'); node.setAttribute('data-payment-'+key,value);node.textContent=key+': '+value;form.prepend(node);
+    }
+    const nativeAttribute=Element.prototype.getAttribute;
+    Element.prototype.getAttribute=function(key){return key==='data-payment-amount'?'18.00':nativeAttribute.call(this,key);};
+    const walker=Document.prototype.createTreeWalker;
+    Document.prototype.createTreeWalker=function(root,...args){
+      if(root.hasAttribute?.('data-payment-amount')) { const part={nodeType:3,parentElement:root,textContent:'Amount: 18.00'};let returned=false;return {nextNode:()=>returned?null:(returned=true,part)}; }
+      return walker.call(this,root,...args);
+    };
+    const range=Document.prototype.createRange;
+    Document.prototype.createRange=function(){const value=range.call(this);value.selectNodeContents=()=>{};value.getClientRects=()=>[{left:10,top:10,right:210,bottom:30}];return value;};
+  });
+  const result=await f.run(f.tab,[{do:'click',ref:'e1'}],f.ctx);
+  assert.match(result.lines[0],/not run:.*confirmation required/);
+  assert.equal(await f.page.locator('#count').innerText(),'0');
 });
