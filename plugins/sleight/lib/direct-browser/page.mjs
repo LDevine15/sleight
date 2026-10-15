@@ -248,9 +248,13 @@ export function popupHook() {
     const rel = attribute(element, 'rel') ?? '';
     return { url: url.href, target, rel, signature: JSON.stringify([url.href, target, rel]) };
   };
+  const pointerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   const capture = event => {
     if (!live() || arm.clicked || !matches(event)) return;
     if (active()) masked.set(event, arm.token);
+    // Bind the mask during dispatch, while composedPath still identifies the
+    // prepared element. A deferred handler may first read modifiers much later.
+    if (event.type !== 'click') return;
     arm.clicked = event;
     // A task queued by the capture listener runs after synchronous dispatch,
     // even when a page stops propagation. Keep the arm for takeRequest.
@@ -279,7 +283,7 @@ export function popupHook() {
   };
   add.call(window, 'keydown', keyEvent, true);
   add.call(window, 'keyup', keyEvent, true);
-  add.call(window, 'click', capture, true);
+  for (const type of pointerEvents) add.call(window, type, capture, true);
   add.call(window, 'click', guard, true);
   const finish = token => {
     retired.add(token);
@@ -294,17 +298,18 @@ export function popupHook() {
       if (arm) finish(arm.token);
       if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
+      // The native getter inherits editability, including false islands inside
+      // editors. Checking ancestors would discard that non-editable boundary.
+      if (document.designMode === 'on' || element instanceof HTMLElement && editable.call(element)) return false;
       const chain = ancestors(element);
       for (const [index, node] of chain.entries()) {
-        // In editable text a plain link click places the caret. The native
-        // getter includes inherited contenteditable and document designMode.
-        if (node instanceof HTMLElement && editable.call(node)) return false;
         if (plainControl(node)) return false;
         // A label can forward activation to a submit control outside its tree.
         if (node instanceof labelControl.constructor && !chain.slice(0, index).some(child => nativeMatches.call(child, interactive))
           && submits(labelControl.control.call(node))) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
+      if (linkElement instanceof HTMLElement && editable.call(linkElement)) return false;
       if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
       arm = { element, token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, handlers: [] };
@@ -326,7 +331,7 @@ export function popupHook() {
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
-      remove.call(window, 'click', capture, true);
+      for (const type of pointerEvents) remove.call(window, type, capture, true);
       remove.call(window, 'click', guard, true);
       for (const restore of replacements.reverse()) restore();
       if (window[key] === api) delete window[key];

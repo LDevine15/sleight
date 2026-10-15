@@ -171,6 +171,7 @@ function hookFixture({ clock = Date } = {}) {
     stopImmediatePropagation() { this.stopped = this.propagationStopped = true; }
   }
   class MouseEvent extends Event {
+    constructor(type = 'click') { super(); this.type = type; }
     get ctrlKey() { return this.control; }
     get metaKey() { return this.meta; }
     getModifierState(name) { return name === 'Control' ? this.control : this.meta; }
@@ -224,6 +225,55 @@ function hookFixture({ clock = Date } = {}) {
   return { window, document, navigator, hook, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     MouseEvent, Event, EventTarget, opens };
 }
+
+test('CR8 pointer events stay plain when their first modifier read is after dispatch', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element(), retained = [];
+  const types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+  const read = event => [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+  try {
+    f.hook.prepare(button, 'pointer', 1000);
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Meta', type: 'keydown', isTrusted: true }));
+    for (const type of types) {
+      const event = Object.assign(new f.MouseEvent(), { type, nodes: [button], isTrusted: true, control: true, meta: true });
+      for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+      // Native composedPath is empty once dispatch has finished. No modifier
+      // getter ran in the page's synchronous handler.
+      event.nodes = []; retained.push(event);
+    }
+    t.mock.timers.tick(0);
+    assert.equal(retained.find(event => event.type === 'mouseup').metaKey, false, 'deferred mouseup.metaKey');
+    for (const event of retained) assert.deepEqual(read(event), [false, false, false, false], event.type);
+    f.hook.finish('pointer');
+    f.hook.prepare(button, 'next', 1000);
+    for (const event of retained) assert.deepEqual(read(event), [false, false, false, false], event.type + ' after retirement');
+  } finally { f.hook.off(); }
+  for (const type of types) assert.equal(f.window.captureListeners[type]?.size ?? 0, 0, type + ' listener removed');
+});
+
+test('CR8 pointer capture masks only trusted events on the prepared element during its click', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element(), other = new f.Element(), retained = [];
+  const dispatch = (type, nodes, isTrusted = true) => {
+    const event = Object.assign(new f.MouseEvent(), { type, nodes, isTrusted, control: true, meta: true });
+    for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+    event.nodes = []; retained.push(event);
+  };
+  try {
+    dispatch('mouseup', [button]);
+    f.hook.prepare(button, 'scoped', 1000);
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      dispatch(type, [button], false); dispatch(type, [other]);
+    }
+    dispatch('click', [button]); retained.pop();
+    dispatch('mouseup', [button]);
+    t.mock.timers.tick(0);
+    dispatch('pointerup', [button]);
+    f.hook.finish('scoped');
+    for (const event of retained) assert.deepEqual([event.ctrlKey, event.metaKey], [true, true], event.type);
+  } finally { f.hook.off(); }
+});
 
 test('CR6 masked events stay plain after dispatch, finish, and another arm', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
@@ -1101,6 +1151,35 @@ for (const mode of ['contenteditable', 'shadow', 'designMode']) for (const targe
     try { assert.equal(f.hook.prepare(text, 'editable-link', 1000), false); }
     finally { f.hook.off(); }
   });
+
+for (const target of ['_blank', 'new-context']) for (const island of ['link', 'wrapper', 'chip'])
+  test('CR9 non-editable island keeps background input: ' + island + ' ' + target, () => {
+    const f = hookFixture(), editor = new f.Element('div', { contenteditable: '' });
+    const link = new f.Element(island === 'chip' ? 'button' : 'a', island === 'chip' ? {} : { href: '/landed', target });
+    const barrier = island === 'wrapper' ? new f.Element('span', { contenteditable: 'false' }) : link;
+    barrier.attrs.contenteditable = 'false'; barrier.parentElement = editor;
+    if (barrier !== link) link.parentElement = barrier;
+    const text = new f.Element('span'); text.parentElement = link;
+    // A page override must not change the native inherited editability result.
+    Object.defineProperty(text, 'isContentEditable', { get() { throw Error('page editable getter'); } });
+    try {
+      const result = f.hook.prepare(text, 'island', 1000);
+      assert.equal(island === 'chip' ? result : result?.kind, island === 'chip' ? true : 'link');
+    } finally { f.hook.off(); }
+  });
+
+test('CR9 re-enabled text and an editable link containing a non-editable child stay plain', () => {
+  const f = hookFixture(), editor = new f.Element('div', { contenteditable: '' });
+  const link = new f.Element('a', { href: '/landed', target: '_blank' }); link.parentElement = editor;
+  const text = new f.Element('span', { contenteditable: 'false' }); text.parentElement = link;
+  try {
+    assert.equal(f.hook.prepare(text, 'editable-link', 1000), false);
+    link.attrs.contenteditable = 'false'; text.attrs.contenteditable = 'true';
+    assert.equal(f.hook.prepare(text, 'editable-text', 1000), false);
+    text.attrs.contenteditable = 'false'; f.document.designMode = 'on';
+    assert.equal(f.hook.prepare(text, 'design-mode', 1000), false);
+  } finally { f.hook.off(); }
+});
 
 for (const multiple of [false, true]) test('CR5 select multiplicity comes from the captured native getter: ' + multiple, () => {
   const f = hookFixture(), select = new f.HTMLSelectElement(multiple ? { multiple: '' } : {}), option = new f.Element('option');
