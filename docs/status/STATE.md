@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 02:40 UTC, flushed before the owner's clear)
+## Banner (2026-10-15 03:05 UTC)
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. 1.3.0 waits only on turbo v3's gate (owner, 2026-10-14. Reaffirmed 2026-10-14 23:20 UTC). ROADMAP.md was rewritten from an
@@ -20,25 +20,28 @@ Branches (all on `private`):
   pass 2/2 there).
 - Merge after reviews, before the release pass (rare-case polish, not gate-blocking): `codex/cr8` `f9237223` (reviewed PASS),
   `codex/cr9` `b612a753` (review: one designMode nit. CR10 then found the real browser contradicts it, STALE, nothing to do).
-- Into 1.3.0 after review: `codex/rc1r` `57079737` (on `codex/rc1` `65246f3a`): sleight reconnects after a ChatGPT engine update
-  without a restart (this session hit that bug). RC1R is DONE and needs its Claude review (restart only when the engine identity
-  changed. A bad replacement must not end the session).
+- Into 1.3.0: `codex/rc1r` `57079737` (on `codex/rc1` `65246f3a`): sleight reconnects after a ChatGPT engine update without a
+  restart. The Claude review passed it (2026-10-15) with M1 (an app approved by name is asked again after a restore by bundle ID),
+  M2 (the reconnect skips turn_ended) and lows L1, L2, L4. A Claude agent fixes them as RC1R2 in `~/Projects/sleight-wt/rc1r2`
+  (`arch/rc1r2`). RC1R and RC1R2 merge together.
 - Merge right after the gate (owner): `codex/v8` `813bca75` (v1/v2 removal, 15.4 to 8.2 MB, reviewed twice), then V8R (queued:
   restore canonical() tests, remove `tests/turbo-popup-demo.real.test.mjs` and other v2-only bench files).
-- `codex/ad1` `5fca2a5b`: the adversarial page bank (about 330 real-page attack tests in `tests/adversarial/`), written by a Claude
-  agent because OpenAI's cyber filter stops Codex lanes on attack work (it killed V10R4's lane at its end and AD1's at its start).
-  It found real failures on the v3-gate code, which block the gate: about 55, listed with causes and repros in
-  `ledger/claims/AD1/REPORT.md`. In the worst, a popup opened by a submit (form, base or area target, or a forwarding label) reached the DevTools
-  endpoint before the guard attached and CLOSED a foreign tab through /json/close. Keydown redirection between the focus check and
-  the keypress lets Enter activate Pay. Decoy payment terms (overlay, transparent text, mask) authorize a different total;
-  an element swapped at click time gets paid for. Page timers open foreground tabs. The agent flagged three failures as possible test bugs.
+- AD1, the adversarial page bank (about 330 real-page attack tests in `tests/adversarial/`), is rebased onto v3-gate (`codex/ad1`
+  `5eb3b92c`, local). Rerun headless on v3-gate 2026-10-15: 53 failures (endpoint 8, keyboard 6, page-instructions 3, page-natives 10,
+  payment-decoys 12, submit-retry 1, timing-and-covering 13), matching `ledger/claims/AD1/REPORT.md`.
+- `arch/ad1-fixes` (`~/Projects/sleight-wt/adfix`, pushed): the bank plus sleight-arch's fix 1 at `2ff1f086`. A page session's
+  Fetch never sees a popup's first request, so one browser-level `Fetch.enable` per connection, matching only the debug port, now
+  fails it (probe: 6 of 6 popup vectors blocked, 0 hits on the port). The endpoint file passes 136/136, and the filter, port and
+  popup tests pass 107/107. The form POST case was a test bug.
+- Five Sonnet-high Claude agents fix the rest, each in `~/Projects/sleight-wt/adfix-<kb|pop|pay|swap|hyg>` on `arch/ad1-<same>`,
+  focused tests only: kb (keypress focus redirect, v3-context), pop (foreground tabs from timers and spoofed targets, cancelled links,
+  clean-room page.mjs), pay (decoy terms and button-type payment controls), swap (click-time swaps, forwarded activation, covers;
+  clean-room), hyg (page text outside the untrusted label, label-forwarded file chooser). Clean-room briefs forbid competitor code.
 
 Next, to reach the gate:
-1. AD1's failures: rebase `codex/ad1` onto v3-gate, rerun each file headless, confirm each failure red, then fix them as items
-   (v3-context, page, cdp-filter and rules are ordinary sleight code. The click classification in page.mjs is clean-room code,
-   and its fixes go to a clean-room lane with a behavior spec). Attack-heavy briefs go to Claude agents or carefully defensive Codex briefs. Every fix keeps
-   its AD1 test green. The bank merges into v3-gate.
-2. Review RC1R. Merge CR8/CR9 and RC1R when reviewed.
+1. Review and merge the five AD1 fix branches into `arch/ad1-fixes` (Sonnet-high review for each, plus the bank rerun), then CR8
+   (`f9237223`, reviewed PASS) and CR9 (`b612a753`), then rerun the whole bank and one full check, and merge into v3-gate.
+2. Merge RC1R with RC1R2 after RC1R2's review.
 3. Smoke run, headless, no owner needed: from `~/Projects/sleight-wt/v3-int`, `bench/fowl/rounds.sh --surface sleight-turbo --model
    haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid` (preflight passed 2026-10-15. A few cents). The gate tasks are
    `codex-h2h.json`'s local fixtures, not FowlBrowser's public-site `tasks.json`.
@@ -53,8 +56,8 @@ How work runs now: lanes run focused tests only (LEDGER NOTICE 3), sleight-arch 
 when faster (LAWS), Claude reviewers (Sonnet high) review every safety, release and clean-room item, and lane reviews add real-page
 repros. Competitor code is never adapted (LAWS): CR items get a similarity audit, and lanes that read FowlBrowser can't review them.
 
-Running through the clear: the real-page runner (`node scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, since
-2026-10-14 ~20:40 UTC). No Codex lane is running (codex-rc1r finished). This session's Monitor and Claude agents end at the clear.
+The real-page runner (`node scripts/live-dom-runner.mjs`, pid 39609) has run from `~/Projects/sleight` since 2026-10-14 20:40
+UTC. No Codex lane is running. Claude agents end at a clear, and their worktrees and pushed branches remain.
 
 The owner's steps at the Mac are Chrome's Allow during the gate, the sleight-arm login if the preflight says it lapsed
 (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`), and
