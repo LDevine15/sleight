@@ -1,5 +1,7 @@
 // Host-only synthetic native/package providers around the actual installed v3
 // worker. Browser pages, filter, snapshots, actions, fill and trust join are real.
+import { Socket } from 'node:net';
+import { createUiChannel } from '../../plugins/sleight/lib/direct-browser/host.mjs';
 import { writeFileSync } from 'node:fs';
 import { startInstalledV3Worker } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 import { createCDPFilter } from '../../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
@@ -17,7 +19,7 @@ const raw = { sessionId:'root',
     return new Promise((resolve,reject)=>{pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params,...(route==='root'?{}:{sessionId:route})}));});
   },
 };
-const selected = {selectedBrowser:'bfixture',session:raw,
+const selected = {selectedBrowser:'bfixture',session:raw,endpoint,
   async connect() {
     socket=new WebSocket(endpoint);
     socket.addEventListener('message',e=>{const frame=JSON.parse(e.data);if(frame.id){const entry=pending.get(frame.id);pending.delete(frame.id);if(frame.error)entry.reject(Error(frame.error.message));else entry.resolve(frame.result);}else for(const fn of listeners)fn(frame);});
@@ -29,14 +31,15 @@ const selected = {selectedBrowser:'bfixture',session:raw,
   onConnectionLoss(fn){losses.add(fn);return()=>losses.delete(fn);},
   createFilter(){const filter=createCDPFilter({session:raw});filters.push(filter);return filter;},
 };
+let uiClosed=false;
+const pipe=new Socket({fd:4});
 const host = await startInstalledV3Worker({channel:process},{
   onError:error=>process.stderr.write('Installed fixture startup: '+error.message+'\n'),
   readConfig:()=>({}),acceptPackage:()=>({current:()=>true}),
   prepareHelpers:async()=>({status:'ready',receipt:{}}),selectConnection:async()=>selected,
-  createUi:()=>({present(){},authenticate:()=>false,close(){}}),
+  createUi:(_receipt,onLoss)=>{const ui=createUiChannel({read:pipe,write:pipe,onLoss});return {...ui,close(){uiClosed=true;ui.close();pipe.destroy();}};},
 });
-process.once('disconnect',async()=>{
-  const result=await host.close();
-  writeFileSync(receiptPath,JSON.stringify({result,disconnected,wire,filters:filters.length}));
+host.closed.then(result=>{
+  writeFileSync(receiptPath,JSON.stringify({result,disconnected,uiClosed,wire,filters:filters.length}));
   if(result.cleanup.length)process.exitCode=1;
 });

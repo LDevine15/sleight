@@ -113,12 +113,12 @@ export function createV3Frontend(bridge) {
 
 // The installed join supplies owned pages and snapshots. Only the worker begin
 // binding supplies user authority; MCP arguments never reach this constructor.
-export async function createV3TurnRuntime({ binding, browser, pages, snapshot, ui, dependencies = {} }) {
+export async function createV3TurnRuntime({ binding, browser, pages, snapshot, ui, endpoint, dependencies = {} }) {
   const [{ runSteps }, { fillFields }, { deliverSnapshot }] = await Promise.all([
     import('./act.mjs'), import('./fill.mjs'), import('./rules.mjs'),
   ]);
   const ctx = createV3Context({ binding, browser, ui });
-  const runtime = createToolDispatcher({ browser, pages, snapshot, ctx,
+  const runtime = createToolDispatcher({ browser, pages, snapshot, ctx, endpoint,
     runSteps: dependencies.runSteps ?? runSteps, fillFields: dependencies.fillFields ?? fillFields,
     deliverSnapshot(state, capture) {
       if (capture.state !== state || !Number.isSafeInteger(capture.number) || capture.number < 1 ||
@@ -192,7 +192,8 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
     work = operation.catch(() => {});
     operation.then(respond, () => respond({ resultId: frame.id, result: failure() })).finally(() => { queued--; });
   });
-  return Object.freeze({ ready: () => send({ version: 3, session, nonce, browser }), end: fence });
+  return Object.freeze({ ready: () => send({ version: 3, session, nonce, browser }), end: fence,
+    drain: () => work.catch(() => {}) });
 }
 
 // The fixed installed entry owns native UI and the approved upstream connection.
@@ -200,14 +201,15 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
 // endpoint, package, loader, authority or executable.
 export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   let parentLost = channel.connected === false, stopped = false, selected, ui, protocol, timer, unsubscribe;
-  let accepted, connected = false, sequence = 0, closing;
+  let accepted, connected = false, sequence = 0, closing, terminalLoss = false, resolveClosed, finalReceipt;
+  const closed = new Promise(resolve => { resolveClosed = resolve; });
   const resources = new Set();
   const current = () => {
     try { return !parentLost && !stopped && accepted.current() === true; } catch { return false; }
   };
   const startupCurrent = () => { if (parentLost || channel.connected === false) throw Error('PARENT_GONE');
     if (!accepted.current()) throw Error('HOST_PACKAGE_MISMATCH'); };
-  const loss = () => { parentLost = true; protocol?.end().catch(() => {}); };
+  const loss = () => { parentLost = true; terminalLoss = true; close().catch(() => {}); };
   channel.on('disconnect', loss);
   const clean = receipt => receipt?.revoked === true && Array.isArray(receipt.cleanup) && !receipt.cleanup.some(row => row.status === 'retained');
   const retained = resource => ({ resource, status: 'retained', code: 'CLEANUP_UNPROVED' });
@@ -232,19 +234,26 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   }
   async function close() {
     stopped = true;
+    if (finalReceipt) return finalReceipt;
     if (closing) return closing;
     closing = (async () => {
       const turn = await protocol?.end().catch(unproved);
+      await protocol?.drain();
       const receipts = await Promise.all([...resources].map(collect));
       const cleanup = receipts.flatMap(receipt => receipt.cleanup);
       if (turn && !clean(turn)) cleanup.push(...turn.cleanup);
-      if (!cleanup.length) {
+      if (!cleanup.length || terminalLoss) {
         let disconnected = !selected;
         try { if (selected) disconnected = await selected.disconnect(selected.session) === true; } catch {}
+        connected = false;
         if (!disconnected) cleanup.push(retained('browser-connection'));
       }
-      if (!cleanup.length) {
-        unsubscribe?.(); clearInterval(timer); ui?.close();
+      if (!cleanup.length || terminalLoss) {
+        finalReceipt = { revoked: true, cleanup };
+        unsubscribe?.(); (dependencies.clearSchedule ?? clearInterval)(timer); ui?.close();
+        channel.off('disconnect', loss);
+        if (terminalLoss && channel.connected) channel.disconnect?.();
+        resolveClosed(finalReceipt);
       }
       return { revoked: true, cleanup };
     })().finally(() => { closing = undefined; });
@@ -258,7 +267,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
       if (ui.authenticate(event) !== true) return;
       if (['disconnect','cleanup'].includes(event.action)) await close();
       else if (event.action === 'pause') { stopped = true; await protocol?.end(); status(); }
-    });
+    }, { deadline: Date.now() + 300000 });
   }
   try {
     const config = (dependencies.readConfig ?? readInstalledConfig)();
@@ -269,7 +278,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     if (built.status !== 'ready') throw Error(built.code);
     const { createSelectedConnection } = await import('./selected-connection.mjs'); startupCurrent();
     selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt }); startupCurrent();
-    ui = (dependencies.createUi ?? host.createNativeUi)(built.receipt, () => { stopped = true; protocol?.end().catch(() => {}); });
+    ui = (dependencies.createUi ?? host.createNativeUi)(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
     startupCurrent();
     unsubscribe = selected.onConnectionLoss(() => { stopped = true; connected = false; protocol?.end().catch(() => {}); });
     protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
@@ -278,6 +287,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
         const resource = {}; resources.add(resource);
         try {
           if (!connected) { if (await selected.connect() !== selected.session) throw Error('STALE_INSTANCE'); connected = true; }
+          if (!current()) throw Error('TRUSTED_TURN_REQUIRED');
           if (!current() || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
           const { loadPlaywrightCore } = await import('./worlds.mjs');
           const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true }).inprocess.playwright;
@@ -291,7 +301,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
           resource.pages = (dependencies.createPages ?? createPageRegistry)({ browser: resource.browser, session,
             upstream: selected.session, ownTarget: resource.filter.own, releaseTarget: resource.filter.release });
           const runtime = await createV3TurnRuntime({ binding, browser: selected.selectedBrowser, pages: resource.pages,
-            snapshot: snapshots.snapshot, ui, dependencies: {
+            snapshot: snapshots.snapshot, ui, endpoint: selected.endpoint, dependencies: {
               // Acknowledgment is coupled to the exact output identity in the
               // fork protocol. Merely taking a snapshot never admits its refs.
               acknowledgeSnapshot: snapshots.acknowledgeSnapshot,
@@ -316,7 +326,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
       try { status(); } catch { stopped = true; protocol.end().catch(() => {}); }
     }, 60000);
     status(); protocol.ready();
-    return Object.freeze({ close });
+    return Object.freeze({ close, closed });
   } catch (error) {
     await close(); channel.off('disconnect', loss); throw error;
   }
