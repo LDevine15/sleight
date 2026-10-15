@@ -2579,7 +2579,7 @@ export function createRelay({
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
     }
     if (turboUnavailable && !turboNoticeShown && pendingBrowser && Array.isArray(msg.result?.content) &&
-        (confirmedBrowser || msg.result._meta?.['codex/toolSurface']?.app?.appId === undefined &&
+        (msg.result._meta?.['codex/toolSurface']?.kind === 'browserUse' || msg.result._meta?.['codex/toolSurface']?.app?.appId === undefined &&
           /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCalls.get(msg.id) ?? ''))) {
       turboNoticeShown = true;
       msg.result.content.push({ type: 'text', text: `Tell the user: Turbo is off (${turboUnavailable}). The engine browser path is available. Check turbo settings and run sleight-mcp --doctor before retrying turbo.` });

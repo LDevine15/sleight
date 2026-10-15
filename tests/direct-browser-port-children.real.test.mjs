@@ -39,7 +39,7 @@ test('port guard continues false matches and protects related targets before the
     res.end(`<title>Owned port fixture</title><a href="${url}">Link</a><form action="${url}"><button>Submit</button></form><script>window.probe=()=>fetch('${url}',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked');</script>`);
   });
   t.after(async()=>{
-    try{await filter?.dispose();await browser?.close();if(socket&&socket.readyState!==3)await new Promise(resolve=>{socket.addEventListener('close',resolve,{once:true});socket.close();});}
+    try{if(filter)assert.equal(await filter.dispose(),true,'filter and related-target watchers collected');await browser?.close();if(socket&&socket.readyState!==3)await new Promise(resolve=>{socket.addEventListener('close',resolve,{once:true});socket.close();});}
     finally{await context?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));rmSync(root,{recursive:true,force:true});assert.equal(existsSync(root),false);}
     t.diagnostic('Cleanup: owned pages and browser closed, filter listener and raw socket closed, foreign fixture untouched, HTTP server and profile collected.');
   });

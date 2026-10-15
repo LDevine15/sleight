@@ -15,7 +15,7 @@ function fixture() {
     ['owned', { targetId: 'owned', type: 'page', title: 'Owned fixture', url: 'about:blank', browserContextId: 'default' }],
     ['foreign', { targetId: 'foreign', type: 'page', title: 'Private fixture', url: 'https://private.invalid/', browserContextId: 'default' }],
   ]);
-  let attachment = 0, browserAttachment = 0;
+  let attachment = 0;
   const emit = event => { for (const fn of listeners) fn(event); };
   const session = { sessionId: 'root', on(name, fn) { assert.equal(name, 'event'); listeners.add(fn); },
     off(name, fn) { assert.equal(name, 'event'); listeners.delete(fn); },
@@ -25,12 +25,6 @@ function fixture() {
       if (method === 'Target.getTargets') return { targetInfos: [...targets.values()] };
       if (method === 'Target.getTargetInfo') { const targetInfo = targets.get(params.targetId); if (!targetInfo) throw Error('missing target'); return { targetInfo }; }
       if (method === 'Target.createTarget') { targets.set('new', { ...targets.get('owned'), targetId: 'new' }); return { targetId: 'new' }; }
-      if (method === 'Target.attachToBrowserTarget') return { sessionId: 'monitor-' + ++browserAttachment };
-      if (method === 'Target.autoAttachRelated') {
-        const sessionId = 's-' + params.targetId + (++attachment === 1 ? '' : '-' + attachment);
-        emit({ method: 'Target.attachedToTarget', sessionId: route, params: { sessionId, targetInfo: targets.get(params.targetId), waitingForDebugger: false } });
-        return {};
-      }
       if (method === 'Target.attachToTarget') {
         const sessionId = 's-' + params.targetId + (++attachment === 1 ? '' : '-' + attachment);
         emit({ method: 'Target.attachedToTarget', params: { sessionId, targetInfo: targets.get(params.targetId), waitingForDebugger: false } });
@@ -216,7 +210,7 @@ test('guard-only false matches continue privately while client Fetch patterns ke
   assert.deepEqual(events.map(frame => frame.params.requestId), ['client']);
 });
 
-test('guard installs recursive auto-attach before exposure and resumes related targets only after guarding', async t => {
+test('guard installs recursive auto-attach and prepares received children before resuming them', async t => {
   const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
   t.after(() => filter.dispose());
   const events = []; filter.session.on('event', frame => events.push(frame));
@@ -238,4 +232,47 @@ test('guard installs recursive auto-attach before exposure and resumes related t
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(!events.some(frame => frame.params.sessionId === 'wrong-opener'));
   assert.ok(!f.calls.some(row => row.route === 'wrong-opener' && row.method === 'Fetch.enable'));
+});
+
+test('guard failure never exposes or resumes a paused target', async t => {
+  const f = fixture(), original = f.session.send;
+  f.session.send = async (method, params, route) => {
+    if (method === 'Fetch.enable' && route === 's-owned') throw Error('guard refused');
+    return original(method, params, route);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  await assert.rejects(filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true }), /guard refused|CDP_ATTACHMENT_INVALID|CDP_SESSION_NOT_OWNED/);
+  assert.ok(!f.calls.some(row => row.method === 'Runtime.runIfWaitingForDebugger'));
+  assert.deepEqual(events, []);
+  assert.equal(await filter.dispose(), true);
+});
+
+test('Fetch client matching preserves response stages, resource types, glob escapes and rollback', async t => {
+  const f = fixture(), original = f.session.send;
+  let rejectEnable = false;
+  f.session.send = (method, params, route) => {
+    if (method === 'Fetch.enable' && rejectEnable) return Promise.reject(Error('invalid Fetch configuration'));
+    return original(method, params, route);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  await filter.session.send('Fetch.enable', { patterns: [{ urlPattern: 'http://fixture.invalid/asset\\?.js', requestStage: 'Response', resourceType: 'Script' }] }, 's-owned');
+  const emit = (requestId, extra = {}) => f.emit({ method: 'Fetch.requestPaused', sessionId: 's-owned', params: {
+    requestId, request: { url: 'http://fixture.invalid/asset?.js' }, resourceType: 'Script', ...extra } });
+  emit('request');
+  emit('response', { responseStatusCode: 200 });
+  emit('other-kind', { responseStatusCode: 200, resourceType: 'Document' });
+  emit('other-url', { responseStatusCode: 200, request: { url: 'http://fixture.invalid/asset1.js' } });
+  rejectEnable = true;
+  await assert.rejects(filter.session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, 's-owned'), /invalid Fetch configuration/);
+  rejectEnable = false;
+  emit('rolled-back', { responseStatusCode: 200 });
+  assert.deepEqual(events.map(frame => frame.params.requestId), ['response', 'rolled-back']);
+  assert.deepEqual(f.calls.filter(row => row.method === 'Fetch.continueRequest').map(row => row.params.requestId), ['request', 'other-kind', 'other-url']);
+  await filter.session.send('Fetch.enable', {}, 's-owned'); emit('default');
+  assert.equal(events.at(-1).params.requestId, 'default');
 });

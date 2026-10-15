@@ -72,3 +72,17 @@ test('turbo startup fault reaches Claude once on the first engine browser result
   assert.match(notice(2)[0].text, /HOST_SOURCE_MISMATCH.*engine browser path/);
   assert.equal(notice(3).length, 0);
 });
+
+test('the first failed browser read still carries the startup notice once', async t => {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough(), replies = [];
+  clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, turboUnavailable: 'HOST_SOURCE_MISMATCH', changeReview: false });
+  t.after(() => relay.dispose());
+  for (const id of [1, 2]) {
+    clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code: 'await tab.getAXState()' } } }) + '\n');
+    serverOut.write(JSON.stringify({ id, result: { isError: true, content: [{ type: 'text', text: 'read unavailable' }],
+      _meta: { 'codex/toolSurface': { kind: 'browserUse' } } } }) + '\n');
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(replies.filter(row => row.result?.content?.some(item => /Tell the user: Turbo is off/.test(item.text ?? ''))).length, 1);
+});
