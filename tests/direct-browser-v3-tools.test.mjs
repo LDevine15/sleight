@@ -134,3 +134,15 @@ test('a fill row prints what the page chose after the status', async () => {
   const out = await d.call({ name: 'browser_fill', arguments: { tab: 't1', fields: [{ ref: 'e1', value: 'a' }, { ref: 'e2', value: 'b' }] } });
   assert.match(out.text, /^e1: set \(chose "Alpha Field \(AAA\)"\)\ne2: failed: no option matches\n/);
 });
+
+test('observe none still delivers the read when a step returned a found row with its ref', async () => {
+  const entry = { page: { url: () => 'https://example.invalid/', title: async () => 'x' }, state: { snapshotNo: 0 } };
+  const make = lines => createToolDispatcher({ browser: 'bfixture', pages: { enqueue: async (id, run) => run(entry), tab: () => entry },
+    snapshot: async () => ({ text: 'page', number: 1 }), fillFields: async () => assert.fail('fill must not run'),
+    runSteps: async () => ({ lines, stoppedAt: null, observe: { text: '+ row', number: 5, capturedAt: 1 } }) });
+  const args = { tab: 't1', steps: [{ do: 'scroll', ref: 'e1', until: 'Row' }], observe: 'none' };
+  const found = await make(['1 scroll e1: found - option "Row" [ref=e9]: ']).call({ name: 'browser_act', arguments: args });
+  assert.match(found.text, /\[ref=e9\]/); assert.match(found.text, /\+ row/);
+  const plain = await make(['1 scroll e1: input sent']).call({ name: 'browser_act', arguments: args });
+  assert.doesNotMatch(plain.text, /\+ row/);
+});

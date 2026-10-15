@@ -142,7 +142,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
               try { observed = await capture(entry, { maxChars: 8000 }); }
               catch { observed = undefined; lines.push('Read unavailable; use browser_read before retrying.'); }
             }
-            if (a.observe === 'none') observed = undefined;
+            // A row that a scroll step found carries a ref from the page read, which only a delivered read makes usable.
+            if (a.observe === 'none' && !lines.some(line => /\[ref=/.test(line))) observed = undefined;
             return finish([...lines, ...(observed ? [observed.text] : [])].join('\n'), entry, observed);
           }
           const result = await fillFields(entry, a.fields, { submit: a.submit }, privateContext);

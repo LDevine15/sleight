@@ -234,7 +234,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             if (state.dialog === dialog) state.dialog = null; return;
           }
           if (step.do === 'wait') {
-            if (locator) return locator.waitFor({ ...options, state: 'visible' });
+            if (locator) return typeof locator.waitFor === 'function' ? locator.waitFor({ ...options, state: 'visible' }) : locator.waitForElementState('visible', options);
             await sleep(100); return;
           }
           if (step.do === 'scroll') {

@@ -41,7 +41,7 @@ async function harness() {
       const read = await call('browser_read', { tab }), found = new RegExp(role + '[^\\n]*"' + name + '"[^\\n]*\\[ref=((?:f\\d+)?[es]\\d+)\\]').exec(read.text)?.[1];
       assert.ok(found, 'no ref for ' + name + ' in:\n' + read.text); return found;
     },
-    async act(tab, steps) { const result = await call('browser_act', { tab, steps }); await settle(); return result; },
+    async act(tab, steps, observe) { const result = await call('browser_act', { tab, steps, ...(observe ? { observe } : {}) }); await settle(); return result; },
     async fill(tab, fields) { const result = await call('browser_fill', { tab, fields }); await settle(); return result; },
     async text(tab, selector) { const read = await call('browser_read', { tab, find: selector }); return read.text; } };
 }
@@ -138,6 +138,17 @@ test('a scroll step past the 10000 limit is refused as not run, and a long list 
   assert.equal(refused.isError, true, refused.text);
   assert.match(refused.text, /dy up to 10000 per step.*until.*Nothing was sent/s, refused.text);
   assert.doesNotMatch(refused.text, /unconfirmed/);
-  const found = await h.act(tab, [{ do: 'scroll', ref, until: AIRPORTS[150].name, dy: 300 }]);
-  assert.match(found.text, /scroll[^\n]*(found|text not found)/, found.text);
+  // The row a scroll finds can be clicked at once, even when the call asked for no observation.
+  const found = await h.act(tab, [{ do: 'scroll', ref, until: label(AIRPORTS[150]), dy: 300 }], 'none');
+  const row = /found[^\n]*option "[^"]*"[^\n]*\[ref=(e\d+)\]/.exec(found.text);
+  assert.ok(row, found.text);
+  const clicked = await h.act(tab, [{ do: 'click', ref: row[1] }], 'none');
+  assert.doesNotMatch(clicked.text, /not run|stale/, clicked.text);
+  assert.deepEqual(h.logs, ['plain ' + AIRPORTS[150].code]);
+});
+
+test('a wait on a ref works through the pinned handle', { skip, timeout: 60000 }, async () => {
+  const h = await harness(), { tab } = await h.open(), ref = await h.ref(tab, 'Airport', 'combobox');
+  const result = await h.act(tab, [{ do: 'wait', ref }]);
+  assert.doesNotMatch(result.text, /not a function|not run|unconfirmed/, result.text);
 });
