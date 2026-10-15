@@ -13,6 +13,20 @@ const forbidden = new Set(['Page.bringToFront', 'Target.activateTarget',
   'Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Network.getAllCookies',
   'Network.deleteCookies', 'Network.getCookies', 'Network.setCookie', 'Network.setCookies',
   'Network.enableDeviceBoundSessions', 'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior']);
+// CDP Fetch patterns use glob wildcards, with backslash escaping.
+function fetchMatch(pattern, params) {
+  if (pattern.resourceType && pattern.resourceType !== params.resourceType) return false;
+  const stage = params.responseStatusCode !== undefined || params.responseErrorReason !== undefined ? 'Response' : 'Request';
+  if ((pattern.requestStage ?? 'Request') !== stage) return false;
+  let source = '^', escaped = false;
+  for (const char of pattern.urlPattern ?? '*') {
+    if (!escaped && char === '\\') { escaped = true; continue; }
+    source += !escaped && char === '*' ? '.*' : !escaped && char === '?' ? '.' : char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    escaped = false;
+  }
+  if (escaped) source += '\\\\';
+  return new RegExp(source + '$', 's').test(params.request?.url ?? '');
+}
 const domains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Accessibility', 'Input',
   'Network', 'Fetch', 'Log', 'Emulation', 'Inspector', 'Debugger', 'Performance']);
 
@@ -33,6 +47,12 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
   const live = () => { if (closed) throw Error('CDP_FILTER_CLOSED'); };
   const owns = target => owned.has(target) || [...routes.values()].some(route => route.target === target);
   const checkTarget = target => { if (!id(target) || !owns(target)) throw Error('CDP_TARGET_NOT_OWNED'); };
+  const autoAttachParams = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{}] };
+  const routed = (frame, parent) => {
+    const value = { ...frame };
+    if (parent === undefined) delete value.sessionId; else value.sessionId = parent;
+    return value;
+  };
   function emit(event) { for (const listener of listeners) try { listener(event); } catch {} }
   function finishEvents() {
     if (closed && listening && !attachments.size && !outstanding.size) {
@@ -83,26 +103,29 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
           params.targetId !== undefined && params.targetId !== detached.target) return;
       const virtualParent = detached.virtualParent;
       collected(params.sessionId);
-      if (!closed) emit({ ...frame, ...(virtualParent ? { sessionId: virtualParent } : {}),
-        params: { ...params, targetId: detached.target } });
+      if (!closed && !detached.private) emit(routed({ ...frame, params: { ...params, targetId: detached.target } }, virtualParent));
       return;
     }
     if (closed && frame.method !== 'Target.attachedToTarget') return;
     const parent = frame.sessionId === undefined ? undefined : (closed ? attachments : routes).get(frame.sessionId);
     if (frame.sessionId !== undefined && !parent) return;
-    if (parent && protectedPort !== undefined && frame.method === 'Fetch.requestPaused' && protectedUrl(params.request?.url)) {
-      upstream.send('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }, frame.sessionId)
-        .catch(() => { removeRoute(frame.sessionId); detach(frame.sessionId).catch(() => {}); });
-      return;
+    if (parent && protectedPort !== undefined && frame.method === 'Fetch.requestPaused') {
+      const protectedRequest = protectedUrl(params.request?.url);
+      if (protectedRequest || !(parent.fetchPatterns ?? []).some(pattern => fetchMatch(pattern, params))) {
+        upstream.send(protectedRequest ? 'Fetch.failRequest' : 'Fetch.continueRequest',
+          { requestId: params.requestId, ...(protectedRequest ? { errorReason: 'BlockedByClient' } : {}) }, frame.sessionId)
+          .catch(() => { removeRoute(frame.sessionId); detach(frame.sessionId).catch(() => {}); });
+        return;
+      }
     }
     if (frame.method === 'Target.attachedToTarget') {
       const info = params.targetInfo;
       if (!object(info) || !id(info.targetId) || !id(params.sessionId)) return;
-      const allowed = parent ? ['iframe', 'worker'].includes(info.type) :
+      const allowed = parent ? ['iframe', 'worker', ...(protectedPort !== undefined ? ['shared_worker', 'service_worker'] : [])].includes(info.type) ||
+        protectedPort !== undefined && info.type === 'page' && info.openerId === parent.target :
         (closed ? attachmentParents.has(info.targetId) : owned.has(info.targetId)) && info.type === 'page';
       if (!allowed) {
-        // A shared service worker is not owned by a page. Undo its automatic
-        // attachment without exposing any of its metadata to Playwright.
+        // Unrelated targets never acquire a route or expose their metadata.
         if (parent && !closed) {
           if (params.waitingForDebugger) upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId).catch(() => {});
           upstream.send('Target.detachFromTarget', { sessionId: params.sessionId }, frame.sessionId).catch(() => {});
@@ -110,16 +133,25 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         return;
       }
       if (routes.has(params.sessionId)) return;
-      const virtualParent = parent ? frame.sessionId : attachmentParents.get(info.targetId);
+      const virtualParent = parent ? info.type === 'page' ? parent.browserParent : frame.sessionId : attachmentParents.get(info.targetId);
       if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
       if (closed) return; // Late attachments stay private and grant no input route.
-      const route = { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent };
+      const route = { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent,
+        browserParent: parent ? parent.browserParent : virtualParent,
+        private: parent?.private || ['shared_worker', 'service_worker'].includes(info.type) };
+      attachments.get(params.sessionId).private = route.private;
       routes.set(params.sessionId, route);
-      if (virtualParent && !parent) frame = { ...frame, sessionId: virtualParent };
+      frame = routed(frame, virtualParent);
       if (protectedPort !== undefined) {
-        route.ready = upstream.send('Fetch.enable', { patterns: guardPatterns }, params.sessionId).then(() => {
-          if (!closed && routes.get(params.sessionId) === route) emit(frame);
-        });
+        route.ready = (async () => {
+          await upstream.send('Fetch.enable', { patterns: guardPatterns }, params.sessionId);
+          // Install this independently of Playwright, including on every child.
+          // A paused target cannot make its first request before the guard exists.
+          await upstream.send('Target.setAutoAttach', autoAttachParams, params.sessionId);
+          if (closed || routes.get(params.sessionId) !== route) return;
+          if (!route.private) emit(frame);
+          if (params.waitingForDebugger) await upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId);
+        })();
         route.ready.catch(() => { removeRoute(params.sessionId); detach(params.sessionId).catch(() => {}); });
         return;
       }
@@ -128,7 +160,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       if (!owns(target)) return;
       if (frame.method === 'Target.targetDestroyed') revoke(target);
     } else if (!parent) return; // No browser-global events or foreign sessions.
-    emit(frame);
+    if (!parent?.private) emit(frame);
   }
   upstream.on('event', event);
   async function attach(target, virtualParent) {
@@ -173,7 +205,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     live();
     if (targetInfo?.targetId !== target || targetInfo.type !== 'page') throw Error('CDP_TARGET_NOT_OWNED');
     owned.add(target);
-    if (autoAttach) await attach(target);
+    if (autoAttach && ![...routes.values()].some(route => route.target === target)) await attach(target);
   }
   const session = Object.freeze({ sessionId: root,
     async send(method, params = {}, route = root) {
@@ -198,7 +230,8 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         }
         if (method === 'Target.setAutoAttach') {
           if (typeof params.autoAttach !== 'boolean' || params.flatten !== true) refuse();
-          if (!isRoot) return upstream.send(method, { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
+          if (!isRoot) return upstream.send(method, protectedPort !== undefined ? autoAttachParams :
+            { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
           autoAttach = params.autoAttach;
           if (autoAttach) for (const target of owned) if (![...routes.values()].some(r => r.target === target)) await attach(target);
           return {};
@@ -249,8 +282,13 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       // domains stay closed, including SystemInfo, Tethering and window APIs.
       if (isRoot || !domains.has(domain)) refuse();
       if (protectedPort !== undefined && domain === 'Fetch') {
-        if (method === 'Fetch.enable') return upstream.send(method, { ...params, patterns: [...(params.patterns ?? [{ urlPattern: '*' }]), ...guardPatterns] }, route);
-        if (method === 'Fetch.disable') return upstream.send('Fetch.enable', { patterns: guardPatterns }, route);
+        if (method === 'Fetch.enable' || method === 'Fetch.disable') {
+          const ownedRoute = routes.get(route), previous = ownedRoute.fetchPatterns;
+          const patterns = method === 'Fetch.disable' ? [] : params.patterns?.length ? params.patterns : [{ urlPattern: '*' }];
+          ownedRoute.fetchPatterns = patterns;
+          try { return await upstream.send('Fetch.enable', { ...(method === 'Fetch.enable' ? params : {}), patterns: [...patterns, ...guardPatterns] }, route); }
+          catch (error) { if (ownedRoute.fetchPatterns === patterns) ownedRoute.fetchPatterns = previous; throw error; }
+        }
         if (['Fetch.continueRequest','Fetch.continueResponse'].includes(method) && params.url && protectedUrl(params.url)) refuse();
       }
       return upstream.send(method, params, route);

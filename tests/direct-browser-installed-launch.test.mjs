@@ -54,3 +54,21 @@ for(const code of ['HOST_PACKAGE_MISMATCH','HOST_SOURCE_MISMATCH','HOST_CACHE_UN
   assert.match(JSON.stringify(replies.find(x=>x.id===3)),/Turbo is off.*engine browser path/);
   assert.ok(!sent.some(x=>x.id===3));
 });
+
+test('turbo startup fault reaches Claude once on the first engine browser result', async t => {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough(), replies = [];
+  clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, turboUnavailable: 'HOST_SOURCE_MISMATCH', changeReview: false });
+  t.after(() => relay.dispose());
+  for (const [id, code] of [[1, 'nodeRepl.write("native-free computation")'], [2, 'const b = await cua.getBrowser()'], [3, 'await b.tabs.list()']]) {
+    clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+    serverOut.write(JSON.stringify({ id, result: { content: [{ type: 'text', text: 'engine result' }],
+      ...(id === 1 ? {} : { _meta: { 'codex/toolSurface': { kind: 'browserUse' } } }) } }) + '\n');
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  const notice = id => replies.find(row => row.id === id).result.content.filter(item => /Tell the user: Turbo is off/.test(item.text ?? ''));
+  assert.equal(notice(1).length, 0);
+  assert.equal(notice(2).length, 1);
+  assert.match(notice(2)[0].text, /HOST_SOURCE_MISMATCH.*engine browser path/);
+  assert.equal(notice(3).length, 0);
+});
