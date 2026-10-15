@@ -1,10 +1,10 @@
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { compactTools } from '../../plugins/sleight/lib/direct-browser/surface.mjs';
+import { browserTools } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
 import { worldAgentSetup } from '../world/arms/browser.mjs';
 
 export const SURFACE = 'sleight-turbo';
-export const MEASUREMENT = 'production turbo tools and modules plus engine companion; installed path excluded';
+export const MEASUREMENT = 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded';
 export function fixturePolicy(origins) {
   if (!Array.isArray(origins) || !origins.length || origins.some(origin => {
     try { const u = new URL(origin); return u.origin !== origin || u.protocol !== 'http:' ||
@@ -33,7 +33,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
     + (env.SLEIGHT_PROMPT === 'lean' ? 'SKILL.lean.md' : 'SKILL.md'), import.meta.url), 'utf8')
     .replace(/^---\n[\s\S]*?\n---\n+/, '').trim();
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
-  const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo.md', import.meta.url), 'utf8')
+  const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8')
     .trimEnd().replace('{browser}', 'bbench');
   if (!section.test(rules)) throw Error('Installed browser skill is missing');
   const installed = rules.replace(section, browserRules + '\n');
@@ -42,13 +42,13 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
   return { command: common.command, args: common.args, settings: common.settings,
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
       env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none' } },
-      'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/server.mjs')],
-      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt } } },
-    allowed: [...compactTools().map(tool => 'mcp__sleight-turbo__' + tool.name),
+      'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
+      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
+    allowed: [...browserTools('bbench').map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',
     env: { ...common.env, CLAUDE_CONFIG_DIR: configDir },
     metadata: { ...common.metadata, configDir, surface: SURFACE, measurement: MEASUREMENT,
-      path: 'model-selected', playwright: '1.64.0', profile: 'owned-temporary', headless: true,
+      path: 'model-selected', turboVersion: 3, runtime: 'V10 join required', playwright: '1.64.0', profile: 'owned-temporary', headless: true,
       safety: 'turbo fixture-only; engine approvals and guards', focus: 'host monitor' } };
 }
