@@ -175,6 +175,7 @@ function hookFixture({ clock = Date } = {}) {
     constructor(localName = 'button', attrs = {}) { Object.assign(this, { localName, attrs, isConnected: true }); }
     getAttribute(name) { return this.attrs[name] ?? null; }
     hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
+    matches() { return !!this.interactive; }
     getRootNode() { return {}; }
   }
   class HTMLButtonElement extends Element {
@@ -865,6 +866,15 @@ test('CR5 label forwarding uses the captured native control and submit ownership
   const label = new f.HTMLLabelElement(control), text = new f.Element('span'); text.parentElement = label;
   Object.defineProperty(label, 'control', { get() { throw Error('page control getter'); } });
   try { assert.equal(f.hook.prepare(text, 'label', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+test('CR5 a label does not forward a click on an interactive descendant to its submit control', () => {
+  const f = hookFixture(), submit = new f.HTMLInputElement({ type: 'submit' }, new f.Element('form'));
+  const label = new f.HTMLLabelElement(submit), button = new f.HTMLButtonElement({ type: 'button' });
+  button.parentElement = label; button.interactive = true;
+  button.matches = () => false;
+  try { assert.equal(f.hook.prepare(button, 'nested-command', 1000), true); }
   finally { f.hook.off(); }
 });
 

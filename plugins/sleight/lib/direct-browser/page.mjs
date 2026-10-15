@@ -19,6 +19,7 @@ export function popupHook() {
     return /^(iframe|object|embed|frame|fencedframe)$/.test(focus?.localName);
   };
   const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
+  const nativeMatches = Element.prototype.matches;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
   // Capture native IDL getters before page scripts. Form ownership includes
@@ -31,6 +32,10 @@ export function popupHook() {
     multiple: Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'multiple').get };
   const labelControl = { constructor: HTMLLabelElement,
     control: Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get };
+  // HTML form-elements.html#the-label-element: an interactive descendant does
+  // not forward label activation. This selector limits label forwarding only;
+  // it does not give any of these elements a plain-click exception.
+  const interactive = 'a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),label,select,textarea,video[controls]';
   // CR5's real modifier table measures native submission and multiple-select
   // selection as modifier-sensitive. ARIA and editable content have no native
   // modifier default; their handlers receive the masked background click.
@@ -203,10 +208,11 @@ export function popupHook() {
       if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
       const chain = ancestors(element);
-      for (const node of chain) {
+      for (const [index, node] of chain.entries()) {
         if (plainControl(node)) return false;
         // A label can forward activation to a submit control outside its tree.
-        if (node instanceof labelControl.constructor && plainControl(labelControl.control.call(node))) return false;
+        if (node instanceof labelControl.constructor && !chain.slice(0, index).some(child => nativeMatches.call(child, interactive))
+          && plainControl(labelControl.control.call(node))) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;
