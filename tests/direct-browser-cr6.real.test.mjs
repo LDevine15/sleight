@@ -18,14 +18,14 @@ test('CR6 real delayed handlers see a plain click and no modifier keyboard event
   assert.deepEqual(await f.entry.page.evaluate(() => keys), []);
 });
 
-for (const [kind, control] of Object.entries(controls)) test('CR6 real empty formtarget inherits blank form: ' + kind,
+// HTML form submission step 19 passes the present empty value to "get an
+// element's target". Its fallback applies only to null, not an empty string.
+for (const [kind, control] of Object.entries(controls)) test('CR6 real empty formtarget overrides blank form with current context: ' + kind,
   { skip, timeout: 60000 }, async t => {
-    const f = await fixture(t, '<form action="/landed" target="_blank">' + control.replace('<', '<').replace(/<(button|input)/, '<$1 formtarget=""') + '</form>');
-    const next = f.context.waitForEvent('page');
+    const f = await fixture(t, '<form action="/landed" target="_blank">' + control.replace(/<(button|input)/, '<$1 formtarget=""') + '</form>');
     await backgroundClick(f.entry, f.entry.page.getByRole('button', { name: 'Send' }), undefined, { timeoutMs: 5000 });
-    const child = await next; await child.waitForURL('**/landed*');
-    assert.match(f.entry.page.url(), /\/start$/);
-    assert.equal(f.context.pages().length, 3);
+    await f.entry.page.waitForURL('**/landed*');
+    assert.equal(f.context.pages().length, 2);
   });
 
 for (const rel of ['', 'noopener', 'noreferrer']) test('CR6 real named link preserves a session-owned name across clicks: ' + (rel || 'default'),

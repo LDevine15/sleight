@@ -27,6 +27,10 @@ function fixture(options = {}) {
       return {};
     }, detach: async () => calls.push(['detach', targetId]) });
     p.goto = async url => { calls.push(['goto', url, targetId]); };
+    p.evaluate = async (_fn, name) => {
+      if (name !== undefined) { p.windowName = name; return name; }
+      return { name: p.windowName ?? '', origin: new URL(p.url()).origin };
+    };
     p.close = async () => { calls.push(['close', targetId]); p.closed = true; p.emit('close'); };
     pages.push(p); context.emit('page', p); return p;
   }
@@ -248,7 +252,9 @@ for (const key of ['Control', 'Meta']) test('CR6 swallows the matching trusted k
     t.mock.timers.tick(0);
     assert.equal(keyEvent('keyup', false).stopped, undefined);
     assert.equal(keyEvent('keyup').stopped, true);
-    assert.equal(keyEvent('keyup').stopped, undefined, 'a later unrelated keyup is visible');
+    assert.equal(keyEvent('keyup').stopped, true, 'the explicit cleanup keyup is also hidden until finish');
+    f.hook.finish('keys');
+    assert.equal(keyEvent('keyup').stopped, undefined, 'later unrelated keyups are visible after finish');
   } finally { f.hook.off(); }
 });
 
@@ -260,6 +266,41 @@ test('CR6 captured link requests retain exact target and rel', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(f.hook.takeRequest('link'))),
       { url: 'https://fixture.invalid/landed', target: 'child', rel: 'noopener noreferrer' });
   } finally { f.hook.off(); }
+});
+
+test('CR6 named links reuse only an unchanged owned target and replace released or renamed targets', async () => {
+  const f = fixture();
+  try {
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/start' }), parent = f.registry.tab(tab);
+    const first = await parent.openChild('https://fixture.invalid/first', { target: 'destination', rel: 'noopener' });
+    const again = await parent.openChild('https://fixture.invalid/second', { target: 'destination', rel: 'noopener' });
+    assert.equal(again.tab, first.tab);
+    assert.equal(f.registry.tab(first.tab).page.windowName, 'destination');
+    f.registry.tab(first.tab).page.windowName = 'page-renamed';
+    const replacement = await parent.openChild('https://fixture.invalid/third', { target: 'destination' });
+    assert.notEqual(replacement.tab, first.tab);
+    const kept = f.registry.tab(replacement.tab);
+    await f.registry.keep(replacement.tab);
+    const afterKeep = await parent.openChild('https://fixture.invalid/fourth', { target: 'destination' });
+    assert.notEqual(afterKeep.tab, replacement.tab);
+    assert.equal(kept.released, true);
+    assert.equal(f.calls.filter(call => call[0] === 'Target.createTarget').length, 4);
+  } finally { await f.registry.endTurn(); }
+});
+
+for (const changed of ['origin', 'identity', 'closed']) test('CR6 named link rejects a stale reuse proof: ' + changed, async () => {
+  const f = fixture();
+  try {
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/start' }), parent = f.registry.tab(tab);
+    const first = await parent.openChild('https://fixture.invalid/first', { target: 'destination' });
+    const child = f.registry.tab(first.tab);
+    if (changed === 'origin') child.page.url = () => 'https://other.invalid/';
+    if (changed === 'identity') child.page.info.targetId = 'replaced-target';
+    if (changed === 'closed') await child.page.close();
+    const next = await parent.openChild('https://fixture.invalid/second', { target: 'destination' });
+    assert.notEqual(next.tab, first.tab);
+    assert.equal(f.registry.tab(next.tab).page.windowName, 'destination');
+  } finally { await f.registry.endTurn(); }
 });
 
 test('CR3 arms every command without inspecting script or listener source', () => {
@@ -793,7 +834,7 @@ test('CR1 a handler installed during dispatch makes an uncancelled default unava
   } finally { f.hook.off(); }
 });
 
-test('CR1 a new arm cannot mask an event from a retired click', () => {
+test('CR6 a new arm keeps a retired event masked under its original token', () => {
   const f = hookFixture(), button = new f.Element();
   const keydown = () => {
     for (const listener of f.window.listeners.keydown)
@@ -808,7 +849,7 @@ test('CR1 a new arm cannot mask an event from a retired click', () => {
     assert.equal(second.ctrlKey, true, 'only the first click belongs to the arm');
     f.hook.finish('first');
     f.hook.prepare(button, 'second', 1000); keydown();
-    assert.equal(first.ctrlKey, true, 'an old event cannot join a new arm');
+    assert.equal(first.ctrlKey, false, 'an old event retains its original mask');
     assert.equal(second.ctrlKey, false);
   } finally { f.hook.off(); }
 });

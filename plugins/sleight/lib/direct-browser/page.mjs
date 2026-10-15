@@ -75,8 +75,10 @@ export function popupHook() {
   const active = () => live() && arm.masking;
   const matches = event => event.isTrusted && composedPath.call(event).includes(arm.element);
   const hide = event => {
+    // The token was bound while this event matched its arm. Retirement changes
+    // which new events can be masked, never a retained event's modifier values.
+    if (masked.has(event)) return arm?.token === masked.get(event) || retired.has(masked.get(event));
     if (!active()) return false;
-    if (masked.has(event)) return masked.get(event) === arm.token;
     if (arm.clicked || !matches(event)) return false;
     masked.set(event, arm.token); return true;
   };
@@ -114,7 +116,10 @@ export function popupHook() {
   replace(window, 'open', { configurable: true, writable: true, value: open });
   const keyEvent = event => {
     if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
-    if (event.type === 'keydown' && !arm.clicked) arm.masking = true;
+    // Playwright restores its modifiers after dispatch; our explicit release
+    // may send another keyup. Keep both hidden until this arm finishes.
+    if (event.type === 'keyup' && arm.modifiers.has(event.key)) { event.stopImmediatePropagation(); return; }
+    if (event.type === 'keydown' && !arm.clicked) { arm.masking = true; arm.modifiers.add(event.key); }
     if (!active()) return;
     event.stopImmediatePropagation();
   };
@@ -161,7 +166,7 @@ export function popupHook() {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
     const target = targetOf(element);
     const rel = attribute(element, 'rel') ?? '';
-    return { url: url.href, signature: JSON.stringify([url.href, target, rel]) };
+    return { url: url.href, target, rel, signature: JSON.stringify([url.href, target, rel]) };
   };
   const capture = event => {
     if (!live() || arm.clicked || !matches(event)) return;
@@ -172,7 +177,7 @@ export function popupHook() {
     const current = arm;
     arm.dispatchTimer = setTimeout(() => { if (arm === current) arm.masking = false; }, 0);
     if (!arm.link) return;
-    const record = { cancelled: prevented.get.call(event), event, signature: arm.link.signature, url: arm.link.url };
+    const record = { ...arm.link, cancelled: prevented.get.call(event), event };
     events.set(event, record); arm.request = record;
     nativePrevent.call(event);
     // Read the actual handlers at dispatch, after pointer handlers may have
@@ -218,7 +223,7 @@ export function popupHook() {
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
-      arm = { element, token, until: now() + capMs, masking: false, link, linkElement, handlers: [] };
+      arm = { element, token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       return link ? { kind: 'link' } : true;
     },
@@ -229,7 +234,7 @@ export function popupHook() {
       const current = linkState(arm.linkElement);
       if (!arm.element.isConnected || current?.signature !== arm.request.signature
         || arm.handlers.some(({ node, wrapper }) => node.onclick !== wrapper)) return { unavailable: true };
-      return { url: arm.request.url };
+      return { url: arm.request.url, target: arm.request.target, rel: arm.request.rel };
     },
     finish,
     off() {
@@ -273,7 +278,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
       if (request?.url) {
         if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
-        await tab.openChild(request.url);
+        await tab.openChild(request.url, { target: request.target, rel: request.rel });
       }
     }
     await tab.settlePopups?.(checkpoint);
@@ -290,6 +295,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   if (ownTarget !== undefined && (typeof ownTarget !== 'function' || typeof upstream?.send !== 'function'))
     throw Error('trusted popup admission needs the upstream CDP connection');
   const records = new Map(), targets = new Map(), metadata = new WeakMap(), seen = new Map(), allocations = new Map(), tasks = new Set();
+  const namedChildren = new Map();
+  let namedQueue = Promise.resolve();
   let ended = false, cleanup;
   const track = promise => {
     tasks.add(promise); promise.then(() => tasks.delete(promise), () => tasks.delete(promise)); return promise;
@@ -333,7 +340,43 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       closed: page.isClosed(), released: false, queue: Promise.resolve() };
     entry.windowOpenNo = 0;
     entry.parent = opener;
-    entry.openChild = url => openOwned(url, entry);
+    entry.openChild = (url, { target = '', rel = '' } = {}) => {
+      // Never resolve a page-supplied name against arbitrary browser targets.
+      // Only this registry's allocations can acquire or reuse a link name.
+      const name = target && !target.startsWith('_') ? target : '';
+      if (!name) return openOwned(url, entry);
+      const opening = namedQueue.then(async () => {
+        tab(entry.tab);
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw Error('invalid browser URL');
+        const candidate = namedChildren.get(name);
+        if (candidate && !candidate.closed && !candidate.released && !candidate.releasing && !candidate.page.isClosed()) {
+          const reused = await api.enqueue(candidate.tab, async child => {
+            let verified = false;
+            try {
+              const { targetInfo } = await deadline(() => child.cdp.send('Target.getTargetInfo'), timeoutMs);
+              const actual = await deadline(() => child.page.evaluate(() => ({ name: window.name, origin: location.origin })), timeoutMs);
+              verified = targetInfo?.targetId === child.targetId && targetInfo.type === 'page' && actual.name === name
+                && actual.origin === new URL(entry.page.url()).origin && actual.origin === new URL(child.page.url()).origin;
+            } catch { /* A stale name is not authority to reuse a target. */ }
+            if (!verified) return;
+            tab(entry.tab);
+            tab(child.tab);
+            await child.page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+            child.link = { target: name, rel };
+            return { tab: child.tab };
+          });
+          if (reused) return reused;
+        }
+        namedChildren.delete(name);
+        const opened = await openOwned(url, entry, name);
+        tab(opened.tab).link = { target: name, rel };
+        namedChildren.set(name, tab(opened.tab));
+        return opened;
+      });
+      namedQueue = opening.catch(() => {});
+      return deadline(() => track(opening), timeoutMs, 'background named open pending; do not retry before cleanup');
+    };
     entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length,
       ...(entry.parent ? { opener: { tab: entry.parent.tab, windows: entry.parent.windowOpenNo, popups: entry.parent.popups.length } } : {}) });
     entry.settlePopups = async before => {
@@ -430,7 +473,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     // A delayed detach/ownership reply remains tracked after the caller's cap.
     return deadline(() => releasing, timeoutMs, 'tab release pending; wait for cleanup before retrying');
   };
-  async function openOwned(url, opener) {
+  async function openOwned(url, opener, name = '') {
       if (ended) throw Error('turn ended');
       let parsed;
       try { parsed = new URL(url); } catch { throw Error('invalid browser URL'); }
@@ -451,6 +494,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         const info = await identify(page), entry = adopt(page, info, opener);
         await entry.ready;
         if (ended) throw Error('turn ended');
+        if (name && await deadline(() => page.evaluate(name => { window.name = name; return window.name; }, name), timeoutMs) !== name)
+          throw Error('background target name unavailable');
         await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
         return { tab: entry.tab };
       })());
