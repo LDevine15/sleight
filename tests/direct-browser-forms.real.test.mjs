@@ -221,8 +221,10 @@ test('v5r2 real navigation during final inspection prevents submit delegation', 
   let inspections = 0, delegated = 0, consumed = 0;
   const original = f.page.getByRef.bind(f.page);
   f.page.getByRef = ref => new Proxy(original(ref), { get(target, key) {
-    if (key === 'evaluate') return async (...args) => {
-      const value = await target.evaluate(...args);
+    // Trusted inspections acquire a pinned handle and evaluate in utility
+    // world. Navigate at that actual boundary, without replacing its reader.
+    if (key === 'elementHandle') return async (...args) => {
+      const value = await target.elementHandle(...args);
       if (++inspections === 3) await f.page.goto(f.page.url() + '?boundary=1');
       return value;
     };
