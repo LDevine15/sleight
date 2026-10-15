@@ -18,24 +18,25 @@ const sameDocument = (a, b) => ['session', 'turn', 'document', 'origin'].every(k
 
 // Closure-free: pass to locator.evaluate in the target's own frame. Page words
 // can only increase risk. Read visible text, aria-label and input value together.
-export function inspectElement(el) {
+export function inspectElement(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   const get = (node, key) => Element.prototype.getAttribute.call(node, key) ?? '';
   const inputType = node => node instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(node).toLowerCase() : '';
-  const words = node => [get(node, 'aria-label'), node.textContent, get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
+  const words = node => [get(node, 'aria-label'), read(node, 'textContent'), get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
   const payment = value => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(value);
   const type = inputType(el);
-  const tag = el.localName, role = get(el, 'role'), form = 'form' in el ? el.form : el.closest('form'), rect = el.getBoundingClientRect(), style = getComputedStyle(el);
+  const associated = read(el, 'form');
+  const tag = read(el, 'localName'), role = get(el, 'role'), form = associated === undefined ? read(el, 'closest')('form') : associated, rect = read(el, 'getBoundingClientRect')(), style = getComputedStyle(el);
   const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
   const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
-    form: !!form, connected: el.isConnected, visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
-    enabled: !el.matches(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)),
+    form: !!form, connected: read(el, 'isConnected'), visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
+    enabled: !read(el, 'matches')(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)),
     submit: ['submit', 'image'].includes(type) || tag === 'button' && !!form && get(el, 'type') !== 'button' && get(el, 'type') !== 'reset' ||
       button && /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(words(el)) };
-  state.formPayment = !!form && Array.from(form.querySelectorAll('input,button,iframe')).some(node => {
+  state.formPayment = !!form && Array.from(read(form, 'querySelectorAll')('input,button,iframe')).some(node => {
     const attrs = ['name', 'id', 'autocomplete', 'title', 'aria-label'].map(key => get(node, key)).join(' ');
     if (/\bcc-|card|cvv|cvc/i.test(attrs)) return true;
-    if (node.localName === 'iframe') { try { return new URL(get(node, 'src'), location.href).origin !== location.origin; } catch { return true; } }
-    return (node.localName === 'button' || ['submit', 'image'].includes(inputType(node))) && payment(words(node));
+    if (read(node, 'localName') === 'iframe') { try { return new URL(get(node, 'src'), location.href).origin !== location.origin; } catch { return true; } }
+    return (read(node, 'localName') === 'button' || ['submit', 'image'].includes(inputType(node))) && payment(words(node));
   });
   if ((button || state.kind === 'link') && state.payment) state.submit = true;
   if (state.submit && state.formPayment) state.payment = true;

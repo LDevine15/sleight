@@ -32,3 +32,16 @@ for (const options of [{}, { nested: true }, { shadowFrame: true }]) test('V10R2
 for (const open of [false, true]) test('V10R2A shadow host is not evidence of the actual key receiver; open=' + open, () => {
   assert.equal(focused({ host: true, open }), false);
 });
+
+
+test('V10R4 native focus evidence wins over a named activeElement property', () => {
+  const view={frameElement:null}; view.top=view;
+  const doc={defaultView:view};
+  const image={isConnected:true,localName:'img',ownerDocument:doc};
+  doc.activeElement=image;
+  const nativeReceiver={localName:'button'};
+  const read=(node,key) => node===doc && key==='activeElement' ? nativeReceiver : node?.[key];
+  assert.equal(runInNewContext('('+focusCheckedNode.toString()+')(el,true,read)',{
+    el:image,read,HTMLElement:{prototype:{focus(){}}},
+  }),false);
+});

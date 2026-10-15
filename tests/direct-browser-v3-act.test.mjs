@@ -363,3 +363,21 @@ test('endpoint popup outcome reports the blocked line without its URL or content
   assert.match(result.lines.join('\n'), /blocked: DevTools endpoint/);
   assert.doesNotMatch(result.lines.join('\n'), /9222|alias.invalid|json\/list/);
 });
+
+test('v3 destroyed form evidence stops the batch after dispatched submit', async () => {
+  const f = fixture({ submit: true }); let reads = 0;
+  f.page.getByRef = () => utilityLocator({
+    async evaluate(fn) {
+      assert.equal(fn.name, 'inspectTarget');
+      if (++reads > 1) throw Error('Execution context was destroyed');
+      return { name: 'Submit', submit: true, payment: false, form: true, formSignature: 'before' };
+    },
+    async click() { f.actions.push(['click']); },
+  });
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'suffix' }], {});
+  assert.equal(result.stoppedAt, 1);
+  assert.match(result.lines[0], /effect unconfirmed;.*Execution context was destroyed/);
+  assert.match(result.lines[1], /not reached/);
+  assert.equal(f.actions.length, 1);
+  assert.ok(f.tab.state.submitUnconfirmed);
+});
