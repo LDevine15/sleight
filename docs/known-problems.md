@@ -103,13 +103,15 @@ our own runs. Dates and engine versions are given where they matter.
   single-line input is refused (Chrome submits the form on a bare line break). A textarea takes it. Keys outside a short list
   (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete,
   Backspace, F1-F12, one character, with modifiers) are refused on this path; Alt, Meta and other chords with Enter or Space are too.
-- `browser_read` on a page with a cross-site or sandboxed iframe that Playwright knows returns "Snapshot unavailable" with the
-  advice to retry or use the engine. The snapshot opens a CDP session for each frame, and the CDP filter refuses to attach to an
-  iframe target (`CDP_ATTACHMENT_INVALID`). It fails closed on purpose: a frame it cannot scan might hold values it would have
-  redacted. Measured on 2026-10-15 with one page and 1, 2 or 5 cross-site iframes, four reads each: 9 of 12 failed at dfa6d47d,
-  where Playwright often never knew the frame and the read then worked without it. 12 of 12 fail now, because Playwright knows
-  those frames every time. A key press without a ref (on the focused field) works on those pages. Not fixed: letting the filter attach
-  to the iframe targets of an owned page is a decision for the snapshot owner.
+- `browser_read` scans every frame in another process through a private read session that the CDP filter attaches to an iframe
+  target of an owned page (one its own auto-attach chain delivered), with the port guard on it first. It attaches to no other
+  target. The filter refuses every other target before any attach goes upstream (other tabs, popups it has not adopted, workers,
+  service workers, the browser target). Before this, any page with a cross-site or sandboxed iframe returned "Snapshot unavailable" (12 of 12 reads failed on
+  pages with 1, 2 and 5 cross-site iframes at 09c4a4c5). Now 12 of 12 succeed, 40 of 40 reads made right after opening pages with
+  five cross-site iframes succeed, and sandboxed iframes (`sandbox`, `allow-same-origin`, `allow-scripts`, both) read 4 of 4
+  each, with passwords and card fields redacted as in a same-origin frame. A read of a 5-iframe page takes about 15 ms against
+  3 ms for a page with none (medians of 20, three runs). A frame the filter has no iframe route for still makes the read fail
+  closed. We have not seen that happen in the runs above, and we don't know how often a slow third-party frame causes it.
 - A page that opens a popup from its own script can still take the screen during a browser session. Since 2026-10-13 sleight opens
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,
   links that need `window.opener`, downloads and anything a script opens, because the engine's read-only page access can't see

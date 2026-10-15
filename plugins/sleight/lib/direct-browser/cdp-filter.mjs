@@ -220,7 +220,8 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     }
     return sent;
   }
-  const frameRoutes = owner => [...routes].filter(([, route]) => route.type === 'iframe' && route.owner === owner);
+  // Private routes are the read-only sessions attach() hands out for an owned page's iframes; they carry no hook and are never counted.
+  const frameRoutes = owner => [...routes].filter(([, route]) => route.type === 'iframe' && route.owner === owner && !route.private);
   const frames = Object.freeze({
     // The running iframe sessions of an owned page, at any depth: the frames in other processes.
     sessions(owner) { live(); checkTarget(owner); return frameRoutes(owner).filter(([, route]) => route.live).map(([name]) => name); },
@@ -254,14 +255,21 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     async evaluate(owner, name, expression) {
       live(); checkTarget(owner);
       const route = routes.get(name);
-      if (!route || route.type !== 'iframe' || route.owner !== owner || !route.live || typeof expression !== 'string') throw Error('CDP_SESSION_NOT_OWNED');
+      if (!route || route.type !== 'iframe' || route.private || route.owner !== owner || !route.live || typeof expression !== 'string') throw Error('CDP_SESSION_NOT_OWNED');
       const result = await upstream.send('Runtime.evaluate', { expression, returnByValue: true }, name);
       if (result?.exceptionDetails) throw Error('CDP_COMMAND_FAILED');
       return result?.result?.value;
     },
   });
+  // The only non-page target the filter attaches to: an iframe that its own auto-attach chain from an owned page's session
+  // delivered (its route has the iframe type and an owner that is still owned). Anything else (another tab, a popup that is
+  // not adopted, a worker, a service worker, the browser) has no such route and is refused before the upstream attach.
+  const ownedFrame = target => [...routes.values()].find(route => route.target === target && route.type === 'iframe' &&
+    !route.private && owned.has(route.owner));
   async function attach(target, virtualParent) {
     checkTarget(target);
+    const frameOwner = owned.has(target) ? undefined : ownedFrame(target)?.owner;
+    if (!owned.has(target) && frameOwner === undefined) throw Error('CDP_ATTACHMENT_INVALID');
     const previous = attaching.get(target);
     const pending = (async () => {
       if (previous) await previous.catch(() => {});
@@ -282,8 +290,26 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         if (!routes.has(result.sessionId)) {
           const { targetInfo } = await upstream.send('Target.getTargetInfo', { targetId: target });
           live(); checkTarget(target);
-          if (targetInfo?.targetId !== target || targetInfo.type !== 'page') throw Error('CDP_ATTACHMENT_INVALID');
-          event({ method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo, waitingForDebugger: false } });
+          if (targetInfo?.targetId !== target) throw Error('CDP_ATTACHMENT_INVALID');
+          if (frameOwner !== undefined) {
+            // A second, private session on an owned page's iframe, for reading (the snapshot scans every frame). Playwright never
+            // sees an attach or detach event for it (it would adopt the iframe's target as a new frame), it takes no child
+            // auto-attach and no hook, and it gets the same port guard as the frame's own session before its first command.
+            if (targetInfo.type !== 'iframe' || ownedFrame(target)?.owner !== frameOwner) throw Error('CDP_ATTACHMENT_INVALID');
+            const route = { target, owner: frameOwner, parent: virtualParent, browserParent: virtualParent, type: 'iframe', private: true,
+              scripts: new Map(), live: false };
+            attachments.get(name).private = true;
+            routes.set(name, route);
+            route.ready = (async () => {
+              if (protectedPort !== undefined) await upstream.send('Fetch.enable', { patterns: guardPatterns }, name);
+              if (closed || routes.get(name) !== route) return;
+              route.live = true;
+            })();
+            route.ready.catch(() => { removeRoute(name); detach(name).catch(() => {}); });
+          } else {
+            if (targetInfo.type !== 'page') throw Error('CDP_ATTACHMENT_INVALID');
+            event({ method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo, waitingForDebugger: false } });
+          }
         }
         if (routes.get(name)?.target !== target) throw Error('CDP_ATTACHMENT_INVALID');
         await routes.get(name).ready;
@@ -328,6 +354,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         }
         if (method === 'Target.setAutoAttach') {
           if (typeof params.autoAttach !== 'boolean' || params.flatten !== true) refuse();
+          if (!isRoot && routes.get(route).private) refuse();
           if (!isRoot) return upstream.send(method, protectedPort !== undefined ? autoAttachParams :
             { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
           autoAttach = params.autoAttach;
