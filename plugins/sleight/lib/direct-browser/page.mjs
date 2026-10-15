@@ -265,7 +265,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         && /target.*closed/i.test(error.message)) result = { closed: true, opener: tab.opener };
       else throw error;
     } finally { if (modified) await tab.page.keyboard.up('ControlOrMeta').catch(() => {}); }
-    if (result?.closed !== true && prepared?.kind === 'link') {
+    if (result?.closed !== true && !tab.closed && !tab.page.isClosed?.() && prepared?.kind === 'link') {
       const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
         (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');

@@ -831,3 +831,15 @@ test('CR4 native submit formtarget overrides its form target and non-submit butt
     assert.equal(f.hook.prepare(new f.HTMLInputElement({ type: 'reset' }, form), 'reset', 1000), true);
   } finally { f.hook.off(); }
 });
+
+test('CR4 successful link dispatch that observes closure skips takeRequest and still settles', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
+  let settled = false;
+  f.entry.settlePopups = async () => { settled = true; };
+  f.entry.page.evaluate = async fn => {
+    if (String(fn).includes('takeRequest')) throw Error('must not read a closed page');
+  };
+  await backgroundClick(f.entry, f.locator, async () => { f.entry.closed = true; });
+  assert.equal(settled, true);
+});
