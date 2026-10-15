@@ -6,6 +6,7 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 ## Banner (2026-10-15 10:40 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
+OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. 1.3.0 waits only on turbo v3's gate. ROADMAP.md is the plan. Read it whole.
