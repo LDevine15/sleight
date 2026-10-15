@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
+import { registerTemp } from '../scripts/temp-leftovers.mjs';
 
 const load = () => import('../bench/turbo/v3-session.mjs');
 const origin = 'http://127.0.0.1:5431';
@@ -88,7 +89,6 @@ test('cleanup metrics are append-only and never manufacture zero tabs or follow 
   const { recordCleanup } = await import('../bench/turbo/v3-server.mjs');
   const { mkdtempSync, readFileSync, symlinkSync, realpathSync } = await import('node:fs');
   const { tmpdir } = await import('node:os'); const { join, resolve } = await import('node:path');
-  const { registerTemp } = await import('../scripts/temp-leftovers.mjs');
   const parent = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-v3-metrics-')));
   const file = join(realpathSync(parent), 'turbo-metrics.jsonl');
   recordCleanup(file, { revoked: true, cleanup: [] });
