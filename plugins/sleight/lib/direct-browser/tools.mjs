@@ -1,4 +1,5 @@
 import { assertEndpointRead, endpointURL, endpointBlock } from './endpoint-guard.mjs';
+import { originOf } from './output-hygiene.mjs'; // a page picks its title and URL path, so trusted lines carry only the origin
 // v3's five eagerly advertised tools. No generic JavaScript or authority fields.
 const object = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = { type: 'string', maxLength: 65536 };
@@ -79,8 +80,6 @@ export function validateToolCall(input, browser) {
   return request;
 }
 const clean = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 240);
-// A page picks its title and URL path (history.replaceState), so trusted lines carry only the origin.
-const originOf = url => { try { const u = new URL(url); return u.origin !== 'null' ? u.origin : u.protocol + (u.pathname === 'blank' ? 'blank' : ''); } catch { return 'unknown origin'; } };
 const textResult = (text, isError = false) => ({ text, isError });
 
 export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillFields, ctx,
@@ -109,7 +108,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
         if (ended) throw Error('turn ended');
         const a = request.arguments;
         if (request.name === 'browser_tabs') {
-          if (a.do === 'list') return textResult((await pages.list()).map(row => `${clean(row.tab)} ${originOf(row.url)}`).join('\n') || 'No owned tabs.');
+          if (a.do === 'list') return textResult((await pages.list()).map(row => `${clean(row.tab)} ${originOf(row.url)}${row.opener ? ' (opener ' + clean(row.opener) + ')' : ''}`).join('\n') || 'No owned tabs.');
           pages.tab(a.tab); started = true;
           return textResult(`${a.do}: ${JSON.stringify(await pages[a.do](a.tab))}`);
         }

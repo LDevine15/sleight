@@ -114,6 +114,7 @@ test('v3 retains blocker button refs when the final page diff is unchanged', asy
     snapshot: async (page, options) => ({ text: options.find ? '- button "Accept cookies" [ref=e8]' : 'No visible changes.', number: 2 }) });
   const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], {});
   assert.match(result.observe.text, /Accept cookies.*ref=e8/);
+  assert.match(result.observe.text, /^Blocker controls \(untrusted page content\):\n- button "Accept cookies"/m, 'the blocker read is labelled'); // its page text may only appear under this label
 });
 
 test('v3 unknown submit prevents a second submit before the delivered read', async () => {
