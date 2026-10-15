@@ -18,8 +18,11 @@ and full checks wait. Puddle's architect says focused headless agents are fine.
 **Gate round status.** The owner logged in both bench arms at 13:28 UTC (both Max, checked). The turbo smoke round on v3-gate
 `83fbf6b4` on the account login was ROUND CLEAN at 13:33 UTC: form-travel 11/11 in 104 s, demoid "Robin Vale" in 17 s, focus ok,
 3 errors, every event `claude-haiku-5-5` with `apiKeySource` none (`~/Library/Caches/sleight-bench/runs/smoke-20261015T133030Z`).
-The gate round waits on the owner: FowlBrowser's extension reloaded in Chrome's "sleight benchmark" profile and in Helium (preflight
-says it isn't reachable in Chrome), and an away window of about 60 minutes, since FowlBrowser's arm shows windows.
+The owner is away since 14:00 UTC and handed sleight-arch the FowlBrowser setup. Helium's FowlBrowser socket is live. Chrome's
+"sleight benchmark" profile is folder `Profile 7` (from `ledger/claims/CS2/plans.json`, since macOS denies reading Chrome's Local State).
+Opened at 14:12 UTC, its FowlBrowser extension didn't connect within 30 s (no `~/.fowlbrowser/chrome.sock`), so it needs a Reload
+click in `chrome://extensions`. That needs a computer-use grant for Chrome (owner's approval card). This session's own sleight 1.2.5
+can't reach the engine helper (RC1 fixes it, unreleased).
 
 Branches (all on `private`):
 - `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
