@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-14 23:57 UTC)
+## Banner (2026-10-15 00:17 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -24,8 +24,9 @@ and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and
 (`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R and V2R DONE and
 reviewed; V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
 no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
-(bench arm) waits for V7. V8 (removal) is built now on lane `codex-v3-v8` by import reachability and merges right after the gate
-(owner, 23:59 UTC). Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
+(bench arm) waits for V7. V8 (removal, `codex/v8` 813bca75) is DONE and passed a Claude review: package 15.4 to 8.2 MB, turbo module
+11,029 to 4,710 lines, tests 63,582 to 48,848 lines, 1155 pass. It merges right after the gate (owner), with V8R (restore canonical()
+coverage, settle five unreachable modules). Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
 template step 6). sleight-arch runs one full check per merge. Sonnet-high Claude reviewers take the critical reviews.
 `private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r2, v2r, v4r, v5r2 and v6r2, 1177/1177
 direct-browser tests, plus `9721c126` crediting page.mjs's popup code as adapted from FowlBrowser with the MIT text (a Claude audit of
@@ -49,7 +50,11 @@ FowlBrowser or the old versions. CR1 is DONE (29/29 real-page). A similarity aud
 them from HTML and WAI-ARIA on lane `codex-cr2` (base `private/cr2-base`). CR3 follows CR2. It uses the background click for
 everything except same-context links and own-activation controls, because the source-text guess missed external scripts. It also
 reads each frame in one CDP pass, measured before and after, and carries CR1's review fixes (same-context links became new tabs, closed-root probe budget,
-weak fixtures). CR3 then replaces the adapted code on v3-integration. Next: CR1, V7, V9R and V10R merge into
+weak fixtures). CR2 is DONE: its re-audit leaves one role-order leftover that sleight-arch sorts at CR3's merge, and it measured the
+modifier window (max 6.2 ms over 20 clicks, so 100 ms, down from 1000). CR3 is on lane `codex-cr3`. Trust join: V10R3 moved
+authority reads to the utility world. A Claude review then found DOM clobbering (`<img name="activeElement">`). V10R4 fixes it on
+`codex-v3-v10r4`, and V10R3 doesn't merge alone. V7R2 passed items 1 to 4; V7R3 (DevTools port blocked at the CDP layer, turbo
+startup failures leave the engine running, reconnect after loss) is on `codex-v3-v7r3`. Next: CR1, V7, V9R and V10R merge into
 v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8 merges.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
