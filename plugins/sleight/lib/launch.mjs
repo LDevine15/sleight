@@ -715,7 +715,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   const { trace, grantAudit } = approvalLogging(preapproved);
-  const s = directBrowserServer(resolveServer(), directBrowser);
+  let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
   let surfaceCache, child, childClosed, firstCallObserver, relay;
@@ -723,7 +723,13 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let terminating = false;
   const browserSelection = createBrowserSelection();
   let activeServer = s;
+  const serverIdentity = server => JSON.stringify([server.version, server.configPath, server.command, server.args, server.env]);
+  let runningServerIdentity;
   async function startEngine(isCurrent = () => true) {
+    s = directBrowserServer(resolveServer(), directBrowser);
+    if (s.error) throw new Error(s.error);
+    if (!existsSync(s.command)) throw new Error(`server runtime missing: ${s.command}`);
+    runningServerIdentity = serverIdentity(s);
     surfaceCache = directBrowser ? undefined : selectSurfaces(s);
     activeServer = directBrowser ? directBrowserServer(s, directBrowser) : await browserSelection.prepare(s);
     if (!isCurrent()) { await surfaceCache?.close(); throw new Error('Engine restart was stopped.'); }
@@ -766,6 +772,12 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
     browserChoice: browserSelection.choice,
     backendChanged: () => browserSelection.changed(),
+    engineChanged: () => {
+      try {
+        const latest = directBrowserServer(resolveServer(), directBrowser);
+        return !latest.error && serverIdentity(latest) !== runningServerIdentity;
+      } catch { return false; } // An update may be replacing the cache directory right now.
+    },
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
     staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
     settleTextWrite: (target, current, grant) => settleTextWrite(target, current, grant,

@@ -198,7 +198,9 @@ export function promptNotice(text, prompt) {
     .replace("sleight: noWindowsAvailable means the engine found no window of this app on the current desktop. If the app has a window, it's on another Space (the user may be in full screen or Split View), minimized or hidden. Clicks may still reach it, but drags and some reads won't. ", 'sleight: noWindowsAvailable. ')
     .replace("sleight: the engine's JavaScript session restarted before this call, so handles from earlier calls (such as `app`) are gone. An action that fails without `await` can end the session. ", 'sleight: JS restarted. ')
     .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ')
-    .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ');
+    .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ')
+    .replace('sleight reconnected after an engine update.', 'sleight: engine reconnected.')
+    .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.');
 }
 const SHUTDOWN_GRACE_MS = 3000;
 
@@ -384,7 +386,7 @@ export function createRelay({
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
-  beginStop = () => {}, stopEngine, restartEngine, backendChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
+  beginStop = () => {}, stopEngine, restartEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
   clientIn, clientOut, serverIn, serverOut,
   sessionId = randomUUID(),
   approvalScope = 'session',
@@ -474,7 +476,7 @@ export function createRelay({
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
-  const startup = startupCache?.bind({
+  let startup = startupCache?.bind({
     context: { approvalScope, firstCallBatch, prompt, changeReview, leanCalls, flowRules: !!flowRules, tools: localTools?.tools },
     send: msg => toClient(msg), forward: msg => clientLine(JSON.stringify(msg), true),
   });
@@ -599,7 +601,7 @@ export function createRelay({
       for (const state of helperStates.values()) if (state.stuck && state.pending === undefined) scheduleHelperRead(state);
     }
   }
-  async function restartCollectedEngine(backend = false) {
+  async function restartCollectedEngine(backend = false, update = false) {
     const generation = stopGeneration;
     const isCurrent = () => generation === stopGeneration && !closing && !disposed;
     try {
@@ -617,14 +619,17 @@ export function createRelay({
           internalRequests.set(id, msg => { clearTimeout(timer); resolve(msg); });
           toServer({ ...initialization, id });
         });
-        if (reply.error || reply.result?.isError) throw new Error('Engine initialization failed.');
+        if (reply.error || reply.result?.isError) throw new Error(reply.error?.message ?? 'Engine initialization failed.');
         toServer({ jsonrpc: '2.0', method: 'notifications/initialized' });
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
-      clipboard = newClipboard(); compactor = createReadCompactor({ leanCalls }); resultCalls.clear(); docsShown = backend; priorRead = undefined;
-      selectorWindows.clear(); helperStates.clear(); helperHandles.clear(); helperAliases.clear();
+      clipboard = newClipboard();
+      if (!update) { compactor = createReadCompactor({ leanCalls }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      resultCalls.clear(); docsShown = backend; priorRead = undefined;
+      for (const state of helperStates.values()) clearTimeout(state.timer);
+      helperStates.clear();
       screenshots.clear();
-      if (!backend) turnId = randomUUID();
+      if (!backend && !update) turnId = randomUUID();
       trace('engine-restarted-after-stop', {});
     } catch (error) {
       if (isCurrent()) {
@@ -635,6 +640,47 @@ export function createRelay({
       }
       throw error;
     }
+  }
+  const reconnectNotes = new Set(), updateRetries = new Set(), engineBindings = new Map();
+  function rememberEngineBindings() {
+    for (const [handle, target] of handleBundles) {
+      if (target?.appId && /^[A-Za-z_$][\w$]*$/.test(handle)) engineBindings.set(handle, target.appId);
+    }
+  }
+  function restoreEngineBindings(code) {
+    let prefix = '';
+    for (const [handle, appId] of engineBindings) {
+      if (!new RegExp(`(?:^|[^\\w$])${handle.replace(/[$]/g, '\\$&')}\\s*(?:\\.|\\[|\\?)`).test(code)) continue;
+      prefix += `globalThis[${JSON.stringify(handle)}] = await cua.getApp(${JSON.stringify(appId)});\n`;
+      engineBindings.delete(handle);
+    }
+    return prefix;
+  }
+  function reconnectEngine(id) {
+    const generation = stopGeneration, attempt = { generation };
+    restarting = attempt;
+    beginStop();
+    clearTimeout(idleTimer);
+    attempt.promise = (async () => {
+      const receipt = await stopEngine();
+      if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+      stopCollected = receipt?.collected === true;
+      if (!stopCollected) throw new Error('Engine collection is unconfirmed. Run /sleight stop before retrying.');
+      // This cache is bound to the launch identity of the collected engine.
+      // The existing client is already initialized; its replacement uses live replies.
+      startup?.close(); startup = undefined;
+      rememberEngineBindings();
+      invalidateDiagnostics(); forgetGuard(); browserStale.reset(); browserRecovery.reset();
+      browserWarmConfirmed = false;
+      privateWarmRequests.clear();
+      engineRequests.clear();
+      await clipboard?.close();
+      await restartCollectedEngine(false, true);
+      reconnectNotes.add(id);
+      trace('engine-update-reconnected', { id });
+    })().catch(error => { backendRestartUnconfirmed = !stopCollected; throw error; })
+      .finally(() => { if (restarting === attempt) restarting = undefined; });
+    return attempt.promise;
   }
   const localRunning = new Set();
   const preapprovalNotes = new Map(); // call id -> grants made during that call
@@ -1009,6 +1055,7 @@ export function createRelay({
   let constApp = false;
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
   function forgetHandles() {
+    engineBindings.clear();
     browserStale.reset();
     forgetGuard();
     tabsMayNeedCleanup = false;
@@ -1365,7 +1412,12 @@ export function createRelay({
       clearTimeout(probe.timer); helperProbes.delete(msg.id); probe.receive?.(msg);
       trace('helper-recovery-result', msg); return;
     }
-    if (msg.method === undefined) { pendingClients.delete(msg.id); callGenerations.delete(msg.id); }
+    if (msg.method === undefined) {
+      pendingClients.delete(msg.id); callGenerations.delete(msg.id);
+      if (reconnectNotes.delete(msg.id) && msg.result) msg.result.content = [...(msg.result.content ?? []),
+        { type: 'text', text: promptNotice('sleight reconnected after an engine update.', prompt) }];
+      updateRetries.delete(msg.id); reconnectNotes.delete(msg.id);
+    }
     if (clientOut.writableEnded || clientOut.destroyed) { trace('client-output-closed', { id: msg.id }); return; }
     if (receiptEnds.has(msg.id) && msg.method === undefined) {
       const receipt = receiptEnds.get(msg.id); receiptEnds.delete(msg.id);
@@ -1881,6 +1933,14 @@ export function createRelay({
     if (backendRestartUnconfirmed && msg.method === 'tools/call') {
       leaseStop(msg, 'Engine collection is unconfirmed. Run /sleight stop before retrying.'); return;
     }
+    if (!restarting && !stopCollected && engineChanged && stopEngine && restartEngine &&
+        msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name) && !updateRetries.has(msg.id) && engineChanged() === true) {
+      if (running.size || localRunning.size || internalRequests.size || approvalRequests.size || listRequests.size) {
+        leaseStop(msg, 'another call in this session is pending. Retry after it finishes.'); return;
+      }
+      updateRetries.add(msg.id);
+      reconnectEngine(msg.id);
+    }
     if (!restarting && !stopCollected && backendChanged && stopEngine && restartEngine &&
         msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name) && backendChanged() === true) {
       if (running.size || localRunning.size || internalRequests.size || approvalRequests.size) {
@@ -1966,6 +2026,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string') {
       msg.params.arguments.code = autoPrintCode(msg.params.arguments.code, process.env.SLEIGHT_AUTOPRINT === '1');
     }
+    const retryClient = structuredClone(msg);
     const originalCode = msg.params?.arguments?.code;
     if (typeof originalCode === 'string') {
       for (const native of nativeBindings(originalCode, nativeHandles)) {
@@ -2208,6 +2269,8 @@ export function createRelay({
                 uniqueSeen: compactor.uniqueSeen(target, literalNumbers(originalCode)) });
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
+          const restore = restoreEngineBindings(originalCode);
+          if (restore) msg.params.arguments.code = readCode(restore) + '\n' + msg.params.arguments.code;
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
@@ -2261,7 +2324,7 @@ export function createRelay({
       });
     } else {
       if (msg.method === 'tools/call' && msg.id !== undefined && !restartRetries.has(msg.id)) restartRetries.set(msg.id,
-        { sent: JSON.stringify(msg), read: !!healthPlan?.read, browserRead: !!browser && isBrowserRead(originalCode) });
+        { sent: JSON.stringify(msg), client: retryClient, read: !!healthPlan?.read, browserRead: !!browser && isBrowserRead(originalCode) });
       if (frontRestore && healthPlan?.acquisition && !healthPlan.selector.startsWith('{') && msg.id !== undefined) {
         forwardAcquisition(msg, healthPlan.key);
       } else toServer(msg);
@@ -2287,6 +2350,26 @@ export function createRelay({
     const failedWith = pattern => msg.result?.isError && (msg.result.content ?? []).some(c => c.type === 'text' && pattern.test(c.text ?? ''));
     const crashed = entry !== true && entry.read && failedWith(HELPER_CRASHED);
     const unattached = entry !== true && entry.browserRead && failedWith(DEBUGGER_UNATTACHED);
+    if (entry !== true && failedWith(HELPER_RESTARTING) && stopEngine && restartEngine) {
+      if (updateRetries.has(msg.id) || running.size > 1 || localRunning.size || internalRequests.size || approvalRequests.size || listRequests.size || closing || disposed) {
+        restartRetries.delete(msg.id); return false;
+      }
+      updateRetries.add(msg.id); restartRetries.set(msg.id, true);
+      const generation = stopGeneration;
+      // This error confirms the failed request never reached an app. Keep its
+      // original client code so the replacement gets complete setup and guards.
+      finishedCall(msg.id);
+      reconnectEngine(msg.id).then(() => {
+        if (generation !== stopGeneration || closing || disposed) return;
+        handleClient(structuredClone(entry.client));
+      }, error => {
+        if (generation !== stopGeneration || disposed) return;
+        msg.result.content.push({ type: 'text', text: `sleight: engine reconnection failed: ${error.message}. Run sleight-mcp --doctor.` });
+        finishedCall(msg.id); restartRetries.delete(msg.id);
+        toClient(msg);
+      });
+      return true;
+    }
     if (!(crashed || unattached || failedWith(HELPER_RESTARTING)) || entry === true || closing) { restartRetries.delete(msg.id); return false; }
     restartRetries.set(msg.id, true);
     if (unattached) {
@@ -2819,7 +2902,9 @@ export function createRelay({
     // a call during that restart can fail before reaching any app (2026-10-05).
     if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
       msg.result.content.some(c => c.type === 'text' && HELPER_START_FAILED.test(c.text ?? ''))) {
-      msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. Call js_reset and retry. If that fails too, tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", prompt) });
+      msg.result.content.push({ type: 'text', text: promptNotice(updateRetries.has(msg.id)
+        ? "sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper."
+        : "sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. Call js_reset and retry. If that fails too, tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", prompt) });
     } else if (msg.method === undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
       msg.result.content.some(c => c.type === 'text' && HELPER_CRASHED.test(c.text ?? ''))) {
       msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. Any action in this call may or may not have run, so read the app before you repeat one. A read alone is safe to repeat.", prompt) });
