@@ -799,7 +799,10 @@ test('CR4 late popup adoption retains the closed owned opener', async () => {
 
 test('CR4 frame walk passes inaccessible names and documents without inventing a target', () => {
   const f = hookFixture(), child = { name: 'destination', frames: [] };
-  const opaque = { frames: [child] };
+  const opaque = { frames: new Proxy([child], { get(array, key) {
+    if (typeof key === 'string' && !/^(length|\d+)$/.test(key)) throw Error('cross-origin named access');
+    return Reflect.get(array, key);
+  } }) };
   Object.defineProperties(opaque, { name: { get() { throw Error('cross-origin'); } },
     document: { get() { throw Error('cross-origin'); } } });
   f.window.top = { frames: [opaque] };
@@ -842,4 +845,30 @@ test('CR4 successful link dispatch that observes closure skips takeRequest and s
   };
   await backgroundClick(f.entry, f.locator, async () => { f.entry.closed = true; });
   assert.equal(settled, true);
+});
+
+test('CR4 self-close settles popup readiness against the living opener after native reparenting', async () => {
+  const f = fixture(), root = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const parent = f.registry.tab(root.tab), closing = f.page('closing', parent.targetId);
+  await f.registry.idle();
+  const child = f.registry.tab(parent.popups[0].tab);
+  child.page.evaluate = async () => true;
+  let release, entered;
+  const held = new Promise(resolve => { release = resolve; }), installing = new Promise(resolve => { entered = resolve; });
+  let finished = false;
+  const clicking = backgroundClick(child, { evaluate: async () => true }, async () => {
+    child.cdp.emit('Page.windowOpen', {}); await closing.close();
+    const survivor = f.page('reparented', parent.targetId), send = survivor.cdp.send;
+    survivor.cdp.send = async (method, params) => {
+      if (method === 'Runtime.evaluate') { entered(); await held; }
+      return send(method, params);
+    };
+    throw Error('Target page has been closed');
+  }).then(result => { finished = true; return result; });
+  try {
+    await installing;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(finished, false, 'backgroundClick must await the reparented popup installation');
+  } finally { release(); await clicking; await f.registry.endTurn(); }
+  assert.equal(parent.popups.length, 2);
 });

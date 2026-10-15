@@ -37,22 +37,23 @@ test('CR4 real popup opened by a self-closing child is ready before backgroundCl
   await child.page.waitForLoadState('load');
   const result = await backgroundClick(child, child.page.getByRole('button'), undefined, { timeoutMs: 5000 });
   assert.equal(child.page.isClosed(), true);
-  t.diagnostic('self-close native targets ' + JSON.stringify((await f.session.send('Target.getTargets')).targetInfos));
-  t.diagnostic('self-close notices ' + JSON.stringify({ root: f.entry.popups, child: child.popups, windows: child.windowOpenNo }));
-  assert.equal(child.popups.length, 1, 'surviving popup must be adopted before returning');
-  const survivor = f.registry.tab(child.popups[0].tab);
-  assert.equal(survivor.opener, child.tab);
+  assert.equal(f.entry.popups.length, 2, 'surviving popup must be adopted against its living native opener before returning');
+  const survivor = f.registry.tab(f.entry.popups[1].tab);
+  assert.equal(survivor.opener, f.entry.tab);
+  let ready = false; survivor.ready.then(() => { ready = true; });
+  await Promise.resolve();
+  assert.equal(ready, true, 'popup preparation is already complete when backgroundClick returns');
   assert.equal(await survivor.page.evaluate(() => !!window[Symbol.for('sleight.popup3')]), true);
   assert.equal(result?.closed === true || result === undefined, true);
   assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
 });
 
-for (const kind of ['sibling', 'grandchild', 'renamed-frame', 'earlier-popup'])
+for (const kind of ['sibling', 'grandchild', 'frame-attribute', 'earlier-popup'])
   test('CR4 real named link reuses existing context: ' + kind, { skip, timeout: 60000 }, async t => {
     const link = '<a href="/landed" target="destination">Continue here</a>';
     const html = kind === 'sibling' ? '<iframe src="/source"></iframe><iframe name="destination" src="/target"></iframe>'
       : kind === 'grandchild' ? link + '<iframe src="/nested"></iframe>'
-      : kind === 'renamed-frame' ? link + '<iframe name="destination" src="/target"></iframe>'
+      : kind === 'frame-attribute' ? link + '<iframe name="destination" src="/target"></iframe>'
       : `<button type="button" onclick="window.open('/target', 'destination')">Open</button>` + link;
     const f = await fixture(t, html, { '/source': link, '/target': '<p>Initial target</p>',
       '/nested': '<iframe name="destination" src="/target"></iframe>' });
@@ -65,7 +66,11 @@ for (const kind of ['sibling', 'grandchild', 'renamed-frame', 'earlier-popup'])
     } else {
       target = source.frames().find(frame => frame.name() === 'destination');
       if (kind === 'sibling') source = source.frames().find(frame => frame.url().endsWith('/source'));
-      if (kind === 'renamed-frame') await target.evaluate(() => { window.name = 'another-name'; });
+      if (kind === 'frame-attribute') {
+        const nextURL = target.url().replace('127.0.0.1', 'localhost');
+        await f.entry.page.locator('iframe').evaluate((element, url) => { element.src = url; }, nextURL);
+        await target.waitForURL(nextURL);
+      }
     }
     const navigated = target.waitForURL('**/landed', { timeout: 5000 });
     await backgroundClick(f.entry, source.getByRole('link', { name: 'Continue here' }), undefined, { timeoutMs: 5000 });

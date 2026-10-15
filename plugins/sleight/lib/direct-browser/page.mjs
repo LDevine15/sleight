@@ -135,7 +135,9 @@ export function popupHook() {
           if (attribute(frame, 'name') === target) return true;
       } catch { /* Cross-origin document. */ }
       try {
-        const frames = context.frames, named = frames?.[target];
+        const frames = context.frames;
+        let named;
+        try { named = frames?.[target]; } catch { /* Cross-origin named access; indexed children remain readable. */ }
         for (let i = 0; i < (frames?.length ?? 0); i++) {
           if (frames[i] === named) return true;
           pending.push(frames[i]);
@@ -332,13 +334,20 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     entry.windowOpenNo = 0;
     entry.parent = opener;
     entry.openChild = url => openOwned(url, entry);
-    entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length });
+    entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length,
+      ...(entry.parent ? { opener: { tab: entry.parent.tab, windows: entry.parent.windowOpenNo, popups: entry.parent.popups.length } } : {}) });
     entry.settlePopups = async before => {
-      if (!before || entry.windowOpenNo === before.windows && entry.popups.length === before.popups) return;
+      if (!before) return;
+      const sources = [{ entry, before }];
+      // Chromium can reparent a new popup to the living opener when the page
+      // that opened it closes during dispatch. Honor that native identity.
+      const parent = entry.closed && records.get(before.opener?.tab);
+      if (parent && !parent.closed && !parent.released) sources.push({ entry: parent, before: before.opener });
+      if (sources.every(({ entry, before }) => entry.windowOpenNo === before.windows && entry.popups.length === before.popups)) return;
       const until = Date.now() + popupWaitMs;
-      while (!ended && entry.popups.length === before.popups && Date.now() < until)
+      while (!ended && sources.every(({ entry, before }) => entry.popups.length === before.popups) && Date.now() < until)
         await new Promise(resolve => setTimeout(resolve, Math.min(10, popupWaitMs)));
-      for (const notice of entry.popups.slice(before.popups)) {
+      for (const { entry, before } of sources) for (const notice of entry.popups.slice(before.popups)) {
         const child = records.get(notice.tab);
         if (child) await deadline(() => child.ready, timeoutMs).catch(() => {});
       }
@@ -383,7 +392,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     const until = Date.now() + popupWaitMs;
     while (!ended && !parent.released) {
       const { targetInfos } = await deadline(() => upstream.send('Target.getTargets'), timeoutMs);
-      const children = targetInfos.filter(info => info.type === 'page' && info.openerId === parent.targetId &&
+      const reparented = parent.closed && parent.parent && !parent.parent.closed && !parent.parent.released ? parent.parent.targetId : undefined;
+      const children = targetInfos.filter(info => info.type === 'page' && (info.openerId === parent.targetId || reparented && info.openerId === reparented) &&
         !targets.has(info.targetId) && !allocations.has(info.targetId));
       for (const child of children) {
         if (ended || parent.released) return;
