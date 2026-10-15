@@ -62,7 +62,9 @@ The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
    After the browser, the next target is the slowest class of Mac app (owner, 2026-10-13, leaning Electron). AM1 measures every
    class, and EL1 is a feasibility note on driving Electron apps through Chromium's own protocol, which is the owner's call.
    The owner approved the Electron design's six decisions (2026-10-14, written in LAWS). The debugger is a separate opt-in for each
-   app, with an Always allow that only the user's click writes. EP-1 to EP-7 build after 1.3.0.
+   app, with an Always allow that only the user's click writes. EP-1 to EP-7 merge after 1.3.0. EP-2 and EP-6 are done on branches.
+   EP-1 blocked on the superseded v1/v2 design, so EPV3 (2026-10-15) re-plans EP-1 to EP-7 on turbo v3's tools and trust join,
+   built on branches now and merged after the tag.
    The astra report (2026-10-13) disproved one extension queue across sessions. The owner lifted the code freeze for AS-1 (bind discovery
    to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. Competitors' code gives ideas only, rewritten clean-room (owner, 2026-10-14).
    Owner, 2026-10-14: a prototype turbo arm (TP1) runs the Haiku gate round early, as a measurement before the production wiring
