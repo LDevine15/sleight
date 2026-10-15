@@ -41,7 +41,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     catch { return false; }
   };
   const owned = new Set(ownedTargets), routes = new Map(), listeners = new Set(), attaching = new Map(), bridges = new Set(), browserRoutes = new Set(), attachmentParents = new Map();
-  const attachments = new Map(), outstanding = new Set(), collectedSessions = new Set();
+  const monitors = new Map(), attachments = new Map(), outstanding = new Set(), collectedSessions = new Set();
   let closed = false, autoAttach = false, disposal, listening = true;
   const root = upstream.sessionId;
   const live = () => { if (closed) throw Error('CDP_FILTER_CLOSED'); };
@@ -60,7 +60,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     }
   }
   function removeRoute(name) {
-    for (const [child, route] of routes) if (route.parent === name) removeRoute(child);
+    for (const [child, route] of routes) if (route.parent === name || attachments.get(child)?.parent === name) removeRoute(child);
     routes.delete(name);
   }
   // Input authority can disappear before a session is physically detached.
@@ -72,7 +72,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
   }
   function collected(name) {
     for (const [child, attachment] of attachments) if (attachment.parent === name) collected(child);
-    attachments.delete(name); collectedSessions.add(name); removeRoute(name);
+    attachments.delete(name); monitors.delete(name); collectedSessions.add(name); removeRoute(name);
     finishEvents();
   }
   async function detach(name) {
@@ -107,7 +107,8 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       return;
     }
     if (closed && frame.method !== 'Target.attachedToTarget') return;
-    const parent = frame.sessionId === undefined ? undefined : (closed ? attachments : routes).get(frame.sessionId);
+    const parent = frame.sessionId === undefined ? undefined : (closed ? attachments : routes).get(frame.sessionId) ??
+      (monitors.has(frame.sessionId) && owns(monitors.get(frame.sessionId).target) ? monitors.get(frame.sessionId) : undefined);
     if (frame.sessionId !== undefined && !parent) return;
     if (parent && protectedPort !== undefined && frame.method === 'Fetch.requestPaused') {
       const protectedRequest = protectedUrl(params.request?.url);
@@ -122,7 +123,8 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       const info = params.targetInfo;
       if (!object(info) || !id(info.targetId) || !id(params.sessionId)) return;
       const allowed = parent ? ['iframe', 'worker', ...(protectedPort !== undefined ? ['shared_worker', 'service_worker'] : [])].includes(info.type) ||
-        protectedPort !== undefined && info.type === 'page' && info.openerId === parent.target :
+        protectedPort !== undefined && info.type === 'page' && (parent.monitor && info.targetId === parent.target ||
+          info.openerId === parent.target || parent.monitor && [...routes.values()].some(route => route.target === info.openerId && route.owner === parent.owner)) :
         (closed ? attachmentParents.has(info.targetId) : owned.has(info.targetId)) && info.type === 'page';
       if (!allowed) {
         // Unrelated targets never acquire a route or expose their metadata.
@@ -133,14 +135,16 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         return;
       }
       if (routes.has(params.sessionId)) return;
-      const virtualParent = parent ? info.type === 'page' ? parent.browserParent : frame.sessionId : attachmentParents.get(info.targetId);
+      const virtualParent = parent ? info.type === 'page' ? parent.browserParent : parent.monitor ? parent.pageSession : frame.sessionId : attachmentParents.get(info.targetId);
       if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
       if (closed) return; // Late attachments stay private and grant no input route.
       const route = { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent,
         browserParent: parent ? parent.browserParent : virtualParent,
         private: parent?.private || ['shared_worker', 'service_worker'].includes(info.type) };
       attachments.get(params.sessionId).private = route.private;
+      if (parent?.monitor && info.targetId === parent.target) parent.pageSession = params.sessionId;
       routes.set(params.sessionId, route);
+      const physicalParent = frame.sessionId;
       frame = routed(frame, virtualParent);
       if (protectedPort !== undefined) {
         route.ready = (async () => {
@@ -148,6 +152,15 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
           // Install this independently of Playwright, including on every child.
           // A paused target cannot make its first request before the guard exists.
           await upstream.send('Target.setAutoAttach', autoAttachParams, params.sessionId);
+          // Page-local auto-attach excludes popups and shared workers in Chromium.
+          // A private browser session watches only this owned page's relations.
+          const monitor = parent?.monitor ? parent : monitors.get(parent?.monitorSession);
+          route.monitorSession = parent?.monitor ? physicalParent : parent?.monitorSession;
+          if (info.type === 'page' && monitor && !monitor.targets.has(info.targetId)) {
+            monitor.targets.add(info.targetId);
+            await upstream.send('Target.autoAttachRelated', { targetId: info.targetId, waitForDebuggerOnStart: true,
+              filter: [{ type: 'page' }, { type: 'shared_worker' }, { type: 'service_worker' }, { exclude: true }] }, route.monitorSession);
+          }
           if (closed || routes.get(params.sessionId) !== route) return;
           if (!route.private) emit(frame);
           if (params.waitingForDebugger) await upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId);
@@ -174,7 +187,23 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       try {
         const request = {}; outstanding.add(request);
         let result;
-        try { result = await upstream.send('Target.attachToTarget', { targetId: target, flatten: true }); }
+        try {
+          if (protectedPort === undefined) result = await upstream.send('Target.attachToTarget', { targetId: target, flatten: true });
+          else {
+            const { sessionId } = await upstream.send('Target.attachToBrowserTarget');
+            if (!id(sessionId)) throw Error('CDP_ATTACHMENT_INVALID');
+            acquired(sessionId, target, root, virtualParent);
+            Object.assign(attachments.get(sessionId), { monitor: true, private: true });
+            const monitor = { target, owner: target, browserParent: virtualParent, monitor: true, targets: new Set([target]) };
+            monitors.set(sessionId, monitor);
+            try {
+              await upstream.send('Target.autoAttachRelated', { targetId: target, waitForDebuggerOnStart: true,
+                filter: [{ type: 'page' }, { type: 'shared_worker' }, { type: 'service_worker' }, { exclude: true }] }, sessionId);
+              if (!id(monitor.pageSession)) throw Error('CDP_ATTACHMENT_INVALID');
+              result = { sessionId: monitor.pageSession };
+            } catch (error) { await detach(sessionId); throw error; }
+          }
+        }
         finally { outstanding.delete(request); }
         if (!id(result?.sessionId)) throw Error('CDP_ATTACHMENT_INVALID');
         name = result.sessionId;

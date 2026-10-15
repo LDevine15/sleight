@@ -15,7 +15,7 @@ function fixture() {
     ['owned', { targetId: 'owned', type: 'page', title: 'Owned fixture', url: 'about:blank', browserContextId: 'default' }],
     ['foreign', { targetId: 'foreign', type: 'page', title: 'Private fixture', url: 'https://private.invalid/', browserContextId: 'default' }],
   ]);
-  let attachment = 0;
+  let attachment = 0, browserAttachment = 0;
   const emit = event => { for (const fn of listeners) fn(event); };
   const session = { sessionId: 'root', on(name, fn) { assert.equal(name, 'event'); listeners.add(fn); },
     off(name, fn) { assert.equal(name, 'event'); listeners.delete(fn); },
@@ -25,6 +25,12 @@ function fixture() {
       if (method === 'Target.getTargets') return { targetInfos: [...targets.values()] };
       if (method === 'Target.getTargetInfo') { const targetInfo = targets.get(params.targetId); if (!targetInfo) throw Error('missing target'); return { targetInfo }; }
       if (method === 'Target.createTarget') { targets.set('new', { ...targets.get('owned'), targetId: 'new' }); return { targetId: 'new' }; }
+      if (method === 'Target.attachToBrowserTarget') return { sessionId: 'monitor-' + ++browserAttachment };
+      if (method === 'Target.autoAttachRelated') {
+        const sessionId = 's-' + params.targetId + (++attachment === 1 ? '' : '-' + attachment);
+        emit({ method: 'Target.attachedToTarget', sessionId: route, params: { sessionId, targetInfo: targets.get(params.targetId), waitingForDebugger: false } });
+        return {};
+      }
       if (method === 'Target.attachToTarget') {
         const sessionId = 's-' + params.targetId + (++attachment === 1 ? '' : '-' + attachment);
         emit({ method: 'Target.attachedToTarget', params: { sessionId, targetInfo: targets.get(params.targetId), waitingForDebugger: false } });
