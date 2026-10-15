@@ -51,7 +51,7 @@ test('CR7 tab observer detects a foreground plain-submit control', { skip, timeo
   const f = await fixture(t, '<form action="/landed" target="_blank"><button>Send</button></form>', {}, { observeTabs: true });
   const before = await f.tabState(), next = f.context.waitForEvent('page', { timeout: 5000 });
   await f.entry.page.getByRole('button').click();
-  const child = await next; await child.waitForURL('**/landed');
+  const child = await next; await child.waitForURL('**/landed**', { timeout: 5000 });
   const opened = (await f.tabState()).filter(tab => !before.some(old => old.id === tab.id));
   t.diagnostic('foreground control ' + JSON.stringify(opened));
   assert.equal(opened.length, 1);
