@@ -85,6 +85,15 @@ our own runs. Dates and engine versions are given where they matter.
   debugging on, so a non-default profile started with `--remote-debugging-port` is exposed.
 - Turbo relies on Chrome refusing page WebSockets to the debug port by their Origin. A Chrome started with
   `--remote-allow-origins=*` would let a page drive another tab that way. sleight doesn't check for that flag.
+- A turbo script click aimed at a frame by its name, after which the page moves that frame out of the document (`appendChild`,
+  `insertBefore`, `append`, `prepend`, `before` or `after` into another parent), empties its parent with `innerText`, or deletes it
+  with a `Range` or `execCommand`, isn't seen as a re-aim. The new window comes to the foreground and the result says it probably
+  did (4 of 4, 2026-10-15). It takes a page written to do this.
+- A popup that closes itself while it loads can be missed by turbo's popup discovery. The click that opened it takes about 2 s and
+  doesn't report the popup, and the turn's cleanup can list an owned tab as retained. Measured 2026-10-15 with `window.close()` at
+  load: 1 of 3 runs before pop round 5, 2 of 3 after. A popup that closes 300 ms after load was handled 9 of 9 times.
+- Turbo refuses Enter in a `contenteditable` element with `CHECKED_FOCUS_REQUIRED`, and the steps after it don't run. Typing works
+  there. Measured 2026-10-15 on a rich-text editor page.
 
 On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s against FowlBrowser's 26/26
 in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from that list:
@@ -327,7 +336,7 @@ Engine behavior that sleight works around or can't change:
   without a hook of its own, could replace its `eval` and read the key and secret from the source. We built no such page. Found 2026-10-15 (AD1 pop round 2).
 - Before a click is sent, turbo v3 seals what the click activates and arms every other frame as foreign. Trusted input that no longer matches the seal is cancelled. Limits of that check (AD1 swap rounds 3 and 4, 2026-10-15):
   - A frame on another site has no hook, because the registry's script is on the page target. The shield skips it, and a click that ends up in it is only reported afterwards, by the landed check.
-  - A same-site frame that answers "no hook" fails the click before it is sent, since a page can fake that answer. The result says to use the engine browser path. A popup's child frames that began before sleight adopted it get the hook installed at adoption. A frame that can't run scripts (its iframe's `sandbox` attribute, or an ancestor's, lacks `allow-scripts`) doesn't fail it. The registry's script runs there but no listener ever fires, so arming it returns false (or the hook is absent), and nothing in the frame can run page code or forge an answer. The attribute is read from the parent's side in the utility world after a frame gives either reply. A page can change the attribute after the frame loaded, which skips that frame like a cross-site one (the landed check reports it afterwards). A frame sandboxed by a CSP `sandbox` header, with no attribute, isn't recognized and fails the click closed (measured 2026-10-15: `<iframe src>` to a response with `content-security-policy: sandbox`).
+  - A same-site frame that answers "no hook" fails the click before it is sent, since a page can fake that answer. The result says to use the engine browser path. A popup's child frames that began before sleight adopted it get the hook installed at adoption. A frame that can't run scripts (its iframe's `sandbox` attribute, or an ancestor's, lacks `allow-scripts`) doesn't fail it. The registry's script runs there but no listener ever fires, so arming it returns false (or the hook is absent), and nothing in the frame can run page code or forge an answer. The attribute is read from the parent's side in the utility world after a frame gives either reply. A page can change the attribute after the frame loaded, which skips that frame like a cross-site one (the landed check reports it afterwards). A frame sandboxed by a CSP `sandbox` header, with no attribute, isn't recognized and can fail the click closed (measured 2026-10-15: `<iframe src>` to a response with `content-security-policy: sandbox`).
   - A click handler registered after the last guarded event can still change the page, and `form.submit()` or `fetch` from a key handler can't be vetoed.
   - A frame the browser creates or navigates between the last confirm and the press arms itself from its parent's state when it is same-origin. One under a cross-origin parent can't.
   - A foreign shield that can't be released (the frame stopped answering) keeps cancelling trusted input in that frame until its hard cap, about 25 s.
