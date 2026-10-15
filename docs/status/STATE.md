@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 21:18 UTC, owner away)
+## Banner (2026-10-15 21:26 UTC, owner away)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
@@ -15,14 +15,12 @@ Owner, 2026-10-15: all testing runs on the owner's Anthropic account login, neve
 sleight-arch's all night (live runs allowed). Puddle holds `/tmp/sleight-hold` for window 1015b from 03:52 UTC (up to about 2 h),
 and full checks wait. Puddle's architect says focused headless agents are fine.
 
-**Gate rerun, 2026-10-15 20:07 UTC: not met on tasks and time** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
-v3-gate `68c1b383` with the arm fixes and closed-root controls). Turbo 24/26, 855 s, 1 error; FowlBrowser 25/26, 703 s, 12 errors;
-both 0 focus events and 0 ToolSearch. Turbo's misses are form-checkout (the payment rule asks: no amount in the prompt). On the 24
-runs both finished, turbo took 770 s against 606 s. It was level or faster on the 9 short tasks and about 154 s slower on form-settings,
-where a range slider refused a numeric fill and a submit waited its full 5 s. Agent `turbo-form-speed` is fixing those
-on v3-gate (`ledger/claims/GATE2/form-speed.md`). The first round at 18:26 UTC had turbo at 14/26 checked, 31 errors.
-Since the rerun: settings forms average 35.5 s (was 82, `fe9cb4d9`), and form-travel's list picker medians are 63 s and 54 s
-(normal, swap; FowlBrowser 93 and 74; `cddc7895`, `ledger/claims/GATE2/combobox.md`). Next: gate round 3 when the owner is away.
+**Gate round 3, 2026-10-15 21:19 UTC: turbo faster** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
+v3-gate `cddc7895`). Turbo 24/26, 590 s, 197 calls, 2 errors; FowlBrowser 26/26, 750 s, 276 calls, 7 errors; both 0 focus events
+and 0 ToolSearch. Turbo's misses are form-checkout, where the payment rule asks (the prompt doesn't give an amount) and FowlBrowser
+paid. On the 24 runs both finished, turbo 509 s against 637 s. One Puddle suite overlapped FowlBrowser's first 42 s. Gate targets:
+errors, ToolSearch and focus met, tasks at 24/26 and time at 590 s against 575 s. A claim needs the median of at least 5 rounds. Earlier
+rounds that day: 18:26 UTC turbo 14/26 checked, 31 errors (arm limits); 20:07 UTC turbo 24/26, 855 s (slow forms).
 
 Branches (all on `private`):
 - `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
@@ -48,7 +46,8 @@ demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.goog
 test/demo/server.mjs --all" --out <dir> --effort high`.
 
 Next, in order (after the 18:26 UTC gate round missed):
-1. Done: arm fixes (`941ee17d`) and closed-root controls (`68c1b383`). Now: turbo form speed (agent `turbo-form-speed`).
+1. Done: arm fixes, closed-root controls, form speed and list pickers (v3-gate `cddc7895`). Next: rounds 4 and 5 for the median
+   (owner away, Puddle's quiet window), and the owner's call on scoring form-checkout as "correctly asked".
 2. AD1 finish line: once the kb integration (running) and pop r5 are in ad1-int, one full check there and the merge into v3-gate.
 3. Fix two small turbo bugs found on the way: a read's redaction can blank matching characters elsewhere on the page, and `wait` with
    a ref may call a method an ElementHandle lacks.
