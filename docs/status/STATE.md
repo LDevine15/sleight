@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 18:35 UTC, owner away)
+## Banner (2026-10-15 20:16 UTC, owner away)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
@@ -15,12 +15,12 @@ Owner, 2026-10-15: all testing runs on the owner's Anthropic account login, neve
 sleight-arch's all night (live runs allowed). Puddle holds `/tmp/sleight-hold` for window 1015b from 03:52 UTC (up to about 2 h),
 and full checks wait. Puddle's architect says focused headless agents are fine.
 
-**Gate round, 2026-10-15 18:26 UTC: not met** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md)). Turbo
-v3 (`v3-gate` `83fbf6b4`) 20/26 graded, 14/26 with a checked answer, 865 s, 31 errors; FowlBrowser 24/26, 806 s, 8 errors; both 0
-focus events and 0 ToolSearch. On the 7 tasks both finished, turbo 381 s against 438 s. Turbo's misses: the closed-shadow two-factor
-switch (4 runs, a turbo gap), form-checkout (2 runs, payment rule; FowlBrowser stopped there too), and the arm's own limits
-(Wikipedia and MDN unreachable from its local-only browser, mobile without a viewport tool since the arm refuses engine calls, 6 runs).
-19 of turbo's 31 errors are that refused engine call (`cua.listBrowsers()` first, every task).
+**Gate rerun, 2026-10-15 20:07 UTC: not met on tasks and time** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
+v3-gate `68c1b383` with the arm fixes and closed-root controls). Turbo 24/26, 855 s, 1 error; FowlBrowser 25/26, 703 s, 12 errors;
+both 0 focus events and 0 ToolSearch. Turbo's misses are form-checkout (the payment rule asks: no amount in the prompt). On the 24
+runs both finished, turbo took 770 s against 606 s. It was level or faster on the 9 short tasks and about 154 s slower on form-settings,
+where a range slider refused a numeric fill and a submit waited its full 5 s. Agent `turbo-form-speed` is fixing those
+on v3-gate (`ledger/claims/GATE2/form-speed.md`). The first round at 18:26 UTC had turbo at 14/26 checked, 31 errors.
 
 Branches (all on `private`):
 - `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
@@ -46,10 +46,10 @@ demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.goog
 test/demo/server.mjs --all" --out <dir> --effort high`.
 
 Next, in order (after the 18:26 UTC gate round missed):
-1. Bench arm fixes (agent `gate-arm-fix` on v3-gate, record `ledger/claims/GATE2/arm-fix.md`): open-web access for the arm's own
-   headless browser, the first engine call every task makes, and a usable viewport step with an in-view marker in reads.
+1. Done: arm fixes (`941ee17d`) and closed-root controls (`68c1b383`). Now: turbo form speed (agent `turbo-form-speed`).
 2. AD1 finish line: once the kb integration (running) and pop r5 are in ad1-int, one full check there and the merge into v3-gate.
-3. Turbo acts on closed-shadow controls (the two-factor switch, 4 gate runs), built on v3-gate after the AD1 merge.
+3. Fix two small turbo bugs found on the way: a read's redaction can blank matching characters elsewhere on the page, and `wait` with
+   a ref may call a method an ElementHandle lacks.
 4. Gate rerun (a round takes about 8 minutes; ask Puddle's architect for a quiet window first), then the Opus head-to-head, then
    merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 
