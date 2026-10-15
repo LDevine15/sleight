@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
+import { check, inspectElement, intent, expirePaymentDialog, keyClass } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 
@@ -10,8 +10,7 @@ const text = value => typeof value === 'string' && value.trim().length > 0 && va
 const refused = () => ({ verdict: 'refuse', message: 'Trusted turn or target evidence is unavailable. Use the engine browser path.' });
 const equal = (a, b) => canonical(a) === canonical(b);
 const FOCUS_MOVED = 'focus moved while the key was being sent, so the key was stopped before it could activate another element. Read the page again before deciding; do not resend the key';
-const ACTIVATION_KEYS = { Enter: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' }, Return: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' },
-  Space: { key: ' ', code: 'Space', vk: 32, text: ' ' }, ' ': { key: ' ', code: 'Space', vk: 32, text: ' ' } };
+const KEYS = { Enter: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' }, Space: { key: ' ', code: 'Space', vk: 32, text: ' ' } };
 export const isV3Context = ctx => !!ctx && contexts.has(ctx);
 
 // Called only by the inherited worker's begin handler. No model-facing endpoint
@@ -66,6 +65,29 @@ export function focusCheckedNode(el, focus, read = (node, key) => { const value 
       node = frame;
     }
   } catch { return false; }
+}
+
+// Utility-world veto for keys we send ourselves. Page script runs between our CDP commands (timers, rAF), so a
+// re-read can't close the window alone: this capture listener on the window drops any key event whose real target
+// (composedPath()[0]) isn't the checked element, before the page's default action (Enter activation, Space click)
+// runs. Frames other than the checked one get expected:false and veto everything. The page can't see this world.
+export function keyGuard(el, arg, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  const slot = Symbol.for('sleight.keyGuard'), add = EventTarget.prototype.addEventListener, drop = EventTarget.prototype.removeEventListener;
+  const guard = globalThis[slot], keys = ['localName', 'type', 'form', 'formAction', 'formMethod', 'formTarget', 'formEnctype', 'formNoValidate'];
+  const stop = () => { if (guard) { for (const type of guard.types) drop.call(globalThis, type, guard.fn, true); globalThis[slot] = undefined; } };
+  if (arg.op === 'install') {
+    stop();
+    const next = { expected: arg.expected ? el : null, vetoed: 0, types: ['keydown', 'keypress', 'keyup'],
+      sig: arg.expected ? keys.map(key => read(el, key)) : [] };
+    next.fn = event => { if (event.composedPath()[0] !== next.expected) { event.preventDefault(); event.stopImmediatePropagation(); next.vetoed++; } };
+    for (const type of next.types) add.call(globalThis, type, next.fn, true);
+    globalThis[slot] = next; return 0;
+  }
+  // Same tag, type and form owner as before the key: a keydown handler can rewire a button without moving focus.
+  if (arg.op === 'verify') return !!guard && guard.sig.every((value, index) => read(el, keys[index]) === value);
+  const vetoed = guard?.vetoed ?? 0;
+  if (arg.op === 'remove') stop();
+  return vetoed;
 }
 
 export function ownDocument(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'ownerDocument'); }
@@ -272,6 +294,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       try {
         if (!current()) return refused();
         target.do = kind;
+        if (kind === 'press' && keyClass(target.key).kind === 'unknown') return { verdict: 'refuse', message: 'Unsupported key. Use Enter, Space, Tab, Escape, Backspace, Delete, Home, End, PageUp, PageDown, an arrow, F1-F12 or one character, with Alt, Control, Meta or Shift if needed.' };
         if (kind !== 'dialog') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         if (kind === 'dialog') {
           if (target.accept === false) { dialogOwner = undefined; expirePaymentDialog(ruleContext); return { verdict: 'allow' }; }
@@ -305,29 +328,50 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       const record = targets.get(target);
       if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
           !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+      const { kind, chord } = keyClass(key);
+      if (kind === 'unknown' || chord && KEYS[kind]) throw Error('CHECKED_FOCUS_REQUIRED'); // chords are refused upstream
       // ElementHandle.press focuses again without verifying its recipient.
       // Use only the owned page keyboard after the checked ref retained focus.
-      const activation = ACTIVATION_KEYS[key];
-      if (!activation) {
-        if (/(?:^|\+)(?:Enter|Return|Space)$|\+ $/.test(key)) throw Error('CHECKED_FOCUS_REQUIRED'); // chords are refused upstream
-        return target.page.keyboard.press(key, options);
-      }
+      if (kind === 'safe') return target.page.keyboard.press(key, options);
       // keyDown with text is keydown plus keypress in one CDP command, so a page
       // keydown handler can move focus before the keypress that activates. Send
-      // them apart and re-read the receiver (isolated world, immune to page getter
-      // overrides) before each event that can activate: keypress (Enter, submit),
-      // keyup (Space). On a move, stop without releasing the key onto the new element.
+      // the events apart, re-read the receiver (isolated world, immune to page
+      // getter overrides) between them, and keep a utility-world veto on every
+      // frame so a page timer firing in the gaps can't aim the event elsewhere.
       const cdp = cdpSessions.get(target.page) ?? await target.page.context().newCDPSession(target.page);
       cdpSessions.set(target.page, cdp);
-      const send = (type, extra) => cdp.send('Input.dispatchKeyEvent', { type, key: activation.key, code: activation.code,
-        windowsVirtualKeyCode: activation.vk, ...extra });
-      const receiver = async () => {
-        if (!current() || !record.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
-            !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error(FOCUS_MOVED);
-      };
-      await send('rawKeyDown');
-      await receiver(); await send('char', { text: activation.text, unmodifiedText: activation.text });
-      await receiver(); await send('keyUp');
+      const send = (type, extra) => cdp.send('Input.dispatchKeyEvent', { type, key: KEYS[kind].key, code: KEYS[kind].code,
+        windowsVirtualKeyCode: KEYS[kind].vk, ...extra });
+      const owner = await record.handle.ownerFrame(), guards = [{ handle: record.handle, own: true }];
+      try {
+        for (const frame of target.page.frames()) {
+          if (frame === owner) continue;
+          let handle;
+          try { handle = await frame.locator('html').elementHandle({ timeout: 1000 }); } catch { if (frame.isDetached()) continue; throw Error('CHECKED_FOCUS_REQUIRED'); }
+          guards.push({ handle });
+        }
+        for (const { handle, own } of guards) await trustedRead(handle, keyGuard, { op: 'install', expected: !!own });
+        const settle = async () => {
+          try {
+            if (!current() || !record.doc.valid) return 'gone';
+            return await trustedRead(record.handle, samePageDocument, record.doc.handle) &&
+              await trustedRead(record.handle, focusCheckedNode, false) && await trustedRead(record.handle, keyGuard, { op: 'verify' }) && current() ? 'ok' : 'moved';
+          } catch { return 'gone'; } // the document went away (the key navigated); nothing more to protect
+        };
+        let state = await settle();
+        if (state !== 'ok') throw Error('CHECKED_FOCUS_REQUIRED');
+        await send('rawKeyDown');
+        if ((state = await settle()) === 'ok') { await send('char', { text: KEYS[kind].text, unmodifiedText: KEYS[kind].text }); state = await settle(); }
+        if (state !== 'gone') await send('keyUp'); // released behind the veto, so a moved focus can't be clicked by it
+        if (state === 'moved') throw Error(FOCUS_MOVED);
+      } finally {
+        let vetoed = 0;
+        for (const { handle, own } of guards) {
+          vetoed += await trustedRead(handle, keyGuard, { op: 'remove' }).catch(() => 0);
+          if (!own) await handle.dispose().catch(() => {});
+        }
+        if (vetoed) throw Error(FOCUS_MOVED);
+      }
     },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);

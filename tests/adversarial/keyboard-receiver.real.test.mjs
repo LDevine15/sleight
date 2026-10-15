@@ -132,3 +132,38 @@ for (const mode of ['open', 'closed']) {
     if (f) await f.safe();
   });
 }
+
+// Review round 2. Key aliases that activate like Enter, a page timer that moves focus between our CDP events, and a
+// keydown handler that rewires the checked control (form owner, type) without moving focus.
+for (const key of ['NumpadEnter', '\n', '\r', ' '])
+  test('alias ' + JSON.stringify(key) + ' on a focused Pay button is gated like Enter and pays nothing', { skip, timeout: 60000 }, async t => {
+    const { f, result } = await press(t, page('pay.focus();'), { key, label: 'Continue' });
+    assert.match(result.text, /not run|refus|confirm/i);
+    await f.safe();
+  });
+
+test('page timer pulled in the keydown handler (0 to 5 ms, rAF) never lets Enter or Space reach Pay, repeated', { skip, timeout: 120000 }, async t => {
+  const modes = [0, 1, 2, 3, 5, 'raf'];
+  const script = `window.mode=0;a.addEventListener('keydown',()=>{ if(mode==='raf')requestAnimationFrame(()=>pay.focus()); else setTimeout(()=>pay.focus(),mode); });`;
+  const b = await bank(t), f = await b.start(page(script), readOnly);
+  const ref = f.ref('Search'); let runs = 0;
+  for (const mode of modes) for (const key of ['Enter', 'Space', 'Enter']) for (let n = 0; n < 4; n++) {
+    await f.page.evaluate(m => { window.mode = m; document.getElementById('a').focus(); }, mode);
+    await f.act([{ do: 'press', ref, key }]); runs++;
+  }
+  t.diagnostic('timer race runs: ' + runs);
+  await f.safe();
+});
+
+test('keydown handler adds form=payment to the checked input, Enter would submit the payment form', { skip, timeout: 60000 }, async t => {
+  const { f, result } = await press(t, page(`a.addEventListener('keydown',()=>a.setAttribute('form','payment'));`));
+  assert.match(result.text, /focus moved/);
+  await f.safe();
+});
+
+test('keydown handler turns the checked button into a submit button of the payment form', { skip, timeout: 60000 }, async t => {
+  const { f, result } = await press(t, page(`b.addEventListener('keydown',()=>{b.type='submit';b.setAttribute('form','payment');});`,
+    '<button id="b" type="button">Next</button>'), { label: 'Next' });
+  assert.match(result.text, /focus moved/);
+  await f.safe();
+});

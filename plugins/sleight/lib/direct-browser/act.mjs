@@ -3,7 +3,7 @@
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
-import { intent } from './rules.mjs';
+import { intent, keyClass } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
@@ -141,8 +141,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
-        const enter = step.do === 'press' && /(?:^|\+)(?:Enter|Return|Space)$/.test(step.key);
-        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && /Enter|Return/.test(step.key));
+        const enter = step.do === 'press' && !!keyClass(step.key).name;
+        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && keyClass(step.key).name === 'Enter');
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
           paths: step.paths, submit: !!submits, payment: !!submits && (info.payment || info.formPayment),
           ...(step.do === 'dialog' ? { type: state.dialog.type(), message: state.dialog.message(), accept: step.accept } : {}) };
