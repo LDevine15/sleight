@@ -393,3 +393,196 @@ test('a capture listener that stops propagation first cannot let a detached link
   assert.deepEqual(dangerHits(f), []);
   await f.safe({ settle: 300 });
 });
+
+// Round 3 of the popup hook. "Foreground" is the browser's own tab active bit: f.safe() compares it with the
+// value at start and counts focus commands on the wire. /danger must never be requested, /landed may be.
+async function attack(t, { body = '', script = '', steps, wait = 1500 } = {}) {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<button id="go" type="button">Go</button>' + body, script), readOnly, { routes: landed(b) });
+  const result = await f.act(steps ? steps(f) : [{ do: 'click', ref: f.ref('Go') }]);
+  await pause(wait);
+  return { b, f, result };
+}
+const press = (label, key = 'Enter') => f => [{ do: 'press', ref: f.ref(label), key }];
+const click = label => f => [{ do: 'click', ref: f.ref(label) }];
+const first = result => result.text.split('\n')[0];
+
+// A1: a window.open handle's first document carries the whole hook, so a native saved from it is the hooked one.
+for (const [name, body, use] of [
+  ['EventTarget.prototype.dispatchEvent on a detached link', '', `const d=w.EventTarget.prototype.dispatchEvent;setTimeout(()=>{const a=document.createElement('a');a.href='/danger';a.target='_blank';d.call(a,new MouseEvent('click',{bubbles:true,cancelable:true}))},400)`],
+  ['HTMLFormElement.prototype.submit on a target=_blank form', '<form id="fm" action="/danger" target="_blank"><input name="q" value="1"></form>', `const s=w.HTMLFormElement.prototype.submit;setTimeout(()=>s.call(fm),400)`],
+  ['HTMLFormElement.prototype.requestSubmit on a target=_blank form', '<form id="fm" action="/danger" target="_blank"><input name="q" value="1"></form>', `const s=w.HTMLFormElement.prototype.requestSubmit;setTimeout(()=>s.call(fm),400)`],
+  ['HTMLElement.prototype.click on a target=_blank link', '<a id="a" href="/danger" target="_blank" hidden>x</a>', `const c=w.HTMLElement.prototype.click;setTimeout(()=>c.call(a),400)`],
+  ['window.open called on the opener', '', `const o=w.open;setTimeout(()=>o.call(window,'/danger','_blank'),400)`],
+  ['focus() on the popup', '', `const fc=w.focus;setTimeout(()=>fc.call(w),400)`],
+]) test('a native saved from a window handle cannot open or raise a tab later: ' + name + ' (A1)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body, script: `go.onclick=()=>{const w=window.open('/landed');${use}}` });
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('the handle realm runs the hook, not just a forwarded preventDefault (A1)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { script: `go.onclick=()=>{const w=window.open('/landed');window.__w=w;
+    window.__x=[typeof w[Symbol.for('sleight.popup3')],w.open('/danger','_blank')===null,String(w.HTMLElement.prototype.click).includes('native code')].join()}` });
+  assert.equal(await f.page.evaluate(() => window.__x), 'object,true,false');
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+// A2: checks accept a node from any realm and look through shadow roots.
+test('a hooked iframe realm dispatchEvent cannot click a detached target=_blank link (A2)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { script: `go.onclick=()=>{const fr=document.createElement('iframe');document.body.append(fr);const d=fr.contentWindow.EventTarget.prototype.dispatchEvent;
+    setTimeout(()=>{const a=document.createElement('a');a.href='/danger';a.target='_blank';d.call(a,new MouseEvent('click',{bubbles:true,cancelable:true}))},400)}` });
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('the top-realm dispatchEvent cannot click a link created in an iframe document (A2)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { script: `go.onclick=()=>{const fr=document.createElement('iframe');document.body.append(fr);const doc=fr.contentDocument;
+    setTimeout(()=>{const a=doc.createElement('a');a.href='/danger';a.target='_blank';EventTarget.prototype.dispatchEvent.call(a,new MouseEvent('click',{bubbles:true,cancelable:true}))},400)}` });
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+for (const [name, fire] of Object.entries({
+  'dispatchEvent on an attached link': `a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))`,
+  'click() on a span inside the link': `const s=document.createElement('span');a.append(s);s.click()`,
+  'dispatchEvent on a span inside the link': `const s=document.createElement('span');a.append(s);s.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))`,
+})) test('a link in a closed shadow root is held: ' + name + ' (A2)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { script: `go.onclick=()=>setTimeout(()=>{const h=document.createElement('div');document.body.append(h);const sr=h.attachShadow({mode:'closed'});
+    const a=document.createElement('a');a.href='/danger';a.target='_blank';sr.append(a);${fire}},300)` });
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+// A4: every spelling of Enter arms the hook; a press whose destination cannot be decided is refused.
+test('NumpadEnter on a target=_blank link opens in the background like Enter (A4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/landed" target="_blank">Open it</a>', steps: press('Open it', 'NumpadEnter') });
+  assert.deepEqual(landedHits(f), ['/landed'], first(result));
+  await f.safe({ settle: 300 });
+});
+
+for (const [name, body, ref] of [
+  ['a submit button outside the form with formtarget=_blank', '<form id="fm" action="/landed"></form><button form="fm" formtarget="_blank" id="b">Send out</button>', 'Send out'],
+  ['a field whose default submit button sits outside the form with formtarget=_blank', '<form id="fm" action="/landed"><input name="q" aria-label="Query" value="x"></form><button form="fm" formtarget="_blank" type="submit">Go out</button>', 'Query'],
+  ['a field whose form= attached default button has formtarget=new-name', '<form id="fm" action="/landed"></form><input form="fm" name="q" aria-label="Query" value="x"><button form="fm" formtarget="elsewhere">Go out</button>', 'Query'],
+]) test('Enter on ' + name + ' is refused before it can raise a tab (A4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, steps: press(ref) });
+  assert.match(result.text, /not run: .*click its submit button/, first(result));
+  assert.deepEqual(landedHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('Enter in a field submits the form when only a later button has formtarget=_blank (A4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<form action="/landed"><input name="q" aria-label="Query"><button>Search</button><button type="submit" formtarget="_blank">Search in a new tab</button></form>',
+    steps: press('Query'), wait: 1000 });
+  assert.doesNotMatch(result.text, /not run/, first(result));
+  assert.deepEqual(landedHits(f), ['/landed?q=']);
+  await f.safe({ settle: 300, tabs: false });
+});
+
+for (const [name, href] of [['credentials in its address', 'http://u:p@127.0.0.1:1/landed'], ['an about:blank address', 'about:blank']]) {
+  test('Enter on a target=_blank link with ' + name + ' is refused (A4)', { skip, timeout: 90000 }, async t => {
+    const { f, result } = await attack(t, { body: `<a id="a" href="${href}" target="_blank">Open it</a>`, steps: press('Open it') });
+    assert.match(result.text, /not run: .*cannot check where it goes/, first(result));
+    await f.safe({ settle: 300 });
+  });
+  test('a click on a target=_blank link with ' + name + ' still stays in the background (A4)', { skip, timeout: 90000 }, async t => {
+    const { f, result } = await attack(t, { body: `<a id="a" href="${href}" target="_blank">Open it</a>`, steps: click('Open it') });
+    assert.doesNotMatch(result.text, /not run/, first(result));
+    await f.safe({ settle: 300 });
+  });
+}
+
+// A5: a cancel through a hooked realm's returnValue setter reaches the clicked page.
+test('returnValue=false through a hooked iframe realm setter stops the link (A5)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body: '<iframe id="r" hidden srcdoc="<p>hi</p>"></iframe><a id="l" href="/danger" target="_blank">Learn more</a>',
+    script: `const set=Object.getOwnPropertyDescriptor(document.getElementById('r').contentWindow.Event.prototype,'returnValue').set;
+      document.getElementById('l').addEventListener('click',e=>set.call(e,false))`, steps: click('Learn more') });
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('returnValue=false through a setter saved from a window handle stops the link (A5)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body: '<a id="l" href="/danger" target="_blank">Learn more</a>',
+    script: `go.onclick=()=>{const w=window.open('/landed');window.__s=Object.getOwnPropertyDescriptor(w.Event.prototype,'returnValue').set};
+      document.getElementById('l').addEventListener('click',e=>{if(window.__s)window.__s.call(e,false)})` });
+  await f.act([{ do: 'click', ref: f.ref('Learn more') }]);
+  await pause(1200);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+// A link's or form's own listener changes the destination after the hook decided it was a plain click.
+const flip = 'a.addEventListener("click",()=>{a.target="_blank"})';
+for (const [name, body, script, steps] of [
+  ['its own click listener', '<a id="a" href="/landed" target="_self">Open it</a>', flip, click('Open it')],
+  ['a document capture listener', '<a id="a" href="/landed" target="_self">Open it</a>', 'document.addEventListener("click",()=>{a.target="_blank"},true)', click('Open it')],
+  ['a base element added by a listener', '<a id="a" href="/landed">Open it</a>', 'a.addEventListener("click",()=>{const b=document.createElement("base");b.target="_blank";document.head.append(b)})', click('Open it')],
+  ['its own listener, then Enter', '<a id="a" href="/landed" target="_self">Open it</a>', flip, press('Open it')],
+  ['a pointerdown listener', '<a id="a" href="/landed" target="_self">Open it</a>', 'a.addEventListener("pointerdown",()=>{a.target="_blank"})', click('Open it')],
+]) test('a same-tab link that turns into a new-tab link in ' + name + ' opens in the background (flip)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script, steps });
+  assert.deepEqual(landedHits(f), ['/landed'], first(result));
+  await f.safe({ settle: 300 });
+});
+
+test('a same-tab link whose listener flips it to a new tab pointing at credentials is stopped (flip)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/landed" target="_self">Open it</a>',
+    script: 'a.addEventListener("click",()=>{a.target="_blank";a.href="http://u:p@127.0.0.1:1/x"})', steps: click('Open it') });
+  assert.match(result.text, /changed this link/, first(result));
+  assert.deepEqual(landedHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('a new-tab link that flips to same-tab in its listener opens nothing and says so (flip)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/landed" target="_blank">Open it</a>',
+    script: 'a.addEventListener("click",()=>{a.target="_self"})', steps: click('Open it') });
+  assert.match(result.text, /changed|not captured/, first(result));
+  await f.safe({ settle: 300 });
+});
+
+for (const [name, script] of [
+  ['its submit button listener', 's.addEventListener("click",()=>{fm.target="_blank"})'],
+  ['its submit listener', 'fm.addEventListener("submit",()=>{fm.target="_blank"})'],
+  ['a formtarget set on the button', 's.addEventListener("click",()=>{s.setAttribute("formtarget","_blank")})'],
+]) test('a same-tab form that turns into a new-tab form in ' + name + ' is stopped (flip)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<form id="fm" action="/landed"><button id="s">Save it</button></form>', script, steps: click('Save it') });
+  assert.match(result.text, /changed this form/, first(result));
+  assert.deepEqual(landedHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('Enter in a same-tab form whose submit listener turns it into a new-tab form is stopped (flip)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<form id="fm" action="/landed"><input name="q" aria-label="Query"><button>Search</button></form>',
+    script: 'fm.addEventListener("submit",()=>{fm.target="_blank"})', steps: press('Query') });
+  assert.match(result.text, /changed this form/, first(result));
+  assert.deepEqual(landedHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('a same-tab form still submits when a listener only observes the click (flip control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<form id="fm" action="/landed"><button id="s">Save it</button></form>',
+    script: 's.addEventListener("click",()=>{window.__seen=1})', steps: click('Save it'), wait: 1000 });
+  assert.doesNotMatch(result.text, /changed|not run/, first(result));
+  assert.deepEqual(landedHits(f), ['/landed']);
+  await f.safe({ settle: 300, tabs: false });
+});
+
+// window.focus is a no-op for a top-level window, never for a frame.
+test('iframe.contentWindow.focus() still focuses the frame (focus)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body: '<iframe id="ed" title="editor" srcdoc="<body contenteditable>hello</body>" width=300 height=100></iframe>',
+    script: `go.onclick=()=>{ed.contentWindow.focus();window.__x=document.activeElement.tagName+':'+ed.contentDocument.hasFocus()}` });
+  assert.equal(await f.page.evaluate(() => window.__x), 'IFRAME:true');
+  await f.safe({ settle: 300 });
+});
+
+// Known gap, reported: a script-started click on a link that flips its own target (a timer started by an
+// unmodified agent click) still raises the tab. The result must not call that tab a background tab.
+test('a script click that flips its own link after an unmodified click is reported as a probable foreground tab (known gap)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="l1" href="/landed?start">Start</a><a id="a2" href="/landed" target="_self" hidden>x</a>',
+    script: 'a2.addEventListener("click",()=>{a2.target="_blank"});document.getElementById("l1").addEventListener("click",e=>{e.preventDefault();setTimeout(()=>a2.click(),50)})',
+    steps: click('Start') });
+  assert.match(result.text, /probably took the foreground/, first(result));
+  assert.doesNotMatch(result.text, /opened background tab/);
+});

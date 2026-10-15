@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
 import { createPageRegistry, backgroundClick, popupHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { activationKey } from '../plugins/sleight/lib/direct-browser/act.mjs';
 
 function fixture(options = {}) {
   const calls = [], pages = [], context = new EventEmitter();
@@ -214,15 +215,25 @@ function hookFixture({ clock = Date } = {}) {
     }
     removeEventListener(name, fn) { this.listeners[name]?.delete(fn); this.captureListeners[name]?.delete(fn); }
   }
+  // The page's mutation observer: tests call `callback` themselves, standing in for the microtask after a listener.
+  const observers = [];
+  class MutationObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe() { this.observing = true; }
+    disconnect() { this.disconnected = true; }
+  }
   const opens = [], window = { listeners: {}, captureListeners: {}, open(...args) { opens.push(args); return { real: true }; } };
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   vm.runInNewContext(`(${popupHook})()`, { window, document, navigator,
     MouseEvent, Element, HTMLElement: Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
-    Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
-  const hook = window[Symbol.for('sleight.popup3')];
-  return { window, document, navigator, hook, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
-    MouseEvent, Event, EventTarget, opens };
+    Event, EventTarget, MutationObserver, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
+  // `raw` is the hook as the page sees it. `hook` reads a watch (a plain same-context click the hook only
+  // observes) as the plain click earlier tests mean, so those tests keep asserting "no modifier, no capture".
+  const raw = window[Symbol.for('sleight.popup3')];
+  const hook = { ...raw, prepare: (...args) => { const result = raw.prepare(...args); return result?.kind === 'watch' ? false : result; } };
+  return { window, document, navigator, hook, raw, Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+    MouseEvent, Event, EventTarget, opens, observers };
 }
 
 test('CR6 masked events stay plain after dispatch, finish, and another arm', t => {
@@ -1036,7 +1047,7 @@ test('AD1 A4 press mode refuses a new-context form and leaves a plain control un
   const f = hookFixture();
   const form = new f.Element('form', { target: '_blank' });
   try {
-    assert.equal(f.hook.prepare(new f.HTMLInputElement({}, form), 'press-form', 1000, true).kind, 'form');
+    assert.deepEqual({ ...f.hook.prepare(new f.HTMLInputElement({}, form), 'press-form', 1000, true) }, { kind: 'refuse', reason: 'form' });
     assert.equal(f.hook.prepare(new f.Element('div'), 'press-div', 1000, true), false);
   } finally { f.hook.off(); }
 });
@@ -1199,4 +1210,172 @@ test('CR4 self-close settles popup readiness against the living opener after nat
     assert.equal(finished, false, 'backgroundClick must await the reparented popup installation');
   } finally { release(); await clicking; await f.registry.endTurn(); }
   assert.equal(parent.popups.length, 2);
+});
+
+test('AD1 A4 every spelling of Enter and Space is an activation key, other keys are not', () => {
+  for (const key of ['Enter', 'NumpadEnter', 'Return', '\r', '\n', 'Shift+Enter', 'Control+NumpadEnter']) assert.equal(activationKey(key), 'enter', key);
+  for (const key of ['Space', ' ', 'Shift+Space']) assert.equal(activationKey(key), 'space', key);
+  for (const key of ['a', 'Tab', 'Escape', 'ArrowDown', 'Control+a', '+']) assert.equal(activationKey(key), null, key);
+});
+
+test('AD1 A4 press arms a decidable link, watches a same-context one, refuses one it cannot decide', () => {
+  const f = hookFixture();
+  const link = attrs => new f.Element('a', { href: '/landed', ...attrs });
+  try {
+    assert.equal(f.raw.prepare(link({ target: '_blank' }), 'blank', 1000, 'enter').kind, 'link');
+    assert.equal(f.raw.prepare(link({}), 'plain', 1000, 'enter').kind, 'watch');
+    assert.equal(f.raw.prepare(link({ target: '_blank', download: '' }), 'download', 1000, 'enter'), false);
+    assert.equal(f.raw.prepare(link({ target: '_blank' }), 'space', 1000, 'space'), false, 'Space never follows a link');
+    for (const href of ['http://user:secret@fixture.invalid/x', 'about:blank', 'mailto:a@b.c'])
+      assert.deepEqual({ ...f.raw.prepare(link({ target: '_blank', href }), 'undecidable', 1000, 'enter') }, { kind: 'refuse', reason: 'link' }, href);
+    // The same links under a click keep the Ctrl-click path.
+    assert.equal(f.raw.prepare(link({ target: '_blank', href: 'about:blank' }), 'click', 1000), true);
+  } finally { f.raw.off(); }
+});
+
+test('AD1 A4 press decides a form from its elements and the control\'s own form and formtarget', () => {
+  const f = hookFixture(), form = new f.Element('form', {});
+  const button = attrs => new f.HTMLButtonElement({ type: 'submit', ...attrs }, form);
+  const field = new f.HTMLInputElement({}, form);
+  try {
+    // A submit button outside the form (form=) carries its own formtarget.
+    assert.deepEqual({ ...f.raw.prepare(button({ formtarget: '_blank' }), 'own', 1000, 'enter') }, { kind: 'refuse', reason: 'form' });
+    // Enter in a field submits through the form's default button, the first submit control among form.elements.
+    form.elements = [field, button({ formtarget: 'elsewhere' }), button({})];
+    assert.deepEqual({ ...f.raw.prepare(field, 'default', 1000, 'enter') }, { kind: 'refuse', reason: 'form' });
+    form.elements = [field, button({}), button({ formtarget: '_blank' })];
+    assert.equal(f.raw.prepare(field, 'later', 1000, 'enter').kind, 'watch', 'a later button does not decide the default submission');
+    // Space in a field types a space: it is no activation.
+    assert.equal(f.raw.prepare(field, 'space-field', 1000, 'space'), false);
+    form.attrs.target = '_blank'; form.elements = [field];
+    assert.deepEqual({ ...f.raw.prepare(field, 'form-target', 1000, 'enter') }, { kind: 'refuse', reason: 'form' });
+    assert.equal(f.raw.prepare(new f.HTMLButtonElement({ type: 'button' }, form), 'plain-button', 1000, 'enter'), false);
+  } finally { f.raw.off(); }
+});
+
+function watchedClick(f, link, token = 'watch') {
+  assert.equal(f.raw.prepare(link, token, 1000).kind, 'watch');
+  const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+  for (const listener of f.window.captureListeners.click) listener(click);
+  return click;
+}
+
+test('AD1 flip: a same-tab link that a listener turns into a new-tab link is cancelled and opened in the background', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: '_self' });
+  try {
+    const click = watchedClick(f, link);
+    assert.equal(click.nativePrevented, undefined, 'a plain same-tab link keeps its default');
+    link.attrs.target = '_blank'; f.observers[0].callback([]);
+    assert.equal(click.nativePrevented, true, 'the browser must not open it itself');
+    assert.equal(click.defaultPrevented, false);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.raw.takeRequest('watch'))), { url: 'https://fixture.invalid/landed', target: '_blank', rel: '' });
+  } finally { f.raw.off(); }
+});
+
+test('AD1 flip: a page that cancels before it flips still gets no tab', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: '_self' });
+  try {
+    const click = watchedClick(f, link);
+    click.preventDefault(); link.attrs.target = '_blank'; f.observers[0].callback([]);
+    assert.equal(f.raw.takeRequest('watch'), undefined);
+  } finally { f.raw.off(); }
+});
+
+test('AD1 flip: a flip made before the click is seen at capture, a flip back is seen at takeRequest', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: '_self' });
+  try {
+    f.raw.prepare(link, 'early', 1000);
+    link.attrs.target = '_blank';
+    const click = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link] });
+    for (const listener of f.window.captureListeners.click) listener(click);
+    assert.equal(click.nativePrevented, true);
+    link.attrs.target = '_self';
+    assert.equal(f.raw.takeRequest('early').unavailable, true, 'the final target decides, not the earlier one');
+  } finally { f.raw.off(); }
+});
+
+test('AD1 flip: a link that turns into one sleight cannot check is cancelled and reported', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: '_self' });
+  try {
+    const click = watchedClick(f, link);
+    link.attrs.target = '_blank'; link.attrs.href = 'http://user:secret@fixture.invalid/x'; f.observers[0].callback([]);
+    assert.equal(click.nativePrevented, true);
+    assert.deepEqual({ ...f.raw.takeRequest('watch') }, { blocked: 'link' });
+  } finally { f.raw.off(); }
+});
+
+test('AD1 flip: a same-tab form whose target turns new-tab is cancelled at the click and at the submit event', () => {
+  const f = hookFixture(), form = new f.Element('form', { action: '/landed' }), submit = new f.HTMLButtonElement({ type: 'submit' }, form);
+  try {
+    const click = watchedClick(f, submit, 'click-flip');
+    form.attrs.target = '_blank'; f.observers[0].callback([]);
+    assert.equal(click.nativePrevented, true);
+    assert.deepEqual({ ...f.raw.takeRequest('click-flip') }, { blocked: 'form' });
+    f.raw.finish('click-flip'); delete form.attrs.target;
+    const second = watchedClick(f, submit, 'submit-flip');
+    assert.equal(second.nativePrevented, undefined);
+    const event = Object.assign(new f.Event(), { isTrusted: true, nodes: [form] });
+    for (const listener of f.window.captureListeners.submit) listener(event);
+    assert.equal(event.nativePrevented, undefined, 'still a same-tab form');
+    form.attrs.target = '_blank'; f.observers.at(-1).callback([]);
+    assert.equal(event.nativePrevented, true, 'the submit event is the one that must not proceed');
+    assert.deepEqual({ ...f.raw.takeRequest('submit-flip') }, { blocked: 'form' });
+  } finally { f.raw.off(); }
+});
+
+test('AD1 flip: the watch ends with its arm and ignores changes after the click was dispatched', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: '_self' });
+  try {
+    const click = watchedClick(f, link);
+    t.mock.timers.tick(0);
+    link.attrs.target = '_blank'; f.observers[0].callback([]);
+    assert.equal(click.nativePrevented, undefined, 'after dispatch there is nothing left to cancel');
+    f.raw.finish('watch');
+    assert.equal(f.observers[0].disconnected, true);
+  } finally { f.raw.off(); }
+});
+
+test('AD1 flip: backgroundClick opens a flipped link, throws for a blocked one, and ignores a watch the navigation destroyed', async () => {
+  const run = async (prepared, request) => {
+    const f = clickFixture(prepared);
+    f.entry.page.evaluate = async fn => { if (String(fn).includes('takeRequest')) { if (request instanceof Error) throw request; return request; } return true; };
+    f.entry.openChild = async (url, options) => f.calls.push(['openChild', url, options]);
+    await backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options]));
+    return f.calls;
+  };
+  const opened = await run({ kind: 'watch' }, { url: 'https://fixture.invalid/landed', target: '_blank', rel: '' });
+  assert.deepEqual(opened.filter(c => ['click', 'openChild'].includes(c[0])), [['click', {}], ['openChild', 'https://fixture.invalid/landed', { target: '_blank', rel: '' }]]);
+  await assert.rejects(run({ kind: 'watch' }, { blocked: 'form' }), /changed this form/);
+  await assert.rejects(run({ kind: 'watch' }, { blocked: 'link' }), /changed this link/);
+  await run({ kind: 'watch' }, { unavailable: true, lost: true });
+  await run({ kind: 'watch' }, new Error('Execution context was destroyed'));
+  await assert.rejects(run({ kind: 'watch' }, { unavailable: true }), /changed or was not captured/);
+  await assert.rejects(run({ kind: 'link' }, { unavailable: true, lost: true }), /changed or was not captured/);
+  await assert.rejects(run({ kind: 'refuse', reason: 'link' }, undefined), /cannot check where it goes/);
+  await assert.rejects(run({ kind: 'refuse', reason: 'form' }, undefined), /click its submit button/);
+});
+
+test('AD1 backstop: a popup the page opens during a click without the background modifier is reported, one sleight opens is not', async () => {
+  const f = fixture({ upstream: { async send() { return { targetInfos: [] }; } } });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const entry = f.registry.tab(tab);
+  entry.page.evaluate = async () => true;
+  const opener = f.pages.at(-1).info.targetId;
+  const click = async (modified, opens) => {
+    const before = entry.popups.length;
+    await backgroundClick(entry, { evaluate: async () => modified }, async () => {
+      entry.cdp.emit('Page.windowOpen', {});
+      await opens();
+    });
+    return entry.popups.length - before;
+  };
+  assert.equal(await click(false, async () => { f.page('page-opened-1', opener); await new Promise(resolve => setTimeout(resolve, 2)); }), 1);
+  assert.equal(entry.takeForeground(), 1);
+  assert.equal(entry.takeForeground(), 0, 'reported once');
+  assert.equal(await click(true, async () => { f.page('page-opened-2', opener); await new Promise(resolve => setTimeout(resolve, 2)); }), 1);
+  assert.equal(entry.takeForeground(), 0, 'a click that carried the background modifier expects its popup');
+  await entry.openChild('https://fixture.invalid/second');
+  assert.equal(entry.takeForeground(), 0, 'a tab sleight opened itself is in the background');
+  await f.registry.endTurn();
 });
