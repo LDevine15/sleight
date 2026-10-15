@@ -48,9 +48,9 @@ add('summary', '<details id="field"><summary id="go">Summary</summary>Details</d
 add('textarea', '<textarea id="go">hello world</textarea>');
 add('contenteditable', '<div id="go" contenteditable>hello world here</div>', { plain: true });
 add('link in contenteditable', '<div contenteditable><a id="go" href="/landed" target="_blank">Editable link</a></div>',
-  { differs: true, plain: true });
+  { plain: true });
 add('link in designMode', '<a id="go" href="/landed" target="_blank">Editable link</a><script>document.designMode="on"</script>',
-  { differs: true, plain: true });
+  { plain: true });
 add('plain text', '<p id="go">hello world here</p>');
 add('double click text', '<p id="go">hello world here</p>', { double: true });
 add('double click input', '<input id="go" value="hello world here">', { double: true });

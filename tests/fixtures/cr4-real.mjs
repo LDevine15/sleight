@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ const executablePath = process.platform === 'darwin'
 export const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'real-page qualification belongs to sleight-arch host runner'
   : !existsSync(executablePath) ? 'pinned Chromium headless shell is unavailable' : false;
 
-export async function fixture(t, html, routes = {}) {
+export async function fixture(t, html, routes = {}, { observeTabs = false } = {}) {
   const sockets = new Set(), requests = [];
   const profile = trackTemp(mkdtempSync(join(realpathSync(tmpdir()), 'sleight-cr4-')));
   let context, registry;
@@ -43,8 +43,21 @@ export async function fixture(t, html, routes = {}) {
     t.diagnostic('cleanup: owned browser and pages closed, private profile removed, loopback server and sockets closed');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  context = await inprocess.playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath,
-    args: ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1'] });
+  const args = ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1'];
+  if (observeTabs) {
+    // Only this disposable browser loads the read-only observer. Chrome's tab
+    // active bit distinguishes background disposition even in headless mode,
+    // where every page reports visible and focus emulation changes hasFocus.
+    const extension = join(profile, 'tab-observer'); mkdirSync(extension);
+    writeFileSync(join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Fixture tab observer',
+      version: '1.0', permissions: ['tabs'], background: { service_worker: 'worker.js' } }));
+    writeFileSync(join(extension, 'worker.js'), 'chrome.runtime.onInstalled.addListener(() => {});');
+    args.push('--disable-extensions-except=' + extension, '--load-extension=' + extension);
+  }
+  context = await inprocess.playwright.chromium.launchPersistentContext(profile, { headless: true, executablePath, args,
+    ...(observeTabs ? { channel: 'chromium', ignoreDefaultArgs: ['--disable-extensions'] } : {}) });
+  const worker = observeTabs ? context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 5000 }) : undefined;
+  const tabState = () => worker.evaluate(async () => (await chrome.tabs.query({})).map(({ id, url, active }) => ({ id, url, active })));
   const browser = context.browser(), sentinel = context.pages()[0];
   await sentinel.goto('about:blank');
   const before = await sentinel.evaluate(() => document.visibilityState);
@@ -52,7 +65,7 @@ export async function fixture(t, html, routes = {}) {
   registry = createPageRegistry({ browser, session, context, timeoutMs: 10000, popupWaitMs: 5000 });
   const { tab } = await registry.openTab({ url: 'http://127.0.0.1:' + server.address().port + '/start' });
   const entry = registry.tab(tab);
-  return { registry, context, entry, requests, sentinel, before, session };
+  return { registry, context, entry, requests, sentinel, before, session, tabState: observeTabs ? tabState : undefined };
 }
 
 export const controls = { button: '<button>Send</button>', submit: '<input type="submit" value="Send">',
