@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..fc51911 100644
+index e7f1db8..bf90893 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,6 @@
@@ -501,7 +501,7 @@ index e7f1db8..fc51911 100644
    // Only browsers with FowlBrowser connected are watched; a task in one that isn't stops the round before it starts.
 -  const hosts = Object.fromEntries((await Promise.all(BROWSERS.map(async (b) => [b, await connectHost(b).catch(() => null)]))).filter(([, host]) => host));
 -  const missing = [...new Set(tasks.map((t) => t.browser))].filter((b) => !hosts[b]);
-+  const watchBrowsers = [...new Set(tasks.filter((t) => surfaceOf(t) !== 'browser-use').map((t) => t.browser))];
++  const watchBrowsers = [...new Set(tasks.filter((t) => !['browser-use', 'sleight-turbo'].includes(surfaceOf(t))).map((t) => t.browser))];
 +  const hosts = watchBrowsers.length
 +    ? Object.fromEntries((await Promise.all(BROWSERS.map(async (b) => [b, await connectHost(b).catch(() => null)]))).filter(([, host]) => host))
 +    : {};
