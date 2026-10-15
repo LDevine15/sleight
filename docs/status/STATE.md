@@ -45,15 +45,13 @@ demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.goog
 --surface sleight-turbo --model haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid --serve "node
 test/demo/server.mjs --all" --out <dir> --effort high`.
 
-Next, in order (owner, 2026-10-15 12:10 UTC: AD1 "will never end", so it has a finish line and no longer blocks the gate):
-1. Gate round as soon as the two arm logins exist (owner command above): smoke round on v3-gate first, then the gate round (Haiku
-   5.5, both arms, both orders; targets 26/26, at most 575 s, at most 9 errors, 0 ToolSearch, 0 focus events). Full checks wait
-   while Puddle's `/tmp/sleight-hold` exists.
-2. AD1 finish line (ROADMAP item 1): pay gets one last round with a rule wording can't beat (any money figure above the amount in
-   the user's message asks, no exemptions); kb r5, kb6 and pop r5 get their last review; a high finding is fixed, and anything
-   that needs a page built to attack sleight goes into `docs/known-problems.md`. Then one full check on ad1-int and the merge into
-   v3-gate, before the release pass.
-3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
+Next, in order (after the 18:26 UTC gate round missed):
+1. Bench arm fixes (agent `gate-arm-fix` on v3-gate, record `ledger/claims/GATE2/arm-fix.md`): open-web access for the arm's own
+   headless browser, the first engine call every task makes, and a usable viewport step with an in-view marker in reads.
+2. AD1 finish line: once the kb integration (running) and pop r5 are in ad1-int, one full check there and the merge into v3-gate.
+3. Turbo acts on closed-shadow controls (the two-factor switch, 4 gate runs), built on v3-gate after the AD1 merge.
+4. Gate rerun (a round takes about 8 minutes; ask Puddle's architect for a quiet window first), then the Opus head-to-head, then
+   merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 
 After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE. EPV3-1 never
 started because V10R4's dead lane held `v3-join`, now free), the claim suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
