@@ -201,6 +201,80 @@ export function popupHook() {
       arm.handlers.push({ node, before, wrapper });
     }
   };
+  // AD1 dispatch guard. The click that lands must be the click that was classified. backgroundClick seals
+  // what the checked element activates (itself, its label's control, its image map's areas) once hover has
+  // settled; every trusted press, release and click is then cancelled if that changed or landed elsewhere.
+  // Natives are captured here, before page scripts, and registered first so no page listener runs earlier.
+  const getter = (type, name) => Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
+  const textOf = getter(globalThis.Node, 'textContent'), nameOf = getter(Element, 'localName'), connected = getter(globalThis.Node, 'isConnected');
+  const rootOf = globalThis.Node?.prototype.getRootNode, queryAll = Element.prototype.querySelectorAll, queryDoc = globalThis.Document?.prototype.querySelector;
+  const shadowMode = getter(globalThis.ShadowRoot, 'mode'), shadowHost = getter(globalThis.ShadowRoot, 'host');
+  const stopNow = Event.prototype.stopImmediatePropagation;
+  const ids = new WeakMap(); let serial = 0, shield;
+  const ident = node => { if (!ids.has(node)) ids.set(node, ++serial); return ids.get(node); };
+  const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619); return h + ':' + value.length; };
+  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'for', 'usemap'];
+  const formSignature = form => {
+    const parts = [], nodes = queryAll.call(form, 'input,button,iframe,select,textarea');
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i], row = [nameOf.call(node), textOf.call(node)];
+      for (const name of ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form']) row.push(attribute(node, name) ?? '');
+      parts.push(row.join('\u0001'));
+    }
+    return hash(parts.join('\u0002'));
+  };
+  // Everything the rules read to classify a control: words, type, form owner and that form's controls.
+  const describe = node => {
+    const control = formControls.find(item => node instanceof item.constructor), form = control?.form.call(node);
+    const row = [ident(node), nameOf.call(node), connected.call(node), hash(textOf.call(node)), control ? control.type.call(node) : '', form ? ident(form) + '|' + formSignature(form) : ''];
+    for (const name of attributes) row.push(attribute(node, name) ?? '');
+    return row.join('\u0001');
+  };
+  // HTML label activation: the first label at or above the element forwards to its control unless interactive content sits between.
+  const forwardedOf = element => {
+    for (const node of ancestors(element)) {
+      if (node instanceof labelControl.constructor) return labelControl.control.call(node);
+      if (nativeMatches.call(node, interactive)) return null;
+    }
+    return null;
+  };
+  const areasOf = element => {
+    const name = String(attribute(element, 'usemap') ?? '').replace(/^#/, ''), found = [];
+    const map = name && queryDoc.call(document, 'map[name="' + name.replace(/["\\]/g, '\\$&') + '"]');
+    const areas = map ? queryAll.call(map, 'area') : [];
+    for (let i = 0; i < areas.length; i++) found.push(areas[i]);
+    return found;
+  };
+  const sealed = (element, forwarded, areas) => [describe(element), forwarded ? describe(forwarded) : '', ...areas.map(describe)].join('\u0003');
+  // composedPath() from window omits nodes inside a closed shadow root; the outermost closed host stands for them.
+  const anchorOf = element => {
+    let anchor = element;
+    for (let node = element; node;) {
+      const root = rootOf.call(node);
+      if (!(root instanceof ShadowRoot)) break;
+      node = shadowHost.call(root);
+      if (shadowMode.call(root) === 'closed') anchor = node;
+    }
+    return anchor;
+  };
+  const inspect = event => {
+    const { element, anchor, forwarded, areas } = shield;
+    if (!connected.call(element)) return 'target left the page';
+    // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
+    const path = composedPath.call(event), at = path.indexOf(anchor);
+    if (at < 0 ? !(forwarded && path.includes(forwarded)) && !areas.includes(path[0]) : anchor === element && path.slice(0, at).some(node => node instanceof Element && node !== forwarded && nativeMatches.call(node, interactive)))
+      return 'the input landed on a different element';
+    return sealed(element, forwardedOf(element), areasOf(element)) === shield.signature ? undefined : 'the checked element changed';
+  };
+  const guardEvent = event => {
+    if (!shield || !event.isTrusted || now() >= shield.until) return;
+    const bad = shield.violation ?? inspect(event);
+    if (!bad) return;
+    shield.violation ??= bad;
+    stopNow.call(event); nativePrevent.call(event);
+  };
+  const guarded = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu'];
+  for (const type of guarded) add.call(window, type, guardEvent, true);
   add.call(window, 'keydown', keyEvent, true);
   add.call(window, 'keyup', keyEvent, true);
   add.call(window, 'click', capture, true);
@@ -212,6 +286,12 @@ export function popupHook() {
     arm = undefined; return true;
   };
   const api = {
+    guard(element, token, capMs) {
+      if (retired.has(token) || !(element instanceof Element) || !connected.call(element) || !Number.isFinite(capMs) || capMs <= 0) return false;
+      const forwarded = forwardedOf(element), areas = areasOf(element);
+      shield = { token, element, anchor: anchorOf(element), forwarded, areas, signature: sealed(element, forwarded, areas), until: now() + capMs };
+      return true;
+    },
     prepare(element, token, capMs) {
       if (retired.has(token)) return false;
       if (arm) finish(arm.token);
@@ -235,6 +315,7 @@ export function popupHook() {
       return link ? { kind: 'link' } : true;
     },
     takeRequest(token) {
+      if (shield?.token === token && shield.violation) return { violation: shield.violation };
       if (!live() || arm.token !== token || !arm.request || arm.taken) return { unavailable: true };
       arm.taken = true;
       if (arm.request.cancelled) return;
@@ -243,12 +324,19 @@ export function popupHook() {
         || arm.handlers.some(({ node, wrapper }) => node.onclick !== wrapper)) return { unavailable: true };
       return { url: arm.request.url, target: arm.request.target, rel: arm.request.rel };
     },
-    finish,
+    // A blocked input reports why, so the caller never mistakes a cancelled click for a delivered one.
+    finish(token) {
+      const bad = shield?.token === token ? shield.violation : undefined;
+      if (shield?.token === token) shield = undefined;
+      finish(token); return bad ?? true;
+    },
     off() {
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
       remove.call(window, 'click', capture, true);
+      for (const type of guarded) remove.call(window, type, guardEvent, true);
+      shield = undefined;
       for (const restore of replacements.reverse()) restore();
       if (window[key] === api) delete window[key];
       return true;
@@ -258,9 +346,13 @@ export function popupHook() {
   return true;
 }
 
+const changedMidClick = 'page changed during the click; read again';
+const dwellMs = 50;
+
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
   const token = randomUUID();
   const disarm = () => tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.finish(token), token);
+  let cancelled;
   try {
     let prepared;
     try {
@@ -271,6 +363,20 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
     const modified = prepared === true || prepared?.kind === 'link';
+    // Hover first so a swap driven by the pointer arriving lands before the final check, then seal what this
+    // click activates. The click callback classifies after this; the hook cancels any input that no longer matches.
+    if (typeof locator.hover === 'function') {
+      // An element with no box (an image-map area) cannot be hovered; the guard below still seals it.
+      try { await locator.hover({ timeout: timeoutMs }); await new Promise(resolve => setTimeout(resolve, dwellMs)); }
+      catch (error) { if (!/element is not visible/.test(error.message)) throw error; }
+    }
+    try {
+      await deadline(() => locator.evaluate((element, { token, capMs }) => {
+        const hook = window[Symbol.for('sleight.popup3')];
+        if (!hook?.guard(element, token, capMs)) throw Error('click guard unavailable');
+        return true;
+      }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+    } catch { throw Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     let result;
     try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}); }
@@ -282,6 +388,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     if (result?.closed !== true && !tab.closed && !tab.page.isClosed?.() && prepared?.kind === 'link') {
       const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
         (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
+      if (request?.violation) { cancelled = request.violation; return result; }
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
       if (request?.url) {
         if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
@@ -290,7 +397,12 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     }
     await tab.settlePopups?.(checkpoint);
     return result;
-  } finally { await disarm().catch(() => {}); }
+  } finally {
+    const verdict = await disarm().catch(() => {});
+    cancelled ??= typeof verdict === 'string' ? verdict : undefined;
+    // The guard cancelled the input: say so instead of reporting a delivered click.
+    if (cancelled) throw Error(changedMidClick);
+  }
 }
 
 // browser is the Playwright connection through V1's CDP filter; session is the
