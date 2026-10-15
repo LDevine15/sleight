@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
 import { hookAnswer } from './adversarial/fixtures/hook.mjs';
-import { createPageRegistry, backgroundClick, popupHook, hookProof, hookOpen, newHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { createPageRegistry, backgroundClick, popupHook, hookProof, hookOpen, hookSource, newHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
 
 function fixture(options = {}) {
   const calls = [], pages = [], context = new EventEmitter();
@@ -225,7 +225,7 @@ function hookFixture({ clock = Date } = {}) {
   const context = vm.createContext({ window, document, navigator,
     MouseEvent, Element, HTMLElement: Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
-  const installed = vm.runInContext(`(${popupHook})(${JSON.stringify(credentials)})`, context);
+  const installed = vm.runInContext(hookSource(credentials), context);
   const raw = window[credentials.key];
   // Each call carries its own proof, as the controller sends it; tests that look at the proof use raw.
   const hook = Object.fromEntries(['guard', 'reveal', 'settle', 'verdict', 'prepare', 'takeRequest', 'finish', 'cancel', 'take', 'off']
@@ -865,6 +865,33 @@ test('CR1 preparation timeout sends no input, retires the late token and disarms
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
+test('a refused proof or unavailable hook sends the model to the engine path from every stage, not to "read again"', async () => {
+  const refuse = () => { throw Error('Error: background popup hook refused the call'); };
+  const stages = {
+    prepare: f => { f.locator.evaluate = async () => refuse(); },
+    guard: f => { const prepared = f.locator.evaluate; f.locator.evaluate = async (fn, arg) => arg?.guard ? refuse() : prepared(fn, arg); },
+    'guard answer': f => { const prepared = f.locator.evaluate; f.locator.evaluate = async (fn, arg) => arg?.guard ? 'x.' + '0'.repeat(64) + '.t' : prepared(fn, arg); },
+    takeRequest: f => { f.entry.page.evaluate = async (fn, arg) => /\.takeRequest\(/.test(String(fn)) ? refuse() : hookAnswer(f.entry.hook, fn, arg, {}); },
+  };
+  for (const [stage, break_] of Object.entries(stages)) {
+    const f = clickFixture(stage === 'takeRequest' ? { kind: 'link' } : true);
+    break_(f);
+    // The finish that follows is refused too: the clearer error must win over "page changed".
+    const finish = f.entry.page.evaluate;
+    f.entry.page.evaluate = async (fn, arg) => /\.finish\(/.test(String(fn)) ? refuse() : finish(fn, arg);
+    await assert.rejects(backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options])),
+      error => /use the engine browser path/.test(error.message) && !/read again/.test(error.message), stage);
+  }
+  // A guard that times out is the page changing, not the hook failing.
+  const f = clickFixture(true), prepared = f.locator.evaluate;
+  f.locator.evaluate = (fn, arg) => arg?.guard ? new Promise(() => {}) : prepared(fn, arg);
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 5 }), /page changed during the click; read again/);
+  // A vetoed click still reads as changed.
+  const g = clickFixture(true);
+  g.entry.page.evaluate = async (fn, arg) => hookAnswer(g.entry.hook, fn, arg, { verdict: 'the checked element changed' });
+  await assert.rejects(backgroundClick(g.entry, g.locator, async () => {}), /page changed during the click; read again/);
+});
+
 test('CR1 unavailable link default and missing registry never replay input', async () => {
   for (const request of [{ unavailable: true }, { url: 'https://fixture.invalid/' }]) {
     const f = clickFixture({ kind: 'link' });
@@ -1333,6 +1360,56 @@ test('hook answers: the tag is the HMAC of method, nonce and text, so the typed-
   } finally { f.hook.off(); }
 });
 
+test('hook answers: the tag is over the UTF-8 bytes of the text, as Node computes it', async () => {
+  const { createHmac } = await import('node:crypto');
+  const f = hookFixture();
+  try {
+    for (const nonce of ['\u00e9', 'a\u20ac', 'x\u{1F600}y', '\u{1F600}'.repeat(30), 'lone\ud800end', 'low\udc00end', 'end\ud83d', '\u07ff\u0800\uffff', 'mix\u00e9\u20ac\u{10000}'.repeat(8)]) {
+      const tag = createHmac('sha256', f.credentials.secret).update('take:' + nonce).digest('hex');
+      const answer = f.raw.take(nonce + '.' + tag), first = answer.indexOf('.'), second = answer.indexOf('.', first + 1);
+      assert.equal(answer.slice(0, first), nonce);
+      assert.equal(answer.slice(first + 1, second), createHmac('sha256', f.credentials.secret).update('take:' + nonce + ':d0').digest('hex'), JSON.stringify(nonce));
+    }
+  } finally { f.hook.off(); }
+});
+
+// A page can redefine %TypedArray%.prototype.length, every prototype method and the Math functions after the hook
+// installs. Proofs and answers must neither change nor call any of them, and the secret must never reach them.
+test('hook crypto: replaced typed-array length, string and array methods and Math are never called while proofs and answers are made', async () => {
+  const { createHmac } = await import('node:crypto');
+  const f = hookFixture();
+  try {
+    const seen = [];
+    f.context.report = (name, value) => { seen.push(name); return value; };
+    vm.runInContext(`
+      (() => {
+        const TA = Object.getPrototypeOf(Uint8Array.prototype), report = globalThis.report, apply = Reflect.apply;
+        for (const name of ['length', 'byteLength', 'buffer', 'byteOffset']) {
+          const descriptor = Object.getOwnPropertyDescriptor(TA, name);
+          Object.defineProperty(TA, name, { configurable: true, get() { report('TypedArray.' + name); return descriptor.get.call(this); } });
+        }
+        for (const [owner, label] of [[String.prototype, 'String'], [Array.prototype, 'Array'], [Math, 'Math'], [Function.prototype, 'Function'], [Object, 'Object'], [Uint8Array.prototype, 'Uint8Array'], [Uint32Array.prototype, 'Uint32Array'], [TA, 'TypedArray'], [Set.prototype, 'Set']]) {
+          for (const name of Object.getOwnPropertyNames(owner)) {
+            const descriptor = Object.getOwnPropertyDescriptor(owner, name);
+            if (!descriptor.configurable || typeof descriptor.value !== 'function' || name === 'constructor') continue;
+            const original = descriptor.value;
+            Object.defineProperty(owner, name, { ...descriptor, value: function () { report(label + '.' + name); return apply(original, this, arguments); } });
+          }
+        }
+        Object.defineProperty(Object.prototype, 'length', { configurable: true, get() { report('Object.prototype.length'); return 0; } });
+      })();`, f.context);
+    seen.length = 0; // the installer above ran through its own traps
+    for (let round = 0; round < 5; round++) {
+      const nonce = 'abc' + round, tag = createHmac('sha256', f.credentials.secret).update('take:' + nonce).digest('hex');
+      const answer = f.raw.take(nonce + '.' + tag), parts = answer.split('.');
+      assert.equal(parts[1], createHmac('sha256', f.credentials.secret).update('take:' + nonce + ':d0').digest('hex'));
+      assert.throws(() => f.raw.take(nonce + '.' + tag), /refused the call/);
+      assert.throws(() => f.raw.take(nonce + 'x.' + tag), /refused the call/);
+    }
+    assert.deepEqual(seen, [], 'the hook called page-visible code: ' + seen.join(','));
+  } finally { f.hook.off(); }
+});
+
 test('hook answers: hookOpen refuses a forged, replayed, re-labelled or unissued answer', () => {
   const f = hookFixture();
   try {
@@ -1355,14 +1432,17 @@ test('hook install: an existing property at the key fails closed and changes not
   const window = { open: real, listeners: {}, addEventListener() { opens.push('listener'); } }, planted = { prepare() { return false; } };
   Object.defineProperty(window, credentials.key, { value: planted });
   const context = vm.createContext({ window, document: { baseURI: 'https://fixture.invalid/' }, navigator: {}, URL, Date, setTimeout, clearTimeout });
-  assert.equal(vm.runInContext(`(${popupHook})(${JSON.stringify(credentials)})`, context), false);
+  assert.equal(vm.runInContext(hookSource(credentials), context), false);
   assert.equal(window.open, real, 'no native was replaced');
   assert.deepEqual(opens, [], 'no listener was added');
   assert.equal(window[credentials.key], planted);
 });
 
-test('hook install: no options, a short secret or an empty key install nothing', () => {
-  for (const options of [undefined, null, {}, { key: 'k', secret: 'short' }, { key: '', secret: 'x'.repeat(36) }, { key: 'k', secret: 'x'.repeat(65) }, { key: 7, secret: 'x'.repeat(36) }]) {
+test('hook install: no options, a string secret, a short or long or malformed byte array, or an empty key install nothing', () => {
+  const bytes = count => Array.from({ length: count }, (_, i) => i + 1);
+  for (const options of [undefined, null, {}, { key: 'k', secret: 'x'.repeat(36) }, { key: 'k', secret: bytes(15) }, { key: 'k', secret: bytes(65) }, { key: '', secret: bytes(36) },
+    { key: 7, secret: bytes(36) }, { key: 'k', secret: [...bytes(35), 256] }, { key: 'k', secret: [...bytes(35), -1] }, { key: 'k', secret: [...bytes(35), 1.5] },
+    { key: 'k', secret: [...bytes(35), '7'] }, { key: 'k', secret: [...bytes(35), null] }, { key: 'k', secret: { length: 36 } }, { key: 'k', secret: null }]) {
     const window = { open() {}, listeners: {} };
     const context = vm.createContext({ window, document: {}, navigator: {}, URL, Date, setTimeout, clearTimeout });
     assert.equal(vm.runInContext(`(${popupHook})(${JSON.stringify(options)})`, context), false, JSON.stringify(options));

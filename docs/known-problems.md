@@ -262,8 +262,10 @@ Engine behavior that sleight works around or can't change:
 - In turbo v3, the popup hook is a random window property, frozen and non-configurable, and every call to it
   carries a one-use proof made with a per-registry secret. Its answers are signed with the same secret. A page that
   replaces, deletes or redefines the property, calls `off()`, or replaces `window.eval` or `Array.prototype.slice` to
-  read or forge what Playwright carries (35 real-browser cases in `hook-key.real.test.mjs`) cannot switch the hook
-  off, steer a request, or get a foreground tab. It can read the proof off an evaluate argument and use it first, which
+  read or forge what Playwright carries (40 real-browser cases in `hook-key.real.test.mjs`) cannot switch the hook
+  off, steer a request, or get a foreground tab. The proof code reads nothing a page can redefine: the secret is
+  injected as byte values, and no typed array length, prototype method or Math function is called after install
+  (round 1 read the secret through `%TypedArray%.prototype.length`, which a page could redefine to copy it). It can read the proof off an evaluate argument and use it first, which
   fails that one click closed ("preparation failed"), so a page can stop turbo v3 from clicking anything on it. The hook
   also reads its globals from copies taken before page scripts, so replacing `window.Element` and the rest changes
   nothing; replacing the prototypes behind them (`Element.prototype.localName`, `Set.prototype.has`, `Array.prototype`

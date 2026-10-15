@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bank, plain, readOnly, skip } from './fixtures/bank.mjs';
-import { popupHook } from '../../plugins/sleight/lib/direct-browser/page.mjs';
+import { hookSource, backgroundClick } from '../../plugins/sleight/lib/direct-browser/page.mjs';
 import { hookState } from './fixtures/hook.mjs';
 
 // The page hook lives at a random window property with a secret only the controller and the hook closure know.
@@ -202,8 +202,8 @@ test('a second install over the same key fails closed and leaves the first hook 
   const r = await attack(t, { body: LINK, steps: click('open docs') });
   background(r);
   const hook = r.f.entry.hook, patched = await r.f.page.evaluate(() => String(window.open));
-  assert.equal(await r.f.page.evaluate(`(${popupHook})(${JSON.stringify(hook)})`), false);
-  assert.equal(await r.f.page.evaluate(`(${popupHook})(${JSON.stringify({ key: hook.key, secret: 'another secret value here' })})`), false);
+  assert.equal(await r.f.page.evaluate(hookSource(hook)), false);
+  assert.equal(await r.f.page.evaluate(hookSource({ key: hook.key, secret: 'another secret value here' })), false);
   assert.equal(await r.f.page.evaluate(() => String(window.open)), patched, 'a refused install changed nothing');
   assert.equal(await hookState(r.f.page, hook), 'live');
 });
@@ -236,4 +236,93 @@ test('a page that forges the finish answer cannot hide that the hook refused the
   const r = await attack(t, { body: LINK, steps: click('open docs'), script: forgeEval('/\\.finish\\(/', 'true') });
   background(r);
   assert.match(r.result.text, /page changed during the click|unconfirmed|not run/i);
+});
+
+// Round 2: the hook's HMAC must touch nothing a page can redefine. The first version read the secret through
+// %TypedArray%.prototype.length, so a page that redefined that getter before the hook ran its first proof check read the
+// secret one byte at a time and could then sign any answer. These are the review's p1 (leak) and p2 (forged answers
+// signed with the stolen secret) cases, plus a counter showing the hook reads no typed array length at all.
+const LEAK = FIND + `
+const TA=Object.getPrototypeOf(Uint8Array.prototype), d=Object.getOwnPropertyDescriptor(TA,'length');
+window.__cands=[]; window.__calls=0;
+Object.defineProperty(TA,'length',{configurable:true,get(){const n=d.get.call(this);window.__calls++;
+  if(n===36||n===64){let s='';for(let i=0;i<n;i++)s+=String.fromCharCode(this[i]);window.__cands.push(s)}return n}});
+const before=window.__calls;
+try{window[K].take('a.b')}catch(e){}
+window.__hookCalls=window.__calls-before;
+Object.defineProperty(TA,'length',d);
+`;
+test('P1 leak: a page that redefines the typed-array length getter learns nothing and sees no call from the hook', opts, async t => {
+  const r = await attack(t, { body: LINK, script: LEAK, steps: click('open docs'),
+    probe: async f => {
+      const c = await f.page.evaluate(() => ({ cands: window.__cands, hookCalls: window.__hookCalls }));
+      const secret = f.entry.hook.secret, bytes = [...Buffer.from(secret, 'latin1')];
+      return { hookCalls: c.hookCalls, candidates: c.cands.length, leaked: c.cands.some(s => s.includes(secret) || s.slice(0, 36) === secret
+        || bytes.every((byte, i) => s.charCodeAt(i) === byte)) };
+    } });
+  assert.equal(r.extra.leaked, false, 'SECRET LEAKED to page: ' + JSON.stringify(r.extra));
+  assert.equal(r.extra.hookCalls, 0, 'the hook read a typed array length a page can redefine: ' + JSON.stringify(r.extra));
+});
+
+const STEAL = FIND + `
+const TA=Object.getPrototypeOf(Uint8Array.prototype), d=Object.getOwnPropertyDescriptor(TA,'length');
+let SECRET='';
+Object.defineProperty(TA,'length',{configurable:true,get(){const n=d.get.call(this);
+  if((n===36||n===64)&&!SECRET){let s='';for(let i=0;i<36;i++)s+=String.fromCharCode(this[i]);if(/^[0-9a-f-]{36}$/.test(s))SECRET=s}return n}});
+try{window[K].take('a.b')}catch(e){}
+Object.defineProperty(TA,'length',d);
+const subtle=crypto.subtle, enc=new TextEncoder(), keyP=subtle.importKey('raw',enc.encode(SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const signed=async(method,proof,text)=>{const nonce=proof.split('.')[0];const k=await keyP;return nonce+'.'+hex(await subtle.sign('HMAC',k,enc.encode(method+':'+nonce+':'+text)))+'.'+text};
+const nativeEval=window.eval;
+window.__forge={};
+window.eval=function(source){const s=String(source);
+  for(const [name,m] of Object.entries(window.__forge)) if(m.re.test(s)) return async(...xs)=>{const a=xs[xs.length-1];return signed(name,a[m.arg],m.text(a))};
+  return nativeEval.call(window,source)};
+`;
+test('P2 foreground: forged prepare answers signed with a stolen secret cannot turn a background link into a plain click', opts, async t => {
+  const r = await attack(t, { body: LINK, steps: click('open docs'), script: STEAL + `window.__forge.prepare={re:/prepare\\(/,arg:'prepare',text:()=>'f'};` });
+  assert.equal(r.activeChanged, false, 'FOREGROUND: ' + r.tabs.join(', ') + ' || ' + r.result.text.split('\n')[0]);
+  background(r);
+});
+
+test('P2 steer: forged prepare=link and takeRequest signed with a stolen secret cannot open a page-chosen URL', opts, async t => {
+  const r = await attack(t, { body: `<button id="b" type="button">Save</button>`, steps: click('Save'),
+    script: STEAL + `window.__forge.prepare={re:/prepare\\(/,arg:'prepare',text:()=>'link'};
+      window.__forge.takeRequest={re:/takeRequest\\(/,arg:'proof',text:()=>'q'+location.origin+'/danger\\0_blank\\0'};` });
+  assert.equal(dangerHits(r).length, 0, 'PAGE-CHOSEN URL OPENED: ' + r.tabs.join(', ') + ' || ' + r.result.text.split('\n')[0]);
+  background(r);
+});
+
+test('a page that wraps every prototype method, Math function and typed-array getter the proof code could call still gets the same click', opts, async t => {
+  const r = await attack(t, { body: LINK, steps: click('open docs'),
+    script: `
+      for(const [owner,label] of [[String.prototype,'String'],[Array.prototype,'Array'],[Math,'Math'],[Function.prototype,'Function'],[Uint8Array.prototype,'Uint8Array'],[Object.getPrototypeOf(Uint8Array.prototype),'TypedArray'],[Uint32Array.prototype,'Uint32Array'],[Set.prototype,'Set'],[Object,'Object']]){
+        for(const name of Object.getOwnPropertyNames(owner)){const dsc=Object.getOwnPropertyDescriptor(owner,name);
+          if(!dsc.configurable||typeof dsc.value!=='function'||name==='constructor'||label==='Object'&&/^(defineProperty|getOwnPropertyNames|getOwnPropertyDescriptor|getPrototypeOf|entries|fromEntries|keys|values|assign)$/.test(name))continue;
+          const original=dsc.value,apply=Reflect.apply;
+          Object.defineProperty(owner,name,{...dsc,value:function(){return apply(original,this,arguments)}})}}
+      for(const name of ['length','byteLength','byteOffset','buffer']){const dsc=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),name);
+        Object.defineProperty(Object.getPrototypeOf(Uint8Array.prototype),name,{configurable:true,get(){return dsc.get.call(this)}})}` });
+  background(r);
+  assert.ok(r.hits.includes('/landed'), 'the link still opened in the background: ' + r.result.text.split('\n')[0]);
+  assert.match(r.result.text, /background/);
+});
+
+test('a proof the hook refuses fails closed and says "use the engine browser path", and the real hook still works afterwards', opts, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain(`<button id="go" type="button" onclick="window.clicked=(window.clicked||0)+1">Go</button>`, ''), readOnly, {});
+  const real = f.entry.hook, clicked = () => f.page.evaluate(() => window.clicked ?? 0);
+  const outcome = async hook => {
+    const tab = Object.create(f.entry, { hook: { value: hook } });
+    try { await backgroundClick(tab, f.page.locator('#go'), options => f.page.locator('#go').click({ ...options, timeout: 1000 })); return 'delivered'; }
+    catch (error) { return error.message; }
+  };
+  const wrongSecret = await outcome({ key: real.key, secret: 'wrong-secret-wrong-secret-0000' });
+  assert.match(wrongSecret, /use the engine browser path/); assert.doesNotMatch(wrongSecret, /read again/);
+  const noHook = await outcome({ key: 'k' + '0'.repeat(32), secret: real.secret });
+  assert.match(noHook, /use the engine browser path/);
+  assert.equal(await clicked(), 0, 'no click was delivered by either refusal');
+  const r = await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  assert.equal(await clicked(), 1, r.text.split('\n')[0]);
 });

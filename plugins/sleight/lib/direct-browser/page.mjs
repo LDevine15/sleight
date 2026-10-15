@@ -13,7 +13,7 @@ function deadline(task, ms, message = 'background preparation timed out') {
 // can be serialized. The hook controls disposition, never grants authority.
 //
 // popupHook({ key, secret }): the controller picks a random property name and a random secret per page registry
-// and writes both into the install source, so a page can find neither before the hook runs. The api lives at
+// and writes both into the install source (secret as an array of byte values, built by hookSource), so a page can find neither before the hook runs. The api lives at
 // window[key] as a frozen, non-configurable, non-writable, non-enumerable value, so a page cannot replace, delete or
 // redefine it. A page can still list the property and call the methods, so every method takes a proof as its first
 // argument: HMAC-SHA-256(secret, method + ':' + nonce) as 'nonce.tag', checked against the secret held in this
@@ -23,7 +23,7 @@ function deadline(task, ms, message = 'background preparation timed out') {
 // first), and the controller must treat that document as having no hook.
 export function popupHook(options) {
   const { key, secret } = options !== null && typeof options === 'object' ? options : {};
-  if (typeof key !== 'string' || key.length === 0 || typeof secret !== 'string' || secret.length < 16 || secret.length > 64) return false;
+  if (typeof key !== 'string' || key.length === 0 || typeof secret !== 'object' || secret === null) return false;
   // Every global this hook reads after install is captured here, before page scripts, so a page that replaces or
   // deletes window.Element, window.Object, window.Set and the rest cannot change what the hook sees. These locals
   // shadow the page-visible names for everything below.
@@ -33,6 +33,18 @@ export function popupHook(options) {
     Window, Uint8Array, Uint32Array, setTimeout, clearTimeout, navigator } = globalThis;
   const { defineProperty, getOwnPropertyDescriptor: getOwn, freeze } = Object, isFinite = Number.isFinite, stringify = JSON.stringify;
   const randomValues = globalThis.crypto?.getRandomValues?.bind(globalThis.crypto), nativeRandom = Math.random;
+  // The secret arrives as an array of 16 to 64 byte values written into the install source (hookSource builds it), so
+  // nothing here converts a string in the page. It is copied once, now, into a typed array nothing outside this closure
+  // can reach; after install the hook never reads secret again, and never reads a length off a typed array (a page can
+  // redefine %TypedArray%.prototype.length): every loop below runs to a count held in a local number.
+  const secretLength = Array.isArray(secret) ? secret.length : 0;
+  if (secretLength < 16 || secretLength > 64) return false;
+  const secretBytes = new Uint8Array(64);
+  for (let i = 0; i < secretLength; i++) {
+    const value = secret[i];
+    if (typeof value !== 'number' || !(value >= 0 && value <= 255) || value % 1 !== 0) return false;
+    secretBytes[i] = value;
+  }
   if (getOwn(window, key)) return false;
   // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable-container
   // and iframe-embed-object.html, obsolete.html#frames; fenced frames:
@@ -420,8 +432,9 @@ export function popupHook(options) {
       found++;
     }
     const w = new Uint32Array(64), h = new Uint32Array(8);
-    return bytes => {
-      const length = bytes.length, total = ((length + 9 + 63) >> 6) << 6, data = new Uint8Array(total);
+    // bytes holds `length` message bytes (a typed array with room to spare); only the count passed in is used.
+    return (bytes, length) => {
+      const total = ((length + 9 + 63) >> 6) << 6, data = new Uint8Array(total);
       for (let i = 0; i < length; i++) data[i] = bytes[i];
       data[length] = 0x80;
       const bits = length * 8;
@@ -447,15 +460,28 @@ export function popupHook(options) {
     };
   })();
   const hexDigits = '0123456789abcdef';
-  const bytesOf = text => { const bytes = new Uint8Array(text.length); for (let i = 0; i < text.length; i++) bytes[i] = charCodeAt(text, i); return bytes; };
-  const secretBytes = bytesOf(secret);
+  // HMAC-SHA-256 over the UTF-8 bytes of text (a lone surrogate becomes U+FFFD, as in Node), written with charCodeAt
+  // (uncurried above), typed array writes and operators. Lengths come from the string (a primitive's length cannot be
+  // redefined) and from counters; no typed array length is read.
   const hmacHex = text => {
-    const message = bytesOf(text), inner = new Uint8Array(64 + message.length), outer = new Uint8Array(96);
-    for (let i = 0; i < 64; i++) { const k = i < secretBytes.length ? secretBytes[i] : 0; inner[i] = k ^ 0x36; outer[i] = k ^ 0x5c; }
-    for (let i = 0; i < message.length; i++) inner[64 + i] = message[i];
-    const digest = sha(inner);
+    const count = text.length, inner = new Uint8Array(64 + 3 * count), outer = new Uint8Array(96);
+    let used = 64;
+    for (let i = 0; i < count; i++) {
+      let unit = charCodeAt(text, i);
+      if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < count) {
+        const next = charCodeAt(text, i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) { unit = 0x10000 + ((unit - 0xd800) << 10) + (next - 0xdc00); i++; }
+      }
+      if (unit >= 0xd800 && unit <= 0xdfff) unit = 0xfffd;
+      if (unit < 0x80) inner[used++] = unit;
+      else if (unit < 0x800) { inner[used++] = 0xc0 | (unit >> 6); inner[used++] = 0x80 | (unit & 63); }
+      else if (unit < 0x10000) { inner[used++] = 0xe0 | (unit >> 12); inner[used++] = 0x80 | ((unit >> 6) & 63); inner[used++] = 0x80 | (unit & 63); }
+      else { inner[used++] = 0xf0 | (unit >> 18); inner[used++] = 0x80 | ((unit >> 12) & 63); inner[used++] = 0x80 | ((unit >> 6) & 63); inner[used++] = 0x80 | (unit & 63); }
+    }
+    for (let i = 0; i < 64; i++) { const k = secretBytes[i]; inner[i] = k ^ 0x36; outer[i] = k ^ 0x5c; }
+    const digest = sha(inner, used);
     for (let i = 0; i < 32; i++) outer[64 + i] = digest[i];
-    const tag = sha(outer);
+    const tag = sha(outer, 96);
     let hex = '';
     for (let i = 0; i < 32; i++) hex += hexDigits[tag[i] >> 4] + hexDigits[tag[i] & 15];
     return hex;
@@ -732,6 +758,13 @@ export function popupHook(options) {
 // false, true, { kind: 'link' } or { kind: 'form' }, takeRequest undefined, { unavailable: true }, { violation } or
 // { url, target, rel }, take a number. It throws an Error with code HOOK_ANSWER_REFUSED for anything it cannot vouch for.
 export const newHook = () => Object.freeze({ key: 'k' + randomBytes(16).toString('hex'), secret: randomUUID() });
+// The install expression for a hook: popupHook called with { key, secret } where secret is the secret's bytes as numeric
+// literals (an array of 16 to 64 byte values). The page never holds a string it must convert, and an array or object
+// literal runs no page code.
+export function hookSource(hook) {
+  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string') throw Error('background popup hook unavailable');
+  return `(${popupHook})(${JSON.stringify({ key: hook.key, secret: Array.from(Buffer.from(hook.secret, 'latin1')) })})`;
+}
 const issued = new WeakMap();
 export function hookProof(hook, method) {
   if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string' || typeof method !== 'string') throw Error('background popup hook unavailable');
@@ -768,6 +801,11 @@ const hookOf = tab => {
 };
 
 const changedMidClick = 'page changed during the click; read again';
+const hookUnavailable = 'background popup hook did not answer; use the engine browser path';
+// A refused proof, an answer the controller cannot verify, a missing or switched-off hook: the page may be hostile or the
+// hook gone, and reading the page again will not help, so the model is sent to the engine browser path.
+const hookFailed = error => error?.code === 'HOOK_ANSWER_REFUSED'
+  || /background popup hook (refused the call|unavailable|is off|answer refused)/.test(String(error?.message));
 
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false } = {}) {
   const token = randomUUID(), hook = hookOf(tab), { key } = hook;
@@ -776,7 +814,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     const answer = await tab.page.evaluate(({ key, proof, token }) => window[key] ? window[key].finish(proof, token) : 'absent', { key, proof: hookProof(hook, 'finish'), token });
     return answer === 'absent' ? undefined : hookOpen(hook, answer);
   };
-  let cancelled;
+  let cancelled, failure;
   try {
     let prepared;
     try {
@@ -787,7 +825,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         hook.reveal(reveal, element);
         return result;
       }, { key, prepare: hookProof(hook, 'prepare'), reveal: hookProof(hook, 'reveal'), token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs));
-    } catch { throw Error('background popup preparation failed; use the engine browser path'); }
+    } catch { throw failure = Error('background popup preparation failed; use the engine browser path'); }
     if (prepared?.kind === 'form') throw Error('Enter would submit this form into a new tab; click its submit button instead');
     const modified = prepared === true || prepared?.kind === 'link';
     // Move the pointer onto the element first, so a swap the pointer's arrival triggers lands before the seal is
@@ -805,7 +843,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         return hook.guard(guard, element, token, capMs);
       }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
       if (hookOpen(hook, armed) !== true) throw Error('click guard unavailable');
-    } catch { throw Error(changedMidClick); }
+    } catch (error) { throw hookFailed(error) ? failure = Error(hookUnavailable) : Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     let result;
     try { result = await click(modified ? { modifiers: ['ControlOrMeta'] } : {}); }
@@ -827,6 +865,9 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     }
     await tab.settlePopups?.(checkpoint);
     return result;
+  } catch (error) {
+    if (failure || !hookFailed(error)) throw error;
+    throw failure = Error(hookUnavailable);
   } finally {
     // A hook that cannot vouch for its own answer, or refused the call, may have vetoed the input: say so rather than
     // report a click delivered. A page that navigated away or closed just ends the evaluate, which is not a veto.
@@ -834,8 +875,9 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     try { verdict = await disarm(); }
     catch (error) { if (error?.code === 'HOOK_ANSWER_REFUSED' || /background popup hook refused/.test(error?.message)) cancelled ??= 'the page hook did not answer'; }
     cancelled ??= typeof verdict === 'string' ? verdict : undefined;
-    // The guard cancelled the input: say so instead of reporting a delivered click.
-    if (cancelled) throw Error(changedMidClick);
+    // The guard cancelled the input: say so instead of reporting a delivered click. An error already on its way out
+    // that names the hook (refused proof, unavailable hook) is clearer than this and stays.
+    if (cancelled && !failure) throw Error(changedMidClick);
   }
 }
 
@@ -874,7 +916,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     });
     await entry.cdp.send('Page.enable');
     await entry.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    const source = `(${popupHook})(${JSON.stringify({ key: entry.hook.key, secret: entry.hook.secret })})`;
+    const source = hookSource(entry.hook);
     const { identifier } = await entry.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source });
     if (!identifier) throw Error('background popup hook installation failed');
     entry.script = identifier;
