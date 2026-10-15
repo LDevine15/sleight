@@ -74,7 +74,10 @@ our own runs. Dates and engine versions are given where they matter.
   it, not through Playwright, which often never attaches such a frame. The filter sends the port guard, the child auto-attach, the
   hook script and the resume as one burst, because one extra round trip before the resume of an iframe's first target left the
   frame unattached in 3 of 3 runs, and it turns the Page domain on before adding the script (without it the browser took the
-  script and never ran it). The key asks each frame's hook for its tree (the same-origin windows below it, each with a hook
+  script and never ran it). It sends `Target.setAutoAttach` once per session, to a page from its first session only, and answers
+  a caller's repeat without sending it. Chrome drops the pending load of a cross-site frame nested in a cross-site frame when
+  a second one arrives, and the page then stayed "interactive" with `browser_open` waiting its 3 s (22 of 24 loads at depth 2, 23 of 24 at
+  depth 3, and `page.goto` on an open depth-3 page hung in 5 of 20; now 0 of 24, 0 of 24 and 0 of 20). The key asks each frame's hook for its tree (the same-origin windows below it, each with a hook
   id and the child count from a getter captured before the page's scripts), a frame reached by two routes counts once, and the key
   goes only when every child the windows count is reached and every hook was there at the start of its document (a hook put in
   later sits behind the page's own listeners, and such a frame paid in 9 of 36 presses in a repro before the check). A
