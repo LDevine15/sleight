@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { trustedRead, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent } from './rules.mjs';
+import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 
@@ -38,6 +39,32 @@ export function requestedPayment(message) {
   } catch { return; }
 }
 
+// Focus and its synchronous page handlers run in the same evaluation. Never
+// let a failed focus silently send a key to the previously active control.
+export function focusCheckedNode(el, focus) {
+  if (!el.isConnected) return false;
+  if (focus) HTMLElement.prototype.focus.call(el, { preventScroll: true });
+  try {
+    // A closed root hides its real receiver behind activeElement's host. DOM
+    // evidence cannot distinguish that host from an ordinary focusable div.
+    // Refuse opaque potential hosts; an open root exposes the receiver below.
+    const opaqueHost = !el.shadowRoot && (el.localName.includes('-') ||
+      ['article','aside','blockquote','body','div','footer','h1','h2','h3','h4','h5','h6','header','main','nav','p','section','span'].includes(el.localName));
+    if (opaqueHost) return false;
+    let node = el;
+    for (;;) {
+      const doc = node.ownerDocument, view = doc.defaultView;
+      let active = doc.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      if (active !== node) return false;
+      const frame = view.frameElement;
+      if (!frame) return view === view.top;
+      if (!frame.isConnected) return false;
+      node = frame;
+    }
+  } catch { return false; }
+}
+
 export function ownDocument(el) { return el.ownerDocument; }
 export function samePageDocument(el, doc) { return el.isConnected && el.ownerDocument === doc; }
 
@@ -46,27 +73,57 @@ export function samePageDocument(el, doc) { return el.isConnected && el.ownerDoc
 // Require one visible exact labeled value per term in the target form/dialog.
 export function readPaymentPage(el) {
   const doc = el.ownerDocument, view = doc.defaultView;
-  const root = el.closest('form,dialog,[role="dialog"]');
-  const visible = node => {
-    const r = node.getBoundingClientRect(), style = view.getComputedStyle(node);
-    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  const root = ('form' in el ? el.form : el.closest('form')) ?? el.closest('dialog,[role="dialog"]');
+  const visible = (node, rects = node.getClientRects()) => {
+    if (!node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+    let left = 0, top = 0, right = view.innerWidth, bottom = view.innerHeight, opacity = 1;
+    for (let parent = node; parent; parent = parent.parentElement ?? parent.getRootNode?.().host) {
+      const style = view.getComputedStyle(parent);
+      opacity *= style.opacity === '' ? 1 : Number(style.opacity ?? 1);
+      if (opacity < 0.1 || style.visibility === 'hidden' || style.display === 'none' ||
+          style.clipPath && style.clipPath !== 'none' || style.clip && style.clip !== 'auto') return false;
+      const box = parent.getBoundingClientRect();
+      const clips = axis => /^(?:auto|scroll|hidden|clip)$/.test(style['overflow' + axis]) || /(?:paint|strict|content)/.test(style.contain ?? '');
+      if (clips('X')) { left = Math.max(left, box.left + parent.clientLeft); right = Math.min(right, box.left + parent.clientLeft + parent.clientWidth); }
+      if (clips('Y')) { top = Math.max(top, box.top + parent.clientTop); bottom = Math.min(bottom, box.top + parent.clientTop + parent.clientHeight); }
+    }
+    return [...rects].some(r => Math.min(right, r.right) - Math.max(left, r.left) >= 4 && Math.min(bottom, r.bottom) - Math.max(top, r.top) >= 4);
+  };
+  const visibleText = node => {
+    const walker = doc.createTreeWalker(node, 5), parts = []; let part, previous;
+    while ((part = walker.nextNode())) if (part.nodeType === 1) {
+      if (part.localName === 'br') { parts.push('\n'); previous = undefined; }
+    } else if (part.parentElement) {
+      const range = doc.createRange(); range.selectNodeContents(part);
+      if (!part.textContent.trim() || !visible(part.parentElement, range.getClientRects())) continue;
+      let block = part.parentElement;
+      while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(view.getComputedStyle(block).display)) block = block.parentElement;
+      if (parts.length) parts.push(previous === block ? ' ' : '\n');
+      parts.push(part.textContent.trim()); previous = block;
+    }
+    return parts.join('');
   };
   const field = key => {
     if (!root) return;
-    const values = [];
+    const values = [], hidden = [];
+    const valueOf = value => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
     for (const node of root.querySelectorAll('[data-payment-' + key + '],[itemprop="' + key + '"],[name="' + key + '"],[aria-label="' + key + '" i]')) {
-      if (!visible(node)) continue;
-      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : node.innerText;
-      const shown = typeof value === 'string' ? value.trim().replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
       const attribute = node.getAttribute('data-payment-' + key);
+      if (!visible(node)) {
+        // Hidden candidates can contradict evidence, never supply authority.
+        hidden.push(valueOf(attribute), valueOf(['input','select','textarea'].includes(node.localName) ? node.value : node.textContent));
+        continue;
+      }
+      const value = ['input', 'select', 'textarea'].includes(node.localName) ? node.value : visibleText(node);
+      const shown = valueOf(value);
       if (attribute !== null && attribute.trim() !== shown) return;
       if (shown) values.push(shown);
     }
     if (!values.length) {
       const label = new RegExp('^' + key + ':\\s*(.+)$', 'i');
-      for (const line of (root.innerText ?? '').split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
+      for (const line of visibleText(root).split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
     }
-    return values.length === 1 && values[0].length <= 4096 ? values[0] : undefined;
+    return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };
   const page = Object.fromEntries(['item', 'amount', 'payee', 'currency'].map(key => [key, field(key)]).filter(([,value]) => value !== undefined));
   const labels = el.labels ? [...el.labels].map(label => label.innerText.trim()).filter(Boolean) : [];
@@ -144,7 +201,9 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     try { native.consume(ticket, entry.operation); return true; } catch { return false; }
     finally { consuming = undefined; }
   } });
-  const ruleContext = { session: bound.message.session, turn: bound.message.turn, userMessage: () => {
+  const ruleContext = { now, dialogContinuation: target => dialogOwner?.dialog === target.state?.dialog &&
+      !!dialogOwner?.dialog && dialogOwner.doc.valid,
+    session: bound.message.session, turn: bound.message.turn, userMessage: () => {
     if (!current()) return;
     const page = ruleTarget?.terms?.page;
     const observed = page && { ...page, method: requested?.method };
@@ -160,17 +219,34 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     held.add(handle);
     try {
       const frame = await handle.ownerFrame();
-      if (!frame || !current() || old && (!old.doc.valid || !await handle.evaluate(samePageDocument, old.doc.handle))) throw Error('TRUSTED_TARGET_REQUIRED');
+      if (!frame || !current() || old && (!old.doc.valid || !await trustedRead(handle, samePageDocument, old.doc.handle))) throw Error('TRUSTED_TARGET_REQUIRED');
       let doc = documents.get(frame);
-      if (!doc || !doc.valid || !await handle.evaluate(samePageDocument, doc.handle)) {
-        const documentHandle = await handle.evaluateHandle(ownDocument);
+      if (!doc || !doc.valid || !await trustedRead(handle, samePageDocument, doc.handle)) {
+        const documentHandle = await trustedHandle(handle, ownDocument);
         doc = { valid: true, handle: documentHandle, id: 'd' + randomUUID().replaceAll('-', '') }; documents.set(frame, doc); held.add(documentHandle);
       }
       if (typeof target.page?.on === 'function' && !watched.has(target.page)) {
-        const navigate = frame => { const document = documents.get(frame); if (document) document.valid = false; };
-        target.page.on('framenavigated', navigate); watched.set(target.page, navigate);
+        const revokeDialog = () => { dialogOwner = undefined; expirePaymentDialog(ruleContext); };
+        const navigate = frame => {
+          const document = documents.get(frame); if (document) document.valid = false;
+          if (dialogOwner?.page === target.page) revokeDialog();
+        };
+        const dialog = value => {
+          if (!dialogOwner?.active || dialogOwner.page !== target.page || !dialogOwner.doc.valid || dialogOwner.dialog) {
+            revokeDialog(); return;
+          }
+          dialogOwner.dialog = value;
+        };
+        // The pinned Playwright emits dialogclosed even for a user/browser
+        // answer outside our action runner. A stale state pointer grants nothing.
+        const dialogclosed = value => { if (dialogOwner?.dialog === value) revokeDialog(); };
+        const close = () => { if (dialogOwner?.page === target.page) revokeDialog(); };
+        const handlers = { framenavigated: navigate, dialog, dialogclosed, close };
+        for (const [event, handler] of Object.entries(handlers)) target.page.on(event, handler);
+        watched.set(target.page, handlers);
       }
-      const observed = await handle.evaluate(readPaymentPage);
+      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
+      const observed = await trustedRead(handle, readPaymentPage);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
       const identity = { browserIncarnation: browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
@@ -178,7 +254,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       const record = { handle, doc, frame, page: target.page, identity, origin: observed.origin, name: observed.name, ref: target.ref };
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
-      const element = await handle.evaluate(inspectElement);
+      const element = await trustedRead(handle, inspectElement);
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: observed.origin,
         element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, method: requested?.method },
@@ -192,8 +268,10 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       try {
         if (!current()) return refused();
         target.do = kind;
+        if (kind !== 'dialog') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         if (kind === 'dialog') {
-          if (!dialogOwner || !dialogOwner.doc.valid || !target.state || !current()) return refused();
+          if (target.accept === false) { dialogOwner = undefined; expirePaymentDialog(ruleContext); return { verdict: 'allow' }; }
+          if (!dialogOwner?.dialog || target.state?.dialog !== dialogOwner.dialog || !dialogOwner.doc.valid || !current()) return refused();
           if (target.page && dialogOwner.page !== target.page) return refused();
           if (new URL(dialogOwner.frame.url()).origin !== dialogOwner.origin) return refused();
           const page = dialogTerms(target.message), record = dialogOwner;
@@ -202,19 +280,36 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
           targets.set(target, record);
         } else if (target.locator) await prepare(target);
         else if (!['wait','back','forward','reload','viewport'].includes(kind)) return refused();
+        else Object.assign(target, { session: bound.message.session, turn: bound.message.turn });
         if (fieldOnly && intent(kind, target).submit) return refused();
         ruleTarget = target;
         const result = check(ruleContext, kind, target);
-        if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind)) dialogOwner = targets.get(target);
+        if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind))
+          dialogOwner = { ...targets.get(target), target, active: false };
+        if (kind === 'dialog' && result.verdict === 'allow') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
         return result;
       } catch { return refused(); }
       finally { ruleTarget = undefined; }
     },
+    beginInput(target) { if (dialogOwner?.target === target && current()) dialogOwner.active = true; },
+    finishInput(target) {
+      if (dialogOwner?.target !== target) return;
+      dialogOwner.active = false;
+      if (!dialogOwner.dialog) { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
+    },
+    async pressTarget(target, key, options) {
+      const record = targets.get(target);
+      if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
+          !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+      // ElementHandle.press focuses again without verifying its recipient.
+      // Use only the owned page keyboard after the checked ref retained focus.
+      return target.page.keyboard.press(key, options);
+    },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);
-      if (!entry || !current() || !entry.record.doc.valid || !equal(paths, entry.paths) || !await entry.record.handle.evaluate(samePageDocument, entry.record.doc.handle))
+      if (!entry || !current() || !entry.record.doc.valid || !equal(paths, entry.paths) || !await trustedRead(entry.record.handle, samePageDocument, entry.record.doc.handle))
         throw Error('USER_NAMED_FILE_REQUIRED');
-      const observed = await entry.record.handle.evaluate(readPaymentPage);
+      const observed = await trustedRead(entry.record.handle, readPaymentPage);
       if (observed.origin !== entry.record.origin || observed.name !== entry.record.name || !current()) throw Error('USER_NAMED_FILE_REQUIRED');
       live = entry.record.identity;
       const bindingData = { ...entry.record.identity, ref: target.ref, operation: 'upload' };
@@ -252,7 +347,8 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     },
     async dispose() {
       closed = true; native?.revoke();
-      for (const [page, navigate] of watched) page.off('framenavigated', navigate); watched.clear(); tickets.clear(); pending.clear(); offered.clear();
+      for (const [page, handlers] of watched) for (const [event, handler] of Object.entries(handlers)) page.off(event, handler);
+      watched.clear(); tickets.clear(); pending.clear(); offered.clear();
       const receipt = fileProvider.dispose();
       await Promise.allSettled([...held].map(handle => handle.dispose?.())); held.clear(); documents.clear();
       return receipt;
