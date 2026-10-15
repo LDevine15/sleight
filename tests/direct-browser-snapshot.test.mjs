@@ -20,6 +20,31 @@ function nativeSnapshot(secrets) {
     textBoxes: { layoutIndex: [], bounds: [], start: [], length: [] } }] };
 }
 
+// A CDP-shaped capture of the same pierced DOM fixture, including closed-root
+// markers and native attributes. Production must decide from this capture.
+function capturedDOM(root, secrets = []) {
+  const capture = nativeSnapshot(secrets), { strings } = capture;
+  const indices = new Map(strings.map((value, index) => [value, index]));
+  const intern = value => {
+    if (!indices.has(value)) { indices.set(value, strings.length); strings.push(value); }
+    return indices.get(value);
+  };
+  const nodes = { parentIndex: [], nodeType: [], nodeName: [], nodeValue: [], backendNodeId: [], attributes: [],
+    shadowRootType: { index: [], value: [] } };
+  const visit = (node, parentIndex = -1) => {
+    const index = nodes.nodeName.length;
+    nodes.parentIndex.push(parentIndex); nodes.nodeType.push(node.nodeType);
+    nodes.nodeName.push(intern((node.localName ?? (node.nodeType === 9 ? '#document' : '#document-fragment')).toUpperCase()));
+    nodes.nodeValue.push(intern('')); nodes.backendNodeId.push(node.backendNodeId ?? 0);
+    nodes.attributes.push((node.attributes ?? []).map(intern));
+    if (node.shadowRootType) { nodes.shadowRootType.index.push(index); nodes.shadowRootType.value.push(intern(node.shadowRootType)); }
+    for (const child of [...node.children ?? [], ...node.shadowRoots ?? [], ...node.contentDocument ? [node.contentDocument] : []]) visit(child, index);
+  };
+  visit(root);
+  capture.documents.push({ nodes });
+  return capture;
+}
+
 function fixture(tree, secrets = []) {
   const page = new EventEmitter();
   const frame = { evaluate: async () => secrets };
@@ -192,7 +217,7 @@ function closedFixture({ emptyHostQuery = false } = {}) {
   base.page.context = () => ({ newCDPSession: async () => ({
     send: async (method, params) => {
       if (method === 'DOM.getDocument') return { root };
-      if (method === 'DOMSnapshot.captureSnapshot') return nativeSnapshot(['closed-secret']);
+      if (method === 'DOMSnapshot.captureSnapshot') return capturedDOM(root, ['closed-secret']);
       if (method === 'Accessibility.queryAXTree') return { nodes: emptyHostQuery ? [] : structuredClone(nodes) };
       if (method === 'Accessibility.getPartialAXTree') return { nodes: structuredClone(nodes.filter(node => node.backendDOMNodeId === params.backendNodeId)) };
       if (method === 'DOM.resolveNode') return { object: { objectId: String(params.backendNodeId) } };
@@ -380,7 +405,7 @@ function nativeClosedFixture(root, axNodes) {
   f.page.context = () => ({ newCDPSession: async () => ({
     async send(method, params) {
       calls.push([method, params]);
-      if (method === 'DOMSnapshot.captureSnapshot') return nativeSnapshot([]);
+      if (method === 'DOMSnapshot.captureSnapshot') return capturedDOM(root);
       if (method === 'DOM.getDocument') return { root };
       if (method === 'Accessibility.getPartialAXTree') {
         assert.equal(params.fetchRelatives, false);
@@ -392,7 +417,7 @@ function nativeClosedFixture(root, axNodes) {
   return { ...f, calls, frame };
 }
 const closedRoot = children => ({ nodeType: 11, shadowRootType: 'closed', children });
-const element = (backendNodeId, extra = {}) => ({ nodeType: 1, backendNodeId, ...extra });
+const element = (backendNodeId, extra = {}) => ({ nodeType: 1, localName: 'button', backendNodeId, ...extra });
 const axControl = (backendDOMNodeId, role, name, extra = {}) => ({ backendDOMNodeId, role: { value: role }, name: { value: name }, ...extra });
 
 test('CR2 WAI-ARIA 1.2 widget roles and Chromium native input mappings expose operable closed controls', async () => {
@@ -465,4 +490,67 @@ test('CR1 backend numbers are isolated by frame and retire when a frame disappea
   await module.snapshot(page);
   assert.throws(() => module.closedRefBinding(page, refs[1]), /stale/i);
   assert.equal(module.closedRefBinding(page, refs[0]).frame, main);
+});
+
+test('CR3 captures each frame once and omits pierced DOM and AX work without closed roots', async () => {
+  const { page } = fixture([{ role: 'button', name: 'Continue', ref: 'e1' }]);
+  const context = page.context(), calls = [];
+  page.context = () => ({ newCDPSession: async frame => {
+    calls.push('attach');
+    const session = await context.newCDPSession(frame), send = session.send;
+    session.send = (method, params) => { calls.push(method); return send(method, params); };
+    session.detach = async () => { calls.push('detach'); };
+    return session;
+  } });
+  await module.snapshot(page);
+  assert.deepEqual(calls, ['attach', 'DOMSnapshot.captureSnapshot', 'detach']);
+});
+
+test('CR3 600 closed-root divs spend only one candidate probe and expose the button', async () => {
+  const children = Array.from({ length: 600 }, (_, i) => element(i + 1, { localName: 'div' }));
+  children.push(element(601));
+  const { page, calls } = nativeClosedFixture({ nodeType: 9, children: [element(900, { shadowRoots: [closedRoot(children)] })] },
+    [axControl(601, 'button', 'Only command')]);
+  const result = await module.snapshot(page);
+  assert.match(result.text, /button "Only command" \[ref=s\d+\]/);
+  assert.deepEqual(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').map(([, params]) => params.backendNodeId), [601]);
+  assert.equal(calls.filter(([method]) => method === 'DOMSnapshot.captureSnapshot').length, 1);
+  assert.equal(calls.filter(([method]) => method === 'DOM.getDocument').length, 1);
+});
+
+test('CR3 native tags and role attributes are candidates while inert divs and hidden inputs are not', async () => {
+  const tags = ['button', 'input', 'textarea', 'select', 'option', 'a', 'area', 'summary'];
+  const children = tags.map((localName, i) => element(i + 1, { localName, attributes: ['href', '/next'] }));
+  children.push(element(20, { localName: 'div', attributes: ['role', 'switch'] }),
+    element(21, { localName: 'div' }), element(22, { localName: 'input', attributes: ['type', 'hidden'] }));
+  const { page, calls } = nativeClosedFixture({ nodeType: 9, children: [element(900, { shadowRoots: [closedRoot(children)] })] }, []);
+  await module.snapshot(page);
+  assert.deepEqual(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').map(([, params]) => params.backendNodeId),
+    [1, 2, 3, 4, 5, 6, 7, 8, 20]);
+});
+
+test('CR3 runs up to four frame sessions alongside the aria read and detaches every session', async () => {
+  const { page } = fixture([]), frames = Array.from({ length: 6 }, () => ({}));
+  let active = 0, peak = 0, ariaStarted = false, captures = 0, detaches = 0, releasing = false;
+  const held = [];
+  page.frames = () => frames; page.mainFrame = () => frames[0];
+  page.ariaSnapshotJSON = async () => { ariaStarted = true; return []; };
+  page.context = () => ({ newCDPSession: async () => {
+    active++; peak = Math.max(peak, active);
+    return { send: async method => {
+      assert.equal(method, 'DOMSnapshot.captureSnapshot'); captures++;
+      if (!releasing) await new Promise(resolve => held.push(resolve));
+      return nativeSnapshot([]);
+    }, detach: async () => { active--; detaches++; } };
+  } });
+  const pending = module.snapshot(page);
+  try {
+    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(ariaStarted, true); assert.equal(captures, 4); assert.equal(peak, 4);
+  } finally {
+    releasing = true;
+    for (const release of held.splice(0)) release();
+    await pending.catch(() => {});
+  }
+  assert.equal(captures, 6); assert.equal(detaches, 6); assert.equal(active, 0); assert.equal(peak, 4);
 });

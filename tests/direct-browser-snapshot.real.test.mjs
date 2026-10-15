@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from '../plugins/sleight/vendor/playwright-core/index.mjs';
 import { snapshot, closedRefBinding, acknowledgeSnapshot, snapshotRefBinding } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
+import { censusFixture } from './fixtures/cr3-forms.mjs';
 
 const live = process.env.SLEIGHT_LIVE_DOM_TEST === '1';
 const pin = JSON.parse(readFileSync(new URL('../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url)))
@@ -147,23 +148,24 @@ test('real fixture size census stays below 15K for open, action diff and find', 
   assert.ok(first.text.length + small.text.length + found.text.length <= 15000);
 });
 
-for (const route of ['travel', 'settings', 'checkout']) test(`real original ${route} fixture snapshot size census`, { skip }, async t => {
-  const controls = {
-    travel: '<label>Destination<input></label><select aria-label="Cabin"><option>Standard</option><option>Premium</option></select>',
-    settings: '<label>Display name<input></label><label><input type="checkbox">Updates</label><button role="switch" aria-checked="true">Secure mode</button>',
-    checkout: '<label>Address<input></label><label>Card<input autocomplete="cc-number" value="4111111111111111"></label>',
-  };
-  const page = await fixture(t, '<main><h1>' + route + '</h1><form>' + controls[route] + '<button>Save</button></form></main>');
+for (const route of ['travel', 'settings', 'checkout']) test(`CR3 authored ${route} form with 40 controls and long-list census`, { skip }, async t => {
+  const { html, routes } = censusFixture(route);
+  const page = await fixture(t, html, routes);
+  await page.waitForLoadState('load');
   assert.ok(await page.locator('input,select,textarea,button').count() >= 40, 'census fixture must have at least 40 controls');
+  assert.ok(await page.locator('li').count() >= 60, 'census must include a long list');
+  if (route === 'checkout') assert.equal(await page.frames()[1].getByRole('textbox', { name: 'Number', exact: true }).count(), 1);
   const first = await snapshot(page);
   assert.ok(first.text.length >= 2000, 'census must exercise at least 2K snapshot characters');
+  assert.doesNotMatch(first.text, /4111|08\/30|: "123"/);
+  if (route === 'checkout') assert.match(first.text, /textbox "Number" \[ref=f\d+e\d+\]: "\[redacted\]"/);
   await page.locator('input').first().fill('Fixture census');
   const action = await snapshot(page, { since: first.number });
   const found = await snapshot(page, { find: 'Fixture census' });
   assert.match(found.text, /Fixture census/);
   const chars = { open: first.text.length, act: action.text.length, read: found.text.length,
     total: first.text.length + action.text.length + found.text.length };
-  t.diagnostic('Original fixture census ' + JSON.stringify(chars));
+  t.diagnostic('CR3 authored fixture census ' + JSON.stringify({ route, ...chars }));
   assert.ok(first.text.length <= 8000 && action.text.length <= 8000 && found.text.length <= 8000);
   assert.ok(chars.total <= 15000);
 });

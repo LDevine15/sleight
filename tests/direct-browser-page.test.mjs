@@ -156,7 +156,7 @@ test('unproved popup preparation refuses before input and disarms a possible lat
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
-function hookFixture() {
+function hookFixture({ clock = Date } = {}) {
   class Event {
     get defaultPrevented() { return !!this.nativePrevented; }
     get returnValue() { return !this.nativePrevented; }
@@ -188,10 +188,75 @@ function hookFixture() {
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
   vm.runInNewContext(`(${popupHook})()`, { window, document, navigator,
-    MouseEvent, Element, Event, EventTarget, URL, Date, setTimeout, clearTimeout });
+    MouseEvent, Element, Event, EventTarget, URL, Date: clock, setTimeout, clearTimeout });
   const hook = window[Symbol.for('sleight.popup3')];
   return { window, document, navigator, hook, Element, MouseEvent, Event, EventTarget, opens };
 }
+
+test('CR3 arms every command without inspecting script or listener source', () => {
+  const f = hookFixture();
+  try {
+    Object.defineProperty(f.document, 'scripts', { get() { throw Error('source inspection is forbidden'); } });
+    assert.equal(f.hook.prepare(new f.Element(), 'external-handler', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+for (const attrs of [{ rel: 'noopener' }, { target: '_self', rel: 'noreferrer' },
+  { target: 'content', rel: 'noopener' }, { target: '_parent' }, { target: '_top' }])
+test('CR3 same-context link stays plain: ' + JSON.stringify(attrs), () => {
+  const f = hookFixture(); f.window.frames = { content: {} };
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', ...attrs }), 'same', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+for (const target of ['_blank', 'new-context']) test('CR3 independent link target is captured: ' + target, () => {
+  const f = hookFixture();
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target }), 'new', 1000)?.kind, 'link'); }
+  finally { f.hook.off(); }
+});
+
+test('CR3 base target selects an existing context without treating rel as a new window', () => {
+  const f = hookFixture(); f.window.frames = { content: {} };
+  f.document.querySelector = () => new f.Element('base', { target: 'content' });
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', rel: 'noopener' }), 'base', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+test('CR3 captures composedPath and Date.now before page wrappers can change masking', () => {
+  let now = 10;
+  const clock = { now: () => now }, f = hookFixture({ clock }), button = new f.Element();
+  try {
+    f.hook.prepare(button, 'native', 1000);
+    f.Event.prototype.composedPath = () => [];
+    clock.now = () => 1e9;
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    now += 5;
+    const event = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+    assert.equal(event.ctrlKey, false);
+  } finally { f.hook.off(); }
+});
+
+test('CR3 preparation arm outlasts the actionability timeout by one second', async () => {
+  const f = clickFixture(true); let cap;
+  f.locator.evaluate = async (_fn, args) => { cap = args.capMs; return true; };
+  await backgroundClick(f.entry, f.locator, async () => {}, { timeoutMs: 2000 });
+  assert.equal(cap, 3000);
+});
+
+test('CR3 a link-kind self-close returns closure without evaluating takeRequest', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
+  let requestReads = 0;
+  f.entry.page.evaluate = async fn => {
+    if (String(fn).includes('takeRequest')) { requestReads++; throw Error('page closed'); }
+  };
+  const result = await backgroundClick(f.entry, f.locator, async () => {
+    f.entry.closed = true; throw Error('Target page has been closed');
+  });
+  assert.deepEqual(result, { closed: true, opener: 'parent' });
+  assert.equal(requestReads, 0);
+});
 
 test('CR2 HTML navigable containers and plugin elements reject focus through open shadow roots', () => {
   // HTML document-sequences.html#navigable-container and iframe-embed-object.html;
@@ -599,12 +664,12 @@ test('CR1 unavailable link default and missing registry never replay input', asy
   }
 });
 
-test('CR1 a same-context link with a registered popup handler still gets modified disposition', () => {
+test('CR3 same-context links stay plain without source inspection even with registered handlers', () => {
   const f = hookFixture(), link = new f.Element('a', { href: '/checkout' });
   link.listeners = {}; link.captureListeners = {};
   try {
     f.EventTarget.prototype.addEventListener.call(link, 'click', () => window.open('/popup'));
-    assert.equal(f.hook.prepare(link, 'registered', 1000), true);
+    assert.equal(f.hook.prepare(link, 'registered', 1000), false);
   } finally { f.hook.off(); }
 });
 

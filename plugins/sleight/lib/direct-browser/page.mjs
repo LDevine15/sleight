@@ -38,12 +38,12 @@ export function popupHook() {
   const CR2_MODIFIER_WINDOW_MS = 100;
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
-  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap(), listeners = new WeakMap();
+  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
   const nativeOpen = window.open, nativePrevent = Event.prototype.preventDefault;
+  const composedPath = Event.prototype.composedPath, now = Date.now;
   const prevented = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented');
   const returnValue = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
   const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
-  const pointerType = type => /^(click|mousedown|mouseup|pointerdown|pointerup)$/.test(type);
   let arm;
   const replace = (object, name, descriptor) => {
     const before = Object.getOwnPropertyDescriptor(object, name);
@@ -60,9 +60,9 @@ export function popupHook() {
     for (let node = element; node && !result.includes(node); node = node.parentElement ?? node.getRootNode?.().host) result.push(node);
     return result;
   };
-  const live = () => arm && Date.now() < arm.until;
-  const active = () => live() && Date.now() < arm.modifierUntil;
-  const matches = event => event.isTrusted && event.composedPath().includes(arm.element);
+  const live = () => arm && now() < arm.until;
+  const active = () => live() && now() < arm.modifierUntil;
+  const matches = event => event.isTrusted && composedPath.call(event).includes(arm.element);
   const hide = event => {
     if (!active()) return false;
     if (masked.has(event)) return masked.get(event) === arm.token;
@@ -99,33 +99,27 @@ export function popupHook() {
     return nativeOpen.call(this, url, target, kept.join(','));
   };
   replace(window, 'open', { configurable: true, writable: true, value: open });
-  replace(EventTarget.prototype, 'addEventListener', { configurable: true, writable: true, value(type, listener, options) {
-    const result = add.call(this, type, listener, options);
-    if (pointerType(type) && listener) {
-      if (!listeners.has(this)) listeners.set(this, new Set());
-      listeners.get(this).add(listener);
-    }
-    return result;
-  } });
-  replace(EventTarget.prototype, 'removeEventListener', { configurable: true, writable: true, value(type, listener, options) {
-    const result = remove.call(this, type, listener, options);
-    if (pointerType(type)) listeners.get(this)?.delete(listener);
-    return result;
-  } });
   const keyEvent = event => {
     if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
-    if (event.type === 'keydown' && !arm.modifierUntil) arm.modifierUntil = Math.min(arm.until, Date.now() + CR2_MODIFIER_WINDOW_MS);
+    if (event.type === 'keydown' && !arm.modifierUntil) arm.modifierUntil = Math.min(arm.until, now() + CR2_MODIFIER_WINDOW_MS);
     if (!active()) return;
     event.stopImmediatePropagation();
   };
+  const targetOf = element => element.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+  const sameContext = element => {
+    const target = targetOf(element);
+    if (!target || /^_(self|parent|top)$/i.test(target) || target === window.name) return true;
+    if (target.toLowerCase() === '_blank') return false;
+    return typeof window.frames?.[target] === 'object';
+  };
   const linkState = element => {
     if (!element || !['a', 'area'].includes(element.localName) || !element.hasAttribute('href') || element.hasAttribute('download')) return;
+    if (sameContext(element)) return;
     let url;
     try { url = new URL(element.getAttribute('href'), document.baseURI); } catch { return; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
-    const target = element.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+    const target = targetOf(element);
     const rel = element.getAttribute('rel') ?? '';
-    if (target.toLowerCase() !== '_blank' && !/(?:^|\s)(noopener|noreferrer)(?:\s|$)/i.test(rel)) return;
     return { url: url.href, signature: JSON.stringify([url.href, target, rel]) };
   };
   const capture = event => {
@@ -176,12 +170,9 @@ export function popupHook() {
           || CR2_OWN_ACTIVATION(node)) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && node.hasAttribute('href'));
+      if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
-      const opens = text => /\b(?:window\s*\.\s*)?open\s*\(/.test(String(text ?? ''));
-      const handlerOpens = chain.some(node => opens(node.onclick) || opens(node.getAttribute('onclick')))
-        || [...chain, document, window].some(node => [...listeners.get(node) ?? []].some(listener => opens(typeof listener === 'function' ? listener : listener.handleEvent)));
-      if (!link && (linkElement ? !handlerOpens : !handlerOpens && ![...document.scripts].some(script => opens(script.textContent)))) return false;
-      arm = { element, token, until: Date.now() + capMs, modifierUntil: 0, link, linkElement, handlers: [] };
+      arm = { element, token, until: now() + capMs, modifierUntil: 0, link, linkElement, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       return link ? { kind: 'link' } : true;
     },
@@ -219,7 +210,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         const hook = window[Symbol.for('sleight.popup3')];
         if (!hook) throw Error('background popup hook unavailable');
         return hook.prepare(element, token, capMs);
-      }, { token, capMs: timeoutMs }, { timeout: timeoutMs }), timeoutMs);
+      }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
     const modified = prepared === true || prepared?.kind === 'link';
     const checkpoint = tab.popupCheckpoint?.();
@@ -230,6 +221,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         && /target.*closed/i.test(error.message)) result = { closed: true, opener: tab.opener };
       else throw error;
     } finally { if (modified) await tab.page.keyboard.up('ControlOrMeta').catch(() => {}); }
+    if (result?.closed === true) return result;
     if (prepared?.kind === 'link') {
       const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
         (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
