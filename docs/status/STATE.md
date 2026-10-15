@@ -3,100 +3,68 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 00:43 UTC)
+## Banner (2026-10-15 02:40 UTC, flushed before the owner's clear)
 
-Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
-busy, and post-release work builds on branches and merges after the tag.
-Pushed: `pane/auto-mode` at the commit holding this banner. `~/Projects/sleight` is fast-forwarded to it. There are 0 open PRs, and
-public CI is green on 1.2.5. The engine updated to 26.1007.71326 (the watch's baseline follows it), and `--doctor` passes with a live read.
+Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
+the video. 1.3.0 waits only on turbo v3's gate (owner, 2026-10-14. Reaffirmed 2026-10-14 23:20 UTC). ROADMAP.md was rewritten from an
+item-by-item audit on 2026-10-15 and is the plan. Read it whole.
 
-Running (headless, nohup): 12 `codex exec` lanes (launcher `~/Projects/sleight-wt/ledger/start-lane.sh <lane> "<START WITH line>"`,
-template `ledger/lane-prompt-codex.md`, prompts and logs in `ledger/lane-runs/`) and the real-page runner (`node
-scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, log `ledger/lane-runs-runner.log`). Two NOTICEs top LEDGER.md: the
-resolved blockers (group 49357, the 300 s compile deadline) and V10 claimable. Restart the runner after merging any runner or
-owned-group fix (a runner keeps the code it started with). A lane worktree from 2026-10-13 sits inside the main checkout at
-`private/codex/fm1` (registered with git, untracked there). Remove it with `git worktree remove` once FM1's evidence is no longer needed.
+Branches (all on `private`):
+- `pane/auto-mode` at the commit holding this banner (parent `ab1faa44`). `~/Projects/sleight` is fast-forwarded to it. Release prep
+  is merged there: CI1, OL1, OL1R, CS3+CS3R+CS3R2, RP2+RP2R+RP2R2 (full check 5691 pass, 0 fail, 49 mod). 0 open PRs. Public CI green
+  on 1.2.5.
+- `v3-gate` at `1ee4cd57` (worktree `~/Projects/sleight-wt/v3-int`): every turbo v3 piece that passed review. V1R2, V2R, V4R, V5R2, V6R2, V3R,
+  V7 to V7R5, V9R, V10 to V10R4, CR1 to CR7 (clean-room, audited CLEAN), AT1 (behavior atlas), plus sleight-arch's bench worker and two
+  merge-seam fixes. Full check 6214 pass, 0 fail, 49 mod. Real-page tests that survive V8: 505/507 at `bba01ea5`. The 2 failures were the
+  v2 demo test (hangs. V8R removes it) and a missing export, fixed in `1ee4cd57` (`turbo-v3-arm.real` and `turbo-v3-bench-worker.real`
+  pass 2/2 there).
+- Merge after reviews, before the release pass (rare-case polish, not gate-blocking): `codex/cr8` `f9237223` (reviewed PASS),
+  `codex/cr9` `b612a753` (review: one designMode nit. CR10 then found the real browser contradicts it, STALE, nothing to do).
+- Into 1.3.0 after review: `codex/rc1r` `57079737` (on `codex/rc1` `65246f3a`): sleight reconnects after a ChatGPT engine update
+  without a restart (this session hit that bug). RC1R is DONE and needs its Claude review (restart only when the engine identity
+  changed. A bad replacement must not end the session).
+- Merge right after the gate (owner): `codex/v8` `813bca75` (v1/v2 removal, 15.4 to 8.2 MB, reviewed twice), then V8R (queued:
+  restore canonical() tests, remove `tests/turbo-popup-demo.real.test.mjs` and other v2-only bench files).
+- `codex/ad1` `5fca2a5b`: the adversarial page bank (about 330 real-page attack tests in `tests/adversarial/`), written by a Claude
+  agent because OpenAI's cyber filter stops Codex lanes on attack work (it killed V10R4's lane at its end and AD1's at its start).
+  It found real failures on the v3-gate code, which block the gate: about 55, listed with causes and repros in
+  `ledger/claims/AD1/REPORT.md`. In the worst, a popup opened by a submit (form, base or area target, or a forwarding label) reached the DevTools
+  endpoint before the guard attached and CLOSED a foreign tab through /json/close. Keydown redirection between the focus check and
+  the keypress lets Enter activate Pay. Decoy payment terms (overlay, transparent text, mask) authorize a different total;
+  an element swapped at click time gets paid for. Page timers open foreground tabs. The agent flagged three failures as possible test bugs.
 
-Turbo v3 (owner's direction, ROADMAP; design `ledger/opus-turbo-v3-design.md`): our own action layer on the bundled Playwright, 5
-always-loaded tools, effects as observations, whole-form fill, background popups that keep their opener, the four rules as one module,
-and V8 removing 7,638 library lines, 7,217 test lines, bench/direct-browser2 and 6.8 MB of playwright-core. Lanes and branches
-(`private/codex/<id lowercase>`), each item reviewed by another lane as `claims/V-<ID>`: V1, V2, V4, V5, V6 DONE; V4R and V2R DONE and
-reviewed; V5R2, V6R2 DONE with reviews running. V3 is in progress. V1R2 hit the stale 120 s compile deadline. sleight-arch cleared it for the next free lane. V10's brief said "after V7" while V7 waits on V10, so
-no lane claimed it; sleight-arch dropped the "after" and started lane `codex-v3-v10` (23:10 UTC), which then finishes V7 on top. V9
-(bench arm) waits for V7. V8 (removal, `codex/v8` 813bca75) is DONE and passed a Claude review: package 15.4 to 8.2 MB, turbo module
-11,029 to 4,710 lines, tests 63,582 to 48,848 lines, 1155 pass. It merges right after the gate (owner), with V8R (restore canonical()
-coverage, settle five unreachable modules). Speed-up (owner, 23:25 UTC, because the load holds up their other projects). Lanes run focused tests only (LEDGER NOTICE 3, lane
-template step 6). sleight-arch runs one full check per merge. Sonnet-high Claude reviewers take the critical reviews.
-`private/v3-integration` (worktree `~/Projects/sleight-wt/v3-int`) holds v1r2, v2r, v4r, v5r2 and v6r2, 1177/1177
-direct-browser tests, plus `9721c126` crediting page.mjs's popup code as adapted from FowlBrowser with the MIT text (a Claude audit of
-all 51 v3 sources found only that file and snapshot.mjs). Reviews by 23:40 UTC: V1R2, V2R, V4R, V5R2 pass. The FIX items
-each have a lane. V10R (in the trust join, Enter or Space could reach a payment button through unverified focus, reload after a payment,
-reusable upload offers, a dialog grant that never expires) is on `codex-v3-v10r`. V3R (snapshot password leak, stalled continuation,
-stale refs, MIT notice) and V9R (census soft failures) are claimed. V7 is on `codex-v3-v7b`, which wires V10's join into the
-installed worker. The load average fell from about 49 to 2.7 within the hour after the switch. V3R passed its re-review and is merged (integration `5dd1eccc`, 1210/1210). V10R's re-review found an iframe focus redirect and a dialog expiry
-shorter than a model turn, queued as V10R2 on lane `codex-v3-v10r2`. A lane review of V10R reproduced two HIGH bypasses on real pages (a page redefines
-the activeElement or form getter in the main world, and a neutral control sends Enter or a click to a card form): queued as
-V10R3 after V10R2, reading authority only from the utility world or CDP. V7 (installed worker, `codex/v7b` 5212de62): a lane
-review found Pause/Disconnect expire at 30 s while the refresh is 60 s (V7R, claimed). The Claude review found cleanup that
-never releases Chrome's connection after UI or parent loss, a stale upload receipt, an eager first-prompt connect, and browser_open
-reaching the DevTools endpoint: V7R2 after V7R. sleight-arch's call: one session keeps its connection between turns and releases it
-when the session ends. CS3R2 merged at `566f4d4e` (5691 pass, 0 fail, 49 mod). Before it, offline handoff tests
-could quit TextEdit or Preview through real osascript. V9R
-passed its re-review. Owner (01:30 UTC): no competitor code in sleight, so LAWS and ROADMAP now say ideas only, written
-clean-room. `private/cr1-base` (`a9212d4d`) strips the two FowlBrowser-adapted pieces (page.mjs popupHook and backgroundClick,
-snapshot.mjs closedRoots) to stubs, and lane `codex-cr1` rewrites them from the behavior spec in queue/CR1.md without access to
-FowlBrowser or the old versions. CR1 is DONE (29/29 real-page). A similarity audit found four constants that came through sleight-arch's spec, so CR2 re-derives
-them from HTML and WAI-ARIA on lane `codex-cr2` (base `private/cr2-base`). CR3 follows CR2. It uses the background click for
-everything except same-context links and own-activation controls, because the source-text guess missed external scripts. It also
-reads each frame in one CDP pass, measured before and after, and carries CR1's review fixes (same-context links became new tabs, closed-root probe budget,
-weak fixtures). CR2 is DONE: its re-audit leaves one role-order leftover that sleight-arch sorts at CR3's merge, and it measured the
-modifier window (max 6.2 ms over 20 clicks, so 100 ms, down from 1000). CR3 is on lane `codex-cr3`. Trust join: V10R3 moved
-authority reads to the utility world. A Claude review then found DOM clobbering (`<img name="activeElement">`). V10R4 fixes it on
-`codex-v3-v10r4`, and V10R3 doesn't merge alone. V7R3 passed startup failures and reconnect; V7R4 (Fetch pattern false positives, popup and worker auto-attach) is on
-`codex-v3-v7r4`. CR3's review found Cmd-click on submit controls submits into a new tab; sleight-arch measured it 12/12 on
-Chromium 1248, and only multi-select options and links also change with Cmd, so CR4 (lane `codex-cr4`) keeps submits in place and
-masks by event, and CR5 (queued after CR4) replaces the role list with that measured rule. `private/v3-gate` (sleight-arch, worktree
-`~/Projects/sleight-wt/v3-int`) merges every turbo tip (v7r3, v10r3, v9r, cr3) with two seam fixes; its full check passed 6115, 0 fail,
-49 mod at `6235142f`. V7R4, V10R4, CR4 and CR5 merge into it as they pass, then V8. V7R4 hit a real limit: page-scoped auto-attach doesn't pause native
-popups, and browser-wide auto-attach would touch the user's tabs. sleight-arch's call: never attach to tabs sleight doesn't own;
-close any adopted popup on the DevTools port before a read (measured: navigating there displays the user's tab list, while a fetch fails);
-document workers as a limit. Lane `codex-v3-v7r4b` finishes it. AT1 (behavior atlas) and AD1 (adversarial page bank) run in lanes.
-Claude Desktop's newest build is v2.37337.1 (2026-10-13; background computer use since 2026-09-02, fixes through October): the claim
-suite's arm for Claude's own computer use runs on that build or newer. Next: CR1, V7, V9R and V10R merge into
-v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
-gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8 merges.
-- v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
-  beside it, owner, LAWS). TF3, TF5, TF6 sit on branches as reference for V5. Measured on v1 in the headless arm:
-  non-form tasks 4/5, forms 3/4, form-travel 242 s in 99 calls.
-- Turbo-only rounds after TG1R need FowlBrowser's extension socket. Measure from a worktree with `bench/fowl/sleight-surface.patch` and
-  `bench/turbo/setup.mjs` from `c0caa5c9` (memory `lessons-2026-10-14-day`). Never kill a running round (unpriced spend marker).
+Next, to reach the gate:
+1. AD1's failures: rebase `codex/ad1` onto v3-gate, rerun each file headless, confirm each failure red, then fix them as items
+   (v3-context, page, cdp-filter and rules are ordinary sleight code. The click classification in page.mjs is clean-room code,
+   and its fixes go to a clean-room lane with a behavior spec). Attack-heavy briefs go to Claude agents or carefully defensive Codex briefs. Every fix keeps
+   its AD1 test green. The bank merges into v3-gate.
+2. Review RC1R. Merge CR8/CR9 and RC1R when reviewed.
+3. Smoke run, headless, no owner needed: from `~/Projects/sleight-wt/v3-int`, `bench/fowl/rounds.sh --surface sleight-turbo --model
+   haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid` (preflight passed 2026-10-15. A few cents). The gate tasks are
+   `codex-h2h.json`'s local fixtures, not FowlBrowser's public-site `tasks.json`.
+4. Then ask the owner once for the away window: the gate round (Haiku 5.5, both arms, both orders. FowlBrowser's arm drives Helium,
+   so it shows windows). FowlBrowser's extension is installed in Helium (0.1.0, pinned 8b68924, Developer mode on, 2026-10-15).
+5. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 
-Release readiness: done apart from turbo. CI1, OL1, OL1R merged earlier. CS3 with CS3R and RP2 with RP2R and RP2R2 passed Claude
-and sleight-arch reviews and merged at `739a0f87`; the full check there passed 5690, 0 fail, 59 skip, 49 mod, in 41 s. RL1 release
-notes are DONE and reviewed on `codex/rl1` (apply at release). The owner chose to drop the codex-cu and devtools bridge arms and say
-so in the published coverage. Post-release on branches, merge after the tag: EP-2, EP-6, EP-6R, Q1-1 to Q1-6 reviewed or DONE,
-Q1-7 to Q1-17 finishing. EP-4 and EP-5 wait for v3's design to settle.
+After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE. EPV3-1 never
+started because V10R4's dead lane held `v3-join`, now free), the claim suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
 
-Owner steps at the Mac: reload FowlBrowser's extension in Helium (Helium isn't on the benchmark allowlist, so sleight-arch can't).
-Run the sleight-arm login (`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`).
-Click turbo's opt-in and Chrome's Allow (only a person grants debugger control). Work through `ledger/claim-suite-owner-checklist.md`. This session's own
-sleight MCP couldn't start the engine helper after the morning's engine update (fresh clients work). API spend for October: $159.96 of $200.
+How work runs now: lanes run focused tests only (LEDGER NOTICE 3), sleight-arch runs one full check per merge and builds directly
+when faster (LAWS), Claude reviewers (Sonnet high) review every safety, release and clean-room item, and lane reviews add real-page
+repros. Competitor code is never adapted (LAWS): CR items get a similarity audit, and lanes that read FowlBrowser can't review them.
 
-Next steps, in order:
-1. Review P2; merge P2, P3 and P4 together once P4 passes. Merge SR1A, SR1CPR2 and OG1 as they pass.
-2. Run the four form tasks headless (TP-style, about $0.20) for an early read on forms.
-3. Live qualification in the owner's Chrome "sleight benchmark" profile and Helium. The owner
-   clicks Allow on Chrome's prompt once per launch. The gate counts Space switches and focus changes.
-4. The turbo gate round (Haiku 5.5, both arms, both orders), only while the owner is away or headless. Then one Opus head-to-head on
-   the owner's account.
-5. Install the claim-suite arms per CS1 and run the suite with the W8 runner.
-6. Apply RP1's CHANGELOG and README proposals, and release 1.3.0 on the owner's call.
-After 1.3.0 come Electron (EP-1 to EP-7), slimming the plugin, AM1, and the SR1 and GR1 results.
+Running through the clear: the real-page runner (`node scripts/live-dom-runner.mjs` from `~/Projects/sleight`, pid 39609, since
+2026-10-14 ~20:40 UTC). No Codex lane is running (codex-rc1r finished). This session's Monitor and Claude agents end at the clear.
 
-Owner items: OpenUsage.app relocked the "Claude Code-credentials" keychain item to its own cdhash again at 05:01 UTC; the owner
-reset the partition list on 2026-10-14 and keeps OpenUsage (it may relock again on a token refresh). CodexBar was moved to the Trash
-and removed from login items on the owner's order (2026-10-14).
+The owner's steps at the Mac are Chrome's Allow during the gate, the sleight-arm login if the preflight says it lapsed
+(`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`), and
+`ledger/claim-suite-owner-checklist.md`. API spend for October: $159.96 of $200. This session's own sleight MCP couldn't reach the
+engine helper after the 2026-10-14 engine update (26.1007.71326). `.dev/tools/probe.mjs`-style fresh clients through the relay with
+`preapproved` and `grantAudit` passed in work (RC1 fixes the cause).
+
+Owner items: OpenUsage.app may relock the "Claude Code-credentials" keychain item on a token refresh (owner keeps it, 2026-10-14).
+A lane worktree from 2026-10-13 sits inside the main checkout at `private/codex/fm1` (registered with git). Remove it with
+`git worktree remove` once FM1's evidence is no longer needed.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this

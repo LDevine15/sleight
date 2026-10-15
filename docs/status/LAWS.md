@@ -55,6 +55,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
   better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
   (owner, 2026-10-15), within reason.
+- Lanes run only the tests for what they changed, and sleight-arch runs the full check once per merge. Full checks in every lane
+  loaded the Mac enough to hold up the owner's other projects (owner, 2026-10-14).
 - Benchmark Claude arms run on the owner's API key, from the $200 monthly credit, and stop at $200. Opus arms run on the owner's
   Claude account. Incremental runs use Haiku.
 
