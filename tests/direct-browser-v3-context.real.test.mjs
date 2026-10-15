@@ -222,6 +222,7 @@ for (const payment of [true,false]) test('V10R2B real exact dialog survives a mo
   const message=payment ? 'Pay ' + JSON.stringify({item:terms.item,amount:terms.amount,payee:terms.payee,currency:'USD'}) : 'Continue with the fixture?';
   await f.page.evaluate(({payment,message}) => {
     const button=document.querySelector('#e1'); button.type='button'; button.textContent=payment ? 'Pay' : 'Continue';
+    if (!payment) document.querySelector('main').append(button); // a script-driven button inside a payment form is a payment control, so the plain-dialog case lives outside it
     button.onclick=e => {e.preventDefault(); if(confirm(message)) document.querySelector('#count').textContent++;};
   },{payment,message});
   const click=await f.runSteps(f.tab,[{do:'click',ref:'e1'}],f.ctx); assert.match(click.lines[0],/dialog.*waiting/);
