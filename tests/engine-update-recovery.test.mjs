@@ -56,11 +56,11 @@ function fixture(t, options = {}) {
   };
 }
 
-test('a pipe error reconnects even without a version change, and keeps preapproved grants', async t => {
+test('a pipe error during an update reconnects and keeps preapproved grants', async t => {
   const preapproved = new PreapprovedApps({ version: 1, apps: [{ app: 'Example', riskLevel: 'low' }] });
   const h = fixture(t, { relay: { preapproved } });
   h.call(1, 'await cua.getApp("Example")'); h.engines[0].reply(approval()); await flush(); h.reply(1);
-  h.call(2, 'await cua.getApp("Example")'); h.reply(2, pipeError); await flush();
+  h.call(2, 'await cua.getApp("Example")'); h.replace(); h.reply(2, pipeError); await flush();
   assert.equal(h.starts, 1); assert.equal(h.stops, 1);
   assert.deepEqual(h.engines[1].sent.find(msg => msg.id === 2).params._meta,
     h.engines[0].sent.find(msg => msg.id === 2).params._meta, 'reconnection keeps the client session and turn identity');
@@ -76,7 +76,7 @@ for (const handle of ['app', '$app']) for (const proactive of [false, true]) for
   h.call(1, `let ${handle} = await cua.getApp("Example")`); h.reply(1);
   if (proactive) h.replace();
   h.call(2, `await ${handle}.click(7)`);
-  if (!proactive) h.reply(2, pipeError);
+  if (!proactive) { h.replace(); h.reply(2, pipeError); }
   await flush();
   assert.equal(h.starts, 1);
   const request = h.engines[1].sent.find(msg => msg.id === 2);
@@ -93,7 +93,7 @@ for (const handle of ['app', '$app']) for (const proactive of [false, true]) for
 
 test('an initialization failure returns the original pipe error and the failed reconnect, without a retry loop', async t => {
   const h = fixture(t, { initializeError: true });
-  h.call(1, 'await cua.getApp("Example")'); h.reply(1, pipeError); await flush();
+  h.call(1, 'await cua.getApp("Example")'); h.replace(); h.reply(1, pipeError); await flush();
   const reply = h.replies.find(msg => msg.id === 1);
   assert.equal(reply.result.isError, true);
   assert.match(JSON.stringify(reply), /Sky Computer Use native pipe startup failed/);
@@ -104,7 +104,7 @@ test('an initialization failure returns the original pipe error and the failed r
 
 test('failed collection never starts a replacement or hides the pending failure', async t => {
   const h = fixture(t, { collected: false });
-  h.call(1, 'await cua.getApp("Example")'); h.reply(1, pipeError); await flush();
+  h.call(1, 'await cua.getApp("Example")'); h.replace(); h.reply(1, pipeError); await flush();
   assert.equal(h.starts, 0);
   assert.match(JSON.stringify(h.replies.find(msg => msg.id === 1)), /collection is unconfirmed/);
   h.call(2, 'await cua.getApp("Example")');
@@ -120,7 +120,7 @@ test('version changes and pipe failures do not collect another pending call', as
   // A second already-running read also prevents collection on an error.
   const other = fixture(t);
   other.call(1, 'await cua.getState()'); other.call(2, 'await cua.getState()');
-  other.reply(1, pipeError); await flush();
+  other.replace(); other.reply(1, pipeError); await flush();
   assert.equal(other.stops, 0); assert.equal(other.starts, 0);
   assert.equal(other.replies.find(msg => msg.id === 1).result.isError, true);
   other.reply(2); h.reply(1);
@@ -129,7 +129,7 @@ test('version changes and pipe failures do not collect another pending call', as
 test('Stop during replacement initialization prevents the queued retry and keeps internal replies private', async t => {
   const h = fixture(t, { holdInitialize: true });
   h.engines[0].reply({ id: 'init', result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'fixture', version: '1' } } });
-  h.call(1, 'await cua.getApp("Example")'); h.reply(1, pipeError); await flush();
+  h.call(1, 'await cua.getApp("Example")'); h.replace(); h.reply(1, pipeError); await flush();
   assert.equal(h.starts, 1);
   h.send({ id: 'stop', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } });
   await flush();
@@ -147,7 +147,7 @@ test('a replacement never serves or verifies its tools against the old engine ha
   warm.engines[0].reply({ id: 'old-list', result: { tools: [{ name: 'js', description: 'Old engine', inputSchema: { type: 'object' } }] } });
   warm.relay.dispose();
   const h = fixture(t, { relay: { startupCache } });
-  h.call(1, 'await cua.getApp("Example")'); h.reply(1, pipeError); await flush(); h.reply(1);
+  h.call(1, 'await cua.getApp("Example")'); h.replace(); h.reply(1, pipeError); await flush(); h.reply(1);
   h.send({ id: 'new-list', method: 'tools/list' });
   assert.equal(h.replies.some(msg => msg.id === 'new-list'), false, 'old cached tools must not escape');
   h.engines[1].reply({ id: 'new-list', result: { tools: [{ name: 'js', description: 'New engine', inputSchema: { type: 'object' } }] } });

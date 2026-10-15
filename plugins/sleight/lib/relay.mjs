@@ -199,7 +199,7 @@ export function promptNotice(text, prompt) {
     .replace("sleight: the engine's JavaScript session restarted before this call, so handles from earlier calls (such as `app`) are gone. An action that fails without `await` can end the session. ", 'sleight: JS restarted. ')
     .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ')
     .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ')
-    .replace('sleight reconnected after an engine update.', 'sleight: engine reconnected.')
+    .replace('sleight reconnected after a ChatGPT engine update.', 'sleight: engine reconnected.')
     .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.');
 }
 const SHUTDOWN_GRACE_MS = 3000;
@@ -386,7 +386,7 @@ export function createRelay({
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
-  beginStop = () => {}, stopEngine, restartEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
+  beginStop = () => {}, stopEngine, restartEngine, prepareEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
   clientIn, clientOut, serverIn, serverOut,
   sessionId = randomUUID(),
   approvalScope = 'session',
@@ -570,7 +570,7 @@ export function createRelay({
   let backendRestartUnconfirmed = false;
   let stopUnconfirmed = false, resumeRequested = false;
   let stopFinished = false, restarting, initialization;
-  let engineEpoch = 0, nextEngineRequest = 0;
+  let engineEpoch = 0, nextEngineRequest = 0, updatePending = false;
   const engineRequests = new Map();
   let stopGeneration = 0;
   const callGenerations = new Map();
@@ -601,11 +601,11 @@ export function createRelay({
       for (const state of helperStates.values()) if (state.stuck && state.pending === undefined) scheduleHelperRead(state);
     }
   }
-  async function restartCollectedEngine(backend = false, update = false) {
+  async function restartCollectedEngine(backend = false, update = false, preparedServer) {
     const generation = stopGeneration;
     const isCurrent = () => generation === stopGeneration && !closing && !disposed;
     try {
-      const engine = await restartEngine(isCurrent);
+      const engine = await restartEngine(isCurrent, preparedServer);
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       detachServer();
       serverIn = engine.serverIn; serverOut = engine.serverOut;
@@ -630,10 +630,12 @@ export function createRelay({
       helperStates.clear();
       screenshots.clear();
       if (!backend && !update) turnId = randomUUID();
+      updatePending = false;
       trace('engine-restarted-after-stop', {});
     } catch (error) {
       if (isCurrent()) {
-        closing = true; beginStop();
+        if (!update) closing = true;
+        beginStop();
         try { stopCollected = (await stopEngine())?.collected === true; }
         catch { stopCollected = false; }
         stopUnconfirmed = !stopCollected; stopFinished = true;
@@ -658,10 +660,13 @@ export function createRelay({
   }
   function reconnectEngine(id) {
     const generation = stopGeneration, attempt = { generation };
+    let collecting = false;
     restarting = attempt;
-    beginStop();
     clearTimeout(idleTimer);
     attempt.promise = (async () => {
+      const preparedServer = await prepareEngine?.();
+      if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+      collecting = true; updatePending = true; beginStop();
       const receipt = await stopEngine();
       if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
       stopCollected = receipt?.collected === true;
@@ -675,10 +680,10 @@ export function createRelay({
       privateWarmRequests.clear();
       engineRequests.clear();
       await clipboard?.close();
-      await restartCollectedEngine(false, true);
+      await restartCollectedEngine(false, true, preparedServer);
       reconnectNotes.add(id);
       trace('engine-update-reconnected', { id });
-    })().catch(error => { backendRestartUnconfirmed = !stopCollected; throw error; })
+    })().catch(error => { backendRestartUnconfirmed = collecting && !stopCollected; throw error; })
       .finally(() => { if (restarting === attempt) restarting = undefined; });
     return attempt.promise;
   }
@@ -1415,7 +1420,7 @@ export function createRelay({
     if (msg.method === undefined) {
       pendingClients.delete(msg.id); callGenerations.delete(msg.id);
       if (reconnectNotes.delete(msg.id) && msg.result) msg.result.content = [...(msg.result.content ?? []),
-        { type: 'text', text: promptNotice('sleight reconnected after an engine update.', prompt) }];
+        { type: 'text', text: promptNotice('sleight reconnected after a ChatGPT engine update.', prompt) }];
       updateRetries.delete(msg.id); reconnectNotes.delete(msg.id);
     }
     if (clientOut.writableEnded || clientOut.destroyed) { trace('client-output-closed', { id: msg.id }); return; }
@@ -1447,7 +1452,10 @@ export function createRelay({
       if (!error && !disposed && !closing) afterWrite(msg);
     } : undefined);
   };
-  const inputError = err => { trace('stream-error', { stream: 'server-input', error: err.message }); failLease(err); };
+  const inputError = err => {
+    trace('stream-error', { stream: 'server-input', error: err.message });
+    if (restarting || stopCollected) cancelInternalRequests(err.message); else failLease(err);
+  };
   clientOut.on('error', err => { trace('stream-error', { stream: 'client-output', error: err.message }); failLease(err); });
 
   function turnMeta() {
@@ -1967,7 +1975,7 @@ export function createRelay({
       if (!restarting || restarting.generation !== generation) {
         const attempt = { generation };
         restarting = attempt;
-        attempt.promise = restartCollectedEngine().finally(() => { if (restarting === attempt) restarting = undefined; });
+        attempt.promise = restartCollectedEngine(false, updatePending).finally(() => { if (restarting === attempt) restarting = undefined; });
       }
       restarting.promise.then(() => {
         if (generation !== stopGeneration || closing || disposed) { leaseStop(msg, 'this call was stopped.'); return; }
@@ -2350,7 +2358,7 @@ export function createRelay({
     const failedWith = pattern => msg.result?.isError && (msg.result.content ?? []).some(c => c.type === 'text' && pattern.test(c.text ?? ''));
     const crashed = entry !== true && entry.read && failedWith(HELPER_CRASHED);
     const unattached = entry !== true && entry.browserRead && failedWith(DEBUGGER_UNATTACHED);
-    if (entry !== true && failedWith(HELPER_RESTARTING) && stopEngine && restartEngine) {
+    if (entry !== true && failedWith(HELPER_RESTARTING) && stopEngine && restartEngine && engineChanged?.() === true) {
       if (updateRetries.has(msg.id) || running.size > 1 || localRunning.size || internalRequests.size || approvalRequests.size || listRequests.size || closing || disposed) {
         restartRetries.delete(msg.id); return false;
       }
@@ -3206,6 +3214,18 @@ export function createRelay({
     changes.dispose();
     trace('change-snapshots-deleted', { directory: changes.directory });
   }
+  function engineEnded(message) {
+    if (disposed || closing) return;
+    stopCollected = true; updatePending = true;
+    rememberEngineBindings();
+    startup?.close(); startup = undefined;
+    cancelInternalRequests(message);
+    for (const id of [...pendingClients.keys()]) {
+      if (!running.has(id)) continue;
+      finishedCall(id); restartRetries.delete(id);
+      leaseStop({ id }, message);
+    }
+  }
   function close() {
     closing = true;
     for (const pending of clipboardReplies.values()) pending.reject(new Error('Clipboard guard: engine connection closed.'));
@@ -3222,5 +3242,5 @@ export function createRelay({
     await close();
     return true;
   }
-  return { endOpenTurn, shutdown, close, dispose: close, get snapshotDirectory() { return changes.directory; }, get sessionId() { return sessionId; }, get turnId() { return turnId; } };
+  return { endOpenTurn, shutdown, engineEnded, close, dispose: close, get snapshotDirectory() { return changes.directory; }, get sessionId() { return sessionId; }, get turnId() { return turnId; } };
 }
