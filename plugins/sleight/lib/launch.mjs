@@ -719,6 +719,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
   let surfaceCache, child, childClosed, firstCallObserver, relay;
+  let stopping = false, deadCleanup;
   let stoppingForReceipt = false;
   let terminating = false;
   const browserSelection = createBrowserSelection();
@@ -738,7 +739,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     }
     return latest;
   }
-  async function startEngine(isCurrent = () => true, preparedServer = prepareEngine()) {
+  async function startEngine(isCurrent = () => true, preparedServer = prepareEngine(), first = false) {
     s = preparedServer;
     runningServerIdentity = serverIdentity(s);
     surfaceCache = directBrowser ? undefined : selectSurfaces(s);
@@ -760,11 +761,18 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       if (stopping) {
         await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(code ?? 0);
       }
+      // The launcher outlives an engine that died unplanned, so stop its helpers as a Stop does (the relay revokes
+      // direct browser work). A restart waits for this.
+      deadCleanup = stopHelpers().catch(() => {});
     });
     terminating = false; stoppingForReceipt = false;
+    // The first start is fatal when the engine can't spawn, as before: no client call or relay exists yet to
+    // receive an error, and the client's initialize would wait forever. Later starts recover through the relay.
+    if (first) await new Promise((resolve, reject) => current.once('spawn', resolve).once('error', reject))
+      .catch(err => fail(`could not start server: ${err.message}`));
     return { serverIn: current.stdin, serverOut: current.stdout };
   }
-  await startEngine();
+  await startEngine(undefined, s, true);
   function terminateEngine(signal = 'SIGTERM') {
     if (terminating || child.exitCode !== null || child.signalCode !== null) return;
     terminating = true;
@@ -863,6 +871,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       return engine;
     },
     restartEngine: async (isCurrent, preparedServer) => {
+      await deadCleanup;
       await appHealth.close();
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       resumeHelpers();
@@ -889,7 +898,6 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
 
   // Claude Code closing the connection is the end of the session: end the
   // open turn so the server releases what it holds, then stop the server.
-  let stopping = false;
   async function stop(signal) {
     if (stopping) return;
     stopping = true;

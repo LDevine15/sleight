@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
-async function fixture(t, mode = 'ok') {
+async function fixture(t, mode = 'ok', initial = {}) {
   const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-update-test-')));
   const codexHome = join(bank, 'codex'), root = join(codexHome, 'plugins/cache/openai-bundled/unified-computer-use');
   const log = join(bank, 'engines.jsonl'), gate = join(bank, 'updated');
@@ -19,7 +19,7 @@ async function fixture(t, mode = 'ok') {
     } } }));
   };
   await writeFile(gate, 'waiting');
-  await configure('1.0');
+  await configure('1.0', initial);
   const child = spawn(process.execPath, [fileURLToPath(new URL('fixtures/restart-launcher.mjs', import.meta.url)), join(bank, 'leases')], {
     stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, CODEX_HOME: codexHome, SLEIGHT_TEST_ENGINE_LOG: log,
       SLEIGHT_WARM_REPL: '0', SLEIGHT_SURFACES: 'computer', SLEIGHT_CHANGE_REVIEW: '0', SLEIGHT_APPROVAL_PROMPT: 'client' },
@@ -151,4 +151,33 @@ test('an unchanged engine resends a pipe failure only once and keeps the origina
   assert.equal((await h.events()).filter(row => row.event === 'call').length, 2);
   assert.equal((await h.events()).filter(row => row.event === 'start').length, 1);
   assert.ok(!(await h.call(2, 'let app = await cua.getApp("Example")')).result.isError);
+});
+
+test('a first start that cannot spawn is fatal with the spawn error, as before', { timeout: 20000 }, async t => {
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-spawn-test-')));
+  t.after(() => rm(bank, { recursive: true, force: true }));
+  const root = join(bank, 'codex/plugins/cache/openai-bundled/unified-computer-use/1.0');
+  await mkdir(root, { recursive: true });
+  // A directory exists but cannot be executed.
+  await writeFile(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { cua_repl: { command: tmpdir(), args: [fileURLToPath(import.meta.url)] } } }));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('fixtures/restart-launcher.mjs', import.meta.url)), join(bank, 'leases')], {
+    stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, CODEX_HOME: join(bank, 'codex'), SLEIGHT_TEST_ENGINE_LOG: join(bank, 'log'),
+      SLEIGHT_WARM_REPL: '0', SLEIGHT_SURFACES: 'computer' } });
+  let stderr = '';
+  child.stderr.on('data', data => stderr += data);
+  const { code } = await new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+  assert.equal(code, 1);
+  assert.match(stderr, /could not start server: spawn .*(EACCES|ENOEXEC)/);
+});
+
+test('an engine that dies on its own is replaced on the next call, keeping approvals', { timeout: 20000 }, async t => {
+  const h = await fixture(t);
+  assert.ok(!(await h.call(1, 'let app = await cua.getApp("Example")')).result.isError);
+  const died = await h.call(2, 'let dieNow = await cua.getApp("Example")');
+  assert.equal(died.result.isError, true);
+  assert.match(texts(died), /Engine exited/);
+  const later = await h.call(3, 'let app = await cua.getApp("Example")');
+  assert.ok(!later.result.isError, texts(later));
+  assert.deepEqual((await h.events()).filter(row => row.event === 'start').map(row => row.version), ['1.0', '1.0']);
+  assert.equal(h.approvals, 1);
 });

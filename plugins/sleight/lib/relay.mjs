@@ -644,16 +644,21 @@ export function createRelay({
     }
   }
   const reconnectNotes = new Set(), updateRetries = new Set(), engineBindings = new Map();
+  // Session approvals are keyed by the app argument the engine was given, so a handle is reacquired with
+  // its original string argument (a name stays a name); the bundle ID is the fallback.
+  const ORIGIN_LITERAL = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')$/;
   function rememberEngineBindings() {
     for (const [handle, target] of handleBundles) {
-      if (target?.appId && /^[A-Za-z_$][\w$]*$/.test(handle)) engineBindings.set(handle, target.appId);
+      if (!target?.appId || !/^[A-Za-z_$][\w$]*$/.test(handle)) continue;
+      const origin = handleOrigins.get(handle);
+      engineBindings.set(handle, origin && ORIGIN_LITERAL.test(origin) ? origin : JSON.stringify(target.appId));
     }
   }
   function restoreEngineBindings(code) {
     let prefix = '';
-    for (const [handle, appId] of engineBindings) {
+    for (const [handle, argument] of engineBindings) {
       if (!new RegExp(`(?:^|[^\\w$])${handle.replace(/[$]/g, '\\$&')}\\s*(?:\\.|\\[|\\?)`).test(code)) continue;
-      prefix += `globalThis[${JSON.stringify(handle)}] = await cua.getApp(${JSON.stringify(appId)});\n`;
+      prefix += `globalThis[${JSON.stringify(handle)}] = await cua.getApp(${argument});\n`;
       engineBindings.delete(handle);
     }
     return prefix;
@@ -666,6 +671,13 @@ export function createRelay({
     attempt.promise = (async () => {
       const preparedServer = await prepareEngine?.();
       if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+      // End the open turn on the engine being replaced, as a normal turn end does, so it releases what it
+      // holds. A hung or dead engine costs one grace period, never the reconnect.
+      let graceTimer;
+      await Promise.race([Promise.resolve().then(() => endOpenTurn(false)).catch(() => {}),
+        new Promise(resolve => { graceTimer = setTimeout(resolve, stopGraceMs); })]);
+      clearTimeout(graceTimer);
+      if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
       collecting = true; updatePending = true; beginStop();
       const receipt = await stopEngine();
       if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
@@ -674,6 +686,9 @@ export function createRelay({
       // This cache is bound to the launch identity of the collected engine.
       // The existing client is already initialized; its replacement uses live replies.
       startup?.close(); startup = undefined;
+      // The collected engine can't take an old turn's cleanup.
+      turnEndCalls.clear(); failedTurnEnds.clear(); turnEndAttempts.clear();
+      cancelInternalRequests('Engine collected.');
       rememberEngineBindings();
       invalidateDiagnostics(); forgetGuard(); browserStale.reset(); browserRecovery.reset();
       browserWarmConfirmed = false;
@@ -1067,9 +1082,10 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
   }
   const handleBundles = new Map();
+  const handleOrigins = new Map(); // handle -> the getApp argument that acquired it
   const handleSelectors = new Map();
   const selectorWindows = new Map();
   function observedAppId(call, window, result) {
@@ -2871,8 +2887,8 @@ export function createRelay({
       if (window?.app) drivenApps.add(window.app);
       if (known) drivenApps.add(known);
       if (call.handle) {
-        if (known) handleBundles.set(call.handle, leaseWindow);
-        else if (call.acquisition) handleBundles.delete(call.handle);
+        if (known) { handleBundles.set(call.handle, leaseWindow); if (call.acquisition) handleOrigins.set(call.handle, call.selector); }
+        else if (call.acquisition) { handleBundles.delete(call.handle); handleOrigins.delete(call.handle); }
       }
       if (known) {
         recoveryTarget = `cua.getApp(${JSON.stringify(known)})`; recoveryKnown = true;
@@ -3107,6 +3123,8 @@ export function createRelay({
     closing = true;
     replWarmup.cancel();
     stopFinished = false;
+    // A Stop starts a fresh engine and turn, even after a failed update reconnect.
+    updatePending = false;
     stopGeneration++;
     cancelFrontCalls();
     invalidateDiagnostics();
@@ -3217,6 +3235,8 @@ export function createRelay({
   function engineEnded(message) {
     if (disposed || closing) return;
     stopCollected = true; updatePending = true;
+    // An engine that died unplanned leaves direct browser work with no owner; revoke it as a Stop does.
+    directBrowser?.end();
     rememberEngineBindings();
     startup?.close(); startup = undefined;
     cancelInternalRequests(message);

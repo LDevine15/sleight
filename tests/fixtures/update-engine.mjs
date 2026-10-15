@@ -23,6 +23,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
     if (name === 'turn_ended' || name === 'js_reset') { send({ id: msg.id, result: { content: [] } }); return; }
     if (name !== 'js') throw Error('Unsupported fake engine tool: ' + name);
     log('call');
+    if (args.code.includes('dieNow')) process.exit(25);
     if (version === '2.0' && mode === 'exit-call') process.exit(24);
     if (args.code.includes('updateDuringCall') && version === '1.0' && !failed) {
       log('waiting-for-update');

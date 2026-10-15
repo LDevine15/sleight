@@ -6,6 +6,7 @@ import { createContext, runInContext } from 'node:vm';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
 import { createStartupCache } from '../plugins/sleight/lib/startup-cache.mjs';
+import { createFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,23 +17,27 @@ const pipeError = { isError: true, content: [{ type: 'text', text: 'Sky Computer
 const approval = (app = 'Example') => ({ id: 'permission', method: 'elicitation/create', params: { message: `Allow ${app}?`,
   _meta: { connector_id: 'computer-use', persist: ['session'], tool_params: { app }, riskLevel: 'low' } } });
 const flush = async () => { for (let n = 0; n < 10; n++) await setImmediate(); };
+const until = async condition => { for (let n = 0; n < 200 && !condition(); n++) await setImmediate(); };
 
 function fixture(t, options = {}) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), replies = [], engines = [];
   let asks = 0, stops = 0, starts = 0, changed = false;
   const fresh = () => {
-    const serverIn = new PassThrough(), serverOut = new PassThrough(), sent = [];
+    const serverIn = new PassThrough(), serverOut = new PassThrough(), sent = [], turnEnds = []; // turnEnds: collections done when each turn_ended arrived
     const reply = msg => serverOut.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
     serverIn.on('data', bytes => {
       for (const line of bytes.toString().trim().split('\n')) {
         const msg = JSON.parse(line); sent.push(msg);
         if (msg.method === 'initialize' && !options.holdInitialize) reply({ id: msg.id,
-          ...(starts && options.initializeError ? { error: { code: -32603, message: 'fixture initialization failed' } }
+          ...(starts && (options.initializeError === true || options.initializeError === starts) ? { error: { code: -32603, message: 'fixture initialization failed' } }
             : { result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'fixture', version: '1' } } }) });
-        if (msg.params?.name === 'turn_ended') reply({ id: msg.id, result: { content: [] } });
+        if (msg.params?.name === 'turn_ended') {
+          turnEnds.push(stops);
+          if (!options.silentTurnEnd) reply({ id: msg.id, result: { content: [] } });
+        }
       }
     });
-    engines.push({ serverIn, serverOut, sent, reply });
+    engines.push({ serverIn, serverOut, sent, reply, turnEnds });
     return { serverIn, serverOut };
   };
   clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
@@ -62,8 +67,12 @@ test('a pipe error during an update reconnects and keeps preapproved grants', as
   h.call(1, 'await cua.getApp("Example")'); h.engines[0].reply(approval()); await flush(); h.reply(1);
   h.call(2, 'await cua.getApp("Example")'); h.replace(); h.reply(2, pipeError); await flush();
   assert.equal(h.starts, 1); assert.equal(h.stops, 1);
-  assert.deepEqual(h.engines[1].sent.find(msg => msg.id === 2).params._meta,
-    h.engines[0].sent.find(msg => msg.id === 2).params._meta, 'reconnection keeps the client session and turn identity');
+  const identity = engine => JSON.parse(Object.values(engine.sent.find(msg => msg.id === 2).params._meta)[0]);
+  const ended = h.engines[0].sent.find(msg => msg.params?.name === 'turn_ended');
+  assert.ok(ended, 'the replaced engine is told its turn ended before it is collected');
+  assert.equal(ended.params.arguments.turn_id, identity(h.engines[0]).turn_id);
+  assert.equal(identity(h.engines[1]).session_id, identity(h.engines[0]).session_id, 'reconnection keeps the client session');
+  assert.notEqual(identity(h.engines[1]).turn_id, identity(h.engines[0]).turn_id, 'the replacement starts a new turn');
   h.engines[1].reply(approval()); await flush(); h.reply(2);
   assert.equal(h.asks, 0);
   assert.equal(h.engines[1].sent.find(msg => msg.result?.action)?.result.action, 'accept');
@@ -84,7 +93,7 @@ for (const handle of ['app', '$app']) for (const proactive of [false, true]) for
   let clicks = 0;
   const raw = { getAXState: async () => fail ? tree.replace('Keep, ID: keep', 'Delete, ID: delete') : tree,
     click: async () => { clicks++; }, appId: 'test.example' };
-  const context = createContext({ cua: { getApp: async id => { assert.equal(id, 'test.example'); return raw; } }, nodeRepl: { write() {} } });
+  const context = createContext({ cua: { getApp: async id => { assert.equal(id, 'Example', 'a handle is reacquired with its original argument'); return raw; } }, nodeRepl: { write() {} } });
   const execute = () => runInContext(`(async () => { ${request.params.arguments.code} })()`, context);
   if (fail) { await assert.rejects(execute, /changed|stale|matches/i); assert.equal(clicks, 0); }
   else { await execute(); assert.equal(clicks, 1); }
@@ -152,4 +161,75 @@ test('a replacement never serves or verifies its tools against the old engine ha
   assert.equal(h.replies.some(msg => msg.id === 'new-list'), false, 'old cached tools must not escape');
   h.engines[1].reply({ id: 'new-list', result: { tools: [{ name: 'js', description: 'New engine', inputSchema: { type: 'object' } }] } });
   assert.match(h.replies.find(msg => msg.id === 'new-list').result.tools[0].description, /New engine/);
+});
+
+test('a reconnect ends the old engine turn before collecting it, and a silent engine only costs the grace period', async t => {
+  for (const silentTurnEnd of [false, true]) {
+    const h = fixture(t, { silentTurnEnd });
+    h.call(1, 'await cua.getApp("Example")'); h.reply(1);
+    h.replace();
+    h.call(2, 'await cua.getApp("Example")'); await flush(); await new Promise(resolve => setTimeout(resolve, 20)); await flush();
+    assert.deepEqual(h.engines[0].turnEnds, [0], 'the turn ended while the engine was still alive');
+    assert.equal(h.stops, 1);
+    assert.equal(h.starts, 1, 'the reconnect went ahead');
+    assert.ok(h.engines[1].sent.some(msg => msg.id === 2), 'the call reached the replacement');
+    h.reply(2);
+    h.call(3, 'await cua.getApp("Example")'); h.reply(3);
+    assert.equal(h.stops, 1, 'no leftover turn-end request blocks or repeats a reconnect');
+  }
+});
+
+test('a handle approved by name is reacquired by name after a reconnect, so the user is not asked again', async t => {
+  for (const proactive of [true, false]) {
+    const h = fixture(t, { relay: { inputLease: { acquire: () => 'owned', grant: () => undefined, renew() {}, close() {} } } });
+    h.call(1, 'let app = await cua.getApp("Example")'); h.engines[0].reply(approval('Example')); await flush(); h.reply(1);
+    assert.equal(h.asks, 1);
+    if (proactive) h.replace();
+    h.call(2, 'await app.click(7)');
+    if (!proactive) { h.replace(); h.reply(2, pipeError); }
+    await flush();
+    assert.equal(h.starts, 1);
+    const code = h.engines[1].sent.find(msg => msg.id === 2).params.arguments.code;
+    assert.ok(code.includes('globalThis["app"] = await cua.getApp("Example");'), 'reacquired by name');
+    assert.ok(!code.includes('getApp("test.example")'));
+    // The replacement asks for the app by the name it was given; the remembered answer covers it.
+    h.engines[1].reply(approval('Example')); await flush(); h.reply(2);
+    assert.equal(h.asks, 1, 'the user is asked 0 times after the reconnect');
+    assert.equal(h.engines[1].sent.find(msg => msg.result?.action)?.result.action, 'accept');
+  }
+});
+
+test('Stop after a failed reconnect makes the next engine start a fresh turn', async t => {
+  const h = fixture(t, { initializeError: 1 });
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1);
+  h.replace();
+  h.call(2, 'await cua.getApp("Example")'); await flush();
+  assert.equal(h.starts, 1);
+  assert.equal(h.replies.find(msg => msg.id === 2).result.isError, true, 'the replacement failed to initialize');
+  const failedTurn = h.relay.turnId;
+  h.send({ id: 'stop', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } });
+  await until(() => h.replies.some(msg => msg.id === 'stop'));
+  h.send({ id: 'resume', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_resume: true } } });
+  await until(() => h.replies.some(msg => msg.id === 'resume'));
+  h.call(3, 'await cua.getApp("Example")');
+  await until(() => h.engines[2]?.sent.some(msg => msg.id === 3));
+  assert.equal(h.starts, 2);
+  assert.notEqual(h.relay.turnId, failedTurn, 'a restart after Stop is not an update restart');
+});
+
+test('an engine that dies on its own revokes direct browser work and still recovers on the next call', async t => {
+  let ended = 0;
+  const directBrowser = await createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true, status: () => 'connected',
+    redact: value => value, endSession: () => { ended++; return { revoked: true, cleanup: [] }; }, client: { request: () => ({}) } });
+  const h = fixture(t, { relay: { directBrowser } });
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1);
+  h.relay.engineEnded('Engine exited (25).');
+  assert.equal(ended, 1);
+  h.call(2, 'await cua.getApp("Example")');
+  await until(() => h.engines[1]?.sent.some(msg => msg.id === 2));
+  assert.equal(h.starts, 1);
+  assert.equal(ended, 1, 'the recovery does not end the work twice');
+  h.reply(2);
+  await flush();
+  assert.ok(!h.replies.find(msg => msg.id === 2).result.isError);
 });
