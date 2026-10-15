@@ -28,6 +28,11 @@ test('port guard continues false matches and protects related targets before the
         req.url==='/service.js'?`oninstall=()=>skipWaiting();onactivate=e=>e.waitUntil(clients.claim());onmessage=e=>{${probe}.then(value=>e.source.postMessage(value));};`:
         `${probe}.then(value=>postMessage(value));`);return;
     }
+    if(req.url==='/early'||req.url==='/early-frame'){
+      res.setHeader('content-type','text/html');
+      res.end(req.url==='/early-frame'?`<script>fetch('http://127.0.0.1:${port}/json/list',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked').then(value=>parent.postMessage(value,'*'));</script>`:
+        `<script>window.results={};onmessage=e=>results.frame=e.data;const worker=new Worker('/worker.js');worker.onmessage=e=>{results.worker=e.data;worker.terminate();};</script><iframe src="http://frame.test:${server.address().port}/early-frame"></iframe>`);return;
+    }
     if(req.url==='/redirect'){res.writeHead(302,{location:'http://127.0.0.1:'+port+'/json/list'});res.end();return;}
     res.setHeader('content-type','text/html');
     const url='http://127.0.0.1:'+port+'/json/list';
@@ -87,6 +92,21 @@ test('port guard continues false matches and protects related targets before the
       assert.ok(calls.slice(before).some(row=>row.method==='Fetch.enable'&&row.route!=='root'),'child session guarded');
       const {targetInfos}=await upstream.send('Target.getTargets');assert.ok(targetInfos.some(info=>info.type==='iframe'),'fixture is an OOPIF');
     }finally{await page.close();}
+  });
+  await t.test('initial OOPIF and worker scripts are guarded without Playwright auto-attach',async()=>{
+    const {targetId}=await upstream.send('Target.createTarget',{url:'about:blank',background:true});
+    const early=createCDPFilter({session:upstream,ownedTargets:[targetId],protectedPort:port});
+    try{
+      const {sessionId}=await early.session.send('Target.attachToTarget',{targetId,flatten:true});
+      await early.session.send('Page.navigate',{url:origin+'/early'},sessionId);
+      let results={};
+      for(let n=0;n<100;n++){
+        const reply=await upstream.send('Runtime.evaluate',{expression:'JSON.stringify(window.results||{})',returnByValue:true},sessionId);
+        results=JSON.parse(reply.result.value);if(results.frame&&results.worker)break;
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      assert.deepEqual(results,{worker:'blocked',frame:'blocked'});
+    }finally{await early.dispose();await upstream.send('Target.closeTarget',{targetId});}
   });
   for(const kind of ['dedicated','shared','service'])await t.test(kind+' worker cannot fetch the port',async()=>{
     const page=await ownedPage(),before=calls.length;
