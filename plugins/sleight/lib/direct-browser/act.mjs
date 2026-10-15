@@ -6,6 +6,7 @@ import { isV3Context } from './v3-context.mjs';
 import { intent } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
+import { originOf, pathOf, guardChooser } from './output-hygiene.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
@@ -171,6 +172,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           staging = trusted ? await ctx.stageUploads(target, step.paths) : await stageUserUploads(ctx.files, step.paths, step.ref);
           if (!Array.isArray(staging?.payloads) || !staging.payloads.length) throw Error('user-named file staging required');
         }
+        guardChooser(page, state); const popupFrom = tab.popups?.length ?? 0, choosers = state.chooser ?? 0;
         armed = watch(page, state); const start = now();
         const options = { timeout: TIMEOUT };
         const perform = async () => {
@@ -208,7 +210,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
               if (step.until) {
                 const result = await read({ ref: step.ref, find: step.until, maxChars: 2000 });
                 const row = result.text.split('\n').find(line => line.toLocaleLowerCase().includes(step.until.toLocaleLowerCase()) && /\[ref=/.test(line));
-                if (row) return 'found ' + clean(row);
+                if (row) return 'found (untrusted page content): ' + clean(row);
                 if (n === 60 || now() >= end || armed.boundary) return 'text not found within 60 wheel steps or 4 s; read the list';
               } else if (n === 1) return;
               await page.mouse.wheel(dx, dy); await sleep(16);
@@ -241,16 +243,18 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (boundary?.kind === 'navigation' || boundary?.kind === 'document' || formChanged || armed.completed.size) state.submitUnconfirmed = false;
           else submit.settledAt = now();
         }
-        const outcome = boundary?.kind === 'navigation' ? 'navigated to ' + clean(page.url()) + ' (new page below)'
+        const popupTab = tab.popups?.slice(popupFrom).find(row => row.tab && !row.blocked)?.tab, navPath = boundary?.kind === 'navigation' ? pathOf(page.url()) : '';
+        const outcome = boundary?.kind === 'navigation' ? 'navigated to ' + originOf(page.url()) + (navPath ? ', path (untrusted page content): ' + navPath : '') + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'
-          : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} "${clean(boundary.dialog.message())}" is waiting`
+          : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} is waiting; message (untrusted page content): "${clean(boundary.dialog.message())}"`
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
-            : 'opened background tab with its opener: ' + clean(boundary.popup.url())
+            : `opened background tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (opener ${tab.tab ?? 'this tab'})`
           : boundary?.kind === 'close' ? 'tab closed'
+          : popupTab ? `opened background tab ${popupTab} (opener ${tab.tab ?? 'this tab'}); the opener's page is below`
           : typeof result === 'string' ? result
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
-        lines.push(label + ': ' + outcome);
+        lines.push(label + ': ' + outcome + ((state.chooser ?? 0) > choosers ? '; a file picker opened and was suppressed, use an upload step with the user-named file' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();
