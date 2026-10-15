@@ -3,79 +3,71 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 21:26 UTC, owner away)
-
-OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
-OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
+## Banner (2026-10-15 22:40 UTC, flushed before the owner's clear)
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. 1.3.0 waits only on turbo v3's gate. ROADMAP.md is the plan. Read it whole.
-
-Owner, 2026-10-15: all testing runs on the owner's Anthropic account login, never API console credits (LAWS). The box is
-sleight-arch's all night (live runs allowed). Puddle holds `/tmp/sleight-hold` for window 1015b from 03:52 UTC (up to about 2 h),
-and full checks wait. Puddle's architect says focused headless agents are fine.
+the video. ROADMAP.md is the plan. Read it whole.
 
 **Gate round 3, 2026-10-15 21:19 UTC: turbo faster** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
-v3-gate `cddc7895`). Turbo 24/26, 590 s, 197 calls, 2 errors; FowlBrowser 26/26, 750 s, 276 calls, 7 errors; both 0 focus events
-and 0 ToolSearch. Turbo's misses are form-checkout, where the payment rule asks (the prompt doesn't give an amount) and FowlBrowser
-paid. On the 24 runs both finished, turbo 509 s against 637 s. One Puddle suite overlapped FowlBrowser's first 42 s. Gate targets:
-errors, ToolSearch and focus met, tasks at 24/26 and time at 590 s against 575 s. A claim needs the median of at least 5 rounds. Earlier
-rounds that day: 18:26 UTC turbo 14/26 checked, 31 errors (arm limits); 20:07 UTC turbo 24/26, 855 s (slow forms).
+v3-gate `cddc7895`, Haiku 5.5 high, owner's login, `--world`). Turbo 26/26 under the owner's scoring (form-checkout asks before an
+unpriced payment, LAWS; the runner shows 24/26), 590 s, 197 calls, 2 errors. FowlBrowser 26/26 (paid $268 unpriced twice), 750 s,
+276 calls, 7 errors. Both 0 focus events and 0 ToolSearch. A claim needs the median of at least 5 rounds on the release build.
+Earlier that day, the 18:26 UTC round had turbo at 14/26 checked with 31 errors (arm limits), and the 20:07 UTC round at 855 s (slow
+forms). Each round takes about 8 minutes. The gate script is `~/Projects/sleight-wt/ledger/claims/GATE2/gate.sh`: four passes that
+alternate the arm order per browser order, and an EXIT trap that touches `/tmp/sleight-bench-done`.
 
-Branches (all on `private`):
-- `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
-  a restart). Full check 5729 pass, 0 fail, 59 skipped. `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
-- `v3-gate` at `83fbf6b4` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3, the two bench fixes, TN1, and the funding switch
-  (`83fbf6b4`, 113/113 focused). The sleight, turbo, FowlBrowser and computer use arms run on the login. Browser Use needs the API key, so it runs only in a round of its own.
-- `arch/ad1-int` at `2ae67b9c` (`~/Projects/sleight-wt/adfix-int`) holds the AD1 bank, the port guard, hyg, CR8, CR9, swap r4,
-  pop r4, the final payment check (owner's choice A: any figure above the user's amount asks; 50/98 honest checkouts allowed) and
-  the hook-key hardening. Its bank files pass in full. Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
-- AD1 finish line (ROADMAP item 1). Pay is done and merged. Kb is done (nested ad frames 0/24 stuck, was 20/24) and is being merged
-  into ad1-int with the iframe reads. Pop r5 runs and gets one last review. Status in `ledger/claims/AD1/OPEN-REVIEWS.md`.
-- sleight-arch's call, 2026-10-15: turbo's `browser_read` failed on most pages with cross-site iframes (9/12 before kb r5, 12/12
-  after), because the CDP filter refuses iframe targets and the snapshot fails closed. The filter will attach to iframe children of
-  owned pages, with the same port and endpoint guards, so the snapshot can scan and redact them (`arch/ad1-kb6`, running).
-- Claude Code's safety classifier stopped the adversarial half of the hook-key review. Its correctness, cost and fail-closed half
-  passed.
+**In flight at the flush.**
+- Agent `gate-ad1-merge` (ends at the clear) was merging `arch/ad1-int` `c25095a9` into `arch/gate-ad1` (from v3-gate `cddc7895`) in
+  `~/Projects/sleight-wt/gate-ad1`. The merge was in progress and NOT committed or pushed: MERGE_HEAD set, conflicts in act, fill,
+  page, rules, tools, v3-context, known-problems and a v3-act test, partly resolved in the index. Next session: read
+  `ledger/claims/GATE2/gate-ad1-merge.md` if it exists; otherwise `git -C ~/Projects/sleight-wt/gate-ad1 merge --abort` and redo the
+  merge with the earlier integration notes (`ledger/claims/AD1/int-*.md`) and the GATE2 notes (arm-fix, closed-shadow, form-speed,
+  combobox) as the guide. The merge drops nothing from either side. Closed-root (s-ref) elements must go
+  through the AD1 shield, popup hook, payment and key paths.
+- No background job, gate round or benchmark is running. Puddle's hold is released (`/tmp/sleight-bench-done` exists).
+
+Branches (all on `private`, all pushed, worktrees clean except gate-ad1):
+- `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). Full check 2026-10-15 22:55 UTC passed 5729 of 5788 with 59 skipped.
+  `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
+- `v3-gate` at `cddc7895` (`~/Projects/sleight-wt/v3-int`): turbo v3 plus funding on the login (`83fbf6b4`), arm fixes (`941ee17d`),
+  closed-root controls (`68c1b383`), form speed (`fe9cb4d9`), option pickers (`f0e7cc6c`, `cddc7895`). Records in
+  `ledger/claims/GATE2/`. No full check on it yet.
+- `arch/ad1-int` at `c25095a9` (`~/Projects/sleight-wt/adfix-int`): AD1 done. The bank, port guard, hyg, CR8, CR9, swap r4, pop r5,
+  the final payment check (any figure above the user's amount asks), kb with the init-script lock and once-per-session auto-attach,
+  iframe read sessions, hook-key hardening. Every bank file passes (page-natives 284, swap-shield 75, payment-checkouts 2528,
+  keyboard 92, endpoint 136). No full check yet. Status: `ledger/claims/AD1/OPEN-REVIEWS.md`.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
-Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
-demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.google.Chrome")` launched the owner's Chrome to the front at 02:59:17 UTC
-(`preapproved.json` holds Chrome as always-allow). The bench hook now refuses that. Command: from v3-int, `bench/fowl/rounds.sh
---surface sleight-turbo --model haiku --tasks tools/agents/codex-h2h.json --only form-travel,demoid --serve "node
-test/demo/server.mjs --all" --out <dir> --effort high`.
+Next for the gate, in order:
+1. Finish `arch/gate-ad1` (above), run one full `npm run check` on it, a turbo smoke round of the form tasks, then fast-forward
+   v3-gate to it.
+2. At least 5 gate rounds on that build. The owner OK'd running them whenever (2026-10-15 21:30 UTC). Before each: ask Puddle's
+   architect for HOLD (`ListAgents`, `SendMessage` to "puddle arch"), wait for "HOLD live", delete `/tmp/sleight-bench-done`, check
+   the Mac has been idle a few minutes (`ioreg -c IOHIDSystem | awk '/HIDIdleTime/'`), run both preflights with `--world`. Report the
+   median per arm.
+3. `SLEIGHT_CONFIRM_PAYMENTS=never` (owner, LAWS) and two small turbo bugs: a read's redaction blanks matching characters elsewhere on
+   the page, which closed-root values make worse.
+4. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 
-Next, in order (after the 18:26 UTC gate round missed):
-1. Done: arm fixes, closed-root controls, form speed and list pickers (v3-gate `cddc7895`). AD1 merges into v3-gate as
-   `arch/gate-ad1` (agent `gate-ad1-merge`), then one full check, then at least 5 gate rounds on that build for the median. The owner
-   said to run them whenever (2026-10-15 21:30 UTC), coordinating each with Puddle's architect. Check the Mac has been idle a few
-   minutes before each round, since FowlBrowser's arm opens windows.
-2. AD1 finish line: once the kb integration (running) and pop r5 are in ad1-int, one full check there and the merge into v3-gate.
-3. Fix two small turbo bugs found on the way: a read's redaction can blank matching characters elsewhere on the page, and `wait` with
-   a ref may call a method an ElementHandle lacks.
-4. Gate rerun (a round takes about 8 minutes; ask Puddle's architect for a quiet window first), then the Opus head-to-head, then
-   merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
+Bench setup facts (2026-10-15): the bench arms log in per config dir. `sleight-turbo` and `fowlbrowser` arm configs are logged in
+(Max). Without `--world`, the FowlBrowser arm uses `~/Library/Caches/sleight-bench/fowl-claude-config`, which is NOT logged in, so
+gate rounds use `--world` (both arms on the pinned Claude Code 2.1.289). FowlBrowser's extension is loaded unpacked from
+`~/Library/Application Support/FowlBrowser/extension` in Chrome's "sleight benchmark" profile and in Helium (sockets in
+`~/.fowlbrowser/`). macOS denies reading Chrome's Local State from this session; `ledger/claims/CS2/plans.json` named the profile
+folder `Profile 7`, but `open --args --profile-directory="Profile 7"` opened the owner's normal profile, so that mapping is unreliable.
 
-After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE. EPV3-1 never
-started because V10R4's dead lane held `v3-join`, now free), the claim suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
+Haiku 5.5 latency (2026-10-15, turbo arm, 138 gaps): median 2.0 s between tool calls, p90 3.5 s, max 4.4 s. Thinking took a median 0.35 s.
 
-How work runs now: lanes run focused tests only (LEDGER NOTICE 3), sleight-arch runs one full check per merge and builds directly
-when faster (LAWS), Claude reviewers (Sonnet high) review every safety, release and clean-room item, and lane reviews add real-page
-repros. Competitor code is never adapted (LAWS): CR items get a similarity audit, and lanes that read FowlBrowser can't review them.
+After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE), the claim
+suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
 
-The real-page runner (`node scripts/live-dom-runner.mjs`, pid 39609, from `~/Projects/sleight` since 2026-10-14 20:40 UTC) ends
-at the owner's reboot. Restart it with `nohup node scripts/live-dom-runner.mjs` from `~/Projects/sleight` if a real-page test needs it.
-No Codex lane is running. Claude agents end at the clear, and their worktrees and pushed branches remain.
-
-The owner's steps at the Mac are Chrome's Allow during the gate, the sleight-arm login if the preflight says it lapsed
-(`CLAUDE_CONFIG_DIR=~/Library/Caches/sleight-bench/sleight-arm/claude ~/.local/bin/claude auth login`), and
-`ledger/claim-suite-owner-checklist.md`. API spend for October: $159.96 of $200. This session's own sleight MCP couldn't reach the
-engine helper after the 2026-10-14 engine update (26.1007.71326). `.dev/tools/probe.mjs`-style fresh clients through the relay with
-`preapproved` and `grantAudit` passed in work (RC1 fixes the cause).
+How work runs: agents (Sonnet high) build and review, and sleight-arch integrates and runs one full check per merge. Every
+real-page test needs `SLEIGHT_LIVE_DOM_TEST=1` or it skips silently. Agents never `pkill -f`. Competitor code is never adapted
+(LAWS). No Codex lane is running. The real-page runner (`node scripts/live-dom-runner.mjs`, pid 39609) is still up from 2026-10-14.
 
 Owner items: OpenUsage.app may relock the "Claude Code-credentials" keychain item on a token refresh (owner keeps it, 2026-10-14).
-A lane worktree from 2026-10-13 sits inside the main checkout at `private/codex/fm1` (registered with git). Remove it with
-`git worktree remove` once FM1's evidence is no longer needed.
+A lane worktree from 2026-10-13 sits inside the main checkout at `private/codex/fm1`. Remove it with `git worktree remove` once
+FM1's evidence is no longer needed. About 20 temporary browser profiles named `sleight-bench-v3-*` remain in the temp dir, left by bench runs.
 
 Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
 public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
@@ -117,7 +109,7 @@ private` sends pushes to `Land-o-Clusters/sleight-dev`, and a pre-push hook refu
 without `SLEIGHT_RELEASE_PUSH=1`. Public `origin/pane/auto-mode` stays at `332e3ca`.
 
 **Benchmark.** Claude arms run on the owner's Anthropic account login, Haiku 5.5 at high (LAWS, 2026-10-15). `bench/fowl/rounds.sh`
-still sends non-Opus models to the API key: switch it to the login first. `--surfaces browser,computer` runs the real suite with the extension browser API. Chains of
+runs every Claude arm on the login since `83fbf6b4`. Browser Use needs an API key and runs only in its own round. `--surfaces browser,computer` runs the real suite with the extension browser API. Chains of
 live runs live in `.dev/passes/`. Compare A/Bs with `node .dev/tools/ab-compare.mjs <log>.log`.
 
 Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working branch.
