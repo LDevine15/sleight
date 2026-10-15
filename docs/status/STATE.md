@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 05:45 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 06:50 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
@@ -27,10 +27,13 @@ Branches (all on `private`):
   and r3, pop r1, kb r2, pay r3, CR8 and CR9. The bank there passes in full for endpoint (136), keyboard (27), instructions (41),
   natives (90), payment (90) and submit-retry (26), with timing-and-covering 30/41 until swap merges. Real-page tests need
   `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
-- AD1 fix rounds (Claude agents, Sonnet high). Status per branch is in `ledger/claims/AD1/OPEN-REVIEWS.md`. Hyg r2 review PASSED
-  and r3 fixed its lows. Pay r4 FAILED review (3/10 realistic checkouts allowed, and two bypasses), so pay r5 is running a
-  default-deny figure rule. Swap r2 (`0519c489`: 41/41, click median 233 ms to 179 ms, key-shield API) is under review. Kb r3 runs on
-  top of swap r2. Pop r2 is running. CR10 is not merged: its premise was disproved (`ledger/claims/CR10/REPORT.md`).
+- `arch/ad1-trial` at `cd44eea2` (`~/Projects/sleight-wt/ad1-trial`) is ad1-int plus swap r2 and pop r2, with the conflicts
+  resolved. All 8 bank files (474 tests) and 16 related unit and real-page files pass there.
+- AD1 fix rounds (Claude agents, Sonnet high). Status per branch is in `ledger/claims/AD1/OPEN-REVIEWS.md`. Pay r4 and pop r2
+  FAILED review, so pay r5 (default-deny figure rule) and pop r3 are running. Swap r2 is under review, and kb r3 runs on top of it.
+  The pop r2 review found a full bypass that predates AD1: a page can replace or switch off the hook at
+  `window[Symbol.for('sleight.popup3')]` and raise a foreground tab. `arch/ad1-hookkey` (from ad1-trial) is fixing it with a
+  random key and secret per session and a frozen hook. CR10 is not merged: its premise was disproved.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
