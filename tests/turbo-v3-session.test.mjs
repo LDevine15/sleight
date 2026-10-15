@@ -75,6 +75,36 @@ test('invalid fixture/task input never forks and missing cleanup evidence stays 
   assert.deepEqual(cleanupMetric(proof), { version: 3, phase: 'cleanup', ...proof });
 });
 
+test('a public-web task names no fixture origin and the session still starts; named origins must still be runner fixtures', async () => {
+  const { createSession } = await load();
+  const events = [];
+  const session = await createSession({ origins: [], taskMessage: 'Look up the height of Mount Kilimanjaro on Wikipedia.',
+    forkWorker: fakeFork(async event => { events.push(event); return { call: async () => ({ text: 'ok', isError: false }),
+      delivered: () => true, end: async () => ({ revoked: true, cleanup: [] }) }; }) });
+  assert.equal(events[0].text, 'Look up the height of Mount Kilimanjaro on Wikipedia.');
+  assert.equal((await session.call({ name: 'browser_read', arguments: { tab: 't1' } })).text, 'ok');
+  await session.close();
+  let forks = 0;
+  for (const origins of [undefined, 'http://127.0.0.1:5431', ['http://localhost:5431'], ['https://en.wikipedia.org']])
+    await assert.rejects(createSession({ origins, taskMessage: 'read', forkWorker: () => forks++ }));
+  assert.equal(forks, 0);
+});
+
+test('the bench browser is its own headless Chromium with a temporary profile and no host restriction', async () => {
+  const { BENCH_BROWSER_ARGS, launchOwnedBrowser } = await import('../bench/turbo/v3-worker.mjs');
+  assert.ok(BENCH_BROWSER_ARGS.includes('--headless'));
+  assert.ok(BENCH_BROWSER_ARGS.includes('--remote-debugging-port=0'));
+  assert.equal(BENCH_BROWSER_ARGS.filter(arg => /host-resolver|proxy|disable-web-security|no-sandbox|remote-allow-origins/.test(arg)).length, 0);
+  const spawned = [];
+  await assert.rejects(launchOwnedBrowser({ timeoutMs: 200, spawnBrowser: (command, args) => {
+    spawned.push({ command, args }); const child = new EventEmitter(); child.exitCode = 1; child.signalCode = null; child.kill = () => {}; return child;
+  } }), /BENCH_BROWSER_START_FAILED|BENCH_BROWSER_MISSING/);
+  for (const { args } of spawned) {
+    assert.ok(args.some(arg => /^--user-data-dir=.*sleight-bench-v3-/.test(arg)), 'a temporary profile, never a real browser profile');
+    assert.ok(!args.some(arg => /Application Support|Google\/Chrome|Helium/.test(arg)));
+  }
+});
+
 test('runner setup selects all five v3 tools, private task, metrics and v3 guidance beside the companion', async () => {
   const { turboSetup } = await import('../bench/turbo/setup.mjs');
   const { browserTools } = await import('../plugins/sleight/lib/direct-browser/tools.mjs');

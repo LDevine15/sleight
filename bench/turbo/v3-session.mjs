@@ -6,7 +6,9 @@ import { createV3Bridge } from '../../plugins/sleight/lib/direct-browser/worker.
 import { fixturePolicy } from './setup.mjs';
 
 export async function createSession({ origins, taskMessage, forkWorker = fork } = {}) {
-  fixturePolicy(origins);
+  // Tasks on the public web name no local fixture; any origins that are named still have to be runner fixtures.
+  if (!Array.isArray(origins)) throw Error('Runner fixture origins required');
+  if (origins.length) fixturePolicy(origins);
   if (typeof taskMessage !== 'string' || !taskMessage.trim() || Buffer.byteLength(taskMessage) > 65536) throw Error('Runner task message required');
   const bridge = await createV3Bridge({}, {
     readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),

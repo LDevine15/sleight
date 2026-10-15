@@ -187,7 +187,15 @@ async function closedRoots(page, state) {
       }
     }
     if (controls.size > 512) children.push({ role: 'note', name: (controls.size - 512) + ' closed shadow candidates omitted (512 candidate limit)' });
-    return { frame, secrets, refs, children };
+    // The page's visible size, for the offscreen markers; the main frame's session already exists.
+    let viewport = null;
+    if (frame === page.mainFrame()) {
+      try {
+        const { cssLayoutViewport: v } = await send('Page.getLayoutMetrics');
+        if (v?.clientWidth > 0 && v?.clientHeight > 0) viewport = { width: v.clientWidth, height: v.clientHeight };
+      } catch { /* no markers without a size */ }
+    }
+    return { frame, secrets, refs, children, viewport };
   });
   const sections = [], secrets = [], next = new Map();
   secrets.names = new Set(); secrets.unnamed = false;
@@ -201,7 +209,7 @@ async function closedRoots(page, state) {
   const current = new Set([...next.values()].flatMap(refs => [...refs.values()]));
   for (const ref of state.deliveredClosed) if (!current.has(ref)) state.deliveredClosed.delete(ref);
   state.closed = next;
-  return { sections, secrets };
+  return { sections, secrets, viewport: results.find(result => result.viewport)?.viewport ?? null };
 }
 
 // V4/V5 can resolve an s ref into an owned frame's CDP backend node. Only refs
@@ -253,7 +261,16 @@ export function snapshotRefBinding(page, ref) {
   return page.locator('aria-ref=' + record.raw);
 }
 
-function rowsOf(tree, secrets) {
+// A ref's box is relative to the viewport, so it says whether the element is in view without scrolling.
+// Frame refs (f2e1) are boxed inside their own frame, and a box with no area says nothing.
+function placement(node, ref, viewport) {
+  const box = node.box;
+  if (!viewport || !ref || /^f\d/.test(ref) || !box || !(box.width > 0 && box.height > 0)) return '';
+  if (box.x + box.width <= 0 || box.y + box.height <= 0 || box.x >= viewport.width || box.y >= viewport.height) return ' [offscreen]';
+  return box.x < 0 || box.y < 0 || box.x + box.width > viewport.width || box.y + box.height > viewport.height ? ' [partly offscreen]' : '';
+}
+
+function rowsOf(tree, secrets, viewport) {
   const rows = [];
   const visit = (nodes, parent = null, depth = 0) => {
     let previous = null;
@@ -268,7 +285,7 @@ function rowsOf(tree, secrets) {
       for (const flag of ['checked', 'disabled', 'expanded', 'active', 'pressed', 'selected', 'invalid', 'level']) {
         if (node[flag]) line += ` [${flag}${node[flag] === true ? '' : '=' + JSON.stringify(node[flag])}]`;
       }
-      if (ref) line += ` [ref=${ref}]`;
+      if (ref) line += ` [ref=${ref}]` + placement(node, ref, viewport);
       if (protectedValue) line += ': "[redacted]"';
       else if (node.text !== undefined) line += ': ' + JSON.stringify(scrub(node.text, secrets));
       else if (node.children?.length) line += ':';
@@ -369,13 +386,13 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
   const generation = state.generation, url = page.url();
   try {
     const acquired = await Promise.allSettled([
-      bounded(() => page.ariaSnapshotJSON({ mode: 'ai', timeout: TIMEOUT })), closedRoots(page, state),
+      bounded(() => page.ariaSnapshotJSON({ mode: 'ai', boxes: true, timeout: TIMEOUT })), closedRoots(page, state),
     ]);
     const failed = acquired.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
     const tree = acquired[0].value, closed = acquired[1].value, secrets = closed.secrets;
     publicRefs(tree, state);
-    const rows = rowsOf([...tree, ...closed.sections], secrets);
+    const rows = rowsOf([...tree, ...closed.sections], secrets, closed.viewport);
     if (generation !== state.generation || url !== page.url()) throw Error('Page changed; try browser_read again.');
     const continuation = MORE.test(ref) ? state.continuations.get(ref) : null;
     if (MORE.test(ref) && (!continuation || continuation.source !== JSON.stringify(rows))) throw Error('Continuation expired');

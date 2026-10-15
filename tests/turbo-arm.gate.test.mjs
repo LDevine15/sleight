@@ -37,7 +37,7 @@ test('turbo arm offers the engine companion and the installed turbo skill before
   assert.equal(engine.env.SLEIGHT_SKILL, 'none', 'the combined prompt supplies the skill once');
   assert.ok(setup.allowed.split(',').includes('mcp__plugin_sleight_computer__js'));
   assert.equal(setup.allowed.split(',').length, 8);
-  const browserRules = readFileSync(join(root, 'plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md'), 'utf8').trimEnd().replace('{browser}', 'bbench').replace('{application}', ' (Chromium)');
+  const browserRules = readFileSync(join(root, 'plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md'), 'utf8').trimEnd().replace('{browser}', 'bbench').replace('{application}', ' (Google Chrome)');
   const installed = skillRules(undefined, {}).replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, browserRules + '\n');
   assert.ok(setup.promptPrefix.includes(installed), 'native rules and production turbo browser rules are preserved together');
   assert.match(setup.promptPrefix, /Never translate refs or handles between paths/);
@@ -55,6 +55,34 @@ test('fixture and open-web tasks receive the same installed prompt and tools wit
   }
   assert.deepEqual(JSON.parse(setups[1].mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_ORIGINS), []);
 });
+
+test('the prompt names the task browser as the one the tools drive and sends no engine browser steps', t => {
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-config-')));
+  for (const [browser, application] of [['helium', 'Helium'], ['chrome', 'Google Chrome']]) {
+    const task = { ...fixtureTask, browser };
+    const { promptPrefix } = turboSetup({ task, repo: root, dir, prompt: task.prompt });
+    assert.match(promptPrefix, new RegExp('Turbo selects `bbench` \\(' + application + '\\)\\.'));
+    assert.match(promptPrefix, /Drive this browser with these tools, not engine `js`\. `js` serves native apps and other browsers/);
+    assert.doesNotMatch(promptPrefix, /listBrowsers|createBrowserTab|extensionInstanceId|Find (Helium|Chrome)/);
+  }
+});
+
+test('the runner adds no engine find-and-open sentence for turbo, in either prompt mode and both browser orders',
+  { skip: cacheSkip }, async t => {
+    const { dir, mod } = await runner(t);
+    for (const world of [false, true]) for (const browser of ['helium', 'chrome']) {
+      const task = { ...fixtureTask, browser, prompt: 'look up a page in {browser}' };
+      const { prompt } = mod.agentSetup({ task, surface: 'sleight-turbo', dir, mcpRoot: '/fixture/mcp',
+        settings: '/fixture/settings.json', model: 'haiku', effort: 'high', world });
+      assert.doesNotMatch(prompt, /listBrowsers|createBrowserTab|getBrowser\(|extensionInstanceId/, `${browser} world=${world}`);
+      assert.match(prompt, new RegExp('Turbo selects `bbench` \\(' + (browser === 'helium' ? 'Helium' : 'Google Chrome') + '\\)'));
+      assert.match(prompt, /look up a page in (Helium|Chrome)/);
+    }
+    // The engine arms keep their find-and-open sentence.
+    const engine = mod.agentSetup({ task: { ...fixtureTask, browser: 'helium' }, surface: 'sleight', dir, mcpRoot: '/fixture/mcp',
+      settings: '/fixture/settings.json', model: 'haiku', effort: 'high', world: false });
+    assert.match(engine.prompt, /cua\.listBrowsers\(\)/);
+  });
 
 test('the gate tasks and optional takeover in both browser orders keep both servers and are supported',
   { skip: cacheSkip }, async t => {

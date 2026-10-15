@@ -268,3 +268,20 @@ test('CR4 real closed select with 600 options returns the select without exhaust
   assert.match(result.text, /combobox "Destination".*\[ref=s\d+\]/);
   t.diagnostic('cleanup: closed-select fixture browser, loopback server and sockets closed by teardown');
 });
+
+test('real snapshot marks refs outside the viewport at a phone size and clears the marks after a scroll', { skip }, async t => {
+  const page = await fixture(t, `<style>body{margin:0}.gap{height:1500px}</style><main><button id="top">Top button</button>
+    <div class="gap"></div><button id="deep">Add to cart</button></main>`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const first = await snapshot(page);
+  assert.match(first.text, /button "Top button" \[ref=e\d+\]\n/);
+  assert.match(first.text, /button "Add to cart" \[ref=e\d+\] \[offscreen\]/);
+  await page.evaluate(() => document.querySelector('#deep').scrollIntoView({ block: 'center' }));
+  const after = await snapshot(page);
+  assert.match(after.text, /button "Add to cart" \[ref=e\d+\]\n?$/m);
+  assert.match(after.text, /button "Top button" \[ref=e\d+\] \[offscreen\]/);
+  // A tall viewport brings the deep button in, with no marker on either.
+  await page.evaluate(() => scrollTo(0, 0));
+  await page.setViewportSize({ width: 390, height: 2000 });
+  assert.doesNotMatch((await snapshot(page)).text, /offscreen/);
+});

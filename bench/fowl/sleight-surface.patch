@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..c473377 100644
+index e7f1db8..e6c68af 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,6 @@
@@ -134,7 +134,7 @@ index e7f1db8..c473377 100644
 +    if (remote) throw new Error('Turbo bench is local only');
 +    const extra = require(path.join(SLEIGHT_REPO, 'bench/turbo/setup.mjs')).turboSetup({ task, repo: SLEIGHT_REPO, dir, prompt: taskPrompt });
 +    mcpServers = extra.mcpServers; allowed = extra.allowed; arm = extra;
-+    prompt = extra.promptPrefix + `${find} and ${open}.\n\n` + prompt;
++    prompt = extra.promptPrefix + prompt; // no engine find/open sentence: it sent the model to cua.listBrowsers() first
 +  } else if (surface === 'sleight') {
 +    // sleight's own launcher with its default surfaces when the extension is connected (browser-only breaks, 2026-10-12), its plugin loaded from the repo for the skill and hooks.
 +    mcpServers = { 'plugin:sleight:computer': { command: path.join(SLEIGHT_REPO, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'browser,computer' } } };
@@ -163,7 +163,7 @@ index e7f1db8..c473377 100644
 +  if (world) {
 +    const common = require(path.join(SLEIGHT_REPO, 'bench/world/arms/browser.mjs')).worldAgentSetup({ surface: surface === 'sleight-turbo' ? 'fowlbrowser' : surface, dir });
 +    arm = { ...common, ...arm, args: arm?.args || common.args };
-+    prompt = common.promptPrefix + (surface === 'sleight-turbo' ? arm.promptPrefix + `${find} and ${open}.\n\n` : `When cua.createBrowserTab is available, open tabs with cua.createBrowserTab(browserId, url, { sessionName: '${labelOf(task.name)}' }). Other tools accepting sessionName use the same label.\n\n`) + (arm.setupPrefix || '') + taskPrompt;
++    prompt = common.promptPrefix + (surface === 'sleight-turbo' ? arm.promptPrefix : `When cua.createBrowserTab is available, open tabs with cua.createBrowserTab(browserId, url, { sessionName: '${labelOf(task.name)}' }). Other tools accepting sessionName use the same label.\n\n`) + (arm.setupPrefix || '') + taskPrompt;
 +  }
    const args = ['-p', '--model', model, '--effort', effort, '--input-format', 'stream-json', '--output-format', 'stream-json',
      '--verbose', '--strict-mcp-config', '--mcp-config', path.join(dir, 'mcp.json'), '--settings', settings,

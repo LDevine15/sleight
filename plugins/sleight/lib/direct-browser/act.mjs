@@ -6,6 +6,7 @@ import { isV3Context } from './v3-context.mjs';
 import { intent } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
+import { setViewport } from './viewport.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
@@ -35,7 +36,8 @@ function validate(steps) {
     if (s.do === 'drag' && !refOf(s.to)) needs('to');
     if (s.do === 'upload' && (!Array.isArray(s.paths) || !s.paths.length || s.paths.some(p => typeof p !== 'string' || !p))) needs('paths');
     if (s.do === 'dialog' && typeof s.accept !== 'boolean') needs('accept');
-    if (s.do === 'viewport' && ![s.width, s.height].every(n => Number.isInteger(n) && n >= 100 && n <= 10000)) needs('width and height between 100 and 10000');
+    if (s.do === 'viewport' && ([s.width, s.height].filter(n => n === undefined).length === 1 ||
+      [s.width, s.height].some(n => n !== undefined && !(Number.isInteger(n) && n >= 100 && n <= 10000)))) needs('width and height between 100 and 10000, or neither to restore');
     if (s.do === 'scroll') {
       if (s.until !== undefined && (typeof s.until !== 'string' || !s.until.trim() || s.until.length > 500)) needs('until text');
       if ([s.dx, s.dy].some(n => n !== undefined && (!Number.isFinite(n) || Math.abs(n) > 10000))) needs('finite dx and dy up to 10000');
@@ -185,7 +187,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (step.do === 'hover') return locator.hover(options);
           if (step.do === 'drag') return trusted ? ctx.dragTo(target, page.getByRef(step.to)) : locator.dragTo(page.getByRef(step.to), options);
           if (step.do === 'upload') return locator.setInputFiles(staging.payloads, options);
-          if (step.do === 'viewport') return page.setViewportSize({ width: step.width, height: step.height });
+          if (step.do === 'viewport') return setViewport(page, step);
           if (step.do === 'back') return page.goBack({ ...options, waitUntil: 'commit' });
           if (step.do === 'forward') return page.goForward({ ...options, waitUntil: 'commit' });
           if (step.do === 'reload') return page.reload({ ...options, waitUntil: 'commit' });

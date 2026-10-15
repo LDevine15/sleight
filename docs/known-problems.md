@@ -231,3 +231,12 @@ Engine behavior that sleight works around or can't change:
   FowlBrowser's travel page. The fix is in progress.
 - After a kernel reset, sleight restores `tab` and `b` only for calls whose source it can parse: 87 of 403 recorded browser calls (21.6%)
   aren't tracked, and a name the call assigns isn't restored.
+
+## Turbo viewport and offscreen markers
+
+- `[offscreen]` and `[partly offscreen]` compare an element's box with the page's viewport only. A scroll container or an overlay that
+  clips the element isn't counted, and refs inside frames (`f2e1`) never get a marker. Checked on a tall page at 390x844 with a real
+  headless Chromium. Not checked on pages with scroll containers.
+- The `viewport` step restores the size by setting the size the tab had before the first override. The tab then has an explicit
+  size that matches the old window and doesn't follow later window resizes. A tab kept or handed off with an override still set keeps
+  that size.

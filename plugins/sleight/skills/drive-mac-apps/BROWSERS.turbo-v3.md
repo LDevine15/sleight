@@ -15,6 +15,6 @@ Never inject JavaScript or try to unmask them.
 
 Keep tabs and popups in the background. Do not blindly resend a submit with an unknown outcome.
 Read current state before deciding what remains. Only delivered state can clear an uncertain-submit fence.
-Engine `js` remains available for its own browser tabs, with its approvals and safety rules.
+Drive this browser with these tools, not engine `js`. `js` serves native apps and other browsers, with its approvals and safety rules.
 Never translate refs or handles between paths or route a safety refusal or uncertain input through another path.
 Native apps retain the engine's approvals and guards.

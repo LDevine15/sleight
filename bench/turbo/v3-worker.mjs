@@ -20,10 +20,10 @@ export function headlessExecutable(home = homedir()) {
   return executable;
 }
 
-// Every host but 127.0.0.1 fails name resolution, so a benchmark round can only reach the
-// runner's local fixtures, whatever the model asks for.
-export const BENCH_BROWSER_ARGS = ['--headless', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
-  '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1', 'about:blank'];
+// The browser reaches the public web like the user's own Chrome does, so public-site tasks (Wikipedia, MDN) run on the
+// product's path. It stays a separate headless Chromium with a temporary profile: the owner's real browsers are never
+// touched. The product's own guards still apply on top: the DevTools port and endpoint guards, http(s)-only opens.
+export const BENCH_BROWSER_ARGS = ['--headless', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', 'about:blank'];
 
 export async function launchOwnedBrowser({ spawnBrowser = spawn, timeoutMs = 15000 } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-bench-v3-')));

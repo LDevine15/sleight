@@ -15,7 +15,7 @@ const benchBrowsers = () => {
   catch { return -1; }
 };
 
-test('benchmark worker opens and reads a real local page, stays on 127.0.0.1, then removes its browser and profile',
+test('benchmark worker opens and reads a real local page by 127.0.0.1 and by name, then removes its browser and profile',
   { skip: live ? false : 'host real-page runner only (SLEIGHT_LIVE_DOM_TEST=1)', timeout: 90000 }, async t => {
     const posts = [];
     const server = createServer((req, res) => {
@@ -26,7 +26,7 @@ test('benchmark worker opens and reads a real local page, stays on 127.0.0.1, th
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
     const origin = 'http://127.0.0.1:' + server.address().port;
-    const profilesBefore = new Set(benchProfiles());
+    const profilesBefore = new Set(benchProfiles()), browsersBefore = benchBrowsers();  // earlier runs' orphans don't count
     const { createSession } = await import('../bench/turbo/v3-session.mjs');
     const session = await createSession({ origins: [origin], taskMessage: 'Open ' + origin + '/ and save the name Bench.' });
     const call = async (name, args) => { const request = { name, arguments: args }; const result = await session.call(request);
@@ -39,14 +39,15 @@ test('benchmark worker opens and reads a real local page, stays on 127.0.0.1, th
       const read = await call('browser_read', { tab });
       assert.equal(read.isError, false, read.text);
       assert.match(read.text, /Bench fixture/);
-      assert.equal(benchBrowsers(), 1);
-      // Only 127.0.0.1 resolves inside the benchmark browser.
-      const outside = await call('browser_open', { url: 'http://example.com/' });
-      assert.ok(outside.isError || !/Example Domain/.test(outside.text), outside.text);
+      assert.equal(benchBrowsers() - browsersBefore, 1);
+      // Names other than 127.0.0.1 resolve too: the bench browser reaches hosts like the user's own Chrome does.
+      const named = await call('browser_open', { url: 'http://localhost:' + server.address().port + '/' });
+      assert.equal(named.isError, false, named.text);
+      assert.match(named.text, /Bench fixture/);
     } finally {
       await session.close();
     }
-    for (let n = 0; n < 50 && benchBrowsers() > 0; n++) await new Promise(resolve => setTimeout(resolve, 100));
-    assert.equal(benchBrowsers(), 0);
+    for (let n = 0; n < 50 && benchBrowsers() > browsersBefore; n++) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(benchBrowsers(), browsersBefore);
     assert.deepEqual(benchProfiles().filter(name => !profilesBefore.has(name)), []);
   });

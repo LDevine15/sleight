@@ -503,7 +503,8 @@ test('CR3 captures each frame once and omits pierced DOM and AX work without clo
     return session;
   } });
   await module.snapshot(page);
-  assert.deepEqual(calls, ['attach', 'DOMSnapshot.captureSnapshot', 'detach']);
+  // The same main-frame session also reads the viewport size for the offscreen markers; no pierced DOM or AX call joins it.
+  assert.deepEqual(calls, ['attach', 'DOMSnapshot.captureSnapshot', 'Page.getLayoutMetrics', 'detach']);
 });
 
 test('CR3 600 closed-root divs spend only one candidate probe and expose the button', async () => {
@@ -591,4 +592,68 @@ test('CR4 closed candidate overflow returns first 512 controls and an omitted-co
   assert.doesNotMatch(result.text, /Command 512/);
   assert.match(result.text, /88.*(?:omitted|left out)/i);
   assert.equal(calls.filter(([method]) => method === 'Accessibility.getPartialAXTree').length, 512);
+});
+
+// A page whose main-frame session also answers Page.getLayoutMetrics, like Chromium.
+function withViewport(page, width, height) {
+  const context = page.context();
+  page.context = () => ({ newCDPSession: async frame => {
+    const session = await context.newCDPSession(frame), send = session.send;
+    session.send = (method, params) => method === 'Page.getLayoutMetrics'
+      ? Promise.resolve({ cssLayoutViewport: { pageX: 0, pageY: 0, clientWidth: width, clientHeight: height } }) : send(method, params);
+    return session;
+  } });
+  return page;
+}
+const boxed = (box, props) => ({ role: 'button', ...props, box: { x: 0, y: 0, width: 100, height: 40, ...box } });
+
+test('refs outside the viewport carry offscreen markers and in-view refs carry none', async () => {
+  const { page } = fixture([{ role: 'main', ref: 'e1', box: { x: 0, y: 0, width: 390, height: 3000 }, children: [
+    boxed({ y: 100 }, { name: 'Visible', ref: 'e2' }),
+    boxed({ y: 900 }, { name: 'Below fold', ref: 'e3' }),
+    boxed({ y: 820 }, { name: 'Cut off', ref: 'e4' }),
+    boxed({ x: 500 }, { name: 'Right of view', ref: 'e5' }),
+    boxed({ y: -200 }, { name: 'Above view', ref: 'e6' }),
+    boxed({ y: 844 }, { name: 'Just below', ref: 'e7' }),
+    boxed({ y: 843, height: 1 }, { name: 'Last pixel row', ref: 'e8' }),
+    boxed({ y: 2000, width: 0, height: 0 }, { name: 'No area', ref: 'e9' }),
+    { role: 'button', name: 'No box', ref: 'e10' },
+    boxed({ y: 5000 }, { name: 'Inside a frame', ref: 'f2e1' }),
+  ] }]);
+  withViewport(page, 390, 844);
+  const { text } = await module.snapshot(page);
+  const line = name => text.split('\n').find(row => row.includes('"' + name + '"'));
+  assert.match(line('Visible'), /\[ref=e2\]$/);
+  assert.match(line('Below fold'), /\[ref=e3\] \[offscreen\]$/);
+  assert.match(line('Cut off'), /\[ref=e4\] \[partly offscreen\]$/);
+  assert.match(line('Right of view'), /\[ref=e5\] \[offscreen\]$/);
+  assert.match(line('Above view'), /\[ref=e6\] \[offscreen\]$/);
+  assert.match(line('Just below'), /\[ref=e7\] \[offscreen\]$/);
+  assert.match(line('Last pixel row'), /\[ref=e8\]$/);
+  assert.match(line('No area'), /\[ref=e9\]$/);
+  assert.match(line('No box'), /\[ref=e10\]$/);
+  assert.match(line('Inside a frame'), /\[ref=f2e1\]$/);
+  assert.match(text, /- main \[ref=e1\] \[partly offscreen\]:/);
+});
+
+test('find reaches the offscreen marker and a scroll shows up as a diff', async () => {
+  const { page, set } = fixture([boxed({ y: 900 }, { name: 'Add to cart', ref: 'e1' })]);
+  withViewport(page, 390, 844);
+  const first = await module.snapshot(page);
+  assert.match(first.text, /Add to cart" \[ref=e1\] \[offscreen\]/);
+  assert.match((await module.snapshot(page, { find: 'offscreen' })).text, /Add to cart/);
+  set([boxed({ y: 300 }, { name: 'Add to cart', ref: 'e1' })]);
+  const diff = await module.snapshot(page, { since: first.number });
+  assert.match(diff.text, /\+ .*Add to cart" \[ref=e1\]$/m);
+  assert.doesNotMatch(diff.text, /offscreen/);
+});
+
+test('boxes are requested, and no markers appear when the page size is unavailable', async () => {
+  const { page } = fixture([boxed({ y: 5000 }, { name: 'Far away', ref: 'e1' })]);
+  const asked = [], read = page.ariaSnapshotJSON;
+  page.ariaSnapshotJSON = options => { asked.push(options); return read(options); };
+  const result = await module.snapshot(page);
+  assert.equal(asked[0].boxes, true);
+  assert.doesNotMatch(result.text, /offscreen/);
+  assert.match(result.text, /Far away" \[ref=e1\]/);
 });

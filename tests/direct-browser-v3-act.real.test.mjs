@@ -171,3 +171,19 @@ test('real v3 upload consumes exact user-file bytes and unknown submit never rep
   assert.equal(result.stoppedAt, 2, result.lines.join('\n')); assert.match(result.lines[0], /unconfirmed/);
   assert.equal(await f.page.evaluate(() => window.sends), 1); assert.ok(f.tab.state.submitUnconfirmed.settledAt >= f.tab.state.submitUnconfirmed.startedAt + 1000);
 });
+
+test('real v3 viewport step resizes the page, reports the old size, and gives the original size back', { skip }, async t => {
+  const f = await fixture(t, '<button>Only button</button>');
+  const size = () => f.page.evaluate(() => [innerWidth, innerHeight]);
+  assert.deepEqual(await size(), [1000, 800]);
+  const set = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }], {});
+  assert.equal(set.stoppedAt, null, set.lines.join('\n'));
+  assert.match(set.lines[0], /viewport 390x844 \(was 1000x800\); a viewport step with no size restores 1000x800/);
+  assert.deepEqual(await size(), [390, 844]);
+  const second = await f.run(f.tab, [{ do: 'viewport', width: 768, height: 1024 }], {});
+  assert.match(second.lines[0], /viewport 768x1024 \(was 390x844\)/);
+  const restored = await f.run(f.tab, [{ do: 'viewport' }], {});
+  assert.match(restored.lines[0], /viewport restored to 1000x800/);
+  assert.deepEqual(await size(), [1000, 800]);
+  assert.match((await f.run(f.tab, [{ do: 'viewport' }], {})).lines[0], /unchanged/);
+});
