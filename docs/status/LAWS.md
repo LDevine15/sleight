@@ -32,6 +32,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   about the `ComputerUseAllowForbiddenTargets` switch.
 - When the user's own message names what to pay and with what, that payment counts as confirmed, including the page's own confirm
   dialog. Any other payment asks. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking.
+- Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
+  user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
+  ask once (46/98 measured).
 - Native apps stay on the ChatGPT engine. After the engine approves an app, sleight may read that app's accessibility metadata itself,
   though never its document content.
 - Browsers get turbo, sleight's own direct path, with no extension install. The user turns it on once through Chrome's built-in
