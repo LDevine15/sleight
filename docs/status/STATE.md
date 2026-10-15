@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 06:50 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 08:00 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
@@ -29,8 +29,9 @@ Branches (all on `private`):
   `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
 - `arch/ad1-trial` at `cd44eea2` (`~/Projects/sleight-wt/ad1-trial`) is ad1-int plus swap r2 and pop r2, with the conflicts
   resolved. All 8 bank files (488 tests) and 16 related unit and real-page files pass there.
-- AD1 fix rounds (Claude agents, Sonnet high). Status per branch is in `ledger/claims/AD1/OPEN-REVIEWS.md`. Pay r4 and pop r2
-  FAILED review, so pay r5 (default-deny figure rule) and pop r3 are running. Swap r2 is under review, and kb r3 runs on top of it.
+- AD1 fix rounds (Claude agents, Sonnet high). Status per branch is in `ledger/claims/AD1/OPEN-REVIEWS.md`. Each round gets a
+  fresh reviewer with real-page repros. Pay r5, swap r2, pop r2 and kb r3 all FAILED review, so pay r6, swap r3, pop r3 and kb r4
+  are running. Most findings in swap and kb predate AD1 (round 1 missed them).
   The pop r2 review found a full bypass that predates AD1: a page can replace or switch off the hook at
   `window[Symbol.for('sleight.popup3')]` and raise a foreground tab. `arch/ad1-hookkey` (from ad1-trial) is fixing it with a
   random key and secret per session and a frozen hook. CR10 is not merged: its premise was disproved.
