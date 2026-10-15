@@ -79,7 +79,8 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - The turbo v3 payment read treats any visible money figure that differs from the amount in the user's message as a
   reason to ask, unless its own label marks it as a part (tax, delivery, discount, per unit, installment). Measured
   2026-10-15 on 36 checkout pages: 32 allow the exact payment. The 4 that ask are two donation pages with preset chips
-  larger than that amount, a dialog whose terms are outside the Pay button's own nested form, and euro line items beside a USD charge. An image of 24x8 or more with no ordinary word in its row asks too, so a decorative `alt=""`
+  larger than that amount, a dialog whose terms are outside the Pay button's own nested form, and euro line items beside a USD charge.
+  The round 7 reviewer's 20 honest invoice and multi-currency pages allow 19 (51/56 in all). An image of 24x8 or more with no ordinary word in its row asks too, so a decorative `alt=""`
   image can cause a false ask. Text-only offers ("Upgrade to Premium for $49.00/month", two delivery prices in one
   paragraph) and a yearly price with no monthly price equal to the total also ask. A recommendation block is
   skipped only when its heading is in its own container under the form, with no total or pay word inside.
@@ -97,7 +98,10 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   EventSource), or when the browser holds another tab of the page's site that sleight doesn't own (a
   BroadcastChannel or `storage` event reaches it, and nothing watches it). A page with a worker, a service worker, a
   shared worker of its origin or an iframe of another origin is not refunded either, because the connection can't see
-  their network. The watch detaches when the turn ends and after 2 minutes. A charge that waits for a timer longer than
+  their network. A dedicated worker in any tab the context holds (an earlier popup too) counts the same. A request still
+  open when its tab closes or its frame loads a new document stops counting (measured on 11 cases, including 600 hanging
+  fetches); one still open after a `pushState`, a hash change, or a 204 or download navigation that never committed
+  keeps counting. The watch detaches when the turn ends and after 2 minutes. A charge that waits for a timer longer than
   the gap to the next payment check, or for the next input, is not seen, so a charger that calls itself "Apply" can
   charge once more (measured: a fetch after 6 s and a `sendBeacon` call on the next pointerdown, 2 charges in total).
   A WebRTC data channel or a WebTransport stream opened before the click can also carry a charge, and Playwright
@@ -107,13 +111,23 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   2 of 6 such pages allow Pay (the quiet one and one with an already-loaded cross-origin image). Skipping requests to a
   URL the page already sent periodically would let a page hide a charge in its own heartbeat, so it asks.
 - A figure in another currency is cleared only when it calls itself an estimate ("Approximately EUR 16.60", "about",
-  "converted", "≈") without a pay word in its label, or sits in parentheses right after the amount. "$24.50 CAD" beside
+  "converted", "equivalent", "≈") without a charge word (charged, billed, pay, payable, debit, checkout, "this order") in
+  its label or the sentence after it, or sits in parentheses right after the amount, and only when it is between a fifth
+  and five times the amount. "About EUR 16.60 will be charged to your card" asks. A conversion into yen or won is
+  over 5 times the amount, so it asks too. "$24.50 CAD" beside
   "$18.00 USD" is not cleared, because both read as dollars. Euro line items beside a USD charge ("Item EUR 16.60",
   "You pay $18.00 USD") ask, because there is no rate to compare them with.
 - "Order total", "Invoice total" and "Original invoice amount" above the amount are accepted only when a gift card,
   store credit, voucher, credit or a payment already received ("Payments received", "Paid to date") brings the figure
-  down to the amount. A discount alone doesn't count for those labels. "Amount paid", "Previous balance" and "Credit applied" never
-  count as a charge, at any size. "Next invoice: $60.00 due Dec 1" is not a charge unless it says due now or today.
+  down to the amount. A discount alone doesn't count for those labels, and neither does a gift card, voucher or store
+  credit line that says purchase, buy, add, not applied, available, optional, unused or balance (unless a minus sign shows
+  it was taken off). "Amount paid", "Previous balance", "Total paid" and "Credit applied" are not a charge at any size,
+  unless the label or the sentence after the figure has a charge word (charged, pay, checkout, "this order", card,
+  today, now, "due within"): "Previous balance to be charged $500.00" and "Amount paid by card today $500.00" ask, but a
+  plain "Total paid $500.00" beside a $18.00 total is still allowed, because the label alone is the exemption. A charge
+  statement in a separate cell or line after the figure is not read. "Next invoice: $60.00 due Dec 1" is not a charge
+  unless it says due now, today, at checkout, with this order or as you pay. "Invoice #88 $58.00" above a payment already
+  received that brings it to the amount is accepted, and "New charges" counts as a part of the total.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.

@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bank, doc, skip, payRequest } from './fixtures/bank.mjs';
-import { trackPage, observeActivity } from '../../plugins/sleight/lib/direct-browser/activity.mjs';
+import { trackPage, observeActivity, openRequestCount } from '../../plugins/sleight/lib/direct-browser/activity.mjs';
 
 // Round 7, F1 to F4 (the round 6 reviewer's repros). A script-driven control that the page names like a closed-list verb ("Apply")
 // spends the request's one payment activation and gets it back only when nothing left the browser until the next payment check.
@@ -175,4 +175,126 @@ test('F4: a streaming request opened before the watch ends the refund: quiet fal
   assert.equal(await watch.verify(), false);
   assert.equal(watch.quiet(), false);
   watch.stop();
+});
+
+// ---------------------------------------------------------------- Round 8
+// F-B. A request still open when its page closes or its frame loads a new document is never reported as ended; it must stop counting,
+// or every later refund on the browser context fails and the Request objects pile up. A same-document change drops nothing.
+const stuckCheckout = doc(`<form id=payment>${meta}<p>Total: $${amt}</p><label>Card number<input autocomplete="cc-number"></label><button type=button id=ctl>Show order summary</button><button id=pay>Pay now</button></form><script>document.getElementById('ctl').addEventListener('click',()=>{document.title='x'})</script>`);
+for (const [name, boot] of [['nothing pending', ''], ['a fetch the server never answers, still open when the link is clicked', 'fetch("/silent").catch(()=>{});'], ['an image whose body never ends', 'document.write("<img src=/slowimg>")']]) {
+  test('F-B end to end: cart page with ' + name + ', link to the checkout, quiet "Show order summary" is refunded, Pay is allowed, nothing stays open', { skip, timeout: 120000 }, async t => {
+    const b = await bank(t);
+    const f = await b.start(doc(`<a href="/checkout">Open cart details</a><script>${boot}</script>`, '', ''), payRequest, { routes: { '/checkout': stuckCheckout, '/silent': () => {}, '/slowimg': (req, res) => { res.writeHead(200, { 'content-type': 'image/png' }); res.write(Buffer.from('89504e470d0a1a0a', 'hex')); } } });
+    let out = f.opened; if (/Snapshot unavailable/.test(f.opened)) out = await f.read();
+    await f.act([{ do: 'click', ref: f.ref('Open cart details', out) }]);
+    await wait(1500);
+    out = await f.read();
+    assert.equal(openRequestCount(f.page), 0, 'the old document\'s requests are gone from the in-flight set');
+    await f.act([{ do: 'click', ref: f.ref('Show order summary', out) }]);
+    out = await f.read();
+    const pay = await f.act([{ do: 'click', ref: f.ref('Pay now', out) }]);
+    await wait(800);
+    assert.equal(f.delta().payment, 1, pay.text.split('\n')[0]);
+  });
+}
+test('F-B: the in-flight set drops what a closed page, a navigated frame, a detached frame and a new document left open, and keeps what a same-document change or a navigation that never commits left open', { skip, timeout: 120000 }, async t => {
+  const { chromium } = await import('../../plugins/sleight/vendor/playwright-core/index.mjs');
+  const sockets = new Set();
+  const server = createServer((req, res) => {
+    if (req.url.startsWith('/silent')) return;
+    if (req.url.startsWith('/img')) { res.writeHead(200, { 'content-type': 'image/png' }); res.write(Buffer.from('89504e470d0a1a0a', 'hex')); return; }
+    if (req.url.startsWith('/204')) { res.writeHead(204); res.end(); return; }
+    if (req.url.startsWith('/dl')) { res.writeHead(200, { 'content-disposition': 'attachment; filename=x.bin', 'content-type': 'application/octet-stream' }); res.end('abc'); return; }
+    if (req.url.startsWith('/slow204')) { setTimeout(() => { res.writeHead(204); res.end(); }, 1500); return; }
+    res.setHeader('content-type', 'text/html'); res.end('<!doctype html><title>x</title>hello');
+  });
+  server.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  const browser = await chromium.launch({ headless: true, executablePath: chromiumPath() });
+  t.after(async () => { for (const s of sockets) s.destroy(); await browser.close(); server.close(); });
+  const results = {};
+  async function scenario(label, expectedCount, run) {
+    const context = await browser.newContext(), cdp = await context.newCDPSession(await context.newPage());
+    const open = async () => { const tab = await context.newPage(); trackPage(tab, { targets: () => cdp.send('Target.getTargets') }); await tab.goto(origin + '/'); return tab; };
+    const first = context.pages()[0]; trackPage(first, { targets: () => cdp.send('Target.getTargets') }); await first.goto(origin + '/');
+    const tab = await open();
+    await run(tab, open);
+    await wait(700);
+    const watch = observeActivity(tab), count = openRequestCount(tab), quiet = watch.quiet(), verified = await watch.verify();
+    watch.stop();
+    results[label] = { count, quiet, verified };
+    await context.close();
+    assert.equal(count, expectedCount, label + ': open requests ' + count);
+    assert.equal(quiet, expectedCount === 0, label + ': quiet');
+  }
+  const fetchOpen = tab => tab.evaluate(url => { fetch(url + '/silent' + Math.random()); }, origin);
+  await scenario('fetch open, new document in the tab', 0, async tab => { await fetchOpen(tab); await wait(300); await tab.goto(origin + '/second'); });
+  await scenario('XHR open, new document', 0, async tab => { await tab.evaluate(() => { const x = new XMLHttpRequest(); x.open('GET', '/silent2'); x.send(); }); await wait(300); await tab.goto(origin + '/second'); });
+  await scenario('slow image, new document', 0, async tab => { await tab.evaluate(() => { const i = new Image(); i.src = '/img1'; document.body.appendChild(i); }); await wait(300); await tab.goto(origin + '/second'); });
+  await scenario('slow script tag, new document', 0, async tab => { await tab.evaluate(() => { const s = document.createElement('script'); s.src = '/img3'; document.head.appendChild(s); }); await wait(300); await tab.goto(origin + '/second'); });
+  await scenario('fetch open, reload', 0, async tab => { await fetchOpen(tab); await wait(300); await tab.reload(); });
+  await scenario('fetch open, navigation by script', 0, async tab => { await fetchOpen(tab); await wait(300); await tab.evaluate(() => { location.href = '/second'; }); await tab.waitForURL('**/second'); });
+  await scenario('fetch open, about:blank (no request at all)', 0, async tab => { await fetchOpen(tab); await wait(300); await tab.evaluate(() => { location.href = 'about:blank'; }); await tab.waitForURL('about:blank'); });
+  await scenario('image open, tab closed', 0, async (tab, open) => { await tab.evaluate(() => { const i = new Image(); i.src = '/img2'; document.body.appendChild(i); }); await wait(300); await tab.close(); });
+  await scenario('request open in an iframe, iframe removed', 0, async tab => {
+    await tab.evaluate(url => { const f = document.createElement('iframe'); f.srcdoc = '<script>fetch("' + url + '/silent9")</script>'; document.body.appendChild(f); }, origin);
+    await wait(500); await tab.evaluate(() => document.querySelector('iframe').remove());
+  });
+  await scenario('request open in an iframe, iframe navigates', 0, async tab => {
+    await tab.evaluate(url => { const f = document.createElement('iframe'); f.srcdoc = '<script>fetch("' + url + '/silent8")</script>'; document.body.appendChild(f); }, origin);
+    await wait(500); await tab.evaluate(() => { const f = document.querySelector('iframe'); f.removeAttribute('srcdoc'); f.src = '/second'; }); await wait(500);
+  });
+  await scenario('600 hanging fetches (past the cap), new document', 0, async tab => { await tab.evaluate(url => { for (let i = 0; i < 600; i++) fetch(url + '/silent' + i).catch(() => {}); }, origin); await wait(1500); await tab.goto(origin.replace('127.0.0.1', 'localhost') + '/second'); });
+  // Nothing may drop a request whose document is still there.
+  await scenario('fetch open, pushState', 1, async tab => { await fetchOpen(tab); await wait(300); await tab.evaluate(() => history.pushState({}, '', '/pushed')); });
+  await scenario('fetch open, hash change', 1, async tab => { await fetchOpen(tab); await wait(300); await tab.evaluate(() => { location.hash = 'x'; }); });
+  await scenario('fetch open, a 204 navigation, then pushState', 1, async tab => {
+    await fetchOpen(tab); await wait(300);
+    await tab.evaluate(() => { location.href = '/204'; }); await wait(500);
+    await tab.evaluate(() => history.pushState({}, '', '/pushed'));
+  });
+  await scenario('fetch open, a download navigation, then pushState', 1, async tab => {
+    await fetchOpen(tab); await wait(300);
+    await tab.evaluate(() => { location.href = '/dl'; }); await wait(500);
+    await tab.evaluate(() => history.pushState({}, '', '/pushed'));
+  });
+  await scenario('fetch open, a slow 204 navigation that ends after a pushState', 1, async tab => {
+    await fetchOpen(tab); await wait(300);
+    await tab.evaluate(() => { location.href = '/slow204'; }); await wait(300);
+    await tab.evaluate(() => history.pushState({}, '', '/pushed')); await wait(1800);
+  });
+  await scenario('fetch open in another tab, this tab navigates', 1, async (tab, open) => { const other = await open(); await fetchOpen(other); await wait(300); await tab.goto(origin + '/second'); });
+  t.diagnostic(JSON.stringify(results));
+});
+
+// F-C. A dedicated worker of an owned cross-origin popup fetches the charge without a report to the context.
+const popupPage = (handler, boot = '', outside = '') => `${outside}<form id=payment>${meta}<p>Total: $${amt}</p><label>Card number<input autocomplete="cc-number"></label>
+<button type=button id=ctl>Apply</button><button id=pay>Pay now</button></form><script>${boot}
+document.getElementById('ctl').addEventListener('click', ()=>{ ${handler} });</script>`;
+const popups = {
+  'cross-origin owned popup with a dedicated worker': (o, x) => ({
+    html: popupPage('window.__w.postMessage("go","*")', 'window.openHelp=()=>{window.__w=window.open("' + x + '/help","help")}', '<button id=help onclick="openHelp()">Help</button>'),
+    routes: { '/help': `<!doctype html><title>help</title><script>const b=new Blob(['onmessage=()=>fetch("${o}/effect?kind=payment",{method:"POST",mode:"no-cors"})']);const w=new Worker(URL.createObjectURL(b));onmessage=()=>w.postMessage("go")</script>` } }),
+  'cross-origin owned popup with a plain fetch': (o, x) => ({
+    html: popupPage('window.__w.postMessage("go","*")', 'window.openHelp=()=>{window.__w=window.open("' + x + '/help","help")}', '<button id=help onclick="openHelp()">Help</button>'),
+    routes: { '/help': `<!doctype html><title>help</title><script>onmessage=()=>fetch("${o}/effect?kind=payment",{method:"POST",mode:"no-cors"})</script>` } }),
+  'same-origin owned popup with a plain fetch': (o, x) => ({
+    html: popupPage('window.__w.postMessage("go","*")', 'window.openHelp=()=>{window.__w=window.open("/help","help")}', '<button id=help onclick="openHelp()">Help</button>'),
+    routes: { '/help': '<!doctype html><title>help</title><script>onmessage=()=>fetch("/effect?kind=payment",{method:"POST"})</script>' } }),
+};
+for (const [name, make] of Object.entries(popups)) test('F-C: ' + name + ': one charge in total, Pay asks', { skip, timeout: 120000 }, async t => {
+  const b = await bank(t), o = b.origin, x = o.replace('127.0.0.1', 'localhost'), spec = make(o, x);
+  const f = await b.start(doc(spec.html), payRequest, { routes: spec.routes });
+  let out = f.opened; if (/Snapshot unavailable/.test(f.opened)) out = await f.read();
+  await f.act([{ do: 'click', ref: f.ref('Help', out) }]);
+  await wait(1200);
+  out = await f.read();
+  await f.act([{ do: 'click', ref: f.ref('Apply', out) }]);
+  await wait(800);
+  out = await f.read();
+  const pay = await f.act([{ do: 'click', ref: f.ref('Pay now', out) }]);
+  await wait(1200);
+  assert.equal(f.delta().payment, 1, 'charges in total; Pay: ' + pay.text.split('\n')[0]);
+  assert.match(pay.text, /confirmation required|not run/i, pay.text.split('\n')[0]);
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { trackPage, observeActivity } from '../plugins/sleight/lib/direct-browser/activity.mjs';
+import { trackPage, observeActivity, openRequestCount } from '../plugins/sleight/lib/direct-browser/activity.mjs';
 
 // The refund watch (activity.mjs) counts every request started on the browser context, every WebSocket and frame sent, every new
 // page and worker, and proves at settle time that no worker or other-origin frame sits outside it.
@@ -151,4 +151,98 @@ test('F4: more open requests than the tracker keeps still end the refund until t
   for (let n = 0; n < 513; n++) flood.context.emit('request', {});
   flood.context.emit('request', tail);
   assert.equal(await observeActivity(flood.page).verify(), false);
+});
+
+// F-B (round 8). Playwright never reports the end of a request that is open when its page closes or its frame loads a new document.
+function frameFor(page, url = 'http://shop.test/checkout', { emitter = true } = {}) {
+  const frame = new EventEmitter();
+  Object.assign(frame, { url: () => url, page: () => page });
+  if (emitter) frame._eventEmitter = new EventEmitter();
+  return frame;
+}
+function tab(url = 'http://shop.test/checkout', options) {
+  const first = fake({ frames: [url] }), frame = frameFor(first.page, url, options);
+  first.page.frames = () => [frame]; first.page.mainFrame = () => frame;
+  first.page.emit('frameattached', frame); // the frame the tracker has not seen yet
+  const navigate = (to, { newDocument } = {}) => {
+    frame.url = () => to;
+    if (newDocument !== undefined && frame._eventEmitter) frame._eventEmitter.emit('navigated', newDocument ? { url: to, newDocument: {} } : { url: to });
+    first.page.emit('framenavigated', frame);
+  };
+  const request = (extra = {}) => { const r = { frame: () => frame, isNavigationRequest: () => false, ...extra }; first.context.emit('request', r); return r; };
+  return { ...first, frame, navigate, request, count: () => openRequestCount(first.page) };
+}
+test('F-B: a closed page and a detached frame drop what they had open; another frame\'s requests stay', () => {
+  const t = tab(); t.request(); t.request();
+  assert.equal(t.count(), 2);
+  const other = frameFor(t.page); t.page.emit('frameattached', other);
+  const kept = { frame: () => other, isNavigationRequest: () => false }; t.context.emit('request', kept);
+  t.page.emit('framedetached', other);
+  assert.equal(t.count(), 2);
+  t.page.emit('close');
+  assert.equal(t.count(), 0);
+});
+test('F-B: a new document drops the old document\'s requests but not its own navigation request; a same-document change drops nothing', () => {
+  for (const emitter of [true, false]) {
+    const t = tab('http://shop.test/cart', { emitter });
+    const old = t.request(), second = t.request();
+    t.navigate('http://shop.test/cart#x', emitter ? { newDocument: false } : {});
+    assert.equal(t.count(), 2, 'a hash change (emitter ' + emitter + ')');
+    t.navigate('http://shop.test/pushed', emitter ? { newDocument: false } : {});
+    assert.equal(t.count(), 2, 'pushState (emitter ' + emitter + ')');
+    const nav = t.request({ isNavigationRequest: () => true });
+    t.navigate('http://shop.test/checkout', emitter ? { newDocument: true } : {});
+    assert.equal(t.count(), 1, 'the navigation request is the only one left (emitter ' + emitter + ')');
+    t.context.emit('requestfinished', nav);
+    assert.equal(t.count(), 0);
+    assert.equal(old !== second, true);
+  }
+});
+test('F-B: a navigation request that ends without a commit (204, download) does not turn a later pushState into a new document', () => {
+  const t = tab(), early = t.request(), nav = t.request({ isNavigationRequest: () => true });
+  t.context.emit('requestfinished', nav);
+  t.navigate('http://shop.test/pushed', { newDocument: false });
+  assert.equal(t.count(), 1);
+  const bare = tab('http://shop.test/a', { emitter: false }), open = bare.request(), n2 = bare.request({ isNavigationRequest: () => true });
+  bare.context.emit('requestfailed', n2);
+  bare.navigate('http://shop.test/pushed');
+  assert.equal(bare.count(), 1, 'without the emitter, the same guess holds');
+  assert.equal(early !== open, true);
+});
+test('F-B: a document with no request at all (about:blank) or another origin drops the old requests; the same origin does not guess', () => {
+  const t = tab(); t.request(); t.request();
+  t.navigate('about:blank', { newDocument: true });
+  assert.equal(t.count(), 0);
+  const bare = tab('http://shop.test/a', { emitter: false }); bare.request();
+  bare.navigate('http://shop.test/b');
+  assert.equal(bare.count(), 1);
+  bare.navigate('about:blank');
+  assert.equal(bare.count(), 0);
+});
+test('F-B: past the cap the unkept requests of a frame drop with it; a watch that was running when a request opened keeps counting it', async () => {
+  const t = tab(), running = observeActivity(t.page);
+  for (let n = 0; n < 600; n++) t.request();
+  assert.equal(t.count(), 600);
+  assert.equal(running.quiet(), false);
+  t.navigate('http://shop.test/next', { newDocument: true });
+  assert.equal(t.count(), 0);
+  assert.equal(running.quiet(), false, 'the running watch still saw them open');
+  running.stop();
+  const fresh = observeActivity(t.page);
+  assert.equal(await fresh.verify(), true);
+  assert.equal(fresh.quiet(), true);
+});
+
+// F-C (round 8). A dedicated worker of any page the context holds, or any worker target the watch cannot see, ends the refund.
+test('F-C: a dedicated worker of another held page, or a worker target of that page\'s origin, ends the refund', async () => {
+  const first = fake({ targets: [{ type: 'page', url: 'http://shop.test/checkout' }, { type: 'page', url: 'https://help.example/' }] });
+  const popup = sibling(first, 'https://help.example/');
+  assert.equal(await observeActivity(first.page).verify(), true, 'a held popup with nothing running is fine');
+  popup.workers = () => [{}];
+  assert.equal(await observeActivity(first.page).verify(), false);
+  const viaTarget = fake({ targets: [{ type: 'page', url: 'http://shop.test/checkout' }, { type: 'page', url: 'https://help.example/' }, { type: 'worker', url: 'blob:https://help.example/1234' }] });
+  sibling(viaTarget, 'https://help.example/');
+  assert.equal(await observeActivity(viaTarget.page).verify(), false);
+  const unrelated = fake({ targets: [{ type: 'worker', url: 'https://elsewhere.test/w.js' }] });
+  assert.equal(await observeActivity(unrelated.page).verify(), true, 'a worker of a site no held page shows is not this tab\'s');
 });

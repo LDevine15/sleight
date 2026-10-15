@@ -413,6 +413,15 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const APPROX = set('approx approximately about around roughly converted conversion equivalent estimated est');
     const QUAL = set('incl includes including inc plus less minus after with before excl excluding excludes without');
     const COUNTED = /^(?:items?|pcs|pieces?|units?|qty|x|×|days?|hours?|mins?|minutes?|years?|months?|weeks?|payments?|installments?|points?|pts|interest|percent|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|st|nd|rd|th)$/i;
+    // A label or clause that says this payment takes the money ("charged to your card", "due at checkout", "paid by card today"). It
+    // takes back an exemption that the same line gives (a settled payment, a later invoice). An estimate note gets the shorter list:
+    // "at today's rate" is a rate, not a charge.
+    const TAKES = /\b(?:charg(?:e|es|ed|ing)|bill(?:ed|ing)|pay|pays|paying|payable|debit(?:ed|s|ing)?|deduct(?:ed|s|ing)?|take|taken|checkout|check out|submi\w*|now|today|tonight|immediately|asap|card|this (?:order|payment|purchase|transaction)|(?:your|the) order|press|click|tap|as you|when you|added to|add to)\b|\bdue (?:in|within)\b/i;
+    const TAKES_EST = /\b(?:charg(?:e|es|ed|ing)|bill(?:ed|ing)|pay|pays|paying|payable|debit(?:ed|s|ing)?|deduct(?:ed|s|ing)?|take|taken|checkout|check out|submi\w*|this (?:order|payment|purchase|transaction)|(?:your|the) order|press|click|tap|as you|when you|added to|add to)\b/i;
+    // A gift card, voucher or store credit line that is bought or only offered is not a tender that paid for part of the order.
+    const BOUGHT = /\b(?:purchas\w*|buy\w*|add|adding|added|send|sending)\b/i;
+    const INERT = /\b(?:not|never|unused|optional|expired|invalid|eligible|ineligible|unavailable|if|can|may|could|would)\b|n't/i;
+    const SOFT = /\b(?:available|balance|remaining|left)\b/i;
     const eps = 0.005;
     const parse = raw => {
       let s = String(raw).replace(/\s/g, '');
@@ -438,7 +447,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const SETTLED = /\b(?:payments? (?:received|made|applied|date)|paid (?:date|far)|received (?:date|far)|amount paid|total paid|already paid|(?:previous|prior|earlier) (?:balance|payments?|invoices?)|credits? applied|amount credited)\b/;
     // A gross figure that a tender line (gift card, store credit, voucher, credit, a payment already received) brings down to the amount.
     const TENDER = set('gift voucher vouchers credit credits certificate');
-    const GROSS = /^(?:order total|invoice total|total invoice|original (?:invoice )?(?:amount|total)|invoice amount|total before .+)$/;
+    const GROSS = /^(?:order total|invoice(?: total)?|total invoice|original (?:invoice )?(?:amount|total)|invoice amount|total before .+)$/;
     const classify = list => {
       const role = classify0(list), phrase = list.join(' ');
       if (role.cut && list.some(x => TENDER.has(x))) role.tender = true;
@@ -452,6 +461,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       const exempt = x => EXEMPT.has(x) || WEAK.has(x) && stores;
       const phrase = list.join(' '), cutPhrase = /\b(?:gift ?cards?|gift certificates?|store credits?|vouchers?)\b/.test(phrase);
       if (SETTLED.test(phrase)) return { kind: 'exempt', settled: true };
+      // "New charges $6" beside "Previous balance $12" and "Total due $18": a part of the total.
+      if (/^(?:new|current|recent|additional) (?:charges?|purchases?|fees?|activity)$/.test(phrase)) return { kind: 'part' };
       if (UNIT.has(w)) return { kind: 'unit' };
       if (COND.has(w) || list.some(x => LATE.has(x))) return { kind: strong ? 'part' : 'exempt' };
       if (PAY.has(w)) { const p = list.at(-2); return PART.has(p) || exempt(p) ? { kind: 'part', cut: CUT.has(p) } : { kind: 'pay' }; }
@@ -465,16 +476,18 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const analyze = rawLines => {
       const list = rawLines.map(norm).map(t => RECOMMEND.test(t) && !STRONG_PAY.test(t) ? '' : t), found = [];
       const hasFigure = list.map(t => [...t.matchAll(figure)].some(m => m[10] === undefined));
+      // A label line may carry a figure of its own in parentheses ("Gift card (balance $20.00)" above "-$20.00").
+      const labelFigure = list.map(t => [...unparen(t).matchAll(figure)].some(m => m[10] === undefined));
       // The nearest line with words above a lone figure labels it. A note line that only holds an exempt word ("incl. savings",
       // "with points") is walked past to the pay or part label above it, as long as no other figure sits between; with no such
       // label the note decides.
       const labelAbove = i => {
         let note;
         for (let j = i - 1; j >= 0 && j >= i - 4; j--) {
-          if (hasFigure[j] && note) break;
-          if (!/\p{L}/u.test(list[j]) || hasFigure[j]) continue;
+          if (labelFigure[j] && note) break;
+          if (!/\p{L}/u.test(list[j]) || labelFigure[j]) continue;
           const s = sig(before(list[j])); if (!s.length) continue;
-          const role = { ...classify(s), adjacent: j === i - 1 };
+          const role = { ...classify(s), adjacent: j === i - 1, raw: list.slice(j, i).join(' ') };
           if (role.kind !== 'exempt') return note && role.unknown ? note : role;
           note ??= role;
         }
@@ -492,7 +505,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           const rp = rs.slice(0, 4).some(x => PAY.has(x));
           const period = rs.slice(0, 3).some(x => /^(?:month|months|monthly|mo)$/.test(x)) ? 'month' : rs.slice(0, 3).some(x => /^(?:year|years|yearly|annual|annually|yr)$/.test(x)) ? 'year' : undefined;
           let role, via = 'none';
-          if (previous && !ls.length && lw.every(w => CONNECT.has(w))) { role = previous.role; via = 'inherit'; }
+          if (previous && !ls.length && lw.every(w => CONNECT.has(w))) { role = previous.role0; via = 'inherit'; }
           else if (ls.length) {
             role = classify(ls); via = 'left';
             if (role.unknown && r0 && PAY.has(r0)) { role = { kind: 'pay' }; via = 'left+right'; }
@@ -508,10 +521,24 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           // An exempt label does not clear a figure that the clause after it calls a charge ("Reward: $500.00 charged now").
           if (via === 'left' && role?.kind === 'exempt' && rs.slice(0, 3).some(x => CHARGED.has(x))) role = { kind: 'part', cut: role.cut };
           // "Next invoice: $60.00 due Dec 1" is a later bill, not this charge.
-          if (via === 'left' && role?.kind !== 'exempt' && /^(?:next|upcoming)$/.test(ls[0]) && ls.some(x => /^(?:invoice|bill|billing|statement)$/.test(x)) && rs.slice(0, 2).includes('due') && !words(after(tail)).slice(0, 4).some(x => /^(?:now|today|tonight|immediately|asap)$/.test(x))) role = { kind: 'exempt' };
+          if (via === 'left' && role?.kind !== 'exempt' && /^(?:next|upcoming)$/.test(ls[0]) && ls.some(x => /^(?:invoice|bill|billing|statement)$/.test(x)) && rs.slice(0, 2).includes('due') && !TAKES.test(seg.slice(lastBreak(seg) + 1)) && !TAKES.test(tail.slice(0, /[.;!?](?=\s|$)/.exec(tail)?.index ?? tail.length))) role = { kind: 'exempt' };
           if (!role && alone && !mark) { role = labelAbove(i); via = 'above'; if (role && role.kind === 'exempt' && !role.adjacent) role = { ...role, kind: 'part' }; }
           if (r0 && UNIT.has(r0) && role && role.kind !== 'exempt') role = { kind: 'unit' };
           role ??= { kind: 'none' };
+          // What the label says, in full (parentheses too), and what the rest of the line says after the figure.
+          // The label is cut at the last sentence end before it, the clause at the first one after it.
+          const labelRaw = via === 'above' ? role.raw ?? '' : via === 'inherit' ? previous.labelRaw : via === 'right' || via === 'none' ? '' : seg.slice(lastBreak(seg) + 1);
+          const stop = /[.;!?](?=\s|$)/.exec(tail), clause = stop ? tail.slice(0, stop.index) : tail;
+          const role0 = role;
+          // A settled payment or a later invoice is exempt only if neither its label nor its clause says this payment takes the money.
+          if (role.settled && (TAKES.test(labelRaw) || TAKES.test(clause))) role = { kind: 'part' };
+          // A tender that was bought, offered or not applied does not bring an order total down to the amount. A minus sign before the
+          // figure says it was taken off, so a note on the card's balance or what is left on it does not undo that.
+          if (role.tender && !role.settled) {
+            const note = labelRaw + ' ' + clause, taken = /[-−–]\s*$/.test(seg);
+            if (BOUGHT.test(note)) role = { kind: 'part' };
+            else if (INERT.test(note) || !taken && SOFT.test(note)) role = { ...role, cut: false, tender: false };
+          }
           // A bare number counts only straight after a pay word ("Total 500", "Total: 500"), and not as a count or a date.
           if (bare && (via !== 'left' || role.kind !== 'pay' || COUNTED.test(words(after(tail))[0] ?? '') || /^\s*%/.test(tail))) return;
           const suffix = m[8] ?? m[13], code = m[1] ?? m[4] ?? m[5] ?? (suffix && /^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
@@ -520,11 +547,13 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           // A figure in another currency that calls itself an estimate ("Approximately EUR 16.60", "≈ €16.60", "Converted: €16.60"), or that
           // sits in parentheses right after the figure that is the amount ("$18.00 (€16.60)"), is a conversion note, not a charge.
           // A pay word in its own label ("Estimated total €500.00") keeps it a charge.
-          const tilde = /(?:[≈~]|\b(?:approx|approximately|about|around|roughly|converted|conversion|equivalent|estimated|est)\b\.?)[\s:(]*$/i.test(seg),
-            marked = lw.some(x => APPROX.has(x)) || /^\s*\(?\s*(?:[≈~]|approx|est\b)/i.test(tail);
-          const approx = !mark && !spelled && !ls.some(x => PAY.has(x) && x !== 'price' && x !== 'cost' && x !== 'amount') && (tilde || marked);
-          const paren = previous && /^\s*\(\s*$/.test(seg) ? previous : undefined;
-          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, mark, text, period, approx, paren };
+          const estLabel = via === 'above' ? labelRaw : seg.slice(lastBreak(seg) + 1), estWords = sig(estLabel);
+          const tilde = /(?:[≈~]|\b(?:approx|approximately|about|around|roughly|converted|conversion|equivalent|estimated|est)\b\.?)[\s:(]*$/i.test(estLabel),
+            marked = words(estLabel).some(x => APPROX.has(x)) || /^\s*\(?\s*(?:[≈~]|approx|est\b)/i.test(tail);
+          const noTake = !TAKES_EST.test(estLabel) && !TAKES_EST.test(clause);
+          const approx = !mark && !spelled && noTake && !estWords.some(x => PAY.has(x) && x !== 'price' && x !== 'cost' && x !== 'amount') && (tilde || marked);
+          const paren = previous && noTake && /^\s*\(\s*$/.test(seg) ? previous : undefined;
+          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, role0, mark, text, period, approx, paren, labelRaw };
           found.push(entry); previous = entry;
           // "Total after $2.00 discount: $500.00": a qualifier figure does not end the label of the figure that follows.
           if (!(via === 'left' && QUAL.has(ls.at(-1)))) start = m.index + m[0].length;
@@ -545,7 +574,9 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       if (kind !== 'exempt' && !same(f.cur, reference)) {
         // An estimate note clears a euro or pound figure, not another kind of dollar: "$24.50 CAD" beside "$18.00 USD" is easy to read as the charge.
         const dollars = x => GENERIC['$'].includes(x), confusable = dollars(f.cur) && dollars(reference);
-        return confusable || !(f.approx || f.paren && !f.paren.mark && Math.abs(f.paren.value - A) < eps && same(f.paren.cur, reference));
+        // A conversion of the amount is within a factor of five of it either way; a figure far from that is not an estimate of this charge.
+        const near = f.value >= A / 5 - eps && f.value <= A * 5 + eps;
+        return confusable || !near || !(f.approx || f.paren && !f.paren.mark && Math.abs(f.paren.value - A) < eps && same(f.paren.cur, reference));
       }
       if (Math.abs(f.value - A) < eps) return false;
       // A yearly price beside the monthly one that is the charge ("$18.00/month", "$180.00/year") is the other plan, not this charge.

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { bank, doc, skip, payRequest } from './fixtures/bank.mjs';
 import { trustedLocatorRead } from '../../plugins/sleight/lib/direct-browser/trusted-dom.mjs';
@@ -520,4 +521,99 @@ test('F5 (round 7): estimates and conversion notes in another currency, invoice 
     ['ask: Order total 40 with a gift card of only -10', P(row7('Order total', '$40.00') + row7('Gift card', '-$10.00') + T), 'ask'],
     ['ask: Cart total 28 with a gift card -10', P(row7('Cart total', '$28.00') + row7('Gift card', '-$10.00') + T), 'ask'],
   ]);
+});
+
+// ---------------------------------------------------------------- Round 8
+// Fixtures: the round 7 reviewer's 61 lines (charge statements behind exempt labels, estimates, tender lines, next invoices) with the
+// outcome each must have, and the reviewer's 20 honest pages. Both are read directly, as in part 2.
+const fixture8 = name => JSON.parse(readFileSync(new URL('./fixtures/pay-r8-' + name + '.json', import.meta.url), 'utf8'));
+test('F-A to F-E (round 8): the reviewer\'s 61 lines (an exempt label never beats a charge statement, estimates must be near the amount, bought or unapplied tender lines close no gap)', { skip, timeout: 240000 }, async t => {
+  await readCases(t, fixture8('reviewer-lines'));
+});
+test('F-A (round 8): charge words in the label or the clause take back an exemption; the plain labels stay allowed', { skip, timeout: 180000 }, async t => {
+  const M = '<meta charset="utf-8">';
+  const T = row7('<b>Total</b>', '<b>$' + amt() + '</b>');
+  const P = inner => `${M}<form id="payment">${meta()}${inner}${card}<button id="pay">Pay now</button></form>`;
+  await readCases(t, [
+    ['ask: "Next invoice: $500.00 due at checkout."', P('<p>Next invoice: $500.00 due at checkout.</p>' + T), 'ask'],
+    ['ask: "Next invoice: $500.00 due with this order."', P('<p>Next invoice: $500.00 due with this order.</p>' + T), 'ask'],
+    ['ask: "Next invoice: $500.00 due upon submission."', P('<p>Next invoice: $500.00 due upon submission.</p>' + T), 'ask'],
+    ['ask: "Next invoice: $500.00 due, charged to your card when you press Pay."', P('<p>Next invoice: $500.00 due, charged to your card when you press Pay.</p>' + T), 'ask'],
+    ['ask: "Next invoice: $500.00 due as you pay."', P('<p>Next invoice: $500.00 due as you pay.</p>' + T), 'ask'],
+    ['ask: "Next invoice: $500.00 (charged to your card now)"', P('<p>Next invoice: $500.00 (charged to your card now)</p>' + T), 'ask'],
+    ['ask: "Next invoice: $500.00 due within 5 minutes."', P('<p>Next invoice: $500.00 due within 5 minutes.</p>' + T), 'ask'],
+    ['allow: "Next invoice: $60.00 due Dec 1. Your card is charged $18.00 now."', P('<p>Next invoice: $60.00 due Dec 1. Your card is charged $18.00 now.</p>' + T), 'allow'],
+    ['ask: "Previous balance to be charged"', P(row7('Previous balance to be charged', '$500.00') + T), 'ask'],
+    ['ask: "Previous balance (added to this order)"', P(row7('Previous balance (added to this order)', '$500.00') + T), 'ask'],
+    ['ask: "Prior payments due at checkout"', P(row7('Prior payments due at checkout', '$500.00') + T), 'ask'],
+    ['ask: "Amount paid by card today"', P(row7('Amount paid by card today', '$500.00') + T), 'ask'],
+    ['ask: "Payments made today"', P(row7('Payments made today', '$500.00') + T), 'ask'],
+    ['ask: "Credit applied to your card"', P(row7('Credit applied to your card', '$500.00') + T), 'ask'],
+    ['ask: label in a line above, clause in the same line as the figure', P(row7('Previous balance', '$500.00 will be charged to your card') + T), 'ask'],
+    ['ask: label split over two lines above the figure', P('<div>Previous balance</div><div>(to be charged now)</div><div>$500.00</div>' + T), 'ask'],
+    ['allow: "Payments received" under an invoice total, then a sentence about the charge', P(row7('Invoice total', '$60.00') + row7('Payments received', '$42.00') + row7('<b>Amount due</b>', '<b>$' + amt() + '</b>') + '<p>Your card is charged $18.00 now.</p>'), 'allow'],
+    ['allow: "Previous balance $42.00 (paid)"', P(row7('Previous balance (paid)', '$42.00') + T), 'allow'],
+    // Estimates: within a factor of five of the amount, and no charge word.
+    ['ask: "About €500.00 will be charged to your card."', P(T + '<p>About €500.00 will be charged to your card.</p>'), 'ask'],
+    ['ask: "About €16.60 will be charged to your card."', P(T + '<p>About €16.60 will be charged to your card.</p>'), 'ask'],
+    ['ask: "≈ €500.00" beside the total', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> <small>≈ €500.00</small>')), 'ask'],
+    ['ask: "(€500.00)" right after the amount', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> (€500.00)')), 'ask'],
+    ['ask: "Equivalent €500.00" in a row', P(T + row7('Equivalent', '€500.00')), 'ask'],
+    ['ask: "≈ €100.00" is more than five times the amount', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> <small>≈ €100.00</small>')), 'ask'],
+    ['ask: "≈ €3.00" is less than a fifth of the amount', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> <small>≈ €3.00</small>')), 'ask'],
+    ['allow: "≈ €3.60" is a fifth of the amount', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> <small>≈ €3.60</small>')), 'allow'],
+    ['allow: "≈ €90.00" is five times the amount', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> <small>≈ €90.00</small>')), 'allow'],
+    ['allow: "Equivalent €16.60" in a row', P(T + row7('Equivalent', '€16.60')), 'allow'],
+    ['allow: "Approximately €16.60 at today\'s rate. Your card is charged in USD."', P(T + '<p>Approximately €16.60 at today\'s rate. Your card is charged in USD.</p>'), 'allow'],
+  ]);
+});
+test('F-D (round 8): a gift card, voucher or store credit that is bought, optional, unused or not applied closes no gap', { skip, timeout: 120000 }, async t => {
+  const M = '<meta charset="utf-8">';
+  const D = row7('<b>Total due</b>', '<b>$' + amt() + '</b>');
+  const P = inner => `${M}<form id="payment">${meta()}${inner}${card}<button id="pay">Pay now</button></form>`;
+  const gap = (label, value = '$500.00') => P(row7('Order total', '$518.00') + row7(label, value) + D);
+  await readCases(t, [
+    ['allow: Gift card applied -$500.00', gap('Gift card applied', '-$500.00'), 'allow'],
+    ['allow: Store credit applied -$500.00', gap('Store credit applied', '-$500.00'), 'allow'],
+    ['allow: Gift card (balance $500.00) then -$500.00', P(row7('Order total', '$518.00') + row7('Gift card (balance $500.00)', '-$500.00') + D), 'allow'],
+    ['ask: Gift card purchase', gap('Gift card purchase'), 'ask'],
+    ['ask: Gift card (add to order)', gap('Gift card (add to order)'), 'ask'],
+    ['ask: Buy a gift card', gap('Buy a gift card'), 'ask'],
+    ['ask: Voucher not applied', gap('Voucher not applied'), 'ask'],
+    ['ask: Gift card available', gap('Gift card available'), 'ask'],
+    ['ask: Gift card balance', gap('Gift card balance'), 'ask'],
+    ['ask: Store credit (optional)', gap('Store credit (optional)'), 'ask'],
+    ['ask: Voucher (not valid)', gap('Voucher code SAVE (not valid)'), 'ask'],
+    ['ask: Store credit unused', gap('Store credit unused'), 'ask'],
+    ['ask: Gift card, offered with an if', gap('Gift card (if you apply it)'), 'ask'],
+  ]);
+});
+test('F-E (round 8): "Invoice #88" labels, an Equivalent row, new charges beside a previous balance', { skip, timeout: 120000 }, async t => {
+  const M = '<meta charset="utf-8">';
+  const D = row7('<b>Balance due</b>', '<b>$' + amt() + '</b>');
+  const P = inner => `${M}<form id="payment">${meta()}${inner}${card}<button id="pay">Pay now</button></form>`;
+  await readCases(t, [
+    ['allow: Invoice #88 58, Previous payments 40, Balance due 18', P(row7('Invoice #88', '$58.00') + row7('Previous payments', '$40.00') + D), 'allow'],
+    ['ask: Invoice #88 58 alone', P(row7('Invoice #88', '$58.00') + D), 'ask'],
+    ['ask: Invoice #88 58 with only 10 paid', P(row7('Invoice #88', '$58.00') + row7('Previous payments', '$10.00') + D), 'ask'],
+    ['ask: Invoice #88 58, Previous payments 40 charged now', P(row7('Invoice #88', '$58.00') + row7('Previous payments', '$40.00 charged now') + D), 'ask'],
+    ['allow: Previous balance 12, New charges 6, Total due 18', P(row7('Previous balance', '$12.00') + row7('New charges', '$6.00') + row7('<b>Total due</b>', '<b>$' + amt() + '</b>')), 'allow'],
+    ['ask: New charges 500', P(row7('Previous balance', '$12.00') + row7('New charges', '$500.00') + row7('<b>Total due</b>', '<b>$' + amt() + '</b>')), 'ask'],
+    ['ask: Previous balance to be charged 12 beside New charges 500', P(row7('Previous balance to be charged', '$12.00') + row7('New charges', '$500.00') + row7('<b>Total due</b>', '<b>$' + amt() + '</b>')), 'ask'],
+  ]);
+});
+test('round 8: the reviewer\'s 20 honest pages allow at least 19/20, and with the suite 36 realistic pages at least 51/56', { skip, timeout: 180000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage(), cases = fixture8('honest-20');
+  let allowed = 0;
+  try {
+    for (const [name, html] of cases) {
+      await page.setContent('<!doctype html><body style="margin:8px"><main>' + html);
+      let amount; try { amount = (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount; } catch { amount = undefined; }
+      if (amount === '18.00') allowed++; else t.diagnostic('asks: ' + name);
+    }
+  } finally { await page.close(); }
+  const real = [...outcome.values()].filter(Boolean).length + 2;
+  t.diagnostic('reviewer 20: ' + allowed + '/20; suite 36: ' + real + '/36; together ' + (allowed + real) + '/' + (cases.length + 36));
+  assert.ok(allowed >= 19, allowed + '/20');
+  assert.ok(allowed + real >= 51, 'together ' + (allowed + real) + '/56');
 });
