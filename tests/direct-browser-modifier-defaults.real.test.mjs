@@ -26,6 +26,8 @@ add('external form owner', '<form id="owner" action="/landed"></form><button id=
 add('label checkbox', '<label id="go" for="field">Toggle</label><input id="field" type="checkbox">');
 add('label submit', '<label id="go" for="field">Send</label><form action="/landed"><input id="field" type="submit"></form>',
   { differs: true, plain: true, navigates: true });
+for (const multiple of [false, true]) add('label for ' + (multiple ? 'multiple' : 'single') + ' select',
+  `<label id="go" for="field">Choose</label><select id="field" ${multiple ? 'multiple' : ''} size="3"><option selected>First</option><option>Second</option></select>`);
 for (const [name, control] of [
   ['button', '<button id="go" type="button">Command</button>'],
   ['input', '<input id="go" type="checkbox">'],
@@ -177,4 +179,5 @@ test('CR5 real label forwarding ignores page control getters', { skip, timeout: 
 test('CR5 full modifier table receipt', { skip }, t => {
   for (const receipt of receipts) t.diagnostic('table ' + JSON.stringify(receipt));
   assert.equal(receipts.length, cases.length);
+  assert.ok(receipts.every(receipt => receipt.completed), 'every native-default row must complete');
 });

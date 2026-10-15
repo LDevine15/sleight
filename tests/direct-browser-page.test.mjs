@@ -878,6 +878,12 @@ test('CR5 a label does not forward a click on an interactive descendant to its s
   finally { f.hook.off(); }
 });
 
+test('CR5 labels for selects do not inherit an option-selection exception', () => {
+  const f = hookFixture(), select = new f.HTMLSelectElement({ multiple: '' }), label = new f.HTMLLabelElement(select);
+  try { assert.equal(f.hook.prepare(label, 'select-label', 1000), true); }
+  finally { f.hook.off(); }
+});
+
 test('CR4 successful link dispatch that observes closure skips takeRequest and still settles', async () => {
   const f = clickFixture({ kind: 'link' });
   f.entry.opener = 'parent'; f.entry.parent = { page: { isClosed: () => false } };
