@@ -154,7 +154,9 @@ for (const route of ['travel', 'settings', 'checkout']) test(`real original ${ro
     checkout: '<label>Address<input></label><label>Card<input autocomplete="cc-number" value="4111111111111111"></label>',
   };
   const page = await fixture(t, '<main><h1>' + route + '</h1><form>' + controls[route] + '<button>Save</button></form></main>');
+  assert.ok(await page.locator('input,select,textarea,button').count() >= 40, 'census fixture must have at least 40 controls');
   const first = await snapshot(page);
+  assert.ok(first.text.length >= 2000, 'census must exercise at least 2K snapshot characters');
   await page.locator('input').first().fill('Fixture census');
   const action = await snapshot(page, { since: first.number });
   const found = await snapshot(page, { find: 'Fixture census' });
@@ -164,6 +166,16 @@ for (const route of ['travel', 'settings', 'checkout']) test(`real original ${ro
   t.diagnostic('Original fixture census ' + JSON.stringify(chars));
   assert.ok(first.text.length <= 8000 && action.text.length <= 8000 && found.text.length <= 8000);
   assert.ok(chars.total <= 15000);
+});
+
+test('CR3 real 600 inert closed-root divs do not consume the control probe budget', { skip }, async t => {
+  const page = await fixture(t, `<custom-controls></custom-controls><script>
+    document.querySelector('custom-controls').attachShadow({mode:'closed'}).innerHTML =
+      '<div></div>'.repeat(600) + '<button>Only command</button>';
+  </script>`);
+  const result = await snapshot(page);
+  assert.match(result.text, /button "Only command" \[ref=s\d+\]/);
+  t.diagnostic('cleanup: 600-div fixture browser and server closed by fixture teardown');
 });
 
 for (const value of [' alpha  beta ', ' alpha\u200B  be\u00ADta ', '\talpha\n\nbeta\t'])
