@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 04:40 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 05:45 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
@@ -23,13 +23,14 @@ Branches (all on `private`):
   a restart). Full check 5729 pass, 0 fail, 59 skipped. `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
 - `v3-gate` at `83fbf6b4` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3, the two bench fixes, TN1, and the funding switch
   (`83fbf6b4`, 113/113 focused). The sleight, turbo, FowlBrowser and computer use arms run on the login. Browser Use needs the API key, so it runs only in a round of its own.
-- `arch/ad1-int` at `5a5265c6` (`~/Projects/sleight-wt/adfix-int`) merges the AD1 bank with the port guard and the fix rounds hyg r2, pop r1,
-  kb r2, pay r3, CR8 and CR9. The bank there passes in full for endpoint (136), keyboard (27), instructions (36), natives (90), payment (90) and
-  submit-retry (26), with timing-and-covering 30/41 until swap merges. Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
-- Fix rounds running as Claude agents (Sonnet high) since 04:15 UTC, records in `ledger/claims/AD1/`: swap r2 (fail-closed shield,
-  latency, key-shield API), pay r4 (B1 to B6; sleight-arch's B5 call: one payment budget per request, scripted and plain share it),
-  pop r2 (A1 to A6), hyg r3 (three lows from the hyg r2 review, which PASSED). kb r3 starts once swap r2 is pushed (it builds on the
-  key-shield API). CR10 is not merged: its premise was disproved (`ledger/claims/CR10/REPORT.md`).
+- `arch/ad1-int` at `c12b466b` (`~/Projects/sleight-wt/adfix-int`) merges the AD1 bank with the port guard and the fix rounds hyg r2
+  and r3, pop r1, kb r2, pay r3, CR8 and CR9. The bank there passes in full for endpoint (136), keyboard (27), instructions (41),
+  natives (90), payment (90) and submit-retry (26), with timing-and-covering 30/41 until swap merges. Real-page tests need
+  `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
+- AD1 fix rounds (Claude agents, Sonnet high). Status per branch is in `ledger/claims/AD1/OPEN-REVIEWS.md`. Hyg r2 review PASSED
+  and r3 fixed its lows. Pay r4 FAILED review (3/10 realistic checkouts allowed, and two bypasses), so pay r5 is running a
+  default-deny figure rule. Swap r2 (`0519c489`: 41/41, click median 233 ms to 179 ms, key-shield API) is under review. Kb r3 runs on
+  top of swap r2. Pop r2 is running. CR10 is not merged: its premise was disproved (`ledger/claims/CR10/REPORT.md`).
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
