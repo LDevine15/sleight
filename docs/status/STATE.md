@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 20:16 UTC, owner away)
+## Banner (2026-10-15 21:18 UTC, owner away)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
@@ -21,6 +21,8 @@ both 0 focus events and 0 ToolSearch. Turbo's misses are form-checkout (the paym
 runs both finished, turbo took 770 s against 606 s. It was level or faster on the 9 short tasks and about 154 s slower on form-settings,
 where a range slider refused a numeric fill and a submit waited its full 5 s. Agent `turbo-form-speed` is fixing those
 on v3-gate (`ledger/claims/GATE2/form-speed.md`). The first round at 18:26 UTC had turbo at 14/26 checked, 31 errors.
+Since the rerun: settings forms average 35.5 s (was 82, `fe9cb4d9`), and form-travel's list picker medians are 63 s and 54 s
+(normal, swap; FowlBrowser 93 and 74; `cddc7895`, `ledger/claims/GATE2/combobox.md`). Next: gate round 3 when the owner is away.
 
 Branches (all on `private`):
 - `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
