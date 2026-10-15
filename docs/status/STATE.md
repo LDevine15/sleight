@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 13:32 UTC, owner awake)
+## Banner (2026-10-15 18:35 UTC, owner away)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 OWNER AWAKE 2026-10-15T12:06:42Z (/goodmorning). Night Shift off.
@@ -15,14 +15,12 @@ Owner, 2026-10-15: all testing runs on the owner's Anthropic account login, neve
 sleight-arch's all night (live runs allowed). Puddle holds `/tmp/sleight-hold` for window 1015b from 03:52 UTC (up to about 2 h),
 and full checks wait. Puddle's architect says focused headless agents are fine.
 
-**Gate round status.** The owner logged in both bench arms at 13:28 UTC (both Max, checked). The turbo smoke round on v3-gate
-`83fbf6b4` on the account login was ROUND CLEAN at 13:33 UTC: form-travel 11/11 in 104 s, demoid "Robin Vale" in 17 s, focus ok,
-3 errors, every event `claude-haiku-5-5` with `apiKeySource` none (`~/Library/Caches/sleight-bench/runs/smoke-20261015T133030Z`).
-The owner is away since 14:00 UTC and handed sleight-arch the FowlBrowser setup. Helium's FowlBrowser socket is live. Chrome's
-"sleight benchmark" profile is folder `Profile 7` (from `ledger/claims/CS2/plans.json`, since macOS denies reading Chrome's Local State).
-Opened at 14:12 UTC, its FowlBrowser extension didn't connect within 30 s (no `~/.fowlbrowser/chrome.sock`), so it needs a Reload
-click in `chrome://extensions`. That needs a computer-use grant for Chrome (owner's approval card). This session's own sleight 1.2.5
-can't reach the engine helper (RC1 fixes it, unreleased).
+**Gate round, 2026-10-15 18:26 UTC: not met** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md)). Turbo
+v3 (`v3-gate` `83fbf6b4`) 20/26 graded, 14/26 with a checked answer, 865 s, 31 errors; FowlBrowser 24/26, 806 s, 8 errors; both 0
+focus events and 0 ToolSearch. On the 7 tasks both finished, turbo 381 s against 438 s. Turbo's misses: the closed-shadow two-factor
+switch (4 runs, a turbo gap), form-checkout (2 runs, payment rule; FowlBrowser stopped there too), and the arm's own limits
+(Wikipedia and MDN unreachable from its local-only browser, mobile without a viewport tool since the arm refuses engine calls, 6 runs).
+19 of turbo's 31 errors are that refused engine call (`cua.listBrowsers()` first, every task).
 
 Branches (all on `private`):
 - `pane/auto-mode` at the commit holding this banner. Holds RC1 to RC1R3 (sleight reconnects after a ChatGPT engine update without
