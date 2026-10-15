@@ -715,15 +715,33 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   const { trace, grantAudit } = approvalLogging(preapproved);
-  const s = directBrowserServer(resolveServer(), directBrowser);
+  let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
   let surfaceCache, child, childClosed, firstCallObserver, relay;
+  let stopping = false, deadCleanup;
   let stoppingForReceipt = false;
   let terminating = false;
   const browserSelection = createBrowserSelection();
   let activeServer = s;
-  async function startEngine(isCurrent = () => true) {
+  const serverIdentity = server => JSON.stringify([server.version, server.configPath, server.command, server.args]);
+  let runningServerIdentity;
+  function prepareEngine() {
+    const latest = directBrowserServer(resolveServer(), directBrowser);
+    if (latest.error) throw new Error(latest.error);
+    if (!Array.isArray(latest.args) || !latest.args.length || latest.args.some(arg => typeof arg !== 'string')) {
+      throw new Error('Engine launch arguments are invalid.');
+    }
+    const paths = [['runtime', latest.command], ['script', latest.args[0]],
+      ...latest.args.slice(1).filter(isAbsolute).map(path => ['argument', path])];
+    for (const [label, path] of paths) {
+      if (typeof path !== 'string' || !existsSync(path)) throw new Error(`server ${label} missing: ${path}`);
+    }
+    return latest;
+  }
+  async function startEngine(isCurrent = () => true, preparedServer = prepareEngine(), first = false) {
+    s = preparedServer;
+    runningServerIdentity = serverIdentity(s);
     surfaceCache = directBrowser ? undefined : selectSurfaces(s);
     activeServer = directBrowser ? directBrowserServer(s, directBrowser) : await browserSelection.prepare(s);
     if (!isCurrent()) { await surfaceCache?.close(); throw new Error('Engine restart was stopped.'); }
@@ -731,18 +749,30 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     child = current;
     trace?.('engine-started', { pid: current.pid });
     childClosed = new Promise(resolve => current.once('close', (code, signal) => resolve({ code, signal })));
-    current.on('error', err => fail(`could not start server: ${err.message}`));
-    firstCallObserver = firstClientCallRefresh(surfaceCache);
-    current.on('close', async code => {
+    let startError;
+    current.on('error', err => { startError = err; });
+    const observer = firstClientCallRefresh(surfaceCache), cache = surfaceCache;
+    firstCallObserver = observer;
+    current.on('close', async (code, signal) => {
       if (current !== child || stoppingForReceipt) return;
-      directBrowser?.end();
-      firstCallObserver.dispose(); await surfaceCache?.close();
-      await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(code ?? 0);
+      observer.dispose(); await cache?.close();
+      relay?.engineEnded(startError ? `Could not start engine: ${startError.message}`
+        : `Engine exited (${signal ?? code ?? 'unknown'}).`);
+      if (stopping) {
+        await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(code ?? 0);
+      }
+      // The launcher outlives an engine that died unplanned, so stop its helpers as a Stop does (the relay revokes
+      // direct browser work). A restart waits for this.
+      deadCleanup = stopHelpers().catch(() => {});
     });
     terminating = false; stoppingForReceipt = false;
+    // The first start is fatal when the engine can't spawn, as before: no client call or relay exists yet to
+    // receive an error, and the client's initialize would wait forever. Later starts recover through the relay.
+    if (first) await new Promise((resolve, reject) => current.once('spawn', resolve).once('error', reject))
+      .catch(err => fail(`could not start server: ${err.message}`));
     return { serverIn: current.stdin, serverOut: current.stdout };
   }
-  await startEngine();
+  await startEngine(undefined, s, true);
   function terminateEngine(signal = 'SIGTERM') {
     if (terminating || child.exitCode !== null || child.signalCode !== null) return;
     terminating = true;
@@ -766,6 +796,13 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
     browserChoice: browserSelection.choice,
     backendChanged: () => browserSelection.changed(),
+    prepareEngine,
+    engineChanged: () => {
+      try {
+        const latest = directBrowserServer(resolveServer(), directBrowser);
+        return !latest.error && serverIdentity(latest) !== runningServerIdentity;
+      } catch { return false; } // An update may be replacing the cache directory right now.
+    },
     diagnoseRead: (app, control, readControl) => diagnoseReadFailure(app, control, { readControl, probeApp: appHealth.probe }),
     staleHelperCheck: async () => staleHelperJobs(await listLaunchdJobs()),
     settleTextWrite: (target, current, grant) => settleTextWrite(target, current, grant,
@@ -833,12 +870,13 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       await stopHelpers();
       return engine;
     },
-    restartEngine: async isCurrent => {
+    restartEngine: async (isCurrent, preparedServer) => {
+      await deadCleanup;
       await appHealth.close();
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       resumeHelpers();
       appHealth = healthHelperFactory();
-      return startEngine(isCurrent);
+      return startEngine(isCurrent, preparedServer);
     },
     inspectInput: inspectStoppedInput ?? (async () => {
       const pointer = await runScript('input-state.js', {}, { cleanup: true });
@@ -860,7 +898,6 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
 
   // Claude Code closing the connection is the end of the session: end the
   // open turn so the server releases what it holds, then stop the server.
-  let stopping = false;
   async function stop(signal) {
     if (stopping) return;
     stopping = true;
@@ -871,6 +908,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     await turnHook?.close();
     if (ended !== false) clearTimeout(deadline);
     terminateEngine(signal);
+    await childClosed;
+    await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(0);
   }
   process.stdin.on('end', () => stop());
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
