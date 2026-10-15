@@ -31,6 +31,8 @@ test('a transparent cross-site iframe above the checked button receives no click
   const b = await bank(t);
   const html = doc(`${css}<div class="box"><button id="x" class="fill" type="button">Close ad</button><iframe class="fill" src="${b.origin.replace('127.0.0.1', 'localhost')}/pay-frame" title="overlay" style="opacity:0;z-index:2"></iframe></div>`);
   const f = await b.start(html, readOnly, { routes: { '/pay-frame': doc('<style>body{margin:0}button{width:100vw;height:100vh}</style>' + pay.replace('class="fill"', '')) } });
+  // A cross-site frame is its own CDP target and the filter refuses the snapshot's attach to it, so the read can fail closed with no ref to click.
+  if (/Snapshot unavailable/.test(f.opened)) return f.safe();
   await f.act([{ do: 'click', ref: f.ref('Close ad') }]);
   await f.safe();
 });
