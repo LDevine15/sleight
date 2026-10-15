@@ -10,10 +10,14 @@ const WATCH_MS = 120000, MAX_FLIGHTS = 512;
 // One that is still open when a click happens (a streaming upload, a long poll) can carry data after the click without any new event.
 function trackFlights(context) {
   if (flights.has(context) || typeof context?.on !== 'function') return;
-  const open = new Set();
-  flights.set(context, open);
-  context.on('request', request => { open.add(request); if (open.size > MAX_FLIGHTS) open.delete(open.values().next().value); });
-  for (const event of ['requestfinished', 'requestfailed']) context.on(event, request => { open.delete(request); });
+  // Past the cap a request is counted but not kept, and the count drops when an unkept request ends: an entry is never evicted
+  // while it is open, so a page that opens many requests first cannot hide a long-lived one.
+  const state = { open: new Set(), overflow: 0, size: () => state.open.size + state.overflow };
+  flights.set(context, state);
+  context.on('request', request => { if (state.open.size < MAX_FLIGHTS) state.open.add(request); else state.overflow++; });
+  for (const event of ['requestfinished', 'requestfailed']) context.on(event, request => {
+    if (!state.open.delete(request) && state.overflow > 0) state.overflow--;
+  });
 }
 
 // Call once when the page is adopted, before the page runs anything: a WebSocket opened earlier can only be seen from its start.
@@ -36,7 +40,7 @@ export function observeActivity(page, { maxMs = WATCH_MS } = {}) {
   const context = typeof page?.context === 'function' ? page.context() : undefined, seen = trackers.get(page), open = flights.get(context);
   if (!seen || !open || typeof context?.on !== 'function' || typeof context.off !== 'function') return { observable: false, quiet: () => false, stop() {} };
   let events = 0, stopped = false, expired = false, final, timer;
-  const inflight = open.size, bases = new Map(), listeners = [], pages = new Set();
+  const inflight = open.size(), bases = new Map(), listeners = [], pages = new Set();
   const bump = () => { if (!stopped) events++; };
   const listen = (emitter, event, fn = bump) => { emitter.on(event, fn); listeners.push(() => emitter.off(event, fn)); };
   const hook = other => {

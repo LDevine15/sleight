@@ -136,3 +136,19 @@ test('F4: a request still open when the watch starts ends the refund, one that f
   const failed = fake(), gone = {}; failed.context.emit('request', gone); failed.context.emit('requestfailed', gone);
   assert.equal(await observeActivity(failed.page).verify(), true);
 });
+test('F4: more open requests than the tracker keeps still end the refund until they drain; none is evicted while open', async () => {
+  const first = fake(), long = {}, many = Array.from({ length: 600 }, () => ({}));
+  first.context.emit('request', long);
+  for (const request of many) first.context.emit('request', request);
+  assert.equal(await observeActivity(first.page).verify(), false);
+  first.context.emit('requestfinished', many[0]); // an unkept or kept one finishing does not clear the long-lived one
+  assert.equal(await observeActivity(first.page).verify(), false);
+  for (const request of many) first.context.emit('requestfinished', request);
+  assert.equal(await observeActivity(first.page).verify(), false, 'the first request is still open');
+  first.context.emit('requestfailed', long);
+  assert.equal(await observeActivity(first.page).verify(), true);
+  const flood = fake(), tail = {};
+  for (let n = 0; n < 513; n++) flood.context.emit('request', {});
+  flood.context.emit('request', tail);
+  assert.equal(await observeActivity(flood.page).verify(), false);
+});
