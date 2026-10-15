@@ -9,6 +9,13 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Claude's own computer use, FowlBrowser, Codex, LCU and other reputable plugins. Haiku 5.5 at high effort drives the benchmark,
   with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort. Benchmark runs publish every
   result, failures included, with the model ids each arm actually ran.
+  Claim results give the median and p90 over at least 5 runs per arm. Claude's own computer use runs Haiku 5.5 on the owner's login.
+  Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
+- Codex's numbers on the same tasks are the speed bar. sleight is light enough that nobody notices it running, and its skill, tool
+  descriptions and notices count against one small budget. When a competitor releases, sleight answers with a same-day head-to-head.
+  Releasing on speed before footprint parity is the owner's call.
+- sleight-arch builds the launch video. The owner publishes the launch post.
+- The owner parked Windows, the Anthropic directory listing, scoped approvals and the stable-controls mode.
 - Releases are a git tag plus a GitHub release from the CHANGELOG, bigger and less often. Work in progress goes to the private
   `Land-o-Clusters/sleight-dev`. The public repo gets pushes only at release, after public CI passes (a pre-push hook enforces it).
 - Every open-source project of the owner's matches competitors first and does it better, then improves on them, then builds what
@@ -36,7 +43,13 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   capability the engine path has, a mobile viewport for one (owner, 2026-10-14).
 - sleight works in the background: it never switches Spaces or takes focus. Chrome's own consent prompt is the one exception.
 - Electron apps get the same turbo after 1.3.0, opt-in per app, relaunching an app only on the user's click.
-- Right after 1.3.0 come Electron and slimming the plugin, which Playwright grows to about 15 MB.
+- Right after 1.3.0 come Electron and slimming the plugin. Slimming keeps only what turbo loads (V8 measured 15.4 MB down to 8.2 MB).
+- Electron (2026-10-14): the debugger is its own opt-in per app, with Always allow written only by the user's click. sleight relaunches
+  an app only on the user's click, through the app's own Quit. The connection lives until the user quits or disconnects, and
+  revoking stops commands without closing the pipe. The accessibility reader matches PID and window, and ambiguity stops. Temporary
+  profiles are for benchmarks only. Apps not yet qualified stay on the native path.
+- Browser turbo's trusted confirmations use sleight's own window, outside the page. Connecting shows a short hookup animation and a
+  connected indicator with Pause and Disconnect, and never hides Chrome's own indicators. Chrome and Helium are qualified separately.
 - Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
   better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
   (owner, 2026-10-15), within reason.

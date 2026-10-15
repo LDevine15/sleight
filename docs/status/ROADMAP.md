@@ -1,428 +1,79 @@
 # sleight roadmap
 
-Everything we intend to do, in order. [STATE.md](STATE.md) says where we are now, and
-[LAWS.md](LAWS.md) says what's always true. When the owner adds or corrects anything about the plan,
-sleight-arch writes it here in the same turn. When asked for the plan, answer from this file whole.
+Everything we intend, in order. Always-true decisions are in [LAWS.md](LAWS.md), current state in [STATE.md](STATE.md), and the
+history of every finished item in git and the CHANGELOG. Rewritten 2026-10-15 from an item-by-item audit of the old roadmap
+against git, the ledger and the code. Any owner correction about the plan is written here the same turn.
 
-1.2.5 is out (2026-10-11). The next release batches several changes, with one full pass. Code work
-goes to Codex, Grok and GLM lanes, each handed to the owner as one paste-ready prompt. sleight-arch
-reviews and merges it and runs the live checks. Live runs that can take the owner's pointer or
-keyboard wait until they're away, in one away sitting.
+## Goal
 
-## 0. App-agnostic, and parity with Codex (owner, 2026-10-11), before the release
+The world's fastest computer use plugin for Mac, proven by a published head-to-head (LAWS), and the most thorough one in measured
+facts (owner, 2026-10-15). Every claim is a measurement. Work goes to the biggest measured lever first: `bench/fowl/anatomy.mjs` splits
+each round into start, model and tool time, result characters and turns. Haiku 5.5 runs every incremental change, because it shows
+how forgiving an interface is, and Opus runs once at the end of a batch.
 
-1. Clean up what exists: lanes generic-drag and generic-mechanisms, from an audit that found about 15
-   places where code depends on one app. Merged 2026-10-11. Live checks are listed in STATE.
-2. Slim the skill. Done 2026-10-11: the app-agnostic skill (86 lines) replaced the old one after two
-   A/Bs, and `SLEIGHT_PROMPT=lean` (1.2.4) cuts what Claude reads by 30%, waiting on its A/B. Then a
-   pruning session (owner, 2026-10-11: the skill is fat, and the point is
-   super lightweight): the current skill is 137 lines and about 1,500 words, with app names in about
-   17 places, among them a TextEdit `setValue` rule and an iPhone Mirroring section. The slim one is
-   86 lines with none. Cut every line the A/Bs don't show saving turns or time, and treat the tool
-   descriptions and relay notices as part of the same budget.
-3. Run the parity battery on about 25 popular apps (approved, LAWS), side by side with Codex, with generic
-   fixture and check kinds, window order recorded per run. Rules are mined on half the apps and
-   proven on the other half. Lanes battery-harness and battery-report, merged 2026-10-11. The owner
-   starts it.
-4. Give the user's front app back when a launch takes it, as a generic mechanism.
-5. Approvals as in Codex (owner, 2026-10-11): one card for every app (Always allow, Allow, Decline),
-   with a "could be dangerous" line for terminals and AI apps. The user decides in one click, with no
-   second step. `blocked_app` is removed. Built on branch `remove-blocked-app`, waiting on the full check.
+## 1. Release 1.3.0 (waits only on turbo v3)
 
-## 0b. FowlBrowser, then the release and a video (owner, 2026-10-12)
+Everything except turbo is release-ready and merged (owner, 2026-10-14). That covers public CI and the benchmark preflights, plus
+the release-pass and claim-suite runners. The release notes (RL1) wait on `codex/rl1`.
 
-Direct browser path (owner, 2026-10-13): yes. A gpt-6-astra design teardown compares FowlBrowser with Claude in Chrome,
-Playwright MCP, Chrome DevTools MCP, Codex's extension and Browser Use, one subsystem at a time, and a second astra measures the
-options on a throwaway Chromium. The owner sees the design before lanes build it. The
-engine keeps native apps and Safari.
-The owner approved design v2 (2026-10-13, `ledger/browser-path-design-v2.md`) with all six of its recommendations (section
-"Owner decisions first"). sleight keeps the connection until Disconnect, and confirmations come from a sleight window. Chrome and
-Helium are qualified separately. Popups get a tested subset with handoff, and a separate profile is only a last resort. The
-hookup gets a one-second animation and a connected indicator.
-The owner approved the native-app design (2026-10-13, `ledger/native-path-design.md`) with its recommendations. A
-sleight-owned accessibility reader handles read-only metadata checks after the engine's app approval. Compact native tools stay
-an opt-in prototype until an A/B wins. Parallel runtimes wait for a stability investigation, and the native claim uses the
-design's per-class bar. The default read size waits for the AM1 speed map. Lanes build BP2-1 to BP2-12 as separate modules in parallel, joined in BP2-9 and BP2-12.
+1. Finish turbo v3 on `private/v3-gate`, where every reviewed piece is merged and the full check passes. Remaining fixes, each merged
+   after its review: V10R4 (trusted reads that page-named elements can't shadow), CR6 and CR7 (masking for the whole click, named
+   link targets, new-tab submits, links in editable text). The behavior atlas (AT1) is merged; the adversarial page bank (AD1)
+   runs beside it, and any failure it finds is fixed before the gate.
+2. One full check on `v3-gate`, then the gate round with the owner away or headless. It runs Haiku 5.5 on both arms in both
+   orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
+   ToolSearch calls, 0 focus events.
+3. One Opus head-to-head on the owner's account.
+4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB), then the release
+   pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
+5. Then the claim post (owner publishes) and the launch video (sleight-arch builds it from the measured claim).
 
-The finish line (owner, 2026-10-12 20:00 EDT), in order, nothing added:
-1. Freeze sleight's code after the items in flight: H3R3, H5R4, H12R3, H15R2, T2R5, D6, K12. No new feature items. An item that
-   fails a third review is parked.
-2. The FowlBrowser gate: one Haiku round (sleight at least FowlBrowser's 24/26 on tasks), then one Opus head-to-head.
-3. The Mac claim: W1R4, W2R2, W3R3, W4R4, W5R2, W6, then one full suite run with every arm on Haiku, published.
-   The drag audit gets one more round, W4R6, past the three-review cap (owner, 2026-10-13), because the merged audit rejects four
-   of sleight's own tool names. Claude's computer use runs Haiku 5.5 on the owner's login (owner, 2026-10-13).
-   Claude quota is short (owner, 2026-10-13): the work is finishing these rows and the release, nothing else.
-   Codex quota reset the same night, so Codex lanes also take release prep and next-sprint items (merged after the 1.3.0 tag),
-   and a gpt-6-astra investigator studies the first-call tab queue. The owner doubts that only our own extension removes it.
-   The owner widened the design studies the same night to Claude in Chrome, LCU, Peekaboo, Cua Driver, Browser Use, Playwright MCP,
-   Chrome DevTools MCP, FowlBrowser's tool surface and Claude Code's computer use (ledger RS1 to RS8).
-   After the astra find, the owner queued five more items (2026-10-13). AA1 tries to falsify every inferred engine claim.
-   The others are reads that overlap the model's writing (IN1), waits that cost no turns (IN2), learned routines (IN3)
-   and a direct accessibility read for simple checks (IN4). All merge after 1.3.0.
-   After the browser, the next target is the slowest class of Mac app (owner, 2026-10-13, leaning Electron). AM1 measures every
-   class, and EL1 is a feasibility note on driving Electron apps through Chromium's own protocol, which is the owner's call.
-   The owner approved the Electron design's six decisions (2026-10-14, written in LAWS). The debugger is a separate opt-in for each
-   app, with an Always allow that only the user's click writes. EP-1 to EP-7 merge after 1.3.0. EP-2 and EP-6 are done on branches.
-   EP-1 blocked on the superseded v1/v2 design, so EPV3 (2026-10-15) re-plans EP-1 to EP-7 on turbo v3's tools and trust join,
-   built on branches now and merged after the tag.
-   The astra report (2026-10-13) disproved one extension queue across sessions. The owner lifted the code freeze for AS-1 (bind discovery
-   to the verified browser) and AS-2 (prime the first session command during warm-up). Both go into 1.3.0, and the gate round waits for them. Competitors' code gives ideas only, rewritten clean-room (owner, 2026-10-14).
-   Owner, 2026-10-14: a prototype turbo arm (TP1) runs the Haiku gate round early, as a measurement before the production wiring
-   finishes. It is never published as the claim.
-   The prototype gets one more round (TP1R2), with its fixes made in the shared modules production uses. If it still can't measure
-   cleanly, it stops and the work goes to the production wiring (owner, 2026-10-14).
-   Turbo's safety is four rules from here on (owner, 2026-10-14, LAWS): the payment rule, page content never authorizes, no blind
-   resend of a submit, background only. Fills check the target element alone. Per-field tokens and per-site prompts are gone.
-   With turbo on, the engine's browser path stays as a fallback for what turbo lacks (owner, 2026-10-14).
-   The claim suite drops the codex-cu and devtools bridge arms, and the published coverage names them as not run and why (owner,
-   2026-10-14: their bridge code isn't in the repo).
-   Everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (owner, 2026-10-14 evening): the claim-suite
-   arms, public CI, the release-pass runner and benchmark preflights. Lanes stay busy: post-release work (Electron pieces that
-   don't use turbo's semantic layer, the Q1 error fixes) builds on branches now and merges after the tag.
-   The v1/v2 turbo removal (V8) is built now, in parallel, and merges right after the gate round (owner, 2026-10-14 night).
-   Owner (2026-10-15): sleight is to be the most thorough computer use plugin there is, in measured facts. Standing test banks
-   start now beside the gate work: a browser behavior atlas (AT1, what Chromium does for every action turbo takes) and an
-   adversarial page bank (AD1, every attack found so far plus new classes), both run on the host runner.
-   Turbo's action layer gets redesigned (owner, 2026-10-14 evening): study what makes FowlBrowser fast and accurate and where it
-   fails, then build our own better layer on the bundled Playwright, under the same safety rules. Studying their code is fine, copying
-   it isn't the goal.
-   Speed follow-ups (owner, 2026-10-14): turbo becomes the browser default once it is proven. The guard's first-action read gets
-   an A/B against no read (GR1). The read after a click, shortcut, Return, Escape, Tab or Space goes to an open-ended investigation
-   by gpt-6-astra and an Opus subagent working independently (SR1), because it is the largest remaining tool-time cost. Lanes get a
-   host-side runner for real-page tests (LD1).
-   SR1's designs combine into one guard mode (owner, 2026-10-14): no reads between clicks (A), quiet edit shortcuts and field
-   clicks (B), and a focus check in place of the read after a real opener (C). Each call keeps one final read, like Codex. A's
-   Calculator probe passed 10/10 (2026-10-14). C is parked: on macOS 27 the Open panel runs in a separate system process, so the
-   app's focus can't show it is ready. The mode has A and B.
-4. Release 1.3.0, the claim post, then the video.
-After 1.3.0, first (owner, 2026-10-14): slim the plugin alongside the Electron path. Including playwright-core 1.64.0 for turbo takes
-the plugin from 1.9 MB to about 15 MB, which the owner called horrendous. Functionality goes out first, and the cleanup follows right after
-the release: keep only what turbo loads, with its notices.
-The AM1 speed map is parked until then too (owner, 2026-10-14). It measures TextEdit and Finder, while VS Code and Word fail fixture
-setup after two fix rounds (AM1E, AM1ER), and the gate doesn't need it.
-Next sprint's top lever (D7, 2026-10-12): anatomy's unattributed time is the model writing. Over 13 Haiku runs, sleight's model
-streamed blocks for 565 s against FowlBrowser's 119 s, because Claude writes JavaScript for every action where FowlBrowser's model fills
-small tool arguments. Less code per action (higher-level helpers, a small fixed set of verbs) is the lever, to measure first.
+Before the gate, the owner reloads FowlBrowser's extension in Helium and runs the sleight-arm login. Chrome's Allow and
+`ledger/claim-suite-owner-checklist.md` are the owner's too.
 
-The owner's long-term goal (2026-10-12): the world's fastest computer use plugin, chasing every lever
-down to milliseconds over months. The method: `bench/fowl/anatomy.mjs` splits every round into time
-(start, model, tool), result characters by kind, tokens and turns by class, and work goes to the biggest
-measured lever first. On 2026-10-12 at 15:23 those were the engine's docs in results (cost), session start
-(time), and turns lost to errors and repeated reads. Turns become the lever again once latency is down
-(owner), so every round also reports which turns look avoidable.
+## 2. After 1.3.0, in the owner's order
 
-Test across models (owner, 2026-10-12): the first Haiku round showed what Opus hid. On FowlBrowser's tasks sleight went 8/13
-with 76 tool errors against FowlBrowser's 11/13 with 9, because Haiku invents calls, leaves actions unawaited and misuses
-selectors in sleight's code interface. So Haiku runs on every incremental change (strictest on how forgiving the interface is, and
-cheapest), Sonnet at checkpoints and Opus once at the end of a batch. Each round runs both arms on the same model, on the API key
-except Opus. Fixes that make the interface forgive a weaker model's mistakes are a lever of their own.
+Post-release work builds on branches now and merges after the tag (owner, 2026-10-14).
 
-FowlBrowser launched on 2026-10-11 (github.com/argofowl/FowlBrowser, MIT). It's an extension for Chrome
-and Helium that drives tabs through `chrome.debugger` and its own MCP server. It reports 26/26 on 13
-tasks against 23/26 for Claude through Codex's extension, and 21/26 for Codex itself. It covers the
-browser only, so sleight covers more, but its author has a far larger audience and a launch video we
-lack. The owner's plan (2026-10-12) is that sleight takes over where browser control ends. In order:
+1. Electron on turbo v3: EPV3-1 to EPV3-8 (`ledger/electron-v3-plan.md`), carrying over EP-2's cleanup and EP-6's build
+   qualification. EPV3-1 is in a lane, and the rest follow in the plan's order.
+2. The full claim suite runs every arm on the same tasks (Claude in Chrome, Claude's own computer use on the newest Claude Desktop,
+   FowlBrowser, Codex, LCU, Cua, Peekaboo), median and p90 over at least 5 runs, published with failures. API spend counts
+   against the $200 monthly cap ($159.96 used in October).
+3. The Q1 error-message fixes. Q1-1 to Q1-6 are reviewed, and Q1-7 to Q1-17 have branches that need review.
+4. Speed. The measured gap to FowlBrowser on Haiku 5.5 is mostly time before the first action (67%) and result size (3x larger),
+   with code streaming 26% (`ledger/opus-less-code-report.md`), so those come first. Turbo's five tools already cut code per action
+   for the browser. IN1 to IN4 (overlapped reads, free waits, learned routines, direct accessibility reads) need owner calls below.
+5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
+6. The AM1 speed map of app classes, parked until after 1.3.0. Its VS Code and Word fixtures still fail setup.
+7. Smaller queued work: NP-8 (native-path follow-up), FM3 (forms), TB2, CH1 (Chess save), AS-3 to AS-9, AM1FR.
 
-1. Benchmark against it on its own runner and tasks: `bench/fowl/` adds sleight as an arm (`--surface sleight`) to its
-   `tools/rounds.mjs` (pinned at `8b68924`), Opus 5.5 at medium as in its published runs (owner).
-   Both arms run on this Mac, published in full. Gaps it shows get generic fixes in Codex and Grok lanes.
-   The owner's goal (2026-10-12): beat FowlBrowser in the browser on its own tasks, on time, cost and
-   tasks done right. The first run lost (23/26 in 2,109 s against 26/26 in 972 s). Model time between
-   calls is the biggest lever (501 calls against 240), so after the batch F fixes come fewer, larger
-   calls: whole forms filled in one call, and results that show only what changed. If the extension's
-   own per-call cost still keeps sleight behind, a browser path that doesn't go through Codex's extension
-   is a scope call for the owner. The owner asked for a video by the end of 2026-10-12 that shows sleight
-   beating it, so the rerun after batch F decides what the video says.
-   Learn from its design (owner, 2026-10-12): anything in FowlBrowser's architecture or logic that sleight
-   can learn from gets rebuilt our way, in the relay, the skill or the benchmark. Since 2026-10-14 (owner) none of its code is
-   adapted: lanes write from a behavior spec without reading its source.
-   Read before probing (owner, 2026-10-12): read how others built it before discovering it ourselves. FowlBrowser's
-   source first (the 21:05 UTC study feeds batch H). Then the installed code of Claude in Chrome, the Codex browser
-   extension and the ChatGPT engine, with REA (github.com/morluto/rea, MIT) where the code isn't readable as is.
-   Those reads are clean-room: notes on behavior and design, never their code in sleight.
-   Tab opens queue in the Codex extension (4.8 s first call against 244 ms later, 15:23). The owner is tempted by a direct
-   browser path like FowlBrowser's but wants data first (2026-10-12). Once the cold-start probe split and the T4, T5 and S1 results are in, the
-   owner decides with the numbers.
-   The claim (owner, 2026-10-12): the fastest computer use plugin in the world. That means a head-to-head against Claude in
-   Chrome, Claude's own computer use, FowlBrowser, Codex and the other reputable plugins a survey finds, on one published task
-   suite (browser and native Mac), same model where possible, reporting tasks done, time, turns and cost.
-   The survey (2026-10-12, `~/Projects/sleight-wt/ledger/competitor-survey.md`) didn't find any published Mac speed comparison. The arms
-   are Cua Driver, Peekaboo, Claude's computer use, Claude in Chrome, Playwright MCP, Chrome DevTools MCP, Browser Use, one hosted
-   agent, with Codex and FowlBrowser as reference rows. Suite: about 20 browser and 20 native Mac tasks with programmatic checks,
-   a few cross-app tasks and a macOSWorld subset. Results give the median and p90 over 5 or more runs, and the raw logs of all of them.
-2. Hand-off tasks: a browser step that ends where a native app takes over (a download opened in an
-   app, a native file panel, a link that opens an app), run with FowlBrowser alone, sleight alone,
-   and both together. We'd pitch FowlBrowser for the tab and sleight for the rest of the Mac.
-3. The rest of track 0's live checks and the away sitting, then the release (5b), public push included.
-4. A launch video that sleight-arch builds (owner: "you have the better taste"). Its footage is
-   per-window recordings of real runs (LAWS: no full-screen capture), and its numbers are measured.
-5. A launch post the owner publishes, built on measured results only. sleight-arch drafts it.
+## 3. Live checks still owed
 
-Builds go to Codex and Grok lanes while Claude's quota is tight (owner, 2026-10-12).
+Unit-tested fixes that no live run has confirmed yet, or that failed their last live run. Each is listed in `docs/known-problems.md`.
 
-## 1. Release 1.0 (done: v1.0.0, 2026-10-09)
+- Full Screen and Split View handling. Detection is merged, and the Split View pass is open.
+- The simulator's first tap (the 2026-10-11 sitting's simulator-form failed, later in fixture setup).
+- iPhone Mirroring scroll-to-swipe and settle wait.
+- `typeText` after select-all, and the TextEdit save lock (cause unknown).
+- `menu_bar` (the sitting's result file and commit disagree) and stale-number (failed).
+- The Target and Best Buy shop tasks (failed in the sitting).
+- Mail, Mimestream and the chat tasks, with the owner watching (LAWS).
+- Desktop sessions staying busy after `/sleight stop` (mod fix, unit-tested only).
+- `sleight-mcp setup` in a fresh macOS user, and native Codex taking part in the lease broker.
+- Recording a task from the user's demonstration.
 
-1. The Chess and simulator head-to-head and a release pass, with the owner away (running 2026-10-09).
-2. A controlled Chess check: the same engine drag from the pawn's base and its head on
-   `pane/auto-mode`, to tell where the model aims from a regression.
-3. If no new failure is sleight's fault, the 1.0.0 steps in STATE, then the owner's install.
+## 4. Parked or shelved by the owner
 
-## 2. Fixes
+Windows (plan in `docs/design/windows.md`), the Anthropic directory listing, scoped approvals (`docs/design/scoped-approvals.md`)
+and the stable-controls mode (LAWS).
 
-Done in 1.1.0 (2026-10-09): `drag` says when it timed out and releases a stuck button, refuses a
-covered drag with no text and points to `app.drag`; an un-awaited failed action keeps the session; a
-call that meets a restarting helper is resent once; a stale element number goes out as its line; an
-app sleight acted on that holds a keyboard tap is named at turn end. Measured and dropped: the 3D
-"press the head" hint, which backfired in a small Chess window.
+## 5. Waiting on the owner
 
-Open, in order of user impact (full list in [known-problems.md](../known-problems.md)):
-
-- Full screen and Split View failed 8 of 21 runs. Detection is built (unreleased, after 1.1.0): an
-  app read says so. Left: a pass in real Split View with the Claude app, at release.
-- In the simulator, Claude's first tap on a Safari field often doesn't focus it (6 of 6 runs with shrunk
-  screenshots), and Claude second-guesses the screenshot's scale there. Lane sim-scale-note (2026-10-11).
-- iPhone Mirroring: scroll didn't move the Settings list, and taps during page animations hit the row
-  below (2026-10-11). Lane iphone-settle.
-- Keys after a click in their own call: dropped (2026-10-11). The merged-calls study found 18 safe
-  pairs before the batching rewrite and 2 after.
-- `typeText` after select-all wrote `Engine01engine01`. The skill now says to paste and compare
-  (`05903fa`, 6/6 on the TextEdit tasks). Likely cause (2026-10-10, inferred from tree sizes, not
-  confirmed): a pending TextEdit capitalization suggestion took Cmd+A, so nothing was selected. The
-  relay's settle read was there, so it isn't sleight's. Confirm with
-  `bench/small-fixes-textedit.mjs --quick` (`.dev/research/2026-10-10-select-all-typetext.md`). Its
-  "Ambiguous TextEdit process" refusal is fixed (`a021a7c`).
-- The TextEdit save lock: the Shift-event fix measured 0/10 hangs, but we don't know why it works.
-  The experiment for that question doesn't work yet. A Cmd+S posted to a background TextEdit's PID
-  never saved in 2 live runs (2026-10-11). It needs the engine's Cmd+S and an Open-panel open, the
-  setup that hung (`.dev/prompts/lane-savelock-engine.md`).
-- Live checks for the unit-tested 1.1.0 changes: `bench/live-checks-1-1.mjs` (`5690bf2`) runs the
-  stale-number remap and `menu_bar`. The helper resend and the keyboard-tap notice skip, since
-  forcing them would mean killing OpenAI's helper or installing a tap.
-- Smaller ones: a moved word in rich text should keep the formatting it had (blocked 2026-10-11: macOS
-  disables Paste in a TextEdit that has never been frontmost; the opt-in stays off), `/sleight stop` in the
-  desktop app, a live `menu_bar` check, and desktop sessions
-  that stay busy. Done 2026-10-10: the doctor's per-app read (`83188cf`, `ac9f0d2`), per-site flow
-  rules (`83188cf`), localized Settings titles in `blocked_app` and the clipboard helper (`05903fa`).
-  TextEdit's orphan Save panel reproduced live on 2026-10-11 through the engine, and the read after
-  it worked, so the 2026-10-06 timeouts' cause is unknown (known-problems). Stays manual: removing the helper's stale launchd job, since that changes OpenAI's helper state
-  (doctor prints the command).
-
-## 3. Performance (owner's goal: lightning fast)
-
-The owner's bar (2026-10-09) is what people love in Codex's computer use. sleight has to be
-lightning quick and stay quick under any load, and the Mac shouldn't feel it running. Codex drives
-the same engine, so Codex's own numbers are the target. Anything sleight adds in time or CPU stays
-only with a measured reason. In order:
-
-0. Real use felt slow (owner, 2026-10-11): puddle arch nudging agent seats in ZCode, an Electron app,
-   through sleight. A head-to-head against Codex on that kind of work, then tuning until sleight is
-   clearly faster. From puddle arch's transcript (Opus 5.5 at high, a long context, the owner's Mac
-   under load): one nudge took 5 calls (new task, workspace picker, workspace, paste, send) and 30 to
-   45 s, of which sleight's calls were about 7 s (0.7 to 1.9 s each). The rest was model time between
-   calls. A click by label took 7.9 s and a click on element 705 with a paste took 8.1 s, both in a
-   tree of over 700 elements. So the targets are turns (one call for steps whose targets are
-   known) and slow reads in large Electron trees. The task must be generic: an Electron chat-style
-   fixture, never the owner's real seats.
-   Real use found what the fixtures missed (2026-10-12): the guard stopped correct clicks whose
-   numbers the code took from its own read in the call, and puddle arch fell back to one action per
-   call (fixed in `430116e`, live check owed). The owner's priority (2026-10-12): real-life smoke tests
-   in Electron and other large, shifting apps (ZCode, Slack, Discord, VS Code, Cursor) alongside the
-   fixtures, with each gap fixed generically.
-
-1. Measure what sleight adds. A head-to-head on the same tasks with sleight and Codex, at the
-   owner's normal load and with added load, recording time, turns and the CPU seconds of each arm's
-   own processes (sleight's relay, mod, helper spawns and pane snapshots against Codex's).
-2. Cut the reads Codex doesn't make. A read right after an action waits for the UI to settle
-   (about 400 ms, tens of seconds under load). The guard does one before each action after the
-   first in a call and one after the call. Done for keys, text, paste and coordinates (`44700ee`,
-   owner's call, `SLEIGHT_GUARD=careful` keeps the read). Numbered actions keep it, since it catches
-   renumbering. The read after the call stays (study 2026-10-10, 93 runs). Codex makes it after
-   527 of 527 acting calls, the lease needed it in 17 of 59 calls, and it costs a mean 1.3 s a run.
-   Done 2026-10-10 (`12042e8`): a call that only acquires and prints the app counts as that read,
-   and a call's first key, typing or coordinate action reuses Claude's full read when it's under
-   10 s old (owner's call). Cutting the guard's reads of Save and Open sheets (5.2 s a run in
-   textedit-save) isn't possible on engine 26.1007.21159, which has no partial read (`d008140`).
-3. Done 2026-10-10, stop spawning processes per call. App probes go to one long-lived helper per
-   session, about 33 ms a probe against about 180 ms a spawn (`818f7e7`), and filter native window
-   and app lists before converting them to JavaScript, 100 probes from about 4.8 to 0.55 osascript
-   CPU s (`4082ae9`). Guard setup stays in the engine after its first installation: 90 guarded
-   no-input calls fell from 0.75 to 0.05 engine CPU s (`4082ae9`). Lease targets, tap scans and
-   health probes share three lazy helper lanes, tap scanning from 46.09 to 7.65 ms, and the lease
-   database is reused instead of reopened per operation (`7d880dc`). The extension check is cached
-   and now runs after the engine's first call has answered, about 0.12 s on a quiet Mac and 2.4 s
-   against 1.2 s under load before the change (`cb3cbc7`,
-   [startup costs](../benchmarks/2026-10-10-startup-costs.md)). Small desktop images skip decoding;
-   terminal pane snapshots and desktop images over the embedding limit still decode all pixels
-   ([known problems](../known-problems.md)). The [CPU report](../benchmarks/2026-10-10-footprint-parity.md)
-   records the component measurements.
-4. Fewer turns. Model time is about two thirds of a run, so batching like Claude's own computer use
-   is the largest lever left once the reads are cheap. A transcript study (2026-10-09) found 13 to
-   20% of calls could have merged with the one before, mostly save-then-close and keys after a
-   click. The engine's description says to send only an acquisition first, and 798 of 799 sessions
-   did. Rewriting that sentence is the default since 2026-10-09, after an A/B cut turns from 208 to
-   168 in 24 runs a side (`docs/benchmark.md`). Merging later calls (save-then-close, keys after a
-   click) stays as it is: wording that asked for it (`SLEIGHT_FIRST_CALL_BATCH=merge`) got save and
-   close into one call in 0 of 24 runs, and 0 of 9 traced runs since
-   (`docs/design/save-then-close-2026-10-11.md`). Done 2026-10-11 (`a43945d`): the first-call
-   wording names `cua.getApp`, which took first calls on `getState` from 8 of 11 runs to 0 of 12 and
-   total time from 30.6 s to 27.0 s a run. Dropped 2026-10-11: skipping the guard read before later
-   clicks (`SLEIGHT_GUARD=batch`). It would resolve those clicks against the call's first tree, and
-   Calculator renumbers every button when its first click closes the history, so a click by ID could
-   press the wrong button.
-   Found 2026-10-11 in the A/B's transcripts, in order:
-   - Results too big for Claude Code. In 4 of 8 textedit-save runs the Save sheet's file browser made
-     results of 55,720 to 87,740 characters, which Claude Code wrote to a file. Claude then spent 2 to
-     5 calls filtering them. In 74 of 150 results a split acquisition's tree came before the call's
-     newer one, making up 23% of the characters in results, and `SLEIGHT_RESULT_TRIM=1` (`e212204`) cuts both, and the
-     spilled results go from about 56k to 16k characters. A/B running.
-   - The Cmd+S stop in the batching wording. It predates the guard's fix that lets a call continue
-     into the window its own shortcut opens. The merge wording, which dropped it, cut total time 20%
-     on 24/24 runs. 5 of 8 textedit-save runs waited for the sheet with `waitFor`, 3.8 to 5.9 s, which
-     the guard's own read after the shortcut already does. Next A/B: the wording without that clause,
-     saying sleight waits for the sheet.
-   - Menus clicked open. 3 of 8 textedit-save runs clicked Format, then Make Plain Text, in two calls,
-     though the skill gives the shortcut (`super+shift+t`).
-5. A release only when the head-to-head shows sleight at Codex's speed and footprint, with the numbers
-   published. On 2026-10-10 (Haiku, engine 26.1007.21159) time and turns were at
-   parity (263 s against 257 s, 61 turns each) and CPU wasn't (76.5 s against 60.2 s over six runs),
-   with the excess in the engine helper and engine node, where guard reads land
-   (`docs/benchmarks/2026-10-10-h2h-footprint-haiku.md`). With the benchmark's folder trimmed and
-   the guard's first-action reuse (`a104a0d`): 190 s against 176 s, 44 turns against 45, own CPU
-   58.4 s against 47.2 s (`2026-10-10-h2h-footprint-haiku-3.json`). Guard reads were 23.3 s:
-   15.0 s in textedit-save's sheet and 7.5 s in Calculator, about 430 ms before each click in a
-   batch, which Codex doesn't read. Those reads stay, because the engine takes only element numbers
-   (LAWS). At `d575dcf` sleight led on total time and turns (313.3 s and 79 against 340.2 s and 83)
-   and still trailed on own CPU (78.2 s against 54.3 s, with the owner's plugins loaded) and on
-   calculator-click. There, in 2 of 3 runs, the batch result read "no change" after 7 clicks, and
-   Claude read again (`docs/benchmarks/2026-10-10-h2h-afternoon.md`). Fixed in `fef67fe`: an acting
-   call that ends on the tree Claude last saw gets that tree whole. In 8 of 8 runs on 2026-10-11 the
-   clicks went in one call with no read after it, 3 turns and 10.3 to 11.6 s a run with the new
-   first-call wording, against Codex's 4 turns and 14.4 to 16.1 s. Next: the quiet-box CPU comparison.
-
-Done: the relay "spike" was a timing bug (real relay time is about 0.4 s a pass). Measured and
-dropped: a first-call hint (8/12 runs still called `getState` first), trimming the engine's docs
-(about 0.1 s a run), and screenshot scaling (`perf/screenshot-scale`, 92 turns against 85 in 9 runs each).
-
-- Background for step 1 (2026-10-09). `load-cost` (no model): without load the guard turned eight
-  clicks from 593 ms into 3,609 ms. Under load it stopped 5 of 5 such calls on degraded reads
-  (`7d63e48` fixed that). The engine's inventory doesn't list windows, and Astra's native window
-  check failed (`674502d`): the engine's JavaScript can't open a socket, and an Accessibility observer
-  failed 14 of 20 reads at load 62 to 67. A loaded Mac starves any window check.
-- In 887 benchmark transcripts, 62% of `js` calls that act send one action, and 35% of all calls
-  only read. Each turn costs 2 to 2.7 s.
-- A warm-up read right after launch (one cold Calculator read took 16.7 s).
-- textedit-save spent 7 to 17.5 s per run in guard reads. Folding the last read into Claude's own
-  is already how the guard works. The sheet reads above are most of the rest.
-- Stable-controls mode (3,775 ms to 801 ms on Calculator) gives up checks, so it stays out unless the
-  owner chooses it.
-
-## 4. Realistic apps (Sol)
-
-- Briefs 6 to 10 are built and squash-merged into `pane/auto-mode` (through `309c2c9`).
-  Qualification on 2026-10-09 passed Helium, Preview, Finder and TextEdit with Calculator 3/3 each,
-  and all 11 web tasks 1/1. Word, Excel and PowerPoint passed 1/1 each (Excel and PowerPoint on
-  2026-10-09 at `76cf880`). Still to qualify are simulator-flow (owner away), and Mail, Mimestream and the chat tasks with the
-  owner watching (owner, 2026-10-11). Their code required `--owner-away`, and lane owner-present-mail flips it.
-
-## 5. After 1.0, in the owner's order
-
-1. A real-use pass, then the Codex head-to-head on it. The Codex arm runs the real suite
-   (`768cbcd`, helium-form 1/1), so this is the head-to-head in track 3, step 1.
-2. Fill the [PENDING] lines of the launch post in `~/Desktop/sleight-launch/thread-1.0.md` (done
-   2026-10-09 with the real-use head-to-head).
-3. Replay: a successful run turns into a script that replays through the engine with no model,
-   keeping sleight's guards, so it stops when the app isn't in the state the script expects. First
-   version built 2026-10-09 (`sleight-mcp record` and `replay`, `docs/design/replay.md`). Done
-   2026-10-10 (`e12aef4`): steps that wait for the app, and Claude taking over at the step that
-   stopped. Replay from the desktop app merged on 2026-10-10.
-
-## 5b. Before this release (owner, 2026-10-10)
-
-1. Match and beat Codex in the head-to-head on time, turns and own CPU. The `let app` failure and the
-   lease refusals are fixed (`80b5abc`), and the Save-panel lines are next.
-2. Done 2026-10-10, owner away (`1a60395`), both setups published in
-   [2026-10-10-away-2.md](../benchmarks/2026-10-10-away-2.md). Clean arms
-   ([raw](../benchmarks/2026-10-10-h2h-clean-arms.json)): sleight 7/9 in 263.7 s (own CPU 51.8 s)
-   against Codex 9/9 in 265.8 s (42.8 s). The owner's normal setup
-   ([raw](../benchmarks/2026-10-10-h2h-normal-setup.json)): sleight 8/9 in 262.4 s (64.2 s) against
-   Codex 9/9 in 229.6 s (38.4 s). Every sleight failure was textedit-save: two on leftover iCloud
-   documents and one stalled in the Save sheet.
-3. Shopping tasks: a local shop page (ZIP store lookup, search, add 3 items to cart) in both
-   browsers, and one-run real-site smoke tasks.
-4. Electron and Gecko: tasks for VS Code, Cursor, Firefox, and read-only Slack, Discord and
-   WhatsApp. Done 2026-10-10, owner away (`1a60395`): VS Code, Cursor and Firefox passed 5/5 on one
-   run each, 27.2 to 58.7 s ([raw](../benchmarks/2026-10-10-electron-firefox-live.json)), after the
-   allowlist took VS Code's bundle name "Code" (`01bfc5c`). The chat tasks never ran, because the
-   pass's private-results filter rejected a row it had built and stopped before any run was saved
-   (fixed in `1700c80`, not rerun yet). iPhone
-   Mirroring with the owner at the Mac: the task is built (`1c0b4b5`) and needs
-   `--owner-present`.
-5. Done 2026-10-10, owner away: sleight passed 8/8 in 210.6 s (56 turns, 131.2 s of model time)
-   against LCU 0.11.2's 7/8 in 299.2 s (85 turns, 209.5 s)
-   ([raw](../benchmarks/2026-10-10-h2h-lcu-0.11.2.json), recorded in `1a60395`, arm setup
-   `29b6de3`). LCU's failure was textedit-save run 1, where the file wasn't saved; its run 2 took
-   136.3 s and 27 turns.
-6. Parked (owner, 2026-10-11). Anthropic's directory listing (owner, 2026-10-10). Submission is at claude.ai/directory/manage
-   from the public repo. The plugin folder passes the mechanical checks (50 files, the largest 142
-   KB, an MIT license field). Unknown: how review treats the ChatGPT engine dependency, and whether
-   the mod's self-approval of its own pane snapshot reads as changing Claude's permissions. A
-   privacy policy link is required: `docs/privacy.md` (2026-10-10). The owner chose not to ask
-   Anthropic for now (2026-10-10).
-7. Less setup in the ChatGPT app (owner, 2026-10-10). Today a user installs ChatGPT and turns on
-   Computer Use in Codex once, which installs the helper and gets macOS permissions. The app
-   needn't run after that. Found 2026-10-10: `codex plugin add` can't install the computer-use
-   plugin (the CLI reserves the `openai-bundled` marketplace, which the ChatGPT app seeds into
-   `~/.codex/.tmp`). The helper is inside ChatGPT.app with OpenAI's own installer
-   (`Codex Computer Use Installer install|uninstall|status`; `status` printed "OK: installed" here),
-   and the engine's command is in the app bundle too. So `sleight-mcp setup` could run that
-   installer and open the two permission panes, with no Codex session. In a fresh macOS user with
-   no `~/.codex` (puddle-census, 2026-10-10), `status` already said "OK: installed", and `install`
-   asked for administrator access (Touch ID or password), then exited 0 without creating
-   `~/.codex/computer-use`. The engine didn't start there, because the probe left out its
-   node_repl path. Probe v2 sets the engine's whole environment and uses the helper inside
-   ChatGPT.app where it is. In puddle-census, never signed in, it initialized the engine, listed
-   its tools and answered the first call (the engine's docs). Probe v3 adds a `listApps` call,
-   which listed apps there too. Built 2026-10-10 (`5a4a8c4`): `sleight-mcp setup`, and an engine
-   started from ChatGPT.app when there's no Codex plugin, computer-only because the browser API
-   needs a Codex sign-in. Left: a live `setup` run in a fresh macOS user. macOS permissions always
-   need the user's click.
-
-## 6. Features after replay
-
-When a competing plugin is released (the owner expects one, 2026-10-10), sleight answers with a same-day
-head-to-head, published in full, through a generic benchmark arm for any plugin or MCP server
-(merged 2026-10-10, `5b7a16e`). Its paired live run waits for the owner to be away. Whether to release on speed before footprint parity is the
-owner's call at that moment.
-
-The owner's rule, in order: do what competitors do but better, then improve where they haven't, then
-build what nobody has. Sources are `.dev/research/2026-10-04-competitors.md` and the README roadmap.
-
-- Separate results for "input sent", "the UI changed" and "saved", with a reason when unverified.
-  Merged 2026-10-10 (`f3d2790`, `8646071`), live 6/6 on Calculator and TextEdit, and 2/2 each on
-  Chess and Safari-form with the owner away (`docs/benchmarks/2026-10-10-away.md`). A save named
-  through Go to Folder and the panel's name field now reads as that file (`71c45ff`).
-- Done 2026-10-10 (`6ca6639`): sleight runs from Cursor or any MCP client, with Claude first in the docs.
-- Next for Codex when its quota resets (owner, 2026-10-11): one lease and consent broker shared by Claude, Codex and other runtimes (without leases, two
-  sessions typing into one document doubled the text 5/5).
-- Next for Codex too (owner, 2026-10-11): review unsaved changes and app state, not only saved files.
-- Shelved (owner, 2026-10-10): scoped approvals (separate read and control grants, expiry, and a
-  required confirm for anything irreversible). The design (`docs/design/scoped-approvals.md`)
-  found a guard in Claude's JavaScript can't guarantee the confirm, and a TextEdit save would need 3
-  prompts instead of 1.
-- Done: scheduled routines built on replay (`da78144`, first live run 10/10 in `35bb762`).
-- Done 2026-10-10: a published table of what works in the background (`docs/background.md`), and
-  redacted receipts of each turn's actions, opt-in with `SLEIGHT_RECEIPTS=1` (`6be06b8`, `bba8cb5`).
-- Stop that confirms the Mac stopped, element waits and exact window targeting for untitled windows
-  merged 2026-10-10 (`6291251`), with their live checks before release. Recording a task from the
-  user's demonstration merged with routines (`da78144`). Its live check is open.
-- Parked (owner, 2026-10-11). Windows (owner's idea, 2026-10-09). Codex computer use reached Windows on 2026-05-29, foreground
-  only. The relay, guards, mod and benchmark could carry over. `drag.js`, `menu_bar`,
-  `notifications`, the keyboard-tap check and the launchd watch are macOS-only
-  (`docs/design/windows.md`). Research on 2026-10-10 didn't find a public report of it working on ARM64,
-  and one of it failing at startup there (Codex #52133). In a VMware VM screenshots timed out
-  (#51589). An outside stdio client did start `cua-repl.mjs` and list apps, but only with the
-  running ChatGPT app's native pipe directory (#45948). Plan (2026-10-10): the owner's 2020 Intel
-  MacBook Pro (16 GB) runs VMware Fusion, free, with Windows 11 Enterprise's free 90-day x64
-  evaluation. Boot Camp is the fallback if the engine fails in the VM. The owner registers,
-  downloads, installs ChatGPT and turns on OpenSSH. sleight-arch runs the spike over SSH: engine
-  start, app list, screenshot, one approved action.
+- IN1 to IN4: narrow IN1 to default browser snapshots or define a private native baseline; approve IN3's design; allow the live
+  measurements IN2 and IN4 need.
+- AS-8 and AS-9: owner qualification and diagnostic runs.
+- Whether to prune the 94-line skill before or after 1.3.0.
+- Whether the parity battery runs before or after the claim suite.
+- Turbo's Chrome connection lifetime. The owner-approved design v2 kept one connection idle until Disconnect, shared across
+  sessions. v3 runs one worker per Claude Code session, and sleight-arch decided it releases at session end.
