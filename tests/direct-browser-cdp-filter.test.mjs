@@ -91,8 +91,32 @@ test('the browser-level guard on port 80 matches loopback hosts only', async t =
   t.after(() => filter.dispose());
   await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
   const patterns = f.calls.find(row => row.method === 'Fetch.enable' && row.route === 'root').params.patterns.map(row => row.urlPattern);
-  assert.ok(patterns.includes('http://127.0.0.1/*') && patterns.includes('http://*.localhost/*'));
+  assert.ok(patterns.includes('http://127.0.0.1/*') && patterns.includes('http://*.localhost/*') && patterns.includes('http://*@127.0.0.1/*'));
   assert.ok(!patterns.some(pattern => /^\*|:\/\/\*\//.test(pattern)), 'no pattern pauses every request: ' + patterns);
+});
+test('the browser-level guard on port 443 also matches plain http on :443', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 443 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const patterns = f.calls.find(row => row.method === 'Fetch.enable' && row.route === 'root').params.patterns.map(row => row.urlPattern);
+  assert.ok(patterns.includes('*://*:443/*') && patterns.includes('https://*@localhost/*'));
+});
+test('a refused browser-level guard names itself, and a failed continue fails the request instead of leaving it paused', async t => {
+  const f = fixture(), send = f.session.send;
+  let refuse = true;
+  f.session.send = async (method, params, route = 'root') => {
+    if (method === 'Fetch.enable' && route === 'root' && refuse) { f.calls.push({ method, params, route }); throw Error('CDP_COMMAND_FAILED'); }
+    if (method === 'Fetch.continueRequest') { f.calls.push({ method, params, route }); throw Error('INVALID_CDP_COMMAND'); }
+    return send.call(f.session, method, params, route);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await assert.rejects(filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true }), /CDP_DEVTOOLS_GUARD_UNAVAILABLE/);
+  refuse = false;
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  f.emit({ method: 'Fetch.requestPaused', params: { requestId: 'odd', resourceType: 'Document', request: { url: 'https://x.invalid/a:9222/b' } } });
+  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls.filter(row => row.params?.requestId === 'odd').map(row => row.method), ['Fetch.continueRequest', 'Fetch.failRequest']);
 });
 for (const method of ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds', 'Browser.setContentsSize',
   'Browser.close', 'Browser.crash', 'Browser.grantPermissions', 'Browser.resetPermissions', 'Browser.setPermission',

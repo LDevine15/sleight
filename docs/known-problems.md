@@ -68,6 +68,15 @@ our own runs. Dates and engine versions are given where they matter.
   or stop those. The extension's own popup interception sits behind a remote OpenAI flag with no local switch. Before the change,
   sleight's arm took focus 7 times in a 13-task Haiku round on 2026-10-12, against 2 for FowlBrowser's. The rerun is pending.
 
+- In a browser started with `--remote-debugging-port`, such as the benchmark's own headless Chromium, a page's speculation rules
+  (prefetch, prerender, or rules a script inserts) can request the DevTools HTTP endpoint and close another tab through
+  `/json/close`. Turbo's Fetch guards never see those requests, and in a 2026-10-15 probe no per-page control stopped them
+  (prerendering off, blocked URLs, cache off, data saver). Turning off Chrome's Preload pages setting stopped all three in Chrome,
+  while the headless shell ignored that setting. A browser connected through Chrome's own remote debugging consent, the way turbo
+  connects to the user's browser, answers 404 on `/json/version`, `/json/list`, `/json/close` and `/json/new`, so there it has nothing to reach.
+- Turbo relies on Chrome refusing page WebSockets to the debug port by their Origin. A Chrome started with
+  `--remote-allow-origins=*` would let a page drive another tab that way. sleight doesn't check for that flag.
+
 On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s against FowlBrowser's 26/26
 in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from that list:
 

@@ -38,18 +38,21 @@ const domains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Access
 const browserGuards = new WeakMap();
 function guardBrowser(upstream, port, isProtected) {
   if (browserGuards.has(upstream)) return browserGuards.get(upstream);
+  // Fetch reports URLs with userinfo, and the debug server speaks plain http even on 443.
   const patterns = ![80, 443].includes(port) ? [{ urlPattern: '*://*:' + port + '/*', requestStage: 'Request' }] :
     ['127.0.0.1', 'localhost', '*.localhost', 'localhost.', '[::1]', '0.0.0.0', '[::ffff:7f00:1]']
-      .map(host => ({ urlPattern: (port === 80 ? 'http' : 'https') + '://' + host + '/*', requestStage: 'Request' }));
+      .flatMap(host => [host, '*@' + host].map(spelled => ({ urlPattern: (port === 80 ? 'http' : 'https') + '://' + spelled + '/*', requestStage: 'Request' })))
+      .concat(port === 443 ? [{ urlPattern: '*://*:443/*', requestStage: 'Request' }] : []);
   const paused = frame => {
     if (frame?.sessionId !== undefined || frame?.method !== 'Fetch.requestPaused' || !id(frame.params?.requestId)) return;
-    const blocked = isProtected(frame.params.request?.url);
-    upstream.send(blocked ? 'Fetch.failRequest' : 'Fetch.continueRequest',
-      { requestId: frame.params.requestId, ...(blocked ? { errorReason: 'BlockedByClient' } : {}) }).catch(() => {});
+    const blocked = isProtected(frame.params.request?.url), requestId = frame.params.requestId;
+    const fail = () => upstream.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' });
+    // A request left paused would hang its tab. A failed continue falls back to failing it.
+    (blocked ? fail() : upstream.send('Fetch.continueRequest', { requestId }).catch(fail)).catch(() => {});
   };
   upstream.on('event', paused);
-  const ready = upstream.send('Fetch.enable', { patterns }).then(() => {}, error => {
-    upstream.off('event', paused); browserGuards.delete(upstream); throw error;
+  const ready = upstream.send('Fetch.enable', { patterns }).then(() => {}, () => {
+    upstream.off('event', paused); browserGuards.delete(upstream); throw Error('CDP_DEVTOOLS_GUARD_UNAVAILABLE');
   });
   browserGuards.set(upstream, ready);
   return ready;
