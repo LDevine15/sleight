@@ -50,6 +50,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   profiles are for benchmarks only. Apps not yet qualified stay on the native path.
 - Browser turbo's trusted confirmations use sleight's own window, outside the page. Connecting shows a short hookup animation and a
   connected indicator with Pause and Disconnect, and never hides Chrome's own indicators. Chrome and Helium are qualified separately.
+  Each Claude Code session has its own turbo worker, and its Chrome connection is released when the session ends (owner,
+  2026-10-15, replacing design v2's shared connection kept until Disconnect).
 - Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
   better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
   (owner, 2026-10-15), within reason.

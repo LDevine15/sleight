@@ -37,13 +37,15 @@ Post-release work builds on branches now and merges after the tag (owner, 2026-1
 
 1. Electron on turbo v3: EPV3-1 to EPV3-8 (`ledger/electron-v3-plan.md`), carrying over EP-2's cleanup and EP-6's build
    qualification. EPV3-1 is in a lane, and the rest follow in the plan's order.
-2. The full claim suite runs every arm on the same tasks (Claude in Chrome, Claude's own computer use on the newest Claude Desktop,
+2. The full claim suite comes before the parity battery (owner, 2026-10-15). It runs every arm on the same tasks (Claude in Chrome, Claude's own computer use on the newest Claude Desktop,
    FowlBrowser, Codex, LCU, Cua, Peekaboo), median and p90 over at least 5 runs, published with failures. API spend counts
    against the $200 monthly cap ($159.96 used in October).
 3. The Q1 error-message fixes. Q1-1 to Q1-6 are reviewed, and Q1-7 to Q1-17 have branches that need review.
 4. Speed. The measured gap to FowlBrowser on Haiku 5.5 is mostly time before the first action (67%) and result size (3x larger),
    with code streaming 26% (`ledger/opus-less-code-report.md`), so those come first. Turbo's five tools already cut code per action
-   for the browser. IN1 to IN4 (overlapped reads, free waits, learned routines, direct accessibility reads) need owner calls below.
+   for the browser. IN1 to IN4 proceed on sleight-arch's calls (owner, 2026-10-15): IN1 narrowed to default browser snapshots,
+   IN3's design reviewed by sleight-arch, and IN2 and IN4 measured headless or in an away window.
+   The skill (94 lines, up from 86 in 1.2.0) gets pruned with an A/B after the tag, not before the gate (owner, 2026-10-15).
 5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
 6. The AM1 speed map of app classes, parked until after 1.3.0. Its VS Code and Word fixtures still fail setup.
 7. Smaller queued work: NP-8 (native-path follow-up), FM3 (forms), TB2, CH1 (Chess save), AS-3 to AS-9, AM1FR.
@@ -70,10 +72,4 @@ and the stable-controls mode (LAWS).
 
 ## 5. Waiting on the owner
 
-- IN1 to IN4: narrow IN1 to default browser snapshots or define a private native baseline; approve IN3's design; allow the live
-  measurements IN2 and IN4 need.
 - AS-8 and AS-9: owner qualification and diagnostic runs.
-- Whether to prune the 94-line skill before or after 1.3.0.
-- Whether the parity battery runs before or after the claim suite.
-- Turbo's Chrome connection lifetime. The owner-approved design v2 kept one connection idle until Disconnect, shared across
-  sessions. v3 runs one worker per Claude Code session, and sleight-arch decided it releases at session end.
