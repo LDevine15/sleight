@@ -16,5 +16,5 @@ export async function prepareBenchRuntime() {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href && process.send) {
   prepareBenchRuntime().then(runtime => serveBenchWorker({ channel: process, ...runtime }).ready())
-    .catch(() => { if (process.connected) { process.send({ version: 3, status: 'unavailable' }); process.disconnect(); } });
+    .catch(error => { if (process.connected) { process.send({ version: 3, status: 'unavailable', code: error.message }); process.disconnect(); } });
 }

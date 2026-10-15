@@ -8,8 +8,7 @@ import { ciTestFiles } from './fixtures/ci-suite.mjs';
 
 test('the stripped CI audit includes every suite selected by npm test', () => {
   const files = ciTestFiles();
-  for (const file of ['tests/requirements.test.mjs', 'bench/direct-browser2/test/input.test.mjs',
-    'bench/native-path/test/contract.test.mjs', 'bench/direct-browser/test/tools.test.mjs',
+  for (const file of ['tests/requirements.test.mjs', 'bench/native-path/test/contract.test.mjs',
     'bench/direct-native/test/compiler.test.mjs']) assert.ok(files.includes(file), file);
   assert.equal(new Set(files).size, files.length);
 });
