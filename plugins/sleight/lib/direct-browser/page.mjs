@@ -110,7 +110,9 @@ export function popupHook() {
     const target = targetOf(element);
     if (!target || /^_(self|parent|top)$/i.test(target) || target === window.name) return true;
     if (target.toLowerCase() === '_blank') return false;
-    return typeof window.frames?.[target] === 'object';
+    const frames = window.frames, named = frames?.[target];
+    for (let i = 0; i < (frames?.length ?? 0); i++) if (frames[i] === named) return true;
+    return false;
   };
   const linkState = element => {
     if (!element || !['a', 'area'].includes(element.localName) || !element.hasAttribute('href') || element.hasAttribute('download')) return;

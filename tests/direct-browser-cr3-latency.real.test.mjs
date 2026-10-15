@@ -51,7 +51,8 @@ test('CR3 measures 20 snapshot reads per shape and 20 plain prepare+click calls'
       const start = performance.now(); await action(); samplesMs.push(performance.now() - start);
     }
     const sorted = samplesMs.toSorted((a, b) => a - b);
-    measurements[name] = { n: 20, medianMs: (sorted[9] + sorted[10]) / 2, p90Ms: sorted[17], samplesMs };
+    measurements[name] = { n: 20, medianMs: (sorted[9] + sorted[10]) / 2, p90Ms: sorted[17] };
+    t.diagnostic('CR3 samples ' + JSON.stringify({ name, samplesMs }));
   };
   for (const name of ['simple', 'frames', 'closed']) {
     await page.goto(origin + '/' + name); await page.waitForLoadState('load');

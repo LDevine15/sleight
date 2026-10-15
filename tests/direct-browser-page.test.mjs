@@ -204,7 +204,7 @@ test('CR3 arms every command without inspecting script or listener source', () =
 for (const attrs of [{ rel: 'noopener' }, { target: '_self', rel: 'noreferrer' },
   { target: 'content', rel: 'noopener' }, { target: '_parent' }, { target: '_top' }])
 test('CR3 same-context link stays plain: ' + JSON.stringify(attrs), () => {
-  const f = hookFixture(); f.window.frames = { content: {} };
+  const f = hookFixture(), child = {}; f.window.frames = Object.assign([child], { content: child });
   try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', ...attrs }), 'same', 1000), false); }
   finally { f.hook.off(); }
 });
@@ -216,9 +216,15 @@ for (const target of ['_blank', 'new-context']) test('CR3 independent link targe
 });
 
 test('CR3 base target selects an existing context without treating rel as a new window', () => {
-  const f = hookFixture(); f.window.frames = { content: {} };
+  const f = hookFixture(), child = {}; f.window.frames = Object.assign([child], { content: child });
   f.document.querySelector = () => new f.Element('base', { target: 'content' });
   try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', rel: 'noopener' }), 'base', 1000), false); }
+  finally { f.hook.off(); }
+});
+
+test('CR3 built-in Window properties are not existing named frame contexts', () => {
+  const f = hookFixture(); f.window.frames = Object.assign([], { top: f.window });
+  try { assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'top' }), 'builtin', 1000)?.kind, 'link'); }
   finally { f.hook.off(); }
 });
 
