@@ -233,9 +233,10 @@ test('V10R5 payment terms follow el.form and exclude an opacity-zero amount deco
   const hidden=node('Amount: 18.00',false), shown=node('Amount: 99.00');
   const root={...node(''),querySelectorAll:selector => selector.includes('amount') ? [hidden,shown] : []};
   const wrong={querySelectorAll:() => [],innerText:''};
-  const doc={createRange() {let node; return {selectNodeContents(n) {node=n;},getClientRects:() => node.parentElement.getClientRects()};},
+  const paint={color:'rgb(0, 0, 0)',webkitTextFillColor:'rgb(0, 0, 0)',backgroundColor:'rgba(0, 0, 0, 0)',backgroundImage:'none',filter:'none',maskImage:'none',mixBlendMode:'normal',fontSize:'16px'};
+  const doc={documentElement:{},createRange() {let node; return {selectNodeContents(n) {node=n;},getClientRects:() => (node.parentElement ?? node).getClientRects()};},
     createTreeWalker(node) { let read=false; return {nextNode() { if (read) return null; read=true; return node.innerText ? {parentElement:node,textContent:node.innerText} : null; }}; },
-    defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({visibility:'visible',display:'block',opacity:'1'})}};
+    defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({...paint,visibility:'visible',display:'block',opacity:'1'})}};
   const observed=api.readPaymentPage({ownerDocument:doc,form:root,closest:() => wrong,getAttribute:() => null});
   assert.equal(observed.page.amount,undefined);
 });

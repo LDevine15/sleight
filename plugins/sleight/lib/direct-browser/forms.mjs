@@ -126,7 +126,7 @@ function formState(expected) {
         (node.localName === 'button' || node.localName === 'input' && attr('type') === 'submit') && payment(words(node));
     });
     // Script-driven buttons (div[role=button], type=button) in a payment form can charge through an invisible handler.
-    if ((state.kind === 'button' || state.role === 'button') && state.formPayment && Element.prototype.getAttribute.call(el, 'type') !== 'reset') state.submit = true;
+    if ((state.kind === 'button' || state.role === 'button') && state.formPayment && !state.submit && (Element.prototype.getAttribute.call(el, 'type') ?? '').toLowerCase() !== 'reset') { state.submit = true; state.scriptButton = true; }
     if (state.submit) state.payment ||= state.formPayment;
   }
   if (state.payment && (state.kind === 'button' || state.role === 'button')) state.submit = true;

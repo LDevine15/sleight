@@ -71,27 +71,106 @@ export function samePageDocument(el, doc, read = (node, key) => { const value = 
 // All names are local so Playwright can serialize this read into the target's
 // frame. Page metadata is an observation only; it can never supply the method.
 // Require one visible exact labeled value per term in the target form/dialog.
+// Two predicates: `visible` (STRICT, a person could read it) lets a term supply
+// authority; `looseLines` (LOOSE, anything rendered) can only force an ask when
+// it shows a different payable number. Whatever can't be established fails closed.
 export function readPaymentPage(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   const doc = read(el, 'ownerDocument'), view = read(doc, 'defaultView');
   const associated = read(el, 'form');
   const root = (associated === undefined ? read(el, 'closest')('form') : associated) ?? read(el, 'closest')('dialog,[role="dialog"]');
+  const gs = (node, pseudo) => read(view, 'getComputedStyle')(node, pseudo);
+  const up = node => read(node, 'parentElement') ?? read(read(node, 'getRootNode')?.(), 'host');
+  const shown = node => read(node, 'checkVisibility')({ checkOpacity: true, checkVisibilityCSS: true });
   // rgba(...) -> [r,g,b,a]; anything else (color(), lab(), ...) is unknown and fails closed.
   const rgba = value => { const m = /^rgba?\(([^)]*)\)$/.exec(String(value).trim()); const n = m && m[1].match(/-?\d*\.?\d+/g)?.map(Number);
     return n && n.length >= 3 && n.every(Number.isFinite) ? [n[0], n[1], n[2], n.length > 3 ? n[3] : 1] : undefined; };
   const lum = c => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
   const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
-  // A person sees text only if it is rendered, uncovered at its own points, has non-zero effective
-  // opacity (opacity, filter, mask), a visible fill and contrast with what is actually behind it.
-  // Anything that cannot be established counts as not visible.
-  const visible = (node, rects = read(node, 'getClientRects')()) => {
-    if (!read(node, 'checkVisibility')({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+  const effective = node => { let o = 1; for (let n = node; n; n = up(n)) { const s = gs(n); o *= s.opacity === '' ? 1 : Number(s.opacity ?? 1); } return o; };
+  // Every element and open shadow root, once. Past the cap, nothing counts as visible.
+  let everyone, pseudoBoxes, tooMany = false;
+  const gather = () => {
+    if (everyone) return;
+    everyone = [];
+    const add = scope => { for (const n of Array.from(read(scope, 'querySelectorAll')?.('*') ?? [])) {
+      if (everyone.length > 20000) { tooMany = true; return; }
+      everyone.push({ n, box: read(n, 'getBoundingClientRect')() });
+      const shadow = read(n, 'shadowRoot'); if (shadow) add(shadow); } };
+    add(doc);
+  };
+  // Does something painted (background, image, replaced content, inset shadow, border, another element's text) sit at x,y?
+  const painted = (n, box, x, y, inside) => {
+    if (!shown(n) || effective(n) < 0.1) return false;
+    const s = gs(n), tag = read(n, 'localName');
+    if (['img', 'canvas', 'svg', 'video', 'picture', 'iframe', 'object', 'embed'].includes(tag)) return true;
+    const bg = rgba(s.backgroundColor);
+    if (!bg || bg[3] >= 0.1 || (s.backgroundImage && s.backgroundImage !== 'none') || [s.backdropFilter, s.webkitBackdropFilter].some(v => v && v !== 'none') ||
+        /inset/.test(s.boxShadow ?? '')) return true;
+    for (const [w, st, c, near] of [['borderTopWidth', 'borderTopStyle', 'borderTopColor', y - box.top], ['borderBottomWidth', 'borderBottomStyle', 'borderBottomColor', box.bottom - y],
+        ['borderLeftWidth', 'borderLeftStyle', 'borderLeftColor', x - box.left], ['borderRightWidth', 'borderRightStyle', 'borderRightColor', box.right - x]])
+      if (s[st] !== 'none' && s[st] !== 'hidden' && parseFloat(s[w]) > 0 && near <= parseFloat(s[w]) && (rgba(s[c])?.[3] ?? 1) >= 0.1) return true;
+    // Another element's own text under the point could hide or replace the digits.
+    return !inside && Array.from(read(n, 'childNodes')).some(c => read(c, 'nodeType') === 3 && read(c, 'textContent').trim()) && (rgba(s.webkitTextFillColor || s.color)?.[3] ?? 1) >= 0.1;
+  };
+  // Absolutely placed ::before/::after boxes that paint anything. Geometry comes from used values; auto or transforms fail closed.
+  const pseudos = () => {
+    if (pseudoBoxes) return pseudoBoxes;
+    pseudoBoxes = []; gather();
+    for (const { n } of everyone) for (const which of ['::before', '::after']) {
+      const s = gs(n, which); if (!s || !s.content || s.content === 'none' || s.content === 'normal') continue;
+      if (!['absolute', 'fixed'].includes(s.position)) continue;
+      const bg = rgba(s.backgroundColor), paints = !bg || bg[3] >= 0.1 || (s.backgroundImage && s.backgroundImage !== 'none') || /inset/.test(s.boxShadow ?? '') ||
+        parseFloat(s.borderTopWidth) > 0 || parseFloat(s.borderLeftWidth) > 0 || s.content.replace(/["'\s]/g, '') !== '';
+      if (!paints || s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) < 0.1) continue;
+      let cb = { left: 0, top: 0 };
+      if (s.position === 'absolute') for (let a = n; a; a = up(a)) if (gs(a).position !== 'static') { const ab = read(a, 'getBoundingClientRect')(); cb = { left: ab.left + read(a, 'clientLeft'), top: ab.top + read(a, 'clientTop') }; break; }
+      const L = parseFloat(s.left), T = parseFloat(s.top), W = parseFloat(s.width), H = parseFloat(s.height);
+      if (![L, T, W, H].every(Number.isFinite) || (s.transform && s.transform !== 'none')) { pseudoBoxes.push({ box: { left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 } }); continue; }
+      const left = cb.left + L + (parseFloat(s.marginLeft) || 0), top = cb.top + T + (parseFloat(s.marginTop) || 0);
+      pseudoBoxes.push({ box: { left, top, right: left + W, bottom: top + H } });
+    }
+    return pseudoBoxes;
+  };
+  // Every colour the text could sit on: ancestors' colours, gradient stops, then the canvas. Images we can't read fail closed.
+  const backdrops = node => {
+    const layers = [];
+    for (let n = node; n; n = up(n)) {
+      const s = gs(n), color = rgba(s.backgroundColor), image = s.backgroundImage;
+      if (!color) return;
+      let stops;
+      if (image && image !== 'none') {
+        if (/url\(|image-set|element\(|paint\(|cross-fade/.test(image)) return;
+        stops = (image.match(/rgba?\([^)]*\)/g) ?? []).map(rgba); if (!stops.length || stops.some(c => !c)) return;
+      }
+      layers.push({ color, stops }); if (color[3] >= 0.99 && !stops) break;
+    }
+    const scheme = gs(read(doc, 'documentElement')).colorScheme ?? '';
+    const dark = /dark/.test(scheme) && (!/light/.test(scheme) || read(view, 'matchMedia')?.('(prefers-color-scheme: dark)')?.matches === true);
+    let backs = [dark ? [18, 18, 18, 1] : [255, 255, 255, 1]];
+    for (const { color, stops } of layers.reverse()) backs = backs.flatMap(b => { const base = over(color, b); return stops ? stops.map(s => over(s, base)) : [base]; }).slice(0, 64);
+    return backs;
+  };
+  // A person sees text only if it is rendered, uncovered at sample points of its own rects (whatever the pointer-events
+  // or paint order), has non-zero effective opacity (opacity, filter, mask), a visible fill, a readable size and
+  // contrast with everything it could sit on. Anything that cannot be established counts as not visible.
+  const visible = (node, rects) => {
+    if (!shown(node)) return false;
+    if (!rects) {
+      const range = ['input', 'select', 'textarea'].includes(read(node, 'localName')) ? undefined : read(doc, 'createRange')();
+      if (range) range.selectNodeContents(node);
+      const own = range && [...range.getClientRects()];
+      rects = own?.length ? own : read(node, 'getClientRects')();
+    }
     let left = 0, top = 0, right = read(view, 'innerWidth'), bottom = read(view, 'innerHeight'), opacity = 1;
-    for (let parent = node; parent; parent = read(parent, 'parentElement') ?? read(read(parent, 'getRootNode')?.(), 'host')) {
-      const style = read(view, 'getComputedStyle')(parent);
+    for (let parent = node; parent; parent = up(parent)) {
+      const style = gs(parent);
       opacity *= style.opacity === '' ? 1 : Number(style.opacity ?? 1);
       for (const f of String(style.filter ?? '').matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g)) opacity *= Number(f[1]) / (f[2] ? 100 : 1);
       if (!(opacity >= 0.1) || style.visibility === 'hidden' || style.display === 'none' ||
           style.clipPath && style.clipPath !== 'none' || style.clip && style.clip !== 'auto') return false;
+      // Blur, brightness, invert and the like change what is seen; only opacity() is understood.
+      const rest = String(style.filter ?? 'none').replace(/opacity\([^)]*\)/g, '').trim();
+      if (rest !== 'none' && rest !== '') return false;
       if ([style.maskImage, style.webkitMaskImage, style.maskBorderSource].some(v => v && v !== 'none') ||
           style.mixBlendMode && style.mixBlendMode !== 'normal') return false;
       const box = read(parent, 'getBoundingClientRect')();
@@ -101,32 +180,28 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     const seen = [...rects].filter(r => Math.min(right, r.right) - Math.max(left, r.left) >= 4 && Math.min(bottom, r.bottom) - Math.max(top, r.top) >= 4);
     if (!seen.length) return false;
-    // Fill and contrast against the first opaque background behind the text (canvas is white).
-    const own = read(view, 'getComputedStyle')(node);
-    const ink = rgba(own.webkitTextFillColor || own.color);
-    if (!ink || ink[3] < 0.1) return false;
-    let back = [255, 255, 255, 1], layers = [];
-    for (let parent = node; parent; parent = read(parent, 'parentElement') ?? read(read(parent, 'getRootNode')?.(), 'host')) {
-      const style = read(view, 'getComputedStyle')(parent), color = rgba(style.backgroundColor);
-      if (!color || style.backgroundImage && style.backgroundImage !== 'none') return false;
-      layers.push(color); if (color[3] >= 0.99) break;
-    }
-    for (const layer of layers.reverse()) back = over(layer, back);
-    const shown = over(ink, back), a = lum(shown) + 0.05, b = lum(back) + 0.05;
-    if (Math.max(a, b) / Math.min(a, b) < 1.5) return false;
-    // Cover test at each rendered rect: the topmost element must be the text's own element or inside it,
-    // unless the element on top paints nothing (a transparent click shield).
-    const related = (x, y) => { for (let n = x; n; n = read(n, 'parentNode') ?? read(read(n, 'getRootNode')?.(), 'host')) if (n === y) return true; return false; };
+    const own = gs(node), ink = rgba(own.webkitTextFillColor || own.color);
+    if (!ink || ink[3] * opacity < 0.1 || !(parseFloat(own.fontSize) >= 7)) return false;
+    const backs = backdrops(node); if (!backs) return false;
+    const paint = [ink[0], ink[1], ink[2], ink[3] * opacity];
+    for (const b of backs) { const a = lum(over(paint, b)) + 0.05, c = lum(b) + 0.05; if (Math.max(a, c) / Math.min(a, c) < 1.5) return false; }
+    gather(); if (tooMany) return false;
+    const spots = [];
     for (const r of seen.slice(0, 8)) {
-      let hit = read(doc, 'elementFromPoint')((Math.max(left, r.left) + Math.min(right, r.right)) / 2, (Math.max(top, r.top) + Math.min(bottom, r.bottom)) / 2);
-      for (let root; hit && (root = read(hit, 'shadowRoot')) && read(root, 'elementFromPoint');) {
-        const inner = read(root, 'elementFromPoint')((Math.max(left, r.left) + Math.min(right, r.right)) / 2, (Math.max(top, r.top) + Math.min(bottom, r.bottom)) / 2);
-        if (!inner || inner === hit) break; hit = inner;
+      const l = Math.max(left, r.left), t = Math.max(top, r.top), rr = Math.min(right, r.right), b = Math.min(bottom, r.bottom);
+      const nx = Math.min(40, Math.max(3, Math.ceil((rr - l) / 6)));
+      for (let i = 0; i < nx; i++) for (let j = 0; j < 3; j++) spots.push([l + (rr - l) * (i + 0.5) / nx, t + (b - t) * (j + 0.5) / 3]);
+    }
+    const ancestors = new Set(); for (let n = node; n; n = up(n)) ancestors.add(n);
+    const xs = spots.map(p => p[0]), ys = spots.map(p => p[1]), lo = [Math.min(...xs), Math.min(...ys)], hi = [Math.max(...xs), Math.max(...ys)];
+    const near = everyone.filter(({ n, box }) => !ancestors.has(n) && box.width > 0 && box.height > 0 && box.right >= lo[0] && box.left <= hi[0] && box.bottom >= lo[1] && box.top <= hi[1]);
+    for (const [x, y] of spots) {
+      for (const { n, box } of near) {
+        if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+        let inside = false; for (let a = n; a; a = up(a)) if (a === node) { inside = true; break; }
+        if (painted(n, box, x, y, inside)) return false;
       }
-      if (!hit) return false;
-      if (related(hit, node)) continue;
-      const hs = read(view, 'getComputedStyle')(hit), bg = rgba(hs.backgroundColor);
-      if (!bg || bg[3] >= 0.1 || hs.backgroundImage !== 'none' || Number(hs.opacity) >= 0.1 && Array.from(read(hit, 'childNodes')).some(c => read(c, 'nodeType') === 3 && read(c, 'textContent').trim())) return false;
+      for (const { box } of pseudos()) if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) return false;
     }
     return true;
   };
@@ -138,11 +213,68 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       const range = read(doc, 'createRange')(); range.selectNodeContents(part);
       if (!read(part, 'textContent').trim() || !visible(read(part, 'parentElement'), range.getClientRects())) continue;
       let block = read(part, 'parentElement');
-      while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(read(view, 'getComputedStyle')(block).display)) block = read(block, 'parentElement');
+      while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(gs(block).display)) block = read(block, 'parentElement');
       if (parts.length) parts.push(previous === block ? ' ' : '\n');
       parts.push(read(part, 'textContent').trim()); previous = block;
     }
     return parts.join('');
+  };
+  // LOOSE: every rendered string under the form (offscreen, faint, ::before/::after, input values, open shadow roots, same-origin frames)
+  // plus the activating control's own label.
+  const looseLines = () => {
+    const parts = []; let previous, count = 0;
+    const push = (text, owner) => {
+      const t = String(text ?? '').replace(/\s+/g, ' ').trim(); if (!t) return;
+      let block = owner; while (block && /^(?:inline(?:-.*)?|contents)$/.test(gs(block).display)) block = up(block);
+      if (parts.length) parts.push(previous === block ? ' ' : '\n');
+      parts.push(t); previous = block;
+    };
+    const pseudo = (n, which) => { const c = gs(n, which)?.content; if (c && c !== 'none' && c !== 'normal') push(c.replace(/^["']|["']$/g, ''), n); };
+    const walk = n => {
+      if (++count > 20000) throw Error('too many nodes');
+      const on = shown(n), tag = read(n, 'localName');
+      // A banner-sized image or canvas can show a total we can't read.
+      if (on && ['img', 'canvas', 'svg', 'video', 'picture', 'object', 'embed'].includes(tag)) { const b = read(n, 'getBoundingClientRect')(); if (b.width >= 100 && b.height >= 16) throw Error('unreadable content'); }
+      if (on) {
+        pseudo(n, '::before');
+        if (tag === 'input') { if (!/^(?:hidden|password|checkbox|radio|file)$/.test(read(n, 'type'))) push(read(n, 'value'), n); }
+        else if (tag === 'textarea') push(read(n, 'value'), n);
+        else if (tag === 'select') for (const o of Array.from(read(n, 'selectedOptions') ?? [])) push(read(o, 'textContent'), n);
+      }
+      if (['select', 'textarea', 'input'].includes(tag)) { if (on) pseudo(n, '::after'); return; }
+      const shadow = read(n, 'shadowRoot'); if (shadow) for (const c of Array.from(read(shadow, 'childNodes') ?? [])) if (read(c, 'nodeType') === 1) walk(c);
+      if (tag === 'iframe') { try { const body = read(read(n, 'contentDocument'), 'body'); if (body) walk(body); } catch { /* cross-origin */ } }
+      for (const c of Array.from(read(n, 'childNodes') ?? [])) {
+        if (read(c, 'nodeType') === 1) walk(c); else if (read(c, 'nodeType') === 3 && on) push(read(c, 'textContent'), n);
+      }
+      if (on) pseudo(n, '::after');
+    };
+    try { walk(root); } catch { return; }
+    const tag = read(el, 'localName'), isField = ['input', 'select', 'textarea'].includes(tag);
+    const own = [read(el, 'getAttribute')('aria-label'), isField ? undefined : read(el, 'textContent'), isField ? undefined : read(el, 'getAttribute')('value'),
+      tag === 'input' && /^(?:submit|button|image|reset)$/.test(read(el, 'type')) ? read(el, 'value') : undefined].filter(Boolean);
+    return parts.join('').split('\n').concat(own.map(t => String(t).replace(/\s+/g, ' ').trim()));
+  };
+  // A payable figure follows total/amount/due/pay/price/cost/charge; subtotals, tax, savings, balances and
+  // "before tax" lines are not payable. Every figure on a line is checked, and each line is also joined to the one
+  // before it so a label and figure in different blocks still meet.
+  const conflicts = (lines, amount) => {
+    const num = value => Number(String(value).replace(/[^\d.]/g, ''));
+    const token = /(?:[$€£¥]\s*|\b(?:USD|EUR|GBP|CAD|AUD)\s*)(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*\.\d{2})\b|(\d[\d,]*(?:\.\d+)?)\s*(?:USD|EUR|GBP|CAD|AUD)\b|(?<=[:=]\s*)(\d[\d,]*(?:\.\d+)?)/gi;
+    const label = /\b(?:total|amount|due|pay(?:ment|able)?|price|cost|charged?|charges|owe[ds]?)\b/i;
+    const before = /\b(?:sub-?\s?total|tax(?:es)?|vat|gst|savings?|saved?|discount|shipping|delivery|tips?|fees?|available|remaining|credit|refund|limit|points|rewards?|coupon|monthly|per|each|unit|item)\b/i;
+    const after = /^\s*(?:tax|vat|savings?|saved|discount|shipping|delivery|tips?|fees?)\b|\b(?:before|excluding|excl|without|pre-?tax)\b/i;
+    const scan = line => {
+      let end = 0;
+      for (const m of line.matchAll(token)) {
+        const seg = line.slice(end, m.index); end = m.index + m[0].length;
+        const found = label.exec(seg); if (!found) continue;
+        if (before.test(seg.slice(0, found.index + found[0].length)) || after.test(seg.slice(found.index + found[0].length))) continue;
+        if (num(m[1] ?? m[2] ?? m[3] ?? m[4]) !== num(amount)) return true;
+      }
+      return false;
+    };
+    return lines.some((line, i) => scan(line) || i > 0 && scan(lines[i - 1] + ' ' + line));
   };
   const field = key => {
     if (!root) return;
@@ -165,12 +297,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       for (const line of visibleText(root).split('\n')) { const match = label.exec(line.trim()); if (match) values.push(match[1].trim()); }
     }
     if (key === 'amount' && values.length === 1) {
-      // Any visible total that disagrees with the labelled amount makes the terms ambiguous.
-      const num = value => Number(String(value).replace(/[^\d.]/g, ''));
-      for (const line of visibleText(root).split('\n')) {
-        const m = /(?:^|[^a-z])(?:(?:grand\s+)?total(?:\s+(?:due|amount|price|payable))?|amount(?:\s+(?:due|payable))?|(?:balance\s+)?due|you\s+pay|charged?|balance)\b[^\d\n]{0,24}?([$\u20ac\u00a3\u00a5]?\s*\d[\d,]*(?:\.\d+)?)/i.exec(line.replace(/\bsub\s*total\b/ig, ''));
-        if (m && num(m[1]) !== num(values[0])) return;
-      }
+      // Anything rendered that shows a different payable figure (LOOSE) leaves the terms ambiguous.
+      const lines = looseLines(); if (!lines || conflicts(lines, values[0])) return;
     }
     return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };

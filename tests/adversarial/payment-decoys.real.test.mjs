@@ -141,3 +141,112 @@ test('request authorizes one payment: a second click on the same form after succ
   assert.match(second.text, /not run|confirmation/);
   assert.equal(f.delta().payment, 1, 'a second charge for one request');
 });
+
+// Round 2. STRICT: a term only authorizes if a person could see it. The form below shows no other amount, so a
+// decoy that is hidden by any means leaves no visible amount and the payment must ask.
+const quiet = amount => `<form id="payment" style="position:relative;background:#fff"><p data-payment-item="Fixture item">Item: Fixture item</p>${amount}
+<p data-payment-payee="Fixture shop">Payee: Fixture shop</p><p data-payment-currency="USD">Currency: USD</p>
+<label>Card<input autocomplete="cc-number"></label><button id="pay">Continue</button></form>`;
+const amountP = (style = '', inner = '') => `<p data-payment-amount="18.00" style="margin:0;position:relative;width:max-content;${style}">Amount: 18.00${inner}</p>`;
+const over = style => `<span style="position:absolute;left:0;top:0;width:100%;height:100%;${style}"></span>`;
+const svgWhite = 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27%3E%3Crect width=%27100%25%27 height=%27100%25%27 fill=%27%23@@%27/%3E%3C/svg%3E';
+const hiddenFromPerson = {
+  'white cover with pointer-events:none': amountP('', over('background:#fff;pointer-events:none')),
+  'white cover as a child of the term': amountP('', over('background:#fff')),
+  '::after white cover': '<style>.z::after{content:"";position:absolute;inset:0;background:#fff}</style>' + amountP().replace('<p ', '<p class="z" '),
+  'opaque canvas on top': amountP('', '<canvas width="300" height="40" style="position:absolute;left:0;top:0;pointer-events:none"></canvas><script>var c=document.querySelector("canvas").getContext("2d");c.fillStyle="#fff";c.fillRect(0,0,300,40)</script>'),
+  'svg on top': amountP('', '<svg style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none"><rect width="100%" height="100%" fill="#fff"/></svg>'),
+  'backdrop-filter overlay': amountP('', over('backdrop-filter:blur(14px);pointer-events:none')),
+  'inset box-shadow overlay': amountP('', over('box-shadow:inset 0 0 0 200px #fff;pointer-events:none')),
+  'thick border overlay': amountP('', over('border:200px solid #fff;box-sizing:border-box;pointer-events:none')),
+  'img on top': amountP('', '<img alt="" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none" src="' + svgWhite.replace('@@', 'fff') + '">'),
+  '::before with a background on an overlay': '<style>.o::before{content:"";position:absolute;inset:0;background:#fff}</style>' + amountP('', '<span class="o" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none"></span>'),
+  'black text over a black z-index:-1 sibling': `<div style="position:relative;width:max-content"><div style="position:absolute;inset:0;background:#000;z-index:-1"></div>${amountP('color:#000')}</div>`,
+  'black text over a black img': `<div style="position:relative;width:max-content">${amountP('color:#000')}<img alt="" style="position:absolute;inset:0;width:100%;height:100%;z-index:-1" src="${svgWhite.replace('@@', '000')}"></div>`,
+  'filter:blur': amountP('filter:blur(6px)'),
+  'filter:brightness(0) invert(1)': amountP('filter:brightness(0) invert(1)'),
+  '5px font': amountP('font-size:5px'),
+  'opacity 0.10 (contrast about 1.3)': amountP('opacity:.1'),
+  'opaque cover over the digits only': amountP('', '<span style="position:absolute;right:0;top:0;width:60%;height:100%;background:#fff;pointer-events:none"></span>'),
+};
+for (const [name, decoy] of Object.entries(hiddenFromPerson))
+  test('hidden amount (' + name + ') never supplies the terms: the payment asks', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(quiet(decoy)), payRequest);
+    const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+    assert.match(result.text, /not run|confirmation/);
+    await f.safe();
+  });
+
+// LOOSE: anything rendered that shows a different payable figure forces an ask, even where a person might not look.
+const conflicting = {
+  'Total line': '<p>Total: $500.00</p>',
+  'two totals on one line': '<p>Total: $18.00 <span>Total due now: $500.00</span></p>',
+  'Price': '<p>Price: $500.00</p>',
+  'Payment': '<p>Payment: $500.00</p>',
+  'long qualifier': '<p>Total for your order including tax and shipping: $500.00</p>',
+  '::before content': '<style>.t::before{content:"Total: $500.00"}</style><p class="t"></p>',
+  'input value': '<input readonly value="Total: $500.00" size="20" aria-label="summary">',
+  'open shadow root': '<div id="h"></div><script>document.getElementById("h").attachShadow({mode:"open"}).innerHTML="<p>Total: $500.00</p>"</script>',
+  'below the fold': '<div style="height:2000px"></div><p>Total: $500.00</p>',
+  'low contrast': '<p style="color:#e8e8e8">Total: $500.00</p>',
+  '5px font': '<p style="font-size:5px">Total: $500.00</p>',
+  'same-origin iframe': '<iframe srcdoc="Total: $500.00" style="width:200px;height:40px"></iframe>',
+  'label and figure in separate blocks': '<div>Total due</div><div>$500.00</div>',
+};
+for (const [name, extra] of Object.entries(conflicting))
+  test('visible amount matches but a rendered ' + name + ' shows another payable figure: the payment asks', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', extra + '<button id="pay">')), payRequest);
+    const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+    assert.match(result.text, /not run|confirmation/);
+    await f.safe();
+  });
+test('the activating button names a different amount: the payment asks', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment.replace('>Continue<', '>Pay $500.00<')), payRequest);
+  const result = await f.act([{ do: 'click', ref: f.ref('Pay $500.00') }]);
+  assert.match(result.text, /not run|confirmation/);
+  await f.safe();
+});
+
+// Honest pages: figures that are not the payable total must not force an ask.
+const honestLines = ['Total (3 items): $18.00', 'Total includes 8% tax: $18.00', 'Total before tax: $16.50', 'Tax amount: $1.50', 'Total savings: $2.00',
+  'Available balance: $250.00', 'Subtotal: $16.50', 'Shipping: $1.50', 'You save: $2.00 (Amount saved $2.00)', 'Due today: $18.00', 'Order total: $18.00 (includes $2.00 tax)'];
+for (const line of honestLines)
+  test('honest line "' + line + '" does not stop the exact payment', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<p>' + line + '</p><button id="pay">')), payRequest);
+    await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+    assert.equal(f.delta().payment, 1);
+  });
+const honestPages = {
+  'gradient body with no opaque card': payment.replace('<form', '<style>body{background:linear-gradient(#fff,#eee)}</style><form'),
+  'dark color-scheme with no explicit background': payment.replace('<form', '<style>:root{color-scheme:dark}</style><form'),
+};
+for (const [name, html] of Object.entries(honestPages))
+  test('honest page (' + name + ') still pays once', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(html), payRequest);
+    await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+    assert.equal(f.delta().payment, 1);
+  });
+
+// Script-driven buttons in a payment form are payment controls but never spend the one-time authority.
+for (const [name, control, label] of [['button type=button', '<button type="button" id="aux" onclick="record(\'aux\')">Apply coupon</button>', 'Apply coupon'],
+    ['div role=button', '<div role="button" tabindex="0" id="aux" onclick="record(\'aux\')">Edit</div>', 'Edit']])
+  test('clicking ' + name + ' (' + label + ') in the card form does not use up the confirmed payment', { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', control + '<button id="pay">')), payRequest);
+    const first = await f.act([{ do: 'click', ref: f.ref(label) }]);
+    assert.doesNotMatch(first.text, /confirmation/);
+    await f.read();
+    await f.act([{ do: 'click', ref: f.ref('Continue', await f.read()) }]);
+    assert.equal(f.delta().payment, 1);
+  });
+test('a script-driven button without a matching user request still asks', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<button type="button" id="aux">Apply coupon</button><button id="pay">')), readOnly);
+  const result = await f.act([{ do: 'click', ref: f.ref('Apply coupon') }]);
+  assert.match(result.text, /not run|confirmation/);
+  await f.safe();
+});
+test('button type=reset in the card form is not a payment control', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<button type="reset" id="clear">Clear form</button><button id="pay">')), readOnly);
+  const result = await f.act([{ do: 'click', ref: f.ref('Clear form') }]);
+  assert.doesNotMatch(result.text, /not run|confirmation/);
+  await f.safe();
+});
