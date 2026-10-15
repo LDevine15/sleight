@@ -180,8 +180,16 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
           // own init scripts do not guarantee) and the resume are ordered without a round trip between them. The pause matters:
           // the browser replaces an iframe's first target a few milliseconds after creating it, and in 3 of 3 runs with one more
           // round trip before the resume the replacement never attached to the filter.
+          // Chrome drops a nested frame's pending load when Target.setAutoAttach reaches a session above it a second time, or
+          // from a second session on the same page while that frame loads, and the page then stays "interactive" for good (a
+          // cross-site frame in a cross-site frame: 20 to 22 of 24 loads stuck at depth 2; without the filter or Playwright, a repeat on an
+          // iframe session left 5 to 7 of 30 stuck and none without it). So every session gets it once, and a page gets it
+          // from one session: the first, here, before the page is announced; a later session of the same page (a probe, a
+          // snapshot read, the registry's handle) only when its caller asks, and a repeat from a caller is answered without
+          // sending (see Target.setAutoAttach below). A frame or worker session gets it here, so its children are caught at once.
+          route.autoAttached = !(route.type === 'page' && [...routes.values()].some(other => other !== route && other.target === route.target && other.autoAttached));
           const sends = [upstream.send('Fetch.enable', { patterns: guardPatterns }, params.sessionId),
-            upstream.send('Target.setAutoAttach', autoAttachParams, params.sessionId),
+            ...(route.autoAttached ? [upstream.send('Target.setAutoAttach', autoAttachParams, params.sessionId)] : []),
             ...(route.type === 'iframe' ? installScripts(params.sessionId, route) : [])];
           const resume = params.waitingForDebugger ? upstream.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId) : undefined;
           resume?.catch(() => {});
@@ -355,8 +363,16 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
         if (method === 'Target.setAutoAttach') {
           if (typeof params.autoAttach !== 'boolean' || params.flatten !== true) refuse();
           if (!isRoot && routes.get(route).private) refuse();
-          if (!isRoot) return upstream.send(method, protectedPort !== undefined ? autoAttachParams :
-            { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
+          if (!isRoot && protectedPort !== undefined) {
+            // The parameters are fixed, so a repeat changes nothing the browser keeps, and the repeat itself can stall a
+            // nested frame that is loading (see the burst).
+            const ownedRoute = routes.get(route);
+            if (ownedRoute.autoAttached) return {};
+            ownedRoute.autoAttached = true;
+            try { return await upstream.send(method, autoAttachParams, route); }
+            catch (error) { ownedRoute.autoAttached = false; throw error; }
+          }
+          if (!isRoot) return upstream.send(method, { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
           autoAttach = params.autoAttach;
           if (autoAttach) for (const target of owned) if (![...routes.values()].some(r => r.target === target)) await attach(target);
           return {};
