@@ -270,21 +270,28 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // A tab the page opened during a click without the background modifier is probably in the foreground.
         const clicked = ['click', 'press'].includes(step.do);
         const foregroundTabs = clicked ? (await tab.takeForeground?.() ?? 0) + (boundary?.kind === 'popup' && tab.background === false
-          && tab.pageOpened?.(boundary.popup) === true ? 1 : 0) : 0;
+          && tab.pageOpened?.(boundary.popup) === true ? 1 : 0)
+          + (boundary?.kind === 'popup' && tab.background === true && tab.popupIsBackground?.(boundary.popup) === false ? 1 : 0) : 0;
+        // The click carried the background modifier only if sleight sent it; a tab the page opened after the click's dispatch ended got no such help.
+        const why = tab.background === false ? 'this click carried no background modifier' : 'the page opened it after a click, outside the background handling';
         const outcome = boundary?.kind === 'navigation' ? 'navigated, address (untrusted page content): ' + originOf(page.url()) + navPath + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'
           : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} is waiting; message (untrusted page content): "${clean(boundary.dialog.message())}"`
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
-            : foregroundTabs > 0 ? 'opened a tab that probably took the foreground (this click carried no background modifier, and sleight cannot tell which tab was active before); opener below: ' + originOf(boundary.popup.url())
+            : foregroundTabs > 0 ? `opened a tab that probably took the foreground (${why}, and sleight cannot tell which tab was active before); opener below: ` + originOf(boundary.popup.url())
             : `opened background tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (opener ${tab.tab ?? 'this tab'})`
           : boundary?.kind === 'close' ? 'tab closed'
+          : popupTab && foregroundTabs > 0 ? `opened a tab ${popupTab} that probably took the foreground (${why}, and sleight cannot tell which tab was active before); the opener's page is below`
           : popupTab ? `opened background tab ${popupTab} (opener ${tab.tab ?? 'this tab'}); the opener's page is below`
           : typeof result === 'string' ? result
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
         // A script that opens a tab after the input (a timer, a fetch) is held in the background, never silently.
         const heldOpenings = clicked ? await tab.takeHeld?.().catch(() => 0) : 0;
-        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' ? '. A tab the page opened probably took the foreground' : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
+        // A page can raise a window it opened from another origin with focus(); no patch in the page, and no CDP call, stops or reports that.
+        const raisable = clicked ? (await tab.raisablePopups?.().catch(() => []) ?? []) : [];
+        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' && !popupTab ? `. A tab the page opened probably took the foreground (${why})` : '')
+          + (raisable.length ? `. ${raisable.length > 1 ? 'Tabs' : 'Tab'} ${raisable.join(', ')} (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that` : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();

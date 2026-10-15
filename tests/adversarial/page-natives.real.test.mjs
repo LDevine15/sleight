@@ -396,12 +396,12 @@ test('a capture listener that stops propagation first cannot let a detached link
 
 // Round 3 of the popup hook. "Foreground" is the browser's own tab active bit: f.safe() compares it with the
 // value at start and counts focus commands on the wire. /danger must never be requested, /landed may be.
-async function attack(t, { body = '', script = '', steps, wait = 1500 } = {}) {
+async function attack(t, { body = '', script = '', steps, wait = 1500, routes = {}, probe } = {}) {
   const b = await bank(t, { observeTabs: true });
-  const f = await b.start(plain('<button id="go" type="button">Go</button>' + body, script), readOnly, { routes: landed(b) });
+  const f = await b.start(plain('<button id="go" type="button">Go</button>' + body, script), readOnly, { routes: { ...landed(b), ...routes } });
   const result = await f.act(steps ? steps(f) : [{ do: 'click', ref: f.ref('Go') }]);
   await pause(wait);
-  return { b, f, result };
+  return { b, f, result, extra: probe ? await probe(f, b) : undefined };
 }
 const press = (label, key = 'Enter') => f => [{ do: 'press', ref: f.ref(label), key }];
 const click = label => f => [{ do: 'click', ref: f.ref(label) }];
@@ -584,11 +584,12 @@ test('iframe.contentWindow.focus() still focuses the frame (focus)', { skip, tim
   await f.safe({ settle: 300 });
 });
 
-// Known gap, reported: a script-started click on a link that flips its own target (a timer started by an
-// unmodified agent click) still raises the tab. The result must not call that tab a background tab.
-test('a script click that flips its own link after an unmodified click is reported as a probable foreground tab (known gap)', { skip, timeout: 90000 }, async t => {
-  const { f, result } = await attack(t, { body: '<a id="l1" href="/landed?start">Start</a><a id="a2" href="/landed" target="_self" hidden>x</a>',
-    script: 'a2.addEventListener("click",()=>{a2.target="_blank"});document.getElementById("l1").addEventListener("click",e=>{e.preventDefault();setTimeout(()=>a2.click(),50)})',
+// Known gap, reported: a script-started click on a link whose target a listener changes in a way the hook cannot see (a
+// base element it adds; setters, setAttribute and Attr values are caught) still raises the tab. The result must not call
+// that tab a background tab.
+test('a script click that flips its own link through a new base element after an unmodified click is reported as a probable foreground tab (known gap)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="l1" href="/landed?start">Start</a><a id="a2" href="/landed" hidden>x</a>',
+    script: 'a2.addEventListener("click",()=>{const b=document.createElement("base");b.target="_blank";document.head.append(b)});document.getElementById("l1").addEventListener("click",e=>{e.preventDefault();setTimeout(()=>a2.click(),50)})',
     steps: click('Start') });
   assert.match(result.text, /probably took the foreground/, first(result));
   assert.doesNotMatch(result.text, /opened background tab/);
@@ -603,4 +604,286 @@ for (const [name, body] of Object.entries({
   assert.match(result.text, /page script tried to open .*held/i, first(result));
   assert.deepEqual(dangerHits(f), []);
   await f.safe({ settle: 300 });
+});
+
+// ---- AD1 pop round 4. The round 3 review's repros (its p7, p9, p10 and p11 files), one test each, plus the fixes' own controls.
+// A case passes when the browser's active tab did not change, nothing asked for /danger (the payment route), and the result says
+// what happened. Cases whose page legitimately ends up in a background tab point at /landed instead of /danger.
+const R4_SELF = '<a id="a" href="/danger" target="_self">open docs</a>';
+const R4_BLANK = '<a id="a" href="/danger" target="_blank">open docs</a>';
+const R4_HELD = /page script tried to open .*held/i;
+const R4_XO = "location.origin.replace('127.0.0.1','localhost')";
+const r4Mouse = (type, init) => `new MouseEvent('${type}',{bubbles:true,cancelable:true,${init}})`;
+// The held count reaches the result of the click that was running when the script fired; a script that fires after the click's
+// settling is counted in the next call, which is read directly here.
+const r4Quiet = async (f, result, { held = false } = {}) => {
+  if (held && !R4_HELD.test(result.text)) assert.ok(await f.entry.takeHeld() > 0, 'the page script\'s opening was held: ' + first(result));
+  assert.deepEqual(dangerHits(f), [], first(result));
+  await f.safe({ settle: 300 });
+};
+// A tab that opened after the click's result was built is reported by the next click or key press.
+const r4Reported = async (f, result) => {
+  if (/probably took the foreground/.test(result.text)) return result;
+  await pause(500);
+  return f.act([{ do: 'click', ref: f.ref('Noop', await f.read()) }]);
+};
+
+// F1. A synthetic click with a modifier or a non-primary button picks a window or tab from the event itself.
+const r4ClosedShadow = event => `const h=document.createElement('div');document.body.append(h);const s=h.attachShadow({mode:'closed'});const l=document.createElement('a');l.href='/danger';s.append(l);l.dispatchEvent(${event})`;
+for (const [name, body, code, inside = false] of [
+  ['shiftKey on a same-tab link', R4_SELF, `a.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['ctrlKey and metaKey on a same-tab link', R4_SELF, `a.dispatchEvent(${r4Mouse('click', 'ctrlKey:true,metaKey:true')})`],
+  ['ctrl, meta and shift on a same-tab link', R4_SELF, `a.dispatchEvent(${r4Mouse('click', 'ctrlKey:true,metaKey:true,shiftKey:true')})`],
+  ['altKey on a same-tab link', R4_SELF, `a.dispatchEvent(${r4Mouse('click', 'altKey:true')})`],
+  ['button 1 on a same-tab link', R4_SELF, `a.dispatchEvent(${r4Mouse('click', 'button:1')})`],
+  ['an auxclick MouseEvent on a same-tab link', R4_SELF, `a.dispatchEvent(${r4Mouse('auxclick', 'button:1')})`],
+  ['an auxclick PointerEvent on a same-tab link', R4_SELF, "a.dispatchEvent(new PointerEvent('auxclick',{bubbles:true,cancelable:true,button:1}))"],
+  ['a PointerEvent click with shiftKey on a same-tab link', R4_SELF, "a.dispatchEvent(new PointerEvent('click',{bubbles:true,cancelable:true,shiftKey:true}))"],
+  ['shiftKey on a same-tab submit button', '<form action="/danger"><button id="sb" type="submit">s</button></form>', `sb.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['shiftKey on a label for a submit button', '<form action="/danger"><button id="sb" type="submit">s</button></form><label id="lb" for="sb">l</label>', `lb.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['shiftKey on a link in a closed shadow root', '', r4ClosedShadow(r4Mouse('click', 'shiftKey:true'))],
+  ['shiftKey on a detached link', '', `const l=document.createElement('a');l.href='/danger';l.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['shiftKey on an image map area', '<img usemap="#m" width=20 height=20 src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><map name="m"><area id="ar" shape="rect" coords="0,0,20,20" href="/danger"></map>', `ar.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['a click that cannot be cancelled on a connected new-tab link', R4_BLANK, "a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:false}))"],
+  ['shiftKey inside the agent click handler itself', R4_SELF, `a.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`, true],
+  ['ctrlKey inside the agent click handler, on a submit button', '<form action="/danger"><button id="sb" type="submit">s</button></form>', `sb.dispatchEvent(${r4Mouse('click', 'ctrlKey:true')})`, true],
+  ['button 1 inside the agent click handler, on a link in a closed shadow root', '', r4ClosedShadow(r4Mouse('click', 'button:1')), true],
+]) test('a synthetic click: ' + name + ' is held and opens nothing (F1)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script: inside ? `go.onclick=()=>{${code}}` : `go.onclick=()=>setTimeout(()=>{${code}},300)` });
+  await r4Quiet(f, result, { held: true });
+});
+
+test('a modified click from a native saved out of a window handle is held too (F1)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body: R4_SELF, script: `go.onclick=()=>{const w=window.open('/landed');const d=w.EventTarget.prototype.dispatchEvent;setTimeout(()=>d.call(a,${r4Mouse('click', 'shiftKey:true')}),400)}` });
+  await r4Quiet(f, { text: '' });
+});
+
+test('an ordinary synthetic click on a same-tab link still follows the link (F1 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/landed" target="_self">open docs</a>', script: `go.onclick=()=>setTimeout(()=>a.dispatchEvent(${r4Mouse('click', '')}),300)` });
+  assert.doesNotMatch(result.text, R4_HELD, first(result));
+  assert.deepEqual(landedHits(f), ['/landed']);
+  await f.safe({ settle: 300, tabs: false });
+});
+
+// F2. The name a link or form target resolves to can change without any attribute changing.
+const r4NameLink = '<a id="a" href="/landed" target="x">Open it</a>';
+const r4Opens = async (f, result) => {
+  assert.deepEqual(landedHits(f), ['/landed'], first(result));
+  assert.doesNotMatch(result.text, /probably took the foreground/, first(result));
+  await f.safe({ settle: 300 });
+};
+test('a click listener that renames the window sends the link to a background tab, not the foreground (F2)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: r4NameLink, script: "window.name='x';a.addEventListener('click',()=>{window.name='other'})", steps: click('Open it') });
+  await r4Opens(f, result);
+});
+test('a click listener that renames a frame window sends the link to a background tab (F2)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<iframe name="fr" title="frame"></iframe><a id="a" href="/landed" target="fr">Open it</a>',
+    script: "a.addEventListener('click',()=>{document.querySelector('iframe').contentWindow.name='zz'})", steps: click('Open it') });
+  await r4Opens(f, result);
+});
+test('a name set through a frame\'s own window.name setter reaches the top window\'s watch (F2)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<iframe id="fr" title="frame"></iframe>' + r4NameLink,
+    script: "window.name='x';const set=Object.getOwnPropertyDescriptor(fr.contentWindow,'name').set;a.addEventListener('click',()=>{set.call(window,'other')})", steps: click('Open it') });
+  await r4Opens(f, result);
+});
+test('Enter on a link whose listener renames the window opens it in the background (F2)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: r4NameLink, script: "window.name='x';a.addEventListener('click',()=>{window.name='other'})", steps: press('Open it') });
+  await r4Opens(f, result);
+});
+test('a submit listener that renames the window stops a form that was aimed at it (F2)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<form id="fm" action="/landed" target="x"><button type="submit">Send</button></form>',
+    script: "window.name='x';fm.addEventListener('submit',()=>{window.name='other'})", steps: click('Send') });
+  assert.match(result.text, /changed this form/, first(result));
+  assert.deepEqual(landedHits(f), []);
+  await f.safe({ settle: 300 });
+});
+test('a listener that sets the window name to what it already was changes nothing (F2 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: r4NameLink, script: "window.name='x';a.addEventListener('click',()=>{window.name='x'})", steps: click('Open it') });
+  assert.doesNotMatch(result.text, /changed|not captured|foreground/, first(result));
+  assert.deepEqual(landedHits(f), ['/landed']);
+  await f.safe({ settle: 300, tabs: false });
+});
+test('renaming an iframe element\'s name attribute does not rename its window, so the link still loads the frame (F2 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<iframe name="fr" title="frame"></iframe><a id="a" href="/landed" target="fr">Open it</a>',
+    script: "a.addEventListener('click',()=>{document.querySelector('iframe').setAttribute('name','zz')})", steps: click('Open it') });
+  assert.doesNotMatch(result.text, /foreground|changed this/, first(result));
+  await f.safe({ settle: 300 });
+});
+
+// F3. A page raising a window it opened from another origin: nothing in the page or in CDP stops it, so the result says it can.
+const r4Pop = "<!doctype html><title>pop</title><script>window.__ev=[];for(const t of ['focus','blur','visibilitychange','pagehide','resize'])addEventListener(t,()=>__ev.push(t),true);const f=window.focus;window.focus=function(){__ev.push('focus-called');return f.apply(this,arguments)}<\/script>";
+test('a cross-origin popup the page can raise with focus() is listed in the result, and sleight sends no focus command (F3)', { skip, timeout: 90000 }, async t => {
+  const { b, f, result, extra } = await attack(t, { wait: 2500, routes: { '/pop': r4Pop },
+    script: `go.onclick=()=>{const w=window.open(${R4_XO}+'/pop');setTimeout(()=>{try{w.focus()}catch(e){}},1200)}`,
+    probe: async (g, bank) => { const events = []; for (const p of bank.host.pages()) if (p.url().endsWith('/pop')) events.push(await p.evaluate(() => window.__ev)); return events; } });
+  assert.match(result.text, /Tab t\w+ \(opened by this page, another origin\) can be raised to the foreground by the page/, first(result));
+  t.diagnostic('active tabs after the opener called focus(): ' + (await b.tabState()).filter(x => x.active).map(x => x.url.replace(b.origin, '')).join(', '));
+  assert.deepEqual(extra.flat(), [], 'the popup\'s own document sees no focus call and no event when the opener raises it, so no hook there can stop it');
+  assert.deepEqual(b.wire.filter(x => ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds'].includes(x.method)), []);
+  assert.deepEqual(dangerHits(f), []);
+});
+test('a second click that makes the page call focus() on its cross-origin sign-in popup says the page can raise it (F3)', { skip, timeout: 90000 }, async t => {
+  const { f, b } = await attack(t, { body: '<button id="go2" type="button">Sign in again</button>', wait: 1500,
+    script: `window.__p=null;const si=()=>{if(window.__p&&!window.__p.closed){window.__p.focus();return}window.__p=window.open(${R4_XO}+'/idp','idp','width=480,height=640')};go.onclick=si;go2.onclick=si`,
+    routes: { '/idp': '<!doctype html><title>idp</title><h1>IdP</h1><button id="b">Allow</button>' } });
+  await pause(1500);
+  const second = await f.act([{ do: 'click', ref: f.ref('Sign in again', await f.read()) }]);
+  assert.match(second.text, /can be raised to the foreground by the page at any time, and sleight cannot block or detect that/, first(second));
+  assert.deepEqual(b.wire.filter(x => ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds'].includes(x.method)), []);
+});
+test('a same-origin sign-in popup is not listed and its focus() raises nothing (F3 control)', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body: '<button id="go2" type="button">Sign in again</button>', wait: 1500,
+    script: "window.__p=null;const si=()=>{if(window.__p&&!window.__p.closed){window.__p.focus();return}window.__p=window.open('/idp','idp','width=480,height=640')};go.onclick=si;go2.onclick=si",
+    routes: { '/idp': '<!doctype html><title>idp</title><h1>IdP</h1><button id="b">Allow</button>' } });
+  await pause(1500);
+  const second = await f.act([{ do: 'click', ref: f.ref('Sign in again', await f.read()) }]);
+  assert.doesNotMatch(second.text, /can be raised/, first(second));
+  await f.safe({ settle: 300 });
+});
+test('a cross-origin popup that does not call focus() stays in the background and is still listed (F3 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { wait: 2000, script: `go.onclick=()=>{window.open(${R4_XO}+'/landed')}` });
+  assert.match(result.text, /can be raised to the foreground by the page/, first(result));
+  await f.safe({ settle: 300 });
+});
+
+test('a cross-origin popup opened with noopener gives the page no handle, so it is not listed (F3 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { wait: 2000, script: `go.onclick=()=>{window.open(${R4_XO}+'/landed','_blank','noopener')}` });
+  assert.doesNotMatch(result.text, /can be raised/, first(result));
+  await f.safe({ settle: 300 });
+});
+test('a cross-origin target=_blank link (noopener by default) is not listed either (F3 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { wait: 1500, body: `<a id="a" href="http://localhost:1/x" target="_blank">elsewhere</a>`, script: `a.href=${R4_XO}+'/landed'`, steps: click('elsewhere') });
+  assert.doesNotMatch(result.text, /can be raised/, first(result));
+  await f.safe({ settle: 300 });
+});
+
+// F4. Script-started clicks and submits that a listener re-aims while they are being dispatched.
+for (const [name, body, script] of [
+  ['a detached link whose own listener re-aims it', '', "go.onclick=()=>setTimeout(()=>{const a=document.createElement('a');a.href='/danger';a.target='_self';a.addEventListener('click',()=>{a.target='_blank'});a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))},300)"],
+  ['a.click() and the link\'s own listener', R4_SELF, "a.addEventListener('click',()=>{a.target='_blank'});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and an ancestor\'s listener', `<div id="wrap">${R4_SELF}</div>`, "wrap.addEventListener('click',()=>{a.target='_blank'});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['requestSubmit() and a submit listener', '<form id="fm" action="/danger" target="_self"><input name="q"></form>', "fm.addEventListener('submit',()=>{fm.target='_blank'});go.onclick=()=>setTimeout(()=>fm.requestSubmit(),300)"],
+  ['button.click() and a click listener on the button', '<form id="fm" action="/danger" target="_self"><button id="sb" type="submit">s</button></form>', "sb.addEventListener('click',()=>{fm.target='_blank'});go.onclick=()=>setTimeout(()=>sb.click(),300)"],
+  ['a.click() and a window.name flip', '<a id="a" href="/danger" target="x">z</a>', "window.name='x';a.addEventListener('click',()=>{window.name='other'});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and setAttribute', R4_SELF, "a.addEventListener('click',()=>{a.setAttribute('target','_blank')});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and a base element target set through its property', '<base id="bs" target="_self"><a id="a" href="/danger">z</a>', "a.addEventListener('click',()=>{bs.target='_blank'});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and an Attr object\'s value', R4_SELF, "a.addEventListener('click',()=>{a.attributes.target.value='_blank'});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and setNamedItem', R4_SELF, "a.addEventListener('click',()=>{const at=document.createAttribute('target');at.value='_blank';a.attributes.setNamedItem(at)});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['requestSubmit() and an Attr object\'s value', '<form id="fm" action="/danger" target="_self"><input name="q"></form>', "fm.addEventListener('submit',()=>{fm.attributes.target.value='_blank'});go.onclick=()=>setTimeout(()=>fm.requestSubmit(),300)"],
+  ['a.click() and setAttribute taken from an iframe\'s realm', R4_SELF + '<iframe id="fr" title="x"></iframe>', "const sa=fr.contentWindow.Element.prototype.setAttribute;a.addEventListener('click',()=>{sa.call(a,'target','_blank')});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and the target setter taken from an iframe\'s realm', R4_SELF + '<iframe id="fr" title="x"></iframe>', "const st=Object.getOwnPropertyDescriptor(fr.contentWindow.HTMLAnchorElement.prototype,'target').set;a.addEventListener('click',()=>{st.call(a,'_blank')});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a.click() and a formtarget change on a submit button', '<form id="fm" action="/danger"><button id="sb" type="submit" formtarget="_self">s</button></form>', "sb.addEventListener('click',()=>{sb.formTarget='_blank'});go.onclick=()=>setTimeout(()=>sb.click(),300)"],
+]) test('a script click or submit re-aimed while it is dispatched is cancelled and reported: ' + name + ' (F4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script });
+  await r4Quiet(f, result, { held: true });
+});
+for (const [name, script] of [
+  ['a.click() right in the agent click handler', "a.addEventListener('click',()=>{a.target='_blank'});go.onclick=()=>{a.click()}"],
+  ['a.click() in a microtask of the agent click handler', "a.addEventListener('click',()=>{a.target='_blank'});go.onclick=()=>{Promise.resolve().then(()=>a.click())}"],
+]) test('a script click that flips its link inside the agent click still lands in a background tab: ' + name + ' (F4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/landed" target="_self">z</a>', script });
+  assert.doesNotMatch(result.text, /probably took the foreground/, first(result));
+  assert.deepEqual(landedHits(f), ['/landed']);
+  await f.safe({ settle: 300 });
+});
+// What the hook cannot see (a base element a listener adds) still reaches the foreground. The result must say so, never "background".
+for (const [name, body, script] of [
+  ['a base element the listener appends', '<a id="a" href="/danger">z</a>', "a.addEventListener('click',()=>{const b=document.createElement('base');b.target='_blank';document.head.append(b)});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+  ['a click that cannot be cancelled, whose listener re-aims the link', R4_SELF, "a.addEventListener('click',()=>{a.target='_blank'});go.onclick=()=>setTimeout(()=>a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:false})),300)"],
+  ['a base element the listener inserts as HTML', '<a id="a" href="/danger">z</a>', "a.addEventListener('click',()=>{document.head.insertAdjacentHTML('beforeend','<base target=_blank>')});go.onclick=()=>setTimeout(()=>a.click(),300)"],
+]) test('a tab opened by a flip the hook cannot see is reported as probably in the foreground, never as a background tab: ' + name + ' (F4 known gap)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: body + '<button id="noop" type="button">Noop</button>', script, wait: 2000 });
+  const reported = await r4Reported(f, result);
+  assert.match(reported.text, /probably took the foreground/, first(reported));
+  assert.doesNotMatch(result.text + reported.text, /opened background tab/);
+});
+test('a tab the page opens by script after a modified click, outside the click\'s dispatch, is reported with the right reason (F4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/danger">z</a><button id="noop" type="button">Noop</button>', script: "a.addEventListener('click',()=>{const b=document.createElement('base');b.target='_blank';document.head.append(b)});go.onclick=()=>setTimeout(()=>a.click(),300)", wait: 2000 });
+  const reported = await r4Reported(f, result);
+  assert.match(reported.text, /the page opened it after a click, outside the background handling/, first(reported));
+});
+
+// F5. An inline onclick on a descendant of the link counts as the page cancelling the click.
+for (const [name, body, script] of [
+  ['an inline onclick on a child span', '<a id="a" href="/landed" target="_blank"><span onclick="return false">open docs</span></a>', ''],
+  ['a span\'s onclick property', '<a id="a" href="/landed" target="_blank"><span id="sp">open docs</span></a>', 'sp.onclick=()=>false'],
+  ['a span\'s addEventListener preventDefault', '<a id="a" href="/landed" target="_blank"><span id="sp">open docs</span></a>', "sp.addEventListener('click',e=>e.preventDefault())"],
+]) test('a new-tab link that ' + name + ' cancels opens nothing (F5)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script, steps: click('open docs') });
+  assert.deepEqual(landedHits(f), [], first(result));
+  await f.safe({ settle: 300 });
+});
+test('a new-tab link whose child span only observes the click still opens in the background (F5 control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/landed" target="_blank"><span id="sp">open docs</span></a>', script: 'sp.onclick=()=>{window.__seen=1}', steps: click('open docs') });
+  assert.deepEqual(landedHits(f), ['/landed'], first(result));
+  await f.safe({ settle: 300 });
+});
+
+// The rest of the round 3 review's p7, p9, p10 and p11 cases: each must leave the active tab alone and never request /danger.
+const r4Handle = code => `go.onclick=()=>{const w=window.open('/landed');${code}}`;
+for (const [name, spec] of Object.entries({
+  'W1 handle dispatchEvent on a connected new-tab link': { body: R4_BLANK, script: r4Handle("const d=w.EventTarget.prototype.dispatchEvent;setTimeout(()=>d.call(a,new MouseEvent('click',{bubbles:true,cancelable:true})),400)") },
+  'W2 handle HTMLAnchorElement click on a new-tab link': { body: R4_BLANK, script: r4Handle('const c=w.HTMLAnchorElement.prototype.click||w.HTMLElement.prototype.click;setTimeout(()=>c.call(a),400)') },
+  'W3 handle requestSubmit with a formtarget submitter': { body: '<form id="fm" action="/danger"><button id="sb" formtarget="_blank" type="submit">s</button></form>', script: r4Handle('const s=w.HTMLFormElement.prototype.requestSubmit;setTimeout(()=>s.call(fm,sb),400)') },
+  'W3b handle submit() on a new-tab form': { body: '<form id="fm" action="/danger" target="_blank"><input name="q" value="1"></form>', script: r4Handle('const s=w.HTMLFormElement.prototype.submit;setTimeout(()=>s.call(fm),400)') },
+  'W4 handle eval opener.open': { script: r4Handle(`setTimeout(()=>{w.eval("opener.open('/danger','_blank')")},400)`) },
+  'W4b handle eval opener.document a.click': { body: R4_BLANK, script: r4Handle(`setTimeout(()=>{w.eval("opener.document.getElementById('a').click()")},400)`) },
+  'W6 named popup reused by a second agent click': { body: '<button id="go2" type="button">Go2</button>', script: "go.onclick=()=>{window.open('/landed','named')};go2.onclick=()=>{window.open('/danger','named')}",
+    steps: f => [{ do: 'click', ref: f.ref('Go') }, { do: 'click', ref: f.ref('Go2') }] },
+  'W7 target=named link beside a page-opened named window': { body: '<a id="a" href="/danger" target="named">named</a>', script: "go.onclick=()=>{window.open('/landed','named')}",
+    steps: f => [{ do: 'click', ref: f.ref('Go') }, { do: 'click', ref: f.ref('named') }] },
+  'D1 link in a nested closed shadow root, click()': { script: "go.onclick=()=>setTimeout(()=>{const h=document.createElement('div');document.body.append(h);const s1=h.attachShadow({mode:'closed'});const h2=document.createElement('div');s1.append(h2);const s2=h2.attachShadow({mode:'closed'});const a=document.createElement('a');a.href='/danger';a.target='_blank';s2.append(a);a.click()},300)" },
+  'D1b same, dispatchEvent': { script: "go.onclick=()=>setTimeout(()=>{const h=document.createElement('div');document.body.append(h);const s1=h.attachShadow({mode:'closed'});const h2=document.createElement('div');s1.append(h2);const s2=h2.attachShadow({mode:'closed'});const a=document.createElement('a');a.href='/danger';a.target='_blank';s2.append(a);a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))},300)" },
+  'D1c handle dispatchEvent on a closed-shadow link': { script: r4Handle("const d=w.EventTarget.prototype.dispatchEvent;setTimeout(()=>{const h=document.createElement('div');document.body.append(h);const s=h.attachShadow({mode:'closed'});const a=document.createElement('a');a.href='/danger';a.target='_blank';s.append(a);d.call(a,new MouseEvent('click',{bubbles:true,cancelable:true}))},400)") },
+  'D2 link inside template content': { script: "go.onclick=()=>setTimeout(()=>{const tp=document.createElement('template');tp.innerHTML='<a href=\"/danger\" target=\"_blank\">z</a>';tp.content.firstChild.click()},300)" },
+  'V3v link made in a window handle\'s document': { script: r4Handle("setTimeout(()=>{const a=w.document.createElement('a');a.href='/danger';a.target='_blank';w.document.body.append(a);a.click()},400)") },
+  'K1 Shift+Enter on a new-tab link': { body: R4_BLANK, steps: press('open docs', 'Shift+Enter') },
+  'K2 Shift+Enter on a same-tab link': { body: R4_SELF, steps: press('open docs', 'Shift+Enter') },
+  'K2b Alt+Enter on a same-tab link': { body: R4_SELF, steps: press('open docs', 'Alt+Enter') },
+  'K3 Enter in a field, keydown inserts a first submit button aimed at a new tab': { body: '<form id="fm" action="/danger"><input id="q" name="q" aria-label="Query" value="x"><button type="submit">Search</button></form>',
+    script: "q.addEventListener('keydown',e=>{if(e.key==='Enter'){const b=document.createElement('button');b.type='submit';b.formTarget='_blank';b.textContent='X';fm.insertBefore(b,fm.firstChild)}})", steps: press('Query') },
+  'K3b Enter in a field, keydown aims the default button at a new tab': { body: '<form id="fm" action="/danger"><input id="q" name="q" aria-label="Query" value="x"><button id="s" type="submit">Search</button></form>',
+    script: "q.addEventListener('keydown',e=>{if(e.key==='Enter'){s.formTarget='_blank'}})", steps: press('Query') },
+  'K3c Enter in a field, keydown inserts a first submit button with another formaction': { body: '<form id="fm" action="/landed"><input id="q" name="q" aria-label="Query" value="x"><button id="s" type="submit">Search</button></form>',
+    script: "q.addEventListener('keydown',e=>{if(e.key==='Enter'){const b=document.createElement('button');b.type='submit';b.setAttribute('formaction','/danger');b.textContent='X';fm.insertBefore(b,fm.firstChild)}})", steps: press('Query') },
+  'K4 Enter on Save, keydown moves focus to Delete in the same form': { body: '<form id="fm" action="/landed" onsubmit="return false"><button id="save" type="button">Save</button><button id="del" type="button">Delete account</button></form>',
+    script: "window.__del=0;del.onclick=()=>{window.__del++;fetch('/danger')};save.addEventListener('keydown',e=>{if(e.key==='Enter')del.focus()})", steps: press('Save'), deleted: true },
+  'K4b same, Delete outside the form': { body: '<form id="fm" action="/landed" onsubmit="return false"><button id="save" type="button">Save</button></form><button id="del" type="button">Delete account</button>',
+    script: "window.__del=0;del.onclick=()=>{window.__del++;fetch('/danger')};save.addEventListener('keydown',e=>{if(e.key==='Enter')del.focus()})", steps: press('Save'), deleted: true },
+  'K4c Enter in a field, keydown focuses a submit button with another formaction': { body: '<form id="fm" action="/landed"><input id="q" name="q" aria-label="Query" value="x"><button id="s" type="submit">Search</button><button id="pay" type="submit" formaction="/danger">Pay now</button></form>',
+    script: "q.addEventListener('keydown',e=>{if(e.key==='Enter')pay.focus()})", steps: press('Query') },
+  'K5 Space on a submit button aimed at a new tab': { body: '<form action="/danger"><button type="submit" formtarget="_blank">Send out</button></form>', steps: press('Send out', ' ') },
+  'K5b Enter on an input type=submit aimed at a new tab': { body: '<form action="/danger"><input type="submit" value="Send out" formtarget="_blank"></form>', steps: press('Send out') },
+  'K6 Enter in an input whose form= names a new-tab form': { body: '<form id="fm" action="/danger" target="_blank"></form><input form="fm" name="q" aria-label="Query" value="x">', steps: press('Query') },
+  'R2 handle returnValue setter with null': { body: R4_BLANK, script: "go.onclick=()=>{const w=window.open('/landed');window.__s=Object.getOwnPropertyDescriptor(w.Event.prototype,'returnValue').set};a.addEventListener('click',e=>{if(window.__s)window.__s.call(e,null)})" },
+  'F-click listener flips a same-tab link to a new tab': { body: '<a id="a" href="/landed" target="_self">open docs</a>', script: "a.addEventListener('click',()=>{a.target='_blank'})", steps: click('open docs') },
+  'F-mouseover flips before the seal': { body: '<a id="a" href="/landed" target="_self">open docs</a>', script: "a.addEventListener('mouseover',()=>{a.target='_blank'})", steps: click('open docs') },
+  'F-iframe name attribute renamed in the listener': { body: '<iframe name="fr" title="frame"></iframe><a id="a" href="/landed" target="fr">open docs</a>', script: "a.addEventListener('click',()=>{document.querySelector('iframe').setAttribute('name','zz')})", steps: click('open docs') },
+  'F-iframe name property set in the listener': { body: '<iframe name="fr" title="frame"></iframe><a id="a" href="/landed" target="fr">open docs</a>', script: "a.addEventListener('click',()=>{document.querySelector('iframe').name='zz'})", steps: click('open docs') },
+  'X1 document.open(url, name) 300 ms after the click': { script: "go.onclick=()=>setTimeout(()=>{try{document.open('/danger','_blank')}catch(e){}},300)" },
+  'X1b document.open(url, name) inside the agent click': { script: "go.onclick=()=>{try{document.open('/danger','_blank')}catch(e){}}" },
+  'X2 a cross-origin popup calls opener.focus()': { wait: 2500, script: `go.onclick=()=>{window.open(${R4_XO}+'/pop')}`, routes: { '/pop': '<!doctype html><title>pop</title><script>setTimeout(()=>{try{opener.focus()}catch(e){}},800)<\/script>' } },
+  'X2b a cross-origin popup calls window.focus() on itself': { wait: 2500, script: `go.onclick=()=>{window.open(${R4_XO}+'/pop')}`, routes: { '/pop': '<!doctype html><title>pop</title><script>setTimeout(()=>{try{window.focus()}catch(e){}},800)<\/script>' } },
+  'X3 a cross-origin iframe calls top.focus() and parent.focus()': { wait: 2500, body: '<iframe id="fr" title="x" src="/ifr"></iframe>', script: `go.onclick=()=>{fr.src=${R4_XO}+'/ifr2'}`,
+    routes: { '/ifr': '<title>i</title>', '/ifr2': '<!doctype html><title>i2</title><script>setTimeout(()=>{try{top.focus()}catch(e){};try{parent.focus()}catch(e){}},800)<\/script>' } },
+})) test('round 3 repro ' + name + ': no foreground tab, no /danger', { skip, timeout: 90000 }, async t => {
+  const { f, result, extra } = await attack(t, { body: spec.body, script: spec.script, steps: spec.steps, wait: spec.wait, routes: spec.routes, probe: spec.deleted ? g => g.page.evaluate(() => window.__del) : undefined });
+  if (spec.deleted) assert.equal(extra, 0, 'Delete never ran');
+  await r4Quiet(f, result);
+});
+test('round 3 repro R1: a hooked frame\'s returnValue setter cannot cancel a new-tab link behind the hook\'s back', { skip, timeout: 90000 }, async t => {
+  const { f } = await attack(t, { body: '<a id="a" href="/danger" target="_blank">open docs</a>', wait: 800,
+    script: "go.onclick=()=>{const f=document.createElement('iframe');document.body.append(f);window.__s=Object.getOwnPropertyDescriptor(f.contentWindow.Event.prototype,'returnValue').set};a.addEventListener('click',e=>{if(window.__s)window.__s.call(e,0)})" });
+  await f.act([{ do: 'click', ref: f.ref('open docs', await f.read()) }]);
+  await pause(1500);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+test('round 3 repro O1: a link whose mousedown handler rewrites its href is stopped on the first click and works on the second', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="r" href="/landed">Result one</a>', script: "r.addEventListener('mousedown',()=>{r.href='/landed?trk=1'})", steps: click('Result one') });
+  assert.match(result.text, /page changed during the click/, first(result));
+  const second = await f.act([{ do: 'click', ref: f.ref('Result one', await f.read().catch(() => '')) }]);
+  await pause(800);
+  assert.match(second.text, /navigated/, first(second));
+  assert.deepEqual(landedHits(f), ['/landed?trk=1']);
 });

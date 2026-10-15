@@ -164,7 +164,7 @@ test('unproved popup preparation refuses before input and disarms a possible lat
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
-function hookFixture({ clock = Date, handle, credentials: given, parent } = {}) {
+function hookFixture({ clock = Date, handle, credentials: given, parent, rewritable = false } = {}) {
   class Event {
     get defaultPrevented() { return !!this.nativePrevented; }
     get returnValue() { return !this.nativePrevented; }
@@ -229,9 +229,17 @@ function hookFixture({ clock = Date, handle, credentials: given, parent } = {}) 
   const opens = [], window = { listeners: {}, captureListeners: {}, parent, open(...args) { opens.push(args); return handle ?? { real: true }; } };
   const navigator = { userActivation: { isActive: true } };
   const document = { baseURI: 'https://fixture.invalid/', scripts: [{ textContent: "window.open('/identity')" }], querySelector: () => null };
+  // document.open() erases every listener on its window; a fixture asks for it with `rewritable`.
+  class Document {
+    open() { window.listeners = {}; window.captureListeners = {}; }
+    write() { this.open(); }
+    writeln() { this.open(); }
+    get defaultView() { return window; }
+  }
+  if (rewritable) Object.setPrototypeOf(document, Document.prototype);
   const credentials = given ?? newHook();
   const context = vm.createContext({ window, document, navigator,
-    MouseEvent, Element, HTMLElement: Element, HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
+    MouseEvent, Element, HTMLElement: Element, ...(rewritable ? { Document } : {}), HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
     Event, EventTarget, MutationObserver, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
   const installed = vm.runInContext(hookSource(credentials), context);
   const raw = window[credentials.key];
@@ -1704,4 +1712,109 @@ test('AD1 backstop: a popup the page opens during a click without the background
   await entry.openChild('https://fixture.invalid/second');
   assert.equal(entry.takeForeground(), 0, 'a tab sleight opened itself is in the background');
   await f.registry.endTurn();
+});
+
+test('AD1 pop4: a modified or auxiliary synthetic click on a link is held and counted, a plain one is left alone', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/x' });
+  link.interactive = true;
+  const fire = init => {
+    const event = Object.assign(new f.MouseEvent(), { isTrusted: false, nodes: [link], ...init });
+    for (const fn of f.window.listeners.click) fn(event);
+    return event;
+  };
+  try {
+    assert.equal(fire({}).nativePrevented, undefined, 'a plain synthetic click on a same-tab link is not held');
+    assert.equal(f.hook.take(), 0);
+    assert.equal(fire({ shiftKey: true }).nativePrevented, true);
+    assert.equal(fire({ control: true }).nativePrevented, true);
+    assert.equal(fire({ altKey: true }).nativePrevented, true);
+    assert.equal(fire({ button: 1 }).nativePrevented, true);
+    assert.equal(fire({ button: 0, shiftKey: false }).nativePrevented, undefined);
+    assert.equal(f.hook.take(), 4);
+    const aux = Object.assign(new f.MouseEvent('auxclick'), { isTrusted: false, nodes: [link] });
+    assert.ok(f.window.listeners.auxclick.size > 0, 'auxclick has the same guard');
+    for (const fn of f.window.listeners.auxclick) fn(aux);
+    assert.equal(aux.nativePrevented, true);
+    const trusted = Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [link], button: 1 });
+    for (const fn of f.window.listeners.click) fn(trusted);
+    assert.equal(trusted.nativePrevented, undefined, 'a user\'s own middle click is not touched');
+  } finally { f.hook.off(); }
+  assert.equal(f.window.listeners.auxclick.size, 0, 'off() removes the auxclick guard');
+});
+
+test('AD1 pop4: changed and watching take a proof like every other call', () => {
+  const f = hookFixture();
+  try {
+    assert.throws(() => f.raw.changed('forged.0000'), /refused/);
+    assert.throws(() => f.raw.watching('forged.0000', true), /refused/);
+    const proof = hookProof(f.credentials, 'changed');
+    f.raw.changed(proof);
+    assert.throws(() => f.raw.changed(proof), /refused/, 'a proof is good once');
+    assert.throws(() => f.raw.changed(hookProof(f.credentials, 'take')), /refused/, 'and only for its own method');
+    f.raw.watching(hookProof(f.credentials, 'watching'), true);
+    f.raw.watching(hookProof(f.credentials, 'watching'), false);
+  } finally { f.hook.off(); }
+});
+
+test('AD1 pop4: a popup opened after the click settled is reported once, and only a settled background popup is background', async () => {
+  const f = fixture({ upstream: { async send() { return { targetInfos: [] }; } } });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const entry = f.registry.tab(tab);
+  entry.page.evaluate = async (fn, arg) => hookAnswer(entry.hook, fn, arg);
+  const opener = f.pages.at(-1).info.targetId;
+  let settled;
+  await backgroundClick(entry, { evaluate: async (fn, arg) => hookAnswer(entry.hook, fn, arg, { prepare: true }) }, async () => {
+    entry.cdp.emit('Page.windowOpen', {});
+    settled = f.page('page-opened-1', opener); await new Promise(resolve => setTimeout(resolve, 2));
+  });
+  assert.equal(entry.popupIsBackground(settled), true, 'a modified click\'s settling classified it');
+  assert.equal(entry.takeForeground(), 0);
+  const late = f.page('page-opened-late', opener); await f.registry.idle();
+  assert.equal(entry.popupIsBackground(late), false, 'a popup nothing settled is not known to be in the background');
+  assert.equal(entry.takeForeground(), 1);
+  assert.equal(entry.takeForeground(), 0, 'reported once');
+  const own = await entry.openChild('https://fixture.invalid/second');
+  assert.equal(entry.popupIsBackground(f.registry.tab(own.tab).page), true);
+  assert.equal(entry.takeForeground(), 0, 'a tab sleight opened is in the background');
+  await f.registry.endTurn();
+});
+
+test('AD1 pop4: raisablePopups lists open page-opened tabs on another origin that the page holds a handle to, and nothing else', async () => {
+  const f = fixture({ upstream: { async send() { return { targetInfos: [] }; } } });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const entry = f.registry.tab(tab), opener = f.pages.at(-1).info.targetId;
+  entry.page.url = () => 'https://fixture.invalid/app';
+  const same = f.page('same', opener), cross = f.page('cross', opener), blank = f.page('blank', opener), noopener = f.page('noopener', opener);
+  same.url = () => 'https://fixture.invalid/same'; cross.url = () => 'https://idp.invalid/signin'; blank.url = () => 'about:blank';
+  noopener.url = () => 'https://docs.invalid/page'; noopener.info.canAccessOpener = false;
+  await f.registry.idle();
+  const crossTab = (await f.registry.list()).find(row => row.targetId === 'cross').tab;
+  await entry.openChild('https://idp.invalid/own');
+  assert.deepEqual(await entry.raisablePopups(), [crossTab], 'not the same-origin, blank or noopener ones, not the one sleight opened');
+  cross.info.canAccessOpener = false;
+  assert.deepEqual(await entry.raisablePopups(), [], 'a popup that dropped its opener is not listed either');
+  cross.info.canAccessOpener = true;
+  await cross.close();
+  assert.deepEqual(await entry.raisablePopups(), []);
+  await f.registry.endTurn();
+});
+
+// document.open() and document.write erase the window's listeners; the hook puts every one back, auxclick and the click guard included.
+test('AD1 pop4 + swap4: document.open and write re-add every listener the hook uses, auxclick too', () => {
+  for (const name of ['open', 'write', 'writeln']) {
+    const f = hookFixture({ rewritable: true });
+    const before = Object.keys(f.window.listeners).sort();
+    assert.ok(before.includes('auxclick') && before.includes('click') && before.includes('submit'), before.join());
+    f.document[name]('<p>');
+    assert.deepEqual(Object.keys(f.window.listeners).sort(), before, name + ' re-adds the same types');
+    assert.ok(f.window.captureListeners.auxclick?.size > 0, name + ' re-adds the auxclick guard in the capture phase');
+    // The guard it re-added still holds a modified click on a link.
+    const link = new f.Element('a', { href: '/x' });
+    link.interactive = true;
+    const aux = Object.assign(new f.MouseEvent('auxclick'), { isTrusted: false, nodes: [link] });
+    for (const listener of f.window.listeners.auxclick) listener(aux);
+    assert.equal(aux.nativePrevented, true, name + ': an auxclick on a link is still held after the rewrite');
+    assert.equal(f.hook.take(), 1);
+    f.hook.off();
+  }
 });
