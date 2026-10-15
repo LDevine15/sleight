@@ -214,6 +214,54 @@ function hookFixture({ clock = Date } = {}) {
     MouseEvent, Event, EventTarget, opens };
 }
 
+test('CR6 masked events stay plain after dispatch, finish, and another arm', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  try {
+    f.hook.prepare(button, 'first', 1000);
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    const event = Object.assign(new f.MouseEvent(), { nodes: [button], isTrusted: true, control: true, meta: true });
+    for (const fn of f.window.listeners.click) fn(event);
+    t.mock.timers.tick(0);
+    const read = () => [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+    assert.deepEqual(read(), [false, false, false, false]);
+    f.hook.finish('first');
+    assert.deepEqual(read(), [false, false, false, false]);
+    f.hook.prepare(button, 'second', 1000);
+    assert.deepEqual(read(), [false, false, false, false]);
+  } finally { f.hook.off(); }
+});
+
+for (const key of ['Control', 'Meta']) test('CR6 swallows the matching trusted keyup after dispatch: ' + key, t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  const keyEvent = (type, isTrusted = true) => {
+    const event = Object.assign(new f.Event(), { key, type, isTrusted });
+    for (const fn of f.window.listeners[type]) fn(event);
+    return event;
+  };
+  try {
+    f.hook.prepare(button, 'keys', 1000);
+    assert.equal(keyEvent('keydown').stopped, true);
+    const event = Object.assign(new f.MouseEvent(), { nodes: [button], isTrusted: true, control: true });
+    for (const fn of f.window.listeners.click) fn(event);
+    t.mock.timers.tick(0);
+    assert.equal(keyEvent('keyup', false).stopped, undefined);
+    assert.equal(keyEvent('keyup').stopped, true);
+    assert.equal(keyEvent('keyup').stopped, undefined, 'a later unrelated keyup is visible');
+  } finally { f.hook.off(); }
+});
+
+test('CR6 captured link requests retain exact target and rel', () => {
+  const f = hookFixture(), link = new f.Element('a', { href: '/landed', target: 'child', rel: 'noopener noreferrer' });
+  try {
+    f.hook.prepare(link, 'link', 1000);
+    for (const fn of f.window.listeners.click) fn(Object.assign(new f.MouseEvent(), { nodes: [link], isTrusted: true }));
+    assert.deepEqual(JSON.parse(JSON.stringify(f.hook.takeRequest('link'))),
+      { url: 'https://fixture.invalid/landed', target: 'child', rel: 'noopener noreferrer' });
+  } finally { f.hook.off(); }
+});
+
 test('CR3 arms every command without inspecting script or listener source', () => {
   const f = hookFixture();
   try {
