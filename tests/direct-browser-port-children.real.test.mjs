@@ -210,7 +210,8 @@ test('port guard continues false matches and protects related targets before the
         });}finally{await registration.unregister();}
       });
       assert.equal(result,'blocked');
-      assert.ok(!calls.slice(before).some(row=>row.method==='Fetch.failRequest'),'service worker is outside owned page routes');
+      // The browser-level port guard may fail its request at the root; no session attaches to the service worker.
+      assert.ok(!calls.slice(before).some(row=>row.method==='Fetch.failRequest'&&row.route!=='root'),'service worker is outside owned page routes');
     }finally{await page.close();}
   });
   assert.equal(await foreign.title(),'Foreign untouched');assert.equal(foreign.isClosed(),false);
