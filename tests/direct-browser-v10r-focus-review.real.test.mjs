@@ -6,6 +6,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createV3Context, createV3TurnBinding } from '../plugins/sleight/lib/direct-browser/v3-context.mjs';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
+import { trustedRead } from '../plugins/sleight/lib/direct-browser/trusted-dom.mjs';
+import { focusCheckedNode } from '../plugins/sleight/lib/direct-browser/v3-context.mjs';
 import { check } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 const skip=process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'review real-page proof runs through sleight-arch host runner' : false;
 async function fixture(t, text = 'Read only. Do not pay.') {
@@ -118,6 +120,10 @@ test('V10R4: img named activeElement cannot send Enter to the native Pay receive
   });
   assert.equal(await f.page.evaluate(() => document.activeElement.id),'e8','the shared DOM clobbers every world');
   assert.equal(await f.page.evaluate(() => Object.getOwnPropertyDescriptor(Document.prototype,'activeElement').get.call(document).id),'e1');
+  const handle=await f.page.locator('#e8').elementHandle();
+  t.diagnostic(JSON.stringify({utility:await trustedRead(handle, el => ({active:el.ownerDocument.activeElement?.id, native:Object.getOwnPropertyDescriptor(Document.prototype,'activeElement').get.call(el.ownerDocument)?.id,connected:el.isConnected}))}));
+  assert.equal(await trustedRead(handle, focusCheckedNode, true),false,'the trusted focus reader must reject clobbered focus');
+  await handle.dispose();
   const result=await f.run(f.tab,[{do:'press',ref:'e8',key:'Enter'}],f.ctx);
   const count=await f.page.locator('#count').innerText();
   t.diagnostic(JSON.stringify({lines:result.lines,count,productionBase:'70528f80dd5d70fefbf21fa465f40b2abdf10714'}));
