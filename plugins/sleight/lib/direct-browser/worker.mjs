@@ -147,7 +147,11 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
   const session = 'v3' + randomBytes(16).toString('hex'), nonce = randomBytes(32).toString('hex');
   let runtime, generation = 0, work = Promise.resolve(), queued = 0, ended = false;
   const seen = new Set(), turns = new Set(), results = new Map();
-  const send = frame => { if (channel.connected !== false) channel.send(frame); };
+  const lost = () => { ended = true; Promise.resolve(fence()).catch(() => {}); };
+  const send = frame => {
+    if (channel.connected === false) return;
+    try { channel.send(frame, error => { if (error) lost(); }); } catch { lost(); }
+  };
   function fence() { generation++; results.clear(); const old = runtime; runtime = undefined; return old?.end() ?? Promise.resolve({ revoked: true, cleanup: [] }); }
   channel.on('disconnect', () => { ended = true; Promise.resolve(fence()).catch(() => {}); });
   channel.on('message', frame => {

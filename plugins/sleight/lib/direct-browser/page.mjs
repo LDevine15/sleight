@@ -301,11 +301,11 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     if (!blocked) try { await assertEndpointRead(page); }
     catch (error) { if (error.message !== endpointBlock) throw error; blocked = true; }
     if (blocked) {
-      await deadline(() => page.close({ runBeforeUnload: false }), timeoutMs);
+      const notice = opener && { opener: opener.tab, closed: false, blocked: true };
+      if (notice) opener.popups.push(notice);
       blockedTargets.add(info.targetInfo.targetId);
-      allocations.delete(info.targetInfo.targetId);
-      await info.cdp.detach();
-      opener?.popups.push({ opener: opener.tab, closed: true, blocked: true });
+      allocations.set(info.targetInfo.targetId, { page, cdp: info.cdp, notice });
+      await closeAllocation(info.targetInfo.targetId);
       return;
     }
     if (targets.has(info.targetInfo.targetId)) return targets.get(info.targetInfo.targetId);
@@ -353,9 +353,12 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     const allocation = allocations.get(targetId);
     if (!allocation) return Promise.resolve();
     if (!allocation.closing) allocation.closing = deadline(async () => {
-      const result = await session.send('Target.closeTarget', { targetId });
+      const result = allocation.page ? await allocation.page.close({ runBeforeUnload: false }).then(() => ({ success: allocation.page.isClosed() }))
+        : await (allocation.blocked ? upstream : session).send('Target.closeTarget', { targetId });
       if (result?.success !== true) throw Error('background target cleanup unconfirmed');
       allocations.delete(targetId);
+      if (allocation.notice) allocation.notice.closed = true;
+      if (allocation.cdp) await allocation.cdp.detach().catch(() => {});
     }, timeoutMs).finally(() => { allocation.closing = null; });
     return allocation.closing;
   };
@@ -373,11 +376,12 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         // The exact trusted opener proves ownership before any admission/read.
         // Close endpoint targets upstream without exposing their title or URL.
         if (endpointTarget(child, endpoint) || parent.pendingEndpointPopup && child.url === 'about:blank') {
-          const result = await deadline(() => upstream.send('Target.closeTarget', { targetId: child.targetId }), timeoutMs);
-          if (result?.success !== true) throw Error('endpoint popup cleanup unconfirmed');
+          const notice = { opener: parent.tab, closed: false, blocked: true };
+          parent.popups.push(notice);
+          allocations.set(child.targetId, { blocked: true, notice });
           blockedTargets.add(child.targetId);
           parent.pendingEndpointPopup = false;
-          parent.popups.push({ opener: parent.tab, closed: true, blocked: true });
+          await closeAllocation(child.targetId);
           continue;
         }
         allocations.set(child.targetId, {});

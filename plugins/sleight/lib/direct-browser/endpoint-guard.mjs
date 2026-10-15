@@ -4,7 +4,7 @@ export const endpointBlock = 'blocked: DevTools endpoint';
 const port = url => url.port || (['https:', 'wss:'].includes(url.protocol) ? '443' : '80');
 export function endpointURL(value, endpoint) {
   if (!endpoint || !value) return false;
-  try { return port(new URL(value)) === port(new URL(endpoint)); } catch { return false; }
+  try { const parsed = new URL(value); return !!parsed.hostname && port(parsed) === port(new URL(endpoint)); } catch { return false; }
 }
 export function endpointTarget(info, endpoint) {
   return [info?.url, info?.pendingUrl, info?.pendingURL].some(url => endpointURL(url, endpoint));
@@ -24,7 +24,10 @@ export async function assertEndpointRead(page, endpoint) {
   if (!selected) return;
   if (endpointURL(page.url(), selected) || endpointURL(record?.pending, selected)) throw Error(endpointBlock);
   if (record?.cdp) {
-    const { targetInfo } = await record.cdp.send('Target.getTargetInfo');
+    let timer;
+    const { targetInfo } = await Promise.race([record.cdp.send('Target.getTargetInfo'), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Error('endpoint page identity unavailable')), 1500);
+    })]).finally(() => clearTimeout(timer));
     if (endpointTarget(targetInfo, selected)) throw Error(endpointBlock);
   }
   if (page.frames?.().some(frame => endpointURL(frame.url?.(), selected))) throw Error(endpointBlock);

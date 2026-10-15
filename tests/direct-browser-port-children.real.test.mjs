@@ -88,6 +88,7 @@ test('port guard continues false matches and protects related targets before the
       assert.equal(popup.isClosed(),true,'adopted endpoint popup must close before model reads');
       await pages.idle();
       const result=await dispatcher.call({name:'browser_act',arguments:{tab,steps:[{do:'wait'}],observe:'none'}});
+      if(result.text!=='blocked: DevTools endpoint')t.diagnostic(JSON.stringify({kind,notices:entry.popups,windows:entry.windowOpenNo,result}));
       assert.equal(result.text,'blocked: DevTools endpoint');
       assert.equal(reads,before,'no endpoint snapshot reached the model');
       assert.doesNotMatch(JSON.stringify(await pages.list()),/json\/list|webSocketDebuggerUrl|Foreign untouched/);

@@ -463,3 +463,32 @@ test('background link allocation refuses the endpoint port before creating a pag
   assert.equal(f.pages.length, 0);
   await f.registry.endTurn();
 });
+
+test('failed endpoint popup closure stays owned for cleanup without filter admission', async () => {
+  const admitted = [], closes = [], f = fixture({ endpoint: 'ws://127.0.0.1:9222/devtools/browser/private',
+    upstream: { async send(method, params) {
+      if (method === 'Target.getTargets') return { targetInfos: [{ type: 'page', targetId: 'blocked-child', openerId: 'target-1', url: 'http://alias.invalid:9222/json/list' }] };
+      assert.equal(method, 'Target.closeTarget'); closes.push(params.targetId);
+      return { success: false };
+    } }, ownTarget: async targetId => admitted.push(targetId) });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  f.registry.tab(tab).cdp.emit('Page.windowOpen', { url: 'http://alias.invalid:9222/json/list' });
+  await f.registry.idle();
+  assert.deepEqual(admitted, []);
+  const result = await f.registry.endTurn();
+  assert.equal(result.cleanedUp, false);
+  assert.deepEqual(result.rows.find(row => row.targetId === 'blocked-child'), { targetId: 'blocked-child', closed: false, cleanupRequired: true });
+  assert.equal(closes.length, 2,'turn end retries the exact owned closure');
+});
+
+test('the default endpoint port does not classify about:blank as an endpoint page', async () => {
+  const f = fixture({ endpoint: 'ws://127.0.0.1/devtools/browser/private' });
+  // Fresh browser targets begin at about:blank, which has no network port.
+  f.context.newCDPSession = async page => {
+    page.url = () => 'about:blank';
+    return page.cdp;
+  };
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  assert.equal(f.registry.tab(tab).closed, false);
+  await f.registry.endTurn();
+});

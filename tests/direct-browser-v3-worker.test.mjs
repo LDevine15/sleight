@@ -109,3 +109,17 @@ test('protocol close fences an in-flight begin and waits for its cleanup before 
   assert.deepEqual(events,['turn-end','close']);assert.equal(frames.find(x=>x.id==='begin').result.available,false);
   assert.deepEqual(frames.find(x=>x.id==='close').result.cleanup,[]);
 });
+
+test('a parent pipe closing during send fences the worker through the IPC callback', async () => {
+  const channel = new EventEmitter(); channel.connected = true;
+  let callback;
+  channel.send = (frame, done) => { callback = done; };
+  let begun = 0;
+  const host = serveV3Worker({ channel, browser: 'bfixture', begin: async () => { begun++; return { end: async () => {} }; } });
+  host.ready();
+  assert.equal(typeof callback, 'function','Node IPC must receive a callback so EPIPE does not emit an unhandled error');
+  callback(Error('write EPIPE'));
+  channel.emit('message', { version: 3, id: 'late', method: 'begin', params: { turn: 'one', text: 'read' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(begun, 0,'late work cannot start after the failed send');
+});
