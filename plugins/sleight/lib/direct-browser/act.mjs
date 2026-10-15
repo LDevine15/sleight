@@ -82,6 +82,23 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
     formPayment, formSignature: form ? hash : null };
 }
 
+// Visible dialogs, alerts and status panels, as a count and a text fingerprint. A submit that opens one of
+// these has had a visible effect even though the form itself did not change and no request has started.
+export function overlaySignature(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+  try {
+    const doc = read(el, 'ownerDocument'), style = read(read(doc, 'defaultView'), 'getComputedStyle');
+    if (!doc || typeof style !== 'function') return null;
+    let count = 0, hash = 2166136261;
+    for (const node of read(doc, 'querySelectorAll')('dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"],[role="alert"],[role="status"]')) {
+      const rect = read(node, 'getBoundingClientRect')(), look = style(node), text = String(read(node, 'textContent') ?? '').trim();
+      if (!text || !rect.width || !rect.height || look.visibility === 'hidden' || look.display === 'none') continue;
+      count++;
+      for (let i = 0; i < text.length && i < 2000; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    }
+    return { count, hash };
+  } catch { return null; }
+}
+
 function scrollPoint(el) {
   const r = el.getBoundingClientRect();
   return { x: Math.max(1, Math.min(innerWidth - 1, r.x + r.width / 2)), y: Math.max(1, Math.min(innerHeight - 1, r.y + r.height / 2)) };
@@ -147,7 +164,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
   return async function runSteps(tab, steps, ctx = {}) {
     validate(steps);
     const { page, state } = tab, since = state.snapshotNo > 0 ? state.snapshotNo : undefined, lines = []; let stoppedAt = null;
-    let observed, observeError, confirmation, blocker;
+    let observed, observeError, confirmation, blocker, carry;
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
@@ -186,6 +203,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           staging = trusted ? await ctx.stageUploads(target, step.paths) : await stageUserUploads(ctx.files, step.paths, step.ref);
           if (!Array.isArray(staging?.payloads) || !staging.payloads.length) throw Error('user-named file staging required');
         }
+        // Visible dialogs and panels before the input, to tell a submit that answered with one from a silent one.
+        const overlayRead = async () => { try { return await trustedLocatorRead(locator, overlaySignature); } catch { return null; } };
+        const overlayBase = locator && (step.do === 'click' || enter) ? await overlayRead() : null;
         armed = watch(page, state); const start = now();
         const options = { timeout: TIMEOUT };
         const perform = async () => {
@@ -231,6 +251,12 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           }
         };
         pendingGate(state, step);
+        // A step settled early left its watcher running. Any boundary it saw since means the page moved
+        // under the batch, so no further input goes out.
+        if (carry) {
+          const earlier = carry.boundary; carry.stop(); carry = null;
+          if (earlier) throw Error('the page changed after the previous step; read it before more input');
+        }
         // A Playwright click can remain pending until a page dialog is answered.
         // Returning the dialog stops the batch; the pending promise is observed,
         // never resent, and finishes after a later explicit dialog action.
@@ -241,15 +267,28 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (stepFinished) armed.stop();
         });
         const result = await bounded(Promise.race([performed, armed.dialogReady]), actionTimeoutMs);
-        let formChanged = false;
-        const settleUntil = start + (submits ? 5000 : 600);
+        let formChanged = false, overlayShown = false;
+        // Repeated key presses and typing do not need their own observation: a step followed by another press
+        // or type settles briefly and the last of the run settles fully. Enter, Return and Space can activate
+        // a control, so they always settle in full, and so does any step that starts a submit.
+        const quiet = (step.do === 'type' || step.do === 'press' && !/(?:^|\+)(?:Enter|Return|NumpadEnter|Space| )$/.test(step.key)) && !submits;
+        const deferred = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes(steps[index + 1]?.do);
+        const settleUntil = deferred ? now() + 40 : start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
             formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature;
+            if (!formChanged && overlayBase) {
+              const latest = await overlayRead();
+              overlayShown = !!latest && (latest.count !== overlayBase.count || latest.hash !== overlayBase.hash);
+            }
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
+          // A dialog or panel with no request in flight is the page's answer to the submit. Wait one second
+          // from the click, which the delivered read needs to clear the unconfirmed submit, rather than five.
+          if (submits && overlayShown && !armed.pending.size && now() >= start + 1000) break;
           await sleep(Math.min(50, settleUntil - now()));
         }
+        if (deferred && !armed.boundary) carry = armed;
         const boundary = armed.boundary;
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
         if (submit && state.submitUnconfirmed === submit) {
@@ -263,6 +302,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             : 'opened background tab with its opener: ' + clean(boundary.popup.url())
           : boundary?.kind === 'close' ? 'tab closed'
           : typeof result === 'string' ? result
+          : submits && state.submitUnconfirmed && overlayShown && !armed.pending.size ? 'submit unconfirmed: a dialog or panel opened and no request has started; read before resubmitting'
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
         lines.push(label + ': ' + outcome);
@@ -286,9 +326,10 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
       } finally {
         stepFinished = true;
         if (isV3Context(ctx) && target) ctx.finishInput(target);
+        if (carry && carry !== armed) { carry.stop(); carry = null; }
         // A deadline ends the call, not the underlying Playwright input. Keep
         // its dialog listener until that exact promise settles or the page closes.
-        if (!inputPending) armed?.stop();
+        if (!inputPending && armed !== carry) armed?.stop();
         try { await staging?.cleanup?.(); } catch { lines.push('Upload staging cleanup unavailable.'); }
         if (isV3Context(ctx) && target && !inputPending) await ctx.releaseTarget(target);
       }

@@ -161,16 +161,55 @@ test('ambiguous autocomplete refuses to pick either suggestion and does not retr
   const r = await h.fill([{ ref: 'e1', value: 'duplicate' }]);
   assert.equal(r.rows[0].status, 'failed'); assert.equal(clicks, 0); assert.equal(h.input.filter(a => a[0] === 'fill').length, 1);
 });
-test('range is moved by bounded keyboard input and read back', async () => {
-  const node = element('INPUT', { type: 'range' }, '0'); node.min = '0'; node.max = '100'; node.step = '1';
-  const h = harness({ e1: node }, { mutate(n, kind) { if (kind === 'press') n.value = '72'; } });
-  const r = await h.fill([{ ref: 'e1', value: 72 }]);
-  assert.equal(r.rows[0].status, 'set'); assert.equal(node.value, '72');
+function nativeRange({ min = '0', max = '100', step = '1', value = '0' } = {}) {
+  const node = element('INPUT', { type: 'range' }, value), events = [];
+  Object.assign(node, { min, max, step });
+  class Input {}
+  Object.defineProperty(Input.prototype, 'value', { set(next) { Object.defineProperty(this, 'value', { value: next, writable: true, configurable: true }); } });
+  node.ownerDocument = { defaultView: { getComputedStyle: () => ({}), HTMLInputElement: Input, Event: class { constructor(type) { this.type = type; } } } };
+  node.dispatchEvent = event => { events.push(event.type); };
+  return { node, events };
+}
+test('a native range takes a number directly with input and change events and no key presses', async () => {
+  const { node, events } = nativeRange(), h = harness({ e1: node });
+  const r = await h.fill([{ ref: 'e1', value: 37 }]);
+  assert.equal(r.rows[0].status, 'set'); assert.equal(node.value, '37'); assert.deepEqual(events, ['input', 'change']);
+  assert.equal(h.input.length, 0);
 });
-test('range refuses a value outside its bounds before any action', async () => {
-  const node = element('INPUT', { type: 'range' }, '0'), h = harness({ e1: node });
-  const r = await h.fill([{ ref: 'e1', value: 101 }]);
-  assert.equal(r.rows[0].status, 'failed'); assert.equal(h.input.length, 0);
+test('a native range takes the numeric string a model usually sends', async () => {
+  const { node, events } = nativeRange({ value: '50' }), h = harness({ e1: node });
+  const r = await h.fill([{ ref: 'e1', value: '82' }, ]);
+  assert.equal(r.rows[0].status, 'set'); assert.equal(node.value, '82'); assert.deepEqual(events, ['input', 'change']); assert.equal(h.input.length, 0);
+});
+test('a native range with no step attribute, a decimal step or step any is set to a value that fits', async () => {
+  for (const [attrs, value, expected] of [[{ step: '' }, '7', '7'], [{ min: '1', max: '2', step: '0.25' }, '1.75', '1.75'], [{ step: 'any' }, '33.3', '33.3'], [{ min: '10', max: '20', step: '5' }, 15, '15']]) {
+    const { node } = nativeRange(attrs), h = harness({ e1: node }), r = await h.fill([{ ref: 'e1', value }]);
+    assert.equal(r.rows[0].status, 'set', JSON.stringify(attrs)); assert.equal(node.value, expected);
+  }
+});
+test('a range value that is off its step names the nearest valid values and sends no input', async () => {
+  const { node, events } = nativeRange({ min: '0', max: '10', step: '3' }), h = harness({ e1: node });
+  let r = await h.fill([{ ref: 'e1', value: 4 }]);
+  assert.equal(r.rows[0].status, 'failed'); assert.match(r.rows[0].reason, /off its step of 3 from 0; nearest valid values are 3 and 6/);
+  r = await h.fill([{ ref: 'e1', value: '10' }]);
+  assert.match(r.rows[0].reason, /nearest valid values are 9$/);
+  assert.equal(h.input.length, 0); assert.deepEqual(events, []); assert.equal(node.value, '0');
+});
+test('a range value outside its bounds or not a number is refused with the bounds before any action', async () => {
+  const { node, events } = nativeRange(), h = harness({ e1: node });
+  for (const [value, reason] of [[101, /101 is outside 0 to 100/], [-1, /outside 0 to 100/], ['abc', /needs a number/], ['', /needs a number/]]) {
+    const r = await h.fill([{ ref: 'e1', value }]);
+    assert.equal(r.rows[0].status, 'failed'); assert.match(r.rows[0].reason, reason);
+  }
+  assert.equal(h.input.length, 0); assert.deepEqual(events, []);
+});
+test('a custom slider with no native value property is still moved by keys and read back', async () => {
+  const node = element('DIV', { role: 'slider', 'aria-valuemin': '0', 'aria-valuemax': '10' });
+  let now = 0;
+  node.getAttribute = key => key === 'role' ? 'slider' : key === 'aria-valuemin' ? '0' : key === 'aria-valuemax' ? '10' : key === 'aria-valuenow' ? String(now) : null;
+  const h = harness({ e1: node }, { mutate(n, kind) { if (kind === 'press') now = h.input.at(-1)[2] === 'Home' ? 0 : now + 1; } });
+  const r = await h.fill([{ ref: 'e1', value: '4' }]);
+  assert.equal(r.rows[0].status, 'set'); assert.deepEqual(h.input.map(a => a[2]), ['Home', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight']);
 });
 test('reorder validates a permutation, drags each misplaced row and observes the final order', async () => {
   const node = element('UL'), names = ['Alpha', 'Beta', 'Gamma'];

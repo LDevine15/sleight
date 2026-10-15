@@ -2,15 +2,17 @@ import test from 'node:test';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
+import { createActionRunner, overlaySignature } from '../plugins/sleight/lib/direct-browser/act.mjs';
+import { deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // Playwright boundary only. There is no engine object and no catch-all method fake.
-function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false } = {}) {
-  const page = new EventEmitter(), actions = [], states = new Map(); let time = 0, number = 1;
+function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false, onCheck } = {}) {
+  const page = new EventEmitter(), actions = [], states = new Map(); let time = 0, number = 1, overlay = { count: 0, hash: 1 };
   const metadata = { name: 'Continue', submit, payment: false, form: submit, formSignature: 'before' };
   const loc = ref => utilityLocator({
     async evaluate(fn, arg) {
       if (fn.name === 'inspectTarget') return { ...metadata, ...(states.get(ref) ?? {}) };
+      if (fn.name === 'overlaySignature') return overlay;
       if (fn.name === 'scrollPoint') return { x: 10, y: 20 };
       if (fn.name === 'coverDetails') return { name: 'Cookie notice', buttons: ['Accept cookies'] };
       throw Error('unexpected evaluate ' + fn.name);
@@ -36,14 +38,14 @@ function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = fa
   for (const method of ['goBack', 'goForward', 'reload', 'setViewportSize']) page[method] = async options => { actions.push([method, options]); };
   const tab = { page, state: { snapshotNo: 1, submitUnconfirmed: false } }, checks = [];
   const check = async (ctx, kind, target) => {
-    checks.push({ ctx, kind, target });
+    checks.push({ ctx, kind, target }); onCheck?.(page, checks.length);
     if (target.submit && target.state.submitUnconfirmed) return { kind: 'refuse', message: 'Read before resubmitting' };
     return { kind: 'allow' };
   };
   const run = createActionRunner({ check, now: () => time, sleep: async ms => { time += ms; },
     snapshot: async (p, options) => { assert.equal(p, page); if (snapshotFail) throw Error('read unavailable');
       return { text: effect || 'No visible changes.', number: ++number, options }; } });
-  return { page, tab, run, checks, actions, states, time: () => time };
+  return { page, tab, run, checks, actions, states, time: () => time, setOverlay: next => { overlay = next; } };
 }
 
 test('v3 action reports an unproved click as an observation and returns a diff', async () => {
@@ -380,4 +382,79 @@ test('v3 destroyed form evidence stops the batch after dispatched submit', async
   assert.match(result.lines[1], /not reached/);
   assert.equal(f.actions.length, 1);
   assert.ok(f.tab.state.submitUnconfirmed);
+});
+
+test('v3 a submit that opens a dialog with no request settles after one second and stays unconfirmed until a fresh read', async () => {
+  let f; f = fixture({ submit: true, onClick() { f.setOverlay({ count: 1, hash: 7 }); } });
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /unconfirmed: a dialog or panel opened and no request has started/);
+  assert.ok(f.time() >= 1000 && f.time() < 1200, 'settled at ' + f.time());
+  assert.match(result.lines[1], /Read before resubmitting/); assert.equal(f.actions.length, 1);
+  const submit = f.tab.state.submitUnconfirmed; assert.ok(submit && submit.settledAt >= 1000);
+  // The retry protection is the unchanged delivered-read rule: a read taken before the one-second mark does not clear it.
+  assert.equal(deliverSnapshot(f.tab.state, { state: f.tab.state, number: 9, capturedAt: submit.startedAt + 999 }), false);
+  assert.ok(f.tab.state.submitUnconfirmed);
+  assert.equal(deliverSnapshot(f.tab.state, { state: f.tab.state, number: 9, capturedAt: submit.settledAt }), true);
+  assert.equal(f.tab.state.submitUnconfirmed, false);
+});
+
+test('v3 a dialog that was already open, or a new one while a request is in flight, still waits the full five seconds', async () => {
+  let f = fixture({ submit: true }); f.setOverlay({ count: 1, hash: 7 });
+  let result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /unconfirmed after 5 s/); assert.ok(f.time() >= 5000);
+  f = fixture({ submit: true, onClick(page) { f.setOverlay({ count: 1, hash: 7 }); page.emit('request', { resourceType: () => 'fetch' }); } });
+  result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /unconfirmed after 5 s/); assert.ok(f.time() >= 5000); assert.ok(f.tab.state.submitUnconfirmed);
+});
+
+test('v3 a submit with no visible effect keeps the five second wait and the unconfirmed state', async () => {
+  const f = fixture({ submit: true }); const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /unconfirmed after 5 s/); assert.ok(f.time() >= 5000); assert.ok(f.tab.state.submitUnconfirmed);
+});
+
+test('v3 overlay signature counts visible dialogs, alerts and status panels and their text', () => {
+  const node = (text, { width = 10, display = 'block' } = {}) => ({ textContent: text, getBoundingClientRect: () => ({ width, height: 5 }), display });
+  const doc = nodes => ({ querySelectorAll: () => nodes, defaultView: { getComputedStyle: n => ({ display: n.display, visibility: 'visible' }) } });
+  const sig = nodes => overlaySignature({ ownerDocument: doc(nodes) });
+  const none = sig([]), one = sig([node('Save these settings?')]);
+  assert.equal(none.count, 0); assert.equal(one.count, 1); assert.notEqual(one.hash, none.hash);
+  assert.deepEqual(sig([node('Save these settings?'), node('hidden', { display: 'none' }), node('flat', { width: 0 }), node('  ')]), one);
+  assert.notDeepEqual(sig([node('Saved')]), sig([node('Failed')]));
+  assert.equal(overlaySignature({ ownerDocument: null }), null);
+});
+
+test('v3 a batch of repeated key presses settles briefly per step and fully once, with every step still gated', async () => {
+  const f = fixture(); const steps = Array.from({ length: 12 }, () => ({ do: 'press', key: 'ArrowRight' }));
+  const result = await f.run(f.tab, steps, {});
+  assert.equal(result.stoppedAt, null); assert.equal(f.actions.filter(a => a[0] === 'key').length, 12); assert.equal(f.checks.length, 12);
+  assert.ok(f.time() <= 600 + 11 * 60, 'settled in ' + f.time()); assert.ok(f.time() >= 600);
+  for (const name of ['request', 'requestfinished', 'requestfailed', 'framenavigated', 'load', 'dialog', 'popup', 'close'])
+    assert.equal(f.page.listenerCount(name), 0, name);
+});
+
+test('v3 typing and key presses defer their settle, but Enter, Space, a click or the last step settle in full', async () => {
+  const timeFor = async steps => { const f = fixture(); await f.run(f.tab, steps, {}); return f.time(); };
+  assert.ok(await timeFor([{ do: 'type', ref: 'e1', text: 'a' }, { do: 'type', ref: 'e2', text: 'b' }]) < 800);
+  assert.ok(await timeFor([{ do: 'press', key: 'Enter' }, { do: 'press', key: 'ArrowRight' }]) >= 1200);
+  assert.ok(await timeFor([{ do: 'press', key: 'Space' }, { do: 'press', key: 'ArrowRight' }]) >= 1200);
+  assert.ok(await timeFor([{ do: 'press', key: 'Control+Enter' }, { do: 'press', key: 'ArrowRight' }]) >= 1200);
+  assert.ok(await timeFor([{ do: 'press', key: 'ArrowRight' }, { do: 'click', ref: 'e1' }]) >= 1200);
+  assert.ok(await timeFor([{ do: 'click', ref: 'e1' }, { do: 'press', key: 'ArrowRight' }]) >= 1200);
+});
+
+test('v3 a boundary that arrives after a deferred step stops the batch before the next input', async () => {
+  const f = fixture({ onCheck(page, n) { if (n === 3) page.emit('load'); } });
+  const result = await f.run(f.tab, Array.from({ length: 5 }, () => ({ do: 'press', key: 'ArrowRight' })), {});
+  assert.equal(f.actions.filter(a => a[0] === 'key').length, 2); assert.equal(result.stoppedAt, 3);
+  assert.match(result.lines[2], /not run: the page changed after the previous step/); assert.match(result.lines[3], /not reached/);
+  for (const name of ['request', 'requestfinished', 'requestfailed', 'framenavigated', 'load', 'dialog', 'popup', 'close'])
+    assert.equal(f.page.listenerCount(name), 0, name);
+});
+
+test('v3 a dialog opened by a deferred step ends the batch at once', async () => {
+  const f = fixture(); const press = f.page.keyboard.press;
+  f.page.keyboard.press = async key => { await press(key); f.page.emit('dialog', { type: () => 'alert', message: () => 'Hi' }); };
+  const result = await f.run(f.tab, [{ do: 'press', key: 'ArrowRight' }, { do: 'press', key: 'ArrowRight' }], {});
+  assert.match(result.lines[0], /dialog alert/); assert.equal(result.stoppedAt, 1); assert.match(result.lines[1], /not reached/);
+  assert.equal(f.actions.filter(a => a[0] === 'key').length, 1);
 });

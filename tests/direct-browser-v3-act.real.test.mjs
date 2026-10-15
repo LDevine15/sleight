@@ -187,3 +187,28 @@ test('real v3 viewport step resizes the page, reports the old size, and gives th
   assert.deepEqual(await size(), [1000, 800]);
   assert.match((await f.run(f.tab, [{ do: 'viewport' }], {})).lines[0], /unchanged/);
 });
+
+test('real v3 twelve repeated key presses settle once at the end and every press reaches the slider', { skip }, async t => {
+  const f = await fixture(t, '<label>Volume<input id="v" type="range" min="0" max="100" step="1" value="0"></label>');
+  const key = 'ArrowRight', started = Date.now();
+  const result = await f.run(f.tab, [{ do: 'click', ref: await f.ref('Volume') }, ...Array.from({ length: 11 }, () => ({ do: 'press', key }))], {});
+  const took = Date.now() - started;
+  assert.equal(result.stoppedAt, null, result.lines.join('\n')); assert.equal(await f.page.locator('#v').inputValue(), '61', 'the click lands on 50 and 11 presses add 11');
+  assert.equal(f.checks.length, 12); t.diagnostic('12-step key batch took ' + took + ' ms');
+  assert.ok(took < 3000, 'took ' + took + ' ms');
+});
+
+test('real v3 a submit that only opens a confirm dialog settles in about a second, and a silent submit keeps the full wait', { skip, timeout: 30000 }, async t => {
+  const f = await fixture(t, `<form onsubmit="event.preventDefault();document.querySelector('#confirm').showModal()"><input aria-label="Note"><button type="submit">Save</button></form>
+    <dialog id="confirm"><p>Save these settings?</p><button type="button" onclick="document.querySelector('#confirm').close()">Save settings</button></dialog>`);
+  let started = Date.now();
+  const result = await f.run(f.tab, [{ do: 'click', ref: await f.ref('Save') }], {});
+  const took = Date.now() - started; t.diagnostic('dialog submit settled in ' + took + ' ms');
+  assert.match(result.lines[0], /submit unconfirmed: a dialog or panel opened and no request has started/);
+  assert.ok(took >= 1000 && took < 2500, 'took ' + took + ' ms');
+  assert.ok(f.tab.state.submitUnconfirmed, 'the submit stays unconfirmed until a read is delivered');
+  const quiet = await fixture(t, '<form onsubmit="event.preventDefault()"><input aria-label="Note"><button type="submit">Save</button></form>');
+  started = Date.now();
+  const silent = await quiet.run(quiet.tab, [{ do: 'click', ref: await quiet.ref('Save') }], {});
+  assert.match(silent.lines[0], /unconfirmed after 5 s/); assert.ok(Date.now() - started >= 5000);
+});

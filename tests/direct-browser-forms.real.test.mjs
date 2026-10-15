@@ -159,6 +159,21 @@ test('v3 real settings fills closed switch, grouped multi-select, slider and reo
   assert.deepEqual(post.data.languages, ['ja', 'ko']); assert.deepEqual(post.data.priorities, order);
 });
 
+test('v3 real settings sets the slider from a numeric string directly, with the page seeing input and change', { skip }, async t => {
+  const f = await fixture(t, 'settings');
+  await f.page.evaluate(() => { window.events = []; for (const type of ['input', 'change']) document.querySelector('#volume').addEventListener(type, () => window.events.push(type)); });
+  const presses = []; await f.page.exposeFunction('noteKey', key => presses.push(key));
+  await f.page.evaluate(() => document.querySelector('#volume').addEventListener('keydown', e => window.noteKey(e.key)));
+  const result = await f.fill([['#volume', '37']]);
+  assert.equal(result.rows[0].status, 'set'); assert.equal(await f.page.locator('#volume').inputValue(), '37');
+  assert.equal(await f.page.locator('#volume-out').textContent(), '37'); assert.deepEqual(await f.page.evaluate(() => window.events), ['input', 'change']);
+  assert.deepEqual(presses, []);
+  const ref = await f.ref('#volume'); await f.page.ariaSnapshot({ mode: 'ai' });
+  const off = await f.fillFields(f.tab, [{ ref, value: 37.5 }], {}, f.ctx);
+  assert.equal(off.rows[0].status, 'failed'); assert.match(off.rows[0].reason, /nearest valid values are 37 and 38/);
+  assert.equal(await f.page.locator('#volume').inputValue(), '37');
+});
+
 test('v3 real shop checkout fills protected fields and returns optional-submit outcome', { skip }, async t => {
   const f = await fixture(t, 'shop');
   const result = await f.fill([['input[name="number"]', '4242424242424242'], ['input[name="expiry"]', '12/30'], ['input[name="cvc"]', '123']], 'form button');

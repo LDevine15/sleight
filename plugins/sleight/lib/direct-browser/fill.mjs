@@ -211,12 +211,30 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) throw new FieldError('combobox value did not match; read the field');
             } finally { await handle?.dispose(); }
           } else if (state.kind === 'range') {
-            const min = Number(state.min), max = Number(state.max), step = Number(state.step), count = Math.round((value - min) / step);
-            if (typeof value !== 'number' || ![min, max, step].every(Number.isFinite) || step <= 0 || value < min || value > max ||
-                Math.abs(min + count * step - value) > 1e-8 || count > 1000) throw new FieldError('range value is outside its bounds or step');
-            await send(checked => checked.press('Home', options), 'press');
-            for (let j = 0; j < count && !stopped; j++) await send(checked => checked.press('ArrowRight', options), 'press');
-            if (!stopped && (await trustedLocatorRead(loc, inspect, value)).number !== value) throw new FieldError('range value did not match; read the field');
+            // The model often sends "37" for a slider, so a numeric string counts as the number it spells.
+            const wanted = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+            const min = Number(state.min), max = Number(state.max), any = state.type === 'range' && String(state.step).toLowerCase() === 'any';
+            const step = any ? 1 : Number(state.step), count = Math.round((wanted - min) / step);
+            if (!Number.isFinite(wanted)) throw new FieldError('range needs a number');
+            if (![min, max, step].every(Number.isFinite) || step <= 0 || min > max) throw new FieldError('range bounds unreadable; use browser_act keys');
+            if (wanted < min || wanted > max) throw new FieldError(`range value ${wanted} is outside ${min} to ${max}`);
+            if (!any && Math.abs(min + count * step - wanted) > 1e-8) {
+              const lower = min + Math.floor((wanted - min) / step) * step, upper = min + Math.ceil((wanted - min) / step) * step;
+              throw new FieldError(`range value ${wanted} is off its step of ${step} from ${min}; nearest valid values are ${upper > max ? lower : lower + ' and ' + upper}`);
+            }
+            if (state.type === 'range') {
+              // A native slider takes its value directly, with the input and change events a drag would fire.
+              await send(checked => checked.evaluate((el, next) => {
+                const view = el.ownerDocument.defaultView;
+                Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value').set.call(el, next);
+                for (const type of ['input', 'change']) el.dispatchEvent(new view.Event(type, { bubbles: true }));
+              }, String(wanted), options));
+            } else {
+              if (count > 1000) throw new FieldError('range has too many steps; use browser_act keys');
+              await send(checked => checked.press('Home', options), 'press');
+              for (let j = 0; j < count && !stopped; j++) await send(checked => checked.press('ArrowRight', options), 'press');
+            }
+            if (!stopped && (await trustedLocatorRead(loc, inspect, wanted)).number !== wanted) throw new FieldError('range value did not match; read the field');
           } else if (state.kind === 'reorder') {
             const names = await loc.evaluate(order, undefined, options);
             if (!Array.isArray(value) || value.length !== names.length || !names.length || names.length > 100 ||
