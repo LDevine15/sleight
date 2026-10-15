@@ -94,6 +94,47 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - A web page's tree is capped in a result, but the first browser result of a session, with the engine's docs,
   still came to 55,450 characters on one article, over the 45,000 sleight aims for.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
+- The turbo v3 payment read asks whenever any visible money figure in the payment form or dialog is larger than the amount in the
+  user's message, in any currency and with any label or sign (a discount, a was price, a gift card, a late fee, a coverage limit,
+  a later total, an estimate, "-$500.00"). It doesn't read wording. Rounds 4 to 12 added label lists that cleared such a figure, and
+  every review found wordings that got past them, so round 13 removed them (397 net lines of the read). It also asks for a figure
+  in another currency at any size, an image or canvas of 24x8 or more that could show a figure, a number spelled out in words,
+  digits with a letter glued on ("$5OO.00"), and a bare number right after a pay word ("Total 500"). Figures in chosen
+  controls (a checked box or radio, an aria-checked, aria-pressed or aria-selected element, a selected option) ask when
+  together, the amount itself aside, they exceed the amount, because the user pays them on top of the pay figure. The label of an unchecked radio or ARIA option is skipped unless it
+  names a total, an amount due or a payment.
+- Figures equal to or below the amount never ask, so the read cannot catch a page that hides its total or states a smaller total
+  than it charges. Examples that allow now and asked in round 12: "Payment $5.00" beside "Total due $18.00", three fee-type parts
+  of $15.00 beside an $18.00 total, "Price: $9.00" with "Qty: 2". 13 earlier fixtures that expected an ask changed to allow for
+  this reason. A page can also split a charge into figures that are each at most the amount.
+- Honest pages measured 2026-10-15: 50/98 allow (83/98 in round 12), 52/98 with the two hold pages counted as correct asks. Of the
+  36 realistic pages 19 allow, of the round 8 reviewer's 20 pages 9, of the 12 pages 7, of the 10 industry pages 6, of the round
+  11 pages 5 and of the round 12 pages 4. Every honest page with a figure above the amount asks: a subtotal beside a discount line, a
+  was price, an invoice total beside payments received, a coverage limit, a list price, a euro estimate, a free-delivery banner
+  with a threshold above the amount, a recommended product. 436 fixture and inline cases that allowed on a label now ask.
+- The same read doesn't see a total drawn as a CSS background image, held in a closed shadow root with no text,
+  set only in an `aria-label` or `title`, shown in a cross-origin iframe, or placed outside the form element.
+  Page text that a person can't read is never accepted as the payment terms, but these are not read at all.
+- An Apply, quantity stepper, Remove or "Show order summary" button gives the request's one payment activation back
+  at the next payment check, but only if its own name is on the closed list (apply, update, remove, delete, increase,
+  decrease, plus, minus, show, hide, edit, change, more, less, +, -) and nothing went out on the network until that
+  check. The watch counts requests, WebSocket frames, workers and new pages in all tabs sleight opened in that browser
+  context (tested with two). It does not refund when any request was still open at click time (a streaming upload, a long poll, an
+  EventSource), or when the browser holds another tab of the page's site that sleight doesn't own (a
+  BroadcastChannel or `storage` event reaches it, and nothing watches it). A page with a worker, a service worker, a
+  shared worker of its origin or an iframe of another origin is not refunded either, because the connection can't see
+  their network. A dedicated worker in any tab the context holds (an earlier popup too) counts the same. A request still
+  open when its tab closes or its frame loads a new document stops counting (measured on 11 cases, including 600 hanging
+  fetches); one still open after a `pushState`, a hash change, or a 204 or download navigation that never committed
+  keeps counting. The watch detaches when the turn ends and after 2 minutes. A charge that waits for a timer longer than
+  the gap to the next payment check, or for the next input, is not seen, so a charger that calls itself "Apply" can
+  charge once more (measured: a fetch after 6 s and a `sendBeacon` call on the next pointerdown, 2 charges in total).
+  A WebRTC data channel or a WebTransport stream opened before the click can also carry a charge, and Playwright
+  doesn't expose either. A control with any other name ("Continue", "Next") is never refunded.
+- A page with background network traffic (an analytics ping, a chat WebSocket heartbeat, a registered service
+  worker, a tax fetch) never gets the refund, so Pay asks once after "Show order summary" there. Measured 2026-10-15:
+  2 of 6 such pages allow Pay (the quiet one and one with an already-loaded cross-origin image). Skipping requests to a
+  URL the page already sent periodically would let a page hide a charge in its own heartbeat, so it asks.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.

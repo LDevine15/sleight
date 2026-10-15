@@ -3,7 +3,8 @@
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
-import { intent, keyClass } from './rules.mjs';
+import { intent, keyClass, deferRefund, refundableName } from './rules.mjs';
+import { observeActivity } from './activity.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 import { originOf, pathOf, guardChooser } from './output-hygiene.mjs';
@@ -59,6 +60,7 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
   const payment = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text);
   const associated = read(el, 'form');
   const form = associated === undefined ? read(el, 'closest')('form') : associated, tag = read(el, 'localName'), role = read(el, 'getAttribute')('role'), name = words(el).trim().slice(0, 100);
+  const accName = (read(el, 'getAttribute')('aria-labelledby') ? '' : (read(el, 'getAttribute')('aria-label') || read(el, 'textContent') || read(el, 'getAttribute')('value') || read(el, 'getAttribute')('alt') || read(el, 'getAttribute')('title') || '')).replace(/\s+/g, ' ').trim().slice(0, 100);
   const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(read(el, 'type')) || role === 'button';
   // A label click forwards to its control, so a label for a file or color input opens the native picker like the input does.
   const forwarded = (() => { try { const label = typeof HTMLLabelElement === 'undefined' ? null : Element.prototype.closest.call(el, 'label'), control = label && Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get.call(label);
@@ -73,7 +75,7 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
     const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');
     for (let i = 0; i < content.length; i++) hash = Math.imul(hash ^ content.charCodeAt(i), 16777619);
   }
-  return { name, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
+  return { name, accName, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
     formPayment, formSignature: form ? hash : null };
 }
 
@@ -146,7 +148,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
-      let locator, target, started = false, armed, staging, submit, inputPending = false, stepFinished = false;
+      let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false;
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
         if (step.do === 'dialog' && !state.dialog) throw Error('no waiting dialog; read the page');
@@ -183,6 +185,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         }
         guardChooser(page, state); const popupFrom = tab.popups?.length ?? 0;
         armed = watch(page, state); const start = now();
+        // A script-driven control on the closed name list may be refunded later, if the whole network stays quiet (activity.mjs).
+        if (step.do === 'click' && info.scriptButton === true && refundableName(info.accName)) activity = observeActivity(page);
         const options = { timeout: TIMEOUT };
         const perform = async () => {
           if (step.do === 'click') return backgroundClick(tab, locator, async (extra, verifySeal) => {
@@ -264,7 +268,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
         if (submit && state.submitUnconfirmed === submit) {
           if (boundary?.kind === 'navigation' || boundary?.kind === 'document' || formChanged || armed.completed.size) state.submitUnconfirmed = false;
-          else submit.settledAt = now();
+          else {
+            submit.settledAt = now();
+            // No navigation, document, dialog or popup, no form change, no request in flight: the refund waits for the next payment check.
+            if (!boundary && !formChanged && !armed.pending.size && activity?.observable && await activity.verify()) deferred = trusted ? ctx.refund(target, activity) : deferRefund(ctx, target, activity);
+          }
         }
         const popupTab = tab.popups?.slice(popupFrom).find(row => row.tab && !row.blocked)?.tab, navPath = boundary?.kind === 'navigation' ? pathOf(page.url()) : '';
         // A tab the page opened during a click without the background modifier is probably in the foreground.
@@ -315,6 +323,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;
+        if (activity && !deferred) activity.stop();
         if (isV3Context(ctx) && target) ctx.finishInput(target);
         // A deadline ends the call, not the underlying Playwright input. Keep
         // its dialog listener until that exact promise settles or the page closes.

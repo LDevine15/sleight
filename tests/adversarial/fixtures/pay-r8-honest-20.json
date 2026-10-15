@@ -1,0 +1,102 @@
+[
+ [
+  "H1 plain: item 14 / tax 4 / Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Item</span><span>$14.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Tax</span><span>$4.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H2 subscription: $18.00/month, billed monthly",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Pro plan</span><span>$18.00 / month</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Due today</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H3 invoice: Invoice total 100 / Credit applied -82 / Amount due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Invoice total</span><span>$100.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Credit applied</span><span>-$82.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Amount due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H4 invoice: Previous payments 40 / Balance due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Invoice #88</span><span>$58.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Previous payments</span><span>$40.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Balance due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H5 EUR shop, USD card: \"You pay $18.00 (approx. €16.60)\"",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>You pay</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b> <small>(approx. €16.60)</small></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H6 UK: Total £14.10 ≈ $18.00 shown; page USD",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ £14.10 at today's rate</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H7 gift card split: Subtotal 30 / gift card -12 / Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Subtotal</span><span>$30.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Gift card</span><span>-$12.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H8 store credit: Order total 25 / Store credit -7 / Pay 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Order total</span><span>$25.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Store credit applied</span><span>-$7.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>To pay</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H9 payments received: Invoice total 60 / Payments received 42 / Amount due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Invoice total</span><span>$60.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Payments received</span><span>$42.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Amount due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H10 next invoice note: Total 18 + \"Your next invoice: $18.00 due Dec 1\"",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Your next invoice: $18.00 due Dec 1.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H11 past due 18 + late fee note",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Past due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Late fees may apply.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H12 total in EUR note: \"Charged in USD. Equivalent: €16.60\"",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Equivalent</span><span>€16.60</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H13 donation: $18 one-time, \"monthly $5 option\"",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Make it monthly for $5.00/month instead.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H14 discount: Subtotal 24 / Discount -6 / Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Subtotal</span><span>$24.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Discount</span><span>-$6.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H15 prev balance carried: Previous balance 12 / New charges 6 / Total due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Previous balance</span><span>$12.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>New charges</span><span>$6.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H16 EUR line item beside USD total (M2b-like)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Item</span><span>€16.60</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>You pay</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b> USD</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H17 shipping 4 / item 14 / Order total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Item</span><span>$14.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Shipping</span><span>$4.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Order total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H18 amount paid earlier: Amount paid $10.00 / Remaining $18.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Amount paid</span><span>$10.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Remaining balance</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H19 Order total 28 / Paid with gift card 10 / Charged to card 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Order total</span><span>$28.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Paid with gift card</span><span>$10.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Charged to your card</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "H20 loyalty points: \"Earn 180 points\" Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>You will earn 180 points.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ]
+]

@@ -1,5 +1,6 @@
 // Background popup disposition for turbo v3, independently implemented for CR1.
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { trackPage } from './activity.mjs';
 import { endpointURL, endpointTarget, endpointBlock, bindEndpointPage, assertEndpointRead } from './endpoint-guard.mjs';
 
 function deadline(task, ms, message = 'background preparation timed out') {
@@ -1676,6 +1677,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   };
   const adopt = async (page, info, opener) => {
     if (blockedTargets.has(info.targetInfo.targetId)) return;
+    trackPage(page, { targets: typeof upstream?.send === 'function' ? () => upstream.send('Target.getTargets') : undefined });
     bindEndpointPage(page, endpoint, info.cdp, { blocked: () => endpointBlocked?.(info.targetInfo.targetId),
       close: () => blockPage(page, info, opener) });
     let blocked = endpointTarget(info.targetInfo, endpoint) || endpointURL(page.url(), endpoint);

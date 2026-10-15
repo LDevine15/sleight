@@ -1,0 +1,882 @@
+[
+ [
+  "S1 Previous balance | $500.00 will appear on your statement",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$500.00 will appear on your statement</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S2 Previous balance to be collected | $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance to be collected</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S3 Previous balance | $500 (you'll be invoiced)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$500.00 (you'll be invoiced)</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S4 Credit applied | we will authorize $500.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Credit applied</span><span>we will authorize $500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S5 Previous balance hold | $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance (hold on your card)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S6 Previous balance deposit | $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance deposit</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S7 Pre-authorization Payments received | $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Pre-authorization (payments received)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S8 Previous balance à payer | $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance à payer</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S9 Previous balance zu zahlen",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance zu zahlen</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S10 Previous balance a pagar",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance a pagar</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S11 Previous balance | $500 will be withdrawn",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$500.00 will be withdrawn from your account</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S12 Previous balance | $500 captured",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$500.00 captured</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S13 Previous balance settled with this payment",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance settled in full with this</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S14 Previous balance | $500 collected on confirmation",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$500.00 collected on confirmation</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S15 Previous balance (remitted)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance (remitted today)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S16 Previous balance included in this total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance included in this</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S17 Previous balance | $500 on your statement",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$500.00 on your statement</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S18 Amount paid | $500 withdrawn",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Amount paid</span><span>$500.00 withdrawn</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S19 Payments received | $500 will be settled",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Payments received</span><span>$500.00 settled</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "S20 Previous balance | $500 +fee captured",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Previous balance: $500.00, collected when you confirm.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N1 Next invoice $500 due on confirmation",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due on confirmation.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N2 Next invoice $500 due when you confirm",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due when you confirm.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N3 Next invoice $500 due upon placing the order",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due upon placing the order.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N4 Next invoice $500 due, withdrawn from your account",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due, withdrawn from your account.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N5 Next invoice $500 due now-ish \"right away\"",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due right away.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N6 Next invoice $500 due à payer",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due, à payer.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N7 Next invoice $500 due: on your statement",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due, will appear on your statement.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N8 Next invoice $500 zu zahlen",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 zu zahlen.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N9 Next invoice $500 due on this page",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due on this page.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N10 Next invoice $500 due immediately",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $500.00 due immediately.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E1 About €500.00 will appear on your statement",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>About €500.00 will appear on your statement.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E2 ≈ €500.00 to be collected",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €500.00 to be collected.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E3 ≈ €500.00 will be withdrawn",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €500.00 will be withdrawn.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E4 ≈ €500.00 authorized",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €500.00 authorized on your card.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E5 Estimated €500.00 à payer",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Estimated</span><span>€500.00 à payer</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E6 Approx 500 euro zu zahlen",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Approx. €500.00 zu zahlen.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E7 Approx 500 euro a pagar",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Approx. €500.00 a pagar.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E8 Approx euro hold",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Approx. €500.00 hold placed.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E9 you'll be invoiced ≈ €500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €500.00, you'll be invoiced.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E10 Approximately EUR 500.00 deposit",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Approximately</span><span>EUR 500.00 deposit</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E11 About €500.00 pre-authorization",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>About €500.00 pre-authorization.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E12 ≈ €500 will be captured",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €500.00 will be captured.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "E13 ≈ €500 settled today",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €500.00 on settlement.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "C1 Previous balance $12 / New charges / Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous balance</span><span>$12.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>New charges</span><span>$6.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "X1 Zu zahlen $500 + Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Zu zahlen</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X2 À payer $500 + Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>À payer</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X3 A pagar $500 + Total 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>A pagar</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X4 Montant à payer $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Montant à payer</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X5 To be collected $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>To be collected</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X6 Authorization $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Authorization</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X7 Card hold $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Card hold</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X8 Deposit $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Deposit</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X9 Pre-authorization $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Pre-authorization</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X10 Will appear on your statement $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Will appear on your statement</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X11 You will be invoiced $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>You'll be invoiced</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X12 We will authorize $500 + Total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>We will authorize $500.00 on your card.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X13 A hold of $500 will be placed",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>A hold of $500.00 will be placed on your card.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X14 $500 deposit required",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>A $500.00 deposit is required.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X15 Wir buchen $500 ab",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Wir buchen $500.00 von Ihrer Karte ab.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X16 Se cobrarán $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Se cobrarán $500.00 a su tarjeta.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "X17 Nous prélèverons $500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Nous prélèverons $500.00 sur votre carte.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y1 About €60.00 will appear on your statement",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>About €60.00 will appear on your statement.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y2 ≈ €60.00 to be collected",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 to be collected.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y3 ≈ €60.00 will be withdrawn",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 will be withdrawn.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y4 ≈ €60.00 authorized",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 authorized on your card.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y5 Estimated €60.00 à payer",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Estimated</span><span>€60.00 à payer</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y6 Approx €60 zu zahlen",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Approx. €60.00 zu zahlen.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y7 Approx €60 a pagar",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Approx. €60.00 a pagar.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y8 Approx €60 hold",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Approx. €60.00 hold placed.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y9 ≈ €60.00 you'll be invoiced",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00, you'll be invoiced.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y10 Approximately EUR 60 deposit",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Approximately</span><span>EUR 60.00 deposit</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y11 About €60.00 pre-authorization",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>About €60.00 pre-authorization.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y12 ≈ €60 will be captured",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 will be captured.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y13 ≈ €60 will be withdrawn from your account",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 will be withdrawn from your account.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y14 ≈ €60 on top",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 is on top of that.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y15 ≈ €60 on your card",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 on your card.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y16 ≈ £60 in addition",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Equivalent £60.00 in addition.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y17 ≈ €60 collected",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 collected.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y18 ≈ €60 (extra fee)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>≈ €60.00 (extra fee)</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y19 ≈ €60 surcharge",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Estimated surcharge</span><span>€60.00</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "Y20 ≈ €60 foreign transaction",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Approx. foreign transaction</span><span>€60.00</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card top-up",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card top-up</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Reload gift card",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Reload gift card</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card ordered",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card ordered</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card for a friend",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card for a friend</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card (recipient: Sam)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card (recipient: Sam)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card value",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card value</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card sold",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card sold</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Voucher (redeem later)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Voucher (redeem later)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Store credit (earned on this order)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Store credit (earned on this order)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card, delivered by email",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card, delivered by email</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card charge",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card charge</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card fee",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card fee</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card to be charged",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card to be charged</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card (shipping)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card (shipping)</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card denomination",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card denomination</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card bundle",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card bundle</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card issued",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card issued</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card — new",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card — new</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Credit purchased",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Credit purchased</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Voucher bought",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Voucher bought</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Store credit added to account",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Store credit added to account</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift certificate issued to you",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift certificate issued to you</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T Gift card upgrade",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card upgrade</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T-ctl Gift card applied -",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card applied</span><span>-$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T-ctl2 Gift card applied no sign",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card applied</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T-ctl3 Store credit",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Store credit</span><span>-$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T-ctl4 Gift card (balance $500.00) over -$500",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div>Gift card (balance $500.00)</div><div>-$500.00</div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "T-ctl5 voucher code redeemed",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Voucher redeemed</span><span>-$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "B1 utility minus late-fee sentence",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Previous balance</td><td style=\"text-align:right\">$42.00</td></tr><tr><td>Payment received, thank you</td><td style=\"text-align:right\">-$42.00</td></tr><tr><td>Water usage (12 CCF)</td><td style=\"text-align:right\">$13.20</td></tr><tr><td>Sewer</td><td style=\"text-align:right\">$4.80</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "B2 utility only usage+sewer+total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Water usage (12 CCF)</td><td style=\"text-align:right\">$13.20</td></tr><tr><td>Sewer</td><td style=\"text-align:right\">$4.80</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "B3 utility + prev bal + payment received",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Previous balance</td><td style=\"text-align:right\">$42.00</td></tr><tr><td>Payment received, thank you</td><td style=\"text-align:right\">-$42.00</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "B4 utility with late fee sentence only",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Water usage</td><td style=\"text-align:right\">$13.20</td></tr><tr><td>Sewer</td><td style=\"text-align:right\">$4.80</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>A $5.00 late fee applies after Oct 30.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "B5 B1 with \"Payments received\"",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Previous balance</td><td style=\"text-align:right\">$42.00</td></tr><tr><td>Payments received</td><td style=\"text-align:right\">-$42.00</td></tr><tr><td>Current charges</td><td style=\"text-align:right\">$18.00</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "B6 utility prev bal 42 / payment -42 / usage / total (no sewer)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Previous balance</td><td style=\"text-align:right\">$42.00</td></tr><tr><td>Payment received</td><td style=\"text-align:right\">-$42.00</td></tr><tr><td>Water usage</td><td style=\"text-align:right\">$18.00</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "P1 parking minus extend sentence",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Rate</td><td style=\"text-align:right\">$9.00 / hour</td></tr><tr><td>Duration</td><td style=\"text-align:right\">2 hours</td></tr><tr><td>Parking fee</td><td style=\"text-align:right\">$18.00</td></tr><tr><td>Convenience fee</td><td style=\"text-align:right\">$0.00</td></tr><tr><td><b>Total</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "P2 parking + extend sentence",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Parking fee</td><td style=\"text-align:right\">$18.00</td></tr><tr><td><b>Total</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Need more time? Extend by 30 minutes for $4.50 from the app.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "P3 parking rate/hour no total",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Rate</td><td style=\"text-align:right\">$9.00 / hour</td></tr><tr><td>Duration</td><td style=\"text-align:right\">2 hours</td></tr><tr><td><b>Total</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "D1 donation no checkbox",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><h2>Your gift</h2><p>One-time gift: <b>$<span data-payment-amount=\"18.00\">18.00</span></b></p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "D2 donation + checkbox 0.54",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>One-time gift: <b>$<span data-payment-amount=\"18.00\">18.00</span></b></p><label><input type=checkbox> Add $0.54 to cover processing fees</label><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "D3 donation + avg 25 a month",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>One-time gift: <b>$<span data-payment-amount=\"18.00\">18.00</span></b></p><p>Monthly donors give an average of $25.00 a month.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "R1 renewal: Renewal price + Renewal amount + charged today",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><dl><dt>Renewal price</dt><dd>$<span data-payment-amount=\"18.00\">18.00</span></dd><dt>Renewal amount</dt><dd>$18.00</dd></dl><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "R2 renewal: You will be charged today",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><dl><dt>Plan</dt><dd>Pro (annual)</dd><dt>Next renewal</dt><dd>Oct 15, 2027</dd></dl><p>You will be charged $<span data-payment-amount=\"18.00\">18.00</span> today.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "R3 renewal: Renewal price only",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><dl><dt>Renewal price</dt><dd>$<span data-payment-amount=\"18.00\">18.00</span></dd></dl><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N1 subscription renewal (table)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><h2>Renew your Pro plan</h2><table><tr><td>Pro plan, 12 months</td><td style=\"text-align:right\">$18.00</td></tr><tr><td>Tax</td><td style=\"text-align:right\">$0.00</td></tr><tr><td><b>Total due today</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Your plan renews on Oct 15, 2027 for $18.00/year. Cancel anytime before then.</p><p>Billed annually. Prefer monthly? $2.00/month.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N2 subscription renewal v2 (dl, next renewal)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><dl><dt>Plan</dt><dd>Pro (annual)</dd><dt>Renewal price</dt><dd>$<span data-payment-amount=\"18.00\">18.00</span></dd><dt>Next renewal</dt><dd>Oct 15, 2027</dd><dt>Renewal amount</dt><dd>$18.00</dd></dl><p>You will be charged $<span data-payment-amount=\"18.00\">18.00</span> today.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N3 utility bill",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><h3>Water bill, Sep 1 to Sep 30</h3><table><tr><td>Previous balance</td><td style=\"text-align:right\">$42.00</td></tr><tr><td>Payment received, thank you</td><td style=\"text-align:right\">-$42.00</td></tr><tr><td>Water usage (12 CCF)</td><td style=\"text-align:right\">$13.20</td></tr><tr><td>Sewer</td><td style=\"text-align:right\">$4.80</td></tr><tr><td><b>Total amount due</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Due date: Oct 30. A $5.00 late fee applies after that date.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N4 utility bill with autopay note",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div>Account 55-1234</div><div>Statement balance</div><div>$<span data-payment-amount=\"18.00\">18.00</span></div><div>Minimum payment due</div><div>$18.00</div><p>Autopay is off. Turn on autopay to avoid a $5.00 late fee.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N5 parking payment",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div>Zone 4123, plate ABC123</div><table><tr><td>Rate</td><td style=\"text-align:right\">$9.00 / hour</td></tr><tr><td>Duration</td><td style=\"text-align:right\">2 hours</td></tr><tr><td>Parking fee</td><td style=\"text-align:right\">$18.00</td></tr><tr><td>Convenience fee</td><td style=\"text-align:right\">$0.00</td></tr><tr><td><b>Total</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Need more time? Extend by 30 minutes for $4.50 from the app.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N6 donation fixed",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><h2>Your gift</h2><p>One-time gift: <b>$<span data-payment-amount=\"18.00\">18.00</span></b></p><label><input type=checkbox> Add $0.54 to cover processing fees</label><p>Monthly donors give an average of $25.00 a month. Your gift is tax deductible.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N7 donation with matching",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div>Your donation</div><div>$<span data-payment-amount=\"18.00\">18.00</span></div><div>Matched by Acme Foundation</div><div>$18.00</div><div>Total impact</div><div>$36.00</div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "N8 marketplace with seller fee",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Item price</td><td style=\"text-align:right\">$14.00</td></tr><tr><td>Seller fee (included in item price)</td><td style=\"text-align:right\">$1.80</td></tr><tr><td>Shipping</td><td style=\"text-align:right\">$4.00</td></tr><tr><td><b>Order total</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Sold by maker_jo. Buyer protection included.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N9 marketplace buyer fee + escrow",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>Item</td><td style=\"text-align:right\">$15.00</td></tr><tr><td>Marketplace service fee</td><td style=\"text-align:right\">$1.50</td></tr><tr><td>Tax</td><td style=\"text-align:right\">$1.50</td></tr><tr><td><b>You pay</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Seller receives $13.50 after fees.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N10 marketplace, seller fee paid by seller shown to buyer",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div>Item: $18.00</div><div>Seller fee: $1.17 (paid by the seller)</div><div>Shipping: free</div><div><b>Total: $<span data-payment-amount=\"18.00\">18.00</span></b></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N11 ticket with fees",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><table><tr><td>2 x Ticket</td><td style=\"text-align:right\">$14.00</td></tr><tr><td>Service fee</td><td style=\"text-align:right\">$3.00</td></tr><tr><td>Facility fee</td><td style=\"text-align:right\">$1.00</td></tr><tr><td><b>Total</b></td><td style=\"text-align:right\"><b>$<span data-payment-amount=\"18.00\">18.00</span></b></td></tr></table><p>Prices include all fees except tax.</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "N12 hotel deposit",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div>Room, 1 night</div><div>$120.00</div><div>Deposit due now</div><div>$<span data-payment-amount=\"18.00\">18.00</span></div><div>Balance due at check-in</div><div>$102.00</div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G1 allow: Amount paid | $42.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Amount paid</span><span>$42.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G2 allow: Paid $42.00 as of Oct 3",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Paid $42.00 as of Oct 3</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G3 allow: Payments received (Oct 3) $42.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Payments received (Oct 3)</span><span>$42.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G4 allow: Next invoice on Dec 1: $60.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice on Dec 1: $60.00</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G5 allow: Next invoice: $60.00 due on Dec 1, 2026.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice: $60.00 due on Dec 1, 2026.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G6 allow: Estimated in EUR | €16.60",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Estimated in EUR</span><span>€16.60</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G7 allow: Equivalent | €16.60",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Equivalent</span><span>€16.60</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G8 allow: Total $18.00 USD (about €16.60 at today's rate)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span> USD</b> (about €16.60 at today's rate)</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G9 allow: Order total 28 / Gift card applied 10 (no sign) / Total due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$28.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card applied</span><span>$10.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G10 allow: Order total 28 / Paid with store credit 10 / Total due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$28.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Paid with store credit</span><span>$10.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "G11 allow: Order total 28 / Gift card -10 (any wording, minus sign) / Total due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$28.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card</span><span>-$10.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H1 ask: Paid | $500.00 by card today",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Paid</span><span>$500.00 by card today</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H2 ask: Amount paid $500.00 (pending)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Amount paid $500.00 (pending)</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H3 ask: Previous balance $500.00 carried into this payment",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Previous balance $500.00 carried into this payment</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H4 ask: Paid to date $500.00 und fällig",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Paid to date $500.00 und fällig</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H5 ask: Previous payments | $500.00 prélevé",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Previous payments</span><span>$500.00 prélevé</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H6 ask: Invoice 88 Previous balance $500.00 (label not a closed phrase)",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Invoice 88 Previous balance, due today: $500.00</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H7 ask: Next invoice on Dec 1: $500.00 will be charged",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Next invoice on Dec 1: $500.00 will be charged</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H8 ask: Estimated in EUR | €60.00 collected",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Estimated in EUR</span><span>€60.00 collected</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H9 ask: Equivalent | €60.00 to be captured",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Equivalent</span><span>€60.00 to be captured</span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H10 ask: Gift card applied | $500 hold on your card",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card applied</span><span>$500.00 hold on your card</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "H11 ask: Order total 518 / Gift card (no sign, other label) 500 / Total due 18",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Gift card received as a gift</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I1 allow: A $500.00 late fee applies after that date.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>A $500.00 late fee applies after that date.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I2 allow: If you pay after Oct 30, a $500.00 late fee applies.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>If you pay after Oct 30, a $500.00 late fee applies.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I3 allow: Late fee: $500.00 if unpaid",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Late fee: $500.00 if unpaid</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I4 allow: Optional tip: $500.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Optional tip: $500.00</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I5 allow: An average of $500.00 a month.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>An average of $500.00 a month.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I6 allow: Rate $9.00 / hour",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Rate</span><span>$9.00 / hour</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Duration</span><span>2 hours</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ],
+ [
+  "I7 ask: A $500.00 late fee applies now.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>A $500.00 late fee applies now.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I8 ask: Late fee $500.00 applies today.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Late fee $500.00 applies today.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I9 ask: A $500.00 late fee applies after you click Pay.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>A $500.00 late fee applies after you click Pay.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I10 ask: If you continue, $500.00 will be charged.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>If you continue, $500.00 will be charged.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I11 ask: If you click Pay, you pay: $500.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>If you click Pay, you pay: $500.00</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I12 ask: Unless you cancel, $500.00 is billed.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Unless you cancel, $500.00 is billed.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I13 ask: Optional: $500.00 is added to the order.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Optional: $500.00 is added to the order.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I14 ask: Optional total $500.00",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Optional total $500.00</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I15 ask: An average of $500.00 will be charged now.",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>An average of $500.00 will be charged now.</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I16 ask: Rate $500.00 / hour",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span>Rate</span><span>$500.00 / hour</span></div><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I17 ask: From $500.00 today",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>From $500.00 today</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "ask"
+ ],
+ [
+  "I18 allow: From $9.00 per month",
+  "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><p>Plans from $9.00 per month</p><div style=\"display:flex;justify-content:space-between;width:540px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
+  "allow"
+ ]
+]

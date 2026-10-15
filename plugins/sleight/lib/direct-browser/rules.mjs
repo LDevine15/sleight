@@ -27,12 +27,14 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
   // A label click forwards to its control, so a label for a file or color input opens the native picker like the input does.
   const forwarded = (() => { try { const label = typeof HTMLLabelElement === 'undefined' ? null : Element.prototype.closest.call(el, 'label'), control = label && Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get.call(label);
     return control instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(control).toLowerCase() : ''; } catch { return ''; } })();
+  // The control's own accessible name (aria-label, else its text, value, alt or title); empty when aria-labelledby decides it.
+  const accName = (get(el, 'aria-labelledby') ? '' : (get(el, 'aria-label') || read(el, 'textContent') || get(el, 'value') || get(el, 'alt') || get(el, 'title') || '')).replace(/\s+/g, ' ').trim().slice(0, 100);
   const associated = read(el, 'form');
   const tag = read(el, 'localName'), role = get(el, 'role'), form = associated === undefined ? read(el, 'closest')('form') : associated, rect = read(el, 'getBoundingClientRect')(), style = getComputedStyle(el);
   const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
   const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : ['file', 'color'].includes(forwarded) ? forwarded : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
     form: !!form, connected: read(el, 'isConnected'), visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
-    enabled: !read(el, 'matches')(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)),
+    enabled: !read(el, 'matches')(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)), accName,
     submit: ['submit', 'image'].includes(type) || tag === 'button' && !!form && get(el, 'type') !== 'button' && get(el, 'type') !== 'reset' ||
       button && /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(words(el)) };
   state.formPayment = !!form && Array.from(read(form, 'querySelectorAll')('input,button,iframe')).some(node => {
@@ -76,11 +78,47 @@ export function intent(kind, target = {}) {
     const submits = kind === 'submit' || sends && (el.submit || el.payment && (button || link) || el.form && activation);
     submit ||= !!submits;
     payment ||= !!submits && (el.payment === true || el.formPayment === true);
-    plain ||= !!submits && el.scriptButton !== true;
   }
-  if (kind === 'dialog' && target.accept === true) { payment ||= target.element?.payment === true || paymentWords(target.message); submit = payment; plain ||= payment; }
-  // scripted: the only payment evidence is a script-driven button (coupon Apply, Edit) in a payment form.
-  return { submit, payment, scripted: payment && !plain };
+  if (kind === 'dialog' && target.accept === true) { payment ||= target.element?.payment === true || paymentWords(target.message); submit = payment; }
+  return { submit, payment };
+}
+
+// A script-driven control whose activation settled with no navigation, form change, dialog or popup may give back the request's
+// one payment activation, but only when (a) its own accessible name is on a closed list of non-payment verbs and (b) no network
+// activity of any kind followed the click until the next payment check (activity.mjs: every request started, WebSocket, worker
+// and new page, not only finished fetches). The decision waits for that next check (settleRefund), so a request that starts
+// later still keeps the budget spent. A real submit button keeps what it spent whatever the page showed.
+const REFUND_VERBS = new Set('apply update remove delete increase decrease plus minus show hide edit change more less'.split(' '));
+const CHARGE_WORDS = new Set('pay paying payment purchase buy checkout donate donation subscribe place complete confirm submit send charge book continue next finish upgrade now tip add'.split(' '));
+export function refundableName(name) {
+  const n = String(name ?? '').normalize('NFKC').trim().toLowerCase();
+  if (!n || n.length > 40) return false;
+  if (/^[+\u2212\-\u2013\u2795\u2796]$/.test(n)) return true;
+  const words = n.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.length > 0 && words.length <= 4 && REFUND_VERBS.has(words[0]) && !words.some(word => CHARGE_WORDS.has(word));
+}
+export function deferRefund(ctx, target, activity) {
+  const spent = target?.paymentSpent, bank = payments.get(ctx);
+  if (!spent || !bank || target.element?.scriptButton !== true) return false;
+  target.paymentSpent = undefined;
+  if (!spent.fresh || !activity?.observable || !refundableName(target.element.accName)) return false;
+  bank.deferred?.activity.stop();
+  bank.deferred = { requestKey: spent.requestKey, activity };
+  return true;
+}
+function settleRefund(bank) {
+  const deferred = bank.deferred;
+  if (!deferred) return;
+  bank.deferred = undefined;
+  const quiet = deferred.activity.quiet(); deferred.activity.stop();
+  if (quiet) { bank.used.delete(deferred.requestKey); bank.dialog = undefined; }
+}
+
+// The turn is over: no further payment check will settle the refund, so its listeners come off the browser context now.
+export function endDeferredRefund(ctx) {
+  const bank = payments.get(ctx), deferred = bank?.deferred;
+  if (!deferred) return;
+  bank.deferred = undefined; deferred.activity.stop();
 }
 
 export function expirePaymentDialog(ctx) { const bank = payments.get(ctx); if (bank) bank.dialog = undefined; }
@@ -124,8 +162,8 @@ export function check(ctx, kind, target = {}) {
       ...(page?.currency !== undefined ? { currency: page.currency } : {}) };
     const ask = () => ({ verdict: 'confirm', terms });
     if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
-    let bank = payments.get(ctx); if (!bank) { bank = { used: new Set(), scriptedUsed: new Set() }; payments.set(ctx, bank); }
-    bank.scriptedUsed ??= new Set();
+    let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
+    settleRefund(bank);
     if (kind === 'dialog' && bank.dialog &&
         (!ctx.dialogContinuation || ctx.dialogContinuation(target) === true) && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
       bank.dialog = undefined; return allow;
@@ -135,11 +173,12 @@ export function check(ctx, kind, target = {}) {
     const requested = user?.payment && ['item', 'method'].every(key => text(user.payment[key])) &&
       ['item', 'method', 'amount', 'payee', 'currency'].every(key => user.payment[key] === undefined || user.payment[key] === terms[key]);
     const strict = (ctx.confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'always';
-    // A script-driven button may be Apply or Edit: it needs the user's request and never spends the real submit's authority,
-    // but gets its own budget of one activation per request, so a disguised charge button can't be pressed again after each read.
-    if (!(requested && !strict && !bank.used.has(requestKey)) && (risk.scripted || ctx.consent?.consume(terms, target) !== true)) return ask();
-    if (risk.scripted) { if (bank.scriptedUsed.has(requestKey)) return ask(); bank.scriptedUsed.add(requestKey); }
-    else if (requestKey) bank.used.add(requestKey);
+    // One payment activation per user request, whichever kind of control it is: a script-driven button may be Apply or a
+    // disguised charge, so it spends the same budget as the real submit. Past the budget, the user is asked through consume.
+    if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();
+    // Remember what this activation spent so a quiet click on a closed-list control can give it back at the next payment check (deferRefund).
+    target.paymentSpent = requestKey ? { requestKey, fresh: !bank.used.has(requestKey) } : undefined;
+    if (requestKey) bank.used.add(requestKey);
     if (target.state) paymentPages.add(target.state);
     bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
     return allow;
