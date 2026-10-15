@@ -392,7 +392,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const same = (a, b) => !a || !b || a === b || !!GENERIC[a]?.includes(b) || !!GENERIC[b]?.includes(a);
     const set = words => new Set(words.split(' '));
     const PAY = set('total amount due pay paying payment payable price cost charge charged charges charging billed billing bill owe owed owes invoice invoiced');
-    const UNIT = set('per each ea unit units apiece × x payments installment installments instalment instalments monthly weekly daily yearly annually quarterly month months mo week weeks wk year yr day days');
+    const UNIT = set('per each ea unit units apiece × x payments installment installments instalment instalments monthly weekly daily yearly annually quarterly month months mo week weeks wk year yr day days hour hours hr hrs night nights');
     const PART = set('sub subtotal tax taxes vat gst hst fee fees shipping delivery handling freight postage tip tips gratuity surcharge duty duties levy item items service processing packaging insurance deposit installation before excl excluding excludes pretax without incl includes including inc plus less minus after with');
     const CUT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed');
     const EXEMPT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed available limit minimum maximum min max over above away points point pts reward rewards was original orig regular reg list msrp compare retail threshold earn earned cashback refund refunded');
@@ -413,13 +413,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const APPROX = set('approx approximately about around roughly converted conversion equivalent estimated est');
     const QUAL = set('incl includes including inc plus less minus after with before excl excluding excludes without');
     const COUNTED = /^(?:items?|pcs|pieces?|units?|qty|x|×|days?|hours?|mins?|minutes?|years?|months?|weeks?|payments?|installments?|points?|pts|interest|percent|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|st|nd|rd|th)$/i;
-    // A label or clause that says this payment takes the money ("charged to your card", "due at checkout", "paid by card today"). It
-    // takes back an exemption that the same line gives (a settled payment, a later invoice). An estimate note gets the shorter list:
-    // "at today's rate" is a rate, not a charge.
-    const TAKES = /\b(?:charg(?:e|es|ed|ing)|bill(?:ed|ing)|pay|pays|paying|payable|debit(?:ed|s|ing)?|deduct(?:ed|s|ing)?|take|taken|checkout|check out|submi\w*|now|today|tonight|immediately|asap|card|this (?:order|payment|purchase|transaction)|(?:your|the) order|press|click|tap|as you|when you|added to|add to)\b|\bdue (?:in|within)\b/i;
-    const TAKES_EST = /\b(?:charg(?:e|es|ed|ing)|bill(?:ed|ing)|pay|pays|paying|payable|debit(?:ed|s|ing)?|deduct(?:ed|s|ing)?|take|taken|checkout|check out|submi\w*|this (?:order|payment|purchase|transaction)|(?:your|the) order|press|click|tap|as you|when you|added to|add to)\b/i;
     // A gift card, voucher or store credit line that is bought or only offered is not a tender that paid for part of the order.
-    const BOUGHT = /\b(?:purchas\w*|buy\w*|add|adding|added|send|sending)\b/i;
+    const BOUGHT = /\b(?:purchas\w*|buy\w*|bought|add|adding|added|send|sending|ordered|sold|issued|reload|reloaded|fee)\b/i;
     const INERT = /\b(?:not|never|unused|optional|expired|invalid|eligible|ineligible|unavailable|if|can|may|could|would)\b|n't/i;
     const SOFT = /\b(?:available|balance|remaining|left)\b/i;
     const eps = 0.005;
@@ -441,17 +436,47 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const before = text => { const t = unparen(text); return t.slice(lastBreak(t) + 1); };
     const after = text => { const t = unparen(text.replace(/^[\s)\]]+/, '')), hard = /[.;!?](?=\s|$)/.exec(t); return hard ? t.slice(0, hard.index) : t; };
     const sig = text => words(text).filter(w => !FILL.has(w));
-    // The role of a label, read from its significant words (the nearest word decides).
-    // Past-tense or settled money on an invoice ("Payments received", "Paid to date", "Amount paid", "Previous balance", "Credit applied"):
-    // not a charge, and a tender that closes the gap under "Invoice total" or "Original invoice amount".
-    const SETTLED = /\b(?:payments? (?:received|made|applied|date)|paid (?:date|far)|received (?:date|far)|amount paid|total paid|already paid|(?:previous|prior|earlier) (?:balance|payments?|invoices?)|credits? applied|amount credited)\b/;
+    // Exemptions come from closed lists of positive phrases, not from a list of words that take them back. A figure is a settled
+    // payment, a later invoice or an estimate only if its whole label is one of the phrases below and the rest of its clause (to
+    // the end of the sentence) holds nothing but punctuation, a currency code, a date or one of the few closed phrases. Any other
+    // word, in any language, makes the figure a plain part of the total.
+    const MON = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?';
+    const DATE = new RegExp(`(?:(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\\.?,?\\s+)?(?:${MON}\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?|\\d{1,2}(?:st|nd|rd|th)?\\s+${MON}(?:,?\\s+\\d{4})?|${MON}\\s+\\d{4}|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4})`, 'gi');
+    const DATE_WORD = /(?:\b(?:as of|as at|on|through|until|since|by) )?@/g;
+    // Lower case, dates turned into "@", everything but letters, "@", "≈" and "~" dropped.
+    const shape = text => norm(text).toLowerCase().replace(/['’]/g, '').replace(DATE, ' @ ').replace(/[^\p{L}@≈~ ]+/gu, ' ').replace(/\s+/g, ' ').trim();
+    const CODE_LOW = CODES.toLowerCase().replace('|try', '');
+    const CLAUSE_PHRASES = [...CODE_LOW.split('|'), 'estimate', 'estimated', 'approx', 'approximately', 'to date', 'so far', 'as of today',
+      'at todays rate', 'at the current rate', 'at current rate', 'at todays exchange rate', 'at the current exchange rate'];
+    // Words that only name the next figure on the same line ("Paid $40.00 Balance due $18.00"): they do not describe this one.
+    const LABEL_TAIL = new Set([...PART, ...UNIT, ...CUT, ...EXEMPT, ...WEAK, ...'total amount due price cost payment payments grand new current remaining left and or plus balance'.split(' ')]);
+    const closedClause = (text, more = [], hasNext = false) => {
+      let t = shape(text).replace(DATE_WORD, ' ').replace(/\s+/g, ' ').trim();
+      if (hasNext) { const w = t.split(' ').filter(Boolean); while (w.length && LABEL_TAIL.has(w.at(-1))) w.pop(); t = w.join(' '); }
+      for (const phrase of [...CLAUSE_PHRASES, ...more].sort((x, y) => y.length - x.length)) t = t.split(new RegExp(`(?:^| )${phrase}(?= |$)`)).join(' ');
+      return t.trim() === '';
+    };
+    const labelPhrase = text => shape(text).replace(DATE_WORD, ' ').replace(/\s+/g, ' ').trim();
+    const SETTLED_LABEL = /^(?:paid(?: to date| so far)?|(?:amount|total) paid(?: to date)?|already paid|payments? (?:received|made|applied)(?: to date)?(?: thank you)?|(?:previous|prior|earlier) (?:payments?|balance|invoices?)|credits? applied(?: to date)?|amount credited)(?: paid(?: in full)?)?$/;
+    const NEXT_LABEL = /^(?:next|upcoming) (?:invoice|bill|billing|statement)(?: date)?$/;
+    const EST_LABEL = new RegExp(`^(?:(?:approx|approximately|about|around|roughly|equivalent|converted|conversion|estimated|est)(?: (?:in|to|as) (?:${CODE_LOW}|euros?|pounds?|dollars?))?|≈|~)$`);
+    const TENDER_NAME = '(?:gift cards?|gift certificates?|store credit|vouchers?|promo credit|account credit)';
+    const TENDER_LABEL = new RegExp(`^(?:${TENDER_NAME} (?:applied|redeemed|used)|paid with ${TENDER_NAME})$`);
+    // Notes that name a future penalty or a statistic, not a charge. A late or cancellation fee note is one sentence with that one figure,
+    // built only from the words below, that names a date or deadline ("A $5.00 late fee applies after that date."). A statistic is
+    // "average of $25.00" followed by nothing but a period ("a month").
+    const PENALTY_WORDS = set('a an the of if unless you your payment is are not was be will may applies apply applied charged added assessed late cancellation penalty overdue returned no show fee fees paid pay received made by before after past within on that this date due day days hour hours minutes deadline unpaid');
+    const PENALTY_ANCHOR = /(?:^| )(?:(?:after|past|by|before|within)(?: (?:the|that))? (?:@|date|due date|deadline|days?|hours?|minutes?)|(?:if|unless) (?:[a-z]+ )*?(?:unpaid|late|overdue|paid|received))(?= |$)/;
+    const penaltyNote = rest => { const w = rest.split(' ').filter(Boolean); return w.some(x => /^(?:fee|fees|penalty)$/.test(x)) && w.some(x => /^(?:late|cancellation|overdue|penalty|returned|show)$/.test(x)) && w.every(x => x === '@' || PENALTY_WORDS.has(x)) && PENALTY_ANCHOR.test(rest); };
+    const STAT_LABEL = /(?:^| )(?:an? )?(?:average|avg|median|typical)(?: of)?$/;
+    const PERIODS = ['a month', 'per month', 'a year', 'per year', 'a week', 'per week', 'a day', 'per day', 'an hour', 'per hour', 'a night', 'per night', 'monthly', 'yearly', 'weekly', 'daily', 'each', 'each way', 'one way', 'per way', 'per person', 'a person', 'per bag'];
     // A gross figure that a tender line (gift card, store credit, voucher, credit, a payment already received) brings down to the amount.
     const TENDER = set('gift voucher vouchers credit credits certificate');
     const GROSS = /^(?:order total|invoice(?: total)?|total invoice|original (?:invoice )?(?:amount|total)|invoice amount|total before .+)$/;
+    // The role of a label, read from its significant words (the nearest word decides).
     const classify = list => {
       const role = classify0(list), phrase = list.join(' ');
       if (role.cut && list.some(x => TENDER.has(x))) role.tender = true;
-      if (role.settled) { role.cut = true; role.tender = true; }
       if (role.kind === 'pay' && GROSS.test(phrase)) role.gross = true;
       return role;
     };
@@ -460,7 +485,6 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       const stores = list.some(x => WEAK_WITH.has(x));
       const exempt = x => EXEMPT.has(x) || WEAK.has(x) && stores;
       const phrase = list.join(' '), cutPhrase = /\b(?:gift ?cards?|gift certificates?|store credits?|vouchers?)\b/.test(phrase);
-      if (SETTLED.test(phrase)) return { kind: 'exempt', settled: true };
       // "New charges $6" beside "Previous balance $12" and "Total due $18": a part of the total.
       if (/^(?:new|current|recent|additional) (?:charges?|purchases?|fees?|activity)$/.test(phrase)) return { kind: 'part' };
       if (UNIT.has(w)) return { kind: 'unit' };
@@ -486,7 +510,9 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
         for (let j = i - 1; j >= 0 && j >= i - 4; j--) {
           if (labelFigure[j] && note) break;
           if (!/\p{L}/u.test(list[j]) || labelFigure[j]) continue;
-          const s = sig(before(list[j])); if (!s.length) continue;
+          const s = sig(before(list[j]));
+          // A label of filler words that says it is an estimate ("Estimated in EUR", "About") labels the figure below it.
+          if (!s.length) { if (words(before(list[j])).some(x => APPROX.has(x))) return { kind: 'part', unknown: true, adjacent: j === i - 1, raw: list.slice(j, i).join(' ') }; continue; }
           const role = { ...classify(s), adjacent: j === i - 1, raw: list.slice(j, i).join(' ') };
           if (role.kind !== 'exempt') return note && role.unknown ? note : role;
           note ??= role;
@@ -520,24 +546,46 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           }
           // An exempt label does not clear a figure that the clause after it calls a charge ("Reward: $500.00 charged now").
           if (via === 'left' && role?.kind === 'exempt' && rs.slice(0, 3).some(x => CHARGED.has(x))) role = { kind: 'part', cut: role.cut };
-          // "Next invoice: $60.00 due Dec 1" is a later bill, not this charge.
-          if (via === 'left' && role?.kind !== 'exempt' && /^(?:next|upcoming)$/.test(ls[0]) && ls.some(x => /^(?:invoice|bill|billing|statement)$/.test(x)) && rs.slice(0, 2).includes('due') && !TAKES.test(seg.slice(lastBreak(seg) + 1)) && !TAKES.test(tail.slice(0, /[.;!?](?=\s|$)/.exec(tail)?.index ?? tail.length))) role = { kind: 'exempt' };
           if (!role && alone && !mark) { role = labelAbove(i); via = 'above'; if (role && role.kind === 'exempt' && !role.adjacent) role = { ...role, kind: 'part' }; }
           if (r0 && UNIT.has(r0) && role && role.kind !== 'exempt') role = { kind: 'unit' };
           role ??= { kind: 'none' };
           // What the label says, in full (parentheses too), and what the rest of the line says after the figure.
           // The label is cut at the last sentence end before it, the clause at the first one after it.
           const labelRaw = via === 'above' ? role.raw ?? '' : via === 'inherit' ? previous.labelRaw : via === 'right' || via === 'none' ? '' : seg.slice(lastBreak(seg) + 1);
-          const stop = /[.;!?](?=\s|$)/.exec(tail), clause = stop ? tail.slice(0, stop.index) : tail;
+          // The clause runs to the next figure that is money (a bare number such as the 1 in "Dec 1" is part of the clause) or the sentence end.
+          const nextMoney = all.slice(k + 1).find(x => x[10] === undefined), tailMoney = text.slice(m.index + m[0].length, nextMoney?.index ?? text.length);
+          const stop = /[.;!?](?=\s|$)/.exec(tailMoney), clause = stop ? tailMoney.slice(0, stop.index) : tailMoney;
+          const sStart = lastBreak(text.slice(0, m.index)) + 1, sRest = text.slice(m.index + m[0].length), sStop = /[.;!?](?=\s|$)/.exec(sRest);
+          const sentence = text.slice(sStart, m.index) + ' ' + (sStop ? sRest.slice(0, sStop.index) : sRest);
+          const onlyFigure = [...sentence.matchAll(figure)].every(x => x[10] !== undefined);
+          const labelShape = shape(labelRaw), labelBase = labelPhrase(labelRaw), clauseOk = more => closedClause(clause, more, !!nextMoney);
+          // A settled payment ("Amount paid", "Previous balance", "Credit applied") is exempt only if its whole label is one of the
+          // closed phrases and nothing but a date, a code or a closed phrase follows the figure. Otherwise it is a plain part.
+          if (via !== 'right' && via !== 'none') {
+            if (SETTLED_LABEL.test(labelBase) && clauseOk(['paid', 'paid in full'])) role = { kind: 'exempt', settled: true, cut: true, tender: true };
+            else if (role.settled) role = { kind: 'part' };
+            // "Next invoice: $60.00 due Dec 1" and "Next invoice on Dec 1: $60.00" are a later bill, not this charge.
+            else if (role.kind !== 'exempt' && NEXT_LABEL.test(labelBase) && (labelShape.includes('@') || /\bdue\b/.test(shape(clause))) && clauseOk(['due'])) role = { kind: 'exempt' };
+          }
+          // "Late fee", "from", "up to", "if" exempt a figure only if nothing but a period, a code or a date follows it, or the whole
+          // sentence is a late fee note ("A $5.00 late fee applies after that date.").
+          if (via === 'left' && role.kind === 'exempt' && !role.settled && (COND.has(ls.at(-1)) || ls.some(x => LATE.has(x))) && !(clauseOk(PERIODS) || onlyFigure && penaltyNote(shape(sentence)))) role = { kind: 'part' };
           const role0 = role;
-          // A settled payment or a later invoice is exempt only if neither its label nor its clause says this payment takes the money.
-          if (role.settled && (TAKES.test(labelRaw) || TAKES.test(clause))) role = { kind: 'part' };
           // A tender that was bought, offered or not applied does not bring an order total down to the amount. A minus sign before the
-          // figure says it was taken off, so a note on the card's balance or what is left on it does not undo that.
+          // figure says it was taken off. Without one, the line closes a gap only if its label is a closed phrase ("Gift card applied",
+          // "Paid with store credit"); a note on what is left on the card keeps it exempt and closes nothing; anything else is a part.
           if (role.tender && !role.settled) {
             const note = labelRaw + ' ' + clause, taken = /[-−–]\s*$/.test(seg);
             if (BOUGHT.test(note)) role = { kind: 'part' };
-            else if (INERT.test(note) || !taken && SOFT.test(note)) role = { ...role, cut: false, tender: false };
+            else if (taken) { if (INERT.test(note)) role = { ...role, cut: false, tender: false }; }
+            else if (TENDER_LABEL.test(labelBase) && clauseOk()) { /* a closed phrase: keeps the gap closed */ }
+            else if (SOFT.test(labelRaw) && !INERT.test(note) && clauseOk()) role = { ...role, cut: false, tender: false };
+            else role = { kind: 'part' };
+          }
+          // A late or cancellation fee note, an optional extra, or a statistic ("an average of $25.00 a month"): not a charge.
+          if (role.kind === 'part' || role.kind === 'unit' || role.kind === 'none') {
+            const optional = /^optional(?: [a-z]+){0,3}$/.test(labelBase) && !labelBase.split(' ').some(x => PAY.has(x));
+            if (!bare && !mark && !spelled && onlyFigure && (penaltyNote(shape(sentence)) || (STAT_LABEL.test(labelBase) || optional) && clauseOk(PERIODS))) role = { kind: 'exempt' };
           }
           // A bare number counts only straight after a pay word ("Total 500", "Total: 500"), and not as a count or a date.
           if (bare && (via !== 'left' || role.kind !== 'pay' || COUNTED.test(words(after(tail))[0] ?? '') || /^\s*%/.test(tail))) return;
@@ -547,12 +595,13 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           // A figure in another currency that calls itself an estimate ("Approximately EUR 16.60", "≈ €16.60", "Converted: €16.60"), or that
           // sits in parentheses right after the figure that is the amount ("$18.00 (€16.60)"), is a conversion note, not a charge.
           // A pay word in its own label ("Estimated total €500.00") keeps it a charge.
-          const estLabel = via === 'above' ? labelRaw : seg.slice(lastBreak(seg) + 1), estWords = sig(estLabel);
-          const tilde = /(?:[≈~]|\b(?:approx|approximately|about|around|roughly|converted|conversion|equivalent|estimated|est)\b\.?)[\s:(]*$/i.test(estLabel),
-            marked = words(estLabel).some(x => APPROX.has(x)) || /^\s*\(?\s*(?:[≈~]|approx|est\b)/i.test(tail);
-          const noTake = !TAKES_EST.test(estLabel) && !TAKES_EST.test(clause);
-          const approx = !mark && !spelled && noTake && !estWords.some(x => PAY.has(x) && x !== 'price' && x !== 'cost' && x !== 'amount') && (tilde || marked);
-          const paren = previous && noTake && /^\s*\(\s*$/.test(seg) ? previous : undefined;
+          // The label must be one of the closed estimate phrases ("Approx.", "About", "≈", "Equivalent", "Estimated in EUR") and the rest of
+          // the clause only a code, a date or a closed phrase ("at today's rate"). A figure with no label of its own takes the marker after it.
+          const estLabel = via === 'above' ? labelRaw : seg.slice(lastBreak(seg) + 1), estBase = labelPhrase(estLabel);
+          const tailMark = /^\s*\(?\s*(?:[≈~]|(?:approx|estimate|estimated|est)\b)/i.test(tail);
+          const approx = !mark && !spelled && clauseOk() && (EST_LABEL.test(estBase) || estBase === '' && tailMark);
+          const close = tailMoney.indexOf(')');
+          const paren = previous && /^\s*\(\s*$/.test(seg) && closedClause(close < 0 ? tailMoney : tailMoney.slice(0, close)) ? previous : undefined;
           const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, role0, mark, text, period, approx, paren, labelRaw };
           found.push(entry); previous = entry;
           // "Total after $2.00 discount: $500.00": a qualifier figure does not end the label of the figure that follows.

@@ -110,24 +110,42 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   worker, a tax fetch) never gets the refund, so Pay asks once after "Show order summary" there. Measured 2026-10-15:
   2 of 6 such pages allow Pay (the quiet one and one with an already-loaded cross-origin image). Skipping requests to a
   URL the page already sent periodically would let a page hide a charge in its own heartbeat, so it asks.
-- A figure in another currency is cleared only when it calls itself an estimate ("Approximately EUR 16.60", "about",
-  "converted", "equivalent", "≈") without a charge word (charged, billed, pay, payable, debit, checkout, "this order") in
-  its label or the sentence after it, or sits in parentheses right after the amount, and only when it is between a fifth
-  and five times the amount. "About EUR 16.60 will be charged to your card" asks. A conversion into yen or won is
-  over 5 times the amount, so it asks too. "$24.50 CAD" beside
-  "$18.00 USD" is not cleared, because both read as dollars. Euro line items beside a USD charge ("Item EUR 16.60",
-  "You pay $18.00 USD") ask, because there is no rate to compare them with.
+- A figure in another currency is cleared only when its whole label is one of "Approx.", "About", "Approximately",
+  "Roughly", "Equivalent", "Converted", "Estimated", "≈", "~" or "Estimated in <currency>", or sits in parentheses right
+  after the amount, and only when nothing but a currency code, a date or "at today's rate" follows it. It also has to be
+  between a fifth and five times the amount. "About EUR 16.60 will be charged to your card", "≈ €60.00 collected" and
+  "Approx. €60.00 zu zahlen" ask, in any language, because any other word after the figure makes it a plain part of the
+  total. A conversion into yen or won is over 5 times the amount, so it asks too. "$24.50 CAD" beside "$18.00 USD" is not
+  cleared, because both read as dollars. Euro line items beside a USD charge ("Item EUR 16.60", "You pay $18.00 USD")
+  ask, because there is no rate to compare them with.
 - "Order total", "Invoice total" and "Original invoice amount" above the amount are accepted only when a gift card,
-  store credit, voucher, credit or a payment already received ("Payments received", "Paid to date") brings the figure
-  down to the amount. A discount alone doesn't count for those labels, and neither does a gift card, voucher or store
-  credit line that says purchase, buy, add, not applied, available, optional, unused or balance (unless a minus sign shows
-  it was taken off). "Amount paid", "Previous balance", "Total paid" and "Credit applied" are not a charge at any size,
-  unless the label or the sentence after the figure has a charge word (charged, pay, checkout, "this order", card,
-  today, now, "due within"): "Previous balance to be charged $500.00" and "Amount paid by card today $500.00" ask, but a
-  plain "Total paid $500.00" beside a $18.00 total is still allowed, because the label alone is the exemption. A charge
-  statement in a separate cell or line after the figure is not read. "Next invoice: $60.00 due Dec 1" is not a charge
-  unless it says due now, today, at checkout, with this order or as you pay. "Invoice #88 $58.00" above a payment already
-  received that brings it to the amount is accepted, and "New charges" counts as a part of the total.
+  store credit, voucher, promo credit, account credit or a payment already received brings the figure down to the
+  amount. A discount alone doesn't count for those labels. A tender line counts toward that gap only when it has a minus sign
+  (and does not say purchase, buy, add, ordered or sold) or when its label is exactly "<tender> applied", "<tender>
+  redeemed", "<tender> used" or "Paid with <tender>". Any other unsigned tender line ("Gift card issued", "Voucher
+  bought", "Store credit (from this order)") is a plain part of the total.
+- "Amount paid", "Paid", "Paid to date", "Payments received", "Previous payments", "Previous balance", "Credit applied" and
+  "Next invoice" (with "due <date>" or "on <date>") are not a charge at any size, but only when the label is one of those
+  phrases and nothing but a date, a currency code or "as of <date>" follows the figure. Any other word in the label or
+  after the figure makes it a plain part, which asks if it is more than the amount: "Previous balance to be collected",
+  "Previous balance zu zahlen", "Next invoice: $500.00 due on confirmation" and "Amount paid $500.00 (pending)" all ask
+  (29 of the round 8 reviewer's phrasings, all asking now). A plain "Total paid $500.00" beside a $18.00 total is still
+  allowed, because the label alone is the exemption. A statement in a separate cell or line after the figure ("Previous
+  balance" | "$500.00" | "to be charged" in three cells) is not read. The cost is some honest false asks: a settled line
+  with a leading item name ("Invoice 88 Previous balance $42.00") or a trailing note ("Paid $42.00 by card on file")
+  asks when it is more than the amount.
+- A late or cancellation fee, an "Optional ..." extra and "an average of $25.00 a month" are not a charge at any size, but
+  only when nothing but a period, a code or a date follows the figure, or (for a late fee) the whole sentence is built
+  from the words of a late fee note and names a date ("A $5.00 late fee applies after that date."). "A $500.00 late fee
+  applies now", "Late fee $500.00 applies today" and "From $500.00 today" ask. A sentence that only starts with "If" or
+  "Unless" is not a note ("If you continue, $500.00 will be charged." asks). The label of an unchecked checkbox or radio is
+  skipped unless it has a pay word (total, amount, due, pay, charged), so "I agree to pay $500.00" stays. A figure per
+  hour, night, day or month is a unit price, at most the amount.
+- Honest pages, 60/68 allow (measured 2026-10-15): the 36 realistic pages 32/36, the round 8 reviewer's 20 pages 19/20,
+  the reviewer's 12 pages 9/12 (57/68 before this round). The 8 that ask are two donation pages with a $50 amount chip,
+  a dialog with its terms outside the Pay button's form, two pages with euro line items beside a USD total, a
+  renewal page that writes the amount attribute twice, a donation with "Total impact $36.00" and a hotel page with
+  "Balance due at check-in $102.00". Asking on the last two may be correct.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.

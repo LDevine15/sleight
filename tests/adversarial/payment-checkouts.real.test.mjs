@@ -617,3 +617,25 @@ test('round 8: the reviewer\'s 20 honest pages allow at least 19/20, and with th
   assert.ok(allowed >= 19, allowed + '/20');
   assert.ok(allowed + real >= 51, 'together ' + (allowed + real) + '/56');
 });
+
+// ---------------------------------------------------------------- Round 9
+// Exemptions are closed lists of positive phrases. Fixture pay-r9-closed-phrases: the round 8 reviewer's ph/ph2 (29 settled, next-invoice
+// and estimate wordings that must ask), tender (unsigned lines that must not close a gap), bis and honest5 (honest notes, unit rates),
+// plus this round's own allow and ask lines.
+const fixture9 = JSON.parse(readFileSync(new URL('./fixtures/pay-r9-closed-phrases.json', import.meta.url), 'utf8'));
+test('F-A, F-D, F-G (round 9): closed positive phrases for settled, next-invoice, estimate and tender lines; late fee, optional and average notes; per-unit rates', { skip, timeout: 600000 }, async t => {
+  await readCases(t, fixture9);
+});
+test('round 9: honest allow rate over the 36 suite pages, the 20 reviewer pages and the reviewer\'s 12 pages is at least 60/68', { skip, timeout: 180000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  let twenty = 0, twelve = 0;
+  const read = async html => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === '18.00'; } catch { return false; } };
+  try {
+    for (const [, html] of fixture8('honest-20')) if (await read(html)) twenty++;
+    for (const [name, html] of fixture9) if (/^N(?:[1-9]|1[0-2]) /.test(name) && await read(html)) twelve++;
+  } finally { await page.close(); }
+  const real = [...outcome.values()].filter(Boolean).length + 2;
+  t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; together ' + (real + twenty + twelve) + '/68');
+  assert.ok(twenty >= 19 && twelve >= 9, twenty + ' of 20, ' + twelve + ' of 12');
+  assert.ok(real + twenty + twelve >= 60, 'together ' + (real + twenty + twelve) + '/68');
+});
