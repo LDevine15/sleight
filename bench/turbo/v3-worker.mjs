@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { serveV3Worker, startInstalledV3Worker } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 import { createCDPFilter } from '../../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
+import { benchBrowser } from './v3-protocol.mjs';
 
 const vendor = new URL('../../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url);
 
@@ -86,7 +87,7 @@ export function selectedConnection(endpoint, browser = 'bbench') {
 
 // Tests that bring their own page providers serve the five tools directly.
 export function serveBenchWorker({ channel, begin, close }) {
-  return serveV3Worker({ channel, browser: 'bbench', begin, close });
+  return serveV3Worker({ channel, browser: benchBrowser(), begin, close });
 }
 
 // No person watches a benchmark round, so the consent window shows nothing and accepts no
@@ -98,7 +99,7 @@ export async function startBenchWorker({ channel = process, launch = launchOwned
   const host = await startInstalledV3Worker({ channel }, {
     readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status: 'ready', receipt: {} }),
-    selectConnection: async () => selectedConnection(owned.endpoint),
+    selectConnection: async () => selectedConnection(owned.endpoint, benchBrowser()),
     createUi: () => benchUi,
   }).catch(async error => { await owned.stop(); throw error; });
   host.closed.then(() => owned.stop(), () => owned.stop());

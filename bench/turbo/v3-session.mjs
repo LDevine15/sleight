@@ -16,6 +16,7 @@ export async function createSession({ origins, taskMessage, forkWorker = fork } 
       const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'DISPLAY', 'XDG_RUNTIME_DIR'].flatMap(key =>
         typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
       env.SLEIGHT_TURBO_ORIGINS = JSON.stringify(origins);
+      if (process.env.SLEIGHT_TURBO_BROWSER) env.SLEIGHT_TURBO_BROWSER = process.env.SLEIGHT_TURBO_BROWSER;
       return forkWorker(fileURLToPath(new URL('./v3-worker.mjs', import.meta.url)), [], { ...options, env });
     },
   });

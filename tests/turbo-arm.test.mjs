@@ -238,7 +238,7 @@ test('Fowl patch wires both servers into isolated rounds and leaves fixture turb
       const setup = runner.agentSetup({ task, surface: 'sleight-turbo', dir, mcpRoot: '/fixture/mcp', settings: '/fixture/settings', model: 'haiku', effort: 'high', world });
       assert.ok(setup.mcpConfig.mcpServers['sleight-turbo'], JSON.stringify(setup.mcpConfig));
       assert.equal(setup.metadata.measurement, 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded');
-      assert.match(setup.prompt, /bbench/);
+      assert.match(setup.prompt, /Turbo selects `chrome`/, 'the owned browser takes the task\'s browser name');
       assert.equal(setup.env.ANTHROPIC_SMALL_FAST_MODEL, 'claude-haiku-5-5');
       assert.equal(setup.mcpConfig.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_TASK,
         'Read ' + origin + '/form\n\nEnd your answer with one line starting with RESULT: that states the value.');

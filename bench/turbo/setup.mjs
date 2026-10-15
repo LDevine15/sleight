@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { browserTools } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
 import { worldAgentSetup } from '../world/arms/browser.mjs';
+import { benchBrowser } from './v3-protocol.mjs';
 
 export const SURFACE = 'sleight-turbo';
 export const MEASUREMENT = 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded';
@@ -27,6 +28,8 @@ export function fixtureOrigins(task) {
 }
 export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
   const origins = fixtureOrigins(task); if (origins.length) fixturePolicy(origins);
+  // The owned browser takes the task's browser name, so the agent finds it where the installed surface would put it.
+  const browser = benchBrowser({ SLEIGHT_TURBO_BROWSER: task.browser });
   // Keep setup synchronous for the pinned runner's require(). launch.mjs has
   // top-level await, so read its same skill body without importing the launcher.
   const rules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/'
@@ -34,21 +37,23 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
     .replace(/^---\n[\s\S]*?\n---\n+/, '').trim();
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
   const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8')
-    .trimEnd().replace('{browser}', 'bbench');
+    .trimEnd().replace('{browser}', browser);
   if (!section.test(rules)) throw Error('Installed browser skill is missing');
   const installed = rules.replace(section, browserRules + '\n');
   const common = worldAgentSetup({ surface: 'fowlbrowser', dir, hostEnv: env });
   const configDir = join(dirname(dirname(common.env.CLAUDE_CONFIG_DIR)), SURFACE, 'claude-config');
-  return { command: common.command, args: common.args, settings: common.settings,
+  const guard = { matcher: 'mcp__plugin_sleight_computer__js', hooks: [{ type: 'command', timeout: 5,
+    command: `node "${join(repo, 'bench/turbo/engine-browser-guard.mjs')}" ${browser}` }] };
+  return { command: common.command, args: common.args, settings: { ...common.settings, hooks: { PreToolUse: [guard] } },
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
       env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none' } },
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
-      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
-    allowed: [...browserTools('bbench').map(tool => 'mcp__sleight-turbo__' + tool.name),
+      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_BROWSER: browser, SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
+    allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',
     env: { ...common.env, CLAUDE_CONFIG_DIR: configDir },
     metadata: { ...common.metadata, configDir, surface: SURFACE, measurement: MEASUREMENT,
       path: 'model-selected', turboVersion: 3, runtime: 'V10 join required', playwright: '1.64.0', profile: 'owned-temporary', headless: true,
-      safety: 'turbo fixture-only; engine approvals and guards', focus: 'host monitor' } };
+      safety: 'turbo fixture-only; engine approvals and guards; engine browser calls refused by a bench hook', focus: 'host monitor' } };
 }
