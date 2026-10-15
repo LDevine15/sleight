@@ -674,7 +674,7 @@ export function createRelay({
       // End the open turn on the engine being replaced, as a normal turn end does, so it releases what it
       // holds. A hung or dead engine costs one grace period, never the reconnect.
       let graceTimer;
-      await Promise.race([Promise.resolve().then(() => endOpenTurn(false)).catch(() => {}),
+      await Promise.race([Promise.resolve().then(() => endOpenTurn(false, id)).catch(() => {}),
         new Promise(resolve => { graceTimer = setTimeout(resolve, stopGraceMs); })]);
       clearTimeout(graceTimer);
       if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
@@ -2887,7 +2887,12 @@ export function createRelay({
       if (window?.app) drivenApps.add(window.app);
       if (known) drivenApps.add(known);
       if (call.handle) {
-        if (known) { handleBundles.set(call.handle, leaseWindow); if (call.acquisition) handleOrigins.set(call.handle, call.selector); }
+        if (known) {
+          const rebound = handleBundles.get(call.handle)?.appId !== known;
+          handleBundles.set(call.handle, leaseWindow);
+          // A read that rebinds the handle to another app makes its acquisition argument stale.
+          if (call.acquisition) handleOrigins.set(call.handle, call.selector); else if (rebound) handleOrigins.delete(call.handle);
+        }
         else if (call.acquisition) { handleBundles.delete(call.handle); handleOrigins.delete(call.handle); }
       }
       if (known) {
@@ -3089,7 +3094,7 @@ export function createRelay({
 
   // Ends the open turn, if any call used it. Resolves once the server answers
   // or after a short grace period.
-  async function endOpenTurn(cleanupTabs = true) {
+  async function endOpenTurn(cleanupTabs = true, carryId) {
     if (inputLease && running.size) {
       const ready = await new Promise(resolve => {
         const done = () => { clearTimeout(timer); resolve(true); };
@@ -3111,7 +3116,11 @@ export function createRelay({
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: TURN_END_TOOL, arguments: args } });
       return answered;
     });
-    if (turnUsed) { finishReceipt(); rotateTurn(); }
+    if (turnUsed) {
+      // The call that triggered a reconnect belongs to the next turn's receipt, not the one being closed.
+      const carried = carryId === undefined ? undefined : journal?.take(carryId);
+      finishReceipt(); journal?.put(carried); rotateTurn();
+    }
     return Promise.all(done);
   }
 
@@ -3244,6 +3253,8 @@ export function createRelay({
       if (!running.has(id)) continue;
       finishedCall(id); restartRetries.delete(id);
       leaseStop({ id }, message);
+      stoppedClients.add(id); // a direct browser call still running must not answer a second time
+
     }
   }
   function close() {

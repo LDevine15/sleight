@@ -233,3 +233,51 @@ test('an engine that dies on its own revokes direct browser work and still recov
   await flush();
   assert.ok(!h.replies.find(msg => msg.id === 2).result.isError);
 });
+
+test('the call that triggers a reconnect lands in the new turn receipt, answered, not in the closed one as pending', async t => {
+  const written = [];
+  const h = fixture(t, { relay: { receipts: true, receiptWriter: receipt => { written.push(receipt); return '/private/tmp/receipt.json'; } } });
+  h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1);
+  h.replace();
+  h.call(2, 'await cua.getApp("Example")');
+  await until(() => h.engines[1]?.sent.some(msg => msg.id === 2));
+  assert.equal(written.length, 1, 'the old turn closed with its receipt');
+  assert.equal(written[0].calls.length, 1);
+  assert.doesNotMatch(JSON.stringify(written[0]), /pending/);
+  h.reply(2); await flush();
+  await h.relay.endOpenTurn();
+  assert.equal(written.length, 2);
+  assert.equal(written[1].calls.length, 1, 'the replayed call is journaled once, in the new turn');
+  assert.doesNotMatch(JSON.stringify(written[1]), /pending/);
+});
+
+test('a handle rebound to another app by a read is reacquired by the new app, not its old argument', async t => {
+  const h = fixture(t, { relay: { inputLease: { acquire: () => 'owned', grant: () => undefined, renew() {}, close() {} } } });
+  h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1);
+  h.call(2, 'await app.getAXState()');
+  h.reply(2, { content: [{ type: 'text', text: tree.replace('App: Example', 'App: Other') }], _meta: { 'codex/toolSurface': { app: { appId: 'test.other' } } } });
+  await flush();
+  h.replace();
+  h.call(3, 'await app.click(7)');
+  await until(() => h.engines[1]?.sent.some(msg => msg.id === 3));
+  const code = h.engines[1].sent.find(msg => msg.id === 3).params.arguments.code;
+  assert.ok(code.includes('globalThis["app"] = await cua.getApp("test.other");'), 'reacquired by the bundle ID it is bound to now');
+  assert.ok(!code.includes('globalThis["app"] = await cua.getApp("Example");'));
+});
+
+test('a direct browser call running when the engine dies is answered once', async t => {
+  let finish;
+  const directBrowser = await createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true, status: () => 'connected',
+    redact: value => value, endSession: () => ({ revoked: true, cleanup: [] }),
+    client: { request: () => new Promise(resolve => { finish = resolve; }) } });
+  const h = fixture(t, { relay: { directBrowser } });
+  h.send({ id: 7, method: 'tools/call', params: { name: 'browser_act', arguments: { tab: 't1', op: 'click', ref: 'r1' } } });
+  await flush();
+  h.relay.engineEnded('Engine exited (25).');
+  await flush();
+  assert.equal(h.replies.filter(msg => msg.id === 7).length, 1);
+  assert.equal(h.replies.find(msg => msg.id === 7).result.isError, true);
+  finish?.({ completed: 1, effect: 'verified', observation: { complete: true } });
+  await flush();
+  assert.equal(h.replies.filter(msg => msg.id === 7).length, 1, 'the late direct result is not a second reply');
+});

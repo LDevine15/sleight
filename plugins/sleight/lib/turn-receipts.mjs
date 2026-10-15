@@ -160,6 +160,14 @@ export class TurnJournal {
     const call = { id: msg.id, name: msg.params?.name, code: msg.params?.arguments?.code, args: msg.params?.arguments };
     this.calls.set(msg.id, call); this.events.push({ call });
   }
+  // A reconnect ends the turn under a call it is about to replay: take the call out before finish() and put it back after.
+  take(id) {
+    const call = this.calls.get(id);
+    if (!call) return undefined;
+    this.calls.delete(id); this.events = this.events.filter(event => event.call !== call); this.count--;
+    return call;
+  }
+  put(call) { if (call) { this.count++; this.calls.set(call.id, call); this.events.push({ call }); } }
   observe(id, text) { const call = this.calls.get(id); if (call) call.text = text; }
   reply(msg) {
     const call = this.calls.get(msg.id);
