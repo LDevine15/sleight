@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 09:10 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 10:40 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
@@ -23,14 +23,17 @@ Branches (all on `private`):
   a restart). Full check 5729 pass, 0 fail, 59 skipped. `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
 - `v3-gate` at `83fbf6b4` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3, the two bench fixes, TN1, and the funding switch
   (`83fbf6b4`, 113/113 focused). The sleight, turbo, FowlBrowser and computer use arms run on the login. Browser Use needs the API key, so it runs only in a round of its own.
-- `arch/ad1-int` at `4de5ceca` (`~/Projects/sleight-wt/adfix-int`) holds the AD1 bank, the port guard, hyg r2 and r3, CR8, CR9,
-  swap r2, pop r3, and the hook-key hardening (random key and secret, frozen hook, one-use HMAC proofs). The bank there passes in
-  full (571 tests in 9 files, hook-key 43 and natives 151 among them). Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
-- AD1 fix rounds (Claude agents, Sonnet high), one fresh reviewer per round with real-page repros. Status per branch is in
-  `ledger/claims/AD1/OPEN-REVIEWS.md`. Swap passed after r4 plus a one-line fix by sleight-arch (`12e4c81c`: 0 payments in about
-  1,000 attack clicks) and is being merged into ad1-int with the hook-key API. Pay is on r10 (closed positive phrases only, 60/68
-  honest pages allowed at r9), kb on r5 (Enter refused on pages with cross-site iframes), pop on r4 (from ad1-int). Claude Code's
-  safety classifier stopped the adversarial half of the hook-key review; its correctness, cost and fail-closed half passed.
+- `arch/ad1-int` at `fbacda8c` (`~/Projects/sleight-wt/adfix-int`) holds the AD1 bank, the port guard, hyg, CR8, CR9, swap r4,
+  pop r4 and the hook-key hardening (random key and secret, frozen hook, one-use HMAC proofs). Its bank files pass in full, page-natives
+  244 and swap-shield 63 among them. Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
+- AD1 rounds (Claude agents, Sonnet high), one fresh reviewer per round with real-page repros; status in
+  `ledger/claims/AD1/OPEN-REVIEWS.md`. Swap passed after r4. Pop r4 is under review as integrated. Pay is on r11 (closed phrases,
+  70/78 honest pages at r10). Kb r5 is under review (Enter now works on 48/48 pages with cross-site iframes).
+- sleight-arch's call, 2026-10-15: turbo's `browser_read` failed on most pages with cross-site iframes (9/12 before kb r5, 12/12
+  after), because the CDP filter refuses iframe targets and the snapshot fails closed. The filter will attach to iframe children of
+  owned pages, with the same port and endpoint guards, so the snapshot can scan and redact them (`arch/ad1-kb6`, running).
+- Claude Code's safety classifier stopped the adversarial half of the hook-key review. Its correctness, cost and fail-closed half
+  passed.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
