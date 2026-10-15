@@ -69,3 +69,45 @@ for (const method of ['GET', 'POST']) for (const [kind, control] of Object.entri
       assert.ok(f.requests.some(request => request.url.startsWith('/landed') && request.method === method));
       assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
     });
+
+for (const stop of [false, true]) test('CR4 real 300 ms main-thread load keeps modifiers hidden and popup background, stop=' + stop,
+  { skip, timeout: 60000 }, async t => {
+    const f = await fixture(t, `<button type="button">Loaded command</button><script>
+      document.querySelector('button').addEventListener('pointerdown', () => {
+        const until = performance.now() + 300; while (performance.now() < until) {}
+      });
+      document.querySelector('button').addEventListener('click', event => {
+        window.modifiers = [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+        if (${stop}) event.stopImmediatePropagation();
+        window.opened = !!window.open('/landed', 'loaded');
+      });
+    </script>`);
+    await backgroundClick(f.entry, f.entry.page.getByRole('button'), undefined, { timeoutMs: 5000 });
+    assert.deepEqual(await f.entry.page.evaluate(() => window.modifiers), [false, false, false, false]);
+    assert.equal(await f.entry.page.evaluate(() => window.opened), true);
+    assert.equal(f.entry.popups.length, 1);
+    const child = f.registry.tab(f.entry.popups[0].tab);
+    await child.page.waitForURL('**/landed');
+    assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
+  });
+
+test('CR4 real popup opened by a self-closing child is ready before backgroundClick returns', { skip, timeout: 60000 }, async t => {
+  const f = await fixture(t, `<button type="button">Continue</button><script>
+    document.querySelector('button').onclick = () => {
+      if (window.name === 'closing-child') { window.open('/landed', 'survivor'); window.close(); }
+      else window.open('/child', 'closing-child');
+    };
+  </script>`);
+  await backgroundClick(f.entry, f.entry.page.getByRole('button'), undefined, { timeoutMs: 5000 });
+  assert.equal(f.entry.popups.length, 1);
+  const child = f.registry.tab(f.entry.popups[0].tab);
+  await child.page.waitForLoadState('load');
+  const result = await backgroundClick(child, child.page.getByRole('button'), undefined, { timeoutMs: 5000 });
+  assert.equal(child.page.isClosed(), true);
+  assert.equal(child.popups.length, 1, 'surviving popup must be adopted before returning');
+  const survivor = f.registry.tab(child.popups[0].tab);
+  assert.equal(survivor.opener, child.tab);
+  assert.equal(await survivor.page.evaluate(() => !!window[Symbol.for('sleight.popup3')]), true);
+  assert.equal(result?.closed === true || result === undefined, true);
+  assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
+});
