@@ -77,6 +77,9 @@ export function textChord(key, el) {
     && (['input', 'textarea'].includes(el?.tag) && el?.kind === 'text' || el?.role === 'textbox');
 }
 
+// Chrome takes text inserted into a single-line input as implicit submission when it is a lone line break.
+export const lineBreakRefusal = 'A line break in a single-line input acts like pressing Enter. Press Enter on it instead, or use the engine browser path';
+
 export function intent(kind, target = {}) {
   const key = keyClass(target.key).name ?? target.key?.split('+').at(-1), activation = kind === 'press' && ['Enter', 'Space'].includes(key);
   let submit = kind === 'submit', payment = false;

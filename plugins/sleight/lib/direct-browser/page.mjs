@@ -51,7 +51,8 @@ export function popupHook() {
   const plainControl = node => submits(node)
     || node instanceof selectControl.constructor && selectControl.multiple.call(node);
   const key = Symbol.for('sleight.popup3');
-  if (window[key]) return true;
+  // A hook already on this window may have lost its listeners (a document that reused the window); put them back.
+  if (window[key]) { try { window[key].reattach?.(); } catch { /* A stale hook has no listeners to restore. */ } return true; }
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
   const nativeOpen = window.open, nativePrevent = Event.prototype.preventDefault;
   const composedPath = Event.prototype.composedPath, now = Date.now;
@@ -237,9 +238,12 @@ export function popupHook() {
   let serial = 0, shield;
   const ident = node => { if (!idsHas(ids, node)) idsSet(ids, node, ++serial); return idsGet(ids, node); };
   const hash = value => { let h = 2166136261; for (let i = 0; i < value.length; i++) h = imul(h ^ charCodeAt(value, i), 16777619); return h + ':' + value.length; };
-  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'for', 'usemap'];
+  const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate', 'for', 'usemap'];
+  // After the first keydown the key seal keeps only what decides where activation goes: words, values and disabled state are
+  // what a handler legitimately changes (a login button that disables itself, a chat box synced by a framework), so they drop out.
+  const routingAttributes = ['href', 'target', 'type', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate', 'for', 'usemap'];
   const formAttributes = ['action', 'method', 'target', 'enctype', 'novalidate'];
-  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form'];
+  const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate'];
   const isElement = node => { try { nameOf(node); return true; } catch { return false; } };
   // { form, type } for a form-associated button, input, textarea or select; a brand mismatch throws and falls to the next, so no instanceof.
   const controlOf = node => {
@@ -278,6 +282,20 @@ export function popupHook() {
     for (let i = 0; i < attributes.length; i++) row += '\u0001' + (attr(node, attributes[i]) ?? '');
     return row;
   };
+  // The routing facts of a control: its identity, form owner, the form's action, method, target, enctype and default submitter
+  // (with that submitter's own formaction and formtarget), and the attributes that point a link or button somewhere else.
+  const routing = node => {
+    const control = controlOf(node), form = control?.form;
+    let row = ident(node) + '\u0001' + nameOf(node) + '\u0001' + connected(node) + '\u0001' + (control ? control.type : '');
+    if (form) {
+      const submitter = submitterOf(form);
+      row += '\u0001' + ident(form) + '|' + (submitter ? ident(submitter) : '');
+      for (let i = 0; i < formAttributes.length; i++) row += '\u0001' + (attr(form, formAttributes[i]) ?? '');
+      for (let i = 0; submitter && i < routingAttributes.length; i++) row += '\u0001' + (attr(submitter, routingAttributes[i]) ?? '');
+    }
+    for (let i = 0; i < routingAttributes.length; i++) row += '\u0001' + (attr(node, routingAttributes[i]) ?? '');
+    return row;
+  };
   // HTML label activation: the first label at or above the element forwards to its control unless interactive content sits between.
   const forwardedOf = element => {
     let node = element;
@@ -303,6 +321,11 @@ export function popupHook() {
     for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + describe(areas[i], withSubmitter);
     return value;
   };
+  const routed = (element, forwarded, areas) => {
+    let value = routing(element) + '\u0003' + (forwarded ? routing(forwarded) : '');
+    for (let i = 0; areas && i < listLength(areas); i++) value += '\u0003' + routing(areas[i]);
+    return value;
+  };
   const listHas = (list, node) => { for (let i = 0; list && i < listLength(list); i++) if (list[i] === node) return true; return false; };
   const pathIndex = (path, node) => { for (let i = 0; i < path.length; i++) if (path[i] === node) return i; return -1; };
   // composedPath() from window omits nodes inside a closed shadow root; the outermost closed host stands for them.
@@ -323,10 +346,15 @@ export function popupHook() {
     for (let i = 0; i < at; i++) if (path[i] !== forwarded && isElement(path[i]) && matchesNode(path[i], interactive)) return true;
     return false;
   };
+  const keyOf = getter(globalThis.KeyboardEvent, 'key'), bodyOf = getter(globalThis.Document, 'body'), rootElementOf = getter(globalThis.Document, 'documentElement');
+  const modifierKey = event => { const key = keyOf(event); return key === 'Control' || key === 'Shift' || key === 'Meta' || key === 'Alt' || key === 'AltGraph'; };
+  // A locked frame lets no key through. A key release alone is reported separately: a page that navigates on the key leaves the
+  // release to its new document, which is blocked there without anything having activated, so the caller may ignore it.
+  const DENIED = 'the key landed in a frame that was not checked', RELEASED = 'the key was released in a document that was not checked';
+  const DIFFERENT = 'the input landed on a different element';
   const inspect = event => {
     const { element, anchor, forwarded, areas, keys, form, submitter, deny } = shield;
-    // A locked frame (not the checked one) lets no key through.
-    if (deny) return 'the key landed in a frame that was not checked';
+    if (deny) return typeOf(event) === 'keyup' ? RELEASED : DENIED;
     if (!connected(element)) return 'target left the page';
     // The browser's own click on a label's control is trusted too, and its path skips the label; an area's click skips the image.
     const path = pathOf(event), at = pathIndex(path, anchor), type = typeOf(event);
@@ -335,30 +363,78 @@ export function popupHook() {
       // A key event itself must land on the checked element, never merely somewhere inside its form.
       const resulting = keys && (type === 'submit' ? !!form && path[0] === form : type === 'click' && !!submitter && pathIndex(path, submitter) >= 0);
       const elsewhere = !(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0]) && !resulting;
-      if (elsewhere) return 'the input landed on a different element';
-    } else if (anchor === element && interactiveBetween(path, at, forwarded)) return 'the input landed on a different element';
-    return sealed(element, forwardedOf(element), areasOf(element), keys) === shield.signature ? undefined : 'the checked element changed';
+      if (elsewhere) return DIFFERENT;
+    } else if (anchor === element && interactiveBetween(path, at, forwarded)) return DIFFERENT;
+    // Until the activation key goes down the whole seal must match. From then on only the routing facts must: what a handler
+    // changes about itself while it works (words, value, disabled) is not a change of where the key's effect goes.
+    const next = keys && shield.down;
+    return (next ? routed(element, forwardedOf(element), areasOf(element)) : sealed(element, forwardedOf(element), areasOf(element), keys))
+      === (next ? shield.routing : shield.signature) ? undefined : 'the checked element changed';
   };
+  // A key released on the empty page (the checked button disabled itself, so focus fell to body) is cancelled without a report:
+  // nothing was released on anything that could act, and the earlier events passed the seal.
+  const onEmptyPage = event => { const target = pathOf(event)[0]; return target === bodyOf(document) || target === rootElementOf(document); };
   // Fail closed: if the check cannot run on this DOM, the input is cancelled.
   const guardEvent = event => {
     const current = shield;
     if (!current || !event.isTrusted || now() >= current.until) return;
-    let bad;
+    let bad, quiet = false;
     try {
       const type = typeOf(event);
       if (!(pointerType(type) || current.keys && keyType(type))) return;
-      bad = current.violation ?? inspect(event);
+      bad = current.violation && current.violation !== RELEASED ? current.violation : inspect(event);
+      if (bad === DIFFERENT && !current.violation && type === 'keyup' && current.down && onEmptyPage(event)) quiet = true;
+      else if (!bad && current.keys && type === 'keydown' && !modifierKey(event)) current.down = true;
     } catch { bad = 'the checked element changed'; }
     if (!bad) return;
-    current.violation ??= bad;
+    if (!quiet && (!current.violation || current.violation === RELEASED && bad !== RELEASED)) current.violation = bad;
     try { stopNow(event); } catch { /* The prevent below still cancels the default. */ }
     try { cancel(event); } catch { /* Nothing further can be done to this event. */ }
   };
   const guarded = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu', 'keydown', 'keypress', 'keyup', 'submit'];
-  for (let i = 0; i < guarded.length; i++) add.call(window, guarded[i], guardEvent, true);
-  add.call(window, 'keydown', keyEvent, true);
-  add.call(window, 'keyup', keyEvent, true);
-  add.call(window, 'click', capture, true);
+  // Two ways a window loses its listeners while the hook stays: document.open() (and write() or writeln() on a loaded document,
+  // which open it first) erases them, and a script-created frame whose first navigation is same-origin reuses the window of its
+  // initial empty document, so the start-of-document script ran once, on the empty document, and the commit left the listeners
+  // registered but dead. Only removing and adding a listener again makes it fire in that window; adding one already registered
+  // does nothing. The document the listeners were added for tells a reused window (a new document) from a settled one, whose
+  // listeners must keep their place ahead of the page's.
+  const lengthOf = uncurry(Object.getOwnPropertyDescriptor(window, 'length')?.get ?? (() => 0));
+  let closed = false, attachedTo;
+  const attach = () => {
+    if (closed) return;
+    for (let i = 0; i < guarded.length; i++) { remove.call(window, guarded[i], guardEvent, true); add.call(window, guarded[i], guardEvent, true); }
+    remove.call(window, 'keydown', keyEvent, true); add.call(window, 'keydown', keyEvent, true);
+    remove.call(window, 'keyup', keyEvent, true); add.call(window, 'keyup', keyEvent, true);
+    remove.call(window, 'click', capture, true); add.call(window, 'click', capture, true);
+    attachedTo = document;
+  };
+  const reattach = force => { if (force || attachedTo !== document) attach(); };
+  attach();
+  // A page could rewrite itself in a keydown handler and take the key unguarded, and the other frame's document may be the one opened.
+  const reflectApply = Reflect.apply, viewOf = getter(globalThis.Document, 'defaultView'), readyOf = getter(globalThis.Document, 'readyState');
+  for (const name of ['open', 'write', 'writeln']) {
+    const native = globalThis.Document?.prototype?.[name];
+    if (typeof native !== 'function') continue;
+    replace(Document.prototype, name, { configurable: true, writable: true, value: function() {
+      // write() on a document still being parsed appends to it; on a loaded one it opens it first, which erases the listeners.
+      let opens = name === 'open';
+      try { opens ||= readyOf(this) !== 'loading'; } catch { /* Not a document: the native call throws below. */ }
+      const result = reflectApply(native, this, arguments);
+      if (opens) {
+        try {
+          const view = viewOf(this);
+          if (view === window) reattach(true); else view?.[key]?.reattach?.(true);
+        } catch { /* A document without a window has no listeners to restore. */ }
+      }
+      return result;
+    } });
+  }
+  // A page that registers a capture listener on a reused window before anything restores ours would run first, so a
+  // registration on the window while a guard is armed restores ours before it is recorded.
+  replace(EventTarget.prototype, 'addEventListener', { configurable: true, writable: true, value: function() {
+    if (this === window && shield) reattach();
+    return reflectApply(add, this, arguments);
+  } });
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
@@ -373,13 +449,22 @@ export function popupHook() {
       const withKeys = keys === true, control = controlOf(element), form = withKeys ? control?.form ?? null : null;
       const forwarded = forwardedOf(element), areas = areasOf(element);
       shield = { token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
-        signature: sealed(element, forwarded, areas, withKeys), until: now() + capMs };
+        signature: sealed(element, forwarded, areas, withKeys), routing: withKeys ? routed(element, forwarded, areas) : undefined, down: false, until: now() + capMs };
       return true;
     },
     // Veto every trusted key in this frame until finish(token) or capMs: for a frame other than the one holding the checked
     // element, which a page script could move focus into. Registered at document start like guard(), so no page listener is earlier.
     lock(token, capMs) {
       if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0) return false;
+      shield = { token, element: document.documentElement, keys: true, deny: true, until: now() + capMs };
+      return true;
+    },
+    // After a key goes down: restore the listeners a reused window lost, and lock any document that is not the checked one (a frame
+    // the key's handler created or navigated). The checked document keeps its seal while the checked element is still in it.
+    resync(token, capMs) {
+      if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0) return false;
+      reattach();
+      if (shield?.token === token && !shield.deny && connected(shield.element)) return true;
       shield = { token, element: document.documentElement, keys: true, deny: true, until: now() + capMs };
       return true;
     },
@@ -433,7 +518,12 @@ export function popupHook() {
       if (shield?.token === token) shield = undefined;
       finish(token); return bad ?? true;
     },
+    // How many child frames this window has, in any process, from the native getter captured before page scripts (the page can
+    // replace window.length). Playwright may not know a frame in another process yet.
+    childFrames() { return lengthOf(window); },
+    reattach,
     off() {
+      closed = true;
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
@@ -512,20 +602,72 @@ export async function backgroundClick(tab, locator, click = options => locator.c
 }
 
 const keyMessage = reason => reason + '. The key may have activated; read the page before deciding, and do not resend it';
+const keyReleased = 'the key was released in a document that was not checked';
 
-// Arms the key shield around a trusted Enter or Space (with Shift or Control in a text field) and then calls send().
+// Arms the key shield around a trusted Enter or Space (with Shift or Control in a text field) and then calls send({ between }).
 // The hook is registered at document start, so no page listener runs before it, and the seal is taken before the key
 // is sent: every keydown, keypress, keyup, click and submit is checked against the sealed element and its form (action,
 // method, target, enctype, default submitter). Any other frame is locked, so a page script cannot move focus into it
-// to take the key. The verdict is read after send(); a veto means events after it were stopped, earlier ones may not have been.
-export async function backgroundKey(tab, locator, send, { timeoutMs = 1000 } = {}) {
-  const token = randomUUID(), capMs = timeoutMs + 3000;
+// to take the key. A document that does not exist yet (a frame the key's handler inserts, re-points or navigates, a cross-site
+// frame that starts in another process) is locked too: an init script that Playwright applies to every new document in every
+// frame, before the page's own scripts, installs a deny lock that expires with the key. It is removed when the key is done.
+// send() presses the key in two halves and calls between() after the key goes down and before it is released. A script-created
+// frame that navigates to a same-origin address reuses the window of its initial empty document, and the commit erases the
+// listeners the start-of-document script put there, so between() waits for such a navigation to commit, restores the listeners
+// and locks every frame again; only then is the key released.
+// The verdict is read after send(); a veto means events after it were stopped, earlier ones may not have been.
+export async function backgroundKey(tab, locator, send, { timeoutMs = 1000, settleMs = 400 } = {}) {
+  const token = randomUUID(), capMs = timeoutMs + 3000, until = Date.now() + capMs;
   const arg = { token, capMs };
   const settle = (work, ms = timeoutMs) => deadline(work, ms);
+  let owner, lockScript, unguarded = false;
+  const cdp = tab.cdp, track = { dirty: false, pending: new Set(), wake: undefined };
+  const wake = () => { const resolve = track.wake; track.wake = undefined; resolve?.(); };
+  const events = {
+    'Page.frameAttached': () => { track.dirty = true; },
+    'Page.frameDetached': () => wake(),
+    'Page.frameNavigated': event => { track.dirty = true; track.pending.delete(event.frame?.id); wake(); },
+    'Page.frameStoppedLoading': event => { track.pending.delete(event.frameId); wake(); },
+    // A frame's first navigation, to an address other than about:blank, is the one that reuses the empty document's window.
+    'Page.frameRequestedNavigation': event => {
+      track.dirty = true;
+      if (event.reason === 'initialFrameNavigation' && event.url !== 'about:blank') track.pending.add(event.frameId);
+    },
+  };
   const finishAll = () => Promise.all(tab.page.frames().map(frame => settle(() => frame.evaluate(arg => {
     const result = window[Symbol.for('sleight.popup3')]?.finish(arg.token);
     return typeof result === 'string' ? result : undefined;
-  }, arg)).catch(() => undefined)));
+    // The frame holding the checked element may have been navigated by the key (a search form): its new document blocks the
+    // release of the key, which is not an activation.
+  }, arg)).then(reason => reason === keyReleased && frame === owner ? undefined : reason).catch(() => undefined)));
+  const resync = () => Promise.all(tab.page.frames().map(async frame => {
+    try {
+      if (!await settle(() => frame.evaluate(arg => window[Symbol.for('sleight.popup3')]?.resync(arg.token, arg.capMs) === true, arg))) throw Error('no hook at document start');
+    } catch { if (!frame.isDetached() && frame !== owner) unguarded = true; }
+  }));
+  // A frame in another process is known to the page before Playwright has its session. One Playwright cannot reach cannot be locked.
+  const sameFrames = async ms => {
+    for (const waitUntil = Date.now() + ms; ; await new Promise(resolve => setTimeout(resolve, 25))) {
+      try {
+        const frames = tab.page.frames();
+        const counts = await Promise.all(frames.map(frame => settle(() => frame.evaluate(() => window[Symbol.for('sleight.popup3')]?.childFrames() ?? -1))));
+        if (counts.every(count => count >= 0) && 1 + counts.reduce((sum, count) => sum + count, 0) <= frames.length) return true;
+      } catch { return false; }
+      if (Date.now() >= waitUntil) return false;
+    }
+  };
+  // Called with the key down. A round trip to the page first, so every frame event its handlers caused has arrived.
+  const between = async () => {
+    for (let round = 0; round < 4; round++) {
+      await settle(() => tab.page.mainFrame().evaluate(() => 0)).catch(() => {});
+      const waitUntil = Date.now() + settleMs;
+      while (track.pending.size && Date.now() < waitUntil) await new Promise(resolve => { track.wake = resolve; setTimeout(wake, Math.max(1, waitUntil - Date.now())); });
+      if (!track.dirty) return;
+      track.dirty = false;
+      if (!await sameFrames(settleMs)) unguarded = true;
+      await resync();
+    }
+  };
   try {
     try {
       await settle(() => locator.evaluate((element, { token, capMs }) => {
@@ -534,19 +676,31 @@ export async function backgroundKey(tab, locator, send, { timeoutMs = 1000 } = {
         return true;
       }, arg, { timeout: timeoutMs }));
     } catch { throw Error('background key guard unavailable; use the engine browser path'); }
-    const owner = typeof locator.ownerFrame === 'function' ? await locator.ownerFrame() : undefined;
+    owner = typeof locator.ownerFrame === 'function' ? await locator.ownerFrame() : undefined;
+    if (typeof tab.page.addInitScript === 'function') {
+      try {
+        lockScript = await settle(() => tab.page.addInitScript(`(${popupHook})();{const hook=window[Symbol.for('sleight.popup3')];` +
+          `hook?.lock(${JSON.stringify(token)},${until}-Date.now());}`));
+      } catch { throw Error('a document created by the key could not be guarded; use the engine browser path'); }
+    }
+    if (!await sameFrames(timeoutMs)) throw Error('a frame could not be guarded before the key; use the engine browser path');
     await Promise.all(tab.page.frames().filter(frame => frame !== owner).map(async frame => {
       try {
-        // A frame the start-of-document script did not reach (a separate process) gets the hook now, late.
-        if (!await settle(() => frame.evaluate(() => !!window[Symbol.for('sleight.popup3')]))) await settle(() => frame.evaluate(popupHook));
+        // A hook that was not there at the start of the document sits behind the page's own listeners, so such a frame is not guarded.
+        if (!await settle(() => frame.evaluate(() => !!window[Symbol.for('sleight.popup3')]))) throw Error('no hook at document start');
         if (!await settle(() => frame.evaluate(({ token, capMs }) => window[Symbol.for('sleight.popup3')]?.lock(token, capMs) === true, arg))) throw Error('not lockable');
       } catch {
         if (frame.isDetached()) return;
         throw Error('a frame could not be guarded before the key; use the engine browser path');
       }
     }));
-    return await send();
+    if (cdp?.on) for (const [name, handler] of Object.entries(events)) cdp.on(name, handler);
+    const result = await send({ between: cdp?.on ? between : undefined });
+    if (unguarded) throw Error('a frame created by the key could not be guarded; use the engine browser path');
+    return result;
   } finally {
+    if (cdp?.off) for (const [name, handler] of Object.entries(events)) cdp.off(name, handler);
+    if (lockScript) await settle(() => lockScript.dispose()).catch(() => {});
     const verdicts = await finishAll().catch(() => []);
     const reason = verdicts.find(value => typeof value === 'string');
     if (reason) throw Error(keyMessage(reason));
@@ -592,11 +746,15 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     entry.script = identifier;
     const result = await entry.cdp.send('Runtime.evaluate', { expression: `(${popupHook})()`, returnByValue: true });
     if (result.exceptionDetails || result.result?.value !== true) throw Error('background popup hook installation failed');
+    // The page session's script does not reach a frame in another process (a cross-site iframe); Playwright's init script
+    // does, before that frame's own scripts, so the key lock finds the hook at the start of every document.
+    if (typeof entry.page.addInitScript === 'function') entry.frameScript = await entry.page.addInitScript(popupHook);
   };
   const removeHook = async entry => {
     if (entry.script) {
       await entry.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.script }); entry.script = null;
     }
+    if (entry.frameScript) { await entry.frameScript.dispose(); entry.frameScript = null; }
     if (!entry.page.isClosed()) for (const frame of entry.page.frames()) await frame.evaluate(() => {
       return window[Symbol.for('sleight.popup3')]?.off() ?? true;
     });

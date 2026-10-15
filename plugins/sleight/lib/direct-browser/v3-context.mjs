@@ -41,6 +41,8 @@ export function requestedPayment(message) {
 
 // Focus and its synchronous page handlers run in the same evaluation. Never
 // let a failed focus silently send a key to the previously active control.
+// An opaque host (div, span, custom element) may hide the real receiver of a key, so a key to it is not tied to the checked ref.
+const focusRequired = 'CHECKED_FOCUS_REQUIRED: the key could not be tied to the checked element (focus moved, or it is a div, span or custom element that may hide the real receiver). Use the engine browser path';
 export function focusCheckedNode(el, focus, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   if (!read(el, 'isConnected')) return false;
   if (focus) HTMLElement.prototype.focus.call(el, { preventScroll: true });
@@ -298,7 +300,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         for (const [event, handler] of Object.entries(handlers)) target.page.on(event, handler);
         watched.set(target.page, handlers);
       }
-      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
+      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, true)) throw Error(focusRequired);
       const observed = await trustedRead(handle, readPaymentPage);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
@@ -352,17 +354,26 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       dialogOwner.active = false;
       if (!dialogOwner.dialog) { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
     },
-    async pressTarget(target, key, options) {
+    async pressTarget(target, key, options, keys) {
       const record = targets.get(target);
       if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
-          !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+          !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error(focusRequired);
       const { kind, chord } = keyClass(key);
-      if (kind === 'unknown' || chord && kind !== 'safe' && !textChord(key, target.element)) throw Error('CHECKED_FOCUS_REQUIRED');
+      if (kind === 'unknown' || chord && kind !== 'safe' && !textChord(key, target.element)) throw Error('KEY_NOT_ALLOWED: this key or chord is not sent in the background (Shift+Enter and Control+Enter in a text field are). Use the engine browser path');
       // ElementHandle.press focuses again without verifying its recipient. Use only the owned page keyboard after
       // the checked ref retained focus. Enter and Space (and Shift or Control with Enter in a text field) are sent
       // by the caller inside the key shield (page.mjs backgroundKey), armed before this key and checked at every
       // event, so a page that moves focus or rewires the control while the key is in flight has the event cancelled.
-      return target.page.keyboard.press(kind === 'safe' ? key : activationKey(key), options);
+      if (kind === 'safe') return target.page.keyboard.press(key, options);
+      const pressed = activationKey(key);
+      if (typeof keys?.between !== 'function') return target.page.keyboard.press(pressed, options);
+      // The shield may need to look at the page between the key going down and coming up (frames the key's handler created).
+      const names = pressed.split('+'), { keyboard } = target.page;
+      let down = 0;
+      try {
+        for (const name of names) { await keyboard.down(name); down++; }
+        await keys.between();
+      } finally { for (let i = down - 1; i >= 0; i--) await keyboard.up(names[i]); }
     },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);

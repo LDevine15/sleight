@@ -64,16 +64,31 @@ our own runs. Dates and engine versions are given where they matter.
 
 - Turbo v3 sends Enter and Space (and Shift+Enter or Control+Enter in a text field) through the page keyboard inside the click
   shield: a hook registered before page scripts is armed with the checked element and its form (action, method, target, enctype,
-  default submitter) before the key goes out, and cancels any keydown, keypress, keyup, click or submit that lands elsewhere or
-  after the seal changed. The other frames are locked for the key. The outcome says "the key may have activated; read the page"
-  when something was cancelled, because events before the cancelled one were delivered. Known gaps: the hook is a plain
+  default submitter and its formaction and formtarget) before the key goes out. The whole seal must match at the first keydown; from
+  then on only those routing facts must, so a handler that disables its own button or changes its label is not a veto. The hook cancels
+  any keydown, keypress, keyup, click or submit that lands elsewhere or after the routing changed. The key goes down and up in two
+  halves. The other frames are locked, and a deny lock is also put into every document created while the key is in flight (Playwright
+  init script, before the page's own scripts, including frames in another process). A script-created frame whose first navigation is
+  same-origin reuses the window of its empty document, where the commit leaves the hook's listeners registered but dead, so
+  between the halves the key waits (up to 400 ms) for such a navigation to commit and puts the listeners back in every frame. The
+  hook also puts them back after `document.open()`, `write()` or `writeln()` on a loaded document. The outcome says "the key may have
+  activated; read the page" when something was cancelled, because events before the cancelled one were delivered. Measured on
+  2026-10-15: 0 payments in 48 inserted-frame presses (document.write and srcdoc, Enter and Space), 32 same-site navigations, 24
+  re-pointed frames, 40 cross-site and same-site frame-focus presses, and the document.open repro. 23 of 24 ordinary uses return a
+  clean outcome. Known gaps: the hook is a plain
   assignment on `window[Symbol.for('sleight.popup3')]`, so a page that overwrites it before the key may turn arming into a no-op
-  (not tested); a separate-process (cross-site) frame has no hook at document start (measured: hook present in the same-site
-  frame, absent in the cross-site one), gets it late, behind that frame's own listeners, and 48 timer-flip presses at a Pay
-  button there paid 0 but never provably reached it; a frame that never finishes
-  loading, or whose hook cannot be armed within 1 s, makes the key refuse with the engine path; Enter on a button that opens a modal
-  and focuses inside it, or an inline editor that removes itself on Enter, activates but reports "may have activated" because the
-  keyup lands elsewhere. Keys outside a short list (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete,
+  (a separate branch replaces the lookup); a page can still run a capture listener ahead of the hook on a reused window if it gets
+  `addEventListener` from a realm the hook never ran in (a script-less sandboxed frame), registers it before the hook restores its own,
+  and creates and focuses that frame in the roughly 1 ms between the last restore and the key release (not tried); a frame with no hook from the start of its document (it loaded before the page was adopted) makes the key refuse with the engine path, as
+  does a frame in another process that Playwright has not attached within 1 s (2 of 8 fresh pages with one cross-site iframe on 2026-10-15, cause not isolated;
+  the CDP filter resumes such a frame without waiting for Playwright's init scripts). A frame
+  that never finishes loading, or whose hook cannot be armed within 1 s, makes the key refuse with the engine path; Enter on a button
+  that opens a modal and focuses inside it, or an inline editor that removes itself on Enter, activates but reports "may have
+  activated" because the key is released on another element. A key release that reaches an empty page (the button disabled itself) is
+  cancelled without a report. A div, span or custom element with role=textbox (most chat composers) is refused for every key on this
+  path, because it could hide the real receiver. The refusal tells the model to use the engine path. Text with a line break typed or filled into a
+  single-line input is refused (Chrome submits the form on a bare line break). A textarea takes it. Keys outside a short list
+  (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete,
   Backspace, F1-F12, one character, with modifiers) are refused on this path; Alt, Meta and other chords with Enter or Space are too.
 - A page that opens a popup from its own script can still take the screen during a browser session. Since 2026-10-13 sleight opens
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,

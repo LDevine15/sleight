@@ -190,8 +190,8 @@ const rewire = [
   ['B keyup handler turns the focused button into a payment submit, Space', '<button id="b" type="button">Next</button>', `b.addEventListener('keyup',()=>{b.type='submit';b.setAttribute('form','payment')});`, 'Space', 'Next'],
   ['C keypress handler sets form=payment on the search input, Enter', '<input id="a" aria-label="Search">', `a.addEventListener('keypress',()=>{a.setAttribute('form','payment')});`, 'Enter', 'Search'],
   ['D keydown handler sets form=payment on the search input, Enter', '<input id="a" aria-label="Search">', `a.addEventListener('keydown',()=>{a.setAttribute('form','payment')});`, 'Enter', 'Search'],
-  ['E keydown handler adds a payment submit button before the form\'s own, Enter', '<form id="sf"><input id="a" aria-label="Search"><button type="button" id="real">Go</button></form>',
-    `a.addEventListener('keydown',()=>{const s=document.createElement('button');s.type='submit';s.setAttribute('form','payment');sf.prepend(s);sf.append(s);});`, 'Enter', 'Search'],
+  ['E keydown handler adds a payment default submit button to the search form (formaction=/charge), Enter', '<form id="sf"><input id="a" aria-label="Search"><button type="button" id="real">Go</button></form>',
+    `a.addEventListener('keydown',()=>{const s=document.createElement('button');s.type='submit';s.setAttribute('formaction','/charge');sf.prepend(s);});`, 'Enter', 'Search'],
   ['G keyup handler moves the checkbox into the payment form, Space', '<input type="checkbox" id="c" aria-label="Agree">', `c.addEventListener('keyup',()=>{c.setAttribute('form','payment');pay.type='submit';});`, 'Space', 'Agree'],
 ];
 for (const [name, html, script, key, label] of rewire)
@@ -368,3 +368,137 @@ for (const always of [false, true])
     t.diagnostic('outcomes ' + JSON.stringify(outcomes));
     await f.safe();
   });
+
+// Round 4. Documents created or focused during the key (review kb-r3 F1, F2), a page that rewrites itself with document.open
+// (F7), a lone line break typed into an input (F3), false "may have activated" outcomes on ordinary pages (F4), and the
+// refusal text for a div[role=textbox] composer (F6). Each payment case presses 6 times; any payment fails it.
+const flat = r => r.text.split('\n')[0];
+async function rounds(t, html, { key, n = 6, routes, setup } = {}) {
+  const b = await bank(t), f = await b.start(html, readOnly, { routes });
+  await setup?.(b, f);
+  const outcomes = [];
+  for (let i = 0; i < n; i++) {
+    await f.page.goto(b.origin + '/attack-1');
+    await f.page.evaluate(() => { document.querySelectorAll('iframe').forEach(x => x.remove()); document.getElementById('a').focus(); });
+    const text = await f.read();
+    outcomes.push(flat(await f.act([{ do: 'press', ref: f.ref('Search', text), key }])));
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  t.diagnostic(JSON.stringify({ outcomes: [...new Set(outcomes.map(o => o.replace(/\d+/g, '#').slice(0, 110)))] }));
+  return { b, f, outcomes };
+}
+
+for (const key of ['Enter', 'Space'])
+  for (const kind of ['about:blank + document.write', 'srcdoc', 'network src set before insertion'])
+    test('R4 F1 frame inserted by the keydown handler, widget acts on keyup: ' + key + ', ' + kind, { skip, timeout: 170000 }, async t => {
+      const script = kind === 'about:blank + document.write'
+        ? `a.addEventListener('keydown',()=>{const fr=document.createElement('iframe');document.body.append(fr);const d=fr.contentDocument;d.open();d.write('<div id=p tabindex=0>Continue</div>');d.close();
+            d.getElementById('p').addEventListener('keyup',()=>parent.record('payment'));fr.contentWindow.focus();d.getElementById('p').focus();});`
+        : kind === 'srcdoc'
+        ? `a.addEventListener('keydown',()=>{const fr=document.createElement('iframe');fr.srcdoc='<div id=p tabindex=0>Continue</div><script>addEventListener("keyup",()=>parent.record("payment"),true);p.focus();<\\/script>';document.body.append(fr);fr.contentWindow.focus();});`
+        : `a.addEventListener('keydown',()=>{const fr=document.createElement('iframe');fr.src='/payframe';document.body.append(fr);fr.contentWindow.focus();});`;
+      const frame = doc('<div id="p" tabindex="0">Continue</div>', `addEventListener('keyup',()=>parent.record('payment'),true);p.addEventListener('keyup',()=>parent.record('payment'));p.focus();`);
+      const { f } = await rounds(t, doc('<input id="a" aria-label="Search">', script), { key, routes: { '/payframe': frame } });
+      assert.equal(f.delta().payment, 0);
+      await f.safe();
+    });
+
+for (const key of ['Enter', 'Space'])
+  test('R4 F1 the checked page navigates same-site from its keydown handler to a page whose autofocused widget pays on keyup: ' + key, { skip, timeout: 170000 }, async t => {
+    const p2 = doc('<div id="p" tabindex="0">Continue</div>', `p.addEventListener('keyup',()=>record('payment'));p.focus();`);
+    const { f, outcomes } = await rounds(t, doc('<input id="a" aria-label="Search">', `a.addEventListener('keydown',()=>{location.href='/p2'});`), { key, n: 8, routes: { '/p2': p2 } });
+    assert.equal(f.delta().payment, 0);
+    assert.ok(outcomes.every(o => !/stopped before it could activate/.test(o)));
+    await f.safe();
+  });
+
+for (const key of ['Enter', 'Space'])
+  test('R4 F1 an existing about:blank frame is pointed at a page whose autofocused widget pays on keyup: ' + key, { skip, timeout: 170000 }, async t => {
+    const pf = doc('<div id="p" tabindex="0">Continue</div>', `p.addEventListener('keyup',()=>parent.record('payment'));addEventListener('keyup',()=>parent.record('payment'),true);p.focus();`);
+    const { f } = await rounds(t, doc('<input id="a" aria-label="Search"><iframe id="fr" src="about:blank"></iframe>', `a.addEventListener('keydown',()=>{fr.src='/payframe'});`),
+      { key, n: 8, routes: { '/payframe': pf } });
+    assert.equal(f.delta().payment, 0);
+    await f.safe();
+  });
+
+for (const host of ['localhost', '127.0.0.1'])
+  for (const key of ['Enter', 'Space'])
+    test('R4 F2 ' + (host === 'localhost' ? 'cross-site' : 'same-site') + ' frame holds a window capture keyup payer and the keydown handler focuses it: ' + key, { skip, timeout: 170000 }, async t => {
+      const b = await bank(t), port = new URL(b.origin).port;
+      const frame = doc('<div id="p" tabindex="0">Continue</div>',
+        `addEventListener('keyup',e=>{ if(e.isTrusted) fetch('http://127.0.0.1:${port}/effect?kind=payment',{method:'POST',mode:'no-cors',keepalive:true}); },true); p.focus();`);
+      const f = await b.start(doc(`<input id="a" aria-label="Search"><iframe id="fr" src="http://${host}:${port}/frame-x" title="payframe"></iframe>`, `a.addEventListener('keydown',()=>fr.focus());`),
+        readOnly, { routes: { '/frame-x': frame } });
+      await new Promise(resolve => setTimeout(resolve, 600));
+      for (let n = 0; n < 6; n++) {
+        await f.page.evaluate(() => document.getElementById('a').focus());
+        await f.act([{ do: 'press', key }]);
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      assert.equal(f.delta().payment, 0);
+      await f.safe();
+    });
+
+for (const key of ['Enter', 'Space'])
+  test('R4 F7 the keydown handler rewrites the page with document.open and the new content pays on keyup: ' + key, { skip, timeout: 90000 }, async t => {
+    const script = `a.addEventListener('keydown',()=>{ document.open(); document.write('<div id=p tabindex=0>Continue</div><script>p.addEventListener("keyup",()=>parent.record("payment"));addEventListener("keyup",()=>record("payment"),true);p.focus();<\\/script>'); document.close(); });`;
+    const { f } = await press(t, doc('<input id="a" aria-label="Search">', script), { key });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(f.delta().payment, 0);
+    await f.safe();
+  });
+
+// F3. A value with a line break typed or filled into a single-line input is refused, so it cannot submit a form unchecked.
+const paymentForm = `<form id="payment"><p data-payment-item="Fixture item">Item: Fixture item</p><p data-payment-amount="18.00">Amount: 18.00</p><p data-payment-payee="Fixture shop">Payee: Fixture shop</p>
+<p data-payment-currency="USD">Currency: USD</p><label>Card<input autocomplete="cc-number"></label><input id="n" aria-label="Note"><textarea id="x" aria-label="Notes"></textarea><button id="pay">Continue</button></form>`;
+for (const text of ['\n', '\r', '\r\n', 'abc\n'])
+  test('R4 F3 type and fill of ' + JSON.stringify(text) + ' into a text input of a payment form are refused and submit nothing', { skip, timeout: 90000 }, async t => {
+    const b = await bank(t), f = await b.start(doc(paymentForm, ''), readOnly);
+    const typed = await f.act([{ do: 'type', ref: f.ref('Note'), text }]);
+    assert.match(typed.text, /not run: A line break in a single-line input/);
+    const filled = await f.fill([{ ref: f.ref('Note'), value: text }]);
+    assert.match(JSON.stringify(filled.text), /line break in a single-line input/);
+    // A textarea takes line breaks as text.
+    const area = await f.act([{ do: 'type', ref: f.ref('Notes'), text }]);
+    assert.doesNotMatch(area.text, /not run/);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await f.page.evaluate(() => document.getElementById('n').value), '');
+    await f.safe();
+  });
+
+// F4. Ordinary pages: the key works and the outcome carries no "may have activated" warning.
+const ordinary = [
+  ['login form whose submit handler disables the button and changes its label', '<form id="lf"><input id="t" aria-label="Username"><input type="password" aria-label="Password"><button id="go">Sign in</button></form>',
+    `lf.addEventListener('submit',e=>{e.preventDefault();go.disabled=true;go.textContent='Signing in';window.__ok=1;})`, 'Username', 'Enter', true],
+  ['chat textarea synced by a framework (defaultValue), Enter sends', '<form id="cf"><textarea id="t" aria-label="Message"></textarea></form><ul id="log"></ul>',
+    `t.addEventListener('input',()=>{t.defaultValue=t.value});t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();log.append(Object.assign(document.createElement('li'),{textContent:t.value}));t.value='';t.defaultValue='';window.__ok=1;}})`, 'Message', 'Enter', true],
+  ['chat input synced by a framework (value attribute), Enter sends', '<form id="cf"><input id="t" aria-label="Message"></form>',
+    `t.addEventListener('input',()=>t.setAttribute('value',t.value));t.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();t.value='';t.setAttribute('value','');window.__ok=1;}})`, 'Message', 'Enter', true],
+  ['chat textarea in a form, Shift+Enter', '<form id="cf"><textarea id="t" aria-label="Message"></textarea></form>',
+    `t.addEventListener('input',()=>{t.defaultValue=t.value});t.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.shiftKey)window.__ok=1;})`, 'Message', 'Shift+Enter', true],
+  ['todo input appends a checkbox row inside its own form', '<form id="tf" onsubmit="return false"><input id="t" aria-label="New todo"><div id="log"></div></form>',
+    `t.addEventListener('keydown',e=>{if(e.key==='Enter'){const l=document.createElement('label');l.innerHTML='<input type=checkbox> '+t.value;log.append(l);t.value='';window.__ok=1;}})`, 'New todo', 'Enter', true],
+  ['disclosure button Enter changes its own label', '<button id="t">Show details</button><p id="d" hidden>x</p>',
+    `t.addEventListener('click',()=>{d.hidden=!d.hidden;t.textContent=d.hidden?'Show details':'Hide details';window.__ok=1;})`, 'Show details', 'Enter', true],
+  ['Save button Enter disables itself on click', '<button id="t">Save draft</button>', `t.addEventListener('click',()=>{t.disabled=true;window.__ok=1;})`, 'Save draft', 'Enter', true],
+  ['button Enter opens a modal dialog and focuses inside it (still warns: the key release lands elsewhere)', '<button id="t">Open</button><dialog id="d"><input aria-label="Inside"></dialog>',
+    `t.onclick=()=>{d.showModal();window.__ok=1}`, 'Open', 'Enter', false],
+];
+for (const [name, html, script, label, key, clean] of ordinary)
+  test('R4 F4 ordinary use: ' + name, { skip, timeout: 90000 }, async t => {
+    const b = await bank(t), f = await b.start(plain(html, script), 'Use the page normally');
+    const ref = f.ref(label);
+    await f.page.evaluate(() => document.getElementById('t').focus());
+    const result = await f.act([{ do: 'press', ref, key }]);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await f.page.evaluate(() => window.__ok), 1, 'the key took effect');
+    if (clean) assert.doesNotMatch(result.text.split('\n')[0], /may have activated|effect unconfirmed|not run/);
+    else assert.match(result.text.split('\n')[0], /may have activated/);
+  });
+
+// F6. A div[role=textbox] composer cannot be tied to a checked receiver; the refusal names the engine path.
+test('R4 F6 Control+Enter in a div[role=textbox] composer is refused with the engine path in the message', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t), f = await b.start(plain('<div id="t" role="textbox" contenteditable="true" aria-label="Composer"></div>', ''), 'Use the page normally');
+  const result = await f.act([{ do: 'press', ref: f.ref('Composer'), key: 'Control+Enter' }]);
+  assert.match(result.text.split('\n')[0], /not run: CHECKED_FOCUS_REQUIRED.*engine browser path/);
+});
