@@ -107,3 +107,20 @@ test('review: main-world terms and visibility getters cannot grant the requested
   assert.match(result.lines[0],/not run:.*confirmation required/);
   assert.equal(await f.page.locator('#count').innerText(),'0');
 });
+
+
+test('V10R4: img named activeElement cannot send Enter to the native Pay receiver', {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(() => {
+    const image=document.createElement('img'); image.id='e8'; image.name='activeElement';
+    image.setAttribute('role','button'); image.setAttribute('aria-label','Ordinary image');
+    document.querySelector('main').prepend(image); document.querySelector('#e1').focus();
+  });
+  assert.equal(await f.page.evaluate(() => document.activeElement.id),'e8','the shared DOM clobbers every world');
+  assert.equal(await f.page.evaluate(() => Object.getOwnPropertyDescriptor(Document.prototype,'activeElement').get.call(document).id),'e1');
+  const result=await f.run(f.tab,[{do:'press',ref:'e8',key:'Enter'}],f.ctx);
+  const count=await f.page.locator('#count').innerText();
+  t.diagnostic(JSON.stringify({lines:result.lines,count,productionBase:'70528f80dd5d70fefbf21fa465f40b2abdf10714'}));
+  assert.equal(count,'0','the native Pay receiver must never receive an unchecked Enter');
+  assert.match(result.lines[0],/not run:/);
+});
