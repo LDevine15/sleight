@@ -455,6 +455,7 @@ export function createRelay({
   if (directBrowser !== undefined && !isFrontend(directBrowser) && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   if (directHost !== undefined && (!(isInstalledBridge(directHost) && isFrontend(directBrowser)) && !(isV3Bridge(directHost) && isV3Frontend(directBrowser)))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
+  let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
   const directTurnEnds = new Map();
@@ -1825,8 +1826,9 @@ export function createRelay({
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
       if (!directBrowser) {
+        const tell = !turboNoticeShown; turboNoticeShown = true;
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true,
-          content: [{ type: 'text', text: `Turbo is off (${turboUnavailable}). Use the engine browser path.` }] } });
+          content: [{ type: 'text', text: `${tell ? 'Tell the user: ' : ''}Turbo is off (${turboUnavailable}). Use the engine browser path.` }] } });
         return;
       }
       if (closing || disposed) { leaseStop(msg, 'this session is closing.'); return; }
@@ -2575,6 +2577,12 @@ export function createRelay({
     let pendingBrowser;
     if (msg.method === undefined && browserCalls.has(msg.id)) {
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
+    }
+    if (turboUnavailable && !turboNoticeShown && pendingBrowser && Array.isArray(msg.result?.content) &&
+        (msg.result._meta?.['codex/toolSurface']?.kind === 'browserUse' || msg.result._meta?.['codex/toolSurface']?.app?.appId === undefined &&
+          /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCalls.get(msg.id) ?? ''))) {
+      turboNoticeShown = true;
+      msg.result.content.push({ type: 'text', text: `Tell the user: Turbo is off (${turboUnavailable}). The engine browser path is available. Check turbo settings and run sleight-mcp --doctor before retrying turbo.` });
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);

@@ -5,6 +5,7 @@ import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
 import { intent } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
+import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
@@ -239,7 +240,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const outcome = boundary?.kind === 'navigation' ? 'navigated to ' + clean(page.url()) + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'
           : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} "${clean(boundary.dialog.message())}" is waiting`
-          : boundary?.kind === 'popup' ? boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
+          : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
             : 'opened background tab with its opener: ' + clean(boundary.popup.url())
           : boundary?.kind === 'close' ? 'tab closed'
           : typeof result === 'string' ? result

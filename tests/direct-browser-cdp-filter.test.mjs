@@ -184,3 +184,156 @@ test('disposal during listener startup closes the pending private server', async
   t.after(() => Promise.all(leaked.map(server => new Promise(resolve => server.close(resolve)))));
   assert.equal(leaked.length, 0, 'a listener must not outlive disposal while its bind is pending');
 });
+
+test('guard-only false matches continue privately while client Fetch patterns keep their events', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  const pause = (requestId, url, extra = {}) => f.emit({ method: 'Fetch.requestPaused', sessionId: 's-owned',
+    params: { requestId, request: { url }, resourceType: 'Document', ...extra } });
+  pause('path', 'http://fixture.invalid:8000/a:9222/b');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.calls.some(row => row.method === 'Fetch.continueRequest' && row.params.requestId === 'path'));
+  assert.deepEqual(events, []);
+  await filter.session.send('Fetch.enable', { patterns: [{ urlPattern: 'https://fixture.invalid/*.js', resourceType: 'Script' }] }, 's-owned');
+  pause('query', 'https://fixture.invalid/?next=http://x:9222/y');
+  pause('client', 'https://fixture.invalid/app.js', { resourceType: 'Script' });
+  pause('protected', 'http://elsewhere.invalid:9222/json/list');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events.map(frame => frame.params.requestId), ['client']);
+  assert.ok(f.calls.some(row => row.method === 'Fetch.continueRequest' && row.params.requestId === 'query'));
+  await filter.session.send('Fetch.disable', {}, 's-owned');
+  pause('disabled', 'https://fixture.invalid/app.js');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.calls.some(row => row.method === 'Fetch.continueRequest' && row.params.requestId === 'disabled'));
+  assert.deepEqual(events.map(frame => frame.params.requestId), ['client']);
+});
+
+test('guard installs recursive auto-attach and prepares received children before resuming them', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  assert.ok(f.calls.some(row => row.method === 'Target.setAutoAttach' && row.route === 's-owned' && row.params.waitForDebuggerOnStart === true));
+  for (const type of ['iframe', 'worker']) {
+    f.emit({ method: 'Target.attachedToTarget', sessionId: 's-owned', params: { sessionId: 'child-' + type,
+      targetInfo: { targetId: type, type, ...(type === 'page' ? { openerId: 'owned' } : {}) }, waitingForDebugger: true } });
+    await new Promise(resolve => setImmediate(resolve));
+    const calls = f.calls.filter(row => row.route === 'child-' + type).map(row => row.method);
+    assert.ok(calls.indexOf('Fetch.enable') >= 0, type);
+    assert.ok(calls.indexOf('Target.setAutoAttach') > calls.indexOf('Fetch.enable'), type);
+    assert.ok(calls.indexOf('Runtime.runIfWaitingForDebugger') > calls.indexOf('Target.setAutoAttach'), type);
+  }
+  await filter.session.send('Target.setAutoAttach', { autoAttach: false, flatten: true }, 's-owned');
+  assert.equal(f.calls.at(-1).params.autoAttach, true, 'client cannot remove guard auto-attach');
+  f.emit({ method: 'Target.attachedToTarget', sessionId: 's-owned', params: { sessionId: 'wrong-opener',
+    targetInfo: { targetId: 'foreign', type: 'page', openerId: 'foreign' }, waitingForDebugger: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(!events.some(frame => frame.params.sessionId === 'wrong-opener'));
+  assert.ok(!f.calls.some(row => row.route === 'wrong-opener' && row.method === 'Fetch.enable'));
+});
+
+test('guard failure never exposes or resumes a paused target', async t => {
+  const f = fixture(), original = f.session.send;
+  f.session.send = async (method, params, route) => {
+    if (method === 'Fetch.enable' && route === 's-owned') throw Error('guard refused');
+    return original(method, params, route);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  await assert.rejects(filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true }), /guard refused|CDP_ATTACHMENT_INVALID|CDP_SESSION_NOT_OWNED/);
+  assert.ok(!f.calls.some(row => row.method === 'Runtime.runIfWaitingForDebugger'));
+  assert.deepEqual(events, []);
+  assert.equal(await filter.dispose(), true);
+});
+
+test('Fetch client matching preserves response stages, resource types, glob escapes and rollback', async t => {
+  const f = fixture(), original = f.session.send;
+  let rejectEnable = false;
+  f.session.send = (method, params, route) => {
+    if (method === 'Fetch.enable' && rejectEnable) return Promise.reject(Error('invalid Fetch configuration'));
+    return original(method, params, route);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  await filter.session.send('Fetch.enable', { patterns: [{ urlPattern: 'http://fixture.invalid/asset\\?.js', requestStage: 'Response', resourceType: 'Script' }] }, 's-owned');
+  const emit = (requestId, extra = {}) => f.emit({ method: 'Fetch.requestPaused', sessionId: 's-owned', params: {
+    requestId, request: { url: 'http://fixture.invalid/asset?.js' }, resourceType: 'Script', ...extra } });
+  emit('request');
+  emit('response', { responseStatusCode: 200 });
+  emit('other-kind', { responseStatusCode: 200, resourceType: 'Document' });
+  emit('other-url', { responseStatusCode: 200, request: { url: 'http://fixture.invalid/asset1.js' } });
+  rejectEnable = true;
+  await assert.rejects(filter.session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, 's-owned'), /invalid Fetch configuration/);
+  rejectEnable = false;
+  emit('rolled-back', { responseStatusCode: 200 });
+  assert.deepEqual(events.map(frame => frame.params.requestId), ['response', 'rolled-back']);
+  assert.deepEqual(f.calls.filter(row => row.method === 'Fetch.continueRequest').map(row => row.params.requestId), ['request', 'other-kind', 'other-url']);
+  await filter.session.send('Fetch.enable', {}, 's-owned'); emit('default');
+  assert.equal(events.at(-1).params.requestId, 'default');
+});
+
+test('REVIEW cancelled interception retains owned route', async t => {
+  const f=fixture(), original=f.session.send;
+  f.session.send=async(method,...args)=>{
+    if(method==='Fetch.continueRequest') throw Error('Invalid InterceptionId.');
+    return original(method,...args);
+  };
+  const filter=(await factory())({session:f.session,ownedTargets:['owned'],protectedPort:9222});
+  t.after(()=>filter.dispose());
+  await filter.session.send('Target.attachToTarget',{targetId:'owned',flatten:true});
+  f.emit({method:'Fetch.requestPaused',sessionId:'s-owned',params:{requestId:'gone',request:{url:'http://fixture.invalid/a:9222/b'}}});
+  await new Promise(resolve=>setImmediate(resolve));
+  await filter.session.send('Runtime.enable',{},'s-owned');
+});
+
+for (const method of ['Fetch.continueRequest', 'Fetch.failRequest']) test(method + ' ignores a vanished interception only', async t => {
+  const f = fixture(), original = f.session.send;
+  let failure = 'Invalid InterceptionId.';
+  f.session.send = async (name, ...args) => {
+    if (name === method) throw Error(failure);
+    return original(name, ...args);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const pause = () => f.emit({ method: 'Fetch.requestPaused', sessionId: 's-owned', params: {
+    requestId: 'cancelled', request: { url: method === 'Fetch.failRequest' ? 'http://localhost:9222/json/list' : 'http://fixture.invalid/a:9222/b' } } });
+  pause(); await new Promise(resolve => setImmediate(resolve));
+  await filter.session.send('Runtime.enable', {}, 's-owned');
+  assert.ok(!f.calls.some(row => row.method === 'Target.detachFromTarget'));
+  failure = 'transport disconnected';
+  pause(); await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(filter.session.send('Runtime.enable', {}, 's-owned'), /CDP_SESSION_NOT_OWNED/);
+});
+
+test('auto-attach selects only owned iframe and dedicated-worker descendants', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  const events = []; filter.session.on('event', frame => events.push(frame));
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  assert.deepEqual(f.calls.find(row => row.method === 'Target.setAutoAttach').params.filter,
+    [{ type: 'iframe' }, { type: 'worker' }, { exclude: true }]);
+  for (const type of ['shared_worker', 'service_worker', 'page']) {
+    f.emit({ method: 'Target.attachedToTarget', sessionId: 's-owned', params: { sessionId: 'foreign-' + type,
+      targetInfo: { targetId: type, type, openerId: 'owned' }, waitingForDebugger: true } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(!f.calls.some(row => row.method === 'Fetch.enable' && row.route === 'foreign-' + type));
+    assert.ok(!events.some(frame => frame.params.sessionId === 'foreign-' + type));
+    await assert.rejects(filter.session.send('Runtime.enable', {}, 'foreign-' + type), /CDP_SESSION_NOT_OWNED/);
+  }
+});
+
+test('endpoint navigation evidence belongs to the exact page target', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  f.emit({ method: 'Fetch.requestPaused', sessionId: 's-owned', params: { requestId: 'redirect', resourceType: 'Document',
+    request: { url: 'http://localhost:9222/json/list' } } });
+  assert.equal(filter.endpointBlocked('owned'), true);
+  assert.equal(filter.endpointBlocked('foreign'), false);
+});

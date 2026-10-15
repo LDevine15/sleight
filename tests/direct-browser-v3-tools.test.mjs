@@ -101,3 +101,17 @@ test('failed full observation preserves the action outcome and never makes deliv
   assert.equal(result.isError, false); assert.match(result.text, /1 click e1: done/);
   assert.match(result.text, /Read unavailable/); assert.doesNotMatch(result.text, /private page data/);
 });
+
+test('endpoint reads and opens refuse any host spelling before title, snapshot or allocation', async () => {
+  let reads = 0, opens = 0;
+  const entry = { page: { url: () => 'http://alias.invalid:9222/json/list', title: async () => { reads++; return 'private title'; } }, state: {} };
+  const dispatcher = createToolDispatcher({ browser: 'bfixture', endpoint: 'ws://127.0.0.1:9222/devtools/browser/private',
+    pages: { enqueue: async (id, run) => run(entry), openTab: async () => { opens++; return { tab: 't1' }; }, tab: () => entry },
+    snapshot: async () => { reads++; return { text: 'private target list', number: 1 }; },
+    runSteps: async () => assert.fail('input must not run'), fillFields: async () => assert.fail('fill must not run') });
+  for (const [name, args] of [['browser_read', { tab: 't1' }], ['browser_open', { url: 'http://alias.invalid:9222/json/list' }]]) {
+    const result = await dispatcher.call({ name, arguments: args });
+    assert.deepEqual(result, { text: 'blocked: DevTools endpoint', isError: true });
+  }
+  assert.equal(reads, 0); assert.equal(opens, 0);
+});

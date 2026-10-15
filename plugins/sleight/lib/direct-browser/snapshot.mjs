@@ -1,3 +1,4 @@
+import { assertEndpointRead } from './endpoint-guard.mjs';
 // Compact page snapshots for turbo v3, with an independent CR1 closed-root reader.
 const pages = new WeakMap();
 const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
@@ -359,6 +360,7 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
     || find !== undefined && (typeof find !== 'string' || find.length > 512)
     || since !== undefined && (!Number.isSafeInteger(since) || since < 1)
     || ref !== undefined && (typeof ref !== 'string' || !REF.test(ref) && !MORE.test(ref))) throw Error('Invalid snapshot request');
+  await assertEndpointRead(page);
   const state = stateOf(page);
   if (state.busy) throw Error('Snapshot read in progress; try browser_read again.');
   state.busy = true;
@@ -398,9 +400,11 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
       candidates, baseline: history, delta, since: continuation?.since ?? since, offset: result.next });
     if (continuation) state.continuations.delete(ref);
     for (const map of [state.history, state.continuations, state.pending]) while (map.size > 8) map.delete(map.keys().next().value);
+    await assertEndpointRead(page);
     return { text: result.text, number };
-  } catch {
+  } catch (error) {
     state.deliveredClosed.clear();
+    if (error.message === 'blocked: DevTools endpoint') throw error;
     throw Error('Snapshot unavailable; try browser_read again or use the engine browser path.');
   } finally { state.busy = false; }
 }

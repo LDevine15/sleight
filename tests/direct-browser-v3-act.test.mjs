@@ -355,3 +355,11 @@ test('v3 answering a dialog preserves a pending gate owned outside this runner',
   await f.run(f.tab, [{ do: 'dialog', accept: true }], {});
   assert.equal(f.tab.state.actionPending, true);
 });
+
+test('endpoint popup outcome reports the blocked line without its URL or content', async () => {
+  const f = fixture({ onClick: page => page.emit('popup', { url: () => 'http://alias.invalid:9222/json/list', isClosed: () => true }) });
+  f.tab.endpoint = 'ws://127.0.0.1:9222/devtools/browser/private';
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines.join('\n'), /blocked: DevTools endpoint/);
+  assert.doesNotMatch(result.lines.join('\n'), /9222|alias.invalid|json\/list/);
+});
