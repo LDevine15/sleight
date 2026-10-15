@@ -250,3 +250,24 @@ test('button type=reset in the card form is not a payment control', { skip, time
   assert.doesNotMatch(result.text, /not run|confirmation/);
   await f.safe();
 });
+
+// Round 3. A script-only button that looks like a charge gets one activation per request, not one per fresh read.
+test('a script-only pay-looking button can be activated once per request: the second activation asks', { skip, timeout: 60000 }, async t => {
+  const html = doc(payment.replace('<button id="pay">Continue</button>', '<div role="button" tabindex="0" id="aux" onclick="record(\'aux\')">Confirm choice</div>'));
+  const b = await bank(t), f = await b.start(html, payRequest);
+  const first = await f.act([{ do: 'click', ref: f.ref('Confirm choice') }]);
+  assert.doesNotMatch(first.text, /not run|confirmation/);
+  const fresh = await f.read();
+  const second = await f.act([{ do: 'click', ref: f.ref('Confirm choice', fresh) }]);
+  assert.match(second.text, /not run|confirmation/);
+  await f.safe();
+});
+test('coupon Apply followed by the real Pay needs no extra ask', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<button type="button" id="aux" onclick="record(\'aux\')">Apply coupon</button><button id="pay">')), payRequest);
+  const first = await f.act([{ do: 'click', ref: f.ref('Apply coupon') }]);
+  assert.doesNotMatch(first.text, /not run|confirmation/);
+  const fresh = await f.read();
+  const pay = await f.act([{ do: 'click', ref: f.ref('Continue', fresh) }]);
+  assert.doesNotMatch(pay.text, /not run|confirmation/);
+  assert.equal(f.delta().payment, 1);
+});

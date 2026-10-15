@@ -103,7 +103,8 @@ export function check(ctx, kind, target = {}) {
       ...(page?.currency !== undefined ? { currency: page.currency } : {}) };
     const ask = () => ({ verdict: 'confirm', terms });
     if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
-    let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
+    let bank = payments.get(ctx); if (!bank) { bank = { used: new Set(), scriptedUsed: new Set() }; payments.set(ctx, bank); }
+    bank.scriptedUsed ??= new Set();
     if (kind === 'dialog' && bank.dialog &&
         (!ctx.dialogContinuation || ctx.dialogContinuation(target) === true) && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
       bank.dialog = undefined; return allow;
@@ -113,9 +114,11 @@ export function check(ctx, kind, target = {}) {
     const requested = user?.payment && ['item', 'method'].every(key => text(user.payment[key])) &&
       ['item', 'method', 'amount', 'payee', 'currency'].every(key => user.payment[key] === undefined || user.payment[key] === terms[key]);
     const strict = (ctx.confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'always';
-    // A script-driven button may be Apply or Edit: it needs the user's request, but never spends the one-time authority.
+    // A script-driven button may be Apply or Edit: it needs the user's request and never spends the real submit's authority,
+    // but gets its own budget of one activation per request, so a disguised charge button can't be pressed again after each read.
     if (!(requested && !strict && !bank.used.has(requestKey)) && (risk.scripted || ctx.consent?.consume(terms, target) !== true)) return ask();
-    if (requestKey && !risk.scripted) bank.used.add(requestKey);
+    if (risk.scripted) { if (bank.scriptedUsed.has(requestKey)) return ask(); bank.scriptedUsed.add(requestKey); }
+    else if (requestKey) bank.used.add(requestKey);
     if (target.state) paymentPages.add(target.state);
     bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
     return allow;
