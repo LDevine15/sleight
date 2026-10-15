@@ -171,9 +171,13 @@ export function popupHook() {
     const rel = attribute(element, 'rel') ?? '';
     return { url: url.href, target, rel, signature: JSON.stringify([url.href, target, rel]) };
   };
+  const pointerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   const capture = event => {
     if (!live() || arm.clicked || !matches(event)) return;
     if (active()) masked.set(event, arm.token);
+    // Bind the mask during dispatch, while composedPath still identifies the
+    // prepared element. A deferred handler may first read modifiers much later.
+    if (event.type !== 'click') return;
     arm.clicked = event;
     // A task queued by the capture listener runs after synchronous dispatch,
     // even when a page stops propagation. Keep the arm for takeRequest.
@@ -202,7 +206,7 @@ export function popupHook() {
   };
   add.call(window, 'keydown', keyEvent, true);
   add.call(window, 'keyup', keyEvent, true);
-  add.call(window, 'click', capture, true);
+  for (const type of pointerEvents) add.call(window, type, capture, true);
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
@@ -247,7 +251,7 @@ export function popupHook() {
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
-      remove.call(window, 'click', capture, true);
+      for (const type of pointerEvents) remove.call(window, type, capture, true);
       for (const restore of replacements.reverse()) restore();
       if (window[key] === api) delete window[key];
       return true;

@@ -171,6 +171,7 @@ function hookFixture({ clock = Date } = {}) {
     stopImmediatePropagation() { this.stopped = this.propagationStopped = true; }
   }
   class MouseEvent extends Event {
+    constructor(type = 'click') { super(); this.type = type; }
     get ctrlKey() { return this.control; }
     get metaKey() { return this.meta; }
     getModifierState(name) { return name === 'Control' ? this.control : this.meta; }
