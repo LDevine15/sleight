@@ -37,8 +37,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - sleight works in the background: it never switches Spaces or takes focus. Chrome's own consent prompt is the one exception.
 - Electron apps get the same turbo after 1.3.0, opt-in per app, relaunching an app only on the user's click.
 - Right after 1.3.0 come Electron and slimming the plugin, which Playwright grows to about 15 MB.
-- Build work goes to Codex lanes. sleight-arch reviews, merges, runs live checks and makes small fixes itself. Claude subagents run only the
-  investigations the owner requests.
+- Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
+  better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
+  (owner, 2026-10-15), within reason.
 - Benchmark Claude arms run on the owner's API key, from the $200 monthly credit, and stop at $200. Opus arms run on the owner's
   Claude account. Incremental runs use Haiku.
 
