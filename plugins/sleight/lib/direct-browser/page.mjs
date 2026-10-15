@@ -20,6 +20,7 @@ export function popupHook() {
   };
   const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
   const nativeMatches = Element.prototype.matches;
+  const editable = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable').get;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
   // Capture native IDL getters before page scripts. Form ownership includes
@@ -36,12 +37,14 @@ export function popupHook() {
   // not forward label activation. This selector limits label forwarding only;
   // it does not give any of these elements a plain-click exception.
   const interactive = 'a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),label,select,textarea,video[controls]';
-  // CR5's real modifier table measures native submission and multiple-select
-  // selection as modifier-sensitive. ARIA and editable content have no native
-  // modifier default; their handlers receive the masked background click.
+  // Same-context submissions and multiple-select selection need plain input.
+  // New-context submissions keep the modifier that selects a background tab.
   const submits = node => {
     for (const control of formControls) if (node instanceof control.constructor
-      && control.form.call(node) && /^(submit|image)$/.test(control.type.call(node))) return true;
+      && /^(submit|image)$/.test(control.type.call(node))) {
+      const form = control.form.call(node);
+      if (form) return sameContext(form, attribute(node, 'formtarget') ?? targetOf(form));
+    }
     return false;
   };
   const plainControl = node => submits(node)
@@ -215,6 +218,9 @@ export function popupHook() {
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
       const chain = ancestors(element);
       for (const [index, node] of chain.entries()) {
+        // In editable text a plain link click places the caret. The native
+        // getter includes inherited contenteditable and document designMode.
+        if (node instanceof HTMLElement && editable.call(node)) return false;
         if (plainControl(node)) return false;
         // A label can forward activation to a submit control outside its tree.
         if (node instanceof labelControl.constructor && !chain.slice(0, index).some(child => nativeMatches.call(child, interactive))
