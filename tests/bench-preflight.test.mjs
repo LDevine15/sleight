@@ -133,7 +133,7 @@ test('round selection applies task surfaces, only, swap and unattended takeover 
     { name: 'c', browser: 'chrome', takeover: true }], { only: 'a,c', swap: true, surface: 'sleight' }),
   [{ name: 'a', browser: 'chrome', surface: 'sleight' }]);
 });
-test('Fowl preflights all selected monitor sockets before setup and checks login only for account arms', async () => {
+test('Fowl preflights all selected monitor sockets before setup and checks login for every Claude arm', async () => {
   const calls = [];
   const tasks = [{ name: 'a', browser: 'helium', surface: 'sleight' }, { name: 'b', browser: 'chrome', surface: 'claude-cu' },
     { name: 'c', browser: 'chrome', surface: 'browser-use' }];
@@ -143,12 +143,14 @@ test('Fowl preflights all selected monitor sockets before setup and checks login
   });
   assert.ok(calls.includes('spend')); assert.ok(calls.includes('helium')); assert.ok(calls.includes('chrome'));
   assert.ok(calls.includes('engine'));
-  assert.deepEqual(calls.filter(c => Array.isArray(c)), [['login', '/fixture/.config/sleight-bench/world/arms/claude-cu/claude']]);
+  assert.deepEqual(calls.filter(c => Array.isArray(c)), [['login', '/fixture/Library/Caches/sleight-bench/fowl-claude-config'],
+    ['login', '/fixture/.config/sleight-bench/world/arms/claude-cu/claude']]);
 });
 test('an unpriced round or stale monitor socket prevents all task setup', async () => {
   let logins = 0;
   for (const which of ['spend', 'fowlSocket']) {
-    await assert.rejects(fowlPreflight({ tasks: [{ name: 'a', browser: 'chrome', surface: 'sleight' }], model: 'haiku', home: '/fixture' }, {
+    await assert.rejects(fowlPreflight({ tasks: [{ name: 'a', browser: 'chrome', surface: 'sleight' },
+      { name: 'b', browser: 'chrome', surface: 'browser-use' }], model: 'haiku', home: '/fixture' }, {
       spend: () => { if (which === 'spend') throw new Error('unpriced'); },
       fowlSocket: () => { if (which === 'fowlSocket') throw new Error('stale'); }, engineSockets() {}, login: () => logins++,
     }), new RegExp(which === 'spend' ? 'unpriced' : 'stale'));

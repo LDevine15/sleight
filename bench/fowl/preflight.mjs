@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assertLogin, assertSpend, assertFowlSocket, assertEngineSockets, quote } from '../preflight.mjs';
-import { modelId } from './accounting.mjs';
 import { runnableTasks } from './support.mjs';
 
 export function selectedTasks(tasks, args) {
@@ -12,14 +11,13 @@ export function selectedTasks(tasks, args) {
       ...(args.swap ? { browser: task.browser === 'helium' ? 'chrome' : 'helium' } : {}) }));
 }
 
-export async function fowlPreflight({ tasks, model = 'opus', world = false, remote, home = homedir(), env = process.env }, {
+export async function fowlPreflight({ tasks, world = false, remote, home = homedir(), env = process.env }, {
   spend = assertSpend, login = assertLogin, fowlSocket = assertFowlSocket, engineSockets = assertEngineSockets,
 } = {}) {
   tasks = runnableTasks(tasks, { world, remote });
-  const api = tasks.some(task => task.surface === 'browser-use') ||
-    (!modelId(model).includes('opus') && tasks.some(task => task.surface !== 'claude-cu'));
-  const account = task => task.surface === 'claude-cu' || (!api && task.surface !== 'browser-use');
-  if (tasks.some(task => task.surface !== 'codex-agent' && !account(task))) {
+  // Every Claude arm runs on the owner's account login (owner, 2026-10-15). Only Browser Use spends API credit.
+  const account = task => task.surface !== 'browser-use';
+  if (tasks.some(task => !account(task))) {
     spend({ file: join(home, 'Library/Logs/sleight/bench-api-spend.json'), capUsd: 190 });
   }
   // Remote sockets are checked by the runner on that host, never against this Mac's sockets.
@@ -62,7 +60,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if (args['funding-surfaces']) {
         // Codex's own model does not use the Claude API key.
         console.log([...new Set(runnableTasks(tasks, args).filter(task => task.surface !== 'codex-agent').map(task => task.surface))].join('\n'));
-      } else await fowlPreflight({ tasks, model: args.model, world: args.world, remote: args.remote });
+      } else await fowlPreflight({ tasks, world: args.world, remote: args.remote });
     } catch (error) { console.error(`preflight failed: ${error.message}`); process.exitCode = 1; }
   }
 }
