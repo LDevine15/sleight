@@ -1,7 +1,7 @@
 ## Browsers
 
 Use the five loaded tools: `browser_open`, `browser_read`, `browser_act`, `browser_fill` and `browser_tabs`.
-Turbo selects `{browser}`. Keep the owned tab handle from open and use only refs observed in its page state.
+Turbo selects `{browser}`{application}. Keep the owned tab handle from open and use only refs observed in its page state.
 Open returns the first snapshot. Read supports `ref`, `find` and `max_chars` for focused state.
 Act takes 1 to 12 `steps` with `do`, returning outcomes and a diff. A batch stops at a boundary or failed step.
 Fill observed fields together with string, boolean, number or string-array values. Optional `submit` names an observed ref.

@@ -15,6 +15,14 @@ const exact = (value, keys) => value && typeof value === 'object' && !Array.isAr
 const unproved = () => ({ revoked: true, cleanup: [{ resource: 'v3-worker', status: 'retained', code: 'CLEANUP_UNPROVED' }] });
 const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.'
   : 'Turbo is unavailable for this turn. Use the engine browser path.', isError: !unknown });
+// The model sees which application turbo selected, so a task naming it needs no engine search.
+// The name comes only from the operator-owned config's executable path and a fixed list, never a page.
+const applications = new Set(['Google Chrome', 'Google Chrome Beta', 'Google Chrome Dev', 'Google Chrome Canary', 'Google Chrome for Testing',
+  'Chromium', 'Helium', 'Brave Browser', 'Microsoft Edge', 'Vivaldi', 'Arc', 'Opera']);
+export const applicationName = executable => {
+  const name = typeof executable === 'string' ? /\/([^/]+)\.app\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1] : undefined;
+  return applications.has(name) ? name : undefined;
+};
 const unsafeStartup = new Set(['HOST_PACKAGE_MISMATCH', 'HOST_SOURCE_MISMATCH', 'HOST_CACHE_UNSAFE', 'INSTALLED_CONFIG_UNSAFE']);
 
 export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31000 } = {}, dependencies = {}) {
@@ -70,7 +78,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
     if (!ending) ending = rpc('end', {}).catch(unproved).finally(() => { ending = undefined; });
     return ending;
   }
-  const bridge = Object.freeze({ browser: hello.browser,
+  const bridge = Object.freeze({ browser: hello.browser, application: applicationName(config.executable),
     bootstrapEnvelope: () => ({ version: 1, session: hello.session, nonce: hello.nonce }),
     tools: () => browserTools(hello.browser),
     async bind(frame) {
@@ -110,7 +118,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
 }
 export function createV3Frontend(bridge) {
   if (!isV3Bridge(bridge)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  const frontend = Object.freeze({ browser: bridge.browser, tools: bridge.tools, call: bridge.call, delivered: bridge.delivered, end: bridge.endTurn });
+  const frontend = Object.freeze({ browser: bridge.browser, application: bridge.application, tools: bridge.tools, call: bridge.call, delivered: bridge.delivered, end: bridge.endTurn });
   frontends.add(frontend); return frontend;
 }
 

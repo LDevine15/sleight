@@ -653,7 +653,7 @@ export function directBrowserRules(rules, frontend) {
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
   if (!section.test(rules)) throw Error('TRUSTED_ROUTE_REQUIRED');
   const compact = readFileSync(join(LIB, isV3Frontend(frontend) ? '../skills/drive-mac-apps/BROWSERS.turbo-v3.md' : '../skills/drive-mac-apps/BROWSERS.turbo.md'), 'utf8').trimEnd()
-    .replace('{browser}', frontend.browser);
+    .replace('{browser}', frontend.browser).replace('{application}', frontend.application ? ` (${frontend.application})` : '');
   return rules.replace(section, compact + '\n');
 }
 

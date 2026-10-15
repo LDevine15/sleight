@@ -27,7 +27,7 @@ export function fixtureOrigins(task) {
 }
 export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
   const origins = fixtureOrigins(task); if (origins.length) fixturePolicy(origins);
-  // Like the installed surface, the arm shows an opaque browser id, never the task's browser name.
+  // Like the installed surface, the arm shows an opaque browser id plus the application name; the arm owns headless Chromium.
   const browser = 'bbench';
   // Keep setup synchronous for the pinned runner's require(). launch.mjs has
   // top-level await, so read its same skill body without importing the launcher.
@@ -36,7 +36,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
     .replace(/^---\n[\s\S]*?\n---\n+/, '').trim();
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
   const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8')
-    .trimEnd().replace('{browser}', browser);
+    .trimEnd().replace('{browser}', browser).replace('{application}', ' (Chromium)');
   if (!section.test(rules)) throw Error('Installed browser skill is missing');
   const installed = rules.replace(section, browserRules + '\n');
   const common = worldAgentSetup({ surface: 'fowlbrowser', dir, hostEnv: env });
