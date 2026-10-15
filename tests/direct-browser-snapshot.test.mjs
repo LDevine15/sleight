@@ -366,13 +366,86 @@ test('V3R: navigation cannot retarget a delivered ref, even after the next snaps
   assert.throws(()=>module.snapshotRefBinding(page,'e2'),/snapshot|read/i);
 });
 
-test('V3R: adapted closed-root code ships the pinned full MIT license', async()=>{
-  const {readFileSync}=await import('node:fs'); const {createHash}=await import('node:crypto');
-  const source=readFileSync(new URL('../plugins/sleight/lib/direct-browser/snapshot.mjs',import.meta.url),'utf8');
-  assert.match(source,/adapted from\s*\/\/ FowlBrowser mcp\/src\/closedShadow\.mjs/);
-  const notice=readFileSync(new URL('../plugins/sleight/THIRD-PARTY-NOTICES.md',import.meta.url),'utf8');
-  assert.match(notice,/Copyright \(c\) 2026 Fowl Labs/);
-  const license=/## Turbo v3 snapshot adaptation[\s\S]*?```text\n([\s\S]*?)```/.exec(notice)?.[1];
-  assert.ok(license,'the complete pinned license is required');
-  assert.equal(createHash('sha256').update(license).digest('hex'),'e384db36e8cc3024ce7e44168e7c345aa6cf58a95f30a7cef729a259363ce667');
+test('CR1 keeps the clean-room declaration without an adaptation claim', async () => {
+  const { readFileSync } = await import('node:fs');
+  const notice = readFileSync(new URL('../plugins/sleight/THIRD-PARTY-NOTICES.md', import.meta.url), 'utf8');
+  const section = notice.split('## Turbo v3 background popups and closed roots')[1];
+  assert.match(section, /No FowlBrowser code is included/);
+  assert.doesNotMatch(section, /adapted from|Copyright/);
+});
+
+function nativeClosedFixture(root, axNodes) {
+  const f = fixture([]), calls = [];
+  const frame = f.page.mainFrame();
+  f.page.context = () => ({ newCDPSession: async () => ({
+    async send(method, params) {
+      calls.push([method, params]);
+      if (method === 'DOMSnapshot.captureSnapshot') return nativeSnapshot([]);
+      if (method === 'DOM.getDocument') return { root };
+      if (method === 'Accessibility.getPartialAXTree') {
+        assert.equal(params.fetchRelatives, false);
+        return { nodes: structuredClone(axNodes.filter(node => node.backendDOMNodeId === params.backendNodeId)) };
+      }
+      throw Error('unsupported CDP call: ' + method);
+    }, detach: async () => calls.push(['detach']),
+  }) });
+  return { ...f, calls, frame };
+}
+const closedRoot = children => ({ nodeType: 11, shadowRootType: 'closed', children });
+const element = (backendNodeId, extra = {}) => ({ nodeType: 1, backendNodeId, ...extra });
+const axControl = (backendDOMNodeId, role, name, extra = {}) => ({ backendDOMNodeId, role: { value: role }, name: { value: name }, ...extra });
+
+test('CR1 probes nested closed controls and same-process frame documents without host AX data', async () => {
+  const root = { nodeType: 9, children: [element(10, { contentDocument: { nodeType: 9, children: [element(20, {
+    shadowRoots: [closedRoot([element(21, { shadowRoots: [closedRoot([element(22)])] })])],
+  })] } })] };
+  const { page, calls, frame } = nativeClosedFixture(root, [axControl(21, 'generic', ''), axControl(22, 'switch', 'Nested')]);
+  const result = await module.snapshot(page);
+  const ref = /switch "Nested" \[ref=(s\d+)\]/.exec(result.text)?.[1];
+  assert.ok(ref); assert.equal(module.closedRefBinding(page, ref).frame, frame);
+  assert.deepEqual(calls.filter(call => call[0] === 'Accessibility.getPartialAXTree').map(call => call[1].backendNodeId), [21, 22]);
+});
+
+test('CR1 emits only native controls, flags and protected scalar roles', async () => {
+  const children = Array.from({ length: 7 }, (_, i) => element(i + 1));
+  const root = { nodeType: 9, children: [element(20, { shadowRoots: [closedRoot(children)] })] };
+  const { page } = nativeClosedFixture(root, [
+    axControl(1, 'button', 'State', { properties: ['disabled', 'expanded', 'selected'].map(name => ({ name, value: { value: true } }))
+      .concat([{ name: 'pressed', value: { value: 'mixed' } }]) }),
+    axControl(2, 'checkbox', 'Choice', { properties: [{ name: 'checked', value: { value: 'mixed' } }] }),
+    axControl(3, 'textbox', 'Field', { value: { value: 'private-text' } }),
+    axControl(4, 'searchbox', 'Search', { value: { value: 'private-search' } }),
+    axControl(5, 'combobox', 'Combo', { value: { value: 'private-combo' } }),
+    axControl(6, 'button', 'Ignored', { ignored: true }), axControl(7, 'paragraph', 'Not a control'),
+  ]);
+  const result = await module.snapshot(page);
+  assert.match(result.text, /button "State" \[disabled\] \[expanded\] \[pressed="mixed"\] \[selected\]/);
+  assert.match(result.text, /checkbox "Choice" \[checked="mixed"\]/);
+  for (const name of ['Field', 'Search', 'Combo']) assert.match(result.text, new RegExp('"' + name + '".*redacted'));
+  assert.doesNotMatch(result.text, /private-|Ignored|Not a control/);
+});
+
+for (const [count, closed, expectedProbes] of [[50001, false, 0], [513, true, 512]])
+  test('CR1 refuses bounded native acquisition at ' + count + ' nodes', async () => {
+    const children = Array.from({ length: count }, (_, i) => element(i + 1));
+    const root = { nodeType: 9, children: closed ? [element(60000, { shadowRoots: [closedRoot(children)] })] : children };
+    const { page, calls } = nativeClosedFixture(root, []);
+    await assert.rejects(module.snapshot(page), /Snapshot unavailable/);
+    assert.equal(calls.filter(call => call[0] === 'Accessibility.getPartialAXTree').length, expectedProbes);
+    assert.equal(calls.at(-1)[0], 'detach');
+  });
+
+test('CR1 backend numbers are isolated by frame and retire when a frame disappears', async () => {
+  const { page } = nativeClosedFixture({ nodeType: 9, children: [element(10, { shadowRoots: [closedRoot([element(1)])] })] },
+    [axControl(1, 'button', 'Per frame')]);
+  const main = page.mainFrame(), child = {};
+  page.frames = () => [main, child];
+  const first = await module.snapshot(page);
+  const refs = [...first.text.matchAll(/button "Per frame" \[ref=(s\d+)\]/g)].map(match => match[1]);
+  assert.equal(refs.length, 2); assert.notEqual(refs[0], refs[1]);
+  assert.equal(module.closedRefBinding(page, refs[1]).frame, child);
+  page.frames = () => [main];
+  await module.snapshot(page);
+  assert.throws(() => module.closedRefBinding(page, refs[1]), /stale/i);
+  assert.equal(module.closedRefBinding(page, refs[0]).frame, main);
 });

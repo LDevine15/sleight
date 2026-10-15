@@ -20,7 +20,7 @@ const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'default-link qualifica
   : !existsSync(executable) ? 'pinned Chromium executable unavailable' : false;
 
 for (const handler of ['plain', 'stopPropagation', 'stopImmediatePropagation', 'preventDefault', 'stopAndPrevent',
-  'returnFalse', 'returnValue'])
+  'returnFalse', 'returnValue', 'lateReturnFalse'])
 test(`real new-tab link stays background-only with ${handler}`, {
   skip, timeout: 60000,
 }, async t => {
@@ -36,9 +36,12 @@ test(`real new-tab link stays background-only with ${handler}`, {
       ${handler === 'preventDefault' || handler === 'stopAndPrevent' ? 'event.preventDefault();' : ''}
       ${handler === 'returnValue' ? 'event.stopImmediatePropagation(); event.returnValue = false;' : ''}
       window.clickState.after = event.defaultPrevented;
-      ${handler === 'returnFalse' ? 'event.stopPropagation(); return false;' : ''}`;
+      ${['returnFalse', 'lateReturnFalse'].includes(handler) ? 'event.stopPropagation(); return false;' : ''}`;
     response.end(request.url === '/parent'
-      ? `<a target="_blank" href="/child" onclick="${code}">Open child</a>`
+      ? `<a target="_blank" href="/child" onclick="${handler === 'lateReturnFalse' ? '' : code}">Open child</a>
+        ${handler === 'lateReturnFalse' ? `<script>document.querySelector('a').addEventListener('pointerdown', () => {
+          document.querySelector('a').onclick = function(event) { ${code} };
+        });</script>` : ''}`
       : '<h1>Owned fixture</h1>');
   });
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
@@ -65,7 +68,7 @@ test(`real new-tab link stays background-only with ${handler}`, {
   registry = createPageRegistry({ browser, session, timeoutMs: 10000 });
   const { tab } = await registry.openTab({ url: origin + '/parent' });
   const entry = registry.tab(tab);
-  const cancelled = ['preventDefault', 'stopAndPrevent', 'returnFalse', 'returnValue'].includes(handler);
+  const cancelled = ['preventDefault', 'stopAndPrevent', 'returnFalse', 'returnValue', 'lateReturnFalse'].includes(handler);
   const nextPage = cancelled ? undefined : context.waitForEvent('page', { timeout: 10000 });
   const locator = entry.page.getByRole('link', { name: 'Open child' }), clicks = [];
   await backgroundClick(entry, locator, options => { clicks.push(options); return locator.click({ ...options, timeout: 5000 }); },
@@ -75,7 +78,7 @@ test(`real new-tab link stays background-only with ${handler}`, {
   await registry.idle();
   const state = await entry.page.evaluate(() => ({ handled: window.handled, click: window.clickState }));
   assert.deepEqual(state, { handled: 1, click: { ctrl: false, meta: false, before: false,
-    after: cancelled && handler !== 'returnFalse' } });
+    after: cancelled && !['returnFalse', 'lateReturnFalse'].includes(handler) } });
   assert.equal(clicks.length, 1);
   const rows = await registry.list();
   const cleanup = await registry.endTurn();

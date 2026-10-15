@@ -1,7 +1,4 @@
-// Compact snapshot code by sleight. Closed-root discovery adapted from
-// FowlBrowser mcp/src/closedShadow.mjs (MIT), Copyright (c) 2026 Fowl Labs,
-// 8b689249ba4e33d2626487aad930605c62e2c6a7. Changed for owned frame sessions,
-// native redaction, bounded acquisition and delivered-ref resolution.
+// Compact page snapshots for turbo v3, with an independent CR1 closed-root reader.
 const pages = new WeakMap();
 const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const MORE = /^more\d+_\d+$/;
@@ -130,70 +127,52 @@ async function nativeSecrets(page) {
 }
 
 async function closedRoots(page, state) {
-  const sections = [], secrets = [], observed = new Set();
+  const sections = [], secrets = [], next = new Map();
   secrets.names = new Set(); secrets.unnamed = false;
   for await (const { frame, send } of sessionsOf(page)) {
     const native = sensitiveValues(await send('DOMSnapshot.captureSnapshot', { computedStyles: [] }));
-    secrets.push(...native); for (const name of native.names) secrets.names.add(name); secrets.unnamed ||= native.unnamed;
+    secrets.push(...native);
+    for (const name of native.names) secrets.names.add(name);
+    secrets.unnamed ||= native.unnamed;
     const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
-    const hosts = [], inside = new Set(), candidates = new Set();
+    const stack = [{ node: root, closed: false }], controls = [], backends = new Set();
     let count = 0;
-    const walk = (node, closed = false) => {
+    // Walk the DOM, not the host's AX subtree: an ignored host can have an
+    // empty AX query while its closed root still contains usable controls.
+    while (stack.length) {
+      const { node, closed } = stack.pop();
       if (++count > 50000) throw Error('DOM acquisition budget exceeded');
-      if (closed && node.backendNodeId) {
-        inside.add(node.backendNodeId);
-        const attributes = node.attributes ?? [];
-        const role = attributes.indexOf('role');
-        if (node.nodeType === 1 && (['button', 'input', 'textarea', 'select', 'option', 'a', 'summary'].includes(node.localName)
-          || role >= 0 && attributes[role + 1].split(/\s+/).some(value => CONTROL_ROLE.test(value)))) candidates.add(node.backendNodeId);
+      if (!node) throw Error('DOM acquisition unavailable');
+      if (closed && node.nodeType === 1 && node.backendNodeId && !backends.has(node.backendNodeId)) {
+        backends.add(node.backendNodeId); controls.push(node.backendNodeId);
       }
-      for (const shadow of node.shadowRoots ?? []) {
-        const hidden = shadow.shadowRootType === 'closed';
-        if (hidden && !closed) hosts.push(node.backendNodeId);
-        walk(shadow, closed || hidden);
-      }
-      for (const child of node.children ?? []) walk(child, closed);
-      if (node.contentDocument) walk(node.contentDocument, closed);
-      // OOPIFs have no contentDocument here and use a separate Frame session.
-    };
-    walk(root);
-    let refs = state.closed.get(frame);
-    if (!refs) state.closed.set(frame, refs = new Map());
-    const children = [], acquired = [];
-    for (const backendNodeId of hosts) {
-      const { nodes } = await send('Accessibility.queryAXTree', { backendNodeId });
-      acquired.push(...nodes);
+      const descendants = (node.children ?? []).map(child => ({ node: child, closed }));
+      for (const shadow of node.shadowRoots ?? []) descendants.push({ node: shadow, closed: closed || shadow.shadowRootType === 'closed' });
+      if (node.contentDocument) descendants.push({ node: node.contentDocument, closed });
+      stack.push(...descendants.reverse());
     }
-    // An ignored custom-element host can have an empty queryAXTree subtree,
-    // even while native AX exposes its closed-root button. Probe only control
-    // candidates from the pierced DOM, using their own backend IDs.
-    const present = new Set(acquired.filter(node => !node.ignored && CONTROL_ROLE.test(node.role?.value)).map(node => node.backendDOMNodeId));
-    const missing = [...candidates].filter(id => !present.has(id));
-    if (missing.length > 512) throw Error('Closed-root acquisition budget exceeded');
-    for (const backendNodeId of missing) {
+    const refs = new Map(), children = [];
+    let probes = 0;
+    for (const backendNodeId of controls) {
+      if (++probes > 512) throw Error('Closed-root accessibility budget exceeded');
       const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
-      acquired.push(...nodes.filter(node => node.backendDOMNodeId === backendNodeId));
-    }
-    for (const node of acquired) {
-      const id = node.backendDOMNodeId;
-      if (node.ignored || !inside.has(id) || !CONTROL_ROLE.test(node.role?.value)) continue;
-      let ref = refs.get(id);
-      if (!ref) refs.set(id, ref = 's' + (++state.shadowNumber));
-      if (observed.has(ref)) continue;
-      observed.add(ref);
-      const props = Object.fromEntries((node.properties ?? []).map(prop => [prop.name, prop.value?.value]));
-      const row = { role: node.role.value, name: node.name?.value ?? '', ref,
-        protected: /^(textbox|searchbox|combobox)$/.test(node.role.value) };
-      for (const flag of ['checked', 'disabled', 'expanded', 'pressed', 'selected']) {
-        if (props[flag] === true || props[flag] === 'true') row[flag] = true;
-        else if (props[flag] === 'mixed') row[flag] = 'mixed';
+      const node = nodes.find(node => node.backendDOMNodeId === backendNodeId && !node.ignored && CONTROL_ROLE.test(node.role?.value));
+      if (!node) continue;
+      const role = node.role.value, ref = state.closed.get(frame)?.get(backendNodeId) ?? 's' + (++state.shadowNumber);
+      const row = { role, name: node.name?.value ?? '', ref, protected: scalarRole(role) };
+      for (const { name, value } of node.properties ?? []) {
+        if (!['checked', 'disabled', 'expanded', 'pressed', 'selected'].includes(name)) continue;
+        if (value?.value === true || value?.value === 'true') row[name] = true;
+        else if (value?.value === 'mixed') row[name] = 'mixed';
       }
-      children.push(row);
+      refs.set(backendNodeId, ref); children.push(row);
     }
-    if (children.length) sections.push({ role: 'group', name: 'Inside closed shadow roots', children });
+    if (refs.size) next.set(frame, refs);
+    if (children.length) sections.push({ role: 'group', name: 'Closed shadow controls', children });
   }
-  for (const refs of state.closed.values()) for (const [id, ref] of refs) if (!observed.has(ref)) refs.delete(id);
-  for (const ref of state.deliveredClosed) if (!observed.has(ref)) state.deliveredClosed.delete(ref);
+  const current = new Set([...next.values()].flatMap(refs => [...refs.values()]));
+  for (const ref of state.deliveredClosed) if (!current.has(ref)) state.deliveredClosed.delete(ref);
+  state.closed = next;
   return { sections, secrets };
 }
 
