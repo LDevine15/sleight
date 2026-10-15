@@ -586,3 +586,14 @@ test('a script click that flips its own link after an unmodified click is report
   assert.match(result.text, /probably took the foreground/, first(result));
   assert.doesNotMatch(result.text, /opened background tab/);
 });
+
+for (const [name, body] of Object.entries({
+  'a user-blocking scheduler task': `go.onclick=()=>{scheduler.postTask(()=>window.open('/danger'),{priority:'user-blocking'})}`,
+  'a message channel task': `go.onclick=()=>{const m=new MessageChannel();m.port1.onmessage=()=>window.open('/danger');m.port2.postMessage(1)}`,
+  'a zero-delay timer': `go.onclick=()=>{setTimeout(()=>window.open('/danger'),0)}`,
+})) test('window.open from ' + name + ' started by an agent click is held, not raised (dispatch end)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { script: body });
+  assert.match(result.text, /page script tried to open .*held/i, first(result));
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});

@@ -275,7 +275,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
         // A script that opens a tab after the input (a timer, a fetch) is held in the background, never silently.
         const heldOpenings = clicked ? await tab.takeHeld?.().catch(() => 0) : 0;
-        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' ? '. A tab the page opened probably took the foreground; read the tab list' : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
+        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' ? '. A tab the page opened probably took the foreground' : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();

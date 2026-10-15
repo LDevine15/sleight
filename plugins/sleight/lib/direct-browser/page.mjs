@@ -45,6 +45,7 @@ export function popupHook() {
   const formElementsOf = getOwn(globalThis.HTMLFormElement?.prototype ?? {}, 'elements')?.get;
   const collectionLength = getOwn(globalThis.HTMLCollection?.prototype ?? {}, 'length')?.get;
   const fnToString = Function.prototype.toString;
+  const postTask = globalThis.scheduler?.postTask?.bind(globalThis.scheduler);
   const NativeObserver = globalThis.MutationObserver, nativeObserve = NativeObserver?.prototype.observe, nativeDisconnect = NativeObserver?.prototype.disconnect;
   const isElement = node => {
     if (!nodeTypeOf) return node instanceof Element; // A test double has no Node interface to brand-check.
@@ -463,9 +464,12 @@ export function popupHook() {
     arm.clicked = event;
     // A task queued by the capture listener runs after synchronous dispatch,
     // even when a page stops propagation. Keep the arm for takeRequest.
-    const current = arm;
+    const current = arm, endDispatch = () => { if (arm === current) { arm.masking = false; arm.done = true; } };
     clearTimeout(arm.dispatchTimer);
-    arm.dispatchTimer = setTimeout(() => { if (arm === current) { arm.masking = false; arm.done = true; } }, 0);
+    arm.dispatchTimer = setTimeout(endDispatch, 0);
+    // A page task at the highest priority (scheduler.postTask 'user-blocking') can run before a timer. This one is
+    // queued first, so it ends the dispatch before any such page task.
+    try { postTask?.(endDispatch, { priority: 'user-blocking' }); } catch { /* The timer ends it. */ }
     if (arm.watch) { arm.done = false; recheck(); return; }
     if (!arm.link) return;
     engage(event, arm.link);
