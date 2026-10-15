@@ -996,7 +996,7 @@ for (const probe of [false, true, { kind: 'link' }]) test('CR4 self-closing clic
   assert.equal(settled, true);
 });
 
-for (const kind of ['sibling', 'grandchild', 'frame-attribute', 'earlier-popup'])
+for (const kind of ['sibling', 'grandchild', 'frame-attribute'])
 test('CR4 existing named context stays plain: ' + kind, () => {
   const f = hookFixture(), child = { name: 'destination', frames: [] };
   const top = { name: '', frames: [] }; f.window.top = top;
@@ -1004,13 +1004,40 @@ test('CR4 existing named context stays plain: ' + kind, () => {
   if (kind === 'grandchild') top.frames.push({ name: '', frames: [child] });
   if (kind === 'frame-attribute') f.document.querySelectorAll = () => [new f.Element('iframe', { name: 'destination' })];
   try {
-    if (kind === 'earlier-popup') {
-      const button = new f.Element(); f.hook.prepare(button, 'first', 1000);
-      for (const listener of f.window.listeners.keydown)
-        listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
-      f.window.open('/first', 'destination'); f.hook.finish('first');
-    }
     assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'destination' }), 'named', 1000), false);
+  } finally { f.hook.off(); }
+});
+
+// Navigating a window the page opened by name raises it, so a link to it is a new-context link that sleight
+// opens in the background (AD1 A3). Only frames and the page's own names stay plain.
+test('CR4 a link to an earlier popup by name is captured, not left plain', () => {
+  const f = hookFixture();
+  try {
+    const button = new f.Element(); f.hook.prepare(button, 'first', 1000);
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    f.window.open('/first', 'destination'); f.hook.finish('first');
+    assert.equal(f.hook.prepare(new f.Element('a', { href: '/next', target: 'destination' }), 'named', 1000).kind, 'link');
+  } finally { f.hook.off(); }
+});
+
+test('AD1 A6 window.open without an agent click is counted as held until taken', () => {
+  const f = hookFixture();
+  try {
+    assert.equal(f.hook.take(), 0);
+    assert.equal(f.window.open('/late', '_blank'), null);
+    assert.equal(f.window.open('/late2', 'named'), null);
+    assert.equal(f.hook.take(), 2);
+    assert.equal(f.hook.take(), 0);
+  } finally { f.hook.off(); }
+});
+
+test('AD1 A4 press mode refuses a new-context form and leaves a plain control unarmed', () => {
+  const f = hookFixture();
+  const form = new f.Element('form', { target: '_blank' });
+  try {
+    assert.equal(f.hook.prepare(new f.HTMLInputElement({}, form), 'press-form', 1000, true).kind, 'form');
+    assert.equal(f.hook.prepare(new f.Element('div'), 'press-div', 1000, true), false);
   } finally { f.hook.off(); }
 });
 

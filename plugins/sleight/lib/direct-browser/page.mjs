@@ -67,8 +67,13 @@ export function popupHook() {
   const prevented = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented');
   const returnValue = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
   const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
-  const namedWindows = new Map();
-  let arm;
+  const openedWindows = [];
+  const dispatch = EventTarget.prototype.dispatchEvent, elementQueryAll = Element.prototype.querySelectorAll;
+  const typeGetter = getOwn(Event.prototype, 'type')?.get, connectedGetter = getOwn(globalThis.Node?.prototype ?? {}, 'isConnected')?.get;
+  const eventType = event => typeGetter ? typeGetter.call(event) : event.type;
+  const isConnected = node => connectedGetter ? connectedGetter.call(node) : node.isConnected;
+  // Script-started openings held since the last agent step, so the result can say so.
+  let held = 0, arm;
   const replace = (object, name, descriptor) => {
     const before = Object.getOwnPropertyDescriptor(object, name);
     Object.defineProperty(object, name, descriptor);
@@ -103,10 +108,23 @@ export function popupHook() {
   replace(MouseEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
     return (name === 'Control' || name === 'Meta') && hide(this) ? false : modifierState.call(this, name);
   } });
+  // Enter pressed with the modifier held (a keyboard-started link or form) hides it the same way.
+  if (globalThis.KeyboardEvent) {
+    for (const name of ['ctrlKey', 'metaKey']) {
+      const descriptor = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, name);
+      replace(KeyboardEvent.prototype, name, { ...descriptor, get() { return hide(this) ? false : descriptor.get.call(this); } });
+    }
+    const keyModifierState = KeyboardEvent.prototype.getModifierState;
+    replace(KeyboardEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
+      return (name === 'Control' || name === 'Meta') && hide(this) ? false : keyModifierState.call(this, name);
+    } });
+  }
   replace(Event.prototype, 'preventDefault', { configurable: true, writable: true, value() {
     const record = events.get(this);
     if (record && this.cancelable !== false) record.cancelled = true;
-    return nativePrevent.call(this);
+    const result = nativePrevent.call(this);
+    if (!record && (this.isTrusted || eventType(this) === probeType)) forward(this);
+    return result;
   } });
   replace(Event.prototype, 'defaultPrevented', { ...prevented, get() {
     return events.has(this) ? events.get(this).cancelled : prevented.get.call(this);
@@ -118,12 +136,25 @@ export function popupHook() {
     if (record && !value && this.cancelable !== false) record.cancelled = true;
     return returnValue.set.call(this, value);
   } });
+  const cancelEvent = event => { const record = events.get(event); if (record && event.cancelable !== false) record.cancelled = true; };
+  // A new window's first document runs no hook yet, and a function the page takes from it now stays native.
+  // Cover it before the handle reaches the page.
+  const coverInitialDocument = opened => {
+    try {
+      const prototype = opened.Event.prototype, original = prototype.preventDefault;
+      Object.defineProperty(prototype, 'preventDefault', { configurable: true, writable: true, value() {
+        const result = original.apply(this, arguments);
+        cancelEvent(this);
+        return result;
+      } });
+    } catch { /* Cross-origin: nothing readable to cancel with. */ }
+  };
   const open = function(url, target, features) {
     if (/^_(self|parent|top)$/i.test(String(target))) return nativeOpen.apply(this, arguments);
-    if (!active() || !navigator.userActivation?.isActive) return null;
+    if (!active() || !navigator.userActivation?.isActive) { held++; return null; }
     const kept = String(features ?? '').split(',').map(value => value.trim()).filter(value => /^(noopener|noreferrer)(?:=|$)/i.test(value));
     const opened = nativeOpen.call(this, url, target, kept.join(','));
-    if (opened && target && !String(target).startsWith('_')) namedWindows.set(String(target), opened);
+    if (opened) { openedWindows.push(opened); coverInitialDocument(opened); }
     return opened;
   };
   replace(window, 'open', { configurable: true, writable: true, value: open });
@@ -157,11 +188,7 @@ export function popupHook() {
     // The HTML spec checks `_blank` before names, so window.name = '_blank' cannot make it current.
     if (/^_blank$/i.test(target)) return false;
     if (!target || /^_(self|parent|top)$/i.test(target) || target === nameOf(window)) return true;
-    const known = namedWindows.get(target);
-    if (known) {
-      try { if (!known.closed) return true; } catch { /* A discarded proxy is not reusable. */ }
-      namedWindows.delete(target);
-    }
+    // A window the page opened by name is not the current context: navigating it by link raises it.
     // Indexed WindowProxy children remain traversable across origins, while
     // names and documents are readable only where same-origin access permits.
     const seen = new Set(), pending = [window.top ?? window];
@@ -188,20 +215,39 @@ export function popupHook() {
     } catch { /* No document to search. */ }
     return false;
   };
-  // preventDefault from any realm other than this one is invisible here: an iframe's pristine
-  // copy sets the same native flag. Such a realm is any other same-origin window this page reaches.
-  const otherRealm = () => {
-    const seen = new Set([window]), pending = [window.top, window.parent, ...childWindows(window)];
+  // preventDefault from another realm sets the same native flag, so it is invisible here unless that
+  // realm is hooked too: a hooked realm forwards the call to every hook it can reach (forward/cancel).
+  // Every same-origin window this page reaches counts, including handles from window.open and the opener.
+  const probeType = 'sleight.probe';
+  // A frame the page later removes keeps its way back to the owner that was its parent when it was hooked.
+  const home = [window.parent, window.top];
+  const realms = () => {
+    const seen = new Set([window]), found = [], pending = [window.top, window.parent, ...home, ...childWindows(window), ...openedWindows];
     try { const opener = openerGetter?.call(window); if (opener) pending.push(opener); } catch { /* No opener. */ }
     for (let steps = 0; pending.length && steps < 512; steps++) {
       const context = pending.pop();
       if (!context || seen.has(context)) continue;
       seen.add(context);
-      if (readable(context)) return true;
+      if (readable(context)) {
+        found.push(context);
+        try { pending.push(context.top, context.parent, openerGetter?.call(context)); } catch { /* Unreadable. */ }
+      }
       pending.push(...childWindows(context));
     }
-    return false;
+    return found;
   };
+  const forward = event => { for (const context of realms()) try { context[key]?.cancel(event); } catch { /* Not a hook. */ } };
+  // A realm is hooked when its preventDefault reaches this hook. A page cannot fake that without the native
+  // function, which only an unhooked realm still holds.
+  const hooked = context => {
+    try {
+      const canary = new Event(probeType, { cancelable: true }), record = { cancelled: false };
+      events.set(canary, record);
+      context.Event.prototype.preventDefault.call(canary);
+      return record.cancelled;
+    } catch { return false; }
+  };
+  const otherRealm = () => realms().some(context => !hooked(context));
   // Script-initiated openings (a timer, a later event) carry no agent modifier, so the browser
   // would raise the new tab. Refuse them unless an agent click is being dispatched.
   const holdsNewContext = node => {
@@ -219,23 +265,50 @@ export function popupHook() {
     try { return !sameContext(form, (submitter && has(submitter, 'formtarget') ? attribute(submitter, 'formtarget') : null) ?? targetOf(form)); }
     catch { return true; }
   };
+  // Enter in this control submits a form into a new context (the form's, or a submit control's formtarget).
+  const opensForm = node => {
+    try {
+      for (const control of formControls) if (node instanceof control.constructor) {
+        const form = control.form.call(node);
+        if (!form) return false;
+        const targets = [targetOf(form), ...[...elementQueryAll.call(form, '[formtarget]')].map(button => attribute(button, 'formtarget'))];
+        return targets.some(target => !sameContext(form, target));
+      }
+    } catch { return true; }
+    return false;
+  };
   // Script entry points that open a context without an agent click. Held outside agent dispatch.
   const hold = (constructor, name, holds) => {
     const native = constructor?.prototype?.[name];
     if (typeof native === 'function') replace(constructor.prototype, name, { configurable: true, writable: true, value() {
-      return !active() && holds.apply(this, arguments) ? undefined : native.apply(this, arguments);
+      if (active() || !holds.apply(this, arguments)) return native.apply(this, arguments);
+      held++;
     } });
   };
   hold(globalThis.HTMLElement, 'click', function() { return holdsNewContext(this); });
   hold(globalThis.HTMLFormElement, 'submit', function() { return holdsForm(this); });
   hold(globalThis.HTMLFormElement, 'requestSubmit', function(submitter) { return holdsForm(this, submitter); });
+  // The window-level guard below never sees a click dispatched on a detached element (html or svg), so
+  // refuse it here instead of dispatching: a listener registered first could otherwise stop a cancel.
+  if (typeof dispatch === 'function') replace(EventTarget.prototype, 'dispatchEvent', { configurable: true, writable: true, value(event) {
+    try {
+      if (!active() && this instanceof Element && !isConnected(this) && event && !event.isTrusted && eventType(event) === 'click') {
+        const node = ancestors(this).find(candidate => nativeMatches.call(candidate, 'a[href],area[href],button,input,label'));
+        if (node && holdsNewContext(node)) { held++; return false; }
+      }
+    } catch { /* Not an event or element: the native call reports it. */ }
+    return dispatch.apply(this, arguments);
+  } });
+  // A page-opened window raised by focus() is a foreground tab; nothing here needs the page to take focus.
+  const focusOwner = getOwn(window, 'focus') ? window : globalThis.Window?.prototype;
+  if (focusOwner) replace(focusOwner, 'focus', { configurable: true, writable: true, value() {} });
   // A dispatched click (not a user's) on a connected link or submit control.
   const guard = event => {
     if (event.isTrusted || active()) return;
     for (const node of composedPath.call(event)) {
       let link = false;
       try { link = node instanceof Element && (nativeMatches.call(node, 'a[href],area[href]') || nativeMatches.call(node, 'button,input,label')); } catch { /* Not an element. */ }
-      if (link) { if (holdsNewContext(node)) nativePrevent.call(event); return; }
+      if (link) { if (holdsNewContext(node)) { held++; nativePrevent.call(event); } return; }
     }
   };
   const linkState = element => {
@@ -289,8 +362,9 @@ export function popupHook() {
     arm = undefined; return true;
   };
   const api = {
-    prepare(element, token, capMs) {
+    prepare(element, token, capMs, press) {
       if (retired.has(token)) return false;
+      held = 0;
       if (arm) finish(arm.token);
       if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
@@ -307,6 +381,9 @@ export function popupHook() {
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
+      // Ctrl+Enter follows a link into a background tab but does not submit a form, and a plain Enter into a
+      // new-context form would raise the tab. Elsewhere Ctrl+Enter would change the key's meaning.
+      if (press && !link) return opensForm(element) ? { kind: 'form' } : false;
       arm = { element, token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       return link ? { kind: 'link' } : true;
@@ -322,6 +399,8 @@ export function popupHook() {
       return { url: arm.request.url, target: arm.request.target, rel: arm.request.rel };
     },
     finish,
+    cancel: cancelEvent,
+    take() { const count = held; held = 0; return count; },
     off() {
       if (arm) finish(arm.token);
       remove.call(window, 'keydown', keyEvent, true);
@@ -337,18 +416,19 @@ export function popupHook() {
   return true;
 }
 
-export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
+export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false } = {}) {
   const token = randomUUID();
   const disarm = () => tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.finish(token), token);
   try {
     let prepared;
     try {
-      prepared = await deadline(() => locator.evaluate((element, { token, capMs }) => {
+      prepared = await deadline(() => locator.evaluate((element, { token, capMs, press }) => {
         const hook = window[Symbol.for('sleight.popup3')];
         if (!hook) throw Error('background popup hook unavailable');
-        return hook.prepare(element, token, capMs);
-      }, { token, capMs: timeoutMs + 1000 }, { timeout: timeoutMs }), timeoutMs);
+        return hook.prepare(element, token, capMs, press);
+      }, { token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs);
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
+    if (prepared?.kind === 'form') throw Error('Enter would submit this form into a new tab; click its submit button instead');
     const modified = prepared === true || prepared?.kind === 'link';
     const checkpoint = tab.popupCheckpoint?.();
     let result;
@@ -434,6 +514,14 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       closed: page.isClosed(), released: false, queue: Promise.resolve() };
     entry.windowOpenNo = 0;
     entry.parent = opener;
+    // A window the page itself opened by that name (window.open) is reused like one this registry named.
+    const namedPopup = async (opener, name) => {
+      for (const notice of [...opener.popups].reverse()) {
+        const child = notice.tab && records.get(notice.tab);
+        if (!child || child.closed || child.released || child.releasing || child.page.isClosed()) continue;
+        try { if (await deadline(() => child.page.evaluate(() => window.name), timeoutMs) === name) return child; } catch { /* Unreadable popup. */ }
+      }
+    };
     entry.openChild = (url, { target = '', rel = '' } = {}) => {
       // Never resolve a page-supplied name against arbitrary browser targets.
       // Only this registry's allocations can acquire or reuse a link name.
@@ -443,7 +531,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         tab(entry.tab);
         const parsed = new URL(url);
         if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw Error('invalid browser URL');
-        const candidate = namedChildren.get(name);
+        const candidate = namedChildren.get(name) ?? await namedPopup(entry, name);
         if (candidate && !candidate.closed && !candidate.released && !candidate.releasing && !candidate.page.isClosed()) {
           // Two owned tabs may link to one another during their queued clicks.
           // Refuse a busy destination instead of making their queues circular.
@@ -474,6 +562,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       namedQueue = opening.catch(() => {});
       return deadline(() => track(opening), timeoutMs, 'background named open pending; do not retry before cleanup');
     };
+    // Script-started openings the hook held since the last agent step (a count, never page text).
+    entry.takeHeld = () => deadline(() => page.evaluate(() => window[Symbol.for('sleight.popup3')]?.take?.() ?? 0), timeoutMs);
     entry.popupCheckpoint = () => ({ windows: entry.windowOpenNo, popups: entry.popups.length,
       ...(entry.parent ? { opener: { tab: entry.parent.tab, windows: entry.parent.windowOpenNo, popups: entry.parent.popups.length } } : {}) });
     entry.settlePopups = async before => {

@@ -231,8 +231,14 @@ Engine behavior that sleight works around or can't change:
   FowlBrowser's travel page. The fix is in progress.
 - After a kernel reset, sleight restores `tab` and `b` only for calls whose source it can parse: 87 of 403 recorded browser calls (21.6%)
   aren't tracked, and a name the call assigns isn't restored.
-- Turbo v3 refuses a link click that would open a new tab (reports the effect unconfirmed) when the page can reach another
-  same-origin window (an `about:blank` iframe, an opener), because that window's own `preventDefault` sets the cancel flag
-  without passing through the hook. Script-started openings (`a.click()`, `form.submit()`, `requestSubmit()`) are dropped
-  outside an agent click, not opened in the background. A realm taken from an iframe that the page then removed, and a
-  `dispatchEvent` of a click on a detached link, are not covered. Found 2026-10-14 (AD1).
+- Turbo v3 reports a new-tab link click as unconfirmed when a same-origin window it can get at has a `preventDefault`
+  that doesn't reach the hook: a window handle that stayed unhooked or whose `Event` the page replaced. Hooked iframes, openers
+  and `window.open` handles forward their `preventDefault` to the clicked page, so a plain `about:blank` or `srcdoc`
+  iframe no longer blocks the click. A native `preventDefault` taken from an unhooked same-origin window would still
+  cancel behind sleight. We found none: a window's first document is covered when `open` returns, a forged hook object
+  on a handle is caught by a probe, and 21 new page-natives cases pass.
+  Script-started openings (`a.click()`, `form.submit()`, `requestSubmit()`, `dispatchEvent` of a click on a detached link)
+  are held, not opened in the background, and the result says so. Enter on a focused link opens it in the background.
+  Enter in or on a form that submits to a new tab is refused with a pointer to the submit button, because Ctrl+Enter
+  doesn't submit a form. A page can still overwrite `window[Symbol.for('sleight.popup3')]` with its own object during a
+  click and steer the captured request. Found 2026-10-14 (AD1).

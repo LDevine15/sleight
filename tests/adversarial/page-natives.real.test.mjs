@@ -212,3 +212,184 @@ test('inline onclick cancel through a frame-realm preventDefault cannot make sle
   await f.safe({ settle: 800 });
   assert.deepEqual(f.hits().filter(h => h.path.startsWith('/danger')), []);
 });
+
+// Round 2 of the popup hook. Every page here is a script-started or keyboard-started opening, a cancel from
+// another realm, or a nested document. The browser's own tab active bit and the fixture server's request log
+// decide the outcome; /danger is a request that must never be made, /landed one the agent's link may make.
+const dangerHits = f => f.hits().filter(h => h.path.startsWith('/danger')).map(h => h.path);
+const landedHits = f => f.hits().filter(h => h.path.startsWith('/landed')).map(h => h.path);
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a window handle from an earlier agent click cannot cancel a later link click behind sleight (A1)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `go.onclick=()=>{window.__w=window.open('/landed','w')};
+    document.getElementById('l').addEventListener('click',e=>{if(window.__w)window.__w.Event.prototype.preventDefault.call(e)});`;
+  const f = await b.start(plain('<button id="go" type="button">Go</button><a id="l" href="/danger" target="_blank">Learn more</a>', script), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(800);
+  await f.act([{ do: 'click', ref: f.ref('Learn more', await f.read()) }]);
+  await pause(1200);
+  assert.deepEqual(dangerHits(f), [], 'the handle cancelled the click; no request for the link target may follow');
+  await f.safe({ settle: 300 });
+});
+
+for (const [name, make] of Object.entries({
+  'detached html anchor': `const a=document.createElement('a');a.href='/danger';a.target='_blank';`,
+  'svg anchor': `const a=document.createElementNS('http://www.w3.org/2000/svg','a');a.setAttribute('href','/danger');a.setAttribute('target','_blank');`,
+  'child of a detached anchor': `const p=document.createElement('a');p.href='/danger';p.target='_blank';const a=document.createElement('span');p.append(a);`,
+})) test('dispatchEvent(click) on a ' + name + ' never opens a tab (A2)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `go.onclick=()=>setTimeout(()=>{${make}a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))},400)`;
+  const f = await b.start(plain('<button id="go" type="button">Go</button>', script), readOnly, { routes: landed(b) });
+  const result = await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(1500);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('w.focus() on a popup the page opened during an agent click does not raise it (A3)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<button id="go" type="button">Go</button>', `go.onclick=()=>{const w=window.open('/landed','w');setTimeout(()=>{try{w.focus()}catch(e){}},700)}`), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(1800);
+  await f.safe({ settle: 300 });
+});
+
+test('a script click on a link to a known named window does not navigate and raise it (A3)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<a id="a" href="/danger" target="w" hidden>x</a><button id="go" type="button">Go</button>',
+    `go.onclick=()=>{window.open('/landed','w');setTimeout(()=>a.click(),700)}`), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(1800);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('the agent clicking a link to a known named window keeps it in the background (A3)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<a id="a" href="/landed?second" target="w">Open again</a><button id="go" type="button">Go</button>',
+    `go.onclick=()=>{window.open('/landed','w')}`), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(800);
+  const result = await f.act([{ do: 'click', ref: f.ref('Open again', await f.read()) }]);
+  await pause(1200);
+  assert.ok(landedHits(f).some(path => path.includes('second')), 'the link was opened: ' + landedHits(f));
+  assert.equal((await b.tabState()).filter(x => x.url.includes('/landed')).length, 1, 'the named window was reused, not duplicated');
+  await f.safe({ settle: 300 });
+});
+
+test('Enter on a focused target=_blank link opens it in the background (A4)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<a id="a" href="/landed" target="_blank">Open it</a>'), readOnly, { routes: landed(b) });
+  const result = await f.act([{ do: 'press', ref: f.ref('Open it'), key: 'Enter' }]);
+  await pause(1200);
+  assert.deepEqual(landedHits(f), ['/landed'], result.text);
+  await f.safe({ settle: 300 });
+});
+
+for (const [name, body, ref] of [
+  ['in a text field of', '<input aria-label="Query" name="q">', 'Query'],
+  ['on a focused submit button of', '<button id="send">Send</button>', 'Send'],
+]) test('Enter ' + name + ' a target=_blank form is refused before it can raise a tab (A4)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<form action="/landed" target="_blank">' + body + '</form>'), readOnly, { routes: landed(b) });
+  const result = await f.act([{ do: 'press', ref: f.ref(ref), key: 'Enter' }]);
+  await pause(1200);
+  assert.match(result.text, /not run: .*click its submit button/, result.text.split('\n')[0]);
+  assert.deepEqual(landedHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('Enter in a text field of a same-tab form still submits (A4)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<form action="/landed"><input aria-label="Query" name="q"></form>'), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'press', ref: f.ref('Query'), key: 'Enter' }]);
+  await pause(1000);
+  assert.deepEqual(landedHits(f), ['/landed?q=']);
+  await f.safe({ settle: 300, tabs: false });
+});
+
+const frames = {
+  'hidden srcdoc iframe': '<iframe hidden srcdoc="<p>hi</p>"></iframe>',
+  'hidden about:blank iframe': '<iframe hidden src="about:blank"></iframe>',
+  'chat widget iframe created by script': '',
+};
+for (const [name, markup] of Object.entries(frames))
+  test('a new-tab link click still works beside a ' + name + ' (A5)', { skip, timeout: 90000 }, async t => {
+    const b = await bank(t, { observeTabs: true });
+    const script = markup ? '' : `const fr=document.createElement('iframe');fr.style.display='none';document.body.append(fr);fr.contentDocument.write('<p>widget</p>');`;
+    const f = await b.start(plain('<a id="a" href="/landed" target="_blank">Open docs</a>' + markup, script), readOnly, { routes: landed(b) });
+    const result = await f.act([{ do: 'click', ref: f.ref('Open docs') }]);
+    await pause(1200);
+    assert.doesNotMatch(result.text, /unconfirmed|not captured|link default changed/, result.text.split('\n')[0]);
+    assert.deepEqual(landedHits(f), ['/landed']);
+    await f.safe({ settle: 300 });
+  });
+
+test('a srcdoc iframe realm that cancels the click still stops the link (A5)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `const pd=document.getElementById('r').contentWindow.Event.prototype.preventDefault;
+    document.getElementById('l').addEventListener('click',e=>pd.call(e));`;
+  const f = await b.start(plain('<iframe id="r" hidden srcdoc="<p>hi</p>"></iframe><a id="l" href="/danger" target="_blank">Learn more</a>', script), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Learn more') }]);
+  await pause(1200);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+for (const [name, body] of Object.entries({
+  'after an await': `go.onclick=async()=>{await fetch('/landed?f');a.click()}`,
+  'in a zero-delay timer': `go.onclick=()=>{setTimeout(()=>a.click(),0)}`,
+})) test('a script link click ' + name + ' is held and the result says so (A6)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<a id="a" href="/landed" target="_blank" hidden>x</a><button id="go" type="button">Go</button>', body), readOnly, { routes: landed(b) });
+  const result = await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  assert.match(result.text, /page script tried to open .*held/i, result.text.split('\n').slice(0, 3).join(' | '));
+  await pause(500);
+  assert.deepEqual(landedHits(f).filter(path => path === '/landed'), []);
+  await f.safe({ settle: 300 });
+});
+
+test('a click that opens nothing from script carries no held-opening sentence (A6)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const f = await b.start(plain('<button id="go" type="button">Go</button>', `go.onclick=()=>{document.title='x'}`), readOnly);
+  const result = await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  assert.doesNotMatch(result.text, /tried to open/i);
+  await f.safe({ settle: 300 });
+});
+
+test('a preventDefault taken from an iframe the page then removed still stops the link (A5)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `const fr=document.getElementById('r'),pd=fr.contentWindow.Event.prototype.preventDefault;fr.remove();
+    document.getElementById('l').addEventListener('click',e=>pd.call(e));`;
+  const f = await b.start(plain('<iframe id="r" hidden srcdoc="<p>hi</p>"></iframe><a id="l" href="/danger" target="_blank">Learn more</a>', script), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Learn more') }]);
+  await pause(1200);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+
+test('a forged hook object on a window handle does not hide that window from the cancel check (A1)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `go.onclick=()=>{const w=window.__w=window.open('/landed','w');window.__nat=w.Event.prototype.preventDefault;
+      w.Event.prototype.preventDefault=function(){return top.Event.prototype.preventDefault.call(this)};w[Symbol.for('sleight.popup3')]={cancel(){}};};
+    document.getElementById('l').addEventListener('click',e=>window.__nat.call(e));`;
+  const f = await b.start(plain('<button id="go" type="button">Go</button><a id="l" href="/danger" target="_blank">Learn more</a>', script), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(800);
+  await f.act([{ do: 'click', ref: f.ref('Learn more', await f.read()) }]);
+  await pause(1200);
+  assert.deepEqual(dangerHits(f), [], 'documented limit if this fails: a page holding a native preventDefault from an unhooked window');
+  await f.safe({ settle: 300 });
+});
+
+test('a capture listener that stops propagation first cannot let a detached link click open a tab (A2)', { skip, timeout: 90000 }, async t => {
+  const b = await bank(t, { observeTabs: true });
+  const script = `go.onclick=()=>setTimeout(()=>{const a=document.createElement('a');a.href='/danger';a.target='_blank';
+    a.addEventListener('click',e=>e.stopImmediatePropagation(),true);a.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))},400)`;
+  const f = await b.start(plain('<button id="go" type="button">Go</button>', script), readOnly, { routes: landed(b) });
+  await f.act([{ do: 'click', ref: f.ref('Go') }]);
+  await pause(1500);
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
