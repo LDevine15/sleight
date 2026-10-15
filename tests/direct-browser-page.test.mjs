@@ -181,6 +181,13 @@ function hookFixture({ clock = Date } = {}) {
     hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
     matches() { return !!this.interactive; }
     getRootNode() { return {}; }
+    get isContentEditable() {
+      for (let node = this; node; node = node.parentElement ?? node.getRootNode().host) {
+        if (node.attrs.contenteditable === 'false') return false;
+        if (Object.hasOwn(node.attrs, 'contenteditable')) return true;
+      }
+      return document.designMode === 'on';
+    }
   }
   class HTMLButtonElement extends Element {
     constructor(attrs = {}, form) { super('button', attrs); this.nativeForm = form; }
@@ -721,10 +728,10 @@ for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox',
     try { assert.equal(f.hook.prepare(button, role, 1000), true); } finally { f.hook.off(); }
   });
 
-test('CR5 masks editable content, refuses detached nodes, frame focus and retired tokens', () => {
+test('CR7 leaves editable content plain and refuses detached nodes, frame focus and retired tokens', () => {
   const f = hookFixture();
   try {
-    assert.equal(f.hook.prepare(new f.Element('div', { contenteditable: '' }), 'editable', 1000), true);
+    assert.equal(f.hook.prepare(new f.Element('div', { contenteditable: '' }), 'editable', 1000), false);
     const detached = new f.Element(); detached.isConnected = false;
     assert.equal(f.hook.prepare(detached, 'detached', 1000), false);
     f.hook.finish('late');
@@ -940,7 +947,7 @@ for (const [kind, type] of [['button', undefined], ['button', 'invalid'], ['butt
     Object.defineProperties(control, { form: { get() { throw Error('page form getter'); } },
       type: { get() { throw Error('page type getter'); } } });
     control.getAttribute = () => { throw Error('page attribute getter'); };
-    try { assert.equal(f.hook.prepare(span, 'submit', 1000), false); }
+    try { assert.equal(f.hook.prepare(span, 'submit', 1000), target === '_blank'); }
     finally { f.hook.off(); }
   });
 
@@ -953,6 +960,39 @@ test('CR4 native submit formtarget overrides its form target and non-submit butt
     assert.equal(f.hook.prepare(new f.HTMLInputElement({ type: 'reset' }, form), 'reset', 1000), true);
   } finally { f.hook.off(); }
 });
+
+for (const labelled of [false, true]) for (const row of [
+  { form: '_blank', expected: true },
+  { form: 'new-context', expected: true },
+  { form: '_self', control: '_blank', expected: true },
+  { form: '_blank', control: '', base: '_blank', expected: false },
+  { form: '_blank', control: '_self', expected: false },
+  { base: '_blank', expected: true },
+  { base: 'new-context', expected: true },
+  { form: 'existing-frame', expected: false },
+  { form: 'own-window', expected: false },
+  { base: '_blank', form: '', expected: false },
+]) test('CR7 submit destination precedence, label=' + labelled + ': ' + JSON.stringify(row), () => {
+  const f = hookFixture(), child = {};
+  f.window.name = 'own-window'; f.window.frames = Object.assign([child], { 'existing-frame': child });
+  f.document.querySelector = () => row.base === undefined ? null : new f.Element('base', { target: row.base });
+  const form = new f.Element('form', row.form === undefined ? {} : { target: row.form });
+  const submit = new f.HTMLInputElement({ type: 'submit', ...(row.control === undefined ? {} : { formtarget: row.control }) }, form);
+  const node = labelled ? new f.HTMLLabelElement(submit) : submit;
+  try { assert.equal(f.hook.prepare(node, 'target', 1000), row.expected); }
+  finally { f.hook.off(); }
+});
+
+for (const mode of ['contenteditable', 'shadow', 'designMode']) for (const target of ['_self', '_blank', 'new-context'])
+  test('CR7 link in editable ancestors stays plain: ' + mode + ' ' + target, () => {
+    const f = hookFixture(), editor = new f.Element('div', { contenteditable: '' });
+    const link = new f.Element('a', { href: '/landed', target }), text = new f.Element('span'); text.parentElement = link;
+    if (mode === 'designMode') f.document.designMode = 'on';
+    else if (mode === 'shadow') link.getRootNode = () => ({ host: editor });
+    else link.parentElement = editor;
+    try { assert.equal(f.hook.prepare(text, 'editable-link', 1000), false); }
+    finally { f.hook.off(); }
+  });
 
 for (const multiple of [false, true]) test('CR5 select multiplicity comes from the captured native getter: ' + multiple, () => {
   const f = hookFixture(), select = new f.HTMLSelectElement(multiple ? { multiple: '' } : {}), option = new f.Element('option');

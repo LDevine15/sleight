@@ -13,7 +13,7 @@ const add = (name, html, options = {}) => cases.push({ name, html, selector: '#g
 for (const method of ['GET', 'POST']) for (const [kind, control] of Object.entries(controls))
   for (const target of ['_self', '_blank']) add(`${method} ${kind} ${target}`,
     `<form method="${method}" action="/landed" target="${target}"><input name="q" value="x">${control.replace(/<(button|input)/, '<$1 id="go"')}</form>`,
-    { differs: target === '_self', plain: true, navigates: true });
+    { differs: target === '_self', plain: target === '_self', navigates: true });
 for (const type of ['text', 'search', 'tel', 'url', 'email', 'password', 'date', 'month', 'week', 'time',
   'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file', 'button', 'reset'])
   add('input ' + type, `<input id="go" type="${type}" value="${type === 'color' ? '#123456' : type === 'range' ? '0' : ''}">`);
@@ -46,11 +46,15 @@ for (const multiple of [false, true]) {
 }
 add('summary', '<details id="field"><summary id="go">Summary</summary>Details</details>');
 add('textarea', '<textarea id="go">hello world</textarea>');
-add('contenteditable', '<div id="go" contenteditable>hello world here</div>');
+add('contenteditable', '<div id="go" contenteditable>hello world here</div>', { plain: true });
+add('link in contenteditable', '<div contenteditable><a id="go" href="/landed" target="_blank">Editable link</a></div>',
+  { differs: true, plain: true });
+add('link in designMode', '<a id="go" href="/landed" target="_blank">Editable link</a><script>document.designMode="on"</script>',
+  { differs: true, plain: true });
 add('plain text', '<p id="go">hello world here</p>');
 add('double click text', '<p id="go">hello world here</p>', { double: true });
 add('double click input', '<input id="go" value="hello world here">', { double: true });
-add('double click editable', '<div id="go" contenteditable>hello world here</div>', { double: true });
+add('double click editable', '<div id="go" contenteditable>hello world here</div>', { double: true, plain: true });
 add('draggable', '<div id="go" draggable="true">Drag source</div>');
 add('draggable image', '<img id="go" draggable="true" width="60" height="40" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E">');
 add('anchor without href', '<a id="go">No href</a>');
@@ -140,10 +144,9 @@ for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, time
   assert.deepEqual(outcomes.background, outcomes.plain, 'masked background input preserves the plain result');
 });
 
-for (const kind of ['checkbox', 'radio', 'text', 'contenteditable', 'summary', 'aria-option'])
+for (const kind of ['checkbox', 'radio', 'text', 'summary', 'aria-option'])
   test('CR5 masked ' + kind + ' handler opens a background popup once', { skip, timeout: 60000 }, async t => {
-    const html = kind === 'contenteditable' ? '<div id="go" contenteditable>Edit</div>'
-      : kind === 'summary' ? '<details><summary id="go">More</summary>Details</details>'
+    const html = kind === 'summary' ? '<details><summary id="go">More</summary>Details</details>'
       : kind === 'aria-option' ? '<div role="listbox"><div id="go" role="option" tabindex="0">Choose</div></div>'
       : `<input id="go" type="${kind}">`;
     const f = await fixture(t, html + `<script>window.clicks=0; go.onclick=event=>{

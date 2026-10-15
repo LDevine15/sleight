@@ -15,7 +15,7 @@ for (const method of ['GET', 'POST']) for (const [kind, control] of Object.entri
       }, { timeoutMs: 5000 });
       const child = await nextPage;
       await child.waitForURL('**/landed**');
-      assert.deepEqual(clicks, [{}], 'CR5 keeps native form submission plain, including explicit targets');
+      assert.deepEqual(clicks, [{ modifiers: ['ControlOrMeta'] }], 'CR7 new-context form submission keeps background disposition');
       assert.match(page.url(), /\/start$/);
       assert.equal(f.context.pages().length, 3, 'sentinel, original tab and background form destination');
       t.diagnostic('submit disposition ' + JSON.stringify({ method, kind, blank, urls: f.context.pages().map(page => page.url()), requests: f.requests }));
