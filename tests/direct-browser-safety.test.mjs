@@ -14,20 +14,20 @@ test('only the private user message allows a payment; page and tool permission f
 test('one private request pays once and accepts exactly one same-document payment dialog', () => {
   const f = fixture(terms);
   assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'allow');
-  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'confirm');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, origin: 'https://other.invalid' })).verdict, 'confirm');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, document: 'other' })).verdict, 'confirm');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'allow');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'confirm');
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'confirm');
 });
 test('the approved payment dialog completes its own in-flight submit, but a second click stays refused', () => {
   const f = fixture(terms);
   assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'allow');
   rules.beginSubmit(f.state, 100);
-  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'refuse');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true, terms: { page: { ...terms, amount: '19.00' }, method: terms.method } })).verdict, 'confirm');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'allow');
   assert.equal(rules.check(f.ctx, 'dialog', f.pay({ accept: true })).verdict, 'refuse');
+  assert.equal(rules.check(f.ctx, 'click', f.pay()).verdict, 'refuse');
 });
 test('a submit without its document state refuses instead of losing the retry fence', () => {
   const f = fixture(); assert.equal(rules.check(f.ctx, 'click', f.submit({ state: undefined })).verdict, 'refuse');

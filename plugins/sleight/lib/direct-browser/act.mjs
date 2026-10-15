@@ -4,6 +4,7 @@
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
 import { intent } from './rules.mjs';
+import { trustedLocatorRead } from './trusted-dom.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
@@ -46,7 +47,7 @@ function validate(steps) {
 export function inspectTarget(el) {
   const words = node => [node.getAttribute('aria-label'), node.textContent, node.getAttribute('value')].filter(Boolean).join(' ');
   const payment = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text);
-  const form = el.closest('form'), tag = el.localName, role = el.getAttribute('role'), name = words(el).trim().slice(0, 100);
+  const form = 'form' in el ? el.form : el.closest('form'), tag = el.localName, role = el.getAttribute('role'), name = words(el).trim().slice(0, 100);
   const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(el.type) || role === 'button';
   const formPayment = !!form && [...form.querySelectorAll('input,button,iframe')].some(node =>
     /^cc-/i.test(node.getAttribute('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(node.id + ' ' + node.getAttribute('name')) ||
@@ -137,7 +138,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         pendingGate(state, step);
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
-        let info = locator ? await locator.evaluate(inspectTarget, undefined, { timeout: TIMEOUT }) : {};
+        let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
         const enter = step.do === 'press' && /(?:^|\+)(?:Enter|Return|Space)$/.test(step.key);
         let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && /Enter|Return/.test(step.key));
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
@@ -169,13 +170,13 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const options = { timeout: TIMEOUT };
         const perform = async () => {
           if (step.do === 'click') return backgroundClick(tab, locator, async extra => {
-            if (trusted) await gate();
+            if (trusted) { await gate(); ctx.beginInput(target); }
             started = true; return locator.click({ ...options, ...extra });
           });
-          if (trusted && step.do !== 'upload') await gate();
+          if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           started = true;
           if (step.do === 'type') return locator.fill(step.text, options);
-          if (step.do === 'press') return trusted || step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          if (step.do === 'press') return trusted ? ctx.pressTarget(target, step.key, options) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           if (step.do === 'select') return locator.selectOption(step.values, options);
           if (step.do === 'check') return locator.check(options);
           if (step.do === 'uncheck') return locator.uncheck(options);
@@ -224,7 +225,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const settleUntil = start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            try { formChanged = (await locator.evaluate(inspectTarget, undefined, { timeout: 250 })).formSignature !== info.formSignature; } catch {}
+            try { formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature; } catch {}
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
           await sleep(Math.min(50, settleUntil - now()));
@@ -264,6 +265,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;
+        if (isV3Context(ctx) && target) ctx.finishInput(target);
         // A deadline ends the call, not the underlying Playwright input. Keep
         // its dialog listener until that exact promise settles or the page closes.
         if (!inputPending) armed?.stop();

@@ -1,3 +1,4 @@
+import { trustedLocatorRead } from './trusted-dom.mjs';
 import { isV3Context } from './v3-context.mjs';
 // Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
@@ -88,23 +89,23 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             rows[i].status = 'set'; continue;
           }
           const loc = typeof page.getByRef === 'function' ? page.getByRef(ref) : page.locator('aria-ref=' + ref);
-          let state = await loc.evaluate(inspect, value, options);
+          let state = await trustedLocatorRead(loc, inspect, value);
           if (state.kind === 'select' && state.disabled) {
             const until = now() + 1500;
             while (state.disabled && !stopped && now() < until) {
               await sleep(Math.min(25, until - now()));
-              state = await loc.evaluate(inspect, value, options);
+              state = await trustedLocatorRead(loc, inspect, value);
             }
             if (state.disabled) throw new FieldError('dependent select stayed disabled; read the form');
           }
           if (!state.connected) throw new FieldError('stale ref; read the page');
           if (state.readonly && state.kind !== 'combo') throw new FieldError('readonly picker; use browser_act on its choices');
-          const prior = await loc.evaluate(inspectElement, value, options);
+          const prior = await trustedLocatorRead(loc, inspectElement);
           if (stopped) throw new FieldError(stopped);
           const send = async (action, kind = 'type', locator = loc) => {
             if (stopped) throw new FieldError(stopped);
             if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
-            const element = await locator.evaluate(inspectElement, value, options);
+            const element = await trustedLocatorRead(locator, inspectElement);
             if (stopped) throw new FieldError(stopped);
             const target = { ...element, element, prior, tab, page, ref, locator, state: tab.state, do: kind };
             if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
@@ -157,7 +158,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               } else await send(checked => state.kind === 'custom' || state.type === '' ? checked.click(options) : checked.setChecked(value, options),
                 state.kind === 'custom' || state.type === '' ? 'click' : value ? 'check' : 'uncheck');
             }
-            if (!stopped && (await loc.evaluate(inspect, value, options)).checked !== value) throw new FieldError('checked state did not match; read the page');
+            if (!stopped && (await trustedLocatorRead(loc, inspect, value)).checked !== value) throw new FieldError('checked state did not match; read the page');
           } else if (state.kind === 'select') {
             const wanted = Array.isArray(value) ? value : [value];
             if (!wanted.every(v => typeof v === 'string') || !state.multiple && wanted.length !== 1 || new Set(wanted).size !== wanted.length)
@@ -169,7 +170,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             });
             await send(checked => checked.selectOption(selected.map(value => ({ value })), options), 'select');
             if (!stopped) {
-              const after = await loc.evaluate(inspect, value, options), actual = after.options.filter(o => o.selected).map(o => o.value);
+              const after = await trustedLocatorRead(loc, inspect, value), actual = after.options.filter(o => o.selected).map(o => o.value);
               if (actual.length !== selected.length || selected.some(v => !actual.includes(v))) throw new FieldError('selection did not match; read the select');
             }
           } else if (state.kind === 'listbox') {
@@ -193,7 +194,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               await candidate.waitFor({ ...options, state: 'visible' });
               if (await candidate.count() !== 1) throw new FieldError('ambiguous option; read the list');
               await send(checked => checked.click(options), 'click', candidate);
-              if (!stopped && !(await loc.evaluate(inspect, value, options)).matched) throw new FieldError('combobox value did not match; read the field');
+              if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) throw new FieldError('combobox value did not match; read the field');
             } finally { await handle?.dispose(); }
           } else if (state.kind === 'range') {
             const min = Number(state.min), max = Number(state.max), step = Number(state.step), count = Math.round((value - min) / step);
@@ -201,7 +202,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
                 Math.abs(min + count * step - value) > 1e-8 || count > 1000) throw new FieldError('range value is outside its bounds or step');
             await send(checked => checked.press('Home', options), 'press');
             for (let j = 0; j < count && !stopped; j++) await send(checked => checked.press('ArrowRight', options), 'press');
-            if (!stopped && (await loc.evaluate(inspect, value, options)).number !== value) throw new FieldError('range value did not match; read the field');
+            if (!stopped && (await trustedLocatorRead(loc, inspect, value)).number !== value) throw new FieldError('range value did not match; read the field');
           } else if (state.kind === 'reorder') {
             const names = await loc.evaluate(order, undefined, options);
             if (!Array.isArray(value) || value.length !== names.length || !names.length || names.length > 100 ||
@@ -224,11 +225,11 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value').set.call(el, color);
               for (const type of ['input', 'change']) el.dispatchEvent(new view.Event(type, { bubbles: true }));
             }, value, options));
-            if (!stopped && !(await loc.evaluate(inspect, value.toLowerCase(), options)).matched) throw new FieldError('color did not match; read the field');
+            if (!stopped && !(await trustedLocatorRead(loc, inspect, value.toLowerCase())).matched) throw new FieldError('color did not match; read the field');
           } else if (state.kind === 'text') {
             if (!['string', 'number'].includes(typeof value)) throw new FieldError('text fields need a string or number');
             await send(checked => checked.fill(String(value), options));
-            if (!stopped && !(await loc.evaluate(inspect, value, options)).matched) rows[i].note = 'value was formatted or changed by the page; read it if exact text matters';
+            if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) rows[i].note = 'value was formatted or changed by the page; read it if exact text matters';
           } else throw new FieldError('unsupported field kind; use browser_act');
           rows[i].status = 'set';
         } catch (error) {

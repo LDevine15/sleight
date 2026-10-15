@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
 
@@ -13,7 +14,7 @@ function element(tag = 'INPUT', attrs = {}, value = '') {
 function harness(nodes, { check = () => 'allow', mutate, submit, event, sleep, now } = {}) {
   const listeners = new Map(), input = [], resolve = [];
   const emit = name => { for (const fn of listeners.get(name) ?? []) fn(event ?? page); };
-  const locator = node => ({
+  const locator = node => utilityLocator({
     async evaluate(fn, arg) { return fn(node, arg); },
     async count() { return node ? 1 : 0; },
     async fill(value) { assert.ok(['INPUT', 'TEXTAREA'].includes(node.tagName) || node.isContentEditable, 'Playwright fill needs an editable field'); input.push(['fill', node, value]); node.value = value; await mutate?.(node, 'fill', emit); },
@@ -139,10 +140,10 @@ test('autocomplete waits for the exact suggestion and confirms it without submit
   const base = h.tab.page.locator;
   h.tab.page.locator = selector => {
     const loc = base(selector);
-    loc.elementHandle = async () => ({ ownerFrame: async () => ({ locator: selector => {
+    loc.elementHandle = async () => ({ _connection: loc._connection, ownerFrame: async () => ({ locator: selector => {
       assert.equal(selector, '[id="choices"]');
       return { getByRole(role, opts) { assert.equal(role, 'option'); assert.deepEqual(opts, { name: '123 Test Street', exact: true });
-        return { async evaluate(fn, arg) { return fn(option, arg); }, async waitFor() {}, async count() { return 1; }, async click() { clicked++; node.value = '123 Test Street'; } }; } };
+        return utilityLocator({ async evaluate(fn, arg) { return fn(option, arg); }, async waitFor() {}, async count() { return 1; }, async click() { clicked++; node.value = '123 Test Street'; } }); } };
     } }), async dispose() {} });
     return loc;
   };
@@ -154,7 +155,7 @@ test('ambiguous autocomplete refuses to pick either suggestion and does not retr
   const node = element('INPUT', { role: 'combobox', 'aria-controls': 'choices' }), h = harness({ e1: node });
   const base = h.tab.page.locator; let clicks = 0;
   h.tab.page.locator = selector => { const loc = base(selector);
-    loc.elementHandle = async () => ({ ownerFrame: async () => ({ locator: () => ({ getByRole: () => ({
+    loc.elementHandle = async () => ({ _connection: loc._connection, ownerFrame: async () => ({ locator: () => ({ getByRole: () => ({
       async waitFor() {}, async count() { return 2; }, async click() { clicks++; }
     }) }) }), async dispose() {} }); return loc; };
   const r = await h.fill([{ ref: 'e1', value: 'duplicate' }]);
@@ -220,7 +221,7 @@ test('listbox selection uses bounded scroll-until before choosing the exact row'
   let clicks = 0; const base = h.tab.page.locator;
   h.tab.page.locator = selector => { const loc = base(selector); loc.getByRole = (role, opts) => {
     assert.equal(role, 'option'); assert.deepEqual(opts, { name: 'Far option', exact: true });
-    return { async evaluate(fn, arg) { return fn(option, arg); }, async waitFor() {}, async count() { return 1; }, async click() { clicks++; } };
+    return utilityLocator({ async evaluate(fn, arg) { return fn(option, arg); }, async waitFor() {}, async count() { return 1; }, async click() { clicks++; } });
   }; return loc; };
   const r = await h.fill([{ ref: 'e1', value: 'Far option' }]); assert.equal(r.rows[0].status, 'set'); assert.equal(clicks, 1);
 });
@@ -235,7 +236,7 @@ test('field input matches V6 operation-kind, element and verdict interface', asy
 
 test('a custom toggle that is also a payment submit cannot bypass the trusted inspector', async () => {
   const node = element('CUSTOM-TOGGLE'); let clicks = 0;
-  const page = { on() {}, off() {}, getByRef: () => ({ evaluate: async (fn, arg) => fn(node, arg), click: async () => { clicks++; } }) };
+  const page = { on() {}, off() {}, getByRef: () => utilityLocator({ evaluate: async (fn, arg) => fn(node, arg), click: async () => { clicks++; } }) };
   const fill = createFillFields({ inspectElement: () => ({ tag: 'button', kind: 'button', connected: true, visible: true, enabled: true,
     submit: true, payment: true, formPayment: true, form: true }),
     check: (ctx, kind, target) => target.element.payment ? { verdict: 'confirm', terms: {} } : { verdict: 'allow' }, runSteps: async () => {} });
@@ -259,7 +260,7 @@ test('a noneditable combobox opens its option list and never attempts text fill'
   const node = element('BUTTON', { role: 'combobox', 'aria-controls': 'choices', type: 'button' }, 'Choose'), option = element('LI');
   const h = harness({ e1: node }); const base = h.tab.page.locator;
   h.tab.page.locator = selector => { const loc = base(selector);
-    loc.elementHandle = async () => ({ ownerFrame: async () => ({ locator: () => ({ getByRole: () => ({
+    loc.elementHandle = async () => ({ _connection: loc._connection, ownerFrame: async () => ({ locator: () => ({ getByRole: () => utilityLocator({
       async evaluate(fn, arg) { return fn(option, arg); }, async waitFor() {}, async count() { return 1; }, async click() { node.value = 'Exact'; }
     }) }) }), async dispose() {} }); return loc;
   };
@@ -359,7 +360,7 @@ test('a payment submit consumes confirmation only in the delegated physical oper
   const node = element('BUTTON', { role: 'checkbox', type: 'submit' }); node.closest = () => ({});
   let consumed = 0, clicks = 0;
   const consume = () => ++consumed === 1 ? { verdict: 'allow' } : { verdict: 'confirm' };
-  const loc = { evaluate: async (fn, arg) => fn(node, arg), click: async () => { clicks++; node.checked = true; } };
+  const loc = utilityLocator({ evaluate: async (fn, arg) => fn(node, arg), click: async () => { clicks++; node.checked = true; } });
   const page = { on() {}, off() {}, getByRef: () => loc };
   const fill = createFillFields({ inspectElement: () => ({ tag: 'button', kind: 'button', connected: true,
     visible: true, enabled: true, submit: true, payment: true, formPayment: true, form: true }),
