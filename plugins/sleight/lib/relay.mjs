@@ -3254,7 +3254,6 @@ export function createRelay({
       finishedCall(id); restartRetries.delete(id);
       leaseStop({ id }, message);
       stoppedClients.add(id); // a direct browser call still running must not answer a second time
-
     }
   }
   function close() {
