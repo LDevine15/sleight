@@ -21,6 +21,7 @@ import { discoverExtensions, createBrowserSelection } from './browser-discovery.
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
+import { isV3Frontend, isV3Bridge, createV3Frontend } from './direct-browser/worker.mjs';
 import { isFrontend, isFrontendSession, createInstalledFrontend } from './direct-browser/surface.mjs';
 import { createTurnHookChannel } from './direct-browser/lifecycle.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
@@ -640,7 +641,7 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
 // branded frontend. Environment and project settings cannot supply one.
 export function directBrowserServer(server, frontend) {
   if (frontend === undefined) return server;
-  if (!isFrontend(frontend)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (!isFrontend(frontend) && !isV3Frontend(frontend)) throw Error('TRUSTED_ROUTE_REQUIRED');
   return { ...server, env: { ...server.env, CUA_REPL_ENABLED_SURFACES: 'browser,computer' } };
 }
 
@@ -648,10 +649,10 @@ export function directBrowserServer(server, frontend) {
 // the compact browser section; default and lean engine skills stay unchanged.
 export function directBrowserRules(rules, frontend) {
   if (frontend === undefined) return rules;
-  if (!isFrontend(frontend) || !/^b[A-Za-z0-9_-]{1,63}$/.test(frontend.browser ?? '') || typeof rules !== 'string') throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (!(isFrontend(frontend) || isV3Frontend(frontend)) || !/^b[A-Za-z0-9_-]{1,63}$/.test(frontend.browser ?? '') || typeof rules !== 'string') throw Error('TRUSTED_ROUTE_REQUIRED');
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
   if (!section.test(rules)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  const compact = readFileSync(join(LIB, '../skills/drive-mac-apps/BROWSERS.turbo.md'), 'utf8').trimEnd()
+  const compact = readFileSync(join(LIB, isV3Frontend(frontend) ? '../skills/drive-mac-apps/BROWSERS.turbo-v3.md' : '../skills/drive-mac-apps/BROWSERS.turbo.md'), 'utf8').trimEnd()
     .replace('{browser}', frontend.browser);
   return rules.replace(section, compact + '\n');
 }
@@ -687,18 +688,34 @@ export async function prepareInstalledBrowser(runtime) {
   return { directBrowser: await runtime.ready(), turnHook: { close: () => runtime.close() } };
 }
 
-export async function prepareInstalledStartup(factory, unavailable = code => process.stderr.write(`sleight: turbo unavailable (${code}); using the engine.\n`)) {
-  let bridge;
-  try { bridge = await (factory ?? (await import('./direct-browser/installed-bridge.mjs')).createInstalledBridge)(); }
+// v2 remains available until V8 retires its installed factory. Only typed
+// unavailability falls back; unsafe package/configuration evidence still stops.
+function installedUnavailable(code, route = 'the engine') {
+  process.stderr.write(`sleight: turbo unavailable (${code}); using ${route}. Check turbo settings and run sleight-mcp --doctor before retrying turbo.\n`);
+}
+export async function createInstalledBrowserBridge(factories, unavailable = installedUnavailable) {
+  const v3 = factories?.v3 ?? (await import('./direct-browser/worker.mjs')).createV3Bridge;
+  try { return await v3(); }
   catch (error) {
-    if (!['NATIVE_HELPERS_UNAVAILABLE', 'HOST_BUILD_BUSY', 'HOST_CACHE_UNSAFE', 'SELECTED_PATH_UNSAFE',
-      'SELECTED_PROCESS_UNPROVED', 'SELECTED_ENDPOINT_UNPROVED', 'SELECTED_LISTENER_UNPROVED',
-      'INSTALLED_WORKER_UNAVAILABLE'].includes(error.message)) throw error;
-    unavailable(error.message); return { directBrowser: undefined, directHost: undefined };
+    if (!['V3_RUNTIME_UNAVAILABLE', 'V3_WORKER_UNAVAILABLE'].includes(error.message)) throw error;
+    const v2 = factories?.v2 ?? (await import('./direct-browser/installed-bridge.mjs')).createInstalledBridge;
+    const bridge = await v2();
+    unavailable(error.message, bridge ? 'v2 turbo' : 'the engine');
+    return bridge;
   }
-  if (!bridge) return { directBrowser: undefined, directHost: undefined };
-  return { directBrowser: createInstalledFrontend(bridge), directHost: bridge,
-    turnHook: { close: () => bridge.detach() } };
+}
+
+export async function prepareInstalledStartup(factory, unavailable = installedUnavailable) {
+  try {
+    const bridge = await (factory ?? (() => createInstalledBrowserBridge(undefined, unavailable)))();
+    if (!bridge) return { directBrowser: undefined, directHost: undefined };
+    return { directBrowser: isV3Bridge(bridge) ? createV3Frontend(bridge) : createInstalledFrontend(bridge), directHost: bridge,
+      turnHook: { close: () => bridge.detach() } };
+  } catch (error) {
+    const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_STARTUP_FAILED';
+    unavailable(code);
+    return { directBrowser: undefined, directHost: undefined, turboUnavailable: code };
+  }
 }
 
 export function turboState(readConfig) {
@@ -761,7 +778,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const approval = approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
-    directBrowser,
+    directBrowser, turboUnavailable: prepared.turboUnavailable,
     directHost: prepared.directHost,
     startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
     browserChoice: browserSelection.choice,

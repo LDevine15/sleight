@@ -228,7 +228,7 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   return Object.freeze({ session, connect, verifyConnection, disconnect, browserIncarnation, selectedBrowser, identity, endpoint,
     createFilter(ownedTargets = []) {
       if (!opened || fenced) fail('SELECTED_CONNECTION_CLOSED');
-      const filter = createCDPFilter({ session, ownedTargets });
+      const filter = createCDPFilter({ session, ownedTargets, protectedPort: identity.file.port });
       const lost = () => { filter.dispose(); losses.delete(lost); };
       losses.add(lost);
       return Object.freeze({ ...filter, dispose() { losses.delete(lost); return filter.dispose(); } });

@@ -59,6 +59,7 @@
 import { randomUUID } from 'node:crypto';
 import { isFrontend } from './direct-browser/surface.mjs';
 import { isInstalledBridge } from './direct-browser/installed-bridge.mjs';
+import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
 import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -380,6 +381,7 @@ function internalTurnEnd(tool) {
 
 export function createRelay({
   directBrowser,
+  turboUnavailable,
   directHost,
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
@@ -450,10 +452,11 @@ export function createRelay({
   warmRepl = false,
   onClientReply = () => {},
 }) {
-  if (directBrowser !== undefined && !isFrontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  if (directHost !== undefined && (!isInstalledBridge(directHost) || !isFrontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (directBrowser !== undefined && !isFrontend(directBrowser) && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (directHost !== undefined && (!(isInstalledBridge(directHost) && isFrontend(directBrowser)) && !(isV3Bridge(directHost) && isV3Frontend(directBrowser)))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
-  const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ?? []);
+  const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
+    (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
   const directTurnEnds = new Map();
   function collectDirectEnd(id) {
     if (!directBrowser) return;
@@ -1821,19 +1824,25 @@ export function createRelay({
   function handleClient(msg) {
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
+      if (!directBrowser) {
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true,
+          content: [{ type: 'text', text: `Turbo is off (${turboUnavailable}). Use the engine browser path.` }] } });
+        return;
+      }
       if (closing || disposed) { leaseStop(msg, 'this session is closing.'); return; }
       running.add(msg.id);
       callDetails.set(msg.id, msg.params.name);
       directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
         finishedCall(msg.id);
-        const content = [{ type: 'text', text: JSON.stringify(result) }];
+        const rendered = isV3Frontend(directBrowser) ? result.text : JSON.stringify(result);
+        const content = [{ type: 'text', text: rendered }];
         if (firstCallRules && !rulesShown) { rulesShown = true; content.push({ type: 'text', text: firstCallRules }); }
-        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: !!result.error,
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: isV3Frontend(directBrowser) ? result.isError : !!result.error,
           content } }, delivered => {
           // Baselines and submit fences advance only after the exact projection
           // reached this client stream, never on a private preparation read.
           if (!delivered.result?.isError && delivered.result?.content?.some(item => item.type === 'text' &&
-              item.text === JSON.stringify(result))) directBrowser.delivered(result);
+              item.text === rendered)) directBrowser.delivered(result);
         });
       }).catch(() => {
         finishedCall(msg.id);

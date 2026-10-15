@@ -2,6 +2,8 @@
 // request-before-input watching and short Playwright actionability timeouts.
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
+import { isV3Context } from './v3-context.mjs';
+import { intent } from './rules.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
@@ -135,31 +137,50 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         pendingGate(state, step);
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
-        const info = locator ? await locator.evaluate(inspectTarget, undefined, { timeout: TIMEOUT }) : {};
+        let info = locator ? await locator.evaluate(inspectTarget, undefined, { timeout: TIMEOUT }) : {};
         const enter = step.do === 'press' && /(?:^|\+)(?:Enter|Return|Space)$/.test(step.key);
-        const submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && /Enter|Return/.test(step.key));
+        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && /Enter|Return/.test(step.key));
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
           paths: step.paths, submit: !!submits, payment: !!submits && (info.payment || info.formPayment),
           ...(step.do === 'dialog' ? { type: state.dialog.type(), message: state.dialog.message(), accept: step.accept } : {}) };
-        const verdict = await check(ctx, step.do, target);
-        if (verdict?.verdict === 'confirm' || verdict?.kind === 'confirm') confirmation = { step: index + 1, terms: verdict.terms };
-        const message = ruleMessage(verdict);
-        if (message) throw Error(message);
-        armed = watch(page, state); const start = now();
+        const trusted = isV3Context(ctx);
+        const gate = async () => {
+          const verdict = trusted ? await ctx.check(step.do, target) : await check(ctx, step.do, target);
+          if (verdict?.verdict === 'confirm' || verdict?.kind === 'confirm') confirmation = { step: index + 1, terms: verdict.terms };
+          const message = ruleMessage(verdict);
+          if (message) throw Error(message);
+          if (trusted && target.locator) locator = target.locator;
+          if (trusted) submits = intent(step.do, target).submit && step.do !== 'dialog';
+          if (submits) {
+            submit = { startedAt: now(), snapshotNo: state.snapshotNo ?? 0 };
+            state.submitUnconfirmed = submit;
+          }
+        };
+        // Pin the element before popup preparation. Check final risk and consume
+        // authority inside the actual click callback, after that preparation.
+        if (trusted && locator) { await ctx.prepareTarget(target); locator = target.locator; }
+        if (!trusted) await gate();
         if (step.do === 'upload') {
-          staging = await stageUserUploads(ctx.files, step.paths, step.ref);
+          if (trusted) await gate();
+          staging = trusted ? await ctx.stageUploads(target, step.paths) : await stageUserUploads(ctx.files, step.paths, step.ref);
           if (!Array.isArray(staging?.payloads) || !staging.payloads.length) throw Error('user-named file staging required');
         }
+        armed = watch(page, state); const start = now();
         const options = { timeout: TIMEOUT };
         const perform = async () => {
-          if (step.do === 'click') return backgroundClick(tab, locator, extra => locator.click({ ...options, ...extra }));
+          if (step.do === 'click') return backgroundClick(tab, locator, async extra => {
+            if (trusted) await gate();
+            started = true; return locator.click({ ...options, ...extra });
+          });
+          if (trusted && step.do !== 'upload') await gate();
+          started = true;
           if (step.do === 'type') return locator.fill(step.text, options);
-          if (step.do === 'press') return step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          if (step.do === 'press') return trusted || step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           if (step.do === 'select') return locator.selectOption(step.values, options);
           if (step.do === 'check') return locator.check(options);
           if (step.do === 'uncheck') return locator.uncheck(options);
           if (step.do === 'hover') return locator.hover(options);
-          if (step.do === 'drag') return locator.dragTo(page.getByRef(step.to), options);
+          if (step.do === 'drag') return trusted ? ctx.dragTo(target, page.getByRef(step.to)) : locator.dragTo(page.getByRef(step.to), options);
           if (step.do === 'upload') return locator.setInputFiles(staging.payloads, options);
           if (step.do === 'viewport') return page.setViewportSize({ width: step.width, height: step.height });
           if (step.do === 'back') return page.goBack({ ...options, waitUntil: 'commit' });
@@ -189,11 +210,6 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           }
         };
         pendingGate(state, step);
-        if (submits) {
-          submit = { startedAt: now(), snapshotNo: state.snapshotNo ?? 0 };
-          state.submitUnconfirmed = submit;
-        }
-        started = true;
         // A Playwright click can remain pending until a page dialog is answered.
         // Returning the dialog stops the batch; the pending promise is observed,
         // never resent, and finishes after a later explicit dialog action.
@@ -252,6 +268,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // its dialog listener until that exact promise settles or the page closes.
         if (!inputPending) armed?.stop();
         try { await staging?.cleanup?.(); } catch { lines.push('Upload staging cleanup unavailable.'); }
+        if (isV3Context(ctx) && target && !inputPending) await ctx.releaseTarget(target);
       }
     }
     if (stoppedAt !== null) for (let i = stoppedAt; i < steps.length; i++) lines.push(`${i + 1} ${steps[i].do}: not reached`);
@@ -273,6 +290,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
 
 let defaultRunner;
 export async function runSteps(tab, steps, ctx) {
+  if (!isV3Context(ctx)) throw Error('TRUSTED_TURN_REQUIRED');
   if (!defaultRunner) {
     const [{ check }, { snapshot }, { backgroundClick }] = await Promise.all([import('./rules.mjs'), import('./snapshot.mjs'), import('./page.mjs')]);
     defaultRunner = createActionRunner({ check, snapshot, backgroundClick });

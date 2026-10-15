@@ -16,9 +16,16 @@ const forbidden = new Set(['Page.bringToFront', 'Target.activateTarget',
 const domains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Accessibility', 'Input',
   'Network', 'Fetch', 'Log', 'Emulation', 'Inspector', 'Debugger', 'Performance']);
 
-export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
+export function createCDPFilter({ session: upstream, ownedTargets = [], protectedPort } = {}) {
   if (!upstream || !id(upstream.sessionId) || !['send', 'on', 'off'].every(name => typeof upstream[name] === 'function') ||
       !Array.isArray(ownedTargets) || !ownedTargets.every(id)) throw Error('CDP_CONNECTION_REQUIRED');
+  if (protectedPort !== undefined && (!Number.isInteger(protectedPort) || protectedPort < 1 || protectedPort > 65535)) throw Error('CDP_CONNECTION_REQUIRED');
+  const guardPatterns = protectedPort === undefined ? [] : [{ urlPattern: '*://*:' + protectedPort + '/*', requestStage: 'Request' },
+    ...([80,443].includes(protectedPort) ? [{ urlPattern: (protectedPort === 80 ? 'http' : 'https') + '://*/*', requestStage: 'Request' }] : [])];
+  const protectedUrl = url => {
+    try { const parsed = new URL(url); return Number(parsed.port || (['https:','wss:'].includes(parsed.protocol) ? 443 : 80)) === protectedPort; }
+    catch { return false; }
+  };
   const owned = new Set(ownedTargets), routes = new Map(), listeners = new Set(), attaching = new Map(), bridges = new Set(), browserRoutes = new Set(), attachmentParents = new Map();
   const attachments = new Map(), outstanding = new Set(), collectedSessions = new Set();
   let closed = false, autoAttach = false, disposal, listening = true;
@@ -83,6 +90,11 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
     if (closed && frame.method !== 'Target.attachedToTarget') return;
     const parent = frame.sessionId === undefined ? undefined : (closed ? attachments : routes).get(frame.sessionId);
     if (frame.sessionId !== undefined && !parent) return;
+    if (parent && protectedPort !== undefined && frame.method === 'Fetch.requestPaused' && protectedUrl(params.request?.url)) {
+      upstream.send('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }, frame.sessionId)
+        .catch(() => { removeRoute(frame.sessionId); detach(frame.sessionId).catch(() => {}); });
+      return;
+    }
     if (frame.method === 'Target.attachedToTarget') {
       const info = params.targetInfo;
       if (!object(info) || !id(info.targetId) || !id(params.sessionId)) return;
@@ -101,8 +113,16 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       const virtualParent = parent ? frame.sessionId : attachmentParents.get(info.targetId);
       if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
       if (closed) return; // Late attachments stay private and grant no input route.
-      routes.set(params.sessionId, { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent });
+      const route = { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent };
+      routes.set(params.sessionId, route);
       if (virtualParent && !parent) frame = { ...frame, sessionId: virtualParent };
+      if (protectedPort !== undefined) {
+        route.ready = upstream.send('Fetch.enable', { patterns: guardPatterns }, params.sessionId).then(() => {
+          if (!closed && routes.get(params.sessionId) === route) emit(frame);
+        });
+        route.ready.catch(() => { removeRoute(params.sessionId); detach(params.sessionId).catch(() => {}); });
+        return;
+      }
     } else if (frame.method.startsWith('Target.')) {
       const target = params.targetInfo?.targetId ?? params.targetId;
       if (!owns(target)) return;
@@ -136,6 +156,8 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
           event({ method: 'Target.attachedToTarget', params: { sessionId: result.sessionId, targetInfo, waitingForDebugger: false } });
         }
         if (routes.get(name)?.target !== target) throw Error('CDP_ATTACHMENT_INVALID');
+        await routes.get(name).ready;
+        live(); checkTarget(target);
         return result;
       } catch (error) {
         if (name) await detach(name);
@@ -159,6 +181,11 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       if (typeof method !== 'string' || !/^[A-Za-z]+\.[A-Za-z][A-Za-z0-9]*$/.test(method) || !object(params) || forbidden.has(method)) refuse();
       const isRoot = route === undefined || route === root || browserRoutes.has(route);
       if (!isRoot && !routes.has(route)) throw Error('CDP_SESSION_NOT_OWNED');
+      if (!isRoot) {
+        const ownedRoute = routes.get(route);
+        await ownedRoute.ready;
+        live(); if (routes.get(route) !== ownedRoute) throw Error('CDP_SESSION_NOT_OWNED');
+      }
       const [domain] = method.split('.');
       if (domain === 'Browser') {
         if (!isRoot || method !== 'Browser.getVersion') refuse();
@@ -189,6 +216,9 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
         }
         if (method === 'Target.createTarget' && isRoot) {
           if (typeof params.url !== 'string' || Object.keys(params).some(key => !['url', 'background'].includes(key)) || params.background === false) refuse();
+          // Attach the port guard before the first untrusted navigation. The
+          // owned registry creates blank targets and navigates after admission.
+          if (protectedPort !== undefined && params.url !== 'about:blank') refuse();
           const result = await upstream.send(method, { url: params.url, background: true });
           await own(result.targetId); return result;
         }
@@ -218,6 +248,11 @@ export function createCDPFilter({ session: upstream, ownedTargets = [] } = {}) {
       // Page-domain commands can never run on the browser connection. Unknown
       // domains stay closed, including SystemInfo, Tethering and window APIs.
       if (isRoot || !domains.has(domain)) refuse();
+      if (protectedPort !== undefined && domain === 'Fetch') {
+        if (method === 'Fetch.enable') return upstream.send(method, { ...params, patterns: [...(params.patterns ?? [{ urlPattern: '*' }]), ...guardPatterns] }, route);
+        if (method === 'Fetch.disable') return upstream.send('Fetch.enable', { patterns: guardPatterns }, route);
+        if (['Fetch.continueRequest','Fetch.continueResponse'].includes(method) && params.url && protectedUrl(params.url)) refuse();
+      }
       return upstream.send(method, params, route);
     },
     on(name, listener) { live(); if (name !== 'event' || typeof listener !== 'function') throw Error('INVALID_CDP_EVENT'); listeners.add(listener); },
