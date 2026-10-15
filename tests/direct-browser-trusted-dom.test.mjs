@@ -34,3 +34,11 @@ test('all context authority readers and action risk/fingerprints use the trusted
   const action = readFileSync(new URL('act.mjs', base), 'utf8');
   assert.doesNotMatch(action, /\.evaluate\(inspectTarget/);
 });
+
+
+test('a delegate without a separate utility world cannot supply trusted evidence', async () => {
+  const impl = { _frame: { _page: { delegate: { noUtilityWorld: () => true } },
+    utilityContext: async () => ({ world: 'utility', evaluateExpression: () => assert.fail('MAIN context must not run') }) } };
+  const handle = { _connection: { toImpl: () => impl } };
+  await assert.rejects(api.trustedRead(handle, el => el.form), /TRUSTED_DOM_REQUIRED/);
+});

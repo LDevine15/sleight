@@ -143,8 +143,7 @@ test('V10R4: a noUtilityWorld delegate refuses on a real held element', {skip}, 
   await impl._frame.utilityContext();
   delegate.noUtilityWorld=() => true;
   try {
-    const verdict=await f.ctx.check('click',{locator:handle,page:f.page,state:f.tab.state,ref:'e1'});
-    assert.equal(verdict.verdict,'refuse','a delegate without utility isolation must fail closed');
+    await assert.rejects(trustedRead(handle, el => el.localName), /TRUSTED_DOM_REQUIRED/);
   } finally { delegate.noUtilityWorld=original; await handle.dispose(); }
 });
 
