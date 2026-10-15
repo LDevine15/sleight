@@ -45,7 +45,11 @@ could quit TextEdit or Preview through real osascript. V9R
 passed its re-review. Owner (01:30 UTC): no competitor code in sleight, so LAWS and ROADMAP now say ideas only, written
 clean-room. `private/cr1-base` (`a9212d4d`) strips the two FowlBrowser-adapted pieces (page.mjs popupHook and backgroundClick,
 snapshot.mjs closedRoots) to stubs, and lane `codex-cr1` rewrites them from the behavior spec in queue/CR1.md without access to
-FowlBrowser or the old versions. CR1 then replaces those files on v3-integration. Next: CR1, V7, V9R and V10R merge into
+FowlBrowser or the old versions. CR1 is DONE (29/29 real-page). A similarity audit found four constants that came through sleight-arch's spec, so CR2 re-derives
+them from HTML and WAI-ARIA on lane `codex-cr2` (base `private/cr2-base`). CR3 follows CR2. It uses the background click for
+everything except same-context links and own-activation controls, because the source-text guess missed external scripts. It also
+reads each frame in one CDP pass, measured before and after, and carries CR1's review fixes (same-context links became new tabs, closed-root probe budget,
+weak fixtures). CR3 then replaces the adapted code on v3-integration. Next: CR1, V7, V9R and V10R merge into
 v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8 merges.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
