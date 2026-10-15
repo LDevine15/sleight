@@ -18,20 +18,6 @@ export function popupHook() {
     while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
     return /^(iframe|object|embed|frame|fencedframe)$/.test(focus?.localName);
   };
-  // HTML input.html#attr-input-type, forms.html#the-label-element and
-  // interactive-elements.html#the-summary-element (same HTML base URL).
-  // https://www.w3.org/TR/wai-aria-1.2/#widget_roles and #aria-selected:
-  // value/selection controls stay plain; command buttons and links may open windows.
-  const CR2_OWN_ACTIVATION = node => {
-    if (node.localName === 'input') return has(node, 'aria-pressed')
-      || !/^(button|submit|reset|image)$/i.test(attribute(node, 'type') ?? 'text');
-    if (node.localName === 'button' && has(node, 'aria-pressed')) return true;
-    if (/^(textarea|select|option|label|summary)$/.test(node.localName)) return true;
-    const roles = (attribute(node, 'role') ?? '').toLowerCase().split(/\s+/);
-    return roles.some(role => /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio|tab|treeitem|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/.test(role)
-      || role === 'button' && has(node, 'aria-pressed')
-      || /^(gridcell|row|rowheader|columnheader)$/.test(role) && has(node, 'aria-selected'));
-  };
   const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
@@ -41,6 +27,19 @@ export function popupHook() {
     constructor, form: Object.getOwnPropertyDescriptor(constructor.prototype, 'form').get,
     type: Object.getOwnPropertyDescriptor(constructor.prototype, 'type').get,
   }));
+  const selectControl = { constructor: HTMLSelectElement,
+    multiple: Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'multiple').get };
+  const labelControl = { constructor: HTMLLabelElement,
+    control: Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get };
+  // CR5's real modifier table measures native submission and multiple-select
+  // selection as modifier-sensitive. ARIA and editable content have no native
+  // modifier default; their handlers receive the masked background click.
+  const plainControl = node => {
+    if (node instanceof selectControl.constructor && selectControl.multiple.call(node)) return true;
+    for (const control of formControls) if (node instanceof control.constructor
+      && control.form.call(node) && /^(submit|image)$/.test(control.type.call(node))) return true;
+    return false;
+  };
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
@@ -205,15 +204,9 @@ export function popupHook() {
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
       const chain = ancestors(element);
       for (const node of chain) {
-        const editable = attribute(node, 'contenteditable');
-        if (node.isContentEditable || editable !== null && /^(|true|plaintext-only)$/i.test(editable)
-          || CR2_OWN_ACTIVATION(node)) return false;
-      }
-      for (const node of chain) for (const control of formControls) {
-        if (!(node instanceof control.constructor)) continue;
-        const form = control.form.call(node), type = control.type.call(node);
-        if (form && /^(submit|image)$/.test(type)
-          && sameContext(form, attribute(node, 'formtarget') ?? targetOf(form))) return false;
+        if (plainControl(node)) return false;
+        // A label can forward activation to a submit control outside its tree.
+        if (node instanceof labelControl.constructor && plainControl(labelControl.control.call(node))) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;

@@ -15,11 +15,10 @@ for (const method of ['GET', 'POST']) for (const [kind, control] of Object.entri
       }, { timeoutMs: 5000 });
       const child = await nextPage;
       await child.waitForURL('**/landed**');
-      assert.deepEqual(clicks, [{ modifiers: ['ControlOrMeta'] }]);
+      assert.deepEqual(clicks, [{}], 'CR5 keeps native form submission plain, including explicit targets');
       assert.match(page.url(), /\/start$/);
       assert.equal(f.context.pages().length, 3, 'sentinel, original tab and background form destination');
       t.diagnostic('submit disposition ' + JSON.stringify({ method, kind, blank, urls: f.context.pages().map(page => page.url()), requests: f.requests }));
       assert.ok(f.requests.some(request => request.url.startsWith('/landed') && request.method === method));
       assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
     });
-

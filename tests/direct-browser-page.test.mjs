@@ -303,8 +303,10 @@ test('CR5 native controls and ARIA roles without a measured modifier default use
   const f = hookFixture();
   try {
     for (const type of ['', 'invalid', 'hidden', 'text', 'search', 'tel', 'url', 'email', 'password', 'date',
-      'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file'])
-      { assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), true, type); f.hook.finish('input-' + type); }
+      'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file']) {
+      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), true, type);
+      f.hook.finish('input-' + type);
+    }
     for (const type of ['button', 'submit', 'reset', 'image', 'SUBMIT']) {
       assert.equal(f.hook.prepare(new f.Element('input', { type }), 'button-' + type, 1000), true, type);
       f.hook.finish('button-' + type);
@@ -313,8 +315,9 @@ test('CR5 native controls and ARIA roles without a measured modifier default use
       assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), true, tag); f.hook.finish(tag);
     }
     for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio', 'tab',
-      'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar'])
-      { assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), true, role); f.hook.finish(role); }
+      'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar']) {
+      assert.equal(f.hook.prepare(new f.Element('div', { role }), 'role-' + role, 1000), true, role); f.hook.finish('role-' + role);
+    }
     for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']]) {
       assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), true, role); f.hook.finish(role);
     }

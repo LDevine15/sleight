@@ -119,6 +119,42 @@ for (const row of cases) test('CR5 modifier defaults: ' + row.name, { skip, time
   assert.deepEqual(outcomes.background, outcomes.plain, 'masked background input preserves the plain result');
 });
 
+for (const kind of ['checkbox', 'radio', 'text', 'contenteditable', 'summary', 'aria-option'])
+  test('CR5 masked ' + kind + ' handler opens a background popup once', { skip, timeout: 60000 }, async t => {
+    const html = kind === 'contenteditable' ? '<div id="go" contenteditable>Edit</div>'
+      : kind === 'summary' ? '<details><summary id="go">More</summary>Details</details>'
+      : kind === 'aria-option' ? '<div role="listbox"><div id="go" role="option" tabindex="0">Choose</div></div>'
+      : `<input id="go" type="${kind}">`;
+    const f = await fixture(t, html + `<script>window.clicks=0; go.onclick=event=>{
+      window.clicks++; window.flags=[event.ctrlKey,event.metaKey,event.getModifierState('Control'),event.getModifierState('Meta')];
+      window.opened=!!window.open('/landed','child'); };</script>`);
+    const before = await f.sentinel.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState }));
+    await backgroundClick(f.entry, f.entry.page.locator('#go'), undefined, { timeoutMs: 5000 });
+    assert.deepEqual(await f.entry.page.evaluate(() => ({ clicks: window.clicks, flags: window.flags, opened: window.opened })),
+      { clicks: 1, flags: [false, false, false, false], opened: true });
+    assert.equal(f.entry.popups.length, 1);
+    await f.registry.tab(f.entry.popups[0].tab).page.waitForURL('**/landed');
+    assert.deepEqual(await f.sentinel.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState })), before);
+  });
+
+for (const multiple of [false, true]) test('CR5 real native multiple getter resists page overrides: ' + multiple,
+  { skip, timeout: 60000 }, async t => {
+    const f = await fixture(t, `<select ${multiple ? 'multiple' : ''} size="3"><option selected>First</option><option id="go">Second</option></select>
+      <script>Object.defineProperty(HTMLSelectElement.prototype,'multiple',{get(){throw Error('page multiple')}});</script>`);
+    const choices = [], locator = f.entry.page.locator('#go');
+    await backgroundClick(f.entry, locator, options => { choices.push(options); return locator.click({ ...options, timeout: 5000 }); }, { timeoutMs: 5000 });
+    assert.deepEqual(choices, [multiple ? {} : { modifiers: ['ControlOrMeta'] }]);
+    assert.deepEqual(await f.entry.page.locator('select').evaluate(el => [...el.selectedOptions].map(o => o.textContent)), ['Second']);
+  });
+
+test('CR5 real label forwarding ignores page control getters', { skip, timeout: 60000 }, async t => {
+  const f = await fixture(t, `<label id="go" for="send">Send</label><form action="/landed"><input id="send" type="submit"></form>
+    <script>Object.defineProperty(HTMLLabelElement.prototype,'control',{get(){throw Error('page control')}});</script>`);
+  await backgroundClick(f.entry, f.entry.page.locator('#go'), undefined, { timeoutMs: 5000 });
+  await f.entry.page.waitForURL('**/landed**', { timeout: 3000 });
+  assert.equal(f.context.pages().length, 2);
+});
+
 test('CR5 full modifier table receipt', { skip }, t => {
   for (const receipt of receipts) t.diagnostic('table ' + JSON.stringify(receipt));
   assert.equal(receipts.length, cases.length);
