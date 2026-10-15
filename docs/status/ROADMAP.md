@@ -17,9 +17,11 @@ Everything except turbo is release-ready and merged (owner, 2026-10-14). That co
 the release-pass and claim-suite runners. The release notes (RL1) wait on `codex/rl1`.
 
 1. Finish turbo v3 on `private/v3-gate`, where every reviewed piece is merged and the full check passes. Remaining fixes, each merged
-   after its review: V10R4 (trusted reads that page-named elements can't shadow), CR6 and CR7 (masking for the whole click, named
-   link targets, new-tab submits, links in editable text). The behavior atlas (AT1) is merged; the adversarial page bank (AD1)
+   after its review: V10R4 (trusted reads that page-named elements can't shadow) and CR7 (new-tab submits, links in editable
+   text). CR6 (masking for the whole click, named link targets) is reviewed. The behavior atlas (AT1) is merged; the adversarial page bank (AD1)
    runs beside it, and any failure it finds is fixed before the gate.
+   Only fixes that change safety or what the gate measures block it. Rare-case polish (CR8 deferred pointer reads, CR9
+   non-editable islands in editors) merges before the release pass, which re-runs the rounds on the final build.
 2. One full check on `v3-gate`, then the gate round with the owner away or headless. It runs Haiku 5.5 on both arms in both
    orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
    ToolSearch calls, 0 focus events.
