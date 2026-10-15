@@ -130,3 +130,42 @@ test('V10R4: img named activeElement cannot send Enter to the native Pay receive
   assert.equal(count,'0','the native Pay receiver must never receive an unchecked Enter');
   assert.match(result.lines[0],/not run:/);
 });
+
+
+test('V10R4: a noUtilityWorld delegate refuses on a real held element', {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(() => { const button=document.querySelector('#e1'); button.type='button'; document.querySelector('main').append(button); });
+  const handle=await f.page.locator('#e1').elementHandle();
+  const impl=handle._connection.toImpl(handle), delegate=impl._frame._page.delegate;
+  const original=delegate.noUtilityWorld;
+  // Warm the real utility context first. Even a correctly named context grants
+  // nothing once its transport claims utility and MAIN are the same world.
+  await impl._frame.utilityContext();
+  delegate.noUtilityWorld=() => true;
+  try {
+    const verdict=await f.ctx.check('click',{locator:handle,page:f.page,state:f.tab.state,ref:'e1'});
+    assert.equal(verdict.verdict,'refuse','a delegate without utility isolation must fail closed');
+  } finally { delegate.noUtilityWorld=original; await handle.dispose(); }
+});
+
+for (const name of ['form','elements','textContent','querySelectorAll','ownerDocument','parentNode'])
+  test('V10R4: named form control cannot hide payment evidence: '+name, {skip}, async t => {
+    const f=await fixture(t);
+    await f.page.evaluate(name => {
+      const input=document.createElement('input'); input.name=name; input.value='ordinary';
+      document.querySelector('form').prepend(input);
+    },name);
+    const result=await f.run(f.tab,[{do:'click',ref:'e1'}],f.ctx);
+    assert.match(result.lines[0],/not run:/);
+    assert.equal(await f.page.locator('#count').innerText(),'0');
+  });
+for (const tag of ['form','iframe']) test('V10R4: named '+tag+' cannot replace document or window evidence', {skip}, async t => {
+  const f=await fixture(t);
+  await f.page.evaluate(tag => {
+    const node=document.createElement(tag); node.name=tag==='iframe'?'frameElement':'forms';
+    document.querySelector('main').prepend(node);
+  },tag);
+  const result=await f.run(f.tab,[{do:'press',ref:'e1',key:'Enter'}],f.ctx);
+  assert.match(result.lines[0],/not run:/);
+  assert.equal(await f.page.locator('#count').innerText(),'0');
+});
