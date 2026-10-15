@@ -52,7 +52,7 @@ export async function fixture(t, html, routes = {}) {
   registry = createPageRegistry({ browser, session, context, timeoutMs: 10000, popupWaitMs: 5000 });
   const { tab } = await registry.openTab({ url: 'http://127.0.0.1:' + server.address().port + '/start' });
   const entry = registry.tab(tab);
-  return { registry, context, entry, requests, sentinel, before };
+  return { registry, context, entry, requests, sentinel, before, session };
 }
 
 export const controls = { button: '<button>Send</button>', submit: '<input type="submit" value="Send">',

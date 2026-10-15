@@ -37,6 +37,8 @@ test('CR4 real popup opened by a self-closing child is ready before backgroundCl
   await child.page.waitForLoadState('load');
   const result = await backgroundClick(child, child.page.getByRole('button'), undefined, { timeoutMs: 5000 });
   assert.equal(child.page.isClosed(), true);
+  t.diagnostic('self-close native targets ' + JSON.stringify((await f.session.send('Target.getTargets')).targetInfos));
+  t.diagnostic('self-close notices ' + JSON.stringify({ root: f.entry.popups, child: child.popups, windows: child.windowOpenNo }));
   assert.equal(child.popups.length, 1, 'surviving popup must be adopted before returning');
   const survivor = f.registry.tab(child.popups[0].tab);
   assert.equal(survivor.opener, child.tab);
