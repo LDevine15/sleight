@@ -19,7 +19,7 @@ const executablePath = process.platform === 'darwin'
 const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'real-page qualification belongs to sleight-arch host runner'
   : !existsSync(executablePath) ? 'pinned Chromium headless shell is unavailable' : false;
 
-async function fixture(t, html) {
+async function fixture(t, html, routes = {}) {
   const sockets = new Set(), requests = [];
   const profile = trackTemp(mkdtempSync(join(realpathSync(tmpdir()), 'sleight-cr4-')));
   let context, registry;
@@ -27,7 +27,8 @@ async function fixture(t, html) {
     let body = ''; for await (const chunk of request) body += chunk;
     requests.push({ url: request.url, method: request.method, body });
     response.setHeader('Content-Type', 'text/html');
-    response.end(request.url.startsWith('/landed') ? '<h1>Landed</h1>' : html);
+    response.end(routes[new URL(request.url, 'http://fixture.invalid').pathname] ??
+      (request.url.startsWith('/landed') ? '<h1>Landed</h1>' : html));
   });
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   t.after(async () => {
@@ -64,6 +65,7 @@ for (const method of ['GET', 'POST']) for (const [kind, control] of Object.entri
         <input name="fixture" value="sent">${control}</form>`);
       const page = f.entry.page, locator = page.getByRole('button', { name: 'Send' });
       await backgroundClick(f.entry, locator, undefined, { timeoutMs: 5000 });
+      t.diagnostic('submit disposition ' + JSON.stringify({ method, kind, blank, urls: f.context.pages().map(page => page.url()), requests: f.requests }));
       if (blank) {
         const rows = await f.registry.list();
         assert.equal(rows.length, 2); assert.match(page.url(), /\/start$/);
@@ -119,3 +121,42 @@ test('CR4 real popup opened by a self-closing child is ready before backgroundCl
   assert.equal(result?.closed === true || result === undefined, true);
   assert.equal(await f.sentinel.evaluate(() => document.visibilityState), f.before);
 });
+
+for (const kind of ['button', 'submit', 'image']) test('CR4 real submit ignores page form/type getter overrides: ' + kind,
+  { skip, timeout: 60000 }, async t => {
+    const f = await fixture(t, `<form action="/landed"><input name="fixture" value="sent">${controls[kind]}</form><script>
+      for (const constructor of [HTMLButtonElement, HTMLInputElement]) {
+        Object.defineProperty(constructor.prototype, 'form', {get() {throw Error('page form getter')}});
+        Object.defineProperty(constructor.prototype, 'type', {get() {return 'button'}});
+      }
+    </script>`);
+    await backgroundClick(f.entry, f.entry.page.getByRole('button', { name: 'Send' }), undefined, { timeoutMs: 5000 });
+    await f.entry.page.waitForURL('**/landed**', { timeout: 3000 });
+    assert.equal(f.context.pages().length, 2);
+  });
+
+for (const kind of ['sibling', 'grandchild', 'renamed-frame', 'earlier-popup'])
+  test('CR4 real named link reuses existing context: ' + kind, { skip, timeout: 60000 }, async t => {
+    const link = '<a href="/landed" target="destination">Continue here</a>';
+    const html = kind === 'sibling' ? '<iframe src="/source"></iframe><iframe name="destination" src="/target"></iframe>'
+      : kind === 'grandchild' ? link + '<iframe src="/nested"></iframe>'
+      : kind === 'renamed-frame' ? link + '<iframe name="destination" src="/target"></iframe>'
+      : `<button type="button" onclick="window.open('/target', 'destination')">Open</button>` + link;
+    const f = await fixture(t, html, { '/source': link, '/target': '<p>Initial target</p>',
+      '/nested': '<iframe name="destination" src="/target"></iframe>' });
+    await f.entry.page.waitForLoadState('load');
+    let source = f.entry.page, target;
+    if (kind === 'earlier-popup') {
+      await backgroundClick(f.entry, source.getByRole('button'), undefined, { timeoutMs: 5000 });
+      target = f.registry.tab(f.entry.popups[0].tab).page;
+      await target.waitForLoadState('load');
+    } else {
+      target = source.frames().find(frame => frame.name() === 'destination');
+      if (kind === 'sibling') source = source.frames().find(frame => frame.url().endsWith('/source'));
+      if (kind === 'renamed-frame') await target.evaluate(() => { window.name = 'another-name'; });
+    }
+    const navigated = target.waitForURL('**/landed', { timeout: 5000 });
+    await backgroundClick(f.entry, source.getByRole('link', { name: 'Continue here' }), undefined, { timeoutMs: 5000 });
+    await navigated;
+    assert.equal(f.context.pages().length, kind === 'earlier-popup' ? 3 : 2);
+  });
