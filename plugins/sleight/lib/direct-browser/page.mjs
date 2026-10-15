@@ -296,6 +296,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     throw Error('trusted popup admission needs the upstream CDP connection');
   const records = new Map(), targets = new Map(), metadata = new WeakMap(), seen = new Map(), allocations = new Map(), tasks = new Set();
   const namedChildren = new Map();
+  const queued = new WeakMap();
   let namedQueue = Promise.resolve();
   let ended = false, cleanup;
   const track = promise => {
@@ -351,6 +352,9 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw Error('invalid browser URL');
         const candidate = namedChildren.get(name);
         if (candidate && !candidate.closed && !candidate.released && !candidate.releasing && !candidate.page.isClosed()) {
+          // Two owned tabs may link to one another during their queued clicks.
+          // Refuse a busy destination instead of making their queues circular.
+          if (queued.has(candidate)) throw Error('named link target is busy; read the page before retrying');
           const reused = await api.enqueue(candidate.tab, async child => {
             let verified = false;
             try {
@@ -511,6 +515,9 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     },
     enqueue(id, run) {
       const entry = tab(id), task = entry.queue.then(() => { tab(id); return run(entry); });
+      queued.set(entry, (queued.get(entry) ?? 0) + 1);
+      const finished = () => { const count = queued.get(entry) - 1; if (count) queued.set(entry, count); else queued.delete(entry); };
+      task.then(finished, finished);
       entry.queue = task.catch(() => {}); return track(task);
     },
     async close(id) {

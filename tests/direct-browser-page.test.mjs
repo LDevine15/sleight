@@ -303,6 +303,21 @@ for (const changed of ['origin', 'identity', 'closed']) test('CR6 named link rej
   } finally { await f.registry.endTurn(); }
 });
 
+test('CR6 a busy named destination refuses before joining its input queue', async () => {
+  const f = fixture(); let release;
+  try {
+    const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/start' }), parent = f.registry.tab(tab);
+    const child = await parent.openChild('https://fixture.invalid/first', { target: 'destination' });
+    const hold = f.registry.enqueue(child.tab, () => new Promise(resolve => { release = resolve; }));
+    await Promise.resolve();
+    const before = f.calls.filter(call => call[0] === 'goto').length;
+    await assert.rejects(parent.openChild('https://fixture.invalid/second', { target: 'destination' }), /named link target is busy/);
+    assert.equal(f.calls.filter(call => call[0] === 'goto').length, before);
+    release(); await hold; release = undefined;
+    assert.equal((await parent.openChild('https://fixture.invalid/second', { target: 'destination' })).tab, child.tab);
+  } finally { release?.(); await f.registry.endTurn(); }
+});
+
 test('CR3 arms every command without inspecting script or listener source', () => {
   const f = hookFixture();
   try {
