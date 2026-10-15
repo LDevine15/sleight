@@ -1044,6 +1044,35 @@ for (const mode of ['contenteditable', 'shadow', 'designMode']) for (const targe
     finally { f.hook.off(); }
   });
 
+for (const target of ['_blank', 'new-context']) for (const island of ['link', 'wrapper', 'chip'])
+  test('CR9 non-editable island keeps background input: ' + island + ' ' + target, () => {
+    const f = hookFixture(), editor = new f.Element('div', { contenteditable: '' });
+    const link = new f.Element(island === 'chip' ? 'button' : 'a', island === 'chip' ? {} : { href: '/landed', target });
+    const barrier = island === 'wrapper' ? new f.Element('span', { contenteditable: 'false' }) : link;
+    barrier.attrs.contenteditable = 'false'; barrier.parentElement = editor;
+    if (barrier !== link) link.parentElement = barrier;
+    const text = new f.Element('span'); text.parentElement = link;
+    // A page override must not change the native inherited editability result.
+    Object.defineProperty(text, 'isContentEditable', { get() { throw Error('page editable getter'); } });
+    try {
+      const result = f.hook.prepare(text, 'island', 1000);
+      assert.equal(island === 'chip' ? result : result?.kind, island === 'chip' ? true : 'link');
+    } finally { f.hook.off(); }
+  });
+
+test('CR9 re-enabled text and an editable link containing a non-editable child stay plain', () => {
+  const f = hookFixture(), editor = new f.Element('div', { contenteditable: '' });
+  const link = new f.Element('a', { href: '/landed', target: '_blank' }); link.parentElement = editor;
+  const text = new f.Element('span', { contenteditable: 'false' }); text.parentElement = link;
+  try {
+    assert.equal(f.hook.prepare(text, 'editable-link', 1000), false);
+    link.attrs.contenteditable = 'false'; text.attrs.contenteditable = 'true';
+    assert.equal(f.hook.prepare(text, 'editable-text', 1000), false);
+    text.attrs.contenteditable = 'false'; f.document.designMode = 'on';
+    assert.equal(f.hook.prepare(text, 'design-mode', 1000), false);
+  } finally { f.hook.off(); }
+});
+
 for (const multiple of [false, true]) test('CR5 select multiplicity comes from the captured native getter: ' + multiple, () => {
   const f = hookFixture(), select = new f.HTMLSelectElement(multiple ? { multiple: '' } : {}), option = new f.Element('option');
   option.parentElement = select;
