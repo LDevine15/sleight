@@ -274,7 +274,22 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     return true;
   };
-  const visibleText = node => {
+  // The order summary: the section, aside, fieldset, form or dialog that holds the amount (a table or list inside it is not enough: the
+  // item table and the totals table are one summary). Text under a header, nav, footer, aside or banner role inside it is not summary.
+  // outsideSummary marks that text with U+E002 in the strict lines (only when asked), so a savings figure in a banner or sidebar closes no gap.
+  let summaryRoot;
+  const summaryOf = node => { let g = up(node); while (g && g !== root && !(['section', 'article', 'fieldset', 'aside', 'form', 'dialog', 'main', 'details'].includes(read(g, 'localName')) || /^(?:region|group|complementary|form)$/.test(read(g, 'getAttribute')('role') ?? ''))) g = up(g); return g ?? root; };
+  const inSummary = owner => {
+    if (!summaryRoot) return true;
+    let side = false;
+    for (let a = owner; a; a = up(a)) {
+      if (a === summaryRoot) return !side;
+      const tag = read(a, 'localName'), role = read(a, 'getAttribute')('role') ?? '';
+      if (['aside', 'header', 'nav', 'footer'].includes(tag) || /^(?:banner|complementary|navigation|contentinfo|alert|status)$/.test(role)) side = true;
+    }
+    return false;
+  };
+  const visibleText = (node, markOutside = false) => {
     const walker = read(doc, 'createTreeWalker')(node, 5), parts = []; let part, previous;
     while ((part = walker.nextNode())) if (read(part, 'nodeType') === 1) {
       if (read(part, 'localName') === 'br') { parts.push('\n'); previous = undefined; }
@@ -284,7 +299,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       let block = read(part, 'parentElement');
       while (block !== node && /^(?:inline(?:-.*)?|contents)$/.test(gs(block).display)) block = read(block, 'parentElement');
       if (parts.length) parts.push(previous === block ? ' ' : '\n');
-      parts.push(read(part, 'textContent').trim()); previous = block;
+      parts.push((markOutside && !inSummary(read(part, 'parentElement')) ? '\uE002' : '') + read(part, 'textContent').trim()); previous = block;
     }
     return parts.join('');
   };
@@ -293,10 +308,28 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
   // Known limits: a figure drawn as a CSS background image, or held in a closed shadow root with no text, is not seen.
   const looseLines = () => {
     const parts = []; let previous, count = 0;
-    const push = (text, owner) => {
+    // The text of a control the user has picked (checked box or radio, aria-checked, selected option, the label linked to one, or the
+    // row of a bare checked box) is wrapped in two private marks: whatever its label says, a chosen figure is an add-on the user will pay.
+    const chosenCache = new Map();
+    const chosenNode = a => {
+      if (chosenCache.has(a)) return chosenCache.get(a);
+      const tag = read(a, 'localName'), role = read(a, 'getAttribute')('role'), isBox = c => read(c, 'localName') === 'input' && /^(?:radio|checkbox)$/.test(read(c, 'type'));
+      let yes = false;
+      if (tag === 'label') { const ctl = read(a, 'control'); yes = !!ctl && isBox(ctl) && !!read(ctl, 'checked'); }
+      else if (read(a, 'getAttribute')('aria-checked') === 'true' || role === 'option' && read(a, 'getAttribute')('aria-selected') === 'true') yes = true;
+      else if (tag !== 'form' && a !== root) {
+        // A bare checked box (no label) takes the text of its own row when it is the only control in it.
+        const kids = Array.from(read(a, 'children') ?? []), controls = kids.filter(c => ['input', 'select', 'textarea'].includes(read(c, 'localName')));
+        yes = controls.length === 1 && isBox(controls[0]) && !!read(controls[0], 'checked') && !(read(controls[0], 'labels')?.length);
+      }
+      chosenCache.set(a, yes); return yes;
+    };
+    const push = (text, owner, picked = false) => {
       let t = String(text ?? '').normalize('NFKC').replace(/[­​-‏⁠﻿]/g, '').replace(/\s+/g, ' ').trim(); if (!t) return;
       // A struck-out price is the old price (marked "struckthrough", which clears a figure like the other savings nouns).
       for (let a = owner; a; a = up(a)) if (['del', 's', 'strike'].includes(read(a, 'localName')) || /line-through/.test(gs(a).textDecorationLine ?? '')) { t = 'struckthrough ' + t; break; }
+      if (!picked) for (let a = owner; a; a = up(a)) { if (chosenNode(a)) { picked = true; break; } if (a === root) break; }
+      if (picked) t = '\uE000' + t + '\uE001';
       let block = owner; while (block && /^(?:inline(?:-.*)?|contents)$/.test(gs(block).display)) block = up(block);
       if (parts.length) parts.push(previous === block ? ' ' : '\n');
       parts.push(t); previous = block;
@@ -344,7 +377,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
         pseudo(n, '::before');
         if (tag === 'input') { if (!/^(?:hidden|password|checkbox|radio|file)$/.test(read(n, 'type'))) push(read(n, 'value'), n); }
         else if (tag === 'textarea') push(read(n, 'value'), n);
-        else if (tag === 'select') for (const o of Array.from(read(n, 'selectedOptions') ?? [])) push(read(o, 'textContent'), n);
+        else if (tag === 'select') for (const o of Array.from(read(n, 'selectedOptions') ?? [])) push(read(o, 'textContent'), n, true);
       }
       if (['select', 'textarea', 'input'].includes(tag)) { if (on) pseudo(n, '::after'); return; }
       const shadow = read(n, 'shadowRoot'); if (shadow) for (const c of Array.from(read(shadow, 'childNodes') ?? [])) if (read(c, 'nodeType') === 1) walk(c, inControl);
@@ -501,9 +534,32 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       new RegExp(`^(?:an? |the )?${FEE}${FEE_VERB} ${WHEN}$`),
       new RegExp(`^(?:if|unless) you (?:pay|paid) (?:late|${WHEN}),? (?:an? |the )?${FEE}${FEE_VERB}$`),
       new RegExp(`^(?:an? |the )?${FEE}${FEE_VERB} (?:if|unless) (?:you |payment |your payment |it |the payment )?(?:is |are |was )?(?:unpaid|late|overdue|not paid|not received|not made)(?: ${WHEN})?$`)];
+    // "After Nov 27 the fine becomes $120.00": a note on what a fine grows to after a date.
+    PENALTY_SHAPES.push(new RegExp(`^(?:after|from|starting|beginning) (?:the )?@ (?:the |your )?(?:fine|fee|penalty|late fee|late penalty|price|rate) (?:becomes|increases to|rises to|goes up to|will increase to|will be|is)(?: and (?:may|will) be (?:sent|referred|forwarded) to collections?)?$`));
     const penaltyNote = rest => PENALTY_SHAPES.some(x => x.test(rest));
+    // A count of days, hours or weeks keeps its digits: "after 0 days" is now, not a later date.
+    const penaltyShape = text => shape(norm(text).replace(/(\d+)(?=\s*(?:days?|hours?|weeks?)\b)/gi, d => /^0+$/.test(d) ? ' zerocount ' : ' '));
     const STAT_LABEL = /^(?:on )?(?:(?:(?:monthly|regular|recurring|annual|new|most|our) )?(?:donors|customers|members|guests|people|users|buyers|shoppers|supporters|visitors) (?:give|donate|spend)(?: on)? )?(?:(?:the|an?|our) )?(?:average|avg|median|typical|mean)(?: (?:gift|donation|order|bill|invoice|basket|cart|purchase|payment|ticket|cost|spend|booking|stay|order value|order size|monthly gift|monthly donation))?(?: is| was| of)?$/;
     const OPTIONAL_LABEL = /^optional (?:tips?|donations?|add on|addon|add ons|gift wrap|gift wrapping|insurance|protection|gift|extras?|upgrade|warranty|coverage)$/;
+    // F-A. A savings noun clears a figure larger than the amount only if the WHOLE label is a closed savings phrase ("Discount", "Coupon",
+    // "Promo code SAVE10", "Savings", "You saved", "Rebate", "Cashback", "Student discount"), or the figure has a minus sign, or another
+    // figure reconciles it (gross minus the figure is at most the amount). "After/with/net of/less/final/remaining/outstanding/balance"
+    // plus a savings noun names the amount still payable.
+    const SAV_NOUNS = set('discount discounts coupon coupons promo promos promotion promotional saving savings rebate rebates cashback');
+    const SAV_MODS = set('student students member members membership loyalty bundle bundled seasonal employee employees staff senior seniors military veteran veterans teacher teachers welcome referral birthday holiday sale clearance volume bulk multi policy safe driver early bird first order orders new customer customers online app vip sitewide storewide black friday cyber monday summer winter spring fall annual price pricing match trade family group shipping delivery code codes applied redeemed saved save off earned available used extra additional bonus instant fee fees service full');
+    const SAV_DENY = set('after with net less minus final remaining outstanding balance post plus before incl excl including excluding');
+    const savingsLabel = raw => {
+      // A code is one token that has a digit or is capitals ("SAVE10", "(WELCOME)", "code SUMMER"); it names the offer and is not read.
+      const t = norm(raw).replace(/\bpaid in full\b/gi, 'full').replace(/\(\s*[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*\s*\)/g, ' ').replace(/\b([Cc]odes?)\s*:?\s*(?:[A-Za-z]*\d[A-Za-z0-9_-]*|[A-Z][A-Z0-9_-]{2,})(?![A-Za-z])/g, '$1 ');
+      const w = words(t).filter(x => !FILL.has(x));
+      return { has: w.some(x => SAV_NOUNS.has(x)), denied: w.some(x => SAV_DENY.has(x)), closed: w.every(x => SAV_NOUNS.has(x) || SAV_MODS.has(x)) };
+    };
+    // F-E. A payment due now that is a deposit or an installment, beside the later total or balance of the same bill.
+    const PARTIAL_LABEL = /^(?:(?:(?:booking|reservation|initial|first|required|down) )?(?:deposit|payment)(?: of)? due (?:now|today|at (?:booking|checkout|reservation|signup|sign up))|down payment(?: due (?:now|today|at (?:booking|checkout)))?|(?:(?:first|next|this|current) )?(?:installment|instalment)(?: of)?(?: due (?:now|today))?)$/;
+    const LATER_TOTAL = /^(?:(?:estimated|full|entire) )?(?:total(?: (?:cost|price|amount))?|price|cost)$/;
+    const LATER_BALANCE = /^(?:(?:remaining|outstanding) )?balance(?: of| remaining| due| owing)?$|^(?:remaining|outstanding) (?:balance|amount)$|^(?:remainder|rest)$/;
+    const LATER_WHEN = ['at pickup', 'at pick up', 'at check in', 'at checkin', 'on arrival', 'at arrival', 'upon arrival', 'at delivery', 'upon delivery', 'at completion', 'upon completion', 'on completion', 'at closing', 'at departure', 'at the event', 'at move in', 'at installation', 'later', 'at the venue', 'at the property', 'at the counter'];
+    const LATER_VERB = ['is due', 'due', 'is payable', 'payable', 'will be due', 'is owed', 'owed', 'remains', 'is the remainder'];
     const PERIODS = ['a month', 'per month', 'a year', 'per year', 'a week', 'per week', 'a day', 'per day', 'an hour', 'per hour', 'a night', 'per night', 'monthly', 'yearly', 'weekly', 'daily', 'each', 'each way', 'one way', 'per way', 'per person', 'a person', 'per bag'];
     // A gross figure that a tender line (gift card, store credit, voucher, credit, a payment already received) brings down to the amount.
     const TENDER = set('gift voucher vouchers credit credits certificate');
@@ -537,7 +593,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       if ((COND.has(w) || list.some(x => LATE.has(x))) && (LATE_LABEL.test(phrase) || !strong && FROM_LABEL.test(phrase))) return { kind: 'exempt' };
       if (PAY.has(w)) {
         const p = list.at(-2), i = list.length - 2;
-        return PART.has(p) || CHARGE_PART.has(p) && /^(?:charges?|payments?)$/.test(w) || i >= 0 && exemptAt(i) ? { kind: 'part', cut: CUT.has(p) } : { kind: 'pay' };
+        if (PART.has(p) || i >= 0 && exemptAt(i)) return { kind: 'part', cut: CUT.has(p) };
+        return CHARGE_PART.has(p) && /^(?:charges?|payments?)$/.test(w) ? { kind: 'part', chargePart: true } : { kind: 'pay' };
       }
       if (cutPhrase) return { kind: hasPay ? 'part' : 'exempt', cut: true };
       if (PART.has(w)) return { kind: 'part' };
@@ -548,7 +605,9 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       return { kind: 'part', unknown: true };
     };
     const analyze = rawLines => {
-      const list = rawLines.map(norm).map(t => RECOMMEND.test(t) && !STRONG_PAY.test(t) ? '' : t), found = [];
+      // U+E000 to U+E003 are private marks put on the text of chosen controls and of text outside the order summary; they are not read.
+      const chosenLine = rawLines.map(t => /\uE000/.test(t)), outsideLine = rawLines.map(t => /\uE002/.test(t));
+      const list = rawLines.map(t => norm(t.replace(/[\uE000-\uE003]/g, ''))).map(t => RECOMMEND.test(t) && !STRONG_PAY.test(t) ? '' : t), found = [];
       const hasFigure = list.map(t => [...t.matchAll(figure)].some(m => m[10] === undefined));
       // A label line may carry a figure of its own in parentheses ("Gift card (balance $20.00)" above "-$20.00").
       const labelFigure = list.map(t => [...unparen(t).matchAll(figure)].some(m => m[10] === undefined));
@@ -612,6 +671,12 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           const sentence = text.slice(sStart, m.index) + ' ' + (sStop ? sRest.slice(0, sStop.index) : sRest);
           const onlyFigure = [...sentence.matchAll(figure)].every(x => x[10] !== undefined);
           const labelShape = shape(labelRaw), labelBase = labelPhrase(labelRaw), clauseOk = more => closedClause(pieces, more);
+          // F-A: a savings noun in the label. After/with/net of/... names the amount still payable. Otherwise the whole label must be a
+          // closed savings phrase, or the figure has a minus sign; if not, it clears itself only against another figure (see below).
+          const minus = /[-−–]$/.test(seg), lab = via === 'left' || via === 'above' ? savingsLabel(labelRaw) : undefined;
+          let needsGross = false;
+          if (role.sav && role.kind === 'exempt' && lab?.has) { if (lab.denied) role = { kind: 'part' }; else if (!minus && !lab.closed) needsGross = true; }
+          if (via === 'inherit' && previous.needsGross) needsGross = true;
           // A savings word clears a figure only if the label (parentheses too) names no money movement and the rest of the sentence is
           // ordinary savings talk ("off your first order", "(SAVE10)"). "Discount: $500.00 deducted from your card" is a plain figure.
           if (role.sav && role.kind === 'exempt' && (words(labelRaw).some(x => MOVE.test(x) || PAY.has(x) && x !== 'price' && x !== 'cost') || !savingsClause(pieces))) role = { kind: 'part' };
@@ -625,9 +690,13 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           }
           // "Late fee", "from", "up to", "if" exempt a figure only if nothing but a period, a code or a date follows it, or the whole
           // sentence is a late fee note ("A $5.00 late fee applies after that date.").
-          const named = sig(labelBase);
+          // "now" and "today" are filler elsewhere, but "Late fee now" and "Late fee: today" are a fee due now. A note that sits beside a sentence
+          // calling the money charged, billed or taken is no note.
+          const named = sig(labelBase), lateNamed = words(labelBase).filter(x => !FILL.has(x) || x === 'now' || x === 'today');
+          const otherSentences = text.slice(0, sStart) + ' ' + (sStop ? sRest.slice(sStop.index + 1) : '');
+          const noteOk = onlyFigure && penaltyNote(penaltyShape(sentence)) && !words(otherSentences).some(x => MOVE.test(x) || /^(?:charged|charges|billed|billing|debited|collected|deducted|withdrawn|taken|captured)$/.test(x));
           if ((via === 'left' || via === 'above') && role.kind === 'exempt' && !role.settled && (COND.has(named.at(-1)) || named.some(x => LATE.has(x))) &&
-              !((LATE_LABEL.test(named.join(' ')) || FROM_LABEL.test(named.join(' '))) && clauseOk(PERIODS) || onlyFigure && penaltyNote(shape(sentence)))) role = { kind: 'part' };
+              !((LATE_LABEL.test(lateNamed.join(' ')) || FROM_LABEL.test(named.join(' '))) && clauseOk(PERIODS) || noteOk)) role = { kind: 'part' };
           const role0 = role;
           // A tender that was bought, offered or not applied does not bring an order total down to the amount. A minus sign before the
           // figure says it was taken off. Without one, the line closes a gap only if its label is a closed phrase ("Gift card applied",
@@ -642,7 +711,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           }
           // A late or cancellation fee note, an optional extra, or a statistic ("an average of $25.00 a month"): not a charge.
           if (role.kind === 'part' || role.kind === 'unit' || role.kind === 'none') {
-            if (!bare && !mark && !spelled && onlyFigure && (penaltyNote(shape(sentence)) || (STAT_LABEL.test(labelBase) || OPTIONAL_LABEL.test(labelBase)) && clauseOk(PERIODS))) role = { kind: 'exempt' };
+            if (!bare && !mark && !spelled && onlyFigure && (noteOk || (STAT_LABEL.test(labelBase) || OPTIONAL_LABEL.test(labelBase)) && clauseOk(PERIODS))) role = { kind: 'exempt' };
           }
           // A bare number counts only straight after a pay word ("Total 500", "Total: 500"), and not as a count or a date.
           if (bare && (via !== 'left' || role.kind !== 'pay' || COUNTED.test(words(after(tail))[0] ?? '') || /^\s*%/.test(tail))) return;
@@ -659,7 +728,15 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           const approx = !mark && !spelled && clauseOk() && (EST_LABEL.test(estBase) || estBase === '' && tailMark);
           const close = tailMoney.indexOf(')');
           const paren = previous && /^\s*\(\s*$/.test(seg) && closedClause(close < 0 ? tailMoney : tailMoney.slice(0, close)) ? previous : undefined;
-          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, role0, mark, text, period, approx, paren, labelRaw };
+          // F-E: a deposit or installment due now, and the later total or balance of the same bill.
+          const named2 = via === 'left' || via === 'above' || via === 'left+right';
+          const partial = named2 && PARTIAL_LABEL.test(labelBase) && clauseOk();
+          const whenSaid = LATER_WHEN.some(x => (' ' + shape(clause) + ' ').includes(' ' + x + ' '));
+          const later = !named2 ? undefined : LATER_TOTAL.test(labelBase) && clauseOk() ? 'total'
+            : LATER_BALANCE.test(labelBase) && clauseOk([...LATER_VERB, ...LATER_WHEN]) && (!/\b(?:due|owing)\b/.test(labelBase) || whenSaid) ? 'balance' : undefined;
+          // "Reward(s)" are a wallet balance unless the line says they were taken off ("Rewards applied", "-$5.00").
+          const weakCut = !!role.cut && words(labelRaw).some(x => x === 'reward' || x === 'rewards'), marked = [...words(labelRaw), ...words(clause)].some(x => /^(?:applied|redeemed|used|off)$/.test(x));
+          const entry = { weakCut, marked, value: mark || spelled ? Infinity : parse(raw), cur, role, role0, mark, text, period, approx, paren, labelRaw, at: i + ':' + m.index, chosen: chosenLine[i], outside: outsideLine[i], minus, needsGross, partial, later };
           found.push(entry); previous = entry;
           // "Total after $2.00 discount: $500.00": a qualifier figure does not end the label of the figure that follows.
           if (!(via === 'left' && QUAL.has(ls.at(-1)))) start = m.index + m[0].length;
@@ -669,16 +746,32 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     };
     let cuts;
     const reconciled = (f, tender = false) => {
-      cuts ??= analyze(strictLines() ?? []).filter(x => x.role.cut && !x.mark && Number.isFinite(x.value));
+      // A discount line closes a gap when it has a minus sign or sits in the order summary; a savings figure in a banner, header or sidebar
+      // does not, and neither does one whose label is not a closed savings phrase (F-A).
+      cuts ??= analyze(strictLines() ?? []).filter(x => x.role.cut && !x.mark && !x.needsGross && Number.isFinite(x.value) && (x.minus || !x.outside) && (!x.weakCut || x.minus || x.marked));
       // One discount line can close the gap, or all the discount lines below the figure together (insurance: premium, multi-policy discount, safe driver discount).
       const lines = cuts.filter(d => d.text !== f.text && (!tender || d.role.tender));
       return lines.some(d => f.value - d.value <= A + eps) || f.value - lines.filter(d => d.value <= f.value + eps).reduce((sum, d) => sum + d.value, 0) <= A + eps;
     };
     const figures = analyze(lines);
     const reference = /^[A-Za-z]{3}$/.test(pageCurrency ?? '') ? pageCurrency.toUpperCase() : figures.find(f => !f.mark && f.cur && Math.abs(f.value - A) < eps)?.cur;
+    // F-B: a chosen control's figure is an add-on the user will pay, whatever its label says: one larger than the amount asks, and
+    // chosen figures (other than the amount itself) that together exceed the amount ask unless a discount line brings them down.
+    const picked = figures.filter(f => f.chosen && !f.mark && !f.minus && Number.isFinite(f.value) && f.role.kind !== 'unit');
+    if (picked.some(f => f.value > A + eps)) return true;
+    const sumOf = (list, skipAmount) => { const seen = new Set(); let sum = 0; for (const f of list) { const k = f.at; if (seen.has(k) || skipAmount && Math.abs(f.value - A) < eps) continue; seen.add(k); sum += f.value; } return sum; };
+    const pickedSum = sumOf(picked, true);
+    if (pickedSum > A + eps && !reconciled({ value: pickedSum, text: '' })) return true;
+    // F-D: fee-type parts ("Booking payment" + "Security payment") are added up and the sum is checked against the amount.
+    const chargeSum = sumOf(figures.filter(f => f.role.chargePart && !f.mark && Number.isFinite(f.value)), false);
+    if (chargeSum > A + eps && !reconciled({ value: chargeSum, text: '' })) return true;
+    const partialNow = figures.some(g => g.partial && !g.mark && Math.abs(g.value - A) < eps);
+    const laterTotal = partialNow ? Math.max(0, ...figures.filter(g => g.later === 'total' && !g.mark && Number.isFinite(g.value)).map(g => g.value)) : 0;
     return figures.some(f => {
       const kind = f.role.kind;
       if (f.mark) return !(kind === 'exempt' || kind === 'part' && f.role.unknown);
+      // F-E: the page says what is due now (a deposit or installment equal to the amount); its items, total and balance are the bill, not this charge.
+      if (partialNow && Number.isFinite(f.value) && (f.later || kind === 'part' && laterTotal && f.value <= laterTotal + eps) && same(f.cur, reference)) return false;
       if (kind !== 'exempt' && !same(f.cur, reference)) {
         // An estimate note clears a euro or pound figure, not another kind of dollar: "$24.50 CAD" beside "$18.00 USD" is easy to read as the charge.
         const dollars = x => GENERIC['$'].includes(x), confusable = dollars(f.cur) && dollars(reference);
@@ -687,6 +780,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
         return confusable || !near || !(f.approx || f.paren && !f.paren.mark && Math.abs(f.paren.value - A) < eps && same(f.paren.cur, reference));
       }
       if (Math.abs(f.value - A) < eps) return false;
+      // F-A: a savings figure with an open label, larger than the amount, needs a gross figure above it that it reconciles to the amount.
+      if (f.needsGross && f.value > A + eps) return !figures.some(g => g !== f && !g.mark && !g.needsGross && Number.isFinite(g.value) && g.value > f.value + eps && g.value - f.value <= A + eps);
       // A yearly price beside the monthly one that is the charge ("$18.00/month", "$180.00/year") is the other plan, not this charge.
       if (kind === 'unit') return f.value > A + eps && !(f.period === 'year' && f.value <= 12 * A + eps && figures.some(g => g.period === 'month' && Math.abs(g.value - A) < eps));
       if (kind === 'part') return f.value > A + eps && !reconciled(f);
@@ -707,6 +802,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
         continue;
       }
       const value = ['input', 'select', 'textarea'].includes(read(node, 'localName')) ? read(node, 'value') : visibleText(node);
+      if (key === 'amount' && !summaryRoot) summaryRoot = summaryOf(node);
       const shown = valueOf(value);
       if (attribute !== null && attribute.trim() !== shown) return;
       if (shown) values.push(shown);
@@ -717,7 +813,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     if (key === 'amount' && values.length === 1) {
       // Anything rendered that shows a different payable figure (LOOSE) leaves the terms ambiguous.
-      const lines = looseLines(); if (!lines || conflicts(lines, () => visibleText(root).split('\n'), values[0], field('currency'))) return;
+      const lines = looseLines(); if (!lines || conflicts(lines, () => visibleText(root, true).split('\n'), values[0], field('currency'))) return;
     }
     return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };

@@ -695,3 +695,76 @@ test('round 10: honest allow rate over the 36 suite pages, the 20 reviewer pages
   assert.ok(twenty >= 19 && twelve >= 9 && ten >= 10, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10');
   assert.ok(real + twenty + twelve + ten >= 70, 'together ' + (real + twenty + twelve + ten) + '/78');
 });
+
+// ---------------------------------------------------------------- Round 11
+// F-A: a savings noun clears a figure larger than the amount only with the whole label in a closed savings vocabulary, a minus sign, or a
+// gross figure it reconciles to; "after/with/net of/less/final/remaining/outstanding/balance" + a savings noun is a pay label.
+// F-B: the text of a chosen control (checked box or radio, aria-checked, selected option, a linked label) is an add-on the user will pay:
+// one larger than the amount, or chosen figures that together exceed it, ask whatever the label says ("Optional ..." too; the round 10
+// expectation "d R O6 Optional tip checked" allow became ask). F-C: a count of 0 days or hours is now; "now" and "today" are not filler
+// in a late fee label. F-D: fee-type parts are added up; unsigned savings figures outside the order summary and "Rewards" without
+// a minus sign or "applied" close no gap. F-E: a deposit or installment due now equal to the amount lets the estimated total, the
+// remaining balance and the items of that bill stand; "After <date> the fine becomes $X" is a note.
+// Fixture pay-r11-labels: the round 10 reviewer's fam6 (language prefixes), fam8 (after/with/net), fam11 (checked boxes), fam3 (late fee),
+// fam7 (fee-type parts), fam9 (discount sums, banners, sidebars) and this round's own extras (425 bodies). Fixture pay-r11-honest: the
+// reviewer's 10 new honest pages (grocery and car rental hold a pre-authorization or deposit hold and ask on purpose; the tuition page
+// asks because its items are larger than the installment and no total is shown).
+const fixture11 = name => JSON.parse(readFileSync(new URL('./fixtures/pay-r11-' + name + '.json', import.meta.url), 'utf8'));
+test('F-A to F-E (round 11): 425 bodies (every charge phrasing of the round 10 review asks; the closed phrases, controls and honest bills allow)', { skip, timeout: 900000 }, async t => {
+  await readCases(t, fixture11('labels').map(([name, body, expect]) => [name, form10(body), expect]));
+});
+test('F-E (round 11): the reviewer\'s 10 new honest pages read with their own amounts (7/10 allow; the holds and the tuition page ask)', { skip, timeout: 300000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  try {
+    for (const [name, html, amount, expect] of fixture11('honest'))
+      await t.test(name, async () => {
+        await page.setContent('<!doctype html><body style="margin:8px"><main>' + html);
+        let read; try { read = (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount; } catch { read = undefined; }
+        assert.equal(read === amount ? 'allow' : 'ask', expect, name + ' read amount=' + read);
+      });
+  } finally { await page.close(); }
+});
+test('F-A, F-B, F-C (round 11): twelve of the reviewer\'s charge phrasings, clicked through the real route, do not reach the network', { skip, timeout: 600000 }, async t => {
+  const T = row7('<b>Total</b>', '<b>$' + amt() + '</b>');
+  const X = '$500.00';
+  const pages = {
+    'K1 checked Optional insurance': `<label><input type=checkbox checked> Optional insurance ${X}</label>` + T,
+    'K1b checked Optional tip': `<label><input type=checkbox checked> Optional tip ${X}</label>` + T,
+    'K6 checked Insurance from': `<label><input type=checkbox checked> Insurance from ${X}</label>` + T,
+    'K2 aria checked Optional protection': `<div role=checkbox aria-checked=true>Optional protection ${X}</div>` + T,
+    'K4 selected option Optional tip': `<select><option selected>Optional tip ${X}</option><option>No tip</option></select>` + T,
+    'K5 bare checked box row': `<div><input type=checkbox checked> Optional tip ${X}</div>` + T,
+    'P1 Zu zahlen discount': row7('Zu zahlen discount', X) + T,
+    'P2 Montant prélevé discount': row7('Montant prélevé discount', X) + T,
+    'P3 Débit coupon': row7('Débit coupon', X) + T,
+    'A1 Final after coupon': row7('Final after coupon', X) + T,
+    'A2 Balance after discount': row7('Balance after discount', X) + T,
+    'A3 Outstanding after promo': row7('Outstanding after promo', X) + T,
+    'L1 A $500.00 late fee applies after 0 hours.': `<p>A ${X} late fee applies after 0 hours.</p>` + T,
+    'L2 Late fee now': row7('Late fee now', X) + T,
+    'S5 rewards banner beside a $500.00 service fee': row7('Service fee', X) + '<p>Rewards: $482.00 available</p>' + T,
+    'D1 Booking payment + Security payment, $17.99 each': row7('Booking payment', '$17.99') + row7('Security payment', '$17.99') + T,
+    'H1 control: a plain Service fee $500.00': row7('Service fee', X) + T,
+  };
+  for (const [name, body] of Object.entries(pages))
+    await t.test(name, async t2 => {
+      const r = await payOnce(t2, form(body), 'Pay', { head: '<meta charset="utf-8">' });
+      assert.equal(r.payment, 0, name + ': ' + r.text);
+    });
+});
+test('round 11: honest allow rate over the 36 suite pages, 20 + 12 + 10 reviewer pages and the 10 new pages is at least 77/88 (the two holds count as correct asks)', { skip, timeout: 240000 }, async t => {
+  const b = await bank(t), page = await b.host.newPage();
+  let twenty = 0, twelve = 0, ten = 0, fresh = 0;
+  const read = async (html, amount = '18.00') => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === amount; } catch { return false; } };
+  try {
+    for (const [, html] of fixture8('honest-20')) if (await read(html)) twenty++;
+    for (const [name, html] of fixture9) if (/^N(?:[1-9]|1[0-2]) /.test(name) && await read(html)) twelve++;
+    for (const [name, html, amount] of fixture10('honest')) if (/^honest10 /.test(name) && await read(html, amount)) ten++;
+    for (const [, html, amount] of fixture11('honest')) if (await read(html, amount)) fresh++;
+  } finally { await page.close(); }
+  const real = [...outcome.values()].filter(Boolean).length + 2;
+  const total = real + twenty + twelve + ten + fresh;
+  t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; new 10: ' + fresh + '; together ' + total + '/88, with the 2 holds counted as correct asks ' + (total + 2) + '/88');
+  assert.ok(twenty >= 19 && twelve >= 9 && ten >= 10, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10');
+  assert.ok(total + 2 >= 77, 'together ' + total + '/88');
+});

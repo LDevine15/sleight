@@ -142,8 +142,18 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   a deadline or "unpaid" ("A $5.00 late fee applies after that date.", "If you pay after Oct 30, a $500.00 late fee
   applies.", "Late fee: $25.00 if unpaid"). "Within 5 minutes" and "if paid" are not anchors. "Late fee debited from your
   card: $500.00", "Optional debit: $500.00", "Your account will be debited up to $500.00", "Debit from $500.00" and "We
-  collect an average of $500.00" ask. A bare "Late fee: $500.00" or "Optional tip $500.00" row (a checked box too) is
-  allowed at any size, since the closed label is the exemption.
+  collect an average of $500.00" ask. A bare "Late fee: $500.00" or "Optional tip $500.00" row is allowed at any size, since the
+  closed label is the exemption. A count of 0 days or hours counts as now, and "now" or "today" in a late fee
+  label ("Late fee now", "Late fee: today") makes the figure a plain part. A late fee note beside a sentence that says
+  the money is charged, billed or taken ("We will charge your card now.") asks. A note on a fine that grows ("After Nov
+  27 the fine becomes $120.00") is allowed when nothing else is in the sentence.
+- The text of a chosen control is an add-on the user will pay: a checked box or radio, an aria-checked element, a
+  selected option, the label linked to one, or the row of a bare checked box. A chosen figure larger than the amount
+  asks, and so do chosen figures (the amount itself aside) that together exceed it unless a discount line brings them
+  down, whatever the label says. A checked "Optional tip $500.00" or "Insurance from $500.00" box asks (round 10
+  allowed it). A chosen figure at most the amount, such as a checked "Standard fee $5.99", is read as before. Not
+  seen: a styled element that replaces the box without an aria state, and bare box text in a row that holds
+  another control.
 - A savings word clears a figure only inside a closed phrase. A savings noun (discount, savings, coupon, promo, rebate,
   cashback, a struck-out price) ends a label. Applied, redeemed, saved, off, available and refund count only alone or
   straight after such a noun, or after credit, code, offer, points or reward ("Discount applied", "Loyalty points
@@ -152,21 +162,41 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   deduct, capture, collect, authorize, hold, taken, card, account, bank) or a pay word, and the rest of the sentence can
   use only savings words, a code or a date ("off your first order", "(SAVE10)"). "Fee applied", "Debit limit", "Debited
   and applied" and "Discount: $500.00 deducted from your card" ask. Cost: 2 of 30 honest large-savings phrasings that
-  allowed now ask ("Student discount: $200.00 off, verified by SheerID", "Bundle and save"), and a money-movement word in
-  another language before a savings noun ("Abgebucht discount") is not seen, so it is allowed.
+  allowed now ask ("Student discount: $200.00 off, verified by SheerID", "Bundle and save").
+- A savings noun (discount, coupon, promo, savings, rebate, cashback) clears a figure larger than the amount only when
+  the whole label is a closed savings phrase ("Discount", "Coupon", "Promo code SAVE10", "Savings", "You saved",
+  "Rebate", "Cashback", or a closed noun before it such as Student, Member, Loyalty, Bundle, Seasonal, Employee), or the
+  figure has a minus sign, or another figure above it minus this one is at most the amount. "Zu zahlen discount",
+  "Montant prélevé coupon", "Paid discount", "Cash discount" and "Autopay discount" ask (124 of the round 10
+  reviewer's 144 language and money-word phrasings allowed before, 1 control allows now). After, with, net of, less,
+  minus, final, remaining, outstanding or balance before a savings noun makes the label a pay label: "Balance
+  after discount", "With coupon code" and "Final after coupon" ask (24 of 28). A real discount with an unusual name and
+  no minus sign, larger than the amount, asks. And "Rewards $500.00" stays a wallet line that closes no gap.
 - A figure's clause is read to the sentence end across later figures, so "Previous balance: $500.00 ($0.00 tax) will be
   withdrawn from your card." asks. A statement in a separate cell or on the next line is still not read.
 - The discount lines (and tender and settled lines) below a figure are added together to close its gap, so a subtotal
   of $612.00 with two discounts of $61.20 and $30.60 beside a $520.20 total allows. A gap the discount lines don't close
   asks. "charge" or "payment" after a fee-type word (tax, carrier, facility, device, booking, usage, convenience...) is a
   part, so "Taxes and carrier charges", "Facility charge" and "Device payment (18 of 24)" allow when they are at most
-  the amount.
-- Honest pages, 70/78 allow (measured 2026-10-15): the 36 realistic pages 32/36, the round 8 reviewer's 20 pages 19/20,
-  the reviewer's 12 pages 9/12, the round 9 reviewer's 10 industry pages 10/10 (65/78 before this round: those 10 gave
-  5/10). The 8 that ask are two donation pages with a $50 amount chip,
-  a dialog with its terms outside the Pay button's form, two pages with euro line items beside a USD total, a
-  renewal page that writes the amount attribute twice, a donation with "Total impact $36.00" and a hotel page with
-  "Balance due at check-in $102.00". Asking on the last two may be correct.
+  the amount, and those fee-type parts are added up: "Booking payment $17.99" beside "Security payment $17.99" and a
+  $18.00 total asks. A discount line counts only with a minus sign or inside the order summary (the section, aside or form
+  that holds the amount, not its header, nav, footer or an aside inside it), and "Reward" lines count only with a minus
+  sign or "applied", "redeemed", "used" or "off". A coupon list in a sidebar, "Promos $482.00" in a header and "Rewards:
+  $482.00 available" no longer bring a part down to the amount. A banner in the same flat form as the total is still inside the summary.
+- A deposit or installment due now that equals the amount ("Deposit due now", "Down payment due today", "Installment 2
+  of 3 due today", "First payment due today") lets the later total and balance of the same bill stand ("Estimated
+  total", "Total cost", "Remaining balance", "Balance of $X is due at pickup"), and lets the items of that bill stand when
+  none is larger than the later total. Any other pay word ("Total due", "Amount due") beside the deposit asks, and so
+  does a pre-authorization or deposit hold ("A $200.00 deposit hold is placed on your card"). A page that claims such a
+  deposit lets a large fee under its estimated total through.
+- Honest pages, 77/88 allow, 79/88 with the two hold pages counted as correct asks (measured 2026-10-15): the 36
+  realistic pages 32/36, the round 8 reviewer's 20 pages 19/20, the reviewer's 12 pages 9/12, the round 9 reviewer's 10
+  industry pages 10/10, the round 10 reviewer's 10 new pages 7/10 (5/10 before this round). Three of the new pages
+  ask: the grocery order with a $150.00 pre-authorization hold, the car rental with a $200.00 deposit hold and the
+  tuition page (its items are larger than the installment and it shows no later total). The 8 older pages that ask are two donation pages
+  with a $50 amount chip, a dialog with its terms outside the Pay button's form, two pages with euro line items beside
+  a USD total, a renewal page that writes the amount attribute twice, a donation with "Total impact $36.00" and a hotel
+  page with "Balance due at check-in $102.00". Asking on the last two may be correct.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.
