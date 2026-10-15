@@ -181,10 +181,18 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             if (trusted) { await gate(); ctx.beginInput(target); }
             started = true; return locator.click({ ...options, ...extra });
           });
+          const pressKey = () => trusted ? ctx.pressTarget(target, step.key, options) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          // Enter can follow a link or submit a form into a new tab: arm the popup hook, as a click does.
+          if (step.do === 'press' && enter) return backgroundClick(tab, locator, async extra => {
+            if (trusted) { await gate(); ctx.beginInput(target); }
+            started = true;
+            if (extra.modifiers) await page.keyboard.down('ControlOrMeta');
+            return pressKey();
+          }, { press: true });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           started = true;
           if (step.do === 'type') return locator.fill(step.text, options);
-          if (step.do === 'press') return trusted ? ctx.pressTarget(target, step.key, options) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
           if (step.do === 'check') return locator.check(options);
           if (step.do === 'uncheck') return locator.uncheck(options);
@@ -233,7 +241,12 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const settleUntil = start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature;
+            // A navigation can destroy the target just before its event arrives: give the event a moment, then report the read failure.
+            formChanged = await trustedLocatorRead(locator, inspectTarget).then(read => read.formSignature !== info.formSignature, async error => {
+              for (let wait = 0; wait < 5 && !armed.boundary; wait++) await sleep(50);
+              if (armed.boundary) return true;
+              throw error;
+            });
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
           await sleep(Math.min(50, settleUntil - now()));
@@ -255,7 +268,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : typeof result === 'string' ? result
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
-        lines.push(label + ': ' + outcome);
+        // A script that opens a tab after the input (a timer, a fetch) is held in the background, never silently.
+        const heldOpenings = ['click', 'press'].includes(step.do) ? await tab.takeHeld?.().catch(() => 0) : 0;
+        lines.push(label + ': ' + outcome + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();
