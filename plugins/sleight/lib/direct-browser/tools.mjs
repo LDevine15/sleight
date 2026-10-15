@@ -79,6 +79,8 @@ export function validateToolCall(input, browser) {
   return request;
 }
 const clean = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 240);
+// A page picks its title and URL path (history.replaceState), so trusted lines carry only the origin.
+const originOf = url => { try { const u = new URL(url); return u.origin !== 'null' ? u.origin : u.protocol + (u.pathname === 'blank' ? 'blank' : ''); } catch { return 'unknown origin'; } };
 const textResult = (text, isError = false) => ({ text, isError });
 
 export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillFields, ctx,
@@ -107,7 +109,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
         if (ended) throw Error('turn ended');
         const a = request.arguments;
         if (request.name === 'browser_tabs') {
-          if (a.do === 'list') return textResult((await pages.list()).map(row => `${clean(row.tab)} ${clean(row.url)}`).join('\n') || 'No owned tabs.');
+          if (a.do === 'list') return textResult((await pages.list()).map(row => `${clean(row.tab)} ${originOf(row.url)}`).join('\n') || 'No owned tabs.');
           pages.tab(a.tab); started = true;
           return textResult(`${a.do}: ${JSON.stringify(await pages[a.do](a.tab))}`);
         }
@@ -116,7 +118,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           started = true;
           const { tab } = await pages.openTab({ url: a.url }), entry = pages.tab(tab);
           await assertEndpointRead(entry.page, endpoint);
-          const header = `${tab} ${clean(await entry.page.title())}\n${clean(entry.page.url())}`;
+          const header = `${tab} ${originOf(entry.page.url())}\nTitle (untrusted page content): ${clean(await entry.page.title())}`;
           try { const observed = await capture(entry, { maxChars: 8000 }); return finish(header + '\n' + observed.text, entry, observed); }
           catch (error) { if (error.message === endpointBlock) throw error; return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
         }

@@ -101,10 +101,10 @@ for (const event of ['navigation', 'document', 'dialog', 'popup', 'close']) test
     assert.equal(f.page.listenerCount(name), 0, name);
 });
 
-test('v3 never retries a timed out dispatched input and names a cover with its buttons', async () => {
+test('v3 never retries a timed out dispatched input and keeps the cover\'s page text out of the harness line', async () => {
   const f = fixture({ fail: 'Timeout 1000ms exceeded: Cookie notice intercepts pointer events' });
   const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e2' }], {});
-  assert.match(result.lines[0], /Cookie notice/); assert.match(result.lines[0], /Accept cookies/);
+  assert.match(result.lines[0], /covering element/); assert.doesNotMatch(result.lines[0], /Cookie notice|Accept cookies/); // page text belongs in the labelled blocker read
   assert.match(result.lines[1], /not reached/); assert.equal(f.actions.length, 1);
 });
 

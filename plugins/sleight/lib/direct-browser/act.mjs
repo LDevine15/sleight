@@ -51,6 +51,9 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
   const associated = read(el, 'form');
   const form = associated === undefined ? read(el, 'closest')('form') : associated, tag = read(el, 'localName'), role = read(el, 'getAttribute')('role'), name = words(el).trim().slice(0, 100);
   const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(read(el, 'type')) || role === 'button';
+  // A label click forwards to its control, so a label for a file or color input opens the native picker like the input does.
+  const forwarded = (() => { try { const label = typeof HTMLLabelElement === 'undefined' ? null : Element.prototype.closest.call(el, 'label'), control = label && Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get.call(label);
+    return control instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(control).toLowerCase() : ''; } catch { return ''; } })();
   const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
     /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
     read(node, 'localName') === 'iframe' || (read(node, 'localName') === 'button' || read(node, 'type') === 'submit') && payment(words(node)));
@@ -60,7 +63,7 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
     const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');
     for (let i = 0; i < content.length; i++) hash = Math.imul(hash ^ content.charCodeAt(i), 16777619);
   }
-  return { name, tag, role, kind: button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit, payment: payment(name) || submit && formPayment,
+  return { name, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit, payment: payment(name) || submit && formPayment,
     formPayment, formSignature: form ? hash : null };
 }
 
@@ -254,11 +257,13 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         let detail = step.do === 'upload' && started ? 'upload did not finish; inspect the control before retrying' : String(error.message);
         for (const value of [step.text, ...step.values ?? [], ...step.paths ?? []]) if (typeof value === 'string' && value) detail = detail.replaceAll(value, '[redacted]');
         detail = clean(detail);
+        if (/intercepts pointer events/i.test(error.message)) detail = 'covered by another element; dismiss the cover first'; // Playwright's message quotes the page's own markup
         if (/intercepts pointer events/i.test(error.message) && locator) {
           try {
             const cover = await locator.evaluate(coverDetails, undefined, { timeout: 250 });
             if (cover) {
-              detail = `covered by ${clean(cover.name)}; buttons: ${cover.buttons.map(clean).join(', ')}; dismiss the cover first`;
+              // The cover's name and buttons are page text; they reach the model only in the labelled blocker read below.
+              detail = 'covered by a covering element; dismiss the cover first (its controls are listed below)';
               blocker = await read({ find: cover.buttons[0] || cover.name, maxChars: 2000 });
             }
           } catch {}
