@@ -251,7 +251,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
 // browser is the Playwright connection through V1's CDP filter; session is the
 // approved root CDP {send,on,off,sessionId}. Existing pages are never acquired.
 export function createPageRegistry({ browser, session, context = browser?.contexts()[0], upstream, ownTarget, releaseTarget,
-  endpoint, timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
+  endpoint, endpointBlocked, timeoutMs = 5000, popupWaitMs = 2000 } = {}) {
   if (!context || typeof session?.send !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('approved browser connection required');
   if (ownTarget !== undefined && (typeof ownTarget !== 'function' || typeof upstream?.send !== 'function'))
@@ -274,7 +274,6 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   };
   const install = async entry => {
     entry.cdp.on('Page.windowOpen', event => {
-      if (endpointURL(event.url, endpoint)) entry.pendingEndpointPopup = true;
       entry.windowOpenNo++;
       if (ownTarget) track(discoverPopups(entry)).catch(() => { entry.popupPending = true; });
     });
@@ -296,18 +295,12 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   };
   const adopt = async (page, info, opener) => {
     if (blockedTargets.has(info.targetInfo.targetId)) return;
-    bindEndpointPage(page, endpoint, info.cdp);
+    bindEndpointPage(page, endpoint, info.cdp, { blocked: () => endpointBlocked?.(info.targetInfo.targetId),
+      close: () => blockPage(page, info, opener) });
     let blocked = endpointTarget(info.targetInfo, endpoint) || endpointURL(page.url(), endpoint);
     if (!blocked) try { await assertEndpointRead(page); }
     catch (error) { if (error.message !== endpointBlock) throw error; blocked = true; }
-    if (blocked) {
-      const notice = opener && { opener: opener.tab, closed: false, blocked: true };
-      if (notice) opener.popups.push(notice);
-      blockedTargets.add(info.targetInfo.targetId);
-      allocations.set(info.targetInfo.targetId, { page, cdp: info.cdp, notice });
-      await closeAllocation(info.targetInfo.targetId);
-      return;
-    }
+    if (blocked) { await blockPage(page, info, opener); return; }
     if (targets.has(info.targetInfo.targetId)) return targets.get(info.targetInfo.targetId);
     const entry = { tab: 't' + randomUUID().replaceAll('-', ''), targetId: info.targetInfo.targetId, page, cdp: info.cdp,
       state: { snapshotNo: 0, submitUnconfirmed: false }, opener: opener?.tab, popups: [], popupWaitMs, endpoint,
@@ -336,6 +329,21 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       if (ended && !entry.closed) await deadline(() => page.close({ runBeforeUnload: false }), timeoutMs);
     })());
     return entry;
+  };
+  const blockPage = async (page, info, opener) => {
+    const targetId = info.targetInfo.targetId, entry = targets.get(targetId);
+    if (entry) entry.blocked = true;
+    if (!blockedTargets.has(targetId)) {
+      const notice = opener && (opener.popups.find(row => row.tab === entry?.tab && row.tab) ??
+        { opener: opener.tab, closed: false, blocked: true });
+      if (notice) {
+        delete notice.tab; notice.blocked = true;
+        if (!opener.popups.includes(notice)) opener.popups.push(notice);
+      }
+      blockedTargets.add(targetId);
+      allocations.set(targetId, { page, cdp: info.cdp, notice });
+    }
+    await closeAllocation(targetId);
   };
   const heard = page => track((async () => {
     // A discovery handle must not detach the persistent handle an open is using.
@@ -375,12 +383,11 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         if (ended || parent.released || parent.closed) return;
         // The exact trusted opener proves ownership before any admission/read.
         // Close endpoint targets upstream without exposing their title or URL.
-        if (endpointTarget(child, endpoint) || parent.pendingEndpointPopup && child.url === 'about:blank') {
+        if (endpointTarget(child, endpoint) || endpointBlocked?.(child.targetId)) {
           const notice = { opener: parent.tab, closed: false, blocked: true };
           parent.popups.push(notice);
           allocations.set(child.targetId, { blocked: true, notice });
           blockedTargets.add(child.targetId);
-          parent.pendingEndpointPopup = false;
           await closeAllocation(child.targetId);
           continue;
         }
@@ -395,6 +402,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   const tab = id => {
     const entry = records.get(id);
     if (!entry || entry.released || entry.releasing) throw Error('unknown or releasing owned tab');
+    if (entry.blocked) throw Error(endpointBlock);
     if (entry.closed || entry.page.isClosed()) throw Error('owned tab closed; read its opener');
     if (ended) throw Error('turn ended');
     return entry;
@@ -443,7 +451,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         if (!entry) throw Error(endpointBlock);
         await entry.ready;
         if (ended) throw Error('turn ended');
-        await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+        try { await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs }); }
+        catch (error) { await assertEndpointRead(page); throw error; }
         await assertEndpointRead(page);
         return { tab: entry.tab };
       })());
@@ -454,8 +463,10 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     openTab: ({ url }) => openOwned(url),
     async list() {
       await deadline(idle, timeoutMs);
-      for (const entry of records.values()) if (!entry.closed && !entry.released) await assertEndpointRead(entry.page);
-      return [...records.values()].filter(r => !r.closed && !r.released).map(r => ({ tab: r.tab, targetId: r.targetId,
+      for (const entry of records.values()) if (!entry.closed && !entry.released && !entry.blocked) {
+        try { await assertEndpointRead(entry.page); } catch (error) { if (error.message !== endpointBlock) throw error; }
+      }
+      return [...records.values()].filter(r => !r.closed && !r.released && !r.blocked).map(r => ({ tab: r.tab, targetId: r.targetId,
         opener: r.opener, url: r.page.url() }));
     },
     enqueue(id, run) {

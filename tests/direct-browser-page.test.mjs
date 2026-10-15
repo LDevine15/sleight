@@ -492,3 +492,61 @@ test('the default endpoint port does not classify about:blank as an endpoint pag
   assert.equal(f.registry.tab(tab).closed, false);
   await f.registry.endTurn();
 });
+
+test('REVIEW endpoint navigation closes the owned page', async t => {
+  const f = fixture({endpoint:'ws://127.0.0.1:9222/devtools/browser/private'});
+  t.after(() => f.registry.endTurn());
+  const {tab} = await f.registry.openTab({url:'https://fixture.invalid/'}), entry=f.registry.tab(tab);
+  entry.page.url=()=> 'http://localhost:9222/json/list';
+  await assert.rejects(f.registry.enqueue(tab, async()=>assert.fail('no read')), /blocked: DevTools endpoint/);
+  assert.equal(entry.page.isClosed(), true);
+});
+test('REVIEW listing preserves unrelated owned tabs', async t => {
+  const f = fixture({endpoint:'ws://127.0.0.1:9222/devtools/browser/private'});
+  t.after(() => f.registry.endTurn());
+  const a=await f.registry.openTab({url:'https://fixture.invalid/'});
+  await f.registry.openTab({url:'https://fixture.invalid/other'});
+  f.registry.tab(a.tab).page.url=()=> 'http://localhost:9222/json/list';
+  assert.ok((await f.registry.list()).some(row=>row.url.includes('target-2')));
+});
+
+test('simultaneous blank popups close only the exact blocked target', async t => {
+  const f = fixture({ endpoint: 'ws://127.0.0.1:9222/devtools/browser/private', endpointBlocked: id => id === 'blocked-child' });
+  t.after(() => f.registry.endTurn());
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const parent = f.registry.tab(tab);
+  parent.cdp.emit('Page.windowOpen', { url: 'http://localhost:9222/json/list' });
+  const safe = f.page('safe-child', 'target-1'), blocked = f.page('blocked-child', 'target-1');
+  safe.url = blocked.url = () => 'about:blank';
+  await f.registry.idle();
+  assert.equal(safe.isClosed(), false);
+  assert.equal(blocked.isClosed(), true);
+  assert.equal((await f.registry.list()).length, 2);
+  assert.deepEqual(parent.popups.find(row => row.blocked), { opener: tab, blocked: true, closed: true });
+});
+
+test('a blocked later navigation with failed closure stays private and cleanup retries it', async t => {
+  const f = fixture({ endpoint: 'ws://127.0.0.1:9222/devtools/browser/private' });
+  t.after(() => f.registry.endTurn());
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' }), entry = f.registry.tab(tab);
+  const close = entry.page.close;
+  entry.page.close = async () => { throw Error('busy'); };
+  entry.page.url = () => 'http://localhost:9222/json/list';
+  await assert.rejects(f.registry.enqueue(tab, async () => assert.fail('no read')), { message: 'blocked: DevTools endpoint' });
+  assert.deepEqual(await f.registry.list(), []);
+  assert.throws(() => f.registry.tab(tab), { message: 'blocked: DevTools endpoint' });
+  assert.equal((await f.registry.endTurn()).cleanedUp, false);
+  entry.page.close = close;
+  assert.equal((await f.registry.endTurn()).cleanedUp, true);
+});
+
+test('an endpoint redirect rejected by goto still closes and reports only the block', async t => {
+  const f = fixture({ endpoint: 'ws://127.0.0.1:9222/devtools/browser/private' });
+  t.after(() => f.registry.endTurn());
+  f.context.on('page', page => { page.goto = async () => {
+    page.info.pendingUrl = 'http://localhost:9222/json/list';
+    throw Error('net::ERR_BLOCKED_BY_CLIENT at private URL');
+  }; });
+  await assert.rejects(f.registry.openTab({ url: 'https://fixture.invalid/redirect' }), { message: 'blocked: DevTools endpoint' });
+  assert.equal(f.pages[0].isClosed(), true);
+});

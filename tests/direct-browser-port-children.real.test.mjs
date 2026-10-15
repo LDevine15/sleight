@@ -26,7 +26,7 @@ test('port guard continues false matches and protects related targets before the
   const server=createServer((req,res)=>{
     if(req.url==='/worker.js'||req.url==='/shared.js'||req.url==='/service.js'){
       res.setHeader('content-type','application/javascript');
-      const probe=`fetch('http://127.0.0.1:${port}/json/list',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked')`;
+      const probe=`fetch('http://127.0.0.1:${port}/json/list'${req.url==='/worker.js'?",{mode:'no-cors'}":''}).then(r=>r.text()).then(()=>'loaded',()=>'blocked')`;
       res.end(req.url==='/shared.js'?`onconnect=e=>{${probe}.then(value=>e.ports[0].postMessage(value));};`:
         req.url==='/service.js'?`oninstall=()=>skipWaiting();onactivate=e=>e.waitUntil(clients.claim());onmessage=e=>{${probe}.then(value=>e.source.postMessage(value));};`:
         `${probe}.then(value=>postMessage(value));`);return;
@@ -36,10 +36,11 @@ test('port guard continues false matches and protects related targets before the
       res.end(req.url==='/early-frame'?`<script>fetch('http://127.0.0.1:${port}/json/list',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked').then(value=>parent.postMessage(value,'*'));</script>`:
         `<script>window.results={};onmessage=e=>results.frame=e.data;const worker=new Worker('/worker.js');worker.onmessage=e=>{results.worker=e.data;worker.terminate();};</script><iframe src="http://frame.test:${server.address().port}/early-frame"></iframe>`);return;
     }
+    if(req.url==='/redirect-start'){res.writeHead(302,{location:'/redirect'});res.end();return;}
     if(req.url==='/redirect'){res.writeHead(302,{location:'http://127.0.0.1:'+port+'/json/list'});res.end();return;}
     res.setHeader('content-type','text/html');
     const url='http://127.0.0.1:'+port+'/json/list';
-    res.end(`<title>Owned port fixture</title><a target="_blank" href="${url}">Link</a><form action="${url}"><button>Submit</button></form><script>window.probe=()=>fetch('${url}',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked');</script>`);
+    res.end(`<title>Owned port fixture</title><a target="_blank" href="${url}">Link</a><form target="endpoint-form" action="${url}"><button>Submit</button></form><script>window.probe=()=>fetch('${url}',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked');</script>`);
   });
   t.after(async()=>{
     try{if(filter)assert.equal(await filter.dispose(),true,'filter and related-target watchers collected');await browser?.close();if(socket&&socket.readyState!==3)await new Promise(resolve=>{socket.addEventListener('close',resolve,{once:true});socket.close();});}
@@ -66,9 +67,9 @@ test('port guard continues false matches and protects related targets before the
       }
     }finally{await page.close();}
   });
-  for (const kind of ['window.open', 'link']) await t.test(kind+' endpoint popup closes before any model read',async()=>{
+  for (const kind of ['window.open', 'link', 'form']) await t.test(kind+' endpoint popup closes before any model read',async()=>{
     const session=await browser.newBrowserCDPSession();
-    const pages=createPageRegistry({browser,session,upstream,ownTarget:filter.own,releaseTarget:filter.release,endpoint:protectedURL});
+    const pages=createPageRegistry({browser,session,upstream,ownTarget:filter.own,releaseTarget:filter.release,endpointBlocked:filter.endpointBlocked,endpoint:protectedURL});
     let reads=0,popup;
     const dispatcher=createToolDispatcher({browser:'bfixture',pages,endpoint:protectedURL,
       snapshot:async page=>{reads++;return snapshot(page);},
@@ -82,7 +83,8 @@ test('port guard continues false matches and protects related targets before the
       const before=reads,focused=await foreign.evaluate(()=>document.hasFocus());
       const opening=context.waitForEvent('page',{timeout:5000});
       if(kind==='window.open')await entry.page.evaluate(url=>{window.open(url,'_blank');},protectedURL);
-      else await entry.page.getByRole('link',{name:'Link'}).click();
+      else if(kind==='link')await entry.page.getByRole('link',{name:'Link'}).click();
+      else await entry.page.getByRole('button',{name:'Submit'}).click();
       popup=await opening;
       for(let n=0;n<250&&!popup.isClosed();n++)await new Promise(resolve=>setTimeout(resolve,20));
       assert.equal(popup.isClosed(),true,'adopted endpoint popup must close before model reads');
@@ -95,6 +97,43 @@ test('port guard continues false matches and protects related targets before the
       assert.equal(await foreign.evaluate(()=>document.hasFocus()),focused);
       assert.equal((await pages.list()).length,1,'blocked popup has no model-visible tab handle');
     }finally{assert.deepEqual(await dispatcher.end(),{revoked:true,cleanup:[]});await popup?.close();await session.detach();}
+  });
+  await t.test('a 302 chain closes its exact owned tab and leaves tab listing usable',async()=>{
+    const session=await browser.newBrowserCDPSession();
+    const pages=createPageRegistry({browser,session,upstream,ownTarget:filter.own,releaseTarget:filter.release,endpointBlocked:filter.endpointBlocked,endpoint:protectedURL});
+    const dispatcher=createToolDispatcher({browser:'bfixture',pages,endpoint:protectedURL,snapshot,
+      runSteps:async()=>assert.fail('no input'),fillFields:async()=>assert.fail('no fill')});
+    try{
+      const safe=await pages.openTab({url:origin});
+      const result=await dispatcher.call({name:'browser_open',arguments:{url:origin+'/redirect-start'}});
+      assert.deepEqual(result,{text:'blocked: DevTools endpoint',isError:true});
+      const rows=await pages.list();assert.equal(rows.length,1);assert.equal(rows[0].tab,safe.tab);
+      const listed=await dispatcher.call({name:'browser_tabs',arguments:{do:'list'}});
+      assert.equal(listed.isError,false);assert.match(listed.text,new RegExp(safe.tab));
+      assert.doesNotMatch(listed.text,/json\/list|DevTools|webSocketDebuggerUrl/);
+      assert.equal(browser.contexts()[0].pages().length,1,'only the safe owned page remains');
+    }finally{assert.deepEqual(await dispatcher.end(),{revoked:true,cleanup:[]});await session.detach();}
+  });
+  await t.test('two blank popups preserve the safe one and close only the endpoint target',async()=>{
+    const session=await browser.newBrowserCDPSession();
+    const pages=createPageRegistry({browser,session,upstream,ownTarget:filter.own,releaseTarget:filter.release,endpointBlocked:filter.endpointBlocked,endpoint:protectedURL});
+    try{
+      const {tab}=await pages.openTab({url:origin}),entry=pages.tab(tab);
+      await entry.page.evaluate(()=>window[Symbol.for('sleight.popup3')].off());
+      await entry.page.evaluate(url=>{
+        const safe=window.open('about:blank','safe-popup');safe.document.title='Safe blank popup';
+        window.open(url,'blocked-popup');
+      },protectedURL);
+      for(let n=0;n<250;n++){
+        await pages.idle();
+        if(entry.popups.some(row=>row.blocked&&row.closed)&&entry.popups.some(row=>row.tab))break;
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      const rows=await pages.list();assert.equal(rows.length,2);
+      const safe=rows.find(row=>row.tab!==tab);assert.ok(safe);assert.equal(safe.url,'about:blank');
+      assert.equal(await pages.tab(safe.tab).page.title(),'Safe blank popup');
+      assert.deepEqual(entry.popups.filter(row=>row.blocked),[{opener:tab,closed:true,blocked:true}]);
+    }finally{assert.equal((await pages.endTurn()).cleanedUp,true);await session.detach();}
   });
   await t.test('site-isolated iframe cannot fetch the port',async()=>{
     const page=await ownedPage(),before=calls.length;
@@ -128,7 +167,7 @@ test('port guard continues false matches and protects related targets before the
       assert.deepEqual(results,{worker:'blocked',frame:'blocked'});
     }finally{await early.dispose();await upstream.send('Target.closeTarget',{targetId});}
   });
-  for(const kind of ['dedicated','service'])await t.test(kind+' worker cannot fetch the port',async()=>{
+  for(const kind of ['dedicated'])await t.test(kind+' worker cannot fetch the port',async()=>{
     const page=await ownedPage(),before=calls.length;
     try{
       const result=await page.evaluate(async kind=>{
@@ -156,6 +195,22 @@ test('port guard continues false matches and protects related targets before the
         finally{worker.port.close();URL.revokeObjectURL(source);}
       },protectedURL);
       assert.equal(result,'cors-blocked');
+    }finally{await page.close();}
+  });
+  await t.test('service worker stays unattached and cannot read endpoint responses through CORS',async()=>{
+    const page=await ownedPage(),before=calls.length;
+    try{
+      const result=await page.evaluate(async()=>{
+        const registration=await navigator.serviceWorker.register('/service.js');
+        await navigator.serviceWorker.ready;
+        try{return await new Promise((resolve,reject)=>{
+          const timer=setTimeout(()=>reject(Error('service worker timed out')),5000);
+          navigator.serviceWorker.onmessage=e=>{clearTimeout(timer);resolve(e.data);};
+          registration.active.postMessage('probe');
+        });}finally{await registration.unregister();}
+      });
+      assert.equal(result,'blocked');
+      assert.ok(!calls.slice(before).some(row=>row.method==='Fetch.failRequest'),'service worker is outside owned page routes');
     }finally{await page.close();}
   });
   assert.equal(await foreign.title(),'Foreign untouched');assert.equal(foreign.isClosed(),false);

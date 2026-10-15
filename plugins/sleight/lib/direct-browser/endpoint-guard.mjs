@@ -9,9 +9,9 @@ export function endpointURL(value, endpoint) {
 export function endpointTarget(info, endpoint) {
   return [info?.url, info?.pendingUrl, info?.pendingURL].some(url => endpointURL(url, endpoint));
 }
-export function bindEndpointPage(page, endpoint, cdp) {
+export function bindEndpointPage(page, endpoint, cdp, { blocked, close } = {}) {
   if (!endpoint) return;
-  const record = { endpoint, cdp, pending: undefined };
+  const record = { endpoint, cdp, blocked, close, pending: undefined };
   pages.set(page, record);
   // Observe only this owned page's browser navigation metadata. Never inject a
   // page-side security check or attach to unrelated targets.
@@ -22,13 +22,19 @@ export function bindEndpointPage(page, endpoint, cdp) {
 export async function assertEndpointRead(page, endpoint) {
   const record = pages.get(page), selected = record?.endpoint ?? endpoint;
   if (!selected) return;
-  if (endpointURL(page.url(), selected) || endpointURL(record?.pending, selected)) throw Error(endpointBlock);
+  const block = async () => {
+    // Revocation happens even when physical closure needs a cleanup retry.
+    await record?.close?.().catch(() => {});
+    throw Error(endpointBlock);
+  };
+  if (record?.blocked?.()) return block();
+  if (endpointURL(page.url(), selected) || endpointURL(record?.pending, selected)) return block();
   if (record?.cdp) {
     let timer;
     const { targetInfo } = await Promise.race([record.cdp.send('Target.getTargetInfo'), new Promise((_, reject) => {
       timer = setTimeout(() => reject(Error('endpoint page identity unavailable')), 1500);
     })]).finally(() => clearTimeout(timer));
-    if (endpointTarget(targetInfo, selected)) throw Error(endpointBlock);
+    if (endpointTarget(targetInfo, selected)) return block();
   }
-  if (page.frames?.().some(frame => endpointURL(frame.url?.(), selected))) throw Error(endpointBlock);
+  if (page.frames?.().some(frame => endpointURL(frame.url?.(), selected))) return block();
 }

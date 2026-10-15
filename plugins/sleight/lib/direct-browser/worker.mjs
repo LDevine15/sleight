@@ -343,7 +343,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
               dependencies.snapshot ? Promise.resolve({ snapshot: dependencies.snapshot }) : import('./snapshot.mjs')]);
             const session = await resource.browser.newBrowserCDPSession();
             resource.pages = (dependencies.createPages ?? createPageRegistry)({ browser: resource.browser, session,
-              endpoint: selected.endpoint, upstream: selected.session, ownTarget: resource.filter.own, releaseTarget: resource.filter.release });
+              endpoint: selected.endpoint, endpointBlocked: resource.filter.endpointBlocked, upstream: selected.session, ownTarget: resource.filter.own, releaseTarget: resource.filter.release });
             const runtime = await (dependencies.createRuntime ?? createV3TurnRuntime)({ binding, browser: selected.selectedBrowser, pages: resource.pages,
               snapshot: snapshots.snapshot, ui, endpoint: selected.endpoint, dependencies: {
                 // Acknowledgment is coupled to the exact output identity in the

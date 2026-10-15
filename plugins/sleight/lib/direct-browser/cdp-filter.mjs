@@ -41,13 +41,15 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     catch { return false; }
   };
   const owned = new Set(ownedTargets), routes = new Map(), listeners = new Set(), attaching = new Map(), bridges = new Set(), browserRoutes = new Set(), attachmentParents = new Map();
+  const endpointTargets = new Set();
   const attachments = new Map(), outstanding = new Set(), collectedSessions = new Set();
   let closed = false, autoAttach = false, disposal, listening = true;
   const root = upstream.sessionId;
   const live = () => { if (closed) throw Error('CDP_FILTER_CLOSED'); };
   const owns = target => owned.has(target) || [...routes.values()].some(route => route.target === target);
   const checkTarget = target => { if (!id(target) || !owns(target)) throw Error('CDP_TARGET_NOT_OWNED'); };
-  const autoAttachParams = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{}] };
+  const autoAttachParams = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+    filter: [{ type: 'iframe' }, { type: 'worker' }, { exclude: true }] };
   const routed = (frame, parent) => {
     const value = { ...frame };
     if (parent === undefined) delete value.sessionId; else value.sessionId = parent;
@@ -111,18 +113,23 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     if (frame.sessionId !== undefined && !parent) return;
     if (parent && protectedPort !== undefined && frame.method === 'Fetch.requestPaused') {
       const protectedRequest = protectedUrl(params.request?.url);
+      if (protectedRequest && params.resourceType === 'Document') endpointTargets.add(parent.owner);
       if (protectedRequest || !(parent.fetchPatterns ?? []).some(pattern => fetchMatch(pattern, params))) {
         upstream.send(protectedRequest ? 'Fetch.failRequest' : 'Fetch.continueRequest',
           { requestId: params.requestId, ...(protectedRequest ? { errorReason: 'BlockedByClient' } : {}) }, frame.sessionId)
-          .catch(() => { removeRoute(frame.sessionId); detach(frame.sessionId).catch(() => {}); });
+          .catch(error => {
+            // Cancellation can invalidate a paused request before its reply.
+            // Only that protocol error proves this interception already ended.
+            if (/^Invalid InterceptionId\.?$/.test(error.message)) return;
+            removeRoute(frame.sessionId); detach(frame.sessionId).catch(() => {});
+          });
         return;
       }
     }
     if (frame.method === 'Target.attachedToTarget') {
       const info = params.targetInfo;
       if (!object(info) || !id(info.targetId) || !id(params.sessionId)) return;
-      const allowed = parent ? ['iframe', 'worker', ...(protectedPort !== undefined ? ['shared_worker', 'service_worker'] : [])].includes(info.type) ||
-        protectedPort !== undefined && info.type === 'page' && info.openerId === parent.target :
+      const allowed = parent ? ['iframe', 'worker'].includes(info.type) :
         (closed ? attachmentParents.has(info.targetId) : owned.has(info.targetId)) && info.type === 'page';
       if (!allowed) {
         // Unrelated targets never acquire a route or expose their metadata.
@@ -137,8 +144,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       if (!acquired(params.sessionId, info.targetId, frame.sessionId ?? root, virtualParent)) return;
       if (closed) return; // Late attachments stay private and grant no input route.
       const route = { target: info.targetId, owner: parent?.owner ?? info.targetId, parent: virtualParent,
-        browserParent: parent ? parent.browserParent : virtualParent,
-        private: parent?.private || ['shared_worker', 'service_worker'].includes(info.type) };
+        browserParent: parent ? parent.browserParent : virtualParent };
       attachments.get(params.sessionId).private = route.private;
       routes.set(params.sessionId, route);
       frame = routed(frame, virtualParent);
@@ -362,5 +368,5 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       .finally(() => { disposal = undefined; });
     return disposal;
   }
-  return Object.freeze({ session, owns, own, release: revoke, listen, dispose });
+  return Object.freeze({ session, owns, own, release: revoke, listen, dispose, endpointBlocked: target => endpointTargets.has(target) });
 }
