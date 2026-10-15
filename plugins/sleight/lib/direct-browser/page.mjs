@@ -625,6 +625,8 @@ async function ownerFrame(locator, page, timeoutMs) {
 export function frameShield(page, owner, { token, capMs, timeoutMs = 1000, keys = false } = {}) {
   const mainFrame = typeof page?.mainFrame === 'function' ? page.mainFrame() : undefined;
   const ownerIs = frame => frame === owner || owner === page && frame === mainFrame;
+  // A closed tab's frames are not marked detached, so a closed page counts as gone too.
+  const gone = frame => frame.isDetached?.() || frame.page?.().isClosed?.();
   const others = () => (typeof page?.frames === 'function' ? page.frames() : []).filter(frame => !ownerIs(frame) && !frame.isDetached?.());
   const call = (frame, method) => deadline(() => frame.evaluate(`(() => { const hook = ${hookKey}; return hook ? ${method} : null; })()`), timeoutMs, 'frame unreachable');
   const adoptCall = `hook.adopt(${JSON.stringify(token)}, ${capMs}, ${keys === true})`, releaseCall = `hook.release(${JSON.stringify(token)})`;
@@ -636,7 +638,7 @@ export function frameShield(page, owner, { token, capMs, timeoutMs = 1000, keys 
       try {
         const reply = await call(frame, adoptCall);
         return reply === null ? 'skipped' : reply === true ? 'armed' : 'failed';
-      } catch { if (frame.isDetached?.()) return 'skipped'; }
+      } catch { if (gone(frame)) return 'skipped'; }
     }
     return 'failed';
   };
@@ -657,7 +659,7 @@ export function frameShield(page, owner, { token, capMs, timeoutMs = 1000, keys 
   const releaseOne = async frame => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try { const reason = await call(frame, releaseCall); return typeof reason === 'string' ? reason : undefined; }
-      catch { if (frame.isDetached?.()) return undefined; }
+      catch { if (gone(frame)) return undefined; }
     }
     return 'the checked element changed';
   };
@@ -695,7 +697,9 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       frame.evaluate(token => window[Symbol.for('sleight.popup3')]?.conclude(token), token),
       others?.release() ?? Promise.resolve(undefined)]);
     const report = own.status === 'fulfilled' ? own.value : undefined;
-    return { bad: report?.bad ?? (rest.status === 'fulfilled' ? rest.value : undefined), landed: report?.landed, passed: report?.passed };
+    // A click that closed its own tab leaves nothing to veto in the other frames.
+    const closed = tab.closed || tab.page.isClosed?.();
+    return { bad: report?.bad ?? (rest.status === 'fulfilled' && !closed ? rest.value : undefined), landed: report?.landed, passed: report?.passed };
   };
   // The click callback calls this once the rules have read the element, before it spends any authority.
   const verify = async evidence => {

@@ -540,3 +540,23 @@ test('key shield attack: a keyup handler that changes the action after the submi
   assert.equal(b.hits.filter(h => h.path.startsWith('/charge')).length, 0);
   assert.equal(b.hits.filter(h => h.path === '/ok').length, 1);
 });
+
+// A click that closes its own tab (a popup's Close button) reports the close, not a failed release: a closed
+// page's frames are not marked detached, so the release must treat the closed page as gone (swap r4 review).
+test('a click that closes its own tab reports the close and leaves the opener idle', { skip, timeout: 120000 }, async t => {
+  const routes = { '/popup': plain(`<button id="c" type="button" aria-label="Close me" onclick="record('upload');window.close()">Close me</button><iframe src="/f" style="width:100px;height:30px"></iframe><iframe src="/f" style="width:100px;height:30px"></iframe>`), '/f': plain('<p>x</p>') };
+  const f = await (await bank(t)).start(plain(`<button id="b" type="button" aria-label="Open" onclick="window.open('/popup')">Open</button><iframe src="/f" style="width:100px;height:30px"></iframe>`), readOnly, { routes });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  await f.act([{ do: 'click', ref: f.ref('Open') }]);
+  await new Promise(resolve => setTimeout(resolve, 800));
+  const pop = /^(t\w+) \S+\/popup/m.exec((await f.call('browser_tabs', { do: 'list' })).text)?.[1];
+  assert.ok(pop, 'the popup tab is listed');
+  const ref = /"Close me"[^\n]*\[ref=([^\]]+)\]/.exec((await f.call('browser_read', { tab: pop })).text)?.[1];
+  const popPage = f.registry.tab(pop).page;
+  const result = await f.call('browser_act', { tab: pop, steps: [{ do: 'click', ref }] });
+  assert.match(result.text.split('\n')[0], /tab closed/);
+  assert.equal(popPage.isClosed(), true);
+  assert.equal(f.delta().upload, 1);
+  for (const frame of f.page.frames())
+    assert.equal(await frame.evaluate(() => { const api = window[Symbol.for('sleight.popup3')]; return api ? (api.armed?.() ? 'armed' : 'idle') : 'none'; }), 'idle');
+});
