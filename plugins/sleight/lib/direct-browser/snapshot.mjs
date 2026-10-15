@@ -6,7 +6,8 @@ const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|exp
 const TIMEOUT = 3000;
 const scalarRole = role => /^(textbox|searchbox|combobox)$/.test(role);
 const normalized = value => String(value ?? '').replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
-const CONTROL_ROLE = /^(textbox|searchbox|button|link|checkbox|radio|combobox|menuitem|tab|switch|slider|option)$/;
+// CR2: derive from WAI-ARIA with citations (queue/CR2.md).
+const CONTROL_ROLE = { test() { throw Error('CR2: CONTROL_ROLE not derived'); } };
 
 async function bounded(action) {
   let timer;

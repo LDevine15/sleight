@@ -11,6 +11,10 @@ function deadline(task, ms, message = 'background preparation timed out') {
 // MAIN world, before page scripts. Every name stays inside this function so it
 // can be serialized. The hook controls disposition, never grants authority.
 export function popupHook() {
+  // CR2 (queue/CR2.md): derive these three from the HTML and WAI-ARIA specs and a measurement, with citations.
+  const CR2_NESTED_DOCUMENT = () => { throw Error('CR2: nested-document check not derived'); };
+  const CR2_OWN_ACTIVATION = () => { throw Error('CR2: own-activation check not derived'); };
+  const CR2_MODIFIER_WINDOW_MS = NaN;
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap(), listeners = new WeakMap();
@@ -89,7 +93,7 @@ export function popupHook() {
   } });
   const keyEvent = event => {
     if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
-    if (event.type === 'keydown' && !arm.modifierUntil) arm.modifierUntil = Math.min(arm.until, Date.now() + 1000);
+    if (event.type === 'keydown' && !arm.modifierUntil) arm.modifierUntil = Math.min(arm.until, Date.now() + CR2_MODIFIER_WINDOW_MS);
     if (!active()) return;
     event.stopImmediatePropagation();
   };
@@ -144,15 +148,13 @@ export function popupHook() {
       if (arm) finish(arm.token);
       let focus = document.activeElement;
       while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
-      if (/^(iframe|frame|fencedframe|object|embed)$/.test(focus?.localName)) throw Error('document focus is inside a frame');
+      if (CR2_NESTED_DOCUMENT(focus)) throw Error('document focus is inside a frame');
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
       const chain = ancestors(element);
       for (const node of chain) {
         const editable = node.getAttribute('contenteditable');
         if (node.isContentEditable || editable !== null && /^(|true|plaintext-only)$/i.test(editable)
-          || /^(textarea|select|option|label)$/.test(node.localName)
-          || node.localName === 'input' && (node.getAttribute('type') ?? '').toLowerCase() !== 'button'
-          || /(?:^|\s)(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio)(?:\s|$)/i.test(node.getAttribute('role') ?? '')) return false;
+          || CR2_OWN_ACTIVATION(node)) return false;
       }
       const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && node.hasAttribute('href'));
       const link = linkState(linkElement);
