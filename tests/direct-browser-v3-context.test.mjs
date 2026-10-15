@@ -152,3 +152,12 @@ test('pinned drag uses ElementHandle actionability without inventing ElementHand
   await f.ctx.dragTo(source,{elementHandle:async () => f.handle});
   assert.deepEqual(events,['hover','hover','down','hover','hover','up']); await f.ctx.dispose();
 });
+
+test('worker end receipts clear recovered upload cleanup without mutating earlier receipts', async () => {
+  const { createV3TurnRuntime }=await import('../plugins/sleight/lib/direct-browser/worker.mjs');
+  const f=fixture();let retained=1;
+  const runtime=await createV3TurnRuntime({binding:f.binding,browser:'bfixture',pages:{endTurn:async()=>({cleanedUp:true})},
+    snapshot:async()=>({text:'fixture',number:1}),dependencies:{createContext:()=>({dispose:async()=>({retained})})}});
+  const first=await runtime.end();assert.equal(first.cleanup.length,1);retained=0;
+  const second=await runtime.end();assert.deepEqual(second.cleanup,[]);assert.equal(first.cleanup.length,1);
+});

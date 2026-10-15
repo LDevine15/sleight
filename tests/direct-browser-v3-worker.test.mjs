@@ -91,3 +91,21 @@ test('a real inherited fork channel exchanges frames and exits after owned disco
   const outcome = await exited;
   assert.equal(outcome.signal, null); assert.equal(outcome.code, 0);
 });
+for(const code of ['HOST_PACKAGE_MISMATCH','HOST_SOURCE_MISMATCH','HOST_CACHE_UNSAFE']) test('worker startup preserves '+code,async()=>{
+  const child=new EventEmitter();child.connected=true;child.disconnect=()=>{child.connected=false;};child.unref=()=>{};
+  await assert.rejects(createV3Bridge({}, {readConfig:()=>({}),acceptPackage:()=>({current:()=>true}),
+    forkWorker(){queueMicrotask(()=>child.emit('message',{version:3,status:'unavailable',code}));return child;}}),new RegExp(code));
+});
+test('protocol close fences an in-flight begin and waits for its cleanup before final closure',async()=>{
+  const channel=new EventEmitter(),frames=[],events=[];channel.connected=true;channel.send=frame=>frames.push(frame);
+  let release;
+  const worker=serveV3Worker({channel,browser:'bfixture',begin:()=>new Promise(resolve=>{release=()=>resolve({end:async()=>{events.push('turn-end');return{revoked:true,cleanup:[]};}});}),
+    close:async()=>{events.push('close');return{revoked:true,cleanup:[]};}});worker.ready();
+  channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  channel.emit('message',{version:3,id:'close',method:'close',params:{}});
+  await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(events,[]);
+  release();await worker.drain();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(events,['turn-end','close']);assert.equal(frames.find(x=>x.id==='begin').result.available,false);
+  assert.deepEqual(frames.find(x=>x.id==='close').result.cleanup,[]);
+});

@@ -15,6 +15,7 @@ const exact = (value, keys) => value && typeof value === 'object' && !Array.isAr
 const unproved = () => ({ revoked: true, cleanup: [{ resource: 'v3-worker', status: 'retained', code: 'CLEANUP_UNPROVED' }] });
 const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.'
   : 'Turbo is unavailable for this turn. Use the engine browser path.', isError: !unknown });
+const unsafeStartup = new Set(['HOST_PACKAGE_MISMATCH', 'HOST_SOURCE_MISMATCH', 'HOST_CACHE_UNSAFE', 'INSTALLED_CONFIG_UNSAFE']);
 
 export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31000 } = {}, dependencies = {}) {
   const config = (dependencies.readConfig ?? readInstalledConfig)();
@@ -41,7 +42,9 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   }
   child.on('message', frame => {
     if (lost) return;
-    if (!hello && frame?.version === 3 && frame.status === 'unavailable') { lose('V3_RUNTIME_UNAVAILABLE'); return; }
+    if (!hello && exact(frame, ['version', 'status', 'code']) && frame.version === 3 && frame.status === 'unavailable') {
+      lose(unsafeStartup.has(frame.code) ? frame.code : 'V3_RUNTIME_UNAVAILABLE'); return;
+    }
     if (!hello && exact(frame, ['version', 'session', 'nonce', 'browser']) && frame.version === 3 && id(frame.session) &&
         /^[a-f0-9]{64}$/.test(frame.nonce) && /^b[A-Za-z0-9_-]{1,63}$/.test(frame.browser)) {
       hello = frame; clearTimeout(timer); resolveReady(); return;
@@ -117,7 +120,7 @@ export async function createV3TurnRuntime({ binding, browser, pages, snapshot, u
   const [{ runSteps }, { fillFields }, { deliverSnapshot }] = await Promise.all([
     import('./act.mjs'), import('./fill.mjs'), import('./rules.mjs'),
   ]);
-  const ctx = createV3Context({ binding, browser, ui });
+  const ctx = (dependencies.createContext ?? createV3Context)({ binding, browser, ui });
   const runtime = createToolDispatcher({ browser, pages, snapshot, ctx, endpoint,
     runSteps: dependencies.runSteps ?? runSteps, fillFields: dependencies.fillFields ?? fillFields,
     deliverSnapshot(state, capture) {
@@ -130,7 +133,8 @@ export async function createV3TurnRuntime({ binding, browser, pages, snapshot, u
       return true;
     } });
   return Object.freeze({ call: runtime.call, delivered: runtime.delivered,
-    async end() { const cleanup = ctx.dispose(); const receipt = await runtime.end();
+    async end() { const cleanup = ctx.dispose(); const previous = await runtime.end();
+      const receipt = { ...previous, cleanup: [...previous.cleanup] };
       if ((await cleanup).retained) receipt.cleanup.push({ resource: 'uploads', status: 'retained', code: 'CLEANUP_UNPROVED' });
       return receipt;
     },
@@ -154,8 +158,12 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
     const respond = result => send({ version: 3, id: frame.id, result });
     if (frame.method === 'end' || frame.method === 'close') {
       if (!exact(frame.params, [])) return respond(unproved());
+      if (frame.method === 'close') ended = true;
       const stopped = fence();
-      Promise.resolve(stopped).then(async receipt => { if (frame.method === 'close') { ended = true; return close(); } return receipt; }).then(respond, () => respond(unproved()));
+      Promise.resolve(stopped).then(async receipt => {
+        if (frame.method === 'close') { await work.catch(() => {}); return close(); }
+        return receipt;
+      }).then(respond, () => respond(unproved()));
       return;
     }
     if (frame.method === 'begin') {
@@ -201,7 +209,7 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
 // endpoint, package, loader, authority or executable.
 export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   let parentLost = channel.connected === false, stopped = false, selected, ui, protocol, timer, unsubscribe;
-  let accepted, connected = false, sequence = 0, closing, terminalLoss = false, resolveClosed, finalReceipt;
+  let accepted, connecting = false, retryConnection = false, connected = false, sequence = 0, closing, terminalLoss = false, resolveClosed, finalReceipt;
   const closed = new Promise(resolve => { resolveClosed = resolve; });
   const resources = new Set();
   const current = () => {
@@ -211,24 +219,31 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     if (!accepted.current()) throw Error('HOST_PACKAGE_MISMATCH'); };
   const loss = () => { parentLost = true; terminalLoss = true; close().catch(() => {}); };
   channel.on('disconnect', loss);
-  const clean = receipt => receipt?.revoked === true && Array.isArray(receipt.cleanup) && !receipt.cleanup.some(row => row.status === 'retained');
   const retained = resource => ({ resource, status: 'retained', code: 'CLEANUP_UNPROVED' });
   async function collect(resource) {
     if (resource.collecting) return resource.collecting;
     resource.collecting = (async () => {
+      const cleanup = [];
       if (resource.runtime) {
         const turn = await resource.runtime.end().catch(unproved);
-        if (!clean(turn) && turn.cleanup.some(row => row.resource !== 'owned-tabs')) return turn;
+        cleanup.push(...turn.cleanup.filter(row => row.resource !== 'owned-tabs'));
       }
       let tabs = true;
       try { if (resource.pages) tabs = (await resource.pages.endTurn()).cleanedUp === true; } catch { tabs = false; }
-      if (!tabs) return { revoked: true, cleanup: [retained('owned-tabs')] };
+      if (!tabs) {
+        cleanup.push(retained('owned-tabs'));
+        if (!terminalLoss) return { revoked: true, cleanup };
+      }
       let detached = true;
       try { if (resource.filter) detached = await resource.filter.dispose() === true; } catch { detached = false; }
-      if (!detached) return { revoked: true, cleanup: [retained('cdp-filter')] };
-      try { await resource.browser?.close(); await resource.listener?.close(); }
-      catch { return { revoked: true, cleanup: [retained('playwright-connection')] }; }
-      resources.delete(resource); return { revoked: true, cleanup: [] };
+      if (!detached) {
+        cleanup.push(retained('cdp-filter'));
+        if (!terminalLoss) return { revoked: true, cleanup };
+      }
+      try { await resource.browser?.close(); } catch { cleanup.push(retained('playwright-connection')); }
+      try { await resource.listener?.close(); } catch { cleanup.push(retained('cdp-listener')); }
+      if (!cleanup.length) resources.delete(resource);
+      return { revoked: true, cleanup };
     })().finally(() => { resource.collecting = undefined; });
     return resource.collecting;
   }
@@ -237,11 +252,10 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     if (finalReceipt) return finalReceipt;
     if (closing) return closing;
     closing = (async () => {
-      const turn = await protocol?.end().catch(unproved);
+      await protocol?.end().catch(unproved);
       await protocol?.drain();
       const receipts = await Promise.all([...resources].map(collect));
       const cleanup = receipts.flatMap(receipt => receipt.cleanup);
-      if (turn && !clean(turn)) cleanup.push(...turn.cleanup);
       if (!cleanup.length || terminalLoss) {
         let disconnected = !selected;
         try { if (selected) disconnected = await selected.disconnect(selected.session) === true; } catch {}
@@ -280,50 +294,81 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt }); startupCurrent();
     ui = (dependencies.createUi ?? host.createNativeUi)(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
     startupCurrent();
-    unsubscribe = selected.onConnectionLoss(() => { stopped = true; connected = false; protocol?.end().catch(() => {}); });
+    const browser = selected.selectedBrowser;
+    function subscribe() {
+      unsubscribe = selected.onConnectionLoss(() => {
+        connected = false;
+        if (!connecting) { stopped = true; protocol?.end().catch(() => {}); }
+      });
+    }
+    subscribe();
     protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
       async begin(_message, binding) {
         if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
         const resource = {}; resources.add(resource);
-        try {
-          if (!connected) { if (await selected.connect() !== selected.session) throw Error('STALE_INSTANCE'); connected = true; }
-          if (!current()) throw Error('TRUSTED_TURN_REQUIRED');
-          if (!current() || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
-          const { loadPlaywrightCore } = await import('./worlds.mjs');
-          const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true }).inprocess.playwright;
-          resource.filter = selected.createFilter();
-          resource.listener = await resource.filter.listen();
-          resource.browser = await playwright.chromium.connectOverCDP(resource.listener.endpoint, { noDefaults: true, timeout: 10000 });
-          if (!current()) throw Error('TRUSTED_TURN_REQUIRED');
-          const [{ createPageRegistry }, snapshots] = await Promise.all([import('./page.mjs'),
-            dependencies.snapshot ? Promise.resolve({ snapshot: dependencies.snapshot }) : import('./snapshot.mjs')]);
-          const session = await resource.browser.newBrowserCDPSession();
-          resource.pages = (dependencies.createPages ?? createPageRegistry)({ browser: resource.browser, session,
-            upstream: selected.session, ownTarget: resource.filter.own, releaseTarget: resource.filter.release });
-          const runtime = await createV3TurnRuntime({ binding, browser: selected.selectedBrowser, pages: resource.pages,
-            snapshot: snapshots.snapshot, ui, endpoint: selected.endpoint, dependencies: {
-              // Acknowledgment is coupled to the exact output identity in the
-              // fork protocol. Merely taking a snapshot never admits its refs.
-              acknowledgeSnapshot: snapshots.acknowledgeSnapshot,
-            } });
-          resource.runtime = runtime;
-          let ending;
-          return Object.freeze({
-            async call(request) {
-              if (!current() || !await selected.verifyConnection(selected.session)) { stopped = true; throw Error('STALE_INSTANCE'); }
-              return runtime.call(request);
-            }, delivered: runtime.delivered,
-            end() {
-              if (!ending) ending = (async () => {
-                return collect(resource);
-              })();
-              return ending;
-            },
-          });
-        } catch (error) { dependencies.onError?.(error); await collect(resource); throw error; }
+        let preparing, ending, turnEnded = false;
+        async function prepare() {
+          try {
+            if (!connected) {
+              connecting = true;
+              try {
+                if (retryConnection) {
+                  unsubscribe?.();
+                  selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt });
+                  if (selected.selectedBrowser !== browser) throw Error('STALE_INSTANCE');
+                  subscribe(); retryConnection = false;
+                }
+                if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+                if (await selected.connect() !== selected.session) throw Error('STALE_INSTANCE');
+                connected = true;
+              } catch (error) {
+                retryConnection = await selected.disconnect(selected.session).catch(() => false) === true;
+                if (!retryConnection) stopped = true;
+                throw error;
+              } finally { connecting = false; }
+            }
+            if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+            if (!current() || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
+            const { loadPlaywrightCore } = await import('./worlds.mjs');
+            const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true }).inprocess.playwright;
+            resource.filter = selected.createFilter();
+            resource.listener = await resource.filter.listen();
+            resource.browser = await playwright.chromium.connectOverCDP(resource.listener.endpoint, { noDefaults: true, timeout: 10000 });
+            if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+            const [{ createPageRegistry }, snapshots] = await Promise.all([import('./page.mjs'),
+              dependencies.snapshot ? Promise.resolve({ snapshot: dependencies.snapshot }) : import('./snapshot.mjs')]);
+            const session = await resource.browser.newBrowserCDPSession();
+            resource.pages = (dependencies.createPages ?? createPageRegistry)({ browser: resource.browser, session,
+              upstream: selected.session, ownTarget: resource.filter.own, releaseTarget: resource.filter.release });
+            const runtime = await (dependencies.createRuntime ?? createV3TurnRuntime)({ binding, browser: selected.selectedBrowser, pages: resource.pages,
+              snapshot: snapshots.snapshot, ui, endpoint: selected.endpoint, dependencies: {
+                // Acknowledgment is coupled to the exact output identity in the
+                // fork protocol. Merely taking a snapshot never admits its refs.
+                acknowledgeSnapshot: snapshots.acknowledgeSnapshot,
+              } });
+            resource.runtime = runtime;
+            return runtime;
+          } catch (error) { dependencies.onError?.(error); await collect(resource); throw error; }
+        }
+        return Object.freeze({
+          async call(request) {
+            if (!current() || turnEnded) return failure();
+            try {
+              const runtime = await (preparing ??= prepare());
+              if (!current() || turnEnded || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
+              return await runtime.call(request);
+            } catch { return failure(); }
+          },
+          delivered: result => !turnEnded && resource.runtime?.delivered(result) === true,
+          end() {
+            turnEnded = true;
+            if (!ending) ending = (async () => { await preparing?.catch(() => {}); return collect(resource); })();
+            return ending;
+          },
+        });
       }, close });
     timer = (dependencies.schedule ?? setInterval)(() => {
-      try { status(); } catch { stopped = true; protocol.end().catch(() => {}); }
+      try { status(); } catch { terminalLoss = true; close().catch(() => {}); }
     }, 60000);
     status(); protocol.ready();
     return Object.freeze({ close, closed });
@@ -334,5 +379,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
 async function installedMain() { return startInstalledV3Worker({ channel: process }); }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.send) {
-  installedMain().catch(() => { if (process.connected) { process.send({ version: 3, status: 'unavailable' }); process.disconnect(); } });
+  installedMain().catch(error => { if (process.connected) {
+    process.send({ version: 3, status: 'unavailable', code: unsafeStartup.has(error.message) ? error.message : 'V3_RUNTIME_UNAVAILABLE' });
+    process.disconnect();
+  } });
 }
