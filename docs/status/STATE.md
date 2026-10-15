@@ -46,8 +46,10 @@ demoid answered Robin Vale). Earlier, demoid's engine call `cua.getApp("com.goog
 test/demo/server.mjs --all" --out <dir> --effort high`.
 
 Next, in order (after the 18:26 UTC gate round missed):
-1. Done: arm fixes, closed-root controls, form speed and list pickers (v3-gate `cddc7895`). Next: rounds 4 and 5 for the median
-   (owner away, Puddle's quiet window), and the owner's call on scoring form-checkout as "correctly asked".
+1. Done: arm fixes, closed-root controls, form speed and list pickers (v3-gate `cddc7895`). AD1 merges into v3-gate as
+   `arch/gate-ad1` (agent `gate-ad1-merge`), then one full check, then at least 5 gate rounds on that build for the median. The owner
+   said to run them whenever (2026-10-15 21:30 UTC), coordinating each with Puddle's architect. Check the Mac has been idle a few
+   minutes before each round, since FowlBrowser's arm opens windows.
 2. AD1 finish line: once the kb integration (running) and pop r5 are in ad1-int, one full check there and the merge into v3-gate.
 3. Fix two small turbo bugs found on the way: a read's redaction can blank matching characters elsewhere on the page, and `wait` with
    a ref may call a method an ElementHandle lacks.
