@@ -23,7 +23,9 @@ export function popupHook() {
   // https://www.w3.org/TR/wai-aria-1.2/#widget_roles and #aria-selected:
   // value/selection controls stay plain; command buttons and links may open windows.
   const CR2_OWN_ACTIVATION = node => {
-    if (node.localName === 'input') return !/^(button|submit|reset|image)$/i.test(node.getAttribute('type') ?? 'text');
+    if (node.localName === 'input') return node.hasAttribute('aria-pressed')
+      || !/^(button|submit|reset|image)$/i.test(node.getAttribute('type') ?? 'text');
+    if (node.localName === 'button' && node.hasAttribute('aria-pressed')) return true;
     if (/^(textarea|select|option|label|summary)$/.test(node.localName)) return true;
     const roles = (node.getAttribute('role') ?? '').toLowerCase().split(/\s+/);
     return roles.some(role => /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio|tab|treeitem|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/.test(role)

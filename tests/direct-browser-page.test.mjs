@@ -227,6 +227,8 @@ test('CR2 HTML input states and ARIA checked/selected widgets keep their own act
       assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), false, role);
     for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']])
       assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), false, role);
+    for (const tag of ['button', 'input'])
+      assert.equal(f.hook.prepare(new f.Element(tag, { type: 'button', 'aria-pressed': 'false' }), 'toggle-' + tag, 1000), false, tag);
     assert.equal(f.hook.prepare(new f.Element('button'), 'popup-button', 1000), true);
   } finally { f.hook.off(); }
 });
