@@ -222,3 +222,24 @@ test('CR1 real nested ignored hosts in an in-process frame expose native flags a
   assert.throws(() => closedRefBinding(page, ref), /stale/i);
   t.diagnostic('cleanup: fixture browser and loopback server are closed by fixture teardown');
 });
+
+test('CR2 HTML-AAM and Chromium native control roles remain reachable inside a closed root', { skip, timeout: 90000 }, async t => {
+  // https://www.w3.org/TR/html-aam-1.0/ and Chromium AXNodeObject native role mapping.
+  const types = ['button', 'submit', 'reset', 'image', 'text', 'search', 'tel', 'url', 'email', 'password',
+    'date', 'datetime-local', 'month', 'week', 'time', 'number', 'range', 'color', 'checkbox', 'radio', 'file'];
+  const inputs = types.map(type => `<input type="${type}" aria-label="Native ${type}">`).join('');
+  const controls = inputs + '<button>Native button element</button><textarea aria-label="Native textarea"></textarea>'
+    + '<select aria-label="Native select"><option>One</option></select>'
+    + '<select multiple aria-label="Native multiple"><option>Two</option></select>'
+    + '<a href="/next">Native link</a><details open><summary>Native summary</summary><p>Details content</p></details>';
+  const page = await fixture(t, '<custom-controls></custom-controls><script>'
+    + 'document.querySelector("custom-controls").attachShadow({mode:"closed"}).innerHTML = '
+    + JSON.stringify(controls) + ';</script>');
+  const result = await snapshot(page, { maxChars: 40000 });
+  for (const name of [...types.map(type => 'Native ' + type), 'Native button element', 'Native textarea',
+    'Native select', 'Native multiple', 'Native link', 'Native summary'])
+    assert.ok(result.text.split('\n').some(line => line.includes(JSON.stringify(name)) && /\[ref=s\d+\]/.test(line)), name);
+  const rows = result.text.split('\n').filter(line => /"Native /.test(line));
+  t.diagnostic('CR2 observed native control roles ' + JSON.stringify(rows));
+  t.diagnostic('cleanup: native-role browser and local server closed by fixture teardown');
+});

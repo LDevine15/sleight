@@ -11,10 +11,28 @@ function deadline(task, ms, message = 'background preparation timed out') {
 // MAIN world, before page scripts. Every name stays inside this function so it
 // can be serialized. The hook controls disposition, never grants authority.
 export function popupHook() {
-  // CR2 (queue/CR2.md): derive these three from the HTML and WAI-ARIA specs and a measurement, with citations.
-  const CR2_NESTED_DOCUMENT = () => { throw Error('CR2: nested-document check not derived'); };
-  const CR2_OWN_ACTIVATION = () => { throw Error('CR2: own-activation check not derived'); };
-  const CR2_MODIFIER_WINDOW_MS = NaN;
+  // HTML: document-sequences.html#navigable-container, iframe-embed-object.html,
+  // obsolete.html#frames (html.spec.whatwg.org/multipage/); fenced frames:
+  // https://wicg.github.io/fenced-frame/#fenced-frame-element. Do not cross documents.
+  const CR2_NESTED_DOCUMENT = focus => {
+    while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
+    return /^(iframe|object|embed|frame|fencedframe)$/.test(focus?.localName);
+  };
+  // HTML input.html#attr-input-type, forms.html#the-label-element and
+  // interactive-elements.html#the-summary-element (same HTML base URL).
+  // https://www.w3.org/TR/wai-aria-1.2/#widget_roles and #aria-selected:
+  // value/selection controls stay plain; command buttons and links may open windows.
+  const CR2_OWN_ACTIVATION = node => {
+    if (node.localName === 'input') return !/^(button|submit|reset|image)$/i.test(node.getAttribute('type') ?? 'text');
+    if (/^(textarea|select|option|label|summary)$/.test(node.localName)) return true;
+    const roles = (node.getAttribute('role') ?? '').toLowerCase().split(/\s+/);
+    return roles.some(role => /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio|tab|treeitem|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/.test(role)
+      || role === 'button' && node.hasAttribute('aria-pressed')
+      || /^(gridcell|row|rowheader|columnheader)$/.test(role) && node.hasAttribute('aria-selected'));
+  };
+  // Host receipt cr2-timing-20261015-0005: 20 ControlOrMeta clicks, max 0.7 ms.
+  // Round max*2+50 ms upward to 100 ms; arm.until remains the harder cap.
+  const CR2_MODIFIER_WINDOW_MS = 100;
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap(), listeners = new WeakMap();
@@ -146,9 +164,7 @@ export function popupHook() {
     prepare(element, token, capMs) {
       if (retired.has(token)) return false;
       if (arm) finish(arm.token);
-      let focus = document.activeElement;
-      while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
-      if (CR2_NESTED_DOCUMENT(focus)) throw Error('document focus is inside a frame');
+      if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
       const chain = ancestors(element);
       for (const node of chain) {

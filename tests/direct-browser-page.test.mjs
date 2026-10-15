@@ -193,6 +193,61 @@ function hookFixture() {
   return { window, document, navigator, hook, Element, MouseEvent, Event, EventTarget, opens };
 }
 
+test('CR2 HTML navigable containers and plugin elements reject focus through open shadow roots', () => {
+  // HTML document-sequences.html#navigable-container and iframe-embed-object.html;
+  // obsolete.html#frames and WICG fenced-frame/#fenced-frame-element extend the set.
+  const f = hookFixture();
+  try {
+    for (const tag of ['iframe', 'object', 'embed', 'frame', 'fencedframe']) {
+      const focused = new f.Element(tag);
+      f.document.activeElement = { shadowRoot: { activeElement: { shadowRoot: { activeElement: focused } } } };
+      assert.throws(() => f.hook.prepare(new f.Element(), tag, 1000), /frame|focus/i);
+    }
+    f.document.activeElement = { shadowRoot: { activeElement: new f.Element('input') } };
+    assert.equal(f.hook.prepare(new f.Element(), 'ordinary-focus', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+test('CR2 HTML input states and ARIA checked/selected widgets keep their own activation', () => {
+  // HTML input.html#attr-input-type (including its text default), forms.html#the-label-element;
+  // WAI-ARIA 1.2 #aria-checked, #aria-selected, #aria-pressed and #widget_roles.
+  const f = hookFixture();
+  try {
+    for (const type of ['', 'invalid', 'hidden', 'text', 'search', 'tel', 'url', 'email', 'password', 'date',
+      'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file'])
+      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'input-' + type, 1000), false, type);
+    for (const type of ['button', 'submit', 'reset', 'image', 'SUBMIT']) {
+      assert.equal(f.hook.prepare(new f.Element('input', { type }), 'button-' + type, 1000), true, type);
+      f.hook.finish('button-' + type);
+    }
+    for (const tag of ['select', 'option', 'textarea', 'label', 'summary'])
+      assert.equal(f.hook.prepare(new f.Element(tag), tag, 1000), false, tag);
+    for (const role of ['checkbox', 'radio', 'switch', 'option', 'menuitemcheckbox', 'menuitemradio', 'tab',
+      'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar'])
+      assert.equal(f.hook.prepare(new f.Element('div', { role }), role, 1000), false, role);
+    for (const [role, attribute] of [['button', 'aria-pressed'], ['gridcell', 'aria-selected'], ['row', 'aria-selected']])
+      assert.equal(f.hook.prepare(new f.Element('div', { role, [attribute]: 'false' }), role, 1000), false, role);
+    assert.equal(f.hook.prepare(new f.Element('button'), 'popup-button', 1000), true);
+  } finally { f.hook.off(); }
+});
+
+test('CR2 measured modifier window covers 0.7 ms host maximum and expires at 100 ms', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element();
+  const mouse = () => Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
+  try {
+    f.hook.prepare(button, 'measured', 1000);
+    for (const listener of f.window.listeners.keydown)
+      listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    t.mock.timers.tick(1);
+    assert.equal(mouse().ctrlKey, false);
+    t.mock.timers.tick(98);
+    assert.equal(mouse().ctrlKey, false);
+    t.mock.timers.tick(1);
+    assert.equal(mouse().ctrlKey, true);
+  } finally { f.hook.off(); }
+});
+
 test('serialized popup hook hides only the prepared trusted click and strips window sizing', () => {
   const f = hookFixture(), button = new f.Element();
   try {

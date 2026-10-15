@@ -6,8 +6,12 @@ const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|exp
 const TIMEOUT = 3000;
 const scalarRole = role => /^(textbox|searchbox|combobox)$/.test(role);
 const normalized = value => String(value ?? '').replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
-// CR2: derive from WAI-ARIA with citations (queue/CR2.md).
-const CONTROL_ROLE = { test() { throw Error('CR2: CONTROL_ROLE not derived'); } };
+// https://www.w3.org/TR/wai-aria-1.2/#widget_roles: operable widgets and
+// composites. Exclude read-only progressbar and the tabpanel content container;
+// separator needs native focusability below. Chromium's AXNodeObject native
+// mapping adds color/date/time and summary controls (details itself is a group):
+// https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/modules/accessibility/ax_node_object.cc
+const CONTROL_ROLE = /^(button|checkbox|gridcell|link|menuitem|menuitemcheckbox|menuitemradio|option|radio|scrollbar|searchbox|separator|slider|spinbutton|switch|tab|textbox|treeitem|combobox|grid|listbox|menu|menubar|radiogroup|tablist|tree|treegrid|ColorWell|Date|DateTime|InputTime|DisclosureTriangle|DisclosureTriangleGrouped)$/;
 
 async function bounded(action) {
   let timer;
@@ -157,7 +161,8 @@ async function closedRoots(page, state) {
     for (const backendNodeId of controls) {
       if (++probes > 512) throw Error('Closed-root accessibility budget exceeded');
       const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
-      const node = nodes.find(node => node.backendDOMNodeId === backendNodeId && !node.ignored && CONTROL_ROLE.test(node.role?.value));
+      const node = nodes.find(node => node.backendDOMNodeId === backendNodeId && !node.ignored && CONTROL_ROLE.test(node.role?.value)
+        && (node.role.value !== 'separator' || node.properties?.some(property => property.name === 'focusable' && property.value?.value === true)));
       if (!node) continue;
       const role = node.role.value, ref = state.closed.get(frame)?.get(backendNodeId) ?? 's' + (++state.shadowNumber);
       const row = { role, name: node.name?.value ?? '', ref, protected: scalarRole(role) };

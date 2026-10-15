@@ -395,6 +395,23 @@ const closedRoot = children => ({ nodeType: 11, shadowRootType: 'closed', childr
 const element = (backendNodeId, extra = {}) => ({ nodeType: 1, backendNodeId, ...extra });
 const axControl = (backendDOMNodeId, role, name, extra = {}) => ({ backendDOMNodeId, role: { value: role }, name: { value: name }, ...extra });
 
+test('CR2 WAI-ARIA 1.2 widget roles and Chromium native input mappings expose operable closed controls', async () => {
+  // w3.org/TR/wai-aria-1.2/#widget_roles; Chromium AXNodeObject::NativeRoleIgnoringAria.
+  const roles = ['button', 'checkbox', 'gridcell', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option',
+    'radio', 'scrollbar', 'searchbox', 'separator', 'slider', 'spinbutton', 'switch', 'tab', 'textbox', 'treeitem',
+    'combobox', 'grid', 'listbox', 'menu', 'menubar', 'radiogroup', 'tablist', 'tree', 'treegrid',
+    'ColorWell', 'Date', 'DateTime', 'InputTime', 'DisclosureTriangle', 'DisclosureTriangleGrouped'];
+  const excluded = ['progressbar', 'tabpanel', 'group', 'generic', 'paragraph', 'separator'];
+  const all = [...roles, ...excluded];
+  const nodes = all.map((role, i) => axControl(i + 1, role, 'Control ' + i,
+    role === 'separator' && i < roles.length ? { properties: [{ name: 'focusable', value: { value: true } }] } : {}));
+  const root = { nodeType: 9, children: [element(100, { shadowRoots: [closedRoot(all.map((_, i) => element(i + 1)))] })] };
+  const { page } = nativeClosedFixture(root, nodes);
+  const result = await module.snapshot(page, { maxChars: 40000 });
+  for (let i = 0; i < roles.length; i++) assert.ok(result.text.includes('"Control ' + i + '"'), roles[i]);
+  for (let i = roles.length; i < all.length; i++) assert.ok(!result.text.includes('"Control ' + i + '"'), all[i]);
+});
+
 test('CR1 probes nested closed controls and same-process frame documents without host AX data', async () => {
   const root = { nodeType: 9, children: [element(10, { contentDocument: { nodeType: 9, children: [element(20, {
     shadowRoots: [closedRoot([element(21, { shadowRoots: [closedRoot([element(22)])] })])],
