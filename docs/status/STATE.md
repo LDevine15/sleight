@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 06:10 UTC, owner asleep, Night Shift)
+## Banner (2026-10-15 07:30 UTC, owner asleep, Night Shift)
 
 OWNER ASLEEP since 2026-10-15T03:49:55Z (/goodnight). Night Shift on.
 
@@ -23,19 +23,13 @@ Branches (all on `private`):
   a restart). Full check 5729 pass, 0 fail, 59 skipped. `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
 - `v3-gate` at `83fbf6b4` (`~/Projects/sleight-wt/v3-int`): reviewed turbo v3, the two bench fixes, TN1, and the funding switch
   (`83fbf6b4`, 113/113 focused). The sleight, turbo, FowlBrowser and computer use arms run on the login. Browser Use needs the API key, so it runs only in a round of its own.
-- `arch/ad1-int` at `c12b466b` (`~/Projects/sleight-wt/adfix-int`) merges the AD1 bank with the port guard and the fix rounds hyg r2
-  and r3, pop r1, kb r2, pay r3, CR8 and CR9. The bank there passes in full for endpoint (136), keyboard (27), instructions (41),
-  natives (90), payment (90) and submit-retry (26), with timing-and-covering 30/41 until swap merges. Real-page tests need
-  `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
-- `arch/ad1-trial` at `cd44eea2` (`~/Projects/sleight-wt/ad1-trial`) is ad1-int plus swap r2 and pop r2, with the conflicts
-  resolved. All 8 bank files (488 tests) and 16 related unit and real-page files pass there.
-- AD1 fix rounds (Claude agents, Sonnet high). Status per branch is in `ledger/claims/AD1/OPEN-REVIEWS.md`. Each round gets a
-  fresh reviewer with real-page repros. At 06:10 UTC the fix rounds pay r7, pop r3, kb r4 and hook-key r2 were running beside the swap r3 review. Most
-  findings in swap and kb predate AD1 (round 1 missed them). Claude Code's safety classifier stopped the adversarial half of the
-  hook-key review; the correctness, cost and fail-closed half passed, and two probes it left behind fail and are being fixed.
-  The pop r2 review found a full bypass that predates AD1: a page can replace or switch off the hook at
-  `window[Symbol.for('sleight.popup3')]` and raise a foreground tab. `arch/ad1-hookkey` (from ad1-trial) is fixing it with a
-  random key and secret per session and a frozen hook. CR10 is not merged: its premise was disproved.
+- `arch/ad1-int` at `4de5ceca` (`~/Projects/sleight-wt/adfix-int`) holds the AD1 bank, the port guard, hyg r2 and r3, CR8, CR9,
+  swap r2, pop r3, and the hook-key hardening (random key and secret, frozen hook, one-use HMAC proofs). The bank there passes in
+  full (571 tests in 9 files, hook-key 43 and natives 151 among them). Real-page tests need `SLEIGHT_LIVE_DOM_TEST=1` or they skip silently.
+- AD1 fix rounds (Claude agents, Sonnet high), one fresh reviewer per round with real-page repros. Status per branch is in
+  `ledger/claims/AD1/OPEN-REVIEWS.md`. Swap r4 and kb r4 are under review, pay r8 is fixing two medium findings, and pop r3 is
+  under review as integrated. Each later round merges into ad1-int with the hook-key API. Claude Code's safety classifier stopped
+  the adversarial half of the hook-key review; its correctness, cost and fail-closed half passed.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Smoke rounds 2026-10-15 (Haiku 5.5, turbo arm, form-travel and demoid): the third was ROUND CLEAN with 0 focus events (form-travel 11/11,
