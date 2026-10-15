@@ -166,7 +166,7 @@ test('focus race: a repeating timer keeps moving focus to Pay while the agent ty
 // ---- Round 3: what the reviewer's repros of round 2 found -----------------------------------------------------
 // Each loop below was a way to get the payment through; the independent server must record none.
 const settleFor = ms => new Promise(resolve => setTimeout(resolve, ms));
-const cancelledText = /page changed during the click; read again/;
+const cancelledText = /page changed during the click/;
 
 // F2: a same-origin iframe made visible by the pointer's own move takes the click.
 test('a preloaded same-origin iframe shown on the second pointermove takes no click (0 of 5 payments)', { skip, timeout: 120000 }, async t => {
@@ -265,8 +265,8 @@ for (const [name, script] of Object.entries(baseSwaps))
 // False cancels stay cancels (the seal is not loosened), but the model is told plainly that nothing was
 // activated and that one retry after a fresh read is safe. Measured separately: the retry succeeds.
 const falseCancels = {
-  'the label becomes Loading... on mousedown': { body: `<button id="b" type="button" aria-label="Next step" onclick="record('upload')">Next step</button>`, script: `b.addEventListener('mousedown',()=>{b.textContent='Loading...'});`, label: 'Next step' },
-  'aria-label changes in a focus handler': { body: `<button id="b" type="button" aria-label="Search" onclick="record('upload')">Search</button>`, script: `b.addEventListener('focus',()=>b.setAttribute('aria-label','Search (focused)'));`, label: 'Search' },
+  'the label becomes Loading... on mousedown': { body: `<button id="b" type="button" aria-label="Next step" onclick="record('upload')">Next step</button>`, script: `b.addEventListener('mousedown',()=>{b.textContent='Loading...'});`, label: 'Next step', pressSeen: true },
+  'aria-label changes in a focus handler': { body: `<button id="b" type="button" aria-label="Search" onclick="record('upload')">Search</button>`, script: `b.addEventListener('focus',()=>b.setAttribute('aria-label','Search (focused)'));`, label: 'Search', pressSeen: true },
   'the node is replaced on the first pointerover': { body: `<div id="root"><button id="b" type="button" aria-label="Add item" onclick="record('upload')">Add item</button></div>`,
     script: `let first=true;document.addEventListener('pointerover',e=>{if(first&&e.target.closest('#root')){first=false;const n=document.createElement('button');n.type='button';n.setAttribute('aria-label','Add item');n.textContent='Add item';n.onclick=()=>record('upload');root.replaceChildren(n)}});`, label: 'Add item' },
   'the node is replaced on the next animation frame': { body: `<div id="root"><button id="b" type="button" aria-label="Add item" onclick="record('upload')">Add item</button></div>`,
@@ -282,7 +282,11 @@ for (const [name, page] of Object.entries(falseCancels))
       await settleFor(120);
       if (f.delta().upload >= 1) { firstOk++; continue; }
       const line = first.text.split('\n')[0];
-      assert.match(line, /not run: page changed during the click; read again\. The click was cancelled before it activated anything, so a fresh read and one retry is safe\./);
+      // A page that acts on the press has already seen part of the click: no "not run", no "retry is safe".
+      if (page.pressSeen) {
+        assert.match(line, /^1 click \S+: effect unconfirmed; read before retrying\. page changed during the click; the page had already received part of it\./);
+        assert.doesNotMatch(line, /not run|retry is safe/);
+      } else assert.match(line, /not run: page changed during the click; read again\. The page received no press, release or click, so a fresh read and one retry is safe\./);
       const text = await f.read();
       const again = await f.act([{ do: 'click', ref: f.ref(page.label, text) }]);
       await settleFor(120);
@@ -291,3 +295,111 @@ for (const [name, page] of Object.entries(falseCancels))
     }
     t.diagnostic('first click delivered ' + firstOk + ', cancelled then retried ' + retried + ' of 4');
   });
+
+// ---- Round 4: what the reviewer's repros of round 3 found -----------------------------------------------------
+// Every frame Playwright knows is armed from Node, so the click is cancelled wherever a control is shown at the
+// second pointer move. The independent server must record no payment in any round.
+const payBody = `<style>body{margin:0}button{width:100vw;height:100vh}</style><button type="button" onclick="(parent.record||record)('payment')">Pay now</button>`;
+const cancelsWith = (t, label, n, make) => async () => {
+  const b = await bank(t); let cancelled = 0;
+  for (let i = 0; i < n; i++) {
+    const f = await make(b);
+    await settleFor(600);
+    const result = await f.act([{ do: 'click', ref: f.ref(label) }]);
+    await settleFor(300);
+    assert.equal(f.delta().payment, 0, 'round ' + i + ': ' + result.text.split('\n')[0]);
+    if (/page changed during the click/.test(result.text)) cancelled++;
+  }
+  t.diagnostic('cancelled ' + cancelled + '/' + n);
+  return cancelled;
+};
+const showAtSecondMove = (target, show) => `let n=0;${target}.addEventListener('pointermove',()=>{n++;if(n==2){${show}}});`;
+
+// F2-A: document.open() in a child frame erased the hook's window listeners (4 of 4 payments in round 3).
+const framed = `<div class="box" id="c"><button id="x" class="fill" type="button" aria-label="Close ad">Close ad</button><iframe id="fr" class="fill" src="/pay-frame" style="z-index:2;opacity:0.01;visibility:hidden"></iframe></div>`;
+const openCases = {
+  'the child frame rewrites itself at load, then is shown at the second move': { route: `<script>document.open();document.write(${JSON.stringify(payBody)});document.close()</script>`, show: `fr.style.visibility='visible'` },
+  'the parent calls fr.contentDocument.open() at the second move, after arming': { route: payBody, show: `const d=fr.contentDocument;d.open();d.write(${JSON.stringify(payBody)});d.close();fr.style.visibility='visible'` },
+  'the parent calls its own Document.prototype.open on the child document': { route: payBody, show: `const d=fr.contentDocument;Document.prototype.open.call(d);d.write(${JSON.stringify(payBody)});d.close();fr.style.visibility='visible'` },
+};
+for (const [name, c] of Object.entries(openCases))
+  test('F2-A: ' + name + ' (0 of 4 payments)', { skip, timeout: 120000 }, async t => {
+    const cancelled = await cancelsWith(t, 'Close ad', 4, b => b.start(plain(css + framed, showAtSecondMove('x', c.show)), readOnly, { routes: { '/pay-frame': plain(c.route) } }))();
+    assert.equal(cancelled, 4, 'every click that met the rewritten frame is reported as cancelled');
+  });
+
+// F2-B: the checked element is in a same-origin child frame; a top overlay or a sibling frame shown at the second move.
+const innerPage = plain(`<style>body{margin:0}button{width:100vw;height:100vh}</style><button id="x" type="button" aria-label="Close ad" onclick="parent.record('upload')">Close ad</button>`, `let n=0;x.addEventListener('pointermove',()=>{n++;if(n==2)parent.show()});`);
+const wide = `<style>body{margin:0}.box{position:relative;width:200px;height:60px;margin:10px}.fill{position:absolute;inset:0;width:100%;height:100%;border:0}</style>`;
+const childFrameCases = {
+  'a top overlay shown at the second move over a button in a same-origin child frame': { html: `<div class="box"><iframe class="fill" src="/inner"></iframe><button id="ov" class="fill" type="button" style="z-index:3;opacity:0.01;visibility:hidden" onclick="record('payment')">Pay now</button></div>`, script: `window.show=()=>{ov.style.visibility='visible'}` },
+  'a sibling same-origin frame shown at the second move over a button in a child frame': { html: `<div class="box"><iframe class="fill" src="/inner"></iframe><iframe id="sib" class="fill" src="/paysib" style="z-index:3;opacity:0.01;visibility:hidden"></iframe></div>`, script: `window.show=()=>{sib.style.visibility='visible'}` },
+};
+for (const [name, c] of Object.entries(childFrameCases))
+  test('F2-B: ' + name + ' (0 of 4 payments)', { skip, timeout: 120000 }, async t => {
+    const cancelled = await cancelsWith(t, 'Close ad', 4, b => b.start(plain(wide + c.html, c.script), readOnly, { routes: { '/inner': innerPage, '/paysib': plain(payBody) } }))();
+    assert.equal(cancelled, 4);
+  });
+test('F2-B control: a plain click on a button in a same-origin child frame is delivered (4 of 4)', { skip, timeout: 120000 }, async t => {
+  const b = await bank(t);
+  for (let i = 0; i < 4; i++) {
+    const f = await b.start(plain(wide + `<div class="box"><iframe class="fill" src="/inner"></iframe></div>`, 'window.show=()=>{}'), readOnly, { routes: { '/inner': innerPage } });
+    await settleFor(600);
+    const result = await f.act([{ do: 'click', ref: f.ref('Close ad') }]);
+    await settleFor(300);
+    assert.equal(f.delta().upload, 1, 'round ' + i + ': ' + result.text.split('\n')[0]);
+  }
+});
+
+// F2-C: an iframe in a shadow root is not in window[i]; it was never armed (4 of 4 payments in round 3).
+test('F2-C: an iframe in an open shadow root shown at the second move takes no click (0 of 4 payments)', { skip, timeout: 120000 }, async t => {
+  const html = framed.replace(/<iframe[^>]*><\/iframe>/, '') + '<div id="h"></div>';
+  const script = `const sr=h.attachShadow({mode:'open'});sr.innerHTML='<iframe id="sf" src="/pay-frame" style="position:absolute;left:10px;top:10px;width:160px;height:48px;border:0;z-index:2;opacity:0.01;visibility:hidden"></iframe>';`
+    + showAtSecondMove('x', `sr.getElementById('sf').style.visibility='visible'`);
+  const cancelled = await cancelsWith(t, 'Close ad', 4, b => b.start(plain(css + html, script), readOnly, { routes: { '/pay-frame': plain(payBody) } }))();
+  assert.equal(cancelled, 4);
+});
+
+// F9: "not run ... retry is safe" only when the page saw no press, release or click. A page that acts on pointerdown
+// has already acted when the later events are cancelled.
+test('F9: a page that acts on pointerdown and then relabels is reported as unconfirmed, never as safe to retry (4 of 4)', { skip, timeout: 120000 }, async t => {
+  const b = await bank(t);
+  for (let i = 0; i < 4; i++) {
+    const f = await b.start(doc(`<button id="b" type="button" aria-label="Add item" onclick="record('submit')">Add item</button>`, `b.addEventListener('pointerdown',()=>{record('upload');b.textContent='Added'});`, '', { audit: false }), readOnly);
+    await settleFor(150);
+    const result = await f.act([{ do: 'click', ref: f.ref('Add item') }]);
+    await settleFor(250);
+    const line = result.text.split('\n')[0];
+    assert.equal(f.delta().upload, 1, 'the page did act on pointerdown');
+    assert.match(line, /effect unconfirmed; read before retrying\./);
+    assert.doesNotMatch(line, /not run|retry is safe/);
+  }
+});
+test('F9: a button that is removed on mousedown is reported as unconfirmed, not as safe to retry', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(`<button id="b" type="button" aria-label="Add item" onclick="record('submit')">Add item</button>`, `b.addEventListener('mousedown',()=>{record('upload');b.remove()});`, '', { audit: false }), readOnly);
+  await settleFor(150);
+  const result = await f.act([{ do: 'click', ref: f.ref('Add item') }]);
+  const line = result.text.split('\n')[0];
+  assert.match(line, /effect unconfirmed/);
+  assert.doesNotMatch(line, /not run|retry is safe/);
+});
+
+// Low: a page that rewrites the URL 30 ms after hover is still cancelled (the seal keeps document.URL), but the
+// message says a retry is safe, and the retry after a fresh read succeeds.
+test('a page that rewrites the URL 30 ms after hover is cancelled as safe to retry, and the retry succeeds (4 of 4)', { skip, timeout: 120000 }, async t => {
+  const b = await bank(t); let retried = 0;
+  for (let i = 0; i < 4; i++) {
+    const f = await b.start(doc(`<button id="b" type="button" aria-label="Next step" onclick="record('upload')">Next step</button>`, `b.addEventListener('mouseenter',()=>{setTimeout(()=>history.replaceState(null,'','?hover='+Date.now()),30)});`, '', { audit: false }), readOnly);
+    await settleFor(150);
+    const first = await f.act([{ do: 'click', ref: f.ref('Next step') }]);
+    await settleFor(150);
+    if (f.delta().upload >= 1) continue;
+    assert.match(first.text.split('\n')[0], /not run: page changed during the click; read again\. The page received no press, release or click, so a fresh read and one retry is safe\./);
+    const text = await f.read();
+    await f.act([{ do: 'click', ref: f.ref('Next step', text) }]);
+    await settleFor(150);
+    assert.equal(f.delta().upload, 1, 'retry ' + i);
+    retried++;
+  }
+  t.diagnostic('cancelled then retried ' + retried + ' of 4');
+});

@@ -247,6 +247,19 @@ test('v3 passes the background-click disposition to the single Playwright click'
   assert.equal(f.actions.length, 1); assert.deepEqual(f.actions[0][2], { timeout: 1000, modifiers: ['ControlOrMeta'] });
 });
 
+// The guard's two cancel messages (page.mjs): "not run" and "retry is safe" only when the page saw no press, release or click.
+for (const [name, message, pattern, absent] of [
+  ['safe', 'page changed during the click; read again. The page received no press, release or click, so a fresh read and one retry is safe.', /^1 click e1: not run: page changed during the click; read again\. The page received no press, release or click, so a fresh read and one retry is safe\./, /effect unconfirmed/],
+  ['after a press', 'page changed during the click; the page had already received part of it.', /^1 click e1: effect unconfirmed; read before retrying\. page changed during the click; the page had already received part of it\./, /not run|retry is safe/],
+]) test('v3 a guard-cancelled click is worded ' + name, async () => {
+  const f = fixture(); let time = 0;
+  const run = createActionRunner({ check: () => 'allow', now: () => time, sleep: async ms => { time += ms; },
+    backgroundClick: async (tab, loc, click) => { await click({}); throw Error(message); },
+    snapshot: async () => ({ text: 'No visible changes.', number: 2 }) });
+  const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], pattern); assert.doesNotMatch(result.lines[0], absent);
+});
+
 test('v3 scroll until finds the text in a bounded search and returns its ref', async () => {
   const f = fixture(); let reads = 0, time = 0;
   const run = createActionRunner({ check: () => 'allow', now: () => time, sleep: async ms => { time += ms; },

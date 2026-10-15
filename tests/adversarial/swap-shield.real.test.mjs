@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bank, plain, readOnly, skip } from './fixtures/bank.mjs';
+import { frameShield } from '../../plugins/sleight/lib/direct-browser/page.mjs';
 
 // The input shield in the page hook (guard, verdict, finish) driven directly with trusted input from the
 // harness's own Playwright. Part one is the key-shield API a keyboard path arms before it sends a key.
@@ -327,22 +328,29 @@ test('key shield: a form with no submit button still submits implicitly with its
   assert.equal(submitted(f), 1);
 });
 
-// F2: same-origin child frames are armed as foreign.
+// F2: every frame but the owner's is armed from Node over page.frames() (frameShield) and released the same way.
 const frameDoc = '<style>body{margin:0}button{width:100vw;height:100vh}</style><button type="button" onclick="record(\'payment\')">Pay now</button>';
 const cover = `<style>.box{position:relative;width:160px;height:48px;margin:10px}.fill{position:absolute;inset:0;width:100%;height:100%;border:0}</style>`;
-test('a same-origin iframe shown after arming receives no click, and the guard reports it', { skip, timeout: 60000 }, async t => {
+const shieldOf = (f, { token = 't1', keys = false } = {}) => frameShield(f.page, f.page.mainFrame(), { token, capMs: 3000, timeoutMs: 2000, keys });
+const armedIn = frame => frame.evaluate(() => { const state = window[Symbol.for('sleight.popup3')]?.armed(); return state ? state.token : null; });
+const elsewhere = 'the input landed on a different element';
+
+test('a same-origin iframe shown after arming receives no click, and the release reports it', { skip, timeout: 60000 }, async t => {
   const html = `${cover}<div class="box"><button id="b" class="fill" type="button" aria-label="Close ad">Close ad</button><iframe id="fr" class="fill" src="/pay-frame" style="opacity:0;z-index:2;visibility:hidden"></iframe></div>`;
   const b = await bank(t), f = await b.start(plain(html, `b.addEventListener('pointermove',()=>{fr.style.visibility='visible'});`), readOnly, { routes: { '/pay-frame': plain(frameDoc) } });
   await new Promise(resolve => setTimeout(resolve, 400));
+  const shield = shieldOf(f);
   assert.equal(await arm(f, '#b'), true);
+  assert.equal(await shield.arm(), true);
   await f.page.evaluate(() => { document.getElementById('fr').style.visibility = 'visible'; });
   await f.page.mouse.click(40, 34); await settle();
-  assert.equal(await verdict(f), 'the input landed on a different element');
   assert.equal(f.delta().payment, 0);
-  assert.equal(await finish(f), 'the input landed on a different element');
+  assert.equal(await shield.release(), elsewhere);
+  const report = await f.page.evaluate(() => window[Symbol.for('sleight.popup3')].conclude('t1'));
+  assert.equal(report.passed, false, 'the sealed document saw no press');
 });
 
-test('a same-origin iframe created while armed starts armed too', { skip, timeout: 60000 }, async t => {
+test('a same-origin iframe created while armed arms itself at document start, and release disarms it', { skip, timeout: 60000 }, async t => {
   const html = `${cover}<div class="box" id="c"><button id="b" class="fill" type="button" aria-label="Close ad">Close ad</button></div>`;
   const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/pay-frame': plain(frameDoc) } });
   assert.equal(await arm(f, '#b'), true);
@@ -350,18 +358,185 @@ test('a same-origin iframe created while armed starts armed too', { skip, timeou
     const q = document.createElement('iframe'); q.className = 'fill'; q.src = '/pay-frame'; q.style.cssText = 'z-index:2;opacity:0';
     q.onload = resolve; document.getElementById('c').append(q);
   }));
+  const child = f.page.frames().find(x => x !== f.page.mainFrame());
+  assert.equal(await armedIn(child), 't1', 'no Node call has run: the frame read its parent');
   await f.page.mouse.click(40, 34); await settle();
-  assert.equal(await verdict(f), 'the input landed on a different element');
   assert.equal(f.delta().payment, 0);
+  assert.equal(await shieldOf(f).release(), elsewhere);
+  assert.equal(await armedIn(child), null);
 });
 
-test('a child frame released by finish stops cancelling', { skip, timeout: 60000 }, async t => {
+test('a child frame released by the shield takes input again', { skip, timeout: 60000 }, async t => {
   const html = `${cover}<div class="box"><button id="b" class="fill" type="button" aria-label="Close ad">Close ad</button></div><iframe id="fr" src="/pay-frame" style="width:200px;height:60px"></iframe>`;
   const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/pay-frame': plain(frameDoc) } });
   await new Promise(resolve => setTimeout(resolve, 300));
+  const shield = shieldOf(f);
   assert.equal(await arm(f, '#b'), true);
-  assert.equal(await finish(f), true);
+  assert.equal(await shield.arm(), true);
   const frame = f.page.frames().find(x => x !== f.page.mainFrame());
+  assert.equal(await armedIn(frame), 't1');
+  assert.equal(await shield.release(), undefined);
+  assert.equal(await armedIn(frame), null);
   await frame.click('button', { timeout: 3000 }); await settle();
-  assert.equal(f.delta().payment, 1, 'after finish the frame takes input again');
+  assert.equal(f.delta().payment, 1, 'after release the frame takes input again');
+});
+
+// F2-C: an iframe inside a shadow root is not in window[i]; Playwright's frame list has it.
+test('an iframe in a shadow root is armed before the click, and one created while armed is released (no leak)', { skip, timeout: 60000 }, async t => {
+  const html = `<button id="t" aria-label="Top">Top</button><div id="h"></div>`;
+  const frames = { '/f': plain(`<button id="fb" style="width:100%;height:100%" onclick="record('payment')">fb</button>`) };
+  const b = await bank(t), f = await b.start(plain(html, `const sr=h.attachShadow({mode:'open'});sr.innerHTML='<iframe id="pre" src="/f" style="width:200px;height:40px;border:0"></iframe>';`), readOnly, { routes: frames });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(await f.page.evaluate(() => window.length), 0, 'window[i] sees no shadow-root frame');
+  const preloaded = f.page.frames().find(x => x !== f.page.mainFrame());
+  assert.ok(preloaded, 'the frame list has the shadow-root frame');
+  const shield = shieldOf(f);
+  assert.equal(await arm(f, '#t'), true);
+  assert.equal(await shield.arm(), true);
+  assert.equal(await armedIn(preloaded), 't1', 'a preloaded shadow-root frame is armed');
+  await f.page.evaluate(() => new Promise(resolve => {
+    const q = document.createElement('iframe'); q.style.cssText = 'width:200px;height:40px;border:0'; q.src = '/f'; q.onload = resolve;
+    document.getElementById('h').shadowRoot.append(q);
+  }));
+  const created = f.page.frames().find(x => x !== f.page.mainFrame() && x !== preloaded);
+  assert.equal(await armedIn(created), 't1', 'a shadow-root frame created while armed starts armed');
+  await created.click('button', { timeout: 1500 }).catch(() => {}); await settle();
+  assert.equal(f.delta().payment, 0, 'both frames cancel the click');
+  assert.equal(await shield.release(), elsewhere);
+  assert.equal(await armedIn(preloaded), null);
+  assert.equal(await armedIn(created), null, 'conclude-time release reaches the frame created while armed');
+  await created.click('button', { timeout: 3000 }); await settle();
+  assert.equal(f.delta().payment, 1, 'a later real click in it is delivered');
+});
+
+test('a frame whose hook already holds another shield cannot be armed, so the arm fails closed', { skip, timeout: 60000 }, async t => {
+  const html = `<button id="t" aria-label="Top">Top</button><iframe id="fr" src="/f" style="width:200px;height:60px"></iframe>`;
+  const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/f': plain('<button id="fb">fb</button>') } });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const frame = f.page.frames().find(x => x !== f.page.mainFrame());
+  assert.equal(await frame.evaluate(() => window[Symbol.for('sleight.popup3')].guard(document.getElementById('fb'), 'other', 3000)), true);
+  assert.equal(await shieldOf(f).arm(), false);
+});
+
+// F2-A: document.open() erases a window's listeners. The hook wraps it (and write) and re-adds them, in the
+// realm of the document that was rewritten, and the Node confirm re-adds them before the click.
+const payButton = `<button type="button" style="width:100vw;height:100vh;margin:0" onclick="parent.record('payment')">Pay</button>`;
+const openModes = {
+  'control (no rewrite)': '',
+  'document.open()': 'd.open();',
+  'document.open() + write + close()': `d.open();d.write(${JSON.stringify(payButton)});d.close();`,
+  'the parent realm\'s Document.prototype.open on the child document': `Document.prototype.open.call(d);d.write(${JSON.stringify(payButton)});d.close();`,
+  'document.write after close (implicit open)': `d.open();d.close();d.write(${JSON.stringify(payButton)});d.close();`,
+  'document.writeln on a closed document': `d.writeln(${JSON.stringify(payButton)});d.close();`,
+};
+for (const [name, code] of Object.entries(openModes))
+  test('document rewrite in an armed child frame still cancels the click: ' + name, { skip, timeout: 60000 }, async t => {
+    const html = `<style>iframe{position:absolute;left:0;top:100px;width:200px;height:60px;border:0}</style><button id="x" aria-label="Close ad">Close ad</button><iframe id="fr" src="/p"></iframe>`;
+    const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/p': plain(payButton) } });
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const shield = shieldOf(f);
+    assert.equal(await arm(f, '#x'), true);
+    assert.equal(await shield.arm(), true);
+    await f.page.evaluate(`(() => { const d = document.getElementById('fr').contentDocument; ${code} })()`);
+    await f.page.mouse.click(50, 130); await settle();
+    assert.equal(f.delta().payment, 0);
+    // A bare open() leaves an empty document: nothing there takes the press, so there is nothing to veto.
+    assert.equal(await shield.release(), code === 'd.open();' ? undefined : elsewhere);
+  });
+
+test('the confirm before the click arms a frame that navigated after the first arm', { skip, timeout: 60000 }, async t => {
+  const html = `<style>iframe{position:absolute;left:0;top:100px;width:200px;height:60px;border:0}</style><button id="x" aria-label="Close ad">Close ad</button><iframe id="fr" src="/p"></iframe>`;
+  const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/p': plain(frameDoc), '/q': plain(frameDoc) } });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  const shield = shieldOf(f);
+  assert.equal(await arm(f, '#x'), true);
+  assert.equal(await shield.arm(), true);
+  const frame = f.page.frames().find(x => x !== f.page.mainFrame());
+  await frame.goto(b.origin + '/q');
+  assert.equal(await shield.confirm(), true);
+  assert.equal(await armedIn(frame), 't1');
+  await f.page.mouse.click(50, 130); await settle();
+  assert.equal(f.delta().payment, 0);
+  assert.equal(await shield.release(), elsewhere);
+});
+
+// F2-B: the checked element is in a same-origin child frame; the top document and its siblings are armed too.
+const inner = plain(`<style>body{margin:0}button{width:100vw;height:100vh}</style><button id="x" type="button" aria-label="Close ad" onclick="record('upload')">Close ad</button>`);
+test('with the checked element in a child frame, the top document and a sibling frame are armed and the owner is not', { skip, timeout: 60000 }, async t => {
+  const html = `<style>iframe{position:absolute;top:0;width:200px;height:60px;border:0}</style><iframe id="a" src="/inner" style="left:0"></iframe><iframe id="s" src="/inner" style="left:300px"></iframe><button id="ov" style="position:absolute;left:0;top:100px;width:200px;height:40px" onclick="record('payment')">Pay</button>`;
+  const b = await bank(t), f = await b.start(plain(html, ''), readOnly, { routes: { '/inner': inner } });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  const [, owner, sibling] = f.page.frames();
+  const shield = frameShield(f.page, owner, { token: 't1', capMs: 3000, timeoutMs: 2000 });
+  assert.equal(await owner.evaluate(() => window[Symbol.for('sleight.popup3')].guard(document.getElementById('x'), 't1', 3000)), true);
+  assert.equal(await shield.arm(), true);
+  assert.equal(await armedIn(f.page.mainFrame()), 't1', 'the top document is armed');
+  assert.equal(await armedIn(sibling), 't1', 'the sibling frame is armed');
+  assert.equal(await owner.evaluate(() => window[Symbol.for('sleight.popup3')].armed().keys), false);
+  await f.page.mouse.click(50, 110); await settle();
+  assert.equal(f.delta().payment, 0, 'the top button takes no click');
+  await f.page.mouse.click(50, 30); await settle();
+  assert.equal(f.delta().upload, 1, 'the owner frame still takes the click on the checked button');
+  assert.equal(await shield.release(), elsewhere);
+  assert.equal((await owner.evaluate(() => window[Symbol.for('sleight.popup3')].conclude('t1'))).landed, true);
+});
+
+// F9: whether the page saw part of the click decides whether a retry is safe.
+test('conclude reports passed: false when only a veto happened, true once a press was delivered', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain('<button id="b" aria-label="Add" onclick="record(\'upload\')">Add</button>', `b.addEventListener('mouseup',()=>{b.textContent='Added'});`), readOnly);
+  assert.equal(await arm(f, '#b'), true);
+  await f.page.mouse.click(30, 20); await settle();
+  const report = await f.page.evaluate(() => window[Symbol.for('sleight.popup3')].conclude('t1'));
+  assert.equal(report.passed, true);
+  assert.equal(report.bad, 'the checked element changed');
+  await f.page.evaluate(() => { document.getElementById('b').textContent = 'Add'; });
+  assert.equal(await arm(f, '#b', { token: 't2' }), true);
+  await f.page.evaluate(() => { document.getElementById('b').setAttribute('aria-label', 'Pay'); });
+  await f.page.mouse.click(30, 20); await settle();
+  const quiet = await f.page.evaluate(() => window[Symbol.for('sleight.popup3')].conclude('t2'));
+  assert.equal(quiet.passed, false);
+  assert.equal(quiet.bad, 'the checked element changed');
+});
+
+// Boolean attributes are sealed by presence: formnovalidate="" is not the same as no attribute.
+test('a boolean attribute added with an empty value is a change (formnovalidate, novalidate, disabled)', { skip, timeout: 60000 }, async t => {
+  for (const [name, target] of [['formnovalidate', 'b'], ['novalidate', 'f'], ['disabled', 'b']]) {
+    const b = await bank(t), f = await b.start(plain(form(), ''), readOnly);
+    assert.equal(await arm(f, '#t', { keys: true }), true);
+    await f.page.evaluate(({ name, target }) => document.getElementById(target).setAttribute(name, ''), { name, target });
+    await f.page.focus('#t'); await f.page.keyboard.press('Enter'); await settle();
+    assert.ok(await verdict(f), name + ' set to the empty string must be seen');
+  }
+});
+
+// The reviewer's key-mode repros (keysX): every swap on the Enter path is vetoed or lands on the sealed action.
+const attackForm = (extra = '', attrs = '') => `<form id="f" action="/ok" method="post" ${attrs}><input id="t" name="q"><button id="b" type="submit">Go</button><button id="alt" type="submit" formaction="/charge">Alt</button>${extra}</form>`;
+const reviewAttacks = {
+  'field form= attribute switched to a second form (keydown)': { html: attackForm() + `<form id="g" action="/charge" method="post"><button type="submit">G</button></form>`, script: `t.addEventListener('keydown',()=>{t.setAttribute('form','g')});` },
+  'default submitter formmethod set (keydown)': { html: attackForm(), script: `t.addEventListener('keydown',()=>b.setAttribute('formmethod','get'));` },
+  'default submitter formenctype set (keypress)': { html: attackForm(), script: `t.addEventListener('keypress',()=>b.setAttribute('formenctype','text/plain'));` },
+  'default submitter formnovalidate set (keydown)': { html: attackForm(), script: `t.addEventListener('keydown',()=>b.setAttribute('formnovalidate',''));` },
+  'default submitter replaced by a clone with formaction (keydown)': { html: attackForm(), script: `t.addEventListener('keydown',()=>{const c=b.cloneNode(true);c.setAttribute('formaction','/charge');b.replaceWith(c)});` },
+  'requestSubmit() with no submitter after formaction on b (keydown)': { html: attackForm(), script: `t.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();b.setAttribute('formaction','/charge');f.requestSubmit()}});` },
+  'requestSubmit(b) after b.formaction (keydown)': { html: attackForm(), script: `t.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();b.setAttribute('formaction','/charge');f.requestSubmit(b)}});` },
+  'document.baseURI via pushState in keydown (relative action)': { html: attackForm().replace('action="/ok"', 'action="ok"'), script: `t.addEventListener('keydown',()=>{history.pushState({},'','/charge/page')});` },
+  'a later window capture keydown swaps the action': { html: attackForm(), script: `window.addEventListener('keydown',()=>{f.action='/charge'},true);` },
+};
+for (const [name, { html, script }] of Object.entries(reviewAttacks))
+  test('key shield attack: ' + name, { skip, timeout: 60000 }, async t => {
+    const b = await bank(t), f = await b.start(plain(html, script + `f.addEventListener('submit',()=>{record('submit')});`), readOnly);
+    assert.equal(await arm(f, '#t', { keys: true }), true);
+    await press(f);
+    const veto = await verdict(f);
+    assert.ok(veto, 'no veto; hits ' + b.hits.map(h => h.method + ' ' + h.path).join(', '));
+    assert.equal(b.hits.filter(h => h.path.startsWith('/charge')).length, 0);
+  });
+
+test('key shield attack: a keyup handler that changes the action after the submit has started is not a veto, and /charge is not reached', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(attackForm(), `t.addEventListener('keyup',()=>{f.action='/charge'});`), readOnly);
+  assert.equal(await arm(f, '#t', { keys: true }), true);
+  await press(f);
+  assert.equal(await verdict(f), undefined);
+  assert.equal(b.hits.filter(h => h.path.startsWith('/charge')).length, 0);
+  assert.equal(b.hits.filter(h => h.path === '/ok').length, 1);
 });

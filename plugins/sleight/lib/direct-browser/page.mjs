@@ -214,8 +214,10 @@ export function popupHook() {
   // What the seal covers: each node's words, attributes, form owner and that form's controls, plus the
   // document's base URL, URL and base target (a relative action or href resolves through them). Trusted input
   // that arrives after the soft cap (capMs) is cancelled, not passed; a separate hard cap (4 x capMs + 5 s) only
-  // drops a shield nobody finished. Same-origin child frames are armed as foreign: any trusted press or click in them is
-  // cancelled, because the sealed element is not there; a frame created while armed inherits that.
+  // drops a shield nobody finished. Every other frame is armed as foreign from Node (frameShield): any trusted press or
+  // click in it is cancelled, because the sealed element is not there; a same-origin frame created while armed arms
+  // itself at document start. document.open() and document.write erase a window's listeners, so they are wrapped to
+  // add them again, and `reinstall` does the same on request.
   //
   // Key-shield API (window[Symbol.for('sleight.popup3')]), for callers that send trusted input:
   //   guard(element, token, capMs, { keys }) seals what activating `element` touches and arms the shield for
@@ -225,8 +227,11 @@ export function popupHook() {
   //   verdict(token) returns the veto reason, or undefined if every guarded event matched the seal.
   //   finish(token) disarms and returns the veto reason, or true.
   //   expect(token, evidence) compares the digests of what the rules read with the seal: true, or a veto reason.
-  //   conclude(token) is finish with { bad, landed }: landed is false if no trusted press or click reached the
-  //     sealed element's document, undefined if the shield is gone (the document changed).
+  //   conclude(token) is finish with { bad, landed, passed }: landed is false if no trusted press or click reached the
+  //     sealed element's document, undefined if the shield is gone (the document changed); passed is true if any
+  //     guarded event was delivered to the page's listeners (false: the page saw no press, release or click).
+  //   adopt(token, capMs, keys) arms this frame as foreign; release(token) disarms it and returns its veto, if any;
+  //     armed() tells a new child frame what its parent holds; reinstall() re-adds the listeners and confirms them.
   const uncurry = Function.prototype.bind.bind(Function.prototype.call);
   const getter = (type, name) => {
     const get = Object.getOwnPropertyDescriptor(type?.prototype ?? {}, name)?.get;
@@ -240,10 +245,9 @@ export function popupHook() {
   const controlGetters = [HTMLButtonElement, HTMLInputElement, globalThis.HTMLTextAreaElement, HTMLSelectElement].map(type => [getter(type, 'form'), getter(type, 'type')]);
   const rootOf = uncurry(globalThis.Node?.prototype.getRootNode), queryAll = uncurry(Element.prototype.querySelectorAll), closest = uncurry(Element.prototype.closest);
   const queryDocAll = uncurry(globalThis.Document?.prototype.querySelectorAll), queryFragAll = uncurry(globalThis.DocumentFragment?.prototype.querySelectorAll);
-  const attr = uncurry(getAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
+  const attr = uncurry(getAttribute), hasAttr = uncurry(hasAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
   const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
   const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeClear = clearTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
-  const frameCount = uncurry(Object.getOwnPropertyDescriptor(window, 'length')?.get ?? (() => 0));
   const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
   let serial = 0, shield;
   const ident = node => { if (!idsHas(ids, node)) idsSet(ids, node, ++serial); return idsGet(ids, node); };
@@ -253,6 +257,9 @@ export function popupHook() {
   const SEP = '\u0001';
   const attributes = ['role', 'aria-label', 'aria-disabled', 'disabled', 'value', 'alt', 'title', 'href', 'target', 'type', 'name', 'form', 'formaction', 'formtarget', 'formmethod', 'formenctype', 'formnovalidate', 'for', 'usemap'];
   const formAttributes = ['action', 'method', 'target', 'enctype', 'novalidate'];
+  // Boolean attributes are sealed by presence, not value: formnovalidate="" and no attribute differ.
+  const isBoolean = name => name === 'disabled' || name === 'formnovalidate' || name === 'novalidate';
+  const attrOf = (node, name) => isBoolean(name) ? (hasAttr(node, name) ? '+' : '-') : attr(node, name) ?? '';
   const rowAttributes = ['type', 'autocomplete', 'name', 'id', 'aria-label', 'value', 'form', 'title', 'alt', 'src'];
   const changedReason = 'the checked element changed', elsewhereReason = 'the input landed on a different element', lateReason = 'the input arrived after the shield expired';
   const isElement = node => { try { nameOf(node); return true; } catch { return false; } };
@@ -282,7 +289,7 @@ export function popupHook() {
   };
   const formContent = form => {
     let parts = '';
-    for (let i = 0; i < formAttributes.length; i++) parts += (attr(form, formAttributes[i]) ?? '') + SEP;
+    for (let i = 0; i < formAttributes.length; i++) parts += attrOf(form, formAttributes[i]) + SEP;
     const nodes = queryAll(form, 'input,button,iframe,select,textarea');
     for (let i = 0; i < listLength(nodes); i++) {
       const node = nodes[i];
@@ -295,7 +302,7 @@ export function popupHook() {
   const content = node => {
     const control = controlOf(node), form = formOwner(node, control);
     let row = nameOf(node) + SEP + connected(node) + SEP + hash(textOf(node)) + SEP + (control ? control.type : '') + SEP + (form ? hash(formContent(form)) : '');
-    for (let i = 0; i < attributes.length; i++) row += SEP + (attr(node, attributes[i]) ?? '');
+    for (let i = 0; i < attributes.length; i++) row += SEP + attrOf(node, attributes[i]);
     return row + SEP + baseState();
   };
   const digest = node => hash(content(node));
@@ -394,7 +401,10 @@ export function popupHook() {
       else if (current.foreign) bad = elsewhereReason;
       else {
         bad = inspect(event, type);
-        if (!bad && (type === 'pointerdown' || type === 'mousedown' || type === 'click')) current.landed = true;
+        if (!bad) {
+          current.passed = true;
+          if (type === 'pointerdown' || type === 'mousedown' || type === 'click') current.landed = true;
+        }
       }
     } catch { bad = changedReason; }
     if (!bad) return;
@@ -403,28 +413,46 @@ export function popupHook() {
     try { cancel(event); } catch { /* Nothing further can be done to this event. */ }
   };
   const guarded = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu', 'keydown', 'keypress', 'keyup', 'submit'];
-  for (let i = 0; i < guarded.length; i++) add.call(window, guarded[i], guardEvent, true);
-  add.call(window, 'keydown', keyEvent, true);
-  add.call(window, 'keyup', keyEvent, true);
-  add.call(window, 'click', capture, true);
+  // document.open() (and a document.write that opens implicitly) erases every listener on the window, so the
+  // listeners are added by a function that can run again: add is idempotent for the same callback, and a re-add
+  // lands before any listener the page registers afterwards. A private event type tells whether they are present.
+  const dispatch = uncurry(EventTarget.prototype.dispatchEvent), NativeEvent = Event, random = Math.random;
+  const probeType = 'sleight-' + random().toString(36).slice(2) + random().toString(36).slice(2);
+  let alive = false;
+  const onProbe = () => { alive = true; };
+  const install = () => {
+    for (let i = 0; i < guarded.length; i++) add.call(window, guarded[i], guardEvent, true);
+    add.call(window, 'keydown', keyEvent, true);
+    add.call(window, 'keyup', keyEvent, true);
+    add.call(window, 'click', capture, true);
+    add.call(window, probeType, onProbe, true);
+    alive = false;
+    try { dispatch(window, new NativeEvent(probeType)); } catch { /* Reported as not alive. */ }
+    return alive;
+  };
+  install();
+  // Natives for the rewriters, captured before page scripts. The listeners are re-added for the window of the
+  // document that was rewritten, which can belong to another realm (a parent calling its own prototype's open).
+  const documentProto = globalThis.Document?.prototype;
+  const rewriters = ['open', 'write', 'writeln'].filter(name => typeof documentProto?.[name] === 'function');
+  const defaultViewOf = getter(globalThis.Document, 'defaultView'), reflectApply = Reflect.apply;
+  const afterRewrite = doc => {
+    let view = null;
+    try { view = defaultViewOf(doc); } catch { /* Not a document; the native call has already thrown. */ }
+    try { if (view && view !== window) view[key]?.reinstall?.(); else install(); } catch { install(); }
+  };
+  for (const name of rewriters) {
+    const original = documentProto[name];
+    replace(documentProto, name, { configurable: true, writable: true, value: { [name]() {
+      try { return reflectApply(original, this, arguments); } finally { afterRewrite(this); }
+    } }[name] });
+  }
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
     clearTimeout(arm.timer); clearTimeout(arm.dispatchTimer);
     for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
     arm = undefined; return true;
-  };
-  // Same-origin child frames, through the hook each one installed. A cross-origin frame throws and is skipped.
-  const framesOf = () => {
-    const found = [];
-    let count = 0;
-    try { count = frameCount(window); } catch { return found; }
-    for (let i = 0; i < count; i++) { try { const hook = window[i][key]; if (hook) found[found.length] = hook; } catch { /* Cross-origin frame. */ } }
-    return found;
-  };
-  const armFrames = until => {
-    const frames = framesOf();
-    for (let i = 0; i < frames.length; i++) { try { frames[i].adopt(until); } catch { /* A frame that cannot be armed is reported by landed(). */ } }
   };
   const dropShield = current => {
     nativeClear(current.drop);
@@ -435,17 +463,15 @@ export function popupHook() {
     current.drop = nativeTimeout(() => { if (shield === current) shield = undefined; }, capMs * 4 + 5000);
     return current;
   };
-  // Disarms the shield and every frame it armed; reports the first veto and whether a press or click landed.
+  // Disarms this frame's shield and reports the first veto, whether a press or click landed on the sealed
+  // element's document, and whether any guarded event passed (so the page's own handlers saw part of the click).
+  // The other frames are armed and released from Node, over every frame Playwright knows (see frameShield).
   const conclude = token => {
-    const current = shield?.token === token ? shield : undefined;
-    let bad = current?.violation;
-    if (current) {
-      const frames = framesOf();
-      for (let i = 0; i < frames.length; i++) { try { const reason = frames[i].release(); bad ??= reason; } catch { bad ??= changedReason; } }
-      dropShield(current);
-    }
+    const current = shield?.token === token && !shield.foreign ? shield : undefined;
+    const bad = current?.violation;
+    if (current) dropShield(current);
     finish(token);
-    return { bad, landed: current?.reports ? current.landed : undefined };
+    return { bad, landed: current?.reports ? current.landed : undefined, passed: current ? current.passed : undefined };
   };
   const api = {
     // See the key-shield API above. Any throw here reaches the caller as a rejected call, which reads as "page changed".
@@ -457,41 +483,40 @@ export function popupHook() {
       for (let i = 0; areas && i < listLength(areas); i++) parts[parts.length] = digest(areas[i]);
       const until = now() + capMs;
       shield = holdShield({ token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, form, submitter: form ? submitterOf(form) : null,
-        parts, signature: sealed(element, forwarded, areas, withKeys), until, landed: false, reports: !swallowsInput(element) }, capMs);
-      armFrames(until);
-      return true;
+        parts, signature: sealed(element, forwarded, areas, withKeys), until, landed: false, passed: false, reports: !swallowsInput(element) }, capMs);
+      return install();
     },
-    // A frame under a guarded document: any trusted press or click here is cancelled until `until`.
-    adopt(until) {
-      if (typeof until !== 'number' || shield && !shield.foreign) return false;
-      if (shield) dropShield(shield);
-      shield = holdShield({ foreign: true, until, landed: false }, (until > now() ? until - now() : 0));
-      armFrames(until);
-      return true;
+    // A frame that is not the checked element's: any trusted press or click here (and key, with { keys }) is
+    // cancelled until the shield is released or its cap passes. Called from Node for every frame but the owner's,
+    // and again before the click (idempotent for one token); a frame created while armed calls it on itself.
+    // Returns true only when the listeners are confirmed present.
+    adopt(token, capMs, keys = false) {
+      if (retired.has(token) || !Number.isFinite(capMs) || capMs <= 0) return false;
+      if (shield && (!shield.foreign || shield.token !== token)) {
+        if (!shield.foreign) return false;
+        dropShield(shield); shield = undefined;
+      }
+      shield ??= holdShield({ foreign: true, token, keys: keys === true, until: now() + capMs, landed: false, passed: false }, capMs);
+      return install();
     },
-    armedUntil() { return shield?.until; },
-    peek() {
-      if (!shield?.foreign) return undefined;
-      let bad = shield.violation;
-      const frames = framesOf();
-      for (let i = 0; i < frames.length; i++) { try { bad ??= frames[i].peek(); } catch { /* Skip. */ } }
-      return bad;
-    },
-    release() {
-      const current = shield;
-      if (!current?.foreign) return undefined;
-      let bad = current.violation;
-      const frames = framesOf();
-      for (let i = 0; i < frames.length; i++) { try { bad ??= frames[i].release(); } catch { bad ??= changedReason; } }
+    armed() { return shield ? { token: shield.token, until: shield.until, keys: shield.keys === true } : undefined; },
+    // Node releases a frame's foreign shield (the token is retired, so a late adopt of it is refused) and reads its veto.
+    release(token) {
+      retired.add(token);
+      const current = shield?.token === token && shield.foreign ? shield : undefined;
+      if (!current) return undefined;
       dropShield(current);
-      return bad;
+      return current.violation;
     },
+    // Re-adds the listeners (a document rewrite erased them); true when they are confirmed present.
+    reinstall() { return install(); },
     // What the rules read, as digests taken in the same step as their read, must equal what was sealed.
     expect(token, evidence) {
       const current = shield;
       if (!current || current.foreign || current.token !== token) return changedReason;
       let bad = current.violation;
       if (!bad && now() >= current.until) bad = lateReason;
+      if (!bad && !install()) bad = changedReason;
       if (!bad) {
         const parts = current.parts, given = evidence?.areas;
         let same = evidence?.element === parts[0] && (evidence?.forwarded ?? '') === parts[1] && given?.length === parts.length - 2;
@@ -514,11 +539,7 @@ export function popupHook() {
       });
     },
     verdict(token) {
-      if (shield?.token !== token) return undefined;
-      let bad = shield.violation;
-      const frames = framesOf();
-      for (let i = 0; i < frames.length; i++) { try { bad ??= frames[i].peek(); } catch { /* Skip. */ } }
-      return bad;
+      return shield?.token === token ? shield.violation : undefined;
     },
     prepare(element, token, capMs) {
       if (retired.has(token)) return false;
@@ -560,6 +581,7 @@ export function popupHook() {
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
       remove.call(window, 'click', capture, true);
+      remove.call(window, probeType, onProbe, true);
       for (let i = 0; i < guarded.length; i++) remove.call(window, guarded[i], guardEvent, true);
       shield = undefined;
       for (const restore of replacements.reverse()) restore();
@@ -569,17 +591,20 @@ export function popupHook() {
   };
   try {
     // A frame created while its parent is guarded starts armed.
-    const parent = window.parent, until = parent !== window ? parent[key]?.armedUntil?.() : undefined;
-    if (typeof until === 'number' && until > now()) api.adopt(until);
+    const parent = window.parent, state = parent !== window ? parent[key]?.armed?.() : undefined;
+    if (state && typeof state.until === 'number' && state.until > now()) api.adopt(state.token, state.until - now(), state.keys);
   } catch { /* Cross-origin parent. */ }
   window[key] = api;
   return true;
 }
 
-// A cancelled click reaches the model as this text. The guard cancels the browser input before the page's
-// click handlers run, so a fresh read and one retry is safe.
-const changedMidClick = 'page changed during the click; read again. The click was cancelled before it activated anything, so a fresh read and one retry is safe.';
+// A cancelled click reaches the model as one of these. The guard cancels the browser input in the page; whether a
+// retry is safe depends on whether any press, release or click was delivered to the page's listeners first
+// (a page can act on pointerdown or mousedown), which the hook reports as `passed`.
+export const changedMidClick = 'page changed during the click; read again. The page received no press, release or click, so a fresh read and one retry is safe.';
+export const changedAfterPress = 'page changed during the click; the page had already received part of it.';
 const missedClick = 'the click did not reach the checked element and may have landed somewhere else; read the page before trying again';
+const hookKey = "window[Symbol.for('sleight.popup3')]";
 
 // The frame that owns the element: the guard lives in that frame's hook, so it is the frame to disarm and read.
 async function ownerFrame(locator, page, timeoutMs) {
@@ -590,14 +615,94 @@ async function ownerFrame(locator, page, timeoutMs) {
   } catch { return page; }
 }
 
+// Every frame Playwright knows except the owner's (same-origin or not, in a shadow root or not, ancestors and
+// siblings included) is armed from Node as foreign: any trusted press or click in it is cancelled, because the
+// sealed element is not there. Frames created or navigated while armed are armed again as the events arrive (and a
+// same-origin one also arms itself at document start); `confirm` re-arms them all just before the click, which also
+// repairs a document.open() that erased a frame's listeners. A frame the hook never reached (cross-site frames run no
+// hook here) is skipped and only reported afterwards by the landed check; a frame that has a hook but cannot be armed
+// fails the click before it is sent. `release` reaches every frame, retries once, and runs even after errors.
+export function frameShield(page, owner, { token, capMs, timeoutMs = 1000, keys = false } = {}) {
+  const mainFrame = typeof page?.mainFrame === 'function' ? page.mainFrame() : undefined;
+  const ownerIs = frame => frame === owner || owner === page && frame === mainFrame;
+  const others = () => (typeof page?.frames === 'function' ? page.frames() : []).filter(frame => !ownerIs(frame) && !frame.isDetached?.());
+  const call = (frame, method) => deadline(() => frame.evaluate(`(() => { const hook = ${hookKey}; return hook ? ${method} : null; })()`), timeoutMs, 'frame unreachable');
+  const adoptCall = `hook.adopt(${JSON.stringify(token)}, ${capMs}, ${keys === true})`, releaseCall = `hook.release(${JSON.stringify(token)})`;
+  const pending = new Set(), late = new Set();
+  let ending = false, failed = false;
+  // 'armed', 'skipped' (no hook, or the frame is gone) or 'failed' (a hook that would not arm, or would not answer).
+  const adoptOne = async frame => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const reply = await call(frame, adoptCall);
+        return reply === null ? 'skipped' : reply === true ? 'armed' : 'failed';
+      } catch { if (frame.isDetached?.()) return 'skipped'; }
+    }
+    return 'failed';
+  };
+  const onFrame = frame => {
+    if (ownerIs(frame)) return;
+    // Once release has started, a frame that appears or navigates is only released again, never armed.
+    if (ending) { late.add(frame); return; }
+    const task = adoptOne(frame).then(result => { if (result === 'failed') failed = true; }, () => { failed = true; });
+    pending.add(task); task.then(() => pending.delete(task));
+  };
+  page?.on?.('framenavigated', onFrame);
+  page?.on?.('frameattached', onFrame);
+  const armAll = async () => {
+    await Promise.all([...pending]);
+    const results = await Promise.all(others().map(adoptOne));
+    return !failed && results.every(result => result !== 'failed');
+  };
+  const releaseOne = async frame => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { const reason = await call(frame, releaseCall); return typeof reason === 'string' ? reason : undefined; }
+      catch { if (frame.isDetached?.()) return undefined; }
+    }
+    return 'the checked element changed';
+  };
+  return {
+    // Arms every other frame; false when one that has a hook could not be armed.
+    arm: armAll,
+    // Called just before the click is sent: arms again whatever is new or was rewritten since.
+    confirm: armAll,
+    // Releases every frame (also those created while the first pass ran) and returns the first veto, if any.
+    async release() {
+      ending = true;
+      await Promise.allSettled([...pending]);
+      const done = new Set();
+      let bad;
+      try {
+        for (let pass = 0; pass < 4; pass++) {
+          const frames = others().filter(frame => !done.has(frame) || late.has(frame));
+          late.clear();
+          if (!frames.length) break;
+          for (const frame of frames) done.add(frame);
+          for (const reason of await Promise.all(frames.map(releaseOne))) bad ??= reason;
+        }
+      } finally { page?.off?.('framenavigated', onFrame); page?.off?.('frameattached', onFrame); }
+      return bad;
+    },
+  };
+}
+
 export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000 } = {}) {
   const token = randomUUID();
-  let frame = tab.page, completed = false;
-  const disarm = () => frame.evaluate(token => window[Symbol.for('sleight.popup3')]?.conclude(token), token);
+  let frame = tab.page, completed = false, others;
+  // Concludes the owner frame's shield and releases every other frame; each runs even if the other throws.
+  const disarm = async () => {
+    const [own, rest] = await Promise.allSettled([
+      frame.evaluate(token => window[Symbol.for('sleight.popup3')]?.conclude(token), token),
+      others?.release() ?? Promise.resolve(undefined)]);
+    const report = own.status === 'fulfilled' ? own.value : undefined;
+    return { bad: report?.bad ?? (rest.status === 'fulfilled' ? rest.value : undefined), landed: report?.landed, passed: report?.passed };
+  };
   // The click callback calls this once the rules have read the element, before it spends any authority.
   const verify = async evidence => {
-    const reply = await deadline(() => frame.evaluate(({ token, evidence }) => window[Symbol.for('sleight.popup3')].expect(token, evidence), { token, evidence }), timeoutMs).catch(() => undefined);
-    return reply === true ? true : changedMidClick;
+    const [reply, armed] = await Promise.all([
+      deadline(() => frame.evaluate(({ token, evidence }) => window[Symbol.for('sleight.popup3')].expect(token, evidence), { token, evidence }), timeoutMs).catch(() => undefined),
+      others.confirm().catch(() => false)]);
+    return reply === true && armed ? true : changedMidClick;
   };
   let cancelled, report;
   try {
@@ -613,6 +718,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     } catch { throw Error('background popup preparation failed; use the engine browser path'); }
     const modified = prepared === true || prepared?.kind === 'link';
     frame = await ownerFrame(locator, tab.page, timeoutMs);
+    others = frameShield(tab.page, frame, { token, capMs: timeoutMs + 4000, timeoutMs });
     // Move the pointer onto the element first, so a swap the pointer's arrival triggers lands before the seal is
     // taken, then wait one frame in the page and seal what this click activates. The click callback classifies
     // after this; the hook cancels any input that no longer matches. An element with no box (an image-map area)
@@ -623,13 +729,14 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     }
     try {
       // The shield outlives the click timeout: a click delayed by a busy page is still checked, and one that
-      // arrives after this cap is cancelled.
-      await deadline(() => locator.evaluate(async (element, { token, capMs }) => {
+      // arrives after this cap is cancelled. The other frames are armed in the same step.
+      const [, armed] = await Promise.all([deadline(() => locator.evaluate(async (element, { token, capMs }) => {
         const hook = window[Symbol.for('sleight.popup3')];
         await hook.settle();
         if (!hook.guard(element, token, capMs)) throw Error('click guard unavailable');
         return true;
-      }, { token, capMs: timeoutMs + 4000 }, { timeout: timeoutMs }), timeoutMs);
+      }, { token, capMs: timeoutMs + 4000 }, { timeout: timeoutMs }), timeoutMs), others.arm()]);
+      if (!armed) throw Error('frame unavailable');
     } catch { throw Error(changedMidClick); }
     const checkpoint = tab.popupCheckpoint?.();
     let result;
@@ -653,12 +760,13 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     completed = result?.closed !== true && !tab.closed && !tab.page.isClosed?.();
     return result;
   } finally {
-    report = await disarm().catch(() => {});
-    cancelled ??= typeof report === 'string' ? report : report?.bad;
-    // The guard cancelled the input: say so instead of reporting a delivered click.
-    if (cancelled) throw Error(changedMidClick);
+    report = await disarm().catch(() => ({}));
+    cancelled ??= report.bad;
+    // The guard cancelled the input: say so instead of reporting a delivered click. A retry is safe only when
+    // the hook confirms that no press, release or click reached the page before the veto.
+    if (cancelled) throw Error(report.passed === false ? changedMidClick : changedAfterPress);
     // A click was sent and no press or click reached the sealed element's document: it went somewhere else.
-    if (completed && report?.landed === false) throw Error(missedClick);
+    if (completed && report.landed === false) throw Error(missedClick);
   }
 }
 
