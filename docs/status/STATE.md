@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 00:17 UTC)
+## Banner (2026-10-15 00:33 UTC)
 
 Goal (owner): a published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. Owner (2026-10-14 evening): everything besides turbo gets release-ready now, so 1.3.0 waits only on turbo v3 (reaffirmed 23:20 UTC, over releasing 1.3.0 without it); lanes stay
@@ -53,8 +53,12 @@ reads each frame in one CDP pass, measured before and after, and carries CR1's r
 weak fixtures). CR2 is DONE: its re-audit leaves one role-order leftover that sleight-arch sorts at CR3's merge, and it measured the
 modifier window (max 6.2 ms over 20 clicks, so 100 ms, down from 1000). CR3 is on lane `codex-cr3`. Trust join: V10R3 moved
 authority reads to the utility world. A Claude review then found DOM clobbering (`<img name="activeElement">`). V10R4 fixes it on
-`codex-v3-v10r4`, and V10R3 doesn't merge alone. V7R2 passed items 1 to 4; V7R3 (DevTools port blocked at the CDP layer, turbo
-startup failures leave the engine running, reconnect after loss) is on `codex-v3-v7r3`. Next: CR1, V7, V9R and V10R merge into
+`codex-v3-v10r4`, and V10R3 doesn't merge alone. V7R3 passed startup failures and reconnect; V7R4 (Fetch pattern false positives, popup and worker auto-attach) is on
+`codex-v3-v7r4`. CR3's review found Cmd-click on submit controls submits into a new tab; sleight-arch measured it 12/12 on
+Chromium 1248, and only multi-select options and links also change with Cmd, so CR4 (lane `codex-cr4`) keeps submits in place and
+masks by event, and CR5 (queued after CR4) replaces the role list with that measured rule. `private/v3-gate` (sleight-arch, worktree
+`~/Projects/sleight-wt/v3-int`) merges every turbo tip (v7r3, v10r3, v9r, cr3) with two seam fixes; its full check passed 6115, 0 fail,
+49 mod at `6235142f`. V7R4, V10R4, CR4 and CR5 merge into it as they pass, then V8. Next: CR1, V7, V9R and V10R merge into
 v3-integration as they pass, then one full check, then the gate round. Then V9's arm runs the
 gate tasks against the targets (26/26, at most 85% of FowlBrowser's 677 s, at most 9 errors, 0 ToolSearch, 0 focus events), then V8 merges.
 - v1 stays on pane/auto-mode as fallback and test source, including TG1R2 (with turbo on, the engine's browser path stays
