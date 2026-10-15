@@ -28,7 +28,10 @@ async function dispatcherClass(connection, dispatchers, frame) {
   } finally { await seed.dispose().catch(() => {}); }
 }
 
-// binding is closedRefBinding(page, ref): the Playwright frame and the CDP backend node of the control.
+// binding is closedRefBinding(page, ref): the Playwright frame and the CDP backend node of the control. A same-process
+// child frame shares its parent's CDP session, so the binding's frame can be the parent of the frame that owns the node,
+// and a cross-origin child can refuse the parent's context outright. Backend ids are unique per process only, so the
+// owner is searched among frames of the same session, and the handle's own ownerFrame() must confirm the choice.
 export async function resolveClosedHandle({ frame, backendNodeId }) {
   const connection = frame?._connection, toImpl = connection?.toImpl;
   if (typeof toImpl !== 'function' || !Number.isSafeInteger(backendNodeId) || backendNodeId <= 0) throw unavailable();
@@ -36,28 +39,44 @@ export async function resolveClosedHandle({ frame, backendNodeId }) {
   const delegate = frameImpl?._page?.delegate;
   if (!frameImpl || !dispatchers?._dispatcherByGuid || typeof delegate?._sessionForFrame !== 'function') throw unavailable();
   const session = delegate._sessionForFrame(frameImpl);
-  let impl;
-  try { impl = await session._adoptBackendNodeId(backendNodeId, await frameImpl.mainContext()); }
-  catch { throw stale(); }
-  let handle;
-  try {
-    // A closed host is invisible to DOM evidence from inside the page, so ask the DOM agent whether this node hosts one.
-    // Anything but a clear "no" counts as a host.
-    const described = await session._client._sendMayFail('DOM.describeNode', { backendNodeId });
-    const hostsRoot = !described?.node || (described.node.shadowRoots?.length ?? 0) > 0;
-    const Dispatcher = await dispatcherClass(connection, dispatchers, frame);
-    const scope = dispatchers._dispatcherByGuid.get(frame._guid);
-    const dispatcher = Dispatcher.fromJSOrElementHandle(scope, impl);
-    // The in-process transport delivers the object-creation message on a later tick.
-    for (let n = 0; n < 200 && !connection._objects?.has(dispatcher._guid); n++) await tick();
-    handle = connection._objects?.get(dispatcher._guid);
-    if (typeof handle?.click !== 'function') throw unavailable();
-    details.set(handle, Object.freeze({ backendNodeId, hostsRoot }));
-    return handle;
-  } catch (error) {
-    try { await impl.dispose(); } catch { /* already gone */ }
-    throw error;
+  // A closed host is invisible to DOM evidence from inside the page, so ask the DOM agent whether this node hosts one.
+  // Anything but a clear "no" counts as a host.
+  const described = await session._client._sendMayFail('DOM.describeNode', { backendNodeId });
+  const hostsRoot = !described?.node || (described.node.shadowRoots?.length ?? 0) > 0;
+  const Dispatcher = await dispatcherClass(connection, dispatchers, frame);
+  const sameSession = candidate => delegate._sessionForFrame(candidate) === session;
+  const build = async candidate => {
+    let impl;
+    try { impl = await session._adoptBackendNodeId(backendNodeId, await candidate.mainContext()); } catch { return null; }
+    try {
+      const scope = candidate === frameImpl ? dispatchers._dispatcherByGuid.get(frame._guid) : dispatchers.existingDispatcher(candidate);
+      const dispatcher = Dispatcher.fromJSOrElementHandle(scope, impl);
+      // The in-process transport delivers the object-creation message on a later tick.
+      for (let n = 0; n < 200 && !connection._objects?.has(dispatcher._guid); n++) await tick();
+      const handle = connection._objects?.get(dispatcher._guid);
+      if (typeof handle?.click !== 'function') throw unavailable();
+      return handle;
+    } catch (error) { try { await impl.dispose(); } catch { /* already gone */ } throw error; }
+  };
+  const order = [frameImpl, ...(frameImpl._page.frames?.() ?? []).filter(candidate => candidate !== frameImpl && sameSession(candidate))];
+  const tried = new Set();
+  let next = order[0];
+  while (next && tried.size < 32) {
+    tried.add(next);
+    const handle = await build(next);
+    if (handle) {
+      let ownerImpl;
+      try { const owner = await handle.ownerFrame(); ownerImpl = owner && toImpl.call(connection, owner); } catch { /* detached */ }
+      if (ownerImpl === next) {
+        details.set(handle, Object.freeze({ backendNodeId, hostsRoot }));
+        return handle;
+      }
+      await handle.dispose().catch(() => {});
+      if (ownerImpl && !tried.has(ownerImpl) && sameSession(ownerImpl)) { next = ownerImpl; continue; }
+    }
+    next = order.find(candidate => !tried.has(candidate));
   }
+  throw stale();
 }
 
 const unsupported = name => () => { throw Error(name + ' cannot search inside a closed shadow root; act on the refs from the page read.'); };

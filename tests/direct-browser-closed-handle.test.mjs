@@ -8,28 +8,33 @@ import { inspectTarget } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
 
 // A fake of the in-process Playwright seams resolveClosedHandle uses: the client connection's toImpl/_objects, the
-// frame's page delegate session, and one seed element handle that teaches the dispatcher class.
-function inProcess({ adopt = async () => ({ disposed: false, dispose() { this.disposed = true; } }), shadowRoots = [] } = {}) {
+// frame's page delegate session, and one seed element handle that teaches the dispatcher class. The page has the
+// binding's frame and one same-session child frame.
+function inProcess({ adopt = async () => ({ disposed: false, dispose() { this.disposed = true; } }), shadowRoots = [], owner } = {}) {
   const objects = new Map(), dispatchers = new Map(), calls = { adopt: [], seeds: 0, described: [] };
   const connection = { _objects: objects };
+  const dispatchConnection = { _dispatcherByGuid: dispatchers, existingDispatcher: impl => impl === childImpl ? childDispatcher : undefined };
   class ElementHandleDispatcher {
     static fromJSOrElementHandle(scope, impl) {
       const dispatcher = new ElementHandleDispatcher(); dispatcher._guid = 'handle@' + objects.size;
       dispatcher.scope = scope; dispatcher.impl = impl;
       dispatchers.set(dispatcher._guid, dispatcher);
-      objects.set(dispatcher._guid, { _guid: dispatcher._guid, click() {}, async dispose() { calls.disposedClient = true; } });
+      objects.set(dispatcher._guid, { _guid: dispatcher._guid, click() {}, async ownerFrame() { return (owner ?? (() => frame))(); },
+        async dispose() { calls.disposedClient = (calls.disposedClient ?? 0) + 1; } });
       return dispatcher;
     }
   }
   const seed = new ElementHandleDispatcher(); seed._type_ElementHandle = true; dispatchers.set('seed', seed);
-  const frameDispatcher = { kind: 'frame' }; dispatchers.set('frame@1', frameDispatcher);
+  const frameDispatcher = { kind: 'frame' }, childDispatcher = { kind: 'child frame' };
+  dispatchers.set('frame@1', frameDispatcher);
   const session = { async _adoptBackendNodeId(id, context) { calls.adopt.push([id, context]); return adopt(id, context); },
     _client: { async _sendMayFail(method, params) { calls.described.push([method, params]); return shadowRoots === null ? null : { node: { shadowRoots } }; } } };
-  const frameImpl = { _page: { delegate: { _sessionForFrame: frame => { assert.equal(frame, frameImpl); return session; } } }, async mainContext() { return 'main-context'; } };
-  const dispatchConnection = { _dispatcherByGuid: dispatchers };
+  const frameImpl = { _page: { delegate: { _sessionForFrame: () => session }, frames: () => [frameImpl, childImpl] }, async mainContext() { return 'main-context'; } };
+  const childImpl = { _page: frameImpl._page, async mainContext() { return 'child-context'; } };
   const frame = { _connection: connection, _guid: 'frame@1', async evaluateHandle() { calls.seeds++; return { _guid: 'seed', async dispose() {} }; } };
-  connection.toImpl = value => value === connection ? dispatchConnection : value === frame ? frameImpl : undefined;
-  return { frame, calls, objects };
+  const child = { kind: 'client child frame' };
+  connection.toImpl = value => value === connection ? dispatchConnection : value === frame ? frameImpl : value === child ? childImpl : undefined;
+  return { frame, child, calls, objects };
 }
 
 test('a closed-root ref resolves to a client handle from its backend node and records whether it hosts a root', async () => {
@@ -40,6 +45,32 @@ test('a closed-root ref resolves to a client handle from its backend node and re
   assert.deepEqual(fake.calls.described, [['DOM.describeNode', { backendNodeId: 12 }]]);
   await resolveClosedHandle({ frame: fake.frame, backendNodeId: 13 });
   assert.equal(fake.calls.seeds, 1, 'the dispatcher class is learned once per connection');
+});
+
+test('a node owned by a same-process child frame is resolved again in that frame', async () => {
+  let fake;
+  fake = inProcess({ owner: () => fake.child });
+  const handle = await resolveClosedHandle({ frame: fake.frame, backendNodeId: 21 });
+  assert.deepEqual(fake.calls.adopt, [[21, 'main-context'], [21, 'child-context']]);
+  assert.equal(fake.calls.disposedClient, 1, 'the handle adopted into the parent frame is released');
+  assert.ok(closedDetails(handle));
+});
+
+test('a child frame that the parent context refuses to adopt from owns the node', async () => {
+  const fake = inProcess({ adopt: async (id, context) => {
+    if (context === 'main-context') throw Error('Unable to adopt element handle from a different document');
+    return { dispose() {} };
+  }, owner: () => fake.child });
+  const handle = await resolveClosedHandle({ frame: fake.frame, backendNodeId: 21 });
+  assert.deepEqual(fake.calls.adopt, [[21, 'main-context'], [21, 'child-context']]);
+  assert.ok(closedDetails(handle));
+});
+
+test('a node whose owner keeps changing is refused after each frame was tried once', async () => {
+  let asked = 0, fake;
+  fake = inProcess({ owner: () => asked++ % 2 === 0 ? fake.child : fake.frame });
+  await assert.rejects(resolveClosedHandle({ frame: fake.frame, backendNodeId: 21 }), /stale or unavailable/);
+  assert.ok(fake.calls.adopt.length <= 2);
 });
 
 test('a closed host, or a describeNode that gives no answer, counts as hosting a root', async () => {

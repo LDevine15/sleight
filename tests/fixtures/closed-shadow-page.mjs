@@ -13,10 +13,12 @@ export const CLOSED_SHADOW_HTML = `<!doctype html><title>Closed shadow controls<
 <x-outer id="outer"></x-outer>
 <x-link id="help"></x-link>
 <a id="light-help" href="/popped?from=light" target="_blank">Open help light</a>
+<label>Light note <input id="light-note"></label>
 <output id="status">idle</output>
 </main>
 <script>
 const log = text => fetch('/log', { method: 'POST', body: text, keepalive: true });
+document.getElementById('light-note').addEventListener('keydown', event => log('light key ' + event.key));
 const css = '<style>*{font:inherit}div[role=switch]{width:60px;height:30px;background:#bbb;border-radius:15px}div[aria-checked=true]{background:#2a7}</style>';
 customElements.define('x-switch', class extends HTMLElement {
   connectedCallback() {

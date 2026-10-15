@@ -20,7 +20,11 @@ async function harness(taskMessage) {
   const logs = [], sockets = new Set();
   const server = createServer((request, response) => {
     if (request.method === 'POST') { let body = ''; request.on('data', part => { body += part; }); request.on('end', () => { logs.push(body); response.end('ok'); }); return; }
-    response.setHeader('Content-Type', 'text/html'); response.end(pages[new URL(request.url, 'http://x').pathname] ?? pages['/']);
+    const path = new URL(request.url, 'http://x').pathname, port = server.address().port;
+    // /framed embeds the controls from the same origin; /crossframe embeds them from localhost, another origin on the same server.
+    const framed = src => '<!doctype html><title>Framed</title><h1>Outer page</h1><iframe src="' + src + '" width="700" height="600"></iframe>';
+    response.setHeader('Content-Type', 'text/html');
+    response.end(path === '/framed' ? framed('/') : path === '/crossframe' ? framed('http://localhost:' + port + '/') : pages[path] ?? pages['/']);
   });
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -147,6 +151,29 @@ test('a closed-root link opens an owned background tab like a light-DOM link', {
   }
   const list = (await w.call('browser_tabs', { do: 'list' })).text;
   for (const from of ['light', 'closed']) assert.equal(list.split('\n').filter(line => line.endsWith('/popped?from=' + from)).length, 1, list);
+});
+
+test('closed-root controls inside a same-origin iframe are acted on in that frame, including a key press', { skip, timeout: 90000 }, async () => {
+  const w = await plain(), { tab } = await w.open('/framed');
+  const box = await w.ref(tab, 'Marketing emails', 'checkbox'), knob = await w.ref(tab, 'Two-factor authentication', 'switch');
+  const result = await w.act(tab, [{ do: 'check', ref: box }, { do: 'press', ref: knob, key: 'Space' }]);
+  assert.doesNotMatch(result.text, /not run|unconfirmed/, result.text);
+  assert.deepEqual(w.logs.splice(0), ['check ck true', 'switch sw true']);
+});
+
+test('closed-root controls inside a cross-origin iframe take a click, and a key press is refused as in the light DOM', { skip, timeout: 90000 }, async () => {
+  const w = await plain(), { tab } = await w.open('/crossframe');
+  const box = await w.ref(tab, 'Marketing emails', 'checkbox'), knob = await w.ref(tab, 'Two-factor authentication', 'switch');
+  let result = await w.act(tab, [{ do: 'check', ref: box }]);
+  assert.doesNotMatch(result.text, /not run|unconfirmed/, result.text);
+  assert.deepEqual(w.logs.splice(0), ['check ck true']);
+  result = await w.act(tab, [{ do: 'press', ref: knob, key: 'Space' }]);
+  assert.match(result.text, /not run:/, result.text);
+  // The light-DOM field in the same frame is refused the same way, so the closed root is no stricter than the page.
+  const light = await w.ref(tab, 'Light note', 'textbox');
+  result = await w.act(tab, [{ do: 'press', ref: light, key: 'ArrowDown' }]);
+  assert.match(result.text, /not run:/, result.text);
+  assert.deepEqual(w.logs, []);
 });
 
 test('a closed-root ref from before a reload is refused without sending input', { skip, timeout: 90000 }, async () => {

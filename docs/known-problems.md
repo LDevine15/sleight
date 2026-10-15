@@ -252,6 +252,9 @@ Engine behavior that sleight works around or can't change:
 - A key press on a closed-root element that isn't a button or an input needs CDP's answer that the element hosts no closed root itself.
   Without that answer (the node was resolved some other way) the press is refused, because a focused closed host looks the same as its
   inner receiver from the page.
+- A key press in a cross-origin iframe is refused for closed-root and light-DOM refs alike, because focus can't be proved up the frame
+  chain from inside the child (1 closed and 1 light fixture, 2026-10-15). Clicks and fills there work. Not measured in an
+  out-of-process frame: the cross-origin fixture frame shared the page's CDP session.
 - Payment terms (item, amount, payee) are read from the nearest form or dialog around the control, climbing from the closed root to
   its host. The text walk doesn't enter shadow roots, so terms shown inside a different closed root should not be read, and
   that Pay button should need confirmation even when the user's message names the exact payment (from the code, not measured).
