@@ -410,8 +410,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
   //   a currency that differs from the page's currency (or from the one the amount is written in), however small the figure;
   //   a mark (an image or canvas that may hold a figure), a spelled-out number and digits with a letter glued on, which we cannot read;
   //   a figure that cannot be parsed;
-  //   a chosen control (checked box or radio, aria-checked, selected option...) whose figure is not the amount itself: it is an
-  //   add-on the user will pay on top of the pay figure.
+  //   chosen controls (checked box or radio, aria-checked, selected option...) whose figures, the amount itself aside, together
+  //   exceed the amount: a chosen figure at or below the amount is a part of the total, but the add-ons the user will pay add up.
   // A bare number with no currency counts only straight after a pay word ("Total 500"), and not as a count or a date.
   // Known limit: a page that hides its real total, or states a smaller total than it charges, is not caught.
   const conflicts = (lines, amount, pageCurrency) => {
@@ -475,7 +475,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     });
     const reference = /^[A-Za-z]{3}$/.test(pageCurrency ?? '') ? pageCurrency.toUpperCase() : figures.find(f => !f.mark && f.cur && Math.abs(f.value - A) < eps)?.cur;
     return figures.some(f => f.mark || !same(f.cur, reference) || !(f.value <= A + eps)) ||
-      figures.some(f => f.chosen && !f.minus && f.value > eps && Math.abs(f.value - A) >= eps);
+      figures.filter(f => f.chosen && !f.minus && Math.abs(f.value - A) >= eps).reduce((sum, f) => sum + f.value, 0) > A + eps;
   };
   const field = key => {
     if (!root) return;

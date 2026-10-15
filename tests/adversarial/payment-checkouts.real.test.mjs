@@ -71,7 +71,7 @@ const outcome = new Map();
 // allowed on the strength of a label (discount, was, gift card, late fee, converted total...) and now ask like the two donation pages.
 const askNow = new Set(['R7 flex Subtotal, Discount, free Shipping, Total', 'P6 discount line', 'P7 was-price, savings, installments', 'P9 free-shipping bar, tips, loyalty points',
   'N1 subscription: monthly vs annual toggle', 'N5 checkout with gift card balance applied', 'N6 invoice payment with due date and late fee note', 'N7 airline fare with taxes and bag fee note',
-  'M1 order bump checkbox already checked', 'M2 multi-currency: converted total in euro', 'M4 split payment gift card + card (total due)', 'M4b split payment: card charge line',
+  'M2 multi-currency: converted total in euro', 'M4 split payment gift card + card (total due)', 'M4b split payment: card charge line',
   'M5 invoice with past-due amount', 'M5b invoice with previous balance line']);
 for (const [name, [html, label]] of Object.entries(pages))
   test('realistic page ' + name + (askNow.has(name) ? ': asks (round 13: a figure above the amount)' : ': the exact payment is allowed once'), { skip, timeout: 90000 }, async t => {
@@ -406,7 +406,7 @@ test('F4 (round 6): alternatives, recommendations, gift cards, conditional fees 
     ['ask: "Annual billing would be $180.00 per year" with "$18.00 every month"', P(`<p>You will be charged $18.00 every month. Annual billing would be $180.00 per year.</p>${T}`), 'ask'],
     ['ask: a yearly price with no monthly price equal to the total', P(`<label>Annual <b>$180.00</b>/year</label>${T}`), 'ask'],
     ['ask: a yearly price above twelve times the monthly total', P(`<p>$18.00 per month. Or $400.00 per year.</p>${T}`), 'ask'],
-    ['ask: shipping radios (Standard checked, Express $24.99 unchecked)', P(`<label><input type="radio" name="s" checked> Standard $5.00</label><label><input type="radio" name="s"> Express $24.99</label>${T}`), 'ask'],
+    ['allow: shipping radios (Standard checked, Express $24.99 unchecked)', P(`<label><input type="radio" name="s" checked> Standard $5.00</label><label><input type="radio" name="s"> Express $24.99</label>${T}`), 'allow'],
     ['allow: unchecked checkbox "Add 2-year protection for $29.99"', P(`<label><input type="checkbox"> Add 2-year protection for $29.99</label>${T}`), 'allow'],
     ['ask: a CHECKED checkbox "Add 2-year protection for $29.99"', P(`<label><input type="checkbox" checked> Add 2-year protection for $29.99</label>${T}`), 'ask'],
     ['ask: an unchecked radio whose label names the Total', P(`<label><input type="radio" name="s"> Total: $500.00</label>${T}`), 'ask'],
@@ -481,11 +481,11 @@ for (const [name, [html, label]] of Object.entries(asks7))
     outcome.set(name, r.payment === 1);
     assert.equal(r.payment, 0);
   });
-test('allow rate over the 36 realistic pages (28 from rounds 5 and 6 plus the 8 of round 7) is at least 18/36 (round 13)', { skip }, t => {
+test('allow rate over the 36 realistic pages (28 from rounds 5 and 6 plus the 8 of round 7) is at least 19/36 (round 13)', { skip }, t => {
   const real = [...outcome.values()].filter(Boolean).length + 2; // R4 and P3 are read directly, above
   t.diagnostic('allowed ' + real + '/36');
   assert.equal(outcome.size, 36 - 2);
-  assert.ok(real >= 18, 'allowed ' + real + ' of 36');
+  assert.ok(real >= 19, 'allowed ' + real + ' of 36');
 });
 
 test('F5 (round 7): estimates and conversion notes in another currency, invoice history, tender lines under an order total', { skip, timeout: 180000 }, async t => {
@@ -608,7 +608,7 @@ test('F-E (round 8): "Invoice #88" labels, an Equivalent row, new charges beside
     ['ask: Previous balance to be charged 12 beside New charges 500', P(row7('Previous balance to be charged', '$12.00') + row7('New charges', '$500.00') + row7('<b>Total due</b>', '<b>$' + amt() + '</b>')), 'ask'],
   ]);
 });
-test('round 8: the reviewer\'s 20 honest pages allow at least 9/20, and with the suite 36 realistic pages at least 27/56 (round 13)', { skip, timeout: 180000 }, async t => {
+test('round 8: the reviewer\'s 20 honest pages allow at least 9/20, and with the suite 36 realistic pages at least 28/56 (round 13)', { skip, timeout: 180000 }, async t => {
   const b = await bank(t), page = await b.host.newPage(), cases = fixture8('honest-20');
   let allowed = 0;
   try {
@@ -621,7 +621,7 @@ test('round 8: the reviewer\'s 20 honest pages allow at least 9/20, and with the
   const real = [...outcome.values()].filter(Boolean).length + 2;
   t.diagnostic('reviewer 20: ' + allowed + '/20; suite 36: ' + real + '/36; together ' + (allowed + real) + '/' + (cases.length + 36));
   assert.ok(allowed >= 9, allowed + '/20');
-  assert.ok(allowed + real >= 27, 'together ' + (allowed + real) + '/56');
+  assert.ok(allowed + real >= 28, 'together ' + (allowed + real) + '/56');
 });
 
 // ---------------------------------------------------------------- Round 9
@@ -632,7 +632,7 @@ const fixture9 = JSON.parse(readFileSync(new URL('./fixtures/pay-r9-closed-phras
 test('F-A, F-D, F-G (round 9): closed positive phrases for settled, next-invoice, estimate and tender lines; late fee, optional and average notes; per-unit rates', { skip, timeout: 600000 }, async t => {
   await readCases(t, fixture9);
 });
-test('round 9: honest allow rate over the 36 suite pages, the 20 reviewer pages and the reviewer\'s 12 pages is at least 34/68 (round 13)', { skip, timeout: 180000 }, async t => {
+test('round 9: honest allow rate over the 36 suite pages, the 20 reviewer pages and the reviewer\'s 12 pages is at least 35/68 (round 13)', { skip, timeout: 180000 }, async t => {
   const b = await bank(t), page = await b.host.newPage();
   let twenty = 0, twelve = 0;
   const read = async html => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === '18.00'; } catch { return false; } };
@@ -643,7 +643,7 @@ test('round 9: honest allow rate over the 36 suite pages, the 20 reviewer pages 
   const real = [...outcome.values()].filter(Boolean).length + 2;
   t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; together ' + (real + twenty + twelve) + '/68');
   assert.ok(twenty >= 9 && twelve >= 7, twenty + ' of 20, ' + twelve + ' of 12');
-  assert.ok(real + twenty + twelve >= 34, 'together ' + (real + twenty + twelve) + '/68');
+  assert.ok(real + twenty + twelve >= 35, 'together ' + (real + twenty + twelve) + '/68');
 });
 
 // ---------------------------------------------------------------- Round 10
@@ -687,7 +687,7 @@ test('F-A (round 10): ten of the reviewer\'s charge phrasings, clicked through t
       assert.equal(r.payment, 0, name + ': ' + r.text);
     });
 });
-test('round 10: honest allow rate over the 36 suite pages, the 20 reviewer pages, the reviewer\'s 12 pages and the 10 industry pages is at least 40/78 (round 13)', { skip, timeout: 180000 }, async t => {
+test('round 10: honest allow rate over the 36 suite pages, the 20 reviewer pages, the reviewer\'s 12 pages and the 10 industry pages is at least 41/78 (round 13)', { skip, timeout: 180000 }, async t => {
   const b = await bank(t), page = await b.host.newPage();
   let twenty = 0, twelve = 0, ten = 0;
   const read = async (html, amount = '18.00') => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === amount; } catch { return false; } };
@@ -699,7 +699,7 @@ test('round 10: honest allow rate over the 36 suite pages, the 20 reviewer pages
   const real = [...outcome.values()].filter(Boolean).length + 2;
   t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; together ' + (real + twenty + twelve + ten) + '/78');
   assert.ok(twenty >= 9 && twelve >= 7 && ten >= 6, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10');
-  assert.ok(real + twenty + twelve + ten >= 40, 'together ' + (real + twenty + twelve + ten) + '/78');
+  assert.ok(real + twenty + twelve + ten >= 41, 'together ' + (real + twenty + twelve + ten) + '/78');
 });
 
 // ---------------------------------------------------------------- Round 11
@@ -758,7 +758,7 @@ test('F-A, F-B, F-C (round 11): twelve of the reviewer\'s charge phrasings, clic
       assert.equal(r.payment, name.startsWith('D1 ') ? 1 : 0, name + ': ' + r.text); // round 13: D1 has two parts within the amount and no figure above it
     });
 });
-test('round 11: honest allow rate over the 36 suite pages, 20 + 12 + 10 reviewer pages and the 10 new pages is at least 45/88 (round 13; the two holds count as correct asks)', { skip, timeout: 240000 }, async t => {
+test('round 11: honest allow rate over the 36 suite pages, 20 + 12 + 10 reviewer pages and the 10 new pages is at least 46/88 (round 13; the two holds count as correct asks)', { skip, timeout: 240000 }, async t => {
   const b = await bank(t), page = await b.host.newPage();
   let twenty = 0, twelve = 0, ten = 0, fresh = 0;
   const read = async (html, amount = '18.00') => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === amount; } catch { return false; } };
@@ -772,7 +772,7 @@ test('round 11: honest allow rate over the 36 suite pages, 20 + 12 + 10 reviewer
   const total = real + twenty + twelve + ten + fresh;
   t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; new 10: ' + fresh + '; together ' + total + '/88, with the 2 holds counted as correct asks ' + (total + 2) + '/88');
   assert.ok(twenty >= 9 && twelve >= 7 && ten >= 6, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10');
-  assert.ok(total + 2 >= 47, 'together ' + total + '/88');
+  assert.ok(total + 2 >= 48, 'together ' + total + '/88');
 });
 
 // ---------------------------------------------------------------- Round 12
@@ -790,7 +790,7 @@ const fixture12 = name => JSON.parse(readFileSync(new URL('./fixtures/pay-r12-' 
 test('F-A2, F-B2, F-E2, F-H, F-G (round 12): 657 bodies (every charge phrasing of the round 11 review asks; since round 13 so do the closed phrases that stood above the amount)', { skip, timeout: 900000 }, async t => {
   await readCases(t, fixture12('labels').map(([name, body, expect]) => [name, form10(body), expect]));
 });
-test('F-G (round 12): the reviewer\'s 10 new honest pages read with their own amounts (round 13: 1/10 allow; any figure above the amount asks)', { skip, timeout: 300000 }, async t => {
+test('F-G (round 12): the reviewer\'s 10 new honest pages read with their own amounts (round 13: 4/10 allow; any figure above the amount asks)', { skip, timeout: 300000 }, async t => {
   const b = await bank(t), page = await b.host.newPage();
   try {
     for (const [name, html, amount, expect] of fixture12('honest'))
@@ -827,7 +827,7 @@ test('F-A2, F-B2, F-E2 (round 12): the reviewer\'s 13 charge pages and 2 control
       assert.equal(r.payment, 0, name + ': ' + r.text);
     });
 });
-test('round 12: honest allow rate over the 36 suite pages, 20 + 12 + 10 + 10 reviewer pages and the 20 pages of rounds 11 and 12 is at least 46/98 (round 13; the two holds count as correct asks)', { skip, timeout: 240000 }, async t => {
+test('round 12: honest allow rate over the 36 suite pages, 20 + 12 + 10 + 10 reviewer pages and the 20 pages of rounds 11 and 12 is at least 50/98 (round 13; the two holds count as correct asks)', { skip, timeout: 240000 }, async t => {
   const b = await bank(t), page = await b.host.newPage();
   let twenty = 0, twelve = 0, ten = 0, fresh = 0, newest = 0;
   const read = async (html, amount = '18.00') => { await page.setContent('<!doctype html><body style="margin:8px"><main>' + html); try { return (await trustedLocatorRead(page.locator('#pay').first(), readPaymentPage)).page?.amount === amount; } catch { return false; } };
@@ -841,14 +841,14 @@ test('round 12: honest allow rate over the 36 suite pages, 20 + 12 + 10 + 10 rev
   const real = [...outcome.values()].filter(Boolean).length + 2;
   const total = real + twenty + twelve + ten + fresh + newest;
   t.diagnostic('suite 36: ' + real + '; reviewer 20: ' + twenty + '; reviewer 12: ' + twelve + '; industry 10: ' + ten + '; round 11 new 10: ' + fresh + '; round 12 new 10: ' + newest + '; together ' + total + '/98, with the 2 holds counted as correct asks ' + (total + 2) + '/98');
-  assert.ok(twenty >= 9 && twelve >= 7 && ten >= 6 && newest >= 1, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10, ' + newest + ' of 10');
-  assert.ok(total + 2 >= 48, 'together ' + total + '/98');
+  assert.ok(twenty >= 9 && twelve >= 7 && ten >= 6 && newest >= 4, twenty + ' of 20, ' + twelve + ' of 12, ' + ten + ' of 10, ' + newest + ' of 10');
+  assert.ok(total + 2 >= 52, 'together ' + total + '/98');
 });
 
 // ---------------------------------------------------------------- Round 13
 // The payment read no longer reads wording. Any visible money figure (any currency, any label, any sign) larger than the amount asks, a figure
-// in another currency asks, an image or canvas mark, a spelled-out number and digits with a letter glued on ("$5OO.00") ask, and a chosen control
-// whose figure is not the amount asks. Figures equal to or below the amount (parts, unit prices, discounts, taxes) do not. Every fixture of rounds
+// in another currency asks, an image or canvas mark, a spelled-out number and digits with a letter glued on ("$5OO.00") ask, and chosen controls
+// whose figures (the amount aside) together exceed the amount ask. Figures equal to or below the amount (parts, unit prices, discounts, taxes) do not. Every fixture of rounds
 // 4 to 12 that expected an allow because of a label (savings, was price, tender, settled payment, estimate, late fee, coverage, deposit...) with a
-// figure above the amount now expects ask (389 fixture bodies, 55 inline cases and 14 realistic pages). Thirteen fixtures that expected ask had
+// figure above the amount now expects ask (382 fixture bodies, 54 inline cases and 13 realistic pages). Thirteen fixtures that expected ask had
 // only figures at or below the amount (a "Payment" or "Charge" of $5.00 beside a $18.00 total, fee-type parts that add up, a unit price) and now allow.
