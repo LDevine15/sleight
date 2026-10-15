@@ -92,6 +92,13 @@ function settleRefund(bank) {
   if (quiet) { bank.used.delete(deferred.requestKey); bank.dialog = undefined; }
 }
 
+// The turn is over: no further payment check will settle the refund, so its listeners come off the browser context now.
+export function endDeferredRefund(ctx) {
+  const bank = payments.get(ctx), deferred = bank?.deferred;
+  if (!deferred) return;
+  bank.deferred = undefined; deferred.activity.stop();
+}
+
 export function expirePaymentDialog(ctx) { const bank = payments.get(ctx); if (bank) bank.dialog = undefined; }
 
 export function check(ctx, kind, target = {}) {

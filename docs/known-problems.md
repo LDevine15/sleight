@@ -78,8 +78,8 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
 - The turbo v3 payment read treats any visible money figure that differs from the amount in the user's message as a
   reason to ask, unless its own label marks it as a part (tax, delivery, discount, per unit, installment). Measured
-  2026-10-15 on 28 checkout pages: 25 allow the exact payment. The 3 that ask are two donation pages with preset chips
-  larger than that amount, and a dialog whose terms are outside the Pay button's own nested form. An image of 24x8 or more with no ordinary word in its row asks too, so a decorative `alt=""`
+  2026-10-15 on 36 checkout pages: 32 allow the exact payment. The 4 that ask are two donation pages with preset chips
+  larger than that amount, a dialog whose terms are outside the Pay button's own nested form, and euro line items beside a USD charge. An image of 24x8 or more with no ordinary word in its row asks too, so a decorative `alt=""`
   image can cause a false ask. Text-only offers ("Upgrade to Premium for $49.00/month", two delivery prices in one
   paragraph) and a yearly price with no monthly price equal to the total also ask. A recommendation block is
   skipped only when its heading is in its own container under the form, with no total or pay word inside.
@@ -91,12 +91,29 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   are charge labels and ask.
 - An Apply, quantity stepper, Remove or "Show order summary" button gives the request's one payment activation back
   at the next payment check, but only if its own name is on the closed list (apply, update, remove, delete, increase,
-  decrease, plus, minus, show, hide, edit, change, more, less, +, -) and no request, WebSocket, worker or new page
-  started anywhere on the browser until that check. A page with a worker, a service worker, a shared worker of its
-  origin or an iframe of another origin is not refunded, because the connection can't see their network. A charge that
-  waits for a timer longer than the gap to the next payment check, or for the next input, is not seen, so a charger
-  that calls itself "Apply" can charge once more (measured: a fetch after 6 s and a `sendBeacon` call on the next pointerdown,
-  2 charges in total). A control with any other name ("Continue", "Next") is never refunded.
+  decrease, plus, minus, show, hide, edit, change, more, less, +, -) and nothing went out on the network until that
+  check. The watch counts requests, WebSocket frames, workers and new pages in all tabs sleight opened in that browser
+  context (tested with two). It does not refund when any request was still open at click time (a streaming upload, a long poll, an
+  EventSource), or when the browser holds another tab of the page's site that sleight doesn't own (a
+  BroadcastChannel or `storage` event reaches it, and nothing watches it). A page with a worker, a service worker, a
+  shared worker of its origin or an iframe of another origin is not refunded either, because the connection can't see
+  their network. The watch detaches when the turn ends and after 2 minutes. A charge that waits for a timer longer than
+  the gap to the next payment check, or for the next input, is not seen, so a charger that calls itself "Apply" can
+  charge once more (measured: a fetch after 6 s and a `sendBeacon` call on the next pointerdown, 2 charges in total).
+  A WebRTC data channel or a WebTransport stream opened before the click can also carry a charge, and Playwright
+  doesn't expose either. A control with any other name ("Continue", "Next") is never refunded.
+- A page with background network traffic (an analytics ping, a chat WebSocket heartbeat, a registered service
+  worker, a tax fetch) never gets the refund, so Pay asks once after "Show order summary" there. Measured 2026-10-15:
+  2 of 6 such pages allow Pay (the quiet one and one with an already-loaded cross-origin image). Skipping requests to a
+  URL the page already sent periodically would let a page hide a charge in its own heartbeat, so it asks.
+- A figure in another currency is cleared only when it calls itself an estimate ("Approximately EUR 16.60", "about",
+  "converted", "≈") without a pay word in its label, or sits in parentheses right after the amount. "$24.50 CAD" beside
+  "$18.00 USD" is not cleared, because both read as dollars. Euro line items beside a USD charge ("Item EUR 16.60",
+  "You pay $18.00 USD") ask, because there is no rate to compare them with.
+- "Order total", "Invoice total" and "Original invoice amount" above the amount are accepted only when a gift card,
+  store credit, voucher, credit or a payment already received ("Payments received", "Paid to date") brings the figure
+  down to the amount. A discount alone doesn't count for those labels. "Amount paid", "Previous balance" and "Credit applied" never
+  count as a charge, at any size. "Next invoice: $60.00 due Dec 1" is not a charge unless it says due now or today.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.

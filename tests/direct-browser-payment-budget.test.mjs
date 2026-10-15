@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { check, deferRefund, refundableName } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { check, deferRefund, refundableName, endDeferredRefund } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // One payment activation per user request, whichever kind of control (scripted type=button or plain submit),
 // and a scripted control can be approved through the same consent path as any other.
@@ -56,6 +56,15 @@ test('a quiet closed-list activation gives the budget back at the next payment c
   assert.equal(deferRefund(ctx, apply, watch), false);
   assert.deepEqual([false, false].map(scripted => check(ctx, 'click', target(scripted)).verdict), ['allow', 'confirm']);
   assert.equal(watch.stopped, true);
+});
+test('F1: ending the turn stops a deferred watch that no payment check settled, and keeps the budget spent', () => {
+  const ctx = ctxFor(named), apply = named_('Apply'), watch = quiet();
+  assert.equal(check(ctx, 'click', apply).verdict, 'allow');
+  assert.equal(deferRefund(ctx, apply, watch), true);
+  endDeferredRefund(ctx);
+  assert.equal(watch.stopped, true);
+  endDeferredRefund(ctx); endDeferredRefund({});
+  assert.equal(check(ctx, 'click', target(false)).verdict, 'confirm');
 });
 test('network activity before the next payment check keeps the budget spent', () => {
   const ctx = ctxFor(named), apply = named_('Apply'), watch = quiet();

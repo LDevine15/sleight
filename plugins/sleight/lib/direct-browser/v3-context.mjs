@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent, expirePaymentDialog, deferRefund } from './rules.mjs';
+import { check, inspectElement, intent, expirePaymentDialog, deferRefund, endDeferredRefund } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 
@@ -410,6 +410,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const RECOMMEND = /^(?:you (?:may|might) (?:also )?like|recommended(?: for you)?|customers (?:also )?(?:bought|viewed|like)|people also (?:bought|viewed)|related (?:items|products)|similar (?:items|products)|frequently bought together|more from|trending(?: now)?|complete the look)\b/i;
     const FILL = set('of is are will be only now today just about approx approximately currently a an the in on at for to your you re our we my this that it its s then also final full overall est estimated usd eur gbp cad aud');
     const CONNECT = set('or and to');
+    const APPROX = set('approx approximately about around roughly converted conversion equivalent estimated est');
     const QUAL = set('incl includes including inc plus less minus after with before excl excluding excludes without');
     const COUNTED = /^(?:items?|pcs|pieces?|units?|qty|x|×|days?|hours?|mins?|minutes?|years?|months?|weeks?|payments?|installments?|points?|pts|interest|percent|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|st|nd|rd|th)$/i;
     const eps = 0.005;
@@ -432,11 +433,25 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const after = text => { const t = unparen(text.replace(/^[\s)\]]+/, '')), hard = /[.;!?](?=\s|$)/.exec(t); return hard ? t.slice(0, hard.index) : t; };
     const sig = text => words(text).filter(w => !FILL.has(w));
     // The role of a label, read from its significant words (the nearest word decides).
+    // Past-tense or settled money on an invoice ("Payments received", "Paid to date", "Amount paid", "Previous balance", "Credit applied"):
+    // not a charge, and a tender that closes the gap under "Invoice total" or "Original invoice amount".
+    const SETTLED = /\b(?:payments? (?:received|made|applied|date)|paid (?:date|far)|received (?:date|far)|amount paid|total paid|already paid|(?:previous|prior|earlier) (?:balance|payments?|invoices?)|credits? applied|amount credited)\b/;
+    // A gross figure that a tender line (gift card, store credit, voucher, credit, a payment already received) brings down to the amount.
+    const TENDER = set('gift voucher vouchers credit credits certificate');
+    const GROSS = /^(?:order total|invoice total|total invoice|original (?:invoice )?(?:amount|total)|invoice amount|total before .+)$/;
     const classify = list => {
+      const role = classify0(list), phrase = list.join(' ');
+      if (role.cut && list.some(x => TENDER.has(x))) role.tender = true;
+      if (role.settled) { role.cut = true; role.tender = true; }
+      if (role.kind === 'pay' && GROSS.test(phrase)) role.gross = true;
+      return role;
+    };
+    const classify0 = list => {
       const w = list.at(-1), hasPay = list.some(x => PAY.has(x)), strong = list.some(x => PAY.has(x) && x !== 'price' && x !== 'cost');
       const stores = list.some(x => WEAK_WITH.has(x));
       const exempt = x => EXEMPT.has(x) || WEAK.has(x) && stores;
       const phrase = list.join(' '), cutPhrase = /\b(?:gift ?cards?|gift certificates?|store credits?|vouchers?)\b/.test(phrase);
+      if (SETTLED.test(phrase)) return { kind: 'exempt', settled: true };
       if (UNIT.has(w)) return { kind: 'unit' };
       if (COND.has(w) || list.some(x => LATE.has(x))) return { kind: strong ? 'part' : 'exempt' };
       if (PAY.has(w)) { const p = list.at(-2); return PART.has(p) || exempt(p) ? { kind: 'part', cut: CUT.has(p) } : { kind: 'pay' }; }
@@ -492,6 +507,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           }
           // An exempt label does not clear a figure that the clause after it calls a charge ("Reward: $500.00 charged now").
           if (via === 'left' && role?.kind === 'exempt' && rs.slice(0, 3).some(x => CHARGED.has(x))) role = { kind: 'part', cut: role.cut };
+          // "Next invoice: $60.00 due Dec 1" is a later bill, not this charge.
+          if (via === 'left' && role?.kind !== 'exempt' && /^(?:next|upcoming)$/.test(ls[0]) && ls.some(x => /^(?:invoice|bill|billing|statement)$/.test(x)) && rs.slice(0, 2).includes('due') && !words(after(tail)).slice(0, 4).some(x => /^(?:now|today|tonight|immediately|asap)$/.test(x))) role = { kind: 'exempt' };
           if (!role && alone && !mark) { role = labelAbove(i); via = 'above'; if (role && role.kind === 'exempt' && !role.adjacent) role = { ...role, kind: 'part' }; }
           if (r0 && UNIT.has(r0) && role && role.kind !== 'exempt') role = { kind: 'unit' };
           role ??= { kind: 'none' };
@@ -500,7 +517,14 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           const suffix = m[8] ?? m[13], code = m[1] ?? m[4] ?? m[5] ?? (suffix && /^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
           const sign = m[2] ?? (suffix && !/^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
           const cur = code ? code.toUpperCase() : sign ? SYMBOL[sign] ?? SYMBOL[sign.toUpperCase()] ?? SYMBOL[sign.toLowerCase()] : undefined;
-          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, mark, text, period };
+          // A figure in another currency that calls itself an estimate ("Approximately EUR 16.60", "≈ €16.60", "Converted: €16.60"), or that
+          // sits in parentheses right after the figure that is the amount ("$18.00 (€16.60)"), is a conversion note, not a charge.
+          // A pay word in its own label ("Estimated total €500.00") keeps it a charge.
+          const tilde = /(?:[≈~]|\b(?:approx|approximately|about|around|roughly|converted|conversion|equivalent|estimated|est)\b\.?)[\s:(]*$/i.test(seg),
+            marked = lw.some(x => APPROX.has(x)) || /^\s*\(?\s*(?:[≈~]|approx|est\b)/i.test(tail);
+          const approx = !mark && !spelled && !ls.some(x => PAY.has(x) && x !== 'price' && x !== 'cost' && x !== 'amount') && (tilde || marked);
+          const paren = previous && /^\s*\(\s*$/.test(seg) ? previous : undefined;
+          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, mark, text, period, approx, paren };
           found.push(entry); previous = entry;
           // "Total after $2.00 discount: $500.00": a qualifier figure does not end the label of the figure that follows.
           if (!(via === 'left' && QUAL.has(ls.at(-1)))) start = m.index + m[0].length;
@@ -509,20 +533,26 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       return found;
     };
     let cuts;
-    const reconciled = f => {
+    const reconciled = (f, tender = false) => {
       cuts ??= analyze(strictLines() ?? []).filter(x => x.role.cut && !x.mark && Number.isFinite(x.value));
-      return cuts.some(d => d.text !== f.text && f.value - d.value <= A + eps);
+      return cuts.some(d => d.text !== f.text && (!tender || d.role.tender) && f.value - d.value <= A + eps);
     };
     const figures = analyze(lines);
     const reference = /^[A-Za-z]{3}$/.test(pageCurrency ?? '') ? pageCurrency.toUpperCase() : figures.find(f => !f.mark && f.cur && Math.abs(f.value - A) < eps)?.cur;
     return figures.some(f => {
       const kind = f.role.kind;
       if (f.mark) return !(kind === 'exempt' || kind === 'part' && f.role.unknown);
-      if (kind !== 'exempt' && !same(f.cur, reference)) return true;
+      if (kind !== 'exempt' && !same(f.cur, reference)) {
+        // An estimate note clears a euro or pound figure, not another kind of dollar: "$24.50 CAD" beside "$18.00 USD" is easy to read as the charge.
+        const dollars = x => GENERIC['$'].includes(x), confusable = dollars(f.cur) && dollars(reference);
+        return confusable || !(f.approx || f.paren && !f.paren.mark && Math.abs(f.paren.value - A) < eps && same(f.paren.cur, reference));
+      }
       if (Math.abs(f.value - A) < eps) return false;
       // A yearly price beside the monthly one that is the charge ("$18.00/month", "$180.00/year") is the other plan, not this charge.
       if (kind === 'unit') return f.value > A + eps && !(f.period === 'year' && f.value <= 12 * A + eps && figures.some(g => g.period === 'month' && Math.abs(g.value - A) < eps));
       if (kind === 'part') return f.value > A + eps && !reconciled(f);
+      // "Order total $28.00" or "Invoice total $60.00" above a gift card, store credit, voucher or a payment already received that brings it down to the amount.
+      if (kind === 'pay' && f.role.gross) return f.value > A + eps ? !reconciled(f, true) : true;
       return kind !== 'exempt';
     });
   };
@@ -779,7 +809,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       if (handle && held.delete(handle)) await handle.dispose().catch(() => {});
     },
     async dispose() {
-      closed = true; native?.revoke();
+      closed = true; native?.revoke(); endDeferredRefund(ruleContext);
       for (const [page, handlers] of watched) for (const [event, handler] of Object.entries(handlers)) page.off(event, handler);
       watched.clear(); tickets.clear(); pending.clear(); offered.clear();
       const receipt = fileProvider.dispose();

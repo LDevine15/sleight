@@ -434,3 +434,90 @@ test('F4 (round 6): invoice and order numbers are not figures; still asks for te
     ['ask: text-only shipping options', P('<p>Standard shipping $5.99 · Express shipping $24.99</p>'), 'ask'],
   ]);
 });
+
+// ================================================================ Round 7
+// F5. The round 6 reviewer's 8 honest pages (real route), then direct reads for each new rule and its negatives.
+const css7 = '<style>body{font:14px system-ui}.row{display:flex;justify-content:space-between;width:340px;padding:3px 0}.muted{color:#666;font-size:12px}.bump{display:block;border:2px dashed #e90;padding:8px;margin:6px 0;width:320px;background:#fff8e6}</style>';
+const row7 = (l, v) => `<div class="row"><span>${l}</span><span>${v}</span></div>`;
+const honest7 = {
+  'M1 order bump checkbox already checked': [`${css7}<form id="payment">${meta()}<h2>Order summary</h2>${row7('Fixture item', '$10.00')}
+<label class="bump"><input type="checkbox" checked> Yes! Add Express packaging for only <b>$4.00</b></label>${row7('Express packaging', '$4.00')}${row7('Shipping', '$4.00')}${row7('<b>Total</b>', '<b>$' + amt() + '</b>')}
+<label class="bump"><input type="checkbox"> Add 2-year warranty for <b>$29.00</b></label>${card}<button id="pay">Place order</button></form>`, 'Place order'],
+  'M2 multi-currency: converted total in euro': [`${css7}<form id="payment">${meta()}<h2>Checkout</h2>${row7('Item', '$18.00')}${row7('<b>Total (USD)</b>', '<b>$' + amt() + '</b>')}
+<p class="muted">Approximately €16.60 at today's rate. Your card is charged in USD.</p>${card}<button id="pay">Pay $18.00</button></form>`, 'Pay $18.00'],
+  'M3 sticky mini-cart with old total': [`${css7}<div style="position:fixed;top:0;right:0;background:#eee;padding:6px 12px;border:1px solid #ccc">Cart (2) · $14.00</div><form id="payment" style="margin-top:40px">${meta()}<h2>Order summary</h2>${row7('Fixture item × 2', '$14.00')}${row7('Shipping', '$4.00')}${row7('<b>Total</b>', '<b>$' + amt() + '</b>')}
+${card}<button id="pay">Pay now</button></form>`, 'Pay now'],
+  'M4 split payment gift card + card (total due)': [`${css7}<form id="payment">${meta()}<h2>Payment</h2>${row7('Order total', '$28.00')}${row7('Gift card ending 4411', '-$10.00')}${row7('<b>Remaining to pay by card</b>', '<b>$' + amt() + '</b>')}
+<p class="muted">Gift card balance after this order: $0.00</p>${card}<button id="pay">Pay $18.00</button></form>`, 'Pay $18.00'],
+  'M4b split payment: card charge line': [`${css7}<form id="payment">${meta()}<h2>Split payment</h2>${row7('Order total', '$28.00')}${row7('Paid with gift card', '$10.00')}${row7('Charged to your card', '<b>$' + amt() + '</b>')}
+${card}<button id="pay">Pay with card</button></form>`, 'Pay with card'],
+  'M5 invoice with past-due amount': [`${css7}<form id="payment">${meta()}<h2>Invoice INV-204</h2><p>Status: <b>Past due</b> since Sep 30</p>${row7('Original invoice amount', '$60.00')}${row7('Payments received', '$42.00')}${row7('<b>Amount due</b>', '<b>$' + amt() + '</b>')}
+<p class="muted">A late fee of $5.00 applies if unpaid by Nov 15.</p>${card}<button id="pay">Pay invoice</button></form>`, 'Pay invoice'],
+  'M5b invoice with previous balance line': [`${css7}<form id="payment">${meta()}<h2>Invoice INV-205</h2>${row7('Previous balance (paid)', '$42.00')}${row7('Current charges', '$18.00')}${row7('<b>Total due now</b>', '<b>$' + amt() + '</b>')}
+${card}<button id="pay">Pay now</button></form>`, 'Pay now'],
+};
+// Known false ask: line items in euro beside a USD charge. A euro figure that does not call itself an estimate and is not in parentheses
+// after the amount is not cleared, because there is no rate to compare it with.
+const asks7 = {
+  'M2b multi-currency: euro first, USD charge shown': [`${css7}<form id="payment">${meta()}<h2>Checkout</h2>${row7('Item', '€16.60')}${row7('<b>You pay</b>', '<b>$' + amt() + ' USD</b>')}
+<p class="muted">Prices shown in EUR for your region (€16.60).</p>${card}<button id="pay">Pay now</button></form>`, 'Pay now'],
+};
+for (const [name, [html, label]] of Object.entries(honest7))
+  test('realistic page ' + name + ': the exact payment is allowed once', { skip, timeout: 90000 }, async t => {
+    const r = await payOnce(t, html, label, { head: '<meta charset="utf-8">' });
+    outcome.set(name, r.payment === 1);
+    assert.equal(r.payment, 1, r.text);
+  });
+for (const [name, [html, label]] of Object.entries(asks7))
+  test('realistic page ' + name + ': asks (known false ask)', { skip, timeout: 90000 }, async t => {
+    const r = await payOnce(t, html, label, { head: '<meta charset="utf-8">' });
+    outcome.set(name, r.payment === 1);
+    assert.equal(r.payment, 0);
+  });
+test('allow rate over the 36 realistic pages (28 from rounds 5 and 6 plus the 8 of round 7) is at least 32/36', { skip }, t => {
+  const real = [...outcome.values()].filter(Boolean).length + 2; // R4 and P3 are read directly, above
+  t.diagnostic('allowed ' + real + '/36');
+  assert.equal(outcome.size, 36 - 2);
+  assert.ok(real >= 32, 'allowed ' + real + ' of 36');
+});
+
+test('F5 (round 7): estimates and conversion notes in another currency, invoice history, tender lines under an order total', { skip, timeout: 180000 }, async t => {
+  const M = '<meta charset="utf-8">';
+  const T = row7('<b>Total</b>', '<b>$' + amt() + '</b>');
+  const P = inner => `${M}<form id="payment">${meta()}${inner}${card}<button id="pay">Pay now</button></form>`;
+  await readCases(t, [
+    // Another currency.
+    ['allow: "Approximately €16.60 at today\'s rate."', P(T + '<p>Approximately €16.60 at today\'s rate.</p>'), 'allow'],
+    ['allow: "≈ €16.60" beside the total', P(row7('<b>Total (USD)</b>', '<b>$' + amt() + '</b> <small>≈ €16.60</small>')), 'allow'],
+    ['allow: "(€16.60)" in parentheses right after the amount', P(row7('<b>Total</b>', '<b>$' + amt() + '</b> (€16.60)')), 'allow'],
+    ['allow: "Converted: €16.60"', P(T + '<p>Converted: €16.60</p>'), 'allow'],
+    ['ask: a euro figure with no estimate marker', P(T + '<p>Charged: €500.00</p>'), 'ask'],
+    ['ask: "Estimated total €500.00" (a pay word in its own label)', P(T + '<p>Estimated total €500.00</p>'), 'ask'],
+    ['ask: "Total ≈ €500.00"', P(T + row7('Total ≈', '€500.00')), 'ask'],
+    ['ask: "You will be charged approximately €500.00"', P(T + '<p>You will be charged approximately €500.00</p>'), 'ask'],
+    ['ask: parentheses after a figure that is not the amount', P(row7('Tax', '$2.00 (€500.00)') + T), 'ask'],
+    // Invoices.
+    ['allow: Original invoice amount 60, Payments received 42, Amount due 18', P(row7('Original invoice amount', '$60.00') + row7('Payments received', '$42.00') + row7('<b>Amount due</b>', '<b>$' + amt() + '</b>')), 'allow'],
+    ['allow: Invoice total 60, Paid to date 42, Balance due 18', P(row7('Invoice total', '$60.00') + row7('Paid to date', '$42.00') + row7('<b>Balance due</b>', '<b>$' + amt() + '</b>')), 'allow'],
+    ['allow: Previous balance 42 (paid)', P(row7('Previous balance', '$42.00') + T), 'allow'],
+    ['allow: Amount paid 500.00', P(row7('Amount paid', '$500.00') + T), 'allow'],
+    ['allow: Credit applied -10.00 under a Subtotal', P(row7('Subtotal', '$28.00') + row7('Credit applied', '-$10.00') + T), 'allow'],
+    ['allow: "Next invoice: $60.00 due Dec 1."', P('<p>Next invoice: $60.00 due Dec 1.</p>' + T), 'allow'],
+    ['allow: "Past due" is the amount', P(row7('Original invoice amount', '$60.00') + row7('Payments received', '$42.00') + row7('Past due', '$' + amt())), 'allow'],
+    ['allow: "Amount due" is the amount under a Past due status', P('<p>Status: Past due</p>' + row7('Amount due', '$' + amt())), 'allow'],
+    ['ask: Original invoice amount 60 alone', P(row7('Original invoice amount', '$60.00') + T), 'ask'],
+    ['ask: Invoice total 60 with only 30 paid', P(row7('Invoice total', '$60.00') + row7('Paid to date', '$30.00') + T), 'ask'],
+    ['ask: "Payments received $500.00 charged now"', P(row7('Payments received', '$500.00 charged now') + T), 'ask'],
+    ['ask: "Next invoice: $500.00 due today."', P('<p>Next invoice: $500.00 due today.</p>' + T), 'ask'],
+    ['ask: a Past due figure that is not the amount', P(row7('Past due', '$500.00') + T), 'ask'],
+    ['ask: two Past due figures, one of them 500.00', P(row7('Past due', '$' + amt()) + row7('Past due', '$500.00')), 'ask'],
+    // Tender lines under "Order total".
+    ['allow: Order total 28, Gift card -10', P(row7('Order total', '$28.00') + row7('Gift card', '-$10.00') + T), 'allow'],
+    ['allow: Order total 28, Store credit applied -10', P(row7('Order total', '$28.00') + row7('Store credit applied', '-$10.00') + T), 'allow'],
+    ['allow: Order total 28, Voucher -10', P(row7('Order total', '$28.00') + row7('Voucher', '-$10.00') + T), 'allow'],
+    ['ask: Order total 28 with no tender line', P(row7('Order total', '$28.00') + T), 'ask'],
+    ['ask: Order total 28 with a discount only', P(row7('Order total', '$28.00') + row7('Discount', '-$10.00') + T), 'ask'],
+    ['ask: Order total 40 with a gift card of only -10', P(row7('Order total', '$40.00') + row7('Gift card', '-$10.00') + T), 'ask'],
+    ['ask: Cart total 28 with a gift card -10', P(row7('Cart total', '$28.00') + row7('Gift card', '-$10.00') + T), 'ask'],
+  ]);
+});

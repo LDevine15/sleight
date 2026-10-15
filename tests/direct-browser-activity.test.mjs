@@ -12,6 +12,15 @@ function fake({ frames = ['http://shop.test/checkout'], workers = [], targets = 
   trackPage(page, { targets: async () => ({ targetInfos: targets }) });
   return { context, page };
 }
+// A second page of the same context (an owned tab), tracked the way the registry tracks an adopted page.
+function sibling(first, url = 'http://shop.test/other') {
+  const page = new EventEmitter();
+  Object.assign(page, { isClosed: () => false, workers: () => [], mainFrame: () => ({ url: () => url }), frames: () => [{ url: () => url }], context: () => first.context });
+  const was = first.context.pages;
+  first.context.pages = () => [...was(), page];
+  trackPage(page, { targets: async () => ({ targetInfos: [] }) });
+  return page;
+}
 const socket = () => new EventEmitter();
 
 test('a quiet page stays quiet and verifies', async () => {
@@ -80,4 +89,50 @@ test('verify accepts same-origin and blank frames and workers of other origins',
   const ok = fake({ frames: ['http://shop.test/checkout', 'http://shop.test/frame', 'about:blank', 'about:srcdoc'],
     targets: [{ type: 'service_worker', url: 'http://elsewhere.test/sw.js' }, { type: 'page', url: 'http://shop.test/checkout' }] });
   assert.equal(await observeActivity(ok.page).verify(), true);
+});
+
+test('F1: the watch detaches at its lifetime cap and then counts as not quiet; stop() takes every listener off', async () => {
+  const { context, page } = fake(), before = ['request', 'requestfailed', 'requestfinished', 'serviceworker', 'weberror', 'page'].map(e => context.listenerCount(e));
+  const capped = observeActivity(page, { maxMs: 20 });
+  assert.equal(capped.quiet(), true);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(capped.quiet(), false);
+  assert.deepEqual(['request', 'requestfailed', 'requestfinished', 'serviceworker', 'weberror', 'page'].map(e => context.listenerCount(e)), before);
+  assert.equal(page.listenerCount('websocket'), 1);
+  const quick = observeActivity(page); quick.stop();
+  assert.equal(quick.quiet(), true);
+  assert.equal(context.listenerCount('request'), before[0]);
+});
+test('F2: a page of the same site that the context does not hold ends the refund; other sites and held pages do not', async () => {
+  const own = { type: 'page', url: 'http://shop.test/checkout' };
+  assert.equal(await observeActivity(fake({ targets: [own] }).page).verify(), true);
+  assert.equal(await observeActivity(fake({ targets: [own, { type: 'page', url: 'http://shop.test/orders' }] }).page).verify(), false);
+  assert.equal(await observeActivity(fake({ targets: [own, { type: 'page', url: 'http://www.shop.test/' }] }).page).verify(), false);
+  assert.equal(await observeActivity(fake({ targets: [own, { type: 'page', url: 'http://news.test/' }, { type: 'page', url: 'about:blank' }] }).page).verify(), true);
+  const two = fake({ targets: [own, { type: 'page', url: 'http://shop.test/other' }] }); sibling(two);
+  assert.equal(await observeActivity(two.page).verify(), true);
+});
+test('F3: a WebSocket frame sent by another page of the context ends the quiet; so does a page that was never tracked', async () => {
+  const first = fake(), old = socket(), other = sibling(first); other.emit('websocket', old);
+  const watch = observeActivity(first.page);
+  assert.equal(watch.quiet(), true);
+  old.emit('framesent', {});
+  assert.equal(watch.quiet(), false);
+  const stray = fake(), extra = new EventEmitter();
+  Object.assign(extra, { context: () => stray.context });
+  const was = stray.context.pages; stray.context.pages = () => [...was(), extra];
+  assert.equal(await observeActivity(stray.page).verify(), false);
+});
+test('F4: a request still open when the watch starts ends the refund, one that finished before does not', async () => {
+  const first = fake(), request = {};
+  first.context.emit('request', request);
+  const open = observeActivity(first.page);
+  assert.equal(await open.verify(), false);
+  assert.equal(open.quiet(), false);
+  first.context.emit('requestfinished', request);
+  const done = observeActivity(first.page);
+  assert.equal(await done.verify(), true);
+  assert.equal(done.quiet(), true);
+  const failed = fake(), gone = {}; failed.context.emit('request', gone); failed.context.emit('requestfailed', gone);
+  assert.equal(await observeActivity(failed.page).verify(), true);
 });
