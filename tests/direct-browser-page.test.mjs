@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
 import { hookAnswer } from './adversarial/fixtures/hook.mjs';
-import { createPageRegistry, backgroundClick, popupHook, hookProof, hookOpen, hookSource, newHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { createPageRegistry, backgroundClick, frameShield, popupHook, hookProof, hookOpen, hookSource, newHook } from '../plugins/sleight/lib/direct-browser/page.mjs';
 import { activationKey } from '../plugins/sleight/lib/direct-browser/act.mjs';
 
 function fixture(options = {}) {
@@ -1769,12 +1769,12 @@ test('AD1 backstop: a popup the page opens during a click without the background
     return entry.popups.length - before;
   };
   assert.equal(await click(false, async () => { f.page('page-opened-1', opener); await new Promise(resolve => setTimeout(resolve, 2)); }), 1);
-  assert.equal(entry.takeForeground(), 1);
-  assert.equal(entry.takeForeground(), 0, 'reported once');
+  assert.equal(await entry.takeForeground(), 1);
+  assert.equal(await entry.takeForeground(), 0, 'reported once');
   assert.equal(await click(true, async () => { f.page('page-opened-2', opener); await new Promise(resolve => setTimeout(resolve, 2)); }), 1);
-  assert.equal(entry.takeForeground(), 0, 'a click that carried the background modifier expects its popup');
+  assert.equal(await entry.takeForeground(), 0, 'a click that carried the background modifier expects its popup');
   await entry.openChild('https://fixture.invalid/second');
-  assert.equal(entry.takeForeground(), 0, 'a tab sleight opened itself is in the background');
+  assert.equal(await entry.takeForeground(), 0, 'a tab sleight opened itself is in the background');
   await f.registry.endTurn();
 });
 
@@ -1832,14 +1832,14 @@ test('AD1 pop4: a popup opened after the click settled is reported once, and onl
     settled = f.page('page-opened-1', opener); await new Promise(resolve => setTimeout(resolve, 2));
   });
   assert.equal(entry.popupIsBackground(settled), true, 'a modified click\'s settling classified it');
-  assert.equal(entry.takeForeground(), 0);
+  assert.equal(await entry.takeForeground(), 0);
   const late = f.page('page-opened-late', opener); await f.registry.idle();
   assert.equal(entry.popupIsBackground(late), false, 'a popup nothing settled is not known to be in the background');
-  assert.equal(entry.takeForeground(), 1);
-  assert.equal(entry.takeForeground(), 0, 'reported once');
+  assert.equal(await entry.takeForeground(), 1);
+  assert.equal(await entry.takeForeground(), 0, 'reported once');
   const own = await entry.openChild('https://fixture.invalid/second');
   assert.equal(entry.popupIsBackground(f.registry.tab(own.tab).page), true);
-  assert.equal(entry.takeForeground(), 0, 'a tab sleight opened is in the background');
+  assert.equal(await entry.takeForeground(), 0, 'a tab sleight opened is in the background');
   await f.registry.endTurn();
 });
 
@@ -1880,5 +1880,95 @@ test('AD1 pop4 + swap4: document.open and write re-add every listener the hook u
     assert.equal(aux.nativePrevented, true, name + ': an auxclick on a link is still held after the rewrite');
     assert.equal(f.hook.take(), 1);
     f.hook.off();
+  }
+});
+
+test('AD1 pop5: takeForeground waits, for a bounded time, for a popup the page opened that is still being admitted', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = fixture({ popupWaitMs: 400, upstream: { async send() { await gate; return { targetInfos: [{ type: 'page', targetId: 'late-child', openerId: 'target-1' }] }; } },
+    ownTarget: async targetId => { f.page(targetId, 'target-1'); } });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const entry = f.registry.tab(tab);
+  entry.cdp.emit('Page.windowOpen', {});
+  assert.equal(entry.popups.length, 0, 'not admitted yet');
+  setTimeout(release, 30);
+  assert.equal(await entry.takeForeground(), 1, 'the tab admitted while the result was being built is counted in it');
+  assert.equal(entry.popups.length, 1);
+  assert.equal(await entry.takeForeground(), 0, 'reported once');
+  await f.registry.endTurn();
+});
+
+test('AD1 pop5: takeForeground gives up after the bound when no popup is ever admitted, and an idle page pays nothing', async () => {
+  const f = fixture({ popupWaitMs: 300, upstream: { async send() { return { targetInfos: [] }; } }, ownTarget: async () => {} });
+  const { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  const entry = f.registry.tab(tab);
+  let started = Date.now();
+  assert.equal(await entry.takeForeground(), 0);
+  assert.ok(Date.now() - started < 50, 'no window.open happened: no wait');
+  entry.cdp.emit('Page.windowOpen', {});
+  started = Date.now();
+  assert.equal(await entry.takeForeground(), 0);
+  assert.ok(Date.now() - started < 1100, 'bounded');
+  await f.registry.endTurn();
+});
+
+// AD1 pop5, F-INT-1. A same-site frame that answers "absent" is hookless by design only when it cannot run scripts: its iframe's
+// sandbox attribute, or an ancestor's, lacks allow-scripts. Otherwise it fails the arm closed and the message sends the model to
+// the engine browser path, never "a retry is safe".
+const shieldFrames = (specs, { throws = false, hooked = false } = {}) => {
+  const hook = newHook();
+  // hooked: the registry's script ran in the frame but its listeners never fire (scripts are off), so adopt answers that it could not arm.
+  const evaluate = async (fn, arg) => hooked ? hookAnswer(hook, fn, arg, { adopt: false }) : 'absent';
+  const main = { url: () => 'https://site.example/', parentFrame: () => null, evaluate, isDetached: () => false };
+  const frames = specs.map(([url, sandbox, parent]) => ({ url: () => url, sandbox, parentFrame: () => parent ? frames[parent - 1] : main, evaluate, isDetached: () => false }));
+  const page = { mainFrame: () => main, frames: () => [main, ...frames], url: () => main.url(), on() {}, off() {} };
+  const sandboxOf = async frame => { if (throws) throw Error('owner unreachable'); return frame.sandbox ?? null; };
+  return { main, frames, page, shield: () => frameShield(page, main, { hook, token: 't', capMs: 1000, timeoutMs: 50, sandboxOf }) };
+};
+const SAME = 'https://site.example/frame';
+for (const [name, specs, expected] of [
+  ['a plain same-site frame', [[SAME, null]], false],
+  ['<iframe sandbox>', [['about:blank', '']], true],
+  ['sandbox="allow-same-origin"', [[SAME, 'allow-same-origin']], true],
+  ['sandbox="allow-forms allow-popups"', [[SAME, 'allow-forms allow-popups']], true],
+  ['sandbox with allow-scripts', [[SAME, 'allow-scripts allow-same-origin']], false],
+  ['sandbox with ALLOW-SCRIPTS in capitals and a tab', [[SAME, 'allow-same-origin\tALLOW-SCRIPTS']], false],
+  ['sandbox="not-allow-scripts" (a different token)', [[SAME, 'not-allow-scripts']], true],
+  ['a frame inside a script-less sandboxed frame', [[SAME, ''], [SAME, null, 1]], true],
+  ['a script-less frame inside a frame that can run scripts and has no hook', [[SAME, null], [SAME, '', 1]], false],
+  ['a plain frame inside a frame that can run scripts', [[SAME, 'allow-scripts allow-same-origin'], [SAME, null, 1]], false],
+]) test('frameShield: ' + name + (expected ? ' is hookless by design and arms' : ' with no hook fails the arm closed'), async () => {
+  const f = shieldFrames(specs), shield = f.shield();
+  assert.equal(await shield.arm(), expected);
+  assert.equal(shield.unarmable, !expected);
+  await shield.release();
+});
+test('frameShield: a frame whose sandbox attribute cannot be read fails closed, a cross-site frame is still hookless', async () => {
+  const unreadable = shieldFrames([[SAME, '']], { throws: true }).shield();
+  assert.equal(await unreadable.arm(), false);
+  assert.equal(unreadable.unarmable, true);
+  const cross = shieldFrames([['https://elsewhere.example/', null]]).shield();
+  assert.equal(await cross.arm(), true);
+  assert.equal(cross.unarmable, false);
+});
+test('backgroundClick: a same-site frame that runs scripts and has no hook sends the model to the engine browser path, never a retry', async () => {
+  const f = clickFixture(true), page = shieldFrames([[SAME, null]]).page;
+  Object.assign(f.entry.page, { mainFrame: page.mainFrame, frames: page.frames, url: page.url, on() {}, off() {} });
+  await assert.rejects(backgroundClick(f.entry, f.locator, async options => f.calls.push(['click', options])),
+    error => /use the engine browser path/.test(error.message) && !/retry is safe|read again/.test(error.message));
+  assert.equal(f.calls.filter(c => c[0] === 'click').length, 0, 'nothing was sent');
+});
+test('backgroundClick: a sandboxed frame whose owner cannot be read fails closed with the engine browser path message', async () => {
+  const f = clickFixture(true), page = shieldFrames([['about:blank', '']]).page;
+  Object.assign(f.entry.page, { mainFrame: page.mainFrame, frames: page.frames, url: page.url, on() {}, off() {} });
+  // The default reader needs a real owner element; this fake page has none, so the sandbox cannot be read and the frame fails closed.
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => {}), /use the engine browser path/);
+});
+test('frameShield: a frame whose hook cannot arm (scripts off) is skipped only when its sandbox lacks allow-scripts', async () => {
+  for (const [sandbox, expected] of [['', true], ['allow-same-origin', true], [null, false], ['allow-scripts', false]]) {
+    const shield = shieldFrames([[SAME, sandbox]], { hooked: true }).shield();
+    assert.equal(await shield.arm(), expected, String(sandbox));
+    assert.equal(shield.unarmable, !expected, String(sandbox));
   }
 });

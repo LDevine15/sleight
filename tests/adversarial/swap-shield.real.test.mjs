@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bank, plain, readOnly, skip } from './fixtures/bank.mjs';
 import { callHook, callHookIn, hookArgs, hookOf, openDeep } from './fixtures/hook.mjs';
-import { frameShield } from '../../plugins/sleight/lib/direct-browser/page.mjs';
+import { backgroundClick, frameShield } from '../../plugins/sleight/lib/direct-browser/page.mjs';
 
 // The input shield in the page hook (guard, verdict, finish) driven directly with trusted input from the
 // harness's own Playwright. Part one is the key-shield API a keyboard path arms before it sends a key.
@@ -558,4 +558,66 @@ test('a click that closes its own tab reports the close and leaves the opener id
   assert.equal(f.delta().upload, 1);
   for (const frame of f.page.frames())
     assert.equal(await callHookIn(f, frame, `api.armed()`), undefined, 'no frame of the opener is left armed');
+});
+
+// AD1 pop5, F-INT-1. A same-site frame that answers "absent" is trusted to have no hook only when it cannot run scripts: its iframe's
+// sandbox attribute (or an ancestor's) lacks allow-scripts, read from the parent's side in the utility world. Any other frame that has no
+// hook fails the arm closed, and the message sends the model to the engine browser path.
+const pingPage = (extra = '') => `<button id="b" type="button" aria-label="Ping" onclick="record('payment')">Ping</button>${extra}`;
+const sandboxRoutes = {
+  '/f': plain('<p>frame</p>'),
+  '/nest': plain('<p>nest</p><iframe sandbox title="inner"></iframe>'),
+  '/csp': (req, res) => { res.setHeader('content-type', 'text/html'); res.setHeader('content-security-policy', 'sandbox'); res.end('<!doctype html><title>csp</title><p>sandboxed by header</p>'); },
+};
+const addFrames = (f, html) => f.page.evaluate(markup => { const box = document.createElement('div'); box.innerHTML = markup; document.body.append(box); return new Promise(resolve => setTimeout(resolve, 400)); }, html);
+for (const [name, html] of Object.entries({
+  '<iframe sandbox> (blank)': '<iframe sandbox title="s"></iframe>',
+  'sandbox="allow-same-origin" with a same-site src': '<iframe sandbox="allow-same-origin" src="/f" title="s"></iframe>',
+  'sandbox="allow-forms allow-popups" with a same-site src': '<iframe sandbox="allow-forms allow-popups" src="/f" title="s"></iframe>',
+  'a sandboxed srcdoc frame': '<iframe sandbox srcdoc="<p>x</p>" title="s"></iframe>',
+  'a sandboxed frame with a same-site src and no tokens': '<iframe sandbox src="/f" title="s"></iframe>',
+  'a frame that runs scripts and holds a script-less sandboxed frame': '<iframe sandbox="allow-scripts allow-same-origin" src="/nest" title="s"></iframe>',
+  'two script-less frames and an ordinary one': '<iframe sandbox title="a"></iframe><iframe sandbox="allow-same-origin" src="/f" title="b"></iframe><iframe src="/f" title="c"></iframe>',
+})) test('a same-site frame that cannot run scripts does not block arming: ' + name + ' (F-INT-1)', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(pingPage(), ''), readOnly, { routes: sandboxRoutes });
+  await addFrames(f, html);
+  const shield = shieldOf(f);
+  assert.equal(await shield.arm(), true);
+  assert.equal(shield.unarmable, false);
+  assert.equal(await shield.release(), undefined);
+});
+test('a sandbox attribute with allow-scripts is still a frame that must hold a hook, and it is armed (F-INT-1)', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(pingPage(), ''), readOnly, { routes: sandboxRoutes });
+  await addFrames(f, '<iframe sandbox="allow-scripts allow-same-origin" src="/f" title="s"></iframe>');
+  const shield = shieldOf(f);
+  assert.equal(await shield.arm(), true);
+  const frame = f.page.frames().find(x => x !== f.page.mainFrame());
+  assert.equal(await armedIn(f, frame), 't1', 'the frame answered with a hook and holds the shield');
+  assert.equal(await shield.release(), undefined);
+  assert.equal(await armedIn(f, frame), null);
+});
+test('a same-site frame sandboxed by a header, which no attribute shows, still fails the arm closed (F-INT-1)', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(pingPage(), ''), readOnly, { routes: sandboxRoutes });
+  await addFrames(f, '<iframe src="/csp" title="s"></iframe>');
+  const shield = shieldOf(f);
+  assert.equal(await shield.arm(), false);
+  assert.equal(shield.unarmable, true);
+  await shield.release();
+});
+for (const [name, html] of Object.entries({
+  'S2 sandbox="allow-same-origin" with a same-site src': '<iframe sandbox="allow-same-origin" src="/f" title="s"></iframe>',
+  'S6 <iframe sandbox> (blank)': '<iframe sandbox title="s"></iframe>',
+})) test('a click on a page with a script-less sandboxed same-site frame works: ' + name + ' (F-INT-1)', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(plain(pingPage(html), ''), readOnly, { routes: sandboxRoutes });
+  const result = await f.act([{ do: 'click', ref: f.ref('Ping') }]);
+  assert.doesNotMatch(result.text, /not run|read again|retry|engine browser/, result.text.split('\n')[0]);
+  assert.equal(f.delta().payment, 1, 'the click reached the page');
+});
+test('a click on a page whose same-site frame cannot be armed says to use the engine browser path, and sends nothing (F-INT-1)', { skip, timeout: 60000 }, async t => {
+  // The page cannot be read with that frame in it (browser_read fails on sandboxed frames, a separate problem), so the click goes in directly.
+  const b = await bank(t), f = await b.start(plain(pingPage(), ''), readOnly, { routes: sandboxRoutes });
+  await addFrames(f, '<iframe src="/csp" title="s"></iframe>');
+  await assert.rejects(backgroundClick(f.entry, f.page.locator('#b')), error => /use the engine browser path/.test(error.message) && !/retry is safe|read again/.test(error.message), 'the message');
+  await settle();
+  assert.equal(f.delta().payment, 0, 'nothing was sent');
 });

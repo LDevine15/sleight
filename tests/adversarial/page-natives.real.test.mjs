@@ -888,3 +888,120 @@ test('round 3 repro O1: a link whose mousedown handler rewrites its href is stop
   assert.match(second.text, /navigated/, first(second));
   assert.deepEqual(landedHits(f), ['/landed?trk=1']);
 });
+
+// ---- AD1 pop round 5. The round 4 review's repros (its v1, v4 and v5 files) as tests: SVG links spelled with xlink:href, re-aims through
+// mutators the hook did not wrap, a frame created inside the click's own listener, and a hold made by a frame's hook.
+const R5_XLINK = 'http://www.w3.org/1999/xlink';
+const R5_SVG = attrs => `<svg width="120" height="30" xmlns:xlink="${R5_XLINK}"><a id="a" ${attrs}><text x="0" y="15">svglink</text></a></svg>`;
+// F1-A. An SVG a is a link whether its address is href or xlink:href: every hold that covers an HTML link covers it.
+for (const [name, body, code] of [
+  ['shiftKey on an SVG link with xlink:href', R5_SVG('xlink:href="/danger"'), `a.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['ctrlKey on an SVG link with xlink:href', R5_SVG('xlink:href="/danger"'), `a.dispatchEvent(${r4Mouse('click', 'ctrlKey:true')})`],
+  ['a plain click on an SVG link with xlink:href and target=_blank', R5_SVG('xlink:href="/danger" target="_blank"'), `a.dispatchEvent(${r4Mouse('click', '')})`],
+  ['a plain click on an SVG link with href and target=_blank', R5_SVG('href="/danger" target="_blank"'), `a.dispatchEvent(${r4Mouse('click', '')})`],
+  ['shiftKey on an SVG link with href', R5_SVG('href="/danger"'), `a.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['shiftKey on the text inside an SVG link with xlink:href', R5_SVG('xlink:href="/danger"'), `a.firstElementChild.dispatchEvent(${r4Mouse('click', 'shiftKey:true')})`],
+  ['a plain click on an SVG link whose xlink:href is set with setAttributeNS', R5_SVG('target="_blank"'), `a.setAttributeNS('${R5_XLINK}','xlink:href','/danger');a.dispatchEvent(${r4Mouse('click', '')})`],
+  ['a plain click on an SVG link in a closed shadow root', '', `const h=document.createElement('div');document.body.append(h);const s=h.attachShadow({mode:'closed'});h.__x=1;s.innerHTML='<svg xmlns:xlink="${R5_XLINK}"><a id="q" xlink:href="/danger" target="_blank"><text>z</text></a></svg>';s.firstChild.firstChild.dispatchEvent(${r4Mouse('click', '')})`],
+]) test('a synthetic click: ' + name + ' is held and opens nothing (F1-A)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script: `go.onclick=()=>setTimeout(()=>{${code}},300)` });
+  await r4Quiet(f, result, { held: true });
+});
+test('an agent click on an SVG link with xlink:href and target=_blank opens it in a background tab (F1-A control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: R5_SVG('xlink:href="/landed" target="_blank"'), steps: click('svglink'), wait: 2000 });
+  assert.deepEqual(landedHits(f), ['/landed'], first(result));
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});
+test('a script click on an SVG link with xlink:href that stays in this tab still follows it (F1-A control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: R5_SVG('xlink:href="/landed" target="_self"'), script: `go.onclick=()=>setTimeout(()=>a.dispatchEvent(${r4Mouse('click', '')}),300)` });
+  assert.doesNotMatch(result.text, R4_HELD, first(result));
+  assert.deepEqual(landedHits(f), ['/landed']);
+  await f.safe({ settle: 300, tabs: false });
+});
+test('a script click on an SVG link with xlink:href whose listener sets target=_blank is stopped (F1-A, F4)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: R5_SVG('xlink:href="/danger" target="_self"'),
+    script: `go.onclick=()=>setTimeout(()=>{a.addEventListener('click',()=>{a.setAttribute('target','_blank')},{once:true});a.dispatchEvent(${r4Mouse('click', '')})},300)` });
+  await r4Quiet(f, result, { held: true });
+});
+
+// F4-A. Every way a listener can send a script click somewhere else reaches the hook: the rest of the Attr writers, removing the frame
+// a target named, and a frame created inside the listener (its realm learns a script click is in flight when it installs).
+const R5_FLIP = listener => `go.onclick=()=>setTimeout(()=>{a.addEventListener('click',()=>{${listener}},{once:true});a.click()},300)`;
+const R5_DL = '<a id="a" href="/danger" download target="_blank">x</a>';
+// srcdoc frames load with the page: a frame still fetching its src when the first read runs can make that read fail ("Snapshot unavailable").
+const R5_NAMED = '<iframe id="ifr" name="x" srcdoc="<p>frame</p>"></iframe><a id="a" href="/danger" target="x">x</a>';
+const R5_NAMED_IN = '<div id="p"><iframe id="ifr" name="x" srcdoc="<p>frame</p>"></iframe></div><a id="a" href="/danger" target="x">x</a>';
+const R5_NEW_FRAME = 'const f=document.createElement("iframe");document.body.append(f);';
+for (const [name, body, listener] of [
+  ['removeAttributeNode(download)', R5_DL, "a.removeAttributeNode(a.getAttributeNode('download'))"],
+  ['the target Attr nodeValue', R4_SELF, "a.attributes.target.nodeValue='_blank'"],
+  ['the target Attr textContent', R4_SELF, "a.attributes.target.textContent='_blank'"],
+  ['Node.prototype.nodeValue on the target Attr', R4_SELF, "Object.getOwnPropertyDescriptor(Node.prototype,'nodeValue').set.call(a.getAttributeNode('target'),'_blank')"],
+  ['Node.prototype.textContent on the target Attr', R4_SELF, "Object.getOwnPropertyDescriptor(Node.prototype,'textContent').set.call(a.getAttributeNode('target'),'_blank')"],
+  ['remove() of the iframe that was the target', R5_NAMED, 'ifr.remove()'],
+  ['removeChild of the iframe that was the target', R5_NAMED_IN, 'p.removeChild(ifr)'],
+  ['replaceWith of the iframe that was the target', R5_NAMED, "ifr.replaceWith(document.createTextNode('z'))"],
+  ['replaceChildren of the iframe that was the target\'s parent', R5_NAMED_IN, 'p.replaceChildren()'],
+  ['replaceChild of the iframe that was the target', R5_NAMED_IN, "p.replaceChild(document.createElement('span'),ifr)"],
+  ['innerHTML of the iframe that was the target\'s parent', R5_NAMED_IN, "p.innerHTML=''"],
+  ['textContent of the iframe that was the target\'s parent', R5_NAMED_IN, "p.textContent=''"],
+  ['outerHTML of the iframe that was the target', R5_NAMED, "ifr.outerHTML='<span>z</span>'"],
+  ['a frame created inside the listener calling its realm\'s setAttribute', R4_SELF, R5_NEW_FRAME + "f.contentWindow.Element.prototype.setAttribute.call(a,'target','_blank')"],
+  ['a frame created inside the listener calling its realm\'s target setter', R4_SELF, R5_NEW_FRAME + "Object.getOwnPropertyDescriptor(f.contentWindow.HTMLAnchorElement.prototype,'target').set.call(a,'_blank')"],
+  ['a frame created inside the listener calling its realm\'s removeAttributeNode', R5_DL, R5_NEW_FRAME + "f.contentWindow.Element.prototype.removeAttributeNode.call(a,a.getAttributeNode('download'))"],
+]) test('a script click whose listener re-aims it with ' + name + ' is stopped (F4-A)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script: R5_FLIP(listener) });
+  await r4Quiet(f, result, { held: true });
+});
+test('a form whose target is rewritten through the Attr nodeValue during requestSubmit is stopped (F4-A)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<form id="fm" action="/danger" target="_self"><button id="sb" type="submit">s</button></form>',
+    script: "go.onclick=()=>setTimeout(()=>{fm.addEventListener('submit',()=>{fm.attributes.target.nodeValue='_blank'},{once:true});fm.requestSubmit()},300)" });
+  await r4Quiet(f, result, { held: true });
+});
+test('a frame created before any click and used by a later script click\'s listener is stopped too (F4-A)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: R4_SELF, script: `const f=document.createElement('iframe');document.body.append(f);${R5_FLIP("f.contentWindow.Element.prototype.setAttribute.call(a,'target','_blank')")}` });
+  await r4Quiet(f, result, { held: true });
+});
+test('a script click that stays put while its listener only reads attributes and removes unrelated nodes still follows the link (F4-A control)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<span id="s">x</span><a id="a" href="/landed" target="_self">open docs</a>',
+    script: R5_FLIP("a.getAttribute('target');s.remove();a.attributes.href.nodeValue;document.body.append(Object.assign(document.createElement('iframe'),{name:'y'}))") });
+  assert.doesNotMatch(result.text, R4_HELD, first(result));
+  assert.deepEqual(landedHits(f), ['/landed']);
+  await f.safe({ settle: 300, tabs: false });
+});
+// An agent click whose listener re-aims the link the same ways: the watch already follows attribute and node changes.
+for (const [name, body, listener, label] of [
+  ['removing the iframe that was the target', R5_NAMED, 'ifr.remove()', 'x'],
+  ['the target Attr nodeValue', R4_SELF, "a.attributes.target.nodeValue='_blank'", 'open docs'],
+  ['removeAttributeNode(download)', R5_DL, "a.removeAttributeNode(a.getAttributeNode('download'))", 'x'],
+  ['a frame created in the listener calling its realm\'s setAttribute', R4_SELF, R5_NEW_FRAME + "f.contentWindow.Element.prototype.setAttribute.call(a,'target','_blank')", 'open docs'],
+]) test('an agent click whose listener re-aims the link by ' + name + ' raises no foreground tab (F4-A)', { skip, timeout: 90000 }, async t => {
+  // The link points at /danger because the agent chose to click it; where it opens is the question, and it must be a background tab.
+  const { f, result } = await attack(t, { body, script: `a.addEventListener('click',()=>{${listener}})`, steps: click(label) });
+  assert.doesNotMatch(result.text, /probably took the foreground/, first(result));
+  await f.safe({ settle: 300, allow: { payment: 1 } }); // The agent clicked a link to /danger: one request is the click working.
+});
+// The "probably took the foreground" line is in the result of the click that caused it when the tab is admitted by then (18 of 20 runs
+// measured, against 14 of 20 before the result waited for tabs still being admitted), and in the next click's result otherwise (20 of 20).
+// The unit test of takeForeground covers the wait itself; here the line must never go unsaid.
+for (let n = 1; n <= 3; n++) test('a tab the hook cannot shape is reported as probably in the foreground by that click or the next, run ' + n + ' (F4-A)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body: '<a id="a" href="/danger">z</a><button id="noop" type="button">Noop</button>', wait: 1500,
+    script: "a.addEventListener('click',()=>{const b=document.createElement('base');b.target='_blank';document.head.append(b)});go.onclick=()=>setTimeout(()=>a.click(),300)" });
+  const reported = await r4Reported(f, result);
+  t.diagnostic(/probably took the foreground/.test(result.text) ? 'reported by the click itself' : 'reported by the next click');
+  assert.match(reported.text, /probably took the foreground/, first(reported));
+  assert.doesNotMatch(result.text + reported.text, /opened background tab/);
+});
+
+// Low. A hold made by a frame's hook is counted by the top window's hook, so the result says so.
+for (const [name, body, code] of [
+  ['a shift click dispatched through an iframe realm\'s dispatchEvent', R4_SELF, `const f=document.createElement('iframe');document.body.append(f);const d=f.contentWindow.EventTarget.prototype.dispatchEvent;d.call(a,${r4Mouse('click', 'shiftKey:true')})`],
+  ['a detached new-tab link clicked through an iframe realm', '', `const f=document.createElement('iframe');document.body.append(f);const l=document.createElement('a');l.href='/danger';l.target='_blank';f.contentWindow.HTMLElement.prototype.click.call(l)`],
+  ['window.open called from a frame of the page', '<iframe id="fr" srcdoc="<p>x</p>"></iframe>', "fr.contentWindow.open('/danger','_blank')"],
+]) test('the result reports what a frame\'s hook held: ' + name + ' (Low)', { skip, timeout: 90000 }, async t => {
+  const { f, result } = await attack(t, { body, script: `go.onclick=()=>setTimeout(()=>{${code}},300)` });
+  assert.match(result.text, R4_HELD, first(result));
+  assert.deepEqual(dangerHits(f), []);
+  await f.safe({ settle: 300 });
+});

@@ -76,7 +76,7 @@ export function samePageDocument(el, doc, read = (node, key) => { const value = 
 export function labelForward(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   for (let node = el; node; node = read(node, 'parentElement') ?? read(read(node, 'getRootNode')?.(), 'host')) {
     if (read(node, 'localName') === 'label') return read(node, 'control') ?? null;
-    if (read(node, 'matches')('a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) return null;
+    if (read(node, 'matches')('a[*|href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) return null;
   }
   return null;
 }
@@ -86,7 +86,7 @@ export function forwardInfo(el, unused, read = (node, key) => { const value = no
   let label = false;
   for (let node = el; node; node = read(node, 'parentElement') ?? read(read(node, 'getRootNode')?.(), 'host')) {
     if (read(node, 'localName') === 'label') { label = !!read(node, 'control'); break; }
-    if (read(node, 'matches')('a[href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) break;
+    if (read(node, 'matches')('a[*|href],audio[controls],button,details,embed,iframe,img[usemap],input:not([type="hidden"]),select,textarea,video[controls]')) break;
   }
   // The hook seals the areas of any element's usemap map; the words count for an img, the digests for every element.
   const usemap = read(el, 'getAttribute')('usemap'), areas = [], seals = [];
