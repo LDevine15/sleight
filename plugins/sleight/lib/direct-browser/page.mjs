@@ -21,6 +21,15 @@ export function popupHook() {
   };
   const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
   const nativeMatches = Element.prototype.matches;
+  // Target decisions read only natives captured here, before any page script: a page can
+  // redefine document.querySelector, window.name or window.frames, never these references.
+  const getOwn = Object.getOwnPropertyDescriptor;
+  const nativeQuery = globalThis.Document?.prototype.querySelector, nativeQueryAll = globalThis.Document?.prototype.querySelectorAll;
+  const query = (root, selector) => (nativeQuery ?? root.querySelector).call(root, selector);
+  const queryAll = (root, selector) => (nativeQueryAll ?? root.querySelectorAll).call(root, selector);
+  const nameGetter = getOwn(window, 'name')?.get, openerGetter = getOwn(window, 'opener')?.get, framesGetter = getOwn(window, 'frames')?.get;
+  const nameOf = context => nameGetter ? nameGetter.call(context) : context.name;
+  const framesOf = context => framesGetter ? framesGetter.call(context) : context.frames;
   const editable = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable').get;
   const attribute = (node, name) => getAttribute.call(node, name);
   const has = (node, name) => hasAttribute.call(node, name);
@@ -127,10 +136,27 @@ export function popupHook() {
     if (!active()) return;
     event.stopImmediatePropagation();
   };
-  const targetOf = element => attribute(element, 'target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+  const baseTarget = () => {
+    const base = query(document, 'base[target]');
+    return base ? attribute(base, 'target') : '';
+  };
+  const targetOf = element => attribute(element, 'target') ?? baseTarget();
+  // Child windows by index: WindowProxy indexed properties cannot be redefined by a page.
+  const childWindows = context => {
+    const list = [];
+    for (let i = 0, frames; i < 256; i++) {
+      let child;
+      try { child = (frames ??= framesOf(context))[i]; } catch { break; }
+      if (!child) break;
+      list.push(child);
+    }
+    return list;
+  };
+  const readable = context => { try { return !!context.document; } catch { return false; } };
   const sameContext = (element, target = targetOf(element)) => {
-    if (!target || /^_(self|parent|top)$/i.test(target) || target === window.name) return true;
-    if (target.toLowerCase() === '_blank') return false;
+    // The HTML spec checks `_blank` before names, so window.name = '_blank' cannot make it current.
+    if (/^_blank$/i.test(target)) return false;
+    if (!target || /^_(self|parent|top)$/i.test(target) || target === nameOf(window)) return true;
     const known = namedWindows.get(target);
     if (known) {
       try { if (!known.closed) return true; } catch { /* A discarded proxy is not reusable. */ }
@@ -143,24 +169,74 @@ export function popupHook() {
       const context = pending.pop();
       if (!context || seen.has(context)) continue;
       seen.add(context);
-      try { if (context.name === target) return true; } catch { /* Cross-origin name. */ }
+      try { if (nameOf(context) === target) return true; } catch { /* Cross-origin name. */ }
       try {
-        for (const frame of context.document?.querySelectorAll('iframe[name],frame[name]') ?? [])
+        for (const frame of queryAll(context.document, 'iframe[name],frame[name]'))
           if (attribute(frame, 'name') === target) return true;
       } catch { /* Cross-origin document. */ }
-      try {
-        const frames = context.frames;
-        let named;
-        try { named = frames?.[target]; } catch { /* Cross-origin named access; indexed children remain readable. */ }
-        for (let i = 0; i < (frames?.length ?? 0); i++) {
-          if (frames[i] === named) return true;
-          pending.push(frames[i]);
-        }
-      } catch { /* A navigated or detached frame can disappear during the walk. */ }
+      // A same-origin page can shadow named access with its own property; a cross-origin one cannot.
+      let named;
+      try { if (!readable(context) || !getOwn(context, target)) named = framesOf(context)[target]; } catch { /* Cross-origin named access. */ }
+      for (const child of childWindows(context)) {
+        if (named && child === named) return true;
+        pending.push(child);
+      }
     }
-    for (const frame of document.querySelectorAll?.('iframe[name],frame[name]') ?? [])
-      if (attribute(frame, 'name') === target) return true;
+    try {
+      for (const frame of queryAll(document, 'iframe[name],frame[name]'))
+        if (attribute(frame, 'name') === target) return true;
+    } catch { /* No document to search. */ }
     return false;
+  };
+  // preventDefault from any realm other than this one is invisible here: an iframe's pristine
+  // copy sets the same native flag. Such a realm is any other same-origin window this page reaches.
+  const otherRealm = () => {
+    const seen = new Set([window]), pending = [window.top, window.parent, ...childWindows(window)];
+    try { const opener = openerGetter?.call(window); if (opener) pending.push(opener); } catch { /* No opener. */ }
+    for (let steps = 0; pending.length && steps < 512; steps++) {
+      const context = pending.pop();
+      if (!context || seen.has(context)) continue;
+      seen.add(context);
+      if (readable(context)) return true;
+      pending.push(...childWindows(context));
+    }
+    return false;
+  };
+  // Script-initiated openings (a timer, a later event) carry no agent modifier, so the browser
+  // would raise the new tab. Refuse them unless an agent click is being dispatched.
+  const holdsNewContext = node => {
+    try {
+      if (node instanceof labelControl.constructor) node = labelControl.control.call(node) ?? node;
+      if (nativeMatches.call(node, 'a[href],area[href]')) return !has(node, 'download') && !sameContext(node);
+      for (const control of formControls) if (node instanceof control.constructor && /^(submit|image)$/.test(control.type.call(node))) {
+        const form = control.form.call(node);
+        return !!form && !sameContext(form, attribute(node, 'formtarget') ?? targetOf(form));
+      }
+    } catch { return node instanceof Element; /* Undecidable for an element: hold it. */ }
+    return false;
+  };
+  const holdsForm = (form, submitter) => {
+    try { return !sameContext(form, (submitter && has(submitter, 'formtarget') ? attribute(submitter, 'formtarget') : null) ?? targetOf(form)); }
+    catch { return true; }
+  };
+  // Script entry points that open a context without an agent click. Held outside agent dispatch.
+  const hold = (constructor, name, holds) => {
+    const native = constructor?.prototype?.[name];
+    if (typeof native === 'function') replace(constructor.prototype, name, { configurable: true, writable: true, value() {
+      return !active() && holds.apply(this, arguments) ? undefined : native.apply(this, arguments);
+    } });
+  };
+  hold(globalThis.HTMLElement, 'click', function() { return holdsNewContext(this); });
+  hold(globalThis.HTMLFormElement, 'submit', function() { return holdsForm(this); });
+  hold(globalThis.HTMLFormElement, 'requestSubmit', function(submitter) { return holdsForm(this, submitter); });
+  // A dispatched click (not a user's) on a connected link or submit control.
+  const guard = event => {
+    if (event.isTrusted || active()) return;
+    for (const node of composedPath.call(event)) {
+      let link = false;
+      try { link = node instanceof Element && (nativeMatches.call(node, 'a[href],area[href]') || nativeMatches.call(node, 'button,input,label')); } catch { /* Not an element. */ }
+      if (link) { if (holdsNewContext(node)) nativePrevent.call(event); return; }
+    }
   };
   const linkState = element => {
     if (!element || !['a', 'area'].includes(element.localName) || !has(element, 'href') || has(element, 'download')) return;
@@ -204,6 +280,7 @@ export function popupHook() {
   add.call(window, 'keydown', keyEvent, true);
   add.call(window, 'keyup', keyEvent, true);
   add.call(window, 'click', capture, true);
+  add.call(window, 'click', guard, true);
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
@@ -238,6 +315,7 @@ export function popupHook() {
       if (!live() || arm.token !== token || !arm.request || arm.taken) return { unavailable: true };
       arm.taken = true;
       if (arm.request.cancelled) return;
+      if (otherRealm()) return { unavailable: true };
       const current = linkState(arm.linkElement);
       if (!arm.element.isConnected || current?.signature !== arm.request.signature
         || arm.handlers.some(({ node, wrapper }) => node.onclick !== wrapper)) return { unavailable: true };
@@ -249,6 +327,7 @@ export function popupHook() {
       remove.call(window, 'keydown', keyEvent, true);
       remove.call(window, 'keyup', keyEvent, true);
       remove.call(window, 'click', capture, true);
+      remove.call(window, 'click', guard, true);
       for (const restore of replacements.reverse()) restore();
       if (window[key] === api) delete window[key];
       return true;

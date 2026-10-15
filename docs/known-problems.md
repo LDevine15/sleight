@@ -231,3 +231,8 @@ Engine behavior that sleight works around or can't change:
   FowlBrowser's travel page. The fix is in progress.
 - After a kernel reset, sleight restores `tab` and `b` only for calls whose source it can parse: 87 of 403 recorded browser calls (21.6%)
   aren't tracked, and a name the call assigns isn't restored.
+- Turbo v3 refuses a link click that would open a new tab (reports the effect unconfirmed) when the page can reach another
+  same-origin window (an `about:blank` iframe, an opener), because that window's own `preventDefault` sets the cancel flag
+  without passing through the hook. Script-started openings (`a.click()`, `form.submit()`, `requestSubmit()`) are dropped
+  outside an agent click, not opened in the background. A realm taken from an iframe that the page then removed, and a
+  `dispatchEvent` of a click on a detached link, are not covered. Found 2026-10-14 (AD1).
