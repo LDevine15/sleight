@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 import { compactTools } from '../plugins/sleight/lib/direct-browser/surface.mjs';
+import { browserTools } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { fixture } from './fixtures/direct-browser-open.mjs';
 import { fixedFormInspectors } from '../plugins/sleight/lib/direct-browser/forms.mjs';
 
@@ -24,14 +25,14 @@ test('turbo setup isolates Claude, authenticates only the original task and impo
   const task = { prompt: 'Fill ' + origin + '/form then submit it', grade: origin + '/grade' };
   const setup = turboSetup({ task, repo: '/fixture/repo', dir: join(tmpdir(), 'turbo-arm-setup'), prompt: task.prompt,
     env: { HOME: '/fixture/home', PATH: '/bin', CLAUDE_CONFIG_DIR: '/owner', CLAUDE_CODE_SESSION_ID: 'owner' } });
-  assert.equal(setup.metadata.measurement, 'production turbo tools and modules plus engine companion; installed path excluded');
+  assert.equal(setup.metadata.measurement, 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded');
   assert.equal(setup.env.CLAUDE_CODE_SESSION_ID, undefined);
   assert.notEqual(setup.env.CLAUDE_CONFIG_DIR, '/owner');
-  assert.equal(setup.allowed.split(',').length, 7);
+  assert.equal(setup.allowed.split(',').length, 8);
   assert.deepEqual(setup.allowed.split(',').filter(name => name.startsWith('mcp__sleight-turbo__'))
-    .map(name => name.replace('mcp__sleight-turbo__', '')), compactTools().map(tool => tool.name));
+    .map(name => name.replace('mcp__sleight-turbo__', '')), browserTools('bbench').map(tool => tool.name));
   const server = setup.mcpServers['sleight-turbo'];
-  assert.deepEqual(server.args, ['/fixture/repo/bench/turbo/server.mjs']);
+  assert.deepEqual(server.args, ['/fixture/repo/bench/turbo/v3-server.mjs']);
   assert.equal(server.env.SLEIGHT_TURBO_TASK, task.prompt);
   assert.deepEqual(JSON.parse(server.env.SLEIGHT_TURBO_ORIGINS), [origin]);
   assert.deepEqual(fixtureOrigins(task), [origin]);
@@ -236,7 +237,7 @@ test('Fowl patch wires both servers into isolated rounds and leaves fixture turb
     for (const world of [false, true]) {
       const setup = runner.agentSetup({ task, surface: 'sleight-turbo', dir, mcpRoot: '/fixture/mcp', settings: '/fixture/settings', model: 'haiku', effort: 'high', world });
       assert.ok(setup.mcpConfig.mcpServers['sleight-turbo'], JSON.stringify(setup.mcpConfig));
-      assert.equal(setup.metadata.measurement, 'production turbo tools and modules plus engine companion; installed path excluded');
+      assert.equal(setup.metadata.measurement, 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded');
       assert.match(setup.prompt, /bbench/);
       assert.equal(setup.env.ANTHROPIC_SMALL_FAST_MODEL, 'claude-haiku-5-5');
       assert.equal(setup.mcpConfig.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_TASK,
