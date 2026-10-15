@@ -209,13 +209,20 @@ test('the activating button names a different amount: the payment asks', { skip,
 
 // Honest pages: figures that are not the payable total must not force an ask.
 const honestLines = ['Total (3 items): $18.00', 'Total includes 8% tax: $18.00', 'Total before tax: $16.50', 'Tax amount: $1.50', 'Total savings: $2.00',
-  'Available balance: $250.00', 'Subtotal: $16.50', 'Shipping: $1.50', 'You save: $2.00 (Amount saved $2.00)', 'Due today: $18.00', 'Order total: $18.00 (includes $2.00 tax)'];
+  'Subtotal: $16.50', 'Shipping: $1.50', 'You save: $2.00 (Amount saved $2.00)', 'Due today: $18.00', 'Order total: $18.00 (includes $2.00 tax)'];
 for (const line of honestLines)
   test('honest line "' + line + '" does not stop the exact payment', { skip, timeout: 60000 }, async t => {
     const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<p>' + line + '</p><button id="pay">')), payRequest);
     await f.act([{ do: 'click', ref: f.ref('Continue') }]);
     assert.equal(f.delta().payment, 1);
   });
+// Round 13: a figure above the amount asks whatever its label says (an available balance, a subtotal with a discount line).
+test('round 13: honest line "Available balance: $250.00" is above the amount and asks', { skip, timeout: 60000 }, async t => {
+  const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<p>Available balance: $250.00</p><button id="pay">')), payRequest);
+  const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+  assert.match(result.text, /not run|confirmation/);
+  assert.equal(f.delta().payment, 0);
+});
 const honestPages = {
   'gradient body with no opaque card': payment.replace('<form', '<style>body{background:linear-gradient(#fff,#eee)}</style><form'),
   'dark color-scheme with no explicit background': payment.replace('<form', '<style>:root{color-scheme:dark}</style><form'),
@@ -337,10 +344,11 @@ for (const line of honest4)
     await f.act([{ do: 'click', ref: f.ref('Continue') }]);
     assert.equal(f.delta().payment, 1);
   });
-test('round 4: a subtotal above the amount with a visible discount line that closes the gap still pays', { skip, timeout: 60000 }, async t => {
+test('round 13: a subtotal above the amount asks even with a visible discount line that closes the gap', { skip, timeout: 60000 }, async t => {
   const b = await bank(t), f = await b.start(doc(payment.replace('<button id="pay">', '<p>Subtotal: $22.00</p><p>Discount: $4.00</p><button id="pay">')), payRequest);
-  await f.act([{ do: 'click', ref: f.ref('Continue') }]);
-  assert.equal(f.delta().payment, 1);
+  const result = await f.act([{ do: 'click', ref: f.ref('Continue') }]);
+  assert.match(result.text, /not run|confirmation/);
+  assert.equal(f.delta().payment, 0);
 });
 test('round 4: terms below the fold still pay once', { skip, timeout: 60000 }, async t => {
   const b = await bank(t), f = await b.start(doc('<div style="height:2400px"></div>' + payment), payRequest);

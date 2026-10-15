@@ -2,17 +2,17 @@
  [
   "C1 honest: Payments received 42 / Original 60 / Amount due 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Original invoice amount</span><span>$60.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Payments received</span><span>$42.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Amount due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "C2 honest: Order total 28 / Gift card -10 / Remaining 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Order total</span><span>$28.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Gift card</span><span>-$10.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Remaining to pay</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "C3 honest: euro estimate",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b> <small>≈ €16.60</small></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "C4 honest: Past due 18",
@@ -37,7 +37,7 @@
  [
   "E1d \"Total paid\" $500 + Total 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Total paid</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E1e \"Payments received\" as header over charge row",
@@ -57,7 +57,7 @@
  [
   "E1h \"Credit applied\" 500 + Total 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Credit applied</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E1i \"Credit applied to card: $500 charge\" ",
@@ -67,12 +67,12 @@
  [
   "E1j \"Amount credited\" 500 Total 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Amount credited</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E1k \"Previous balance\" 500 Total 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Previous balance</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E1l \"Previous balance to be charged\" 500",
@@ -167,7 +167,7 @@
  [
   "E3a Order total 518 / Gift card -500 / Total 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Gift card</span><span>-$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E3b Order total 518 / Gift card balance 500 (not applied)",
@@ -207,7 +207,7 @@
  [
   "E3i Order total 518 / \"Payments received\" 500 / Total due 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Order total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Payments received</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E3j Order total 518 / \"Gift card\" 500 (no minus, \"Gift card purchase\")",
@@ -222,7 +222,7 @@
  [
   "E3l Invoice total 518 / \"Paid to date\" 500 / \"Amount due\" 18",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Invoice total</span><span>$518.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span>Paid to date</span><span>$500.00</span></div><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Amount due</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E3m Invoice total 518 / no tender / Amount due 18",
@@ -257,7 +257,7 @@
  [
   "E4e Next invoice 60 due Dec 1",
   "<form id=payment><p data-payment-item=\"Fixture item\">Item: Fixture item</p><p data-payment-payee=\"Fixture shop\">Payee: Fixture shop</p><p data-payment-currency=\"USD\">Currency: USD</p><div style=\"display:flex;justify-content:space-between;width:340px\"><span><b>Total</b></span><span><b>$<span data-payment-amount=\"18.00\">18.00</span></b></span></div><p>Next invoice: $60.00 due Dec 1</p><label>Card number<input autocomplete=\"cc-number\"></label><button id=pay>Pay now</button></form>",
-  "allow"
+  "ask"
  ],
  [
   "E4f Next invoice 500 due at checkout",
