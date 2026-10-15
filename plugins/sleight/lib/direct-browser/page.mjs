@@ -23,19 +23,24 @@ export function popupHook() {
   // https://www.w3.org/TR/wai-aria-1.2/#widget_roles and #aria-selected:
   // value/selection controls stay plain; command buttons and links may open windows.
   const CR2_OWN_ACTIVATION = node => {
-    if (node.localName === 'input') return node.hasAttribute('aria-pressed')
-      || !/^(button|submit|reset|image)$/i.test(node.getAttribute('type') ?? 'text');
-    if (node.localName === 'button' && node.hasAttribute('aria-pressed')) return true;
+    if (node.localName === 'input') return has(node, 'aria-pressed')
+      || !/^(button|submit|reset|image)$/i.test(attribute(node, 'type') ?? 'text');
+    if (node.localName === 'button' && has(node, 'aria-pressed')) return true;
     if (/^(textarea|select|option|label|summary)$/.test(node.localName)) return true;
-    const roles = (node.getAttribute('role') ?? '').toLowerCase().split(/\s+/);
+    const roles = (attribute(node, 'role') ?? '').toLowerCase().split(/\s+/);
     return roles.some(role => /^(checkbox|radio|switch|option|menuitemcheckbox|menuitemradio|tab|treeitem|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/.test(role)
-      || role === 'button' && node.hasAttribute('aria-pressed')
-      || /^(gridcell|row|rowheader|columnheader)$/.test(role) && node.hasAttribute('aria-selected'));
+      || role === 'button' && has(node, 'aria-pressed')
+      || /^(gridcell|row|rowheader|columnheader)$/.test(role) && has(node, 'aria-selected'));
   };
-  // Host receipts cr2-timing-20261015-0005 and cr2-qualification-20261015-0014:
-  // 20 ControlOrMeta clicks each, maxima 0.7 and 5 ms. Round max*2+50 ms upward
-  // to 100 ms; arm.until remains the harder cap.
-  const CR2_MODIFIER_WINDOW_MS = 100;
+  const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
+  const attribute = (node, name) => getAttribute.call(node, name);
+  const has = (node, name) => hasAttribute.call(node, name);
+  // Capture native IDL getters before page scripts. Form ownership includes
+  // controls outside a form using form=id; button's missing/invalid type is submit.
+  const formControls = [HTMLButtonElement, HTMLInputElement].map(constructor => ({
+    constructor, form: Object.getOwnPropertyDescriptor(constructor.prototype, 'form').get,
+    type: Object.getOwnPropertyDescriptor(constructor.prototype, 'type').get,
+  }));
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;
   const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
@@ -44,6 +49,7 @@ export function popupHook() {
   const prevented = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented');
   const returnValue = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
   const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
+  const namedWindows = new Map();
   let arm;
   const replace = (object, name, descriptor) => {
     const before = Object.getOwnPropertyDescriptor(object, name);
@@ -61,7 +67,7 @@ export function popupHook() {
     return result;
   };
   const live = () => arm && now() < arm.until;
-  const active = () => live() && now() < arm.modifierUntil;
+  const active = () => live() && arm.masking;
   const matches = event => event.isTrusted && composedPath.call(event).includes(arm.element);
   const hide = event => {
     if (!active()) return false;
@@ -96,38 +102,68 @@ export function popupHook() {
     if (/^_(self|parent|top)$/i.test(String(target))) return nativeOpen.apply(this, arguments);
     if (!active() || !navigator.userActivation?.isActive) return null;
     const kept = String(features ?? '').split(',').map(value => value.trim()).filter(value => /^(noopener|noreferrer)(?:=|$)/i.test(value));
-    return nativeOpen.call(this, url, target, kept.join(','));
+    const opened = nativeOpen.call(this, url, target, kept.join(','));
+    if (opened && target && !String(target).startsWith('_')) namedWindows.set(String(target), opened);
+    return opened;
   };
   replace(window, 'open', { configurable: true, writable: true, value: open });
   const keyEvent = event => {
     if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
-    if (event.type === 'keydown' && !arm.modifierUntil) arm.modifierUntil = Math.min(arm.until, now() + CR2_MODIFIER_WINDOW_MS);
+    if (event.type === 'keydown' && !arm.clicked) arm.masking = true;
     if (!active()) return;
     event.stopImmediatePropagation();
   };
-  const targetOf = element => element.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
-  const sameContext = element => {
-    const target = targetOf(element);
+  const targetOf = element => attribute(element, 'target') ?? document.querySelector('base[target]')?.getAttribute('target') ?? '';
+  const sameContext = (element, target = targetOf(element)) => {
     if (!target || /^_(self|parent|top)$/i.test(target) || target === window.name) return true;
     if (target.toLowerCase() === '_blank') return false;
-    const frames = window.frames, named = frames?.[target];
-    for (let i = 0; i < (frames?.length ?? 0); i++) if (frames[i] === named) return true;
+    const known = namedWindows.get(target);
+    if (known) {
+      try { if (!known.closed) return true; } catch { /* A discarded proxy is not reusable. */ }
+      namedWindows.delete(target);
+    }
+    // Indexed WindowProxy children remain traversable across origins, while
+    // names and documents are readable only where same-origin access permits.
+    const seen = new Set(), pending = [window.top ?? window];
+    while (pending.length) {
+      const context = pending.pop();
+      if (!context || seen.has(context)) continue;
+      seen.add(context);
+      try { if (context.name === target) return true; } catch { /* Cross-origin name. */ }
+      try {
+        for (const frame of context.document?.querySelectorAll('iframe[name],frame[name]') ?? [])
+          if (attribute(frame, 'name') === target) return true;
+      } catch { /* Cross-origin document. */ }
+      try {
+        const frames = context.frames, named = frames?.[target];
+        for (let i = 0; i < (frames?.length ?? 0); i++) {
+          if (frames[i] === named) return true;
+          pending.push(frames[i]);
+        }
+      } catch { /* A navigated or detached frame can disappear during the walk. */ }
+    }
+    for (const frame of document.querySelectorAll?.('iframe[name],frame[name]') ?? [])
+      if (attribute(frame, 'name') === target) return true;
     return false;
   };
   const linkState = element => {
-    if (!element || !['a', 'area'].includes(element.localName) || !element.hasAttribute('href') || element.hasAttribute('download')) return;
+    if (!element || !['a', 'area'].includes(element.localName) || !has(element, 'href') || has(element, 'download')) return;
     if (sameContext(element)) return;
     let url;
-    try { url = new URL(element.getAttribute('href'), document.baseURI); } catch { return; }
+    try { url = new URL(attribute(element, 'href'), document.baseURI); } catch { return; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
     const target = targetOf(element);
-    const rel = element.getAttribute('rel') ?? '';
+    const rel = attribute(element, 'rel') ?? '';
     return { url: url.href, signature: JSON.stringify([url.href, target, rel]) };
   };
   const capture = event => {
     if (!live() || arm.clicked || !matches(event)) return;
     if (active()) masked.set(event, arm.token);
     arm.clicked = event;
+    // A task queued by the capture listener runs after synchronous dispatch,
+    // even when a page stops propagation. Keep the arm for takeRequest.
+    const current = arm;
+    arm.dispatchTimer = setTimeout(() => { if (arm === current) arm.masking = false; }, 0);
     if (!arm.link) return;
     const record = { cancelled: prevented.get.call(event), event, signature: arm.link.signature, url: arm.link.url };
     events.set(event, record); arm.request = record;
@@ -155,7 +191,7 @@ export function popupHook() {
   const finish = token => {
     retired.add(token);
     if (arm?.token !== token) return true;
-    clearTimeout(arm.timer);
+    clearTimeout(arm.timer); clearTimeout(arm.dispatchTimer);
     for (const { node, before, wrapper } of arm.handlers) if (wrapper !== before && node.onclick === wrapper) node.onclick = before;
     arm = undefined; return true;
   };
@@ -167,14 +203,20 @@ export function popupHook() {
       if (!(element instanceof Element) || !element.isConnected || !Number.isFinite(capMs) || capMs <= 0) return false;
       const chain = ancestors(element);
       for (const node of chain) {
-        const editable = node.getAttribute('contenteditable');
+        const editable = attribute(node, 'contenteditable');
         if (node.isContentEditable || editable !== null && /^(|true|plaintext-only)$/i.test(editable)
           || CR2_OWN_ACTIVATION(node)) return false;
       }
-      const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && node.hasAttribute('href'));
+      for (const node of chain) for (const control of formControls) {
+        if (!(node instanceof control.constructor)) continue;
+        const form = control.form.call(node), type = control.type.call(node);
+        if (form && /^(submit|image)$/.test(type)
+          && sameContext(form, attribute(node, 'formtarget') ?? targetOf(form))) return false;
+      }
+      const linkElement = chain.find(node => ['a', 'area'].includes(node.localName) && has(node, 'href'));
       if (linkElement && sameContext(linkElement)) return false;
       const link = linkState(linkElement);
-      arm = { element, token, until: now() + capMs, modifierUntil: 0, link, linkElement, handlers: [] };
+      arm = { element, token, until: now() + capMs, masking: false, link, linkElement, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       return link ? { kind: 'link' } : true;
     },
@@ -223,8 +265,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         && /target.*closed/i.test(error.message)) result = { closed: true, opener: tab.opener };
       else throw error;
     } finally { if (modified) await tab.page.keyboard.up('ControlOrMeta').catch(() => {}); }
-    if (result?.closed === true) return result;
-    if (prepared?.kind === 'link') {
+    if (result?.closed !== true && prepared?.kind === 'link') {
       const request = await tab.page.evaluate(token => window[Symbol.for('sleight.popup3')]?.takeRequest(token) ??
         (window[Symbol.for('sleight.popup3')] ? undefined : { unavailable: true }), token);
       if (request?.unavailable) throw Error('link default changed or was not captured; read the page before using the engine browser path');
@@ -321,7 +362,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     finally { await probe.detach(); }
     if (targetInfo?.type === 'page') seen.set(targetInfo.targetId, page);
     const parent = targets.get(targetInfo?.openerId);
-    if (parent && !parent.released && !parent.closed) adopt(page, await identify(page), parent);
+    if (parent && !parent.released) adopt(page, await identify(page), parent);
   })()).catch(() => {});
   context.on('page', heard);
   const idle = async () => { while (tasks.size) await Promise.allSettled([...tasks]); };
@@ -340,12 +381,12 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   // registry explicitly admits that child through V1's private own() capability.
   async function discoverPopups(parent) {
     const until = Date.now() + popupWaitMs;
-    while (!ended && !parent.released && !parent.closed) {
+    while (!ended && !parent.released) {
       const { targetInfos } = await deadline(() => upstream.send('Target.getTargets'), timeoutMs);
       const children = targetInfos.filter(info => info.type === 'page' && info.openerId === parent.targetId &&
         !targets.has(info.targetId) && !allocations.has(info.targetId));
       for (const child of children) {
-        if (ended || parent.released || parent.closed) return;
+        if (ended || parent.released) return;
         allocations.set(child.targetId, {});
         await ownTarget(child.targetId);
         if (ended) await closeAllocation(child.targetId);

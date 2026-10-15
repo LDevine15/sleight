@@ -148,7 +148,8 @@ function closedCandidates({ strings, documents }) {
       const attributes = {}, raw = nodes.attributes[index] ?? [];
       for (let i = 0; i < raw.length; i += 2) attributes[strings[raw[i]]] = strings[raw[i + 1]];
       const tag = strings[nodes.nodeName[index]];
-      const native = /^(BUTTON|TEXTAREA|SELECT|OPTION|SUMMARY)$/.test(tag)
+      if (tag === 'OPTION') continue;
+      const native = /^(BUTTON|TEXTAREA|SELECT|SUMMARY)$/.test(tag)
         || tag === 'INPUT' && attributes.type?.toLowerCase() !== 'hidden'
         || /^(A|AREA)$/.test(tag) && Object.hasOwn(attributes, 'href')
         || Object.hasOwn(attributes, 'contenteditable') && /^(|true|plaintext-only)$/i.test(attributes.contenteditable);
@@ -169,7 +170,7 @@ async function closedRoots(page, state) {
       await send('DOM.getDocument', { depth: -1, pierce: true });
       let probes = 0;
       for (const backendNodeId of controls) {
-        if (++probes > 512) throw Error('Closed-root accessibility budget exceeded');
+        if (probes++ === 512) break;
         const { nodes } = await send('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
         const node = nodes.find(node => node.backendDOMNodeId === backendNodeId && !node.ignored && CONTROL_ROLE.test(node.role?.value)
           && (node.role.value !== 'separator' || node.properties?.some(property => property.name === 'focusable' && property.value?.value === true)));
@@ -184,6 +185,7 @@ async function closedRoots(page, state) {
         refs.set(backendNodeId, ref); children.push(row);
       }
     }
+    if (controls.size > 512) children.push({ role: 'note', name: (controls.size - 512) + ' closed shadow candidates omitted (512 candidate limit)' });
     return { frame, secrets, refs, children };
   });
   const sections = [], secrets = [], next = new Map();
