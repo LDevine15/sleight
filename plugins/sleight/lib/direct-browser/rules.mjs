@@ -46,8 +46,25 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
   return state;
 }
 
+// Every spelling of a key that activates (Enter, NumpadEnter, \r, \n, Space) maps to one name, so no alias can dodge the
+// submit rules or the checked path. Other keys must be on an explicit non-activating list; anything else is 'unknown'.
+// Returns { name: 'Enter' | 'Space' | undefined, kind: 'Enter' | 'Space' | 'safe' | 'unknown', chord }.
+export function keyClass(key) {
+  if (typeof key !== 'string' || !key) return { kind: 'unknown' };
+  const tokens = []; let building = '';
+  for (const char of key) { if (char === '+' && building) { tokens.push(building); building = ''; } else building += char; }
+  tokens.push(building);
+  const main = tokens.pop(), chord = tokens.length > 0, modifier = /^(?:Alt|Control|Ctrl|Meta|Cmd|Command|Option|Shift|ControlOrMeta)$/;
+  if (tokens.some(token => !modifier.test(token))) return { kind: 'unknown', chord };
+  if (['Enter', 'Return', 'NumpadEnter', '\r', '\n'].includes(main)) return { kind: 'Enter', name: 'Enter', chord };
+  if (['Space', ' '].includes(main)) return { kind: 'Space', name: 'Space', chord };
+  const safe = modifier.test(main) || /^(?:Tab|Escape|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(?:Left|Right|Up|Down)|F\d{1,2}|Key[A-Z]|Digit\d|Numpad(?!Enter)\w+)$/.test(main) ||
+    /^\S$/u.test(main);
+  return { kind: safe ? 'safe' : 'unknown', chord };
+}
+
 export function intent(kind, target = {}) {
-  const key = target.key?.split('+').at(-1), activation = kind === 'press' && ['Enter', 'Return', 'Space', ' '].includes(key);
+  const key = keyClass(target.key).name ?? target.key?.split('+').at(-1), activation = kind === 'press' && ['Enter', 'Space'].includes(key);
   let submit = kind === 'submit', payment = false;
   for (const el of [target.prior, target.element].filter(Boolean)) {
     const button = el.kind === 'button' || el.role === 'button', link = el.kind === 'link' || el.role === 'link' || el.tag === 'a';
@@ -67,7 +84,7 @@ export function check(ctx, kind, target = {}) {
     if (kind !== 'dialog') expirePaymentDialog(ctx);
     if (!ordinary.has(kind) && kind !== 'submit') return refuse('Background-only operation required.');
     if (kind === 'Target.createTarget') return target.background === true ? allow : refuse('New tabs must use background:true.');
-    if (kind === 'press' && target.key?.includes('+') && /(?:Enter|Return|Space| )$/.test(target.key)) return refuse('This activation chord may open a foreground window.');
+    if (kind === 'press' && keyClass(target.key).chord && keyClass(target.key).name) return refuse('This activation chord may open a foreground window.');
     const el = target.element;
     if (!['read', 'dialog', 'open', 'wait', 'back', 'forward', 'reload', 'viewport', 'close', 'keep', 'handoff'].includes(kind)) {
       if (!el || !text(el.tag)) return refuse('Read the target before input.');
@@ -76,9 +93,8 @@ export function check(ctx, kind, target = {}) {
     }
     if (['click', 'press', 'submit'].includes(kind) && ['payment', 'submit', 'form', 'formPayment'].some(key => typeof el?.[key] !== 'boolean'))
       return refuse('Read final submit and payment classification before activation.');
-    const key = target.key?.split('+').at(-1);
     const pickerOpening = kind === 'click' || kind === 'press' &&
-      (['Enter', 'Return', 'Space', ' '].includes(key) || el?.kind === 'select' && ['Alt+ArrowDown', 'F4'].includes(target.key));
+      (!!keyClass(target.key).name || el?.kind === 'select' && ['Alt+ArrowDown', 'F4'].includes(target.key));
     if (pickerOpening && ['file', 'color', 'select'].includes(el?.kind)) return refuse('Use browser_fill or upload instead of opening a native picker.');
     const risk = intent(kind, target);
     if (risk.submit && (!target.state || !Number.isSafeInteger(target.state.snapshotNo))) return refuse('Submit needs its document state.');

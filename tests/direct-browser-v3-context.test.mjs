@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
-import { check, inspectElement } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { check, inspectElement, keyClass } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 const api = await import('../plugins/sleight/lib/direct-browser/v3-context.mjs').catch(e => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e; return {};
 });
@@ -21,6 +21,7 @@ function fixture(text = payText(terms), options = {}) {
     ownerFrame: async () => frame, dispose: async () => {},
     async evaluate(fn, arg) {
       if (fn.name === 'focusCheckedNode') return f.focusOk;
+      if (fn.name === 'keyGuard') return arg.op === 'verify' || 0;
       if (fn.name === 'samePageDocument') return arg === document;
       if (fn.name === 'ownDocument') return document;
       if (fn.name === 'inspectTarget') return { ...element, name: 'Continue', payment, formPayment: payment };
@@ -181,11 +182,14 @@ test('V10R1 dispatch never calls ElementHandle.press after checking focus', asyn
   const f = fixture('Read only'); f.ordinary(); const keys = [], page = new EventEmitter();
   Object.assign(f.handle, { press: async () => { throw Error('unsafe refocusing press'); } });
   page.getByRef = () => ({elementHandle:async () => f.handle, evaluate:async () => ({submit:false,form:false})});
+  // Enter goes out as separate CDP key events with a focus re-read before the keypress, never page.keyboard.press.
   page.keyboard = {press:async key => keys.push(key)};
+  page.frames = () => [];
+  page.context = () => ({newCDPSession:async () => ({send:async (method,params) => keys.push(method + ':' + params.type), detach:async () => {}})});
   let clock = 0;
   const run = createActionRunner({check, snapshot:async () => ({text:'fixture',number:1}), now:() => clock, sleep:async ms => {clock += ms;}});
   const result = await run({page,state:f.state},[{do:'press',ref:'e1',key:'Enter'}],f.ctx);
-  assert.deepEqual(keys,['Enter']); assert.doesNotMatch(result.lines[0],/not run|unconfirmed/); await f.ctx.dispose();
+  assert.deepEqual(keys,['Input.dispatchKeyEvent:rawKeyDown','Input.dispatchKeyEvent:char','Input.dispatchKeyEvent:keyUp']); assert.doesNotMatch(result.lines[0],/not run|unconfirmed/); await f.ctx.dispose();
 });
 
 for (const kind of ['reload','back','forward']) test('V10R2 ' + kind + ' cannot retry an unknown payment or revisit its document', async () => {
@@ -285,4 +289,17 @@ for (const kind of ['reload','back','forward']) test('V10R2 explicit user histor
   const f=fixture(commands[kind]); f.state.submitUnconfirmed={startedAt:1,snapshotNo:0};
   assert.equal((await f.ctx.check(kind,{state:f.state})).verdict,'allow');
   assert.equal((await f.ctx.check(kind,{state:f.state})).verdict,'refuse'); await f.ctx.dispose();
+});
+
+test('every spelling of an activating key is one name; keys off the safe list are unknown', () => {
+  for (const key of ['Enter', 'Return', 'NumpadEnter', '\r', '\n']) assert.deepEqual(keyClass(key), { kind: 'Enter', name: 'Enter', chord: false }, key);
+  for (const key of ['Space', ' ']) assert.deepEqual(keyClass(key), { kind: 'Space', name: 'Space', chord: false }, key);
+  assert.equal(keyClass('Shift+NumpadEnter').chord, true); assert.equal(keyClass('Control+ ').name, 'Space');
+  for (const key of ['Tab', 'Escape', 'ArrowLeft', 'End', 'a', '+', '@', 'Shift+Tab', 'Control+a', 'F4', 'Alt+ArrowDown', 'Numpad5']) assert.equal(keyClass(key).kind, 'safe', key);
+  for (const key of ['', 'Enterr', 'NumpadEnterX', 'Bogus+Enter', 'Select', '\t\n', 'Accept']) assert.equal(keyClass(key).kind, 'unknown', key);
+});
+test('a pressed key the safe list does not know is refused before any input', async () => {
+  const f = fixture('Read only'); f.ordinary();
+  const result = await f.ctx.check('press', f.target({ key: 'Execute', ref: 'e1' }));
+  assert.equal(result.verdict, 'refuse'); assert.match(result.message, /Unsupported key/); await f.ctx.dispose();
 });

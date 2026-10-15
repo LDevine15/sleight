@@ -62,6 +62,14 @@ our own runs. Dates and engine versions are given where they matter.
 
 ## Browsers
 
+- Turbo v3 sends Enter and Space as rawKeyDown, char and keyUp. It re-reads the focused element (and its tag, type and form owner)
+  between them, and a window capture listener in sleight's isolated world drops any key event whose target isn't the checked
+  element, in every frame that exists when the key starts. Measured 2026-10-14 on headless Chromium: a page timer pulled in the
+  keydown handler (0, 1, 2, 3, 5 ms and rAF, Enter and Space, 72 runs) clicked Pay 0 times; before the listener the reviewer saw 5/15
+  at 2 ms, 3/15 at 3 ms and 1/15 at 5 ms. Not covered: a frame the page creates after the listener is installed and then focuses
+  inside the same key, and a page handler that changes the checked element's value or label without changing its tag, type or form
+  owner. Keys outside a short list (Enter spellings, Space, Tab, Escape, arrows, Home/End, PageUp/PageDown, Delete, Backspace, F1-F12,
+  one character, with modifiers) are refused on this path.
 - A page that opens a popup from its own script can still take the screen during a browser session. Since 2026-10-13 sleight opens
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,
   links that need `window.opener`, downloads and anything a script opens, because the engine's read-only page access can't see
