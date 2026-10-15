@@ -4,6 +4,9 @@ import { createServer } from 'node:http';
 import { readFileSync, mkdtempSync, rmSync, realpathSync, existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createPageRegistry } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
+import { snapshot } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
 import { createCDPFilter } from '../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 const skip=process.env.SLEIGHT_LIVE_DOM_TEST!=='1'&&'DevTools port real-page proof requires the host runner';
@@ -36,7 +39,7 @@ test('port guard continues false matches and protects related targets before the
     if(req.url==='/redirect'){res.writeHead(302,{location:'http://127.0.0.1:'+port+'/json/list'});res.end();return;}
     res.setHeader('content-type','text/html');
     const url='http://127.0.0.1:'+port+'/json/list';
-    res.end(`<title>Owned port fixture</title><a href="${url}">Link</a><form action="${url}"><button>Submit</button></form><script>window.probe=()=>fetch('${url}',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked');</script>`);
+    res.end(`<title>Owned port fixture</title><a target="_blank" href="${url}">Link</a><form action="${url}"><button>Submit</button></form><script>window.probe=()=>fetch('${url}',{mode:'no-cors'}).then(()=>'loaded',()=>'blocked');</script>`);
   });
   t.after(async()=>{
     try{if(filter)assert.equal(await filter.dispose(),true,'filter and related-target watchers collected');await browser?.close();if(socket&&socket.readyState!==3)await new Promise(resolve=>{socket.addEventListener('close',resolve,{once:true});socket.close();});}
@@ -63,18 +66,34 @@ test('port guard continues false matches and protects related targets before the
       }
     }finally{await page.close();}
   });
-  await t.test('native window.open is guarded before popup navigation and leaves fixture focus unchanged',async()=>{
-    const page=await ownedPage(),before=calls.length;
-    const focused=await foreign.evaluate(()=>document.hasFocus());
-    let popup;
+  for (const kind of ['window.open', 'link']) await t.test(kind+' endpoint popup closes before any model read',async()=>{
+    const session=await browser.newBrowserCDPSession();
+    const pages=createPageRegistry({browser,session,upstream,ownTarget:filter.own,releaseTarget:filter.release,endpoint:protectedURL});
+    let reads=0,popup;
+    const dispatcher=createToolDispatcher({browser:'bfixture',pages,endpoint:protectedURL,
+      snapshot:async page=>{reads++;return snapshot(page);},
+      runSteps:async entry=>{await entry.settlePopups({windows:0,popups:0});return {lines:entry.popups.map(row=>row.blocked?'blocked: DevTools endpoint':'popup: '+row.tab)};},
+      fillFields:async()=>assert.fail('no fill expected')});
     try{
+      const {tab}=await pages.openTab({url:origin}),entry=pages.tab(tab);
+      // Exercise the browser's native popup path, which scoped auto-attach does
+      // not pause. This fixture removes only its own disposition hook.
+      await entry.page.evaluate(()=>window[Symbol.for('sleight.popup3')].off());
+      const before=reads,focused=await foreign.evaluate(()=>document.hasFocus());
       const opening=context.waitForEvent('page',{timeout:5000});
-      await page.evaluate(url=>{window.open(url,'_blank');},protectedURL);popup=await opening;
-      await popup.waitForLoadState('domcontentloaded',{timeout:5000}).catch(()=>{});
-      assert.ok(calls.slice(before).some(row=>row.method==='Fetch.failRequest'),'first popup request must be blocked');
-      assert.doesNotMatch(await popup.locator('body').innerText(),/webSocketDebuggerUrl/);
+      if(kind==='window.open')await entry.page.evaluate(url=>{window.open(url,'_blank');},protectedURL);
+      else await entry.page.getByRole('link',{name:'Link'}).click();
+      popup=await opening;
+      for(let n=0;n<250&&!popup.isClosed();n++)await new Promise(resolve=>setTimeout(resolve,20));
+      assert.equal(popup.isClosed(),true,'adopted endpoint popup must close before model reads');
+      await pages.idle();
+      const result=await dispatcher.call({name:'browser_act',arguments:{tab,steps:[{do:'wait'}],observe:'none'}});
+      assert.equal(result.text,'blocked: DevTools endpoint');
+      assert.equal(reads,before,'no endpoint snapshot reached the model');
+      assert.doesNotMatch(JSON.stringify(await pages.list()),/json\/list|webSocketDebuggerUrl|Foreign untouched/);
       assert.equal(await foreign.evaluate(()=>document.hasFocus()),focused);
-    }finally{await popup?.close();await page.close();}
+      await assert.rejects(snapshot(popup),/blocked: DevTools endpoint/);
+    }finally{assert.deepEqual(await dispatcher.end(),{revoked:true,cleanup:[]});await popup?.close();await session.detach();}
   });
   await t.test('site-isolated iframe cannot fetch the port',async()=>{
     const page=await ownedPage(),before=calls.length;
@@ -108,7 +127,7 @@ test('port guard continues false matches and protects related targets before the
       assert.deepEqual(results,{worker:'blocked',frame:'blocked'});
     }finally{await early.dispose();await upstream.send('Target.closeTarget',{targetId});}
   });
-  for(const kind of ['dedicated','shared','service'])await t.test(kind+' worker cannot fetch the port',async()=>{
+  for(const kind of ['dedicated','service'])await t.test(kind+' worker cannot fetch the port',async()=>{
     const page=await ownedPage(),before=calls.length;
     try{
       const result=await page.evaluate(async kind=>{
@@ -124,6 +143,18 @@ test('port guard continues false matches and protects related targets before the
       },kind);
       assert.equal(result,'blocked');
       assert.ok(calls.slice(before).some(row=>row.method==='Fetch.failRequest'),'worker request blocked by guard');
+    }finally{await page.close();}
+  });
+  await t.test('shared worker cannot read endpoint responses through CORS',async()=>{
+    const page=await ownedPage();
+    try{
+      const result=await page.evaluate(async url=>{
+        const blob=new Blob([`onconnect=e=>{fetch(${JSON.stringify(url)}).then(r=>r.text()).then(value=>e.ports[0].postMessage(value),()=>e.ports[0].postMessage('cors-blocked'));};`],{type:'application/javascript'});
+        const source=URL.createObjectURL(blob),worker=new SharedWorker(source);
+        try{return await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('worker timed out')),5000);worker.port.onmessage=e=>{clearTimeout(timer);resolve(e.data);};worker.port.start();});}
+        finally{worker.port.close();URL.revokeObjectURL(source);}
+      },protectedURL);
+      assert.equal(result,'cors-blocked');
     }finally{await page.close();}
   });
   assert.equal(await foreign.title(),'Foreign untouched');assert.equal(foreign.isClosed(),false);
