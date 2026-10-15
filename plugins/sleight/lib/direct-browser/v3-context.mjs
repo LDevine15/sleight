@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent, expirePaymentDialog, refundPayment } from './rules.mjs';
+import { check, inspectElement, intent, expirePaymentDialog, deferRefund } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 
@@ -304,8 +304,33 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const pseudo = (n, which) => { const c = gs(n, which)?.content; if (/counters?\(/.test(c ?? '')) throw Error('counter content'); if (c && c !== 'none' && c !== 'normal') push(c.replace(/^["']|["']$/g, ''), n); };
     const media = ['img', 'canvas', 'svg', 'video', 'picture', 'object', 'embed'];
     const controlled = n => { const tag = read(n, 'localName'), role = read(n, 'getAttribute')('role'); return ['button', 'a', 'summary', 'select'].includes(tag) || ['button', 'link', 'tab', 'menuitem'].includes(role); };
+    // Alternatives and neighbours are not this charge: the label of a radio, checkbox or ARIA option the user has not picked, and a
+    // block under a "You may also like" style heading that holds no total, amount due or pay word (and not the activating control).
+    const NOT_PAY = /\b(?:total|amount|due|pay|paying|payable|payment|charged?|charges|billed|billing|owe|owed|invoice)\b/i;
+    const recommended = new Set();
+    for (const h of Array.from(read(root, 'querySelectorAll')('h1,h2,h3,h4,h5,h6,legend,summary,caption,[role="heading"]'))) {
+      const title = String(read(h, 'textContent') ?? '').replace(/\s+/g, ' ').trim();
+      if (!title || title.length > 60 || !/^(?:you (?:may|might) (?:also )?like|recommended(?: for you)?|customers (?:also )?(?:bought|viewed|like)|people also (?:bought|viewed)|related (?:items|products)|similar (?:items|products)|frequently bought together|more from|trending(?: now)?|complete the look)\b/i.test(title)) continue;
+      let box = read(h, 'parentElement');
+      while (box && box !== root && String(read(box, 'textContent') ?? '').replace(/\s+/g, ' ').trim() === title) box = read(box, 'parentElement');
+      if (box && box !== root && !read(box, 'contains')(el) && !NOT_PAY.test(read(box, 'innerText') ?? read(box, 'textContent') ?? '')) recommended.add(box);
+    }
+    const alternative = n => {
+      if (recommended.has(n)) return true;
+      const role = read(n, 'getAttribute')('role');
+      let unpicked = false;
+      if (read(n, 'localName') === 'label') {
+        const control = read(n, 'control');
+        unpicked = !!control && read(control, 'localName') === 'input' && /^(?:radio|checkbox)$/.test(read(control, 'type')) && !read(control, 'checked');
+      } else if (/^(?:radio|checkbox|option|menuitemradio|menuitemcheckbox|switch)$/.test(role ?? '')) {
+        const state = read(n, 'getAttribute')(role === 'option' ? 'aria-selected' : 'aria-checked');
+        unpicked = state !== null && state !== 'true' && state !== 'mixed';
+      }
+      return unpicked && !NOT_PAY.test(read(n, 'innerText') ?? read(n, 'textContent') ?? '') && !read(n, 'contains')(el);
+    };
     const walk = (n, inControl = false) => {
       if (++count > 20000) throw Error('too many nodes');
+      if (alternative(n)) return;
       const on = shown(n), tag = read(n, 'localName');
       inControl ||= controlled(n);
       if (on && media.includes(tag)) {
@@ -356,7 +381,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       `|\\b(${CODES})\\s*(${NUM})` +
       `|(?<![\\w.,])(${NUM})\\s*(${CODES}(?![A-Za-z])|[${SIGNS}]|dollars?\\b|euros?\\b|pounds?\\b|bucks\\b)` +
       `|(?<![\\w.,])(\\d[\\d,]*[.,]\\d{2})(?!\\d)` +
-      `|(?<![\\w.,])(${NUM})` +
+      `|(?<![#№\\w.,])(${NUM})` +
       `|(￼)` +
       `|\\b((?:(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|and)[\\s-]+)+)(dollars?|euros?|pounds?|bucks)\\b`, 'giu');
     const SYMBOL = { '$': '$', 'US$': 'USD', 'CA$': 'CAD', 'C$': 'CAD', 'AU$': 'AUD', 'A$': 'AUD', 'NZ$': 'NZD', 'HK$': 'HKD', 'SG$': 'SGD', 'S$': 'SGD',
@@ -370,7 +395,19 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const UNIT = set('per each ea unit units apiece × x payments installment installments instalment instalments monthly weekly daily yearly annually quarterly month months mo week weeks wk year yr day days');
     const PART = set('sub subtotal tax taxes vat gst hst fee fees shipping delivery handling freight postage tip tips gratuity surcharge duty duties levy item items service processing packaging insurance deposit installation before excl excluding excludes pretax without incl includes including inc plus less minus after with');
     const CUT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed');
-    const EXEMPT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed credit credits balance available limit minimum maximum min max over above away points point pts reward rewards value valued worth was original orig regular reg list msrp compare retail threshold earn earned cashback refund refunded');
+    const EXEMPT = set('discount discounts savings saving save saved coupon promo rebate off applied redeemed available limit minimum maximum min max over above away points point pts reward rewards was original orig regular reg list msrp compare retail threshold earn earned cashback refund refunded');
+    // balance, value, worth and credit are also names of a real charge ("Balance due", "Order value", "Credit card"): they clear a
+    // figure only beside a word that makes them a store of money ("available balance", "gift card balance", "points value").
+    const WEAK = set('balance value valued worth credit credits');
+    const WEAK_WITH = set('available remaining gift points point pts reward rewards store loyalty member');
+    // Not a charge unless it happens: "from", "up to", "starting at", "if", a late or cancellation fee.
+    const NOTE_NOUN = set('code codes amount amounts offer offers deal deals line lines item items today so far applied used');
+    const CHARGED = set('pay paying payable payment charge charged charges billed billing owe owed due invoice');
+    const COND = set('from up upto starting if unless when');
+    const COND_AFTER = set('if unless when applies applicable');
+    const LATE = set('late cancellation cancelation penalty overdue noshow');
+    const STRONG_PAY = /\b(?:total|amount|due|pay|paying|payable|payment|charged?|charges|billed|billing|owe|owed|invoice)\b/i;
+    const RECOMMEND = /^(?:you (?:may|might) (?:also )?like|recommended(?: for you)?|customers (?:also )?(?:bought|viewed|like)|people also (?:bought|viewed)|related (?:items|products)|similar (?:items|products)|frequently bought together|more from|trending(?: now)?|complete the look)\b/i;
     const FILL = set('of is are will be only now today just about approx approximately currently a an the in on at for to your you re our we my this that it its s then also final full overall est estimated usd eur gbp cad aud');
     const CONNECT = set('or and to');
     const QUAL = set('incl includes including inc plus less minus after with before excl excluding excludes without');
@@ -396,22 +433,37 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     const sig = text => words(text).filter(w => !FILL.has(w));
     // The role of a label, read from its significant words (the nearest word decides).
     const classify = list => {
-      const w = list.at(-1), hasPay = list.some(x => PAY.has(x));
+      const w = list.at(-1), hasPay = list.some(x => PAY.has(x)), strong = list.some(x => PAY.has(x) && x !== 'price' && x !== 'cost');
+      const stores = list.some(x => WEAK_WITH.has(x));
+      const exempt = x => EXEMPT.has(x) || WEAK.has(x) && stores;
+      const phrase = list.join(' '), cutPhrase = /\b(?:gift ?cards?|gift certificates?|store credits?|vouchers?)\b/.test(phrase);
       if (UNIT.has(w)) return { kind: 'unit' };
-      if (PAY.has(w)) { const p = list.at(-2); return PART.has(p) || EXEMPT.has(p) ? { kind: 'part', cut: CUT.has(p) } : { kind: 'pay' }; }
+      if (COND.has(w) || list.some(x => LATE.has(x))) return { kind: strong ? 'part' : 'exempt' };
+      if (PAY.has(w)) { const p = list.at(-2); return PART.has(p) || exempt(p) ? { kind: 'part', cut: CUT.has(p) } : { kind: 'pay' }; }
+      if (cutPhrase) return { kind: hasPay ? 'part' : 'exempt', cut: true };
       if (PART.has(w)) return { kind: 'part' };
-      if (EXEMPT.has(w)) return { kind: hasPay ? 'part' : 'exempt', cut: CUT.has(w) };
-      if (!hasPay && list.some(x => EXEMPT.has(x))) return { kind: 'exempt' };
+      if (exempt(w)) return { kind: hasPay ? 'part' : 'exempt', cut: CUT.has(w) };
+      // An exempt word ahead of an ordinary noun still clears the figure ('coupon code', 'savings amount'), but not a product name ('savings plan').
+      if (!hasPay && list.some(exempt) && !list.slice(list.findIndex(exempt) + 1).some(x => !NOTE_NOUN.has(x))) return { kind: 'exempt' };
       return { kind: 'part', unknown: true };
     };
     const analyze = rawLines => {
-      const list = rawLines.map(norm), found = [];
+      const list = rawLines.map(norm).map(t => RECOMMEND.test(t) && !STRONG_PAY.test(t) ? '' : t), found = [];
       const hasFigure = list.map(t => [...t.matchAll(figure)].some(m => m[10] === undefined));
+      // The nearest line with words above a lone figure labels it. A note line that only holds an exempt word ("incl. savings",
+      // "with points") is walked past to the pay or part label above it, as long as no other figure sits between; with no such
+      // label the note decides.
       const labelAbove = i => {
+        let note;
         for (let j = i - 1; j >= 0 && j >= i - 4; j--) {
+          if (hasFigure[j] && note) break;
           if (!/\p{L}/u.test(list[j]) || hasFigure[j]) continue;
-          const s = sig(before(list[j])); if (s.length) return { ...classify(s), adjacent: j === i - 1 };
+          const s = sig(before(list[j])); if (!s.length) continue;
+          const role = { ...classify(s), adjacent: j === i - 1 };
+          if (role.kind !== 'exempt') return note && role.unknown ? note : role;
+          note ??= role;
         }
+        return note;
       };
       list.forEach((text, i) => {
         const all = [...text.matchAll(figure)];
@@ -422,17 +474,24 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           const raw = m[3] ?? m[6] ?? m[7] ?? m[9] ?? m[10];
           const next = all[k + 1], seg = text.slice(start, m.index), tail = text.slice(m.index + m[0].length, next?.index ?? text.length);
           const lw = words(before(seg)), ls = lw.filter(w => !FILL.has(w)), rs = sig(after(tail)), r0 = rs[0];
+          const rp = rs.slice(0, 4).some(x => PAY.has(x));
+          const period = rs.slice(0, 3).some(x => /^(?:month|months|monthly|mo)$/.test(x)) ? 'month' : rs.slice(0, 3).some(x => /^(?:year|years|yearly|annual|annually|yr)$/.test(x)) ? 'year' : undefined;
           let role, via = 'none';
           if (previous && !ls.length && lw.every(w => CONNECT.has(w))) { role = previous.role; via = 'inherit'; }
           else if (ls.length) {
             role = classify(ls); via = 'left';
             if (role.unknown && r0 && PAY.has(r0)) { role = { kind: 'pay' }; via = 'left+right'; }
-            else if (role.unknown && r0 && EXEMPT.has(r0)) role = { kind: 'exempt' };
+            else if (role.unknown && rp && !UNIT.has(r0)) { role = { kind: 'pay' }; via = 'left+right'; }
+            else if (role.unknown && r0 && (EXEMPT.has(r0) || COND_AFTER.has(r0))) role = { kind: 'exempt' };
           } else if (r0) {
-            if (PAY.has(r0)) role = { kind: 'pay' }; else if (EXEMPT.has(r0)) role = { kind: 'exempt', cut: CUT.has(r0) };
+            if (PAY.has(r0)) role = { kind: 'pay' }; else if (EXEMPT.has(r0)) role = { kind: rp ? 'part' : 'exempt', cut: CUT.has(r0) };
+            else if (COND_AFTER.has(r0)) role = { kind: 'exempt' };
             else if (PART.has(r0) || UNIT.has(r0)) role = classify([r0]);
+            else if (rp) role = { kind: 'pay' };
             via = 'right';
           }
+          // An exempt label does not clear a figure that the clause after it calls a charge ("Reward: $500.00 charged now").
+          if (via === 'left' && role?.kind === 'exempt' && rs.slice(0, 3).some(x => CHARGED.has(x))) role = { kind: 'part', cut: role.cut };
           if (!role && alone && !mark) { role = labelAbove(i); via = 'above'; if (role && role.kind === 'exempt' && !role.adjacent) role = { ...role, kind: 'part' }; }
           if (r0 && UNIT.has(r0) && role && role.kind !== 'exempt') role = { kind: 'unit' };
           role ??= { kind: 'none' };
@@ -441,7 +500,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
           const suffix = m[8] ?? m[13], code = m[1] ?? m[4] ?? m[5] ?? (suffix && /^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
           const sign = m[2] ?? (suffix && !/^[A-Za-z]{3}$/.test(suffix) ? suffix : undefined);
           const cur = code ? code.toUpperCase() : sign ? SYMBOL[sign] ?? SYMBOL[sign.toUpperCase()] ?? SYMBOL[sign.toLowerCase()] : undefined;
-          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, mark, text };
+          const entry = { value: mark || spelled ? Infinity : parse(raw), cur, role, mark, text, period };
           found.push(entry); previous = entry;
           // "Total after $2.00 discount: $500.00": a qualifier figure does not end the label of the figure that follows.
           if (!(via === 'left' && QUAL.has(ls.at(-1)))) start = m.index + m[0].length;
@@ -461,7 +520,8 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
       if (f.mark) return !(kind === 'exempt' || kind === 'part' && f.role.unknown);
       if (kind !== 'exempt' && !same(f.cur, reference)) return true;
       if (Math.abs(f.value - A) < eps) return false;
-      if (kind === 'unit') return f.value > A + eps;
+      // A yearly price beside the monthly one that is the charge ("$18.00/month", "$180.00/year") is the other plan, not this charge.
+      if (kind === 'unit') return f.value > A + eps && !(f.period === 'year' && f.value <= 12 * A + eps && figures.some(g => g.period === 'month' && Math.abs(g.value - A) < eps));
       if (kind === 'part') return f.value > A + eps && !reconciled(f);
       return kind !== 'exempt';
     });
@@ -658,8 +718,12 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       } catch { return refused(); }
       finally { ruleTarget = undefined; }
     },
-    // The action settled with no effect at all: the payment activation it spent goes back to the request's budget.
-    refund(target) { if (current() && dialogOwner?.target === target && refundPayment(ruleContext, target)) { dialogOwner = undefined; expirePaymentDialog(ruleContext); } },
+    // The action settled with no visible effect: its payment activation goes back to the request's budget at the next payment
+    // check, if the control is on the closed name list and the network stayed quiet until then (deferRefund).
+    refund(target, activity) {
+      if (!current() || dialogOwner?.target !== target || !deferRefund(ruleContext, target, activity)) return false;
+      dialogOwner = undefined; expirePaymentDialog(ruleContext); return true;
+    },
     beginInput(target) { if (dialogOwner?.target === target && current()) dialogOwner.active = true; },
     finishInput(target) {
       if (dialogOwner?.target !== target) return;

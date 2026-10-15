@@ -78,15 +78,25 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
 - The turbo v3 payment read treats any visible money figure that differs from the amount in the user's message as a
   reason to ask, unless its own label marks it as a part (tax, delivery, discount, per unit, installment). Measured
-  2026-10-15 on 20 checkout pages: 18 allow the exact payment. The 2 that ask are a donation page with preset chips
-  larger than that amount, and a dialog whose terms are outside the Pay button's own nested form. An image of 24x8
-  or more with no ordinary word in its row asks too, so a decorative `alt=""` image can cause a false ask.
+  2026-10-15 on 28 checkout pages: 25 allow the exact payment. The 3 that ask are two donation pages with preset chips
+  larger than that amount, and a dialog whose terms are outside the Pay button's own nested form. An image of 24x8 or more with no ordinary word in its row asks too, so a decorative `alt=""`
+  image can cause a false ask. Text-only offers ("Upgrade to Premium for $49.00/month", two delivery prices in one
+  paragraph) and a yearly price with no monthly price equal to the total also ask. A recommendation block is
+  skipped only when its heading is in its own container under the form, with no total or pay word inside.
 - The same read doesn't see a total drawn as a CSS background image, held in a closed shadow root with no text,
   set only in an `aria-label` or `title`, shown in a cross-origin iframe, or placed outside the form element.
   Page text that a person can't read is never accepted as the payment terms, but these are not read at all.
+- A label with "balance", "value" or "credit" is exempt only beside "available", "remaining", "gift", "points",
+  "reward" or "store", so "Remaining balance: $500.00" is allowed whatever it charges. "Balance due" and "Order value"
+  are charge labels and ask.
 - An Apply, quantity stepper, Remove or "Show order summary" button gives the request's one payment activation back
-  when it settles with no navigation, form change or request. A slow request that finishes after the 5 s settle
-  window would not be counted, so a second payment could then go through without asking.
+  at the next payment check, but only if its own name is on the closed list (apply, update, remove, delete, increase,
+  decrease, plus, minus, show, hide, edit, change, more, less, +, -) and no request, WebSocket, worker or new page
+  started anywhere on the browser until that check. A page with a worker, a service worker, a shared worker of its
+  origin or an iframe of another origin is not refunded, because the connection can't see their network. A charge that
+  waits for a timer longer than the gap to the next payment check, or for the next input, is not seen, so a charger
+  that calls itself "Apply" can charge once more (measured: a fetch after 6 s and a `sendBeacon` call on the next pointerdown,
+  2 charges in total). A control with any other name ("Continue", "Next") is never refunded.
 
 Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
 is capped with a note on how to read the rest.

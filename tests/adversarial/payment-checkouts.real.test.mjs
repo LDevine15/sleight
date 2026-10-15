@@ -12,8 +12,8 @@ const meta = (item = 'Fixture item', payee = 'Fixture shop', cur = 'USD') =>
 const amt = (v = '18.00') => `<span data-payment-amount="${v}">${v}</span>`;
 const card = '<label>Card number<input autocomplete="cc-number" inputmode="numeric"></label> <label>Expiry<input autocomplete="cc-exp"></label> <label>CVC<input autocomplete="cc-csc"></label>';
 
-async function payOnce(t, html, label, { before = [] } = {}) {
-  const b = await bank(t), f = await b.start(doc(html), payRequest);
+async function payOnce(t, html, label, { before = [], head = '' } = {}) {
+  const b = await bank(t), f = await b.start(doc(html, '', head), payRequest);
   let out = f.opened; if (/Snapshot unavailable/.test(f.opened)) out = await f.read();
   for (const step of before) { await f.act([{ do: 'click', ref: f.ref(step, out) }]); out = await f.read(); }
   const result = await f.act([{ do: 'click', ref: f.ref(label, out) }]);
@@ -299,5 +299,138 @@ test('known limits: text no one renders into the page is not read', { skip, time
     ['limit: total only in a title attribute', P('<span title="Total: $500.00">Total</span>'), 'allow'],
     ['limit: cross-origin iframe', P('<iframe srcdoc="x" sandbox style="width:300px;height:30px"></iframe>'), 'allow'],
     ['limit: closed popover', P('<div popover>Total: $500.00</div>'), 'allow'],
+  ]);
+});
+
+// ================================================================ Round 6
+// 8 more realistic pages (the round 5 reviewer's N1 to N8, real route). The fixture server sends no charset, so each carries a meta tag.
+const css6 = '<style>body{font:14px system-ui}table{width:340px;border-collapse:collapse}td{padding:4px 0}td:last-child{text-align:right}.row{display:flex;justify-content:space-between;width:340px;padding:3px 0}.muted{color:#666;font-size:12px}.opt{display:block;border:1px solid #ccc;padding:8px;margin:4px 0;width:320px}</style>';
+const row6 = (l, v) => `<div class="row"><span>${l}</span><span>${v}</span></div>`;
+const more = {
+  'N1 subscription: monthly vs annual toggle': [`${css6}<form id="payment">${meta()}<h2>Choose your plan</h2>
+<label class="opt"><input type="radio" name="p" checked> Monthly <b>$18.00</b>/month</label>
+<label class="opt"><input type="radio" name="p"> Annual <b>$180.00</b>/year <span class="muted">(save $36.00, 2 months free)</span></label>
+<h3>Order summary</h3>${row6('Pro plan, monthly', '$18.00')}${row6('Tax', '$0.00')}${row6('<b>Total due today</b>', '<b>$' + amt() + '</b>')}
+<p class="muted">You will be charged $18.00 every month until you cancel. Annual billing would be $180.00 per year.</p>${card}<button id="pay">Start subscription</button></form>`, 'Start subscription'],
+  'N2 cart with 4 line items, shipping, tax': [`${css6}<form id="payment">${meta()}<h2>Your cart (4 items)</h2><table>
+<tr><td>Blue widget × 1</td><td>$4.00</td></tr><tr><td>Red widget × 2</td><td>$5.00</td></tr><tr><td>Green gadget × 1</td><td>$2.50</td></tr><tr><td>Gift wrap × 1</td><td>$1.50</td></tr></table><hr>
+<table><tr><td>Subtotal</td><td>$13.00</td></tr><tr><td>Shipping</td><td>$3.00</td></tr><tr><td>Estimated tax</td><td>$2.00</td></tr><tr><td><b>Order total</b></td><td><b>$${amt()}</b></td></tr></table>${card}<button id="pay">Place order</button></form>`, 'Place order'],
+  'N3 hotel booking: nightly rate × nights': [`${css6}<form id="payment">${meta()}<h2>Seaside Inn, 3 nights</h2><p>Check-in Nov 3, check-out Nov 6</p>
+${row6('$4.00 × 3 nights', '$12.00')}${row6('Taxes &amp; fees', '$4.00')}${row6('Resort fee', '$2.00')}${row6('<b>Total (USD)</b>', '<b>$' + amt() + '</b>')}
+<p class="muted">Free cancellation until Nov 1. Rooms from $4.00 per night.</p>${card}<button id="pay">Book now</button></form>`, 'Book now'],
+  'N5 checkout with gift card balance applied': [`${css6}<form id="payment">${meta()}<h2>Order summary</h2>${row6('Subtotal', '$38.00')}${row6('Gift card (balance $20.00)', '-$20.00')}${row6('Shipping', 'FREE')}${row6('<b>Total due</b>', '<b>$' + amt() + '</b>')}
+<p class="muted">Gift card balance remaining after this order: $0.00</p>${card}<button id="pay">Pay now</button></form>`, 'Pay now'],
+  'N6 invoice payment with due date and late fee note': [`${css6}<form id="payment">${meta()}<h2>Invoice #1042</h2><p>Due Nov 1. A late fee of $25.00 applies after that date.</p>${row6('Services', '$16.00')}${row6('Tax', '$2.00')}<p><b>Amount due:</b> $${amt()}</p>${card}<button id="pay">Pay invoice</button></form>`, 'Pay invoice'],
+  'N7 airline fare with taxes and bag fee note': [`${css6}<form id="payment">${meta()}<h2>Flight AB 123</h2>${row6('Fare', '$12.00')}${row6('Taxes and carrier fees', '$6.00')}${row6('<b>Total price</b>', '<b>$' + amt() + '</b>')}<p class="muted">Checked bag: from $30.00 each way. Seat selection from $9.00.</p>${card}<button id="pay">Purchase</button></form>`, 'Purchase'],
+  'N8 pay in 3 installments (Klarna) notice': [`${css6}<form id="payment">${meta()}<h2>Checkout</h2>${row6('Item', '$18.00')}${row6('Shipping', 'Free')}${row6('<b>Total</b>', '<b>$' + amt() + '</b>')}<p class="muted">or 3 payments of $6.00 with Klarna</p>${card}<button id="pay">Pay $18.00</button></form>`, 'Pay $18.00'],
+};
+const moreAsks = {
+  'N4 donation: preset chips and custom amount': [`${css6}<form id="payment">${meta()}<h2>Give today</h2><div><button type="button">$5</button><button type="button">$10</button><button type="button">$18</button><button type="button">$25</button><button type="button">$50</button></div>
+<label>Other amount <input name="other" value="18.00"></label><p>Your gift: $${amt()}</p><label><input type="checkbox"> Make this monthly</label>${card}<button id="pay">Donate $18.00</button></form>`, 'Donate $18.00'],
+};
+for (const [name, [html, label]] of Object.entries(more))
+  test('realistic page ' + name + ': the exact payment is allowed once', { skip, timeout: 90000 }, async t => {
+    const r = await payOnce(t, html, label, { head: '<meta charset="utf-8">' });
+    outcome.set(name, r.payment === 1);
+    assert.equal(r.payment, 1, r.text);
+  });
+for (const [name, [html, label]] of Object.entries(moreAsks))
+  test('realistic page ' + name + ': asks (known false ask)', { skip, timeout: 90000 }, async t => {
+    const r = await payOnce(t, html, label, { head: '<meta charset="utf-8">' });
+    outcome.set(name, r.payment === 1);
+    assert.equal(r.payment, 0);
+  });
+test('allow rate over the 28 realistic pages (20 from round 5 plus N1 to N8) is at least 25/28', { skip }, t => {
+  const real = [...outcome.values()].filter(Boolean).length + 2; // R4 and P3 are read directly, above
+  t.diagnostic('allowed ' + real + '/28');
+  assert.ok(real >= 25, 'allowed ' + real + ' of 28');
+});
+
+// F2. The nearest line above a lone figure labels it, but a note line of exempt words ("incl. savings", "with points") is walked past
+// to the pay or part label above it, unless another figure sits between.
+test('F2 (round 6): an exempt note line between the pay label and the figure does not clear a larger figure', { skip, timeout: 120000 }, async t => {
+  const fx = 'display:flex;justify-content:space-between;width:300px';
+  await readCases(t, [
+    ['ask: Total / incl. savings / $500.00 stack', withAmount('<div><div>Total</div><div>incl. savings</div><div>$500.00</div></div>'), 'ask'],
+    ['ask: Total / after savings / $500.00 stack', withAmount('<div><div>Total</div><div>after savings</div><div>$500.00</div></div>'), 'ask'],
+    ['ask: Total / with points / $500.00 flex row', withAmount(`<div style="${fx}"><span>Total</span><span>with points</span><span>$500.00</span></div>`), 'ask'],
+    ['ask: Total | Balance | $500.00 table row', withAmount('<table><tr><td>Total</td><td>Balance</td><td>$500.00</td></tr></table>'), 'ask'],
+    ['ask: Amount due / available now / $500.00', withAmount('<p>Amount due</p><p>available now</p><p>$500.00</p>'), 'ask'],
+    ['ask: You will pay / Savings / $500.00', withAmount('<p>You will pay</p><p>Savings</p><p>$500.00</p>'), 'ask'],
+    ['ask: dl dt Total, dt Savings, dd $500.00', withAmount('<dl><dt>Total</dt><dt>Savings</dt><dd>$500.00</dd></dl>'), 'ask'],
+    ['ask: Total / Original / $500.00 stack', withAmount('<div>Total</div><div>Original</div><div>$500.00</div>'), 'ask'],
+    ['ask: Savings / Total / $500.00 stack', withAmount('<p>Savings</p><p>Total</p><p>$500.00</p>'), 'ask'],
+    ['ask: Total (savings in parentheses) / $500.00', withAmount('<div>Total (incl. savings)</div><div>$500.00</div>'), 'ask'],
+    // Honest layouts the walk must keep.
+    ['allow: Savings / $4.00 under a Total row that has its own figure', withAmount('<div style="display:flex;justify-content:space-between;width:300px"><span>Total</span><span>$18.00</span></div><p>Savings</p><p>$482.00</p>'), 'allow'],
+    ['allow: dl Total $18.00, Savings $482.00', withAmount('<dl><dt>Total</dt><dd>$18.00</dd><dt>Savings</dt><dd>$482.00</dd></dl>'), 'allow'],
+    ['allow: Savings stack alone, no pay label above', withAmount('<p>Savings</p><p>$482.00</p>'), 'allow'],
+    ['allow: an unknown name above a Savings line', withAmount('<p>Blue mug</p><p>Savings</p><p>$482.00</p>'), 'allow'],
+    ['ask: a part label (item) above a Savings line', withAmount('<p>Fixture item</p><p>Savings</p><p>$482.00</p>'), 'ask'],
+    ['allow: Total / incl. savings / $18.00', withAmount('<div>Total</div><div>incl. savings</div><div>$18.00</div>'), 'allow'],
+  ]);
+});
+
+// F3. balance, value, worth and credit also name real charges; a pay word after the figure counts as much as one before it.
+test('F3 (round 6): balance, value, worth and credit alone do not clear a figure, and a pay word after the figure counts', { skip, timeout: 120000 }, async t => {
+  const P = s => withAmount(`<p>${s}</p>`);
+  const asking = ['Order value: $500.00', 'Cart value $500.00', 'Credit card: $500.00', 'Balance: $500.00', 'Your balance: $500.00', 'Value: $500.00', 'Savings plan: $500.00',
+    'Reward: $500.00 charged now', '$500.00 balance due today', '$500.00 credit card charge', '$500.00 will be billed', 'Balance due: $500.00', 'Amount available: $500.00',
+    'Total savings: $482.00 You pay $500.00', 'Total value: $500.00', 'Total was $500.00', 'Worth: $500.00', 'Credit: $500.00', 'Store credit due: $500.00'];
+  await readCases(t, [
+    ...asking.map(text => ['ask: ' + text, P(text), 'ask']),
+    ['allow: Available balance: $500.00', P('Available balance: $500.00'), 'allow'],
+    ['allow: Remaining balance: $500.00 (known: exempt beside "remaining")', P('Remaining balance: $500.00'), 'allow'],
+    ['allow: Gift card balance: $500.00', P('Gift card balance: $500.00'), 'allow'],
+    ['allow: Points value: $5.00', P('Points value: $5.00'), 'allow'],
+    ['allow: You save $482.00 off', P('You save $482.00 off'), 'allow'],
+    ['allow: Order value: $18.00', P('Order value: $18.00'), 'allow'],
+    ['allow: $4.00 off your total', P('$4.00 off your total'), 'allow'],
+    ['allow: Coupon code: $482.00', P('Coupon code: $482.00'), 'allow'],
+  ]);
+});
+
+// F4. Common checkout content that used to make a correct 18.00 total ask.
+test('F4 (round 6): alternatives, recommendations, gift cards, conditional fees and a yearly price beside the monthly one do not ask', { skip, timeout: 180000 }, async t => {
+  const T = row6('<b>Total</b>', '$' + amt());
+  const P = inner => `${css6}<form id="payment">${meta()}${inner}<label>Card<input autocomplete="cc-number"></label><button id="pay">Pay</button></form>`;
+  await readCases(t, [
+    ['allow: unchecked radio "Annual $180.00/year" beside the checked monthly one', P(`<label class="opt"><input type="radio" name="p" checked> Monthly <b>$18.00</b>/month</label><label class="opt"><input type="radio" name="p"> Annual <b>$180.00</b>/year (save $36.00)</label>${T}`), 'allow'],
+    ['allow: "Annual billing would be $180.00 per year" with "$18.00 every month"', P(`<p>You will be charged $18.00 every month. Annual billing would be $180.00 per year.</p>${T}`), 'allow'],
+    ['ask: a yearly price with no monthly price equal to the total', P(`<label>Annual <b>$180.00</b>/year</label>${T}`), 'ask'],
+    ['ask: a yearly price above twelve times the monthly total', P(`<p>$18.00 per month. Or $400.00 per year.</p>${T}`), 'ask'],
+    ['allow: shipping radios (Standard checked, Express $24.99 unchecked)', P(`<label><input type="radio" name="s" checked> Standard $5.00</label><label><input type="radio" name="s"> Express $24.99</label>${T}`), 'allow'],
+    ['allow: unchecked checkbox "Add 2-year protection for $29.99"', P(`<label><input type="checkbox"> Add 2-year protection for $29.99</label>${T}`), 'allow'],
+    ['ask: a CHECKED checkbox "Add 2-year protection for $29.99"', P(`<label><input type="checkbox" checked> Add 2-year protection for $29.99</label>${T}`), 'ask'],
+    ['ask: an unchecked radio whose label names the Total', P(`<label><input type="radio" name="s"> Total: $500.00</label>${T}`), 'ask'],
+    ['allow: an ARIA option that is not selected', P(`<div role="radio" aria-checked="false">Premium $49.00</div>${T}`), 'allow'],
+    ['ask: an ARIA option that is selected', P(`<div role="radio" aria-checked="true">Premium $49.00</div>${T}`), 'ask'],
+    ['allow: "You may also like" block with a product price', P(`<section><h3>You may also like</h3><ul><li>Gadget $59.00</li><li>Widget $79.00</li></ul></section>${T}`), 'allow'],
+    ['allow: "You may also like: Gadget $59.00" as one line', P(`<p>You may also like: Gadget $59.00</p>${T}`), 'allow'],
+    ['ask: a "You may also like" block that holds the Total', P(`<section><h3>You may also like</h3><p>Total: $500.00</p></section>${T}`), 'ask'],
+    ['allow: gift card (balance $20.00) -$20.00 closes the Subtotal gap', P(row6('Subtotal', '$38.00') + row6('Gift card (balance $20.00)', '-$20.00') + T), 'allow'],
+    ['allow: gift card -$20.00 closes the Subtotal gap', P(row6('Subtotal', '$38.00') + row6('Gift card', '-$20.00') + T), 'allow'],
+    ['allow: store credit -$20.00', P(row6('Subtotal', '$38.00') + row6('Store credit', '-$20.00') + T), 'allow'],
+    ['allow: voucher -$20.00', P(row6('Subtotal', '$38.00') + row6('Voucher', '-$20.00') + T), 'allow'],
+    ['allow: Rewards applied -$20.00', P(row6('Subtotal', '$38.00') + row6('Rewards applied', '-$20.00') + T), 'allow'],
+    ['ask: Subtotal $38.00 with a gift card line of only -$5.00', P(row6('Subtotal', '$38.00') + row6('Gift card', '-$5.00') + T), 'ask'],
+    ['allow: "A late fee of $25.00 applies after that date."', P(`<p>Due Nov 1. A late fee of $25.00 applies after that date.</p>${T}`), 'allow'],
+    ['allow: "Cancellation fee $50.00 after 24 hours"', P(`<p>Cancellation fee $50.00 after 24 hours</p>${T}`), 'allow'],
+    ['allow: "Checked bag: from $30.00 each way."', P(`<p>Checked bag: from $30.00 each way.</p>${T}`), 'allow'],
+    ['allow: "Price match guarantee up to $500.00"', P(`<p>Price match guarantee up to $500.00</p>${T}`), 'allow'],
+    ['allow: "Late fee: $25.00 if unpaid"', P(`<p>Late fee: $25.00 if unpaid</p>${T}`), 'allow'],
+    ['ask: "Total: from $500.00" (a pay word before "from")', withAmount(`<p>Total: from $500.00</p>`), 'ask'],
+    ['ask: "Amount due: up to $500.00"', withAmount(`<p>Amount due: up to $500.00</p>`), 'ask'],
+    ['ask: "Pay $500.00 if you agree" (pay word first)', withAmount(`<p>Pay $500.00 if you agree</p>`), 'ask'],
+  ]);
+});
+test('F4 (round 6): invoice and order numbers are not figures; still asks for text-only offers', { skip, timeout: 120000 }, async t => {
+  const P = inner => `<form id="payment">${meta()}<p>Total: $${amt()}</p>${inner}<label>Card<input autocomplete="cc-number"></label><button id="pay">Pay</button></form>`;
+  await readCases(t, [
+    ['allow: Invoice #1042', P('<h2>Invoice #1042</h2>'), 'allow'],
+    ['allow: Order #5000123', P('<h2>Order #5000123</h2>'), 'allow'],
+    ['ask: Invoice 1042 as a bare figure after a pay word', P('<p>Invoice: 1042</p>'), 'ask'],
+    ['ask: text-only offer "Upgrade to Premium for $49.00/month"', P('<p>Upgrade to Premium for $49.00/month</p>'), 'ask'],
+    ['ask: text-only shipping options', P('<p>Standard shipping $5.99 · Express shipping $24.99</p>'), 'ask'],
   ]);
 });

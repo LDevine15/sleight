@@ -24,12 +24,14 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
   const words = node => [get(node, 'aria-label'), read(node, 'textContent'), get(node, 'value'), inputType(node) === 'image' ? get(node, 'alt') : ''].join(' ');
   const payment = value => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(value);
   const type = inputType(el);
+  // The control's own accessible name (aria-label, else its text, value, alt or title); empty when aria-labelledby decides it.
+  const accName = (get(el, 'aria-labelledby') ? '' : (get(el, 'aria-label') || read(el, 'textContent') || get(el, 'value') || get(el, 'alt') || get(el, 'title') || '')).replace(/\s+/g, ' ').trim().slice(0, 100);
   const associated = read(el, 'form');
   const tag = read(el, 'localName'), role = get(el, 'role'), form = associated === undefined ? read(el, 'closest')('form') : associated, rect = read(el, 'getBoundingClientRect')(), style = getComputedStyle(el);
   const button = tag === 'button' || role === 'button' || ['submit', 'image', 'button', 'reset'].includes(type);
   const state = { tag, role, kind: ['file', 'color'].includes(type) ? type : tag === 'select' ? 'select' : button ? 'button' : tag === 'a' || role === 'link' ? 'link' : 'text',
     form: !!form, connected: read(el, 'isConnected'), visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
-    enabled: !read(el, 'matches')(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)),
+    enabled: !read(el, 'matches')(':disabled') && get(el, 'aria-disabled') !== 'true', payment: payment(words(el)), accName,
     submit: ['submit', 'image'].includes(type) || tag === 'button' && !!form && get(el, 'type') !== 'button' && get(el, 'type') !== 'reset' ||
       button && /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(words(el)) };
   state.formPayment = !!form && Array.from(read(form, 'querySelectorAll')('input,button,iframe')).some(node => {
@@ -59,16 +61,35 @@ export function intent(kind, target = {}) {
   return { submit, payment };
 }
 
-// A script-driven control (not a submit button) whose activation settled with no navigation, form change, network request, dialog
-// or popup charged nothing (Apply, a quantity stepper, Remove, "Show order summary"), so it gives back the request's one payment
-// activation. A real submit button keeps what it spent whatever the page showed.
-export function refundPayment(ctx, target) {
+// A script-driven control whose activation settled with no navigation, form change, dialog or popup may give back the request's
+// one payment activation, but only when (a) its own accessible name is on a closed list of non-payment verbs and (b) no network
+// activity of any kind followed the click until the next payment check (activity.mjs: every request started, WebSocket, worker
+// and new page, not only finished fetches). The decision waits for that next check (settleRefund), so a request that starts
+// later still keeps the budget spent. A real submit button keeps what it spent whatever the page showed.
+const REFUND_VERBS = new Set('apply update remove delete increase decrease plus minus show hide edit change more less'.split(' '));
+const CHARGE_WORDS = new Set('pay paying payment purchase buy checkout donate donation subscribe place complete confirm submit send charge book continue next finish upgrade now tip add'.split(' '));
+export function refundableName(name) {
+  const n = String(name ?? '').normalize('NFKC').trim().toLowerCase();
+  if (!n || n.length > 40) return false;
+  if (/^[+\u2212\-\u2013\u2795\u2796]$/.test(n)) return true;
+  const words = n.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.length > 0 && words.length <= 4 && REFUND_VERBS.has(words[0]) && !words.some(word => CHARGE_WORDS.has(word));
+}
+export function deferRefund(ctx, target, activity) {
   const spent = target?.paymentSpent, bank = payments.get(ctx);
   if (!spent || !bank || target.element?.scriptButton !== true) return false;
   target.paymentSpent = undefined;
-  if (!spent.fresh) return false;
-  bank.used.delete(spent.requestKey); bank.dialog = undefined;
+  if (!spent.fresh || !activity?.observable || !refundableName(target.element.accName)) return false;
+  bank.deferred?.activity.stop();
+  bank.deferred = { requestKey: spent.requestKey, activity };
   return true;
+}
+function settleRefund(bank) {
+  const deferred = bank.deferred;
+  if (!deferred) return;
+  bank.deferred = undefined;
+  const quiet = deferred.activity.quiet(); deferred.activity.stop();
+  if (quiet) { bank.used.delete(deferred.requestKey); bank.dialog = undefined; }
 }
 
 export function expirePaymentDialog(ctx) { const bank = payments.get(ctx); if (bank) bank.dialog = undefined; }
@@ -114,6 +135,7 @@ export function check(ctx, kind, target = {}) {
     const ask = () => ({ verdict: 'confirm', terms });
     if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
     let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
+    settleRefund(bank);
     if (kind === 'dialog' && bank.dialog &&
         (!ctx.dialogContinuation || ctx.dialogContinuation(target) === true) && sameDocument(bank.dialog, target) && sameTerms(bank.dialog.terms, terms)) {
       bank.dialog = undefined; return allow;
@@ -126,7 +148,7 @@ export function check(ctx, kind, target = {}) {
     // One payment activation per user request, whichever kind of control it is: a script-driven button may be Apply or a
     // disguised charge, so it spends the same budget as the real submit. Past the budget, the user is asked through consume.
     if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();
-    // Remember what this activation spent so a click that turns out to do nothing can give it back (refundPayment).
+    // Remember what this activation spent so a quiet click on a closed-list control can give it back at the next payment check (deferRefund).
     target.paymentSpent = requestKey ? { requestKey, fresh: !bank.used.has(requestKey) } : undefined;
     if (requestKey) bank.used.add(requestKey);
     if (target.state) paymentPages.add(target.state);
