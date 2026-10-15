@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { trustedLocatorRead } from '../plugins/sleight/lib/direct-browser/trusted-dom.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
@@ -37,7 +38,7 @@ async function fixture(t, html) {
   await page.goto(origin);
   const state = { snapshotNo: 0, submitUnconfirmed: false }, ctx = {};
   const target = async (selector, extra = {}) => ({ state, session: 'session', turn: 'turn', document: 'owned-document', origin,
-    element: await page.locator(selector).evaluate(inspectElement), ref: selector, terms: { page: { ...terms }, method: terms.method }, ...extra });
+    element: await trustedLocatorRead(page.locator(selector), inspectElement), ref: selector, terms: { page: { ...terms }, method: terms.method }, ...extra });
   return { page, state, ctx, target, posts: () => posts };
 }
 
@@ -59,7 +60,7 @@ test('real v3 payment classification refuses masked buttons, card frames, change
   const prior = (await f.target('#field')).element;
   await f.page.locator('#final').evaluate(el => { el.textContent = 'Pay $18 now'; });
   assert.equal(check(f.ctx, 'press', await f.target('#field', { key: 'Enter', prior })).verdict, 'confirm');
-  const card = await f.page.frameLocator('iframe').locator('#card').evaluate(inspectElement);
+  const card = await trustedLocatorRead(f.page.frameLocator('iframe').locator('#card'), inspectElement);
   assert.equal(check(f.ctx, 'press', { ...await f.target('#field'), element: card, key: 'Enter' }).verdict, 'confirm');
   assert.equal(check(f.ctx, 'type', { ...await f.target('#field'), element: card }).verdict, 'allow');
   assert.equal(await f.page.locator('#clicked').innerText(), '0', 'no payment actuator dispatched');

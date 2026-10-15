@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
@@ -7,7 +8,7 @@ import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mj
 function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false } = {}) {
   const page = new EventEmitter(), actions = [], states = new Map(); let time = 0, number = 1;
   const metadata = { name: 'Continue', submit, payment: false, form: submit, formSignature: 'before' };
-  const loc = ref => ({
+  const loc = ref => utilityLocator({
     async evaluate(fn, arg) {
       if (fn.name === 'inspectTarget') return { ...metadata, ...(states.get(ref) ?? {}) };
       if (fn.name === 'scrollPoint') return { x: 10, y: 20 };
@@ -142,7 +143,7 @@ test('v3 upload goes through the private file provider and releases staging afte
   const refused = await f.run(f.tab, [{ do: 'upload', ref: 'e1', paths: ['/tmp/page.txt'] }], {});
   assert.match(refused.lines[0], /file/i); assert.equal(f.actions.length, 1);
   const original = f.page.getByRef;
-  f.page.getByRef = ref => ({ ...original(ref), async setInputFiles() { throw Error('raw private bytes must stay private'); } });
+  f.page.getByRef = ref => utilityLocator({ ...original(ref), async setInputFiles() { throw Error('raw private bytes must stay private'); } });
   const failed = await f.run(f.tab, [{ do: 'upload', ref: 'e1', paths: ['/tmp/owned.txt'] }], { files });
   assert.equal(cleaned, 2); assert.doesNotMatch(JSON.stringify(failed), /raw private bytes/);
 });
@@ -190,7 +191,7 @@ test('v3 refuses to input behind a waiting dialog', async () => {
 
 test('v3 action failure redacts echoed text and files', async () => {
   const f = fixture({ fail: 'failed while setting secret-card-value' });
-  f.page.getByRef = () => ({ async evaluate() { return {}; }, async fill() { throw Error('failed while setting secret-card-value'); } });
+  f.page.getByRef = () => utilityLocator({ async evaluate() { return {}; }, async fill() { throw Error('failed while setting secret-card-value'); } });
   const result = await f.run(f.tab, [{ do: 'type', ref: 'e1', text: 'secret-card-value' }], {});
   assert.doesNotMatch(JSON.stringify(result), /secret-card-value/);
 });
@@ -274,7 +275,7 @@ function pendingDialog(t, { early = false, rejectAnswer = false, holdAnswer = fa
   };
   const dialog = { type: () => 'confirm', message: () => 'Continue?', accept: () => answer('accept'), dismiss: () => answer('dismiss') };
   page.mainFrame = () => page; page.url = () => 'about:blank';
-  page.getByRef = ref => ({
+  page.getByRef = ref => utilityLocator({
     async evaluate(fn) { assert.equal(fn.name, 'inspectTarget'); return { name: 'Continue', submit, form: submit, formSignature: 'same' }; },
     async click() { calls.push(ref); if (ref === 'e1') { if (early) page.emit('dialog', dialog); await held; } },
   });

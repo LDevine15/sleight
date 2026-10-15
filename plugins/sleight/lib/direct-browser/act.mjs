@@ -4,6 +4,7 @@
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
 import { intent } from './rules.mjs';
+import { trustedLocatorRead } from './trusted-dom.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
@@ -137,7 +138,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         pendingGate(state, step);
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
-        let info = locator ? await locator.evaluate(inspectTarget, undefined, { timeout: TIMEOUT }) : {};
+        let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
         const enter = step.do === 'press' && /(?:^|\+)(?:Enter|Return|Space)$/.test(step.key);
         let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && /Enter|Return/.test(step.key));
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
@@ -224,7 +225,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const settleUntil = start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            try { formChanged = (await locator.evaluate(inspectTarget, undefined, { timeout: 250 })).formSignature !== info.formSignature; } catch {}
+            try { formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature; } catch {}
           }
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
           await sleep(Math.min(50, settleUntil - now()));

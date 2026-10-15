@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { trustedRead, trustedHandle } from './trusted-dom.mjs';
 import { canonical } from './authority.mjs';
 import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
@@ -218,10 +219,10 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     held.add(handle);
     try {
       const frame = await handle.ownerFrame();
-      if (!frame || !current() || old && (!old.doc.valid || !await handle.evaluate(samePageDocument, old.doc.handle))) throw Error('TRUSTED_TARGET_REQUIRED');
+      if (!frame || !current() || old && (!old.doc.valid || !await trustedRead(handle, samePageDocument, old.doc.handle))) throw Error('TRUSTED_TARGET_REQUIRED');
       let doc = documents.get(frame);
-      if (!doc || !doc.valid || !await handle.evaluate(samePageDocument, doc.handle)) {
-        const documentHandle = await handle.evaluateHandle(ownDocument);
+      if (!doc || !doc.valid || !await trustedRead(handle, samePageDocument, doc.handle)) {
+        const documentHandle = await trustedHandle(handle, ownDocument);
         doc = { valid: true, handle: documentHandle, id: 'd' + randomUUID().replaceAll('-', '') }; documents.set(frame, doc); held.add(documentHandle);
       }
       if (typeof target.page?.on === 'function' && !watched.has(target.page)) {
@@ -244,8 +245,8 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         for (const [event, handler] of Object.entries(handlers)) target.page.on(event, handler);
         watched.set(target.page, handlers);
       }
-      if (target.do === 'press' && !await handle.evaluate(focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
-      const observed = await handle.evaluate(readPaymentPage);
+      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, true)) throw Error('CHECKED_FOCUS_REQUIRED');
+      const observed = await trustedRead(handle, readPaymentPage);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
       const identity = { browserIncarnation: browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
@@ -253,7 +254,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       const record = { handle, doc, frame, page: target.page, identity, origin: observed.origin, name: observed.name, ref: target.ref };
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
-      const element = await handle.evaluate(inspectElement);
+      const element = await trustedRead(handle, inspectElement);
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: observed.origin,
         element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, method: requested?.method },
@@ -298,17 +299,17 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     },
     async pressTarget(target, key, options) {
       const record = targets.get(target);
-      if (!current() || !record?.doc.valid || !await record.handle.evaluate(samePageDocument, record.doc.handle) ||
-          !await record.handle.evaluate(focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+      if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
+          !await trustedRead(record.handle, focusCheckedNode, false) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
       // ElementHandle.press focuses again without verifying its recipient.
       // Use only the owned page keyboard after the checked ref retained focus.
       return target.page.keyboard.press(key, options);
     },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);
-      if (!entry || !current() || !entry.record.doc.valid || !equal(paths, entry.paths) || !await entry.record.handle.evaluate(samePageDocument, entry.record.doc.handle))
+      if (!entry || !current() || !entry.record.doc.valid || !equal(paths, entry.paths) || !await trustedRead(entry.record.handle, samePageDocument, entry.record.doc.handle))
         throw Error('USER_NAMED_FILE_REQUIRED');
-      const observed = await entry.record.handle.evaluate(readPaymentPage);
+      const observed = await trustedRead(entry.record.handle, readPaymentPage);
       if (observed.origin !== entry.record.origin || observed.name !== entry.record.name || !current()) throw Error('USER_NAMED_FILE_REQUIRED');
       live = entry.record.identity;
       const bindingData = { ...entry.record.identity, ref: target.ref, operation: 'upload' };

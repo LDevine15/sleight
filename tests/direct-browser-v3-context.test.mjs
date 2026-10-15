@@ -23,12 +23,19 @@ function fixture(text = payText(terms), options = {}) {
       if (fn.name === 'focusCheckedNode') return f.focusOk;
       if (fn.name === 'samePageDocument') return arg === document;
       if (fn.name === 'ownDocument') return document;
+      if (fn.name === 'inspectTarget') return { ...element, name: 'Continue', payment, formPayment: payment };
       if (fn.name === 'inspectElement') return { ...element, payment, formPayment: payment };
       if (fn.name === 'readPaymentPage') return { origin, page: { ...terms, ...f.pageTerms }, name: inputName };
       throw Error('unsupported page reader: ' + fn.name);
     },
     evaluateHandle: async fn => { assert.equal(fn.name, 'ownDocument'); return document; },
   };
+  const read = handle.evaluate;
+  handle._connection = { toImpl: () => ({ _frame: { utilityContext: async () => ({ world: 'utility',
+    evaluateExpression: async (source, options, args) => read({name: /function (\w+)/.exec(source)[1]}, args[1]),
+    evaluateExpressionHandle: async source => { assert.match(source, /function ownDocument/); return document; },
+  }) } }) };
+  handle.evaluate = () => assert.fail('context authority must never read MAIN world');
   const locator = { elementHandle: async () => handle };
   const binding = api.createV3TurnBinding({ source: 'user', session: 'session', turn: 'turn', id: 'request', text }, () => !ended);
   const ctx = api.createV3Context({ binding, browser: 'bfixture', ...options });

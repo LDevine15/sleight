@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { trustedLocatorRead } from '../plugins/sleight/lib/direct-browser/trusted-dom.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
@@ -53,7 +54,7 @@ test('real trust join refuses page and tool authority, masked payment controls a
     const result = await f.runSteps(f.tab,[{do:'click',ref}],f.ctx);
     assert.match(result.lines[0], /not run:.*confirmation required/);
   }
-  const prior = await f.page.locator('#e2').evaluate(inspectElement);
+  const prior = await trustedLocatorRead(f.page.locator('#e2'), inspectElement);
   assert.equal((await f.ctx.check('press',f.target('e2',{key:'Enter', prior, terms:{page:terms,method:terms.method},permission:true}))).verdict,'confirm');
   assert.equal((await f.ctx.check('press',f.target('f1e1',{key:'Enter'}))).verdict,'confirm');
   assert.equal(await f.page.locator('#count').innerText(),'0');
