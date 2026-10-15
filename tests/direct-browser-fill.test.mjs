@@ -2,6 +2,8 @@ import test from 'node:test';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
+import { readOptions, moveList, pickElement, findPopup } from '../plugins/sleight/lib/direct-browser/pick-option.mjs';
+import { AIRPORTS, label, virtualList } from './fixtures/virtual-list.mjs';
 
 function element(tag = 'INPUT', attrs = {}, value = '') {
   return { tagName: tag, type: attrs.type ?? 'text', value, checked: false, isConnected: true,
@@ -253,16 +255,64 @@ test('closed-root snapshot refs delegate to the action layer without guessing a 
   const r = await h.fill([{ ref: 's1', value: true }]);
   assert.equal(r.rows[0].status, 'set'); assert.deepEqual(seen, [[{ do: 'check', ref: 's1' }]]); assert.equal(h.resolve.length, 0);
 });
-test('listbox selection uses bounded scroll-until before choosing the exact row', async () => {
-  const node = element('DIV', { role: 'listbox' }), option = element('LI'), h = harness({ e1: node }, {
-    submit: async (tab, steps) => { assert.deepEqual(steps, [{ do: 'scroll', ref: 'e1', until: 'Far option' }]); return { lines: ['1 scroll e1: found'], stoppedAt: null }; }
-  });
-  let clicks = 0; const base = h.tab.page.locator;
-  h.tab.page.locator = selector => { const loc = base(selector); loc.getByRole = (role, opts) => {
-    assert.equal(role, 'option'); assert.deepEqual(opts, { name: 'Far option', exact: true });
-    return utilityLocator({ async evaluate(fn, arg) { return fn(option, arg); }, async waitFor() {}, async count() { return 1; }, async click() { clicks++; } });
-  }; return loc; };
-  const r = await h.fill([{ ref: 'e1', value: 'Far option' }]); assert.equal(r.rows[0].status, 'set'); assert.equal(clicks, 1);
+// A list handle and option handle in the unit harness's bridge. The page functions are told apart by identity.
+function listHandles(loc, sim, { onClick, popup = true } = {}) {
+  const option = (index, text) => ({ _connection: loc._connection, click: async () => { sim.pick(index); onClick?.(text); }, async dispose() {}, asElement() { return this; } });
+  const list = { _connection: loc._connection, async dispose() {}, asElement() { return this; },
+    evaluate: async (fn, arg) => fn === readOptions ? sim.read() : fn === moveList ? sim.move(arg) : loc.evaluate(fn, arg),
+    async evaluateHandle(fn, arg) { assert.equal(fn, pickElement);
+      const rows = (await sim.read()).rows, row = rows[arg.index]; return row && row.t === arg.t ? option(arg.index, row.t) : { asElement: () => null, async dispose() {} }; } };
+  return popup ? list : null;
+}
+test('a listbox row is found by its text over a virtual list and clicked once', async () => {
+  const items = AIRPORTS.map(label), sim = virtualList(items, { marks: true }), node = element('DIV', { role: 'listbox' }), clicked = [];
+  const h = harness({ e1: node }), base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector); const list = listHandles(loc, sim, { onClick: text => clicked.push(text) });
+    loc.elementHandle = async () => list; return loc; };
+  const r = await h.fill([{ ref: 'e1', value: AIRPORTS[301].name + ' ' + AIRPORTS[301].code }]);
+  assert.equal(r.rows[0].status, 'set', JSON.stringify(r)); assert.deepEqual(clicked, [items[301]]); assert.equal(sim.chosen, items[301]);
+  assert.equal(r.rows[0].note, 'chose "' + items[301] + '"'); assert.ok(sim.calls.read < 20, 'reads ' + sim.calls.read);
+});
+test('a listbox with no matching row fails with the closest rows and clicks nothing', async () => {
+  const sim = virtualList(AIRPORTS.map(label)), node = element('DIV', { role: 'listbox' }), h = harness({ e1: node }), base = h.tab.page.locator; let clicks = 0;
+  h.tab.page.locator = selector => { const loc = base(selector); const list = listHandles(loc, sim, { onClick: () => clicks++ }); loc.elementHandle = async () => list; return loc; };
+  const r = await h.fill([{ ref: 'e1', value: 'Harcliff Nowhere (QQQ)' }]);
+  assert.equal(r.rows[0].status, 'failed'); assert.equal(clicks, 0);
+  assert.match(r.rows[0].reason, /^no option matches "Harcliff Nowhere \(QQQ\)"; closest: "/); assert.deepEqual(h.input, []);
+});
+test('a listbox row clicked but not shown as selected fails when other rows are', async () => {
+  const items = AIRPORTS.map(label), sim = virtualList(items, { marks: true }), node = element('DIV', { role: 'listbox' }), h = harness({ e1: node }), base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector); const list = listHandles(loc, sim, { onClick: () => {} });
+    const click = list.evaluateHandle; list.evaluateHandle = async (fn, arg) => { const handle = await click(fn, arg); handle.click = async () => sim.pick(Math.max(0, arg.index - 1)); return handle; };
+    loc.elementHandle = async () => list; return loc; };
+  const r = await h.fill([{ ref: 'e1', value: items[100] }]);
+  assert.equal(r.rows[0].status, 'failed'); assert.match(r.rows[0].reason, /clicked but is not shown as selected/);
+});
+test('a combobox types the text, finds the row in its popup by words, and reads the input back', async () => {
+  const items = AIRPORTS.map(label), sim = virtualList(items), node = element('INPUT', { role: 'combobox', 'aria-controls': 'popup' }), clicked = [];
+  const h = harness({ e1: node }), base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector); const list = listHandles(loc, sim, { onClick: text => { clicked.push(text); node.value = text; } });
+    loc.elementHandle = async () => ({ ...list, ownerFrame: async () => ({ locator: () => ({ getByRole: () => ({ waitFor: async () => { throw Error('timeout'); } }) }) }) });
+    loc.evaluateHandle = async fn => { assert.equal(fn, findPopup); return list; };
+    return loc; };
+  const want = AIRPORTS[250].name + ' ' + AIRPORTS[250].code, r = await h.fill([{ ref: 'e1', value: want }]);
+  assert.equal(r.rows[0].status, 'set', JSON.stringify(r)); assert.deepEqual(clicked, [items[250]]); assert.equal(node.value, items[250]);
+  assert.deepEqual(h.input.map(a => a[0]), ['fill'], 'one fill of the typed text'); assert.equal(h.input[0][2], want);
+});
+test('a combobox whose popup never lists the text types the shorter queries, restores the asked text and says so', async () => {
+  const sim = virtualList(AIRPORTS.map(label)), node = element('INPUT', { role: 'combobox', 'aria-controls': 'popup' }), h = harness({ e1: node }), base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector); const list = listHandles(loc, sim);
+    loc.elementHandle = async () => ({ ...list, ownerFrame: async () => ({ locator: () => ({ getByRole: () => ({ waitFor: async () => { throw Error('timeout'); } }) }) }) });
+    loc.evaluateHandle = async () => list; return loc; };
+  const r = await h.fill([{ ref: 'e1', value: 'Harcliff Nowhere Airport (QQQ)' }]);
+  assert.equal(r.rows[0].status, 'failed'); assert.match(r.rows[0].reason, /no option matches.*; the field holds the text typed while searching/);
+  assert.deepEqual(h.input.map(a => a[2]), ['Harcliff Nowhere Airport (QQQ)', 'Harcliff Nowhere Airport', 'Harcliff Nowhere', 'Harcliff Nowhere Airport (QQQ)']);
+});
+test('a combobox that opens no popup says so instead of reporting a changed field', async () => {
+  const node = element('INPUT', { role: 'combobox' }), h = harness({ e1: node }), base = h.tab.page.locator;
+  h.tab.page.locator = selector => { const loc = base(selector); loc.evaluateHandle = async () => ({ asElement: () => null, async dispose() {} }); return loc; };
+  const r = await h.fill([{ ref: 'e1', value: 'x' }]);
+  assert.equal(r.rows[0].status, 'failed'); assert.match(r.rows[0].reason, /opened no option list/);
 });
 
 test('field input matches V6 operation-kind, element and verdict interface', async () => {

@@ -252,6 +252,9 @@ Engine behavior that sleight works around or can't change:
 - A key press on a closed-root element that isn't a button or an input needs CDP's answer that the element hosts no closed root itself.
   Without that answer (the node was resolved some other way) the press is refused, because a focused closed host looks the same as its
   inner receiver from the page.
+- A key press on a light-DOM div, span or custom element asks CDP the same question and goes through when the node hosts no shadow root.
+  It costs one extra CDP call, and only after the page-side proof refused. Measured on a `div role=combobox tabindex=0` (arrow keys
+  worked) and on a div hosting a closed root (refused), 2026-10-15.
 - A key press in a cross-origin iframe is refused for closed-root and light-DOM refs alike, because focus can't be proved up the frame
   chain from inside the child (1 closed and 1 light fixture, 2026-10-15). Clicks and fills there work. Not measured in an
   out-of-process frame: the cross-origin fixture frame shared the page's CDP session.
@@ -266,3 +269,12 @@ Engine behavior that sleight works around or can't change:
   closed-root field, "Account controls" read as "Acc[redacted]unt c[redacted]ntr[redacted]ls" (2026-10-15). Checkbox, radio and button
   values no longer do this (a checkbox's default "on" blanked every "on" before 2026-10-15).
 
+## Turbo option lists
+
+- `browser_fill` on a listbox or combobox finds options by `role=option` or `<option>` inside the list it names. Rows drawn as plain
+  divs, buttons or links without those roles aren't found, and the message says no option matches.
+- The search bisects a list that reads as sorted by visible text and walks every other list from the top, 8 s at most. On a sorted
+  400-row list a hit took 0.4 to 1.8 s and a miss about 2 s (fixture runs, 2026-10-15). A list that reorders itself while it is
+  searched, or loads rows only after a delay, can end as "ran out of time". Not measured on a real infinite-scroll list.
+- A combobox that filters on a different spelling than the option text gets up to three typed queries (the text, without brackets,
+  its first two words). After a miss the field is typed back to the asked text.

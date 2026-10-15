@@ -79,6 +79,21 @@ export async function resolveClosedHandle({ frame, backendNodeId }) {
   throw stale();
 }
 
+// CDP evidence for a handle that did not come from this module: false when the DOM agent names no shadow root of any
+// kind on the node, so it cannot hide a closed root's focused control behind itself. Anything else, a failed call
+// included, is undefined and keeps the proof's refusal.
+export async function hostsRootEvidence(handle) {
+  try {
+    const connection = handle?._connection, toImpl = connection?.toImpl;
+    const impl = typeof toImpl === 'function' ? toImpl.call(connection, handle) : undefined;
+    const owner = await handle.ownerFrame(), frameImpl = owner && toImpl.call(connection, owner);
+    const session = frameImpl?._page?.delegate?._sessionForFrame?.(frameImpl);
+    if (typeof impl?._objectId !== 'string' || !session?._client?._sendMayFail) return undefined;
+    const described = await session._client._sendMayFail('DOM.describeNode', { objectId: impl._objectId });
+    return described?.node && (described.node.shadowRoots?.length ?? 0) === 0 ? false : undefined;
+  } catch { return undefined; }
+}
+
 const unsupported = name => () => { throw Error(name + ' cannot search inside a closed shadow root; act on the refs from the page read.'); };
 const direct = ['click', 'dblclick', 'fill', 'check', 'uncheck', 'setChecked', 'selectOption', 'hover', 'press', 'focus',
   'scrollIntoViewIfNeeded', 'inputValue', 'isChecked', 'isVisible', 'isEnabled', 'isDisabled', 'isEditable', 'textContent', 'innerText',

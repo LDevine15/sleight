@@ -1,8 +1,11 @@
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { isV3Context } from './v3-context.mjs';
+import { readOptions, moveList, pickElement, findPopup, searchOptions, describeMiss, normalize, queries } from './pick-option.mjs';
 // Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
 class FieldError extends Error {}
+// A refusal after only typing or scrolling, which says plainly what happened instead of "field may have changed".
+const said = message => Object.assign(new FieldError(message), { said: true });
 const actionFailed = result => result?.lines?.some(line => /: not run:|effect unconfirmed;/.test(line));
 const refPattern = /^(?:(?:f\d+)?e\d+|s\d+)$/;
 const options = { timeout: 1500 };
@@ -48,6 +51,7 @@ function inspect(el, expected, read = (node, key) => { const value = node?.[key]
     hiddenLabel: ['checkbox', 'radio'].includes(type) && !!read(el, 'labels')?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
     visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: read(el, 'isConnected'), readonly: !!read(el, 'readOnly'), disabled: !!read(el, 'disabled') || attr('aria-disabled') === 'true',
     controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!read(el, 'multiple'),
+    innerInput: tag !== 'input' && !!read(el, 'querySelector')?.('input:not([type="hidden"]), textarea'), current: text.slice(0, 300),
     matched: text === String(expected),
     min: read(el, 'min') || attr('aria-valuemin') || '0', max: read(el, 'max') || attr('aria-valuemax') || '100', step: read(el, 'step') || '1',
     number: Number(type === 'range' ? read(el, 'value') : attr('aria-valuenow')),
@@ -187,29 +191,79 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               const after = await trustedLocatorRead(loc, inspect, value), actual = after.options.filter(o => o.selected).map(o => o.value);
               if (actual.length !== selected.length || selected.some(v => !actual.includes(v))) throw new FieldError('selection did not match; read the select');
             }
-          } else if (state.kind === 'listbox') {
-            if (typeof value !== 'string') throw new FieldError('listbox needs exact option text');
-            const result = await runSteps(tab, [{ do: 'scroll', ref, until: value }], ctx);
-            if (actionFailed(result) || stopped) throw new FieldError('list search stopped; read the list');
-            const candidate = loc.getByRole('option', { name: value, exact: true });
-            await candidate.waitFor({ ...options, state: 'visible' });
-            if (await candidate.count() !== 1) throw new FieldError('option missing or ambiguous; read the list');
-            await send(checked => checked.click(options), 'click', candidate);
-          } else if (state.kind === 'combo') {
-            if (typeof value !== 'string' || !state.controls || /[\r\n\0]/.test(state.controls)) throw new FieldError('combobox needs text and a controlled option list');
-            if (state.editableText) await send(checked => checked.fill(value, options));
-            else await send(checked => checked.click(options), 'click');
-            const handle = await loc.elementHandle(options);
-            try {
-              const frame = await handle.ownerFrame();
-              if (!frame) throw new FieldError('stale frame; read the page');
-              const id = state.controls.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-              const candidate = frame.locator('[id="' + id + '"]').getByRole('option', { name: value, exact: true });
-              await candidate.waitFor({ ...options, state: 'visible' });
-              if (await candidate.count() !== 1) throw new FieldError('ambiguous option; read the list');
-              await send(checked => checked.click(options), 'click', candidate);
-              if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) throw new FieldError('combobox value did not match; read the field');
-            } finally { await handle?.dispose(); }
+          } else if (state.kind === 'listbox' || state.kind === 'combo') {
+            if (typeof value !== 'string') throw new FieldError(state.kind + ' needs the option text');
+            const combo = state.kind === 'combo';
+            const handleOf = async (locator, fn, arg) => {
+              const handle = await locator.evaluateHandle(fn, arg), element = handle.asElement();
+              if (!element) await handle.dispose().catch(() => {});
+              return element;
+            };
+            const popup = () => combo ? handleOf(loc, findPopup) : loc.elementHandle(options);
+            const withList = async use => { const list = await popup(); try { return list ? await use(list) : null; } finally { await list?.dispose().catch(() => {}); } };
+            const readList = () => withList(list => list.evaluate(readOptions));
+            // One scroll-gated search over the whole list: the popup opens by typing, the rows render as the list moves.
+            const search = async () => {
+              let result;
+              await withList(list => send(async checked => { result = await searchOptions({ read: () => checked.evaluate(readOptions), move: to => checked.evaluate(moveList, to), want: value, now, sleep }); }, 'scroll', list));
+              return result;
+            };
+            let result, inner;
+            if (combo) {
+              inner = state.editableText ? loc : state.innerInput ? loc.locator('input:not([type="hidden"]), textarea').first() : null;
+              const enter = text => inner ? send(checked => checked.fill(text, options), 'type', inner) : send(checked => checked.click(options), 'click');
+              const attempts = inner ? queries(value) : [value];
+              await enter(attempts[0]);
+              // The usual case: the page lists the option under exactly the wanted name.
+              if (state.controls && !/[\r\n\0]/.test(state.controls)) {
+                const handle = await loc.elementHandle(options);
+                try {
+                  const frame = await handle.ownerFrame();
+                  if (!frame) throw new FieldError('stale frame; read the page');
+                  const candidate = frame.locator('[id="' + state.controls.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]').getByRole('option', { name: value, exact: true });
+                  const visible = await candidate.waitFor({ ...options, timeout: 500, state: 'visible' }).then(() => true, () => false);
+                  if (visible) {
+                    if (await candidate.count() !== 1) throw new FieldError('ambiguous option; read the list');
+                    await send(checked => checked.click(options), 'click', candidate);
+                    if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) throw new FieldError('combobox value did not match; read the field');
+                    rows[i].status = 'set'; rows[i].note = 'chose "' + value.slice(0, 80) + '"'; continue;
+                  }
+                } finally { await handle?.dispose(); }
+              }
+              for (let a = 0; a < attempts.length && !stopped; a++) {
+                if (a > 0) await enter(attempts[a]);
+                // Typing filters the list a moment later. Wait until the rows stop changing.
+                let before, quiet = 0;
+                for (let waited = 0; waited < 1500 && quiet < 4 && !stopped; waited += 60) {
+                  const list = await readList(), signature = list ? list.rows.map(row => row.t).join('|') : null;
+                  quiet = signature !== null && signature === before ? quiet + 1 : 0; before = signature; if (quiet < 4) await sleep(60);
+                }
+                if (before === null && a === 0) { await send(checked => checked.click(options), 'click', inner ?? loc); await sleep(120); }
+                result = await search();
+                if (result?.status === 'found') break;
+                if (result && result.status !== 'none') break;
+              }
+              // A search that found nothing leaves the field holding what was asked for, not the last shorter query.
+              if (result?.status !== 'found' && attempts.length > 1 && !stopped) await enter(attempts[0]);
+              if (!result) throw said('the combobox opened no option list; the field holds the typed text. Read the page');
+            } else result = await search();
+            if (result.status !== 'found') throw said(describeMiss(result, value) + (combo ? '; the field holds the text typed while searching' : ''));
+            const element = await withList(list => handleOf(list, pickElement, { index: result.index, t: result.row.t, a: result.row.a }));
+            if (!element) throw said('the list changed while choosing; read it and try again');
+            try { await send(checked => checked.click(options), 'click', element); }
+            finally { await element.dispose().catch(() => {}); }
+            if (!stopped) {
+              await sleep(60);
+              if (combo) {
+                const shown = (await trustedLocatorRead(inner ?? loc, inspect, value)).current ?? '', want = normalize(result.text), have = normalize(shown);
+                if (!have) throw said('the combobox stayed empty after choosing; read the field');
+                rows[i].note = 'chose "' + result.text.slice(0, 80) + '"' + (have === want || have === normalize(value) ? '' : '; the field now shows "' + shown.slice(0, 80) + '"');
+              } else {
+                const list = await readList(), row = list?.rows.find(r => r.v && r.t === result.row.t && r.a === result.row.a);
+                if (row && row.s === 'false' && list.rows.some(r => r.s === 'true')) throw said('the option was clicked but is not shown as selected; read the list');
+                rows[i].note = 'chose "' + result.text.slice(0, 80) + '"' + (row && row.s === null ? '; the list does not mark its selection' : '');
+              }
+            }
           } else if (state.kind === 'range') {
             // The model often sends "37" for a slider, so a numeric string counts as the number it spells.
             const wanted = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
@@ -268,7 +322,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
           rows[i].status = 'failed';
           // Playwright call logs can contain passwords, card numbers or arbitrary
           // page text. After attempted input report uncertainty without that log.
-          rows[i].reason = sent ? 'field may have changed; read the page before retrying' : error instanceof FieldError ? String(error.message).slice(0, 200) : 'field unavailable; read the page before retrying';
+          rows[i].reason = error.said ? String(error.message).slice(0, 300) : sent ? 'field may have changed; read the page before retrying' : error instanceof FieldError ? String(error.message).slice(0, 200) : 'field unavailable; read the page before retrying';
           stopped ||= 'field failed';
         }
       }

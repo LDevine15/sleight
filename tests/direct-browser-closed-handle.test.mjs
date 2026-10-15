@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
-import { closedLocator, closedDetails, resolveClosedHandle } from '../plugins/sleight/lib/direct-browser/closed-handle.mjs';
+import { closedLocator, closedDetails, resolveClosedHandle, hostsRootEvidence } from '../plugins/sleight/lib/direct-browser/closed-handle.mjs';
 import { focusCheckedNode } from '../plugins/sleight/lib/direct-browser/v3-context.mjs';
 import { inspectTarget } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
@@ -166,4 +166,26 @@ test('the action runner accepts closed-root s refs and resolves them through pag
   assert.deepEqual(asked, ['s3']);
   assert.match(result.lines[0], /1 click s3: not run: resolver reached/);
   await assert.rejects(run({ page, state: {} }, [{ do: 'click', ref: 'sx3' }], {}), /click needs ref/);
+});
+
+// hostsRootEvidence asks the DOM agent about an ordinary handle: only "described, and no shadow root" says false.
+function ordinaryHandle(answer, { objectId = 'object-1', owner = true } = {}) {
+  const asked = [], frame = {};
+  const session = { _client: { async _sendMayFail(method, params) { asked.push([method, params]); return typeof answer === 'function' ? answer() : answer; } } };
+  const frameImpl = { _page: { delegate: { _sessionForFrame: value => (value === frameImpl ? session : undefined) } } };
+  const connection = { toImpl: value => value === frame ? frameImpl : { _objectId: objectId } };
+  return { handle: { _connection: connection, ownerFrame: async () => (owner ? frame : null) }, asked };
+}
+test('a light-DOM handle with no shadow root in the DOM agent gives false evidence, from its object id', async () => {
+  const { handle, asked } = ordinaryHandle({ node: { shadowRoots: [] } });
+  assert.equal(await hostsRootEvidence(handle), false); assert.deepEqual(asked, [['DOM.describeNode', { objectId: 'object-1' }]]);
+  assert.equal(await hostsRootEvidence(ordinaryHandle({ node: {} }).handle), false, 'a node with no shadowRoots field hosts none');
+});
+test('a handle that hosts a root, is not described, or cannot be asked gives no evidence', async () => {
+  assert.equal(await hostsRootEvidence(ordinaryHandle({ node: { shadowRoots: [{}] } }).handle), undefined);
+  assert.equal(await hostsRootEvidence(ordinaryHandle(null).handle), undefined);
+  assert.equal(await hostsRootEvidence(ordinaryHandle(() => { throw Error('gone'); }).handle), undefined);
+  assert.equal(await hostsRootEvidence(ordinaryHandle({ node: {} }, { objectId: 7 }).handle), undefined);
+  assert.equal(await hostsRootEvidence(ordinaryHandle({ node: {} }, { owner: false }).handle), undefined);
+  assert.equal(await hostsRootEvidence({}), undefined);
 });

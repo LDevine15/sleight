@@ -115,3 +115,22 @@ test('endpoint reads and opens refuse any host spelling before title, snapshot o
   }
   assert.equal(reads, 0); assert.equal(opens, 0);
 });
+
+test('a step list refused before input is a tool error that says nothing was sent, not an unconfirmed outcome', async () => {
+  const entry = { page: { url: () => 'https://example.invalid/', title: async () => 'x' }, state: {} };
+  const make = runSteps => createToolDispatcher({ browser: 'bfixture', pages: { enqueue: async (id, run) => run(entry), tab: () => entry },
+    snapshot: async () => ({ text: 'page', number: 1 }), runSteps, fillFields: async () => assert.fail('fill must not run') });
+  const args = { tab: 't1', steps: [{ do: 'scroll', ref: 'e1', dy: 20000 }] };
+  const refused = await make(async () => { throw Object.assign(Error('scroll needs finite dx and dy up to 10000 per step'), { notRun: true }); }).call({ name: 'browser_act', arguments: args });
+  assert.equal(refused.isError, true); assert.match(refused.text, /dy up to 10000 per step\. Nothing was sent\.$/); assert.doesNotMatch(refused.text, /unconfirmed/);
+  const lost = await make(async () => { throw Error('connection closed'); }).call({ name: 'browser_act', arguments: args });
+  assert.match(lost.text, /^Operation outcome is unconfirmed/);
+});
+test('a fill row prints what the page chose after the status', async () => {
+  const entry = { page: { url: () => 'https://example.invalid/', title: async () => 'x' }, state: { snapshotNo: 0 } };
+  const d = createToolDispatcher({ browser: 'bfixture', pages: { enqueue: async (id, run) => run(entry), tab: () => entry },
+    snapshot: async () => ({ text: 'page', number: 1 }), runSteps: async () => assert.fail('act must not run'),
+    fillFields: async () => ({ rows: [{ ref: 'e1', status: 'set', note: 'chose "Alpha\nField (AAA)"' }, { ref: 'e2', status: 'failed', reason: 'no option matches', note: 'ignored' }] }) });
+  const out = await d.call({ name: 'browser_fill', arguments: { tab: 't1', fields: [{ ref: 'e1', value: 'a' }, { ref: 'e2', value: 'b' }] } });
+  assert.match(out.text, /^e1: set \(chose "Alpha Field \(AAA\)"\)\ne2: failed: no option matches\n/);
+});

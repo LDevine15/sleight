@@ -458,3 +458,11 @@ test('v3 a dialog opened by a deferred step ends the batch at once', async () =>
   assert.match(result.lines[0], /dialog alert/); assert.equal(result.stoppedAt, 1); assert.match(result.lines[1], /not reached/);
   assert.equal(f.actions.filter(a => a[0] === 'key').length, 1);
 });
+
+test('v3 refuses a scroll step past 10000 as not run, with the way to reach a long list', async () => {
+  const f = fixture();
+  for (const step of [{ do: 'scroll', ref: 'e1', dy: 20000 }, { do: 'scroll', dx: -10001 }]) {
+    await assert.rejects(f.run(f.tab, [step], {}), error => error.notRun === true && /dy up to 10000 per step; give until the row text/.test(error.message));
+  }
+  assert.deepEqual(f.actions, []);
+});

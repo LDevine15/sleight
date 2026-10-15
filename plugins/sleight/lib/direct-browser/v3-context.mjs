@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedHandle } from './trusted-dom.mjs';
-import { closedDetails } from './closed-handle.mjs';
+import { closedDetails, hostsRootEvidence } from './closed-handle.mjs';
 import { canonical } from './authority.mjs';
 import { check, inspectElement, intent, expirePaymentDialog } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
@@ -80,6 +80,14 @@ export function focusCheckedNode(el, options, read = (node, key) => { const valu
       node = frame;
     }
   } catch { return false; }
+}
+
+// The page-side guess refuses a focused div, span, body or custom element, because it cannot see a closed root. The
+// Node side can ask CDP, so a refusal on a light-DOM node is asked again once the DOM agent says it hosts no root.
+async function focusProved(handle, focus, closed) {
+  if (await trustedRead(handle, focusCheckedNode, { focus, hostsRoot: closed?.hostsRoot })) return true;
+  if (closed || await hostsRootEvidence(handle) !== false) return false;
+  return trustedRead(handle, focusCheckedNode, { focus, hostsRoot: false });
 }
 
 export function ownDocument(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'ownerDocument'); }
@@ -280,7 +288,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
         watched.set(target.page, handlers);
       }
       const closed = closedDetails(handle);
-      if (target.do === 'press' && !await trustedRead(handle, focusCheckedNode, { focus: true, hostsRoot: closed?.hostsRoot })) throw Error('CHECKED_FOCUS_REQUIRED');
+      if (target.do === 'press' && !await focusProved(handle, true, closed)) throw Error('CHECKED_FOCUS_REQUIRED');
       const observed = await trustedRead(handle, readPaymentPage);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
@@ -335,7 +343,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     async pressTarget(target, key, options) {
       const record = targets.get(target);
       if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
-          !await trustedRead(record.handle, focusCheckedNode, { focus: false, hostsRoot: record.closed?.hostsRoot }) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
+          !await focusProved(record.handle, false, record.closed) || !current()) throw Error('CHECKED_FOCUS_REQUIRED');
       // ElementHandle.press focuses again without verifying its recipient.
       // Use only the owned page keyboard after the checked ref retained focus.
       return target.page.keyboard.press(key, options);
