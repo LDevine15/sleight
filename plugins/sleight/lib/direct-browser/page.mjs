@@ -11,8 +11,8 @@ function deadline(task, ms, message = 'background preparation timed out') {
 // MAIN world, before page scripts. Every name stays inside this function so it
 // can be serialized. The hook controls disposition, never grants authority.
 export function popupHook() {
-  // HTML: document-sequences.html#navigable-container, iframe-embed-object.html,
-  // obsolete.html#frames (html.spec.whatwg.org/multipage/); fenced frames:
+  // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable-container
+  // and iframe-embed-object.html, obsolete.html#frames; fenced frames:
   // https://wicg.github.io/fenced-frame/#fenced-frame-element. Do not cross documents.
   const CR2_NESTED_DOCUMENT = focus => {
     while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
@@ -30,8 +30,9 @@ export function popupHook() {
       || role === 'button' && node.hasAttribute('aria-pressed')
       || /^(gridcell|row|rowheader|columnheader)$/.test(role) && node.hasAttribute('aria-selected'));
   };
-  // Host receipt cr2-timing-20261015-0005: 20 ControlOrMeta clicks, max 0.7 ms.
-  // Round max*2+50 ms upward to 100 ms; arm.until remains the harder cap.
+  // Host receipts cr2-timing-20261015-0005 and cr2-qualification-20261015-0014:
+  // 20 ControlOrMeta clicks each, maxima 0.7 and 5 ms. Round max*2+50 ms upward
+  // to 100 ms; arm.until remains the harder cap.
   const CR2_MODIFIER_WINDOW_MS = 100;
   const key = Symbol.for('sleight.popup3');
   if (window[key]) return true;

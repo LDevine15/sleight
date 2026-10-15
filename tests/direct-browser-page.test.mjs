@@ -231,7 +231,7 @@ test('CR2 HTML input states and ARIA checked/selected widgets keep their own act
   } finally { f.hook.off(); }
 });
 
-test('CR2 measured modifier window covers 0.7 ms host maximum and expires at 100 ms', t => {
+test('CR2 measured modifier window covers 5 ms host maximum and expires at 100 ms', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = hookFixture(), button = new f.Element();
   const mouse = () => Object.assign(new f.MouseEvent(), { isTrusted: true, nodes: [button], control: true });
@@ -239,9 +239,9 @@ test('CR2 measured modifier window covers 0.7 ms host maximum and expires at 100
     f.hook.prepare(button, 'measured', 1000);
     for (const listener of f.window.listeners.keydown)
       listener(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
-    t.mock.timers.tick(1);
+    t.mock.timers.tick(5);
     assert.equal(mouse().ctrlKey, false);
-    t.mock.timers.tick(98);
+    t.mock.timers.tick(94);
     assert.equal(mouse().ctrlKey, false);
     t.mock.timers.tick(1);
     assert.equal(mouse().ctrlKey, true);

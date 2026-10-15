@@ -10,7 +10,7 @@ const normalized = value => String(value ?? '').replace(/[\u200b\u00ad]/g, '').t
 // composites. Exclude read-only progressbar and the tabpanel content container;
 // separator needs native focusability below. Chromium's AXNodeObject native
 // mapping adds color/date/time and summary controls (details itself is a group):
-// https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/modules/accessibility/ax_node_object.cc
+// https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/modules/accessibility/ax_node_object.cc
 const CONTROL_ROLE = /^(button|checkbox|gridcell|link|menuitem|menuitemcheckbox|menuitemradio|option|radio|scrollbar|searchbox|separator|slider|spinbutton|switch|tab|textbox|treeitem|combobox|grid|listbox|menu|menubar|radiogroup|tablist|tree|treegrid|ColorWell|Date|DateTime|InputTime|DisclosureTriangle|DisclosureTriangleGrouped)$/;
 
 async function bounded(action) {

@@ -46,5 +46,6 @@ test('CR2 measures 20 ControlOrMeta keydown-to-click intervals on a local page',
   assert.ok(samplesMs.every(ms => Number.isFinite(ms) && ms >= 0 && ms < 1000));
   const maxMs = Math.max(...samplesMs);
   t.diagnostic('CR2 modifier timing ' + JSON.stringify({ samplesMs, maxMs, capMs: 1000,
-    proposedWindowMs: Math.ceil(maxMs * 2 + 50) }));
+    proposedWindowMs: Math.ceil((maxMs * 2 + 50) / 100) * 100 }));
+  assert.ok(maxMs < 100, 'the measured clicks must fit the chosen 100 ms masking window');
 });
