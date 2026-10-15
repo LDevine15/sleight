@@ -46,13 +46,29 @@ test('installed open refuses the selected DevTools listener before any page crea
   try {
     await begin(f);
     for (const [i,url] of ['http://127.0.0.1:9222/json/activate/foreign','http://localhost:9222/json/close/foreign',
-      'http://127.1:9222/json/list','http://2130706433:9222/','http://localhost:9222/'].entries()) {
+      'http://127.1:9222/json/list','http://2130706433:9222/','http://localhost:9222/',
+      'http://[::ffff:127.0.0.1]:9222/json','http://0.0.0.0:9222/json',
+      'http://127.0.0.2:9222/json','http://foo.localhost:9222/json'].entries()) {
       f.channel.emit('message',{version:3,id:'open'+i,method:'call',params:{name:'browser_open',arguments:{url}}});
       await settle(); const result=f.frames.find(x=>x.id==='open'+i).result.result;
       assert.equal(result.isError,true); assert.match(result.text,/DevTools/);
     }
     assert.equal(opens,0);
   } finally { await host.close(); }
+});
+test('a connected browser loss fences this turn and permits one new attempt next turn',async()=>{
+  const f=fixture();let selections=0;
+  f.dependencies.selectConnection=async()=>{selections++;return f.selected;};
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  try {
+    await begin(f);f.selected.loss();await settle();
+    f.channel.emit('message',{version:3,id:'lost',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
+    assert.match(f.frames.find(x=>x.id==='lost').result.result.text,/Turbo is unavailable/);
+    f.channel.emit('message',{version:3,id:'again',method:'begin',params:{turn:'two',text:'read'}});await settle();
+    assert.equal(f.frames.find(x=>x.id==='again').result.available,true);
+    f.channel.emit('message',{version:3,id:'retry',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
+    assert.equal(f.frames.find(x=>x.id==='retry').result.result.text,'No owned tabs.');assert.equal(selections,2);
+  } finally {await host.close();}
 });
 for (const cause of ['ui','parent']) test(`installed ${cause} loss releases the connection and panel after begin`, async () => {
   const f=fixture(); let timerCleared=false;

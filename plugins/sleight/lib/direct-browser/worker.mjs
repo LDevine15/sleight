@@ -298,7 +298,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     function subscribe() {
       unsubscribe = selected.onConnectionLoss(() => {
         connected = false;
-        if (!connecting) { stopped = true; protocol?.end().catch(() => {}); }
+        if (!connecting && !stopped) { retryConnection = true; protocol?.end().catch(() => {}); }
       });
     }
     subscribe();

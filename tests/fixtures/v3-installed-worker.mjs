@@ -29,7 +29,7 @@ const selected = {selectedBrowser:'bfixture',session:raw,endpoint,
   verifyConnection:async session=>session===raw&&socket?.readyState===1,
   async disconnect(){if(!socket||disconnected)return true;await new Promise(resolve=>{socket.addEventListener('close',resolve,{once:true});socket.close();});return disconnected;},
   onConnectionLoss(fn){losses.add(fn);return()=>losses.delete(fn);},
-  createFilter(){const filter=createCDPFilter({session:raw});filters.push(filter);return filter;},
+  createFilter(){const filter=createCDPFilter({session:raw,protectedPort:Number(new URL(endpoint).port)});filters.push(filter);return filter;},
 };
 let uiClosed=false;
 const pipe=new Socket({fd:4});

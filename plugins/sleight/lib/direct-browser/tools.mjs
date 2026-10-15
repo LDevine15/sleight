@@ -112,7 +112,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           if (endpoint) {
             const target = new URL(a.url), devtools = new URL(endpoint);
             const port = url => url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? '443' : '80');
-            const local = host => ['127.0.0.1', 'localhost', '[::1]'].includes(host.replace(/\.$/, ''));
+            const local = host => /^(?:127\.\d+\.\d+\.\d+|0\.0\.0\.0|localhost|.+\.localhost|\[(?:::|::1|::ffff:[\da-f:]+)\])$/.test(host.replace(/\.$/, ''));
             if (port(target) === port(devtools) && (target.hostname === devtools.hostname || local(target.hostname) && local(devtools.hostname)))
               throw Error('The selected DevTools endpoint cannot be opened');
           }

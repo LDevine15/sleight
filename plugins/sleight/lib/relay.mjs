@@ -381,6 +381,7 @@ function internalTurnEnd(tool) {
 
 export function createRelay({
   directBrowser,
+  turboUnavailable,
   directHost,
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
@@ -454,7 +455,8 @@ export function createRelay({
   if (directBrowser !== undefined && !isFrontend(directBrowser) && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   if (directHost !== undefined && (!(isInstalledBridge(directHost) && isFrontend(directBrowser)) && !(isV3Bridge(directHost) && isV3Frontend(directBrowser)))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
-  const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ?? []);
+  const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
+    (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
   const directTurnEnds = new Map();
   function collectDirectEnd(id) {
     if (!directBrowser) return;
@@ -1822,6 +1824,11 @@ export function createRelay({
   function handleClient(msg) {
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
+      if (!directBrowser) {
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true,
+          content: [{ type: 'text', text: `Turbo is off (${turboUnavailable}). Use the engine browser path.` }] } });
+        return;
+      }
       if (closing || disposed) { leaseStop(msg, 'this session is closing.'); return; }
       running.add(msg.id);
       callDetails.set(msg.id, msg.params.name);

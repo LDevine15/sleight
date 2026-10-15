@@ -31,7 +31,7 @@ function fixture() {
         return { sessionId };
       }
       if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: route.replace(/^s-/, '').replace(/-\d+$/, ''), url: 'about:blank', securityOrigin: '://', mimeType: 'text/html', loaderId: 'loader' } } };
-      if (/^(Page|Runtime|Network|Log|Emulation|Inspector|DOM|Target)\./.test(method)) return {};
+      if (/^(Page|Runtime|Network|Fetch|Log|Emulation|Inspector|DOM|Target)\./.test(method)) return {};
       throw Error('fake has no CDP method: ' + method);
     } };
   return { session, calls, emit, targets, listeners };
@@ -47,6 +47,27 @@ test('only explicitly owned targets appear in enumeration, metadata and events',
   f.emit({ method: 'Runtime.consoleAPICalled', params: { type: 'log' }, sessionId: 'foreign-session' });
   assert.equal(events.length, 1); assert.equal(events[0].params.targetInfo.targetId, 'owned');
   assert.doesNotMatch(JSON.stringify(events), /Private fixture|private.invalid/);
+});
+test('selected-port guard precedes page exposure, fails private requests and survives Fetch changes',async t=>{
+  const f=fixture(),filter=(await factory())({session:f.session,ownedTargets:['owned'],protectedPort:9222});t.after(()=>filter.dispose());
+  const events=[];filter.session.on('event',frame=>events.push(frame));
+  await filter.session.send('Target.attachToTarget',{targetId:'owned',flatten:true});
+  assert.deepEqual(f.calls.find(row=>row.method==='Fetch.enable')?.params.patterns,[{urlPattern:'*://*:9222/*',requestStage:'Request'}]);
+  assert.equal(events[0].method,'Target.attachedToTarget');
+  for(const url of ['http://127.0.0.1:9222/json/list','http://foo.localhost:9222/json/close/a','http://[::ffff:127.0.0.1]:9222/json'])
+    f.emit({method:'Fetch.requestPaused',sessionId:'s-owned',params:{requestId:url,request:{url}}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.calls.filter(row=>row.method==='Fetch.failRequest'&&row.params.errorReason==='BlockedByClient').length,3);
+  assert.equal(events.length,1);
+  await filter.session.send('Fetch.enable',{patterns:[{urlPattern:'https://fixture.invalid/*'}]},'s-owned');
+  assert.ok(f.calls.at(-1).params.patterns.some(row=>row.urlPattern==='*://*:9222/*'));
+  await filter.session.send('Fetch.disable',{},'s-owned');assert.equal(f.calls.at(-1).method,'Fetch.enable');
+  await assert.rejects(filter.session.send('Target.createTarget',{url:'http://fixture.invalid/redirect'}),/CDP_COMMAND_REFUSED/);
+  await assert.rejects(filter.session.send('Fetch.continueRequest',{requestId:'x',url:'http://0.0.0.0:9222/json/list'},'s-owned'),/CDP_COMMAND_REFUSED/);
+  f.emit({method:'Target.attachedToTarget',sessionId:'s-owned',params:{sessionId:'child',targetInfo:{targetId:'iframe',type:'iframe'},waitingForDebugger:true}});
+  await filter.session.send('Runtime.runIfWaitingForDebugger',{},'child');
+  assert.ok(f.calls.some(row=>row.method==='Fetch.enable'&&row.route==='child'));
+  assert.ok(!f.calls.some(row=>row.method==='Fetch.enable'&&row.route==='foreign'));
 });
 for (const method of ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds', 'Browser.setContentsSize',
   'Browser.close', 'Browser.crash', 'Browser.grantPermissions', 'Browser.resetPermissions', 'Browser.setPermission',

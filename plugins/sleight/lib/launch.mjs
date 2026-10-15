@@ -691,7 +691,7 @@ export async function prepareInstalledBrowser(runtime) {
 // v2 remains available until V8 retires its installed factory. Only typed
 // unavailability falls back; unsafe package/configuration evidence still stops.
 function installedUnavailable(code, route = 'the engine') {
-  process.stderr.write(`sleight: turbo unavailable (${code}); using ${route}.\n`);
+  process.stderr.write(`sleight: turbo unavailable (${code}); using ${route}. Check turbo settings and run sleight-mcp --doctor before retrying turbo.\n`);
 }
 export async function createInstalledBrowserBridge(factories, unavailable = installedUnavailable) {
   const v3 = factories?.v3 ?? (await import('./direct-browser/worker.mjs')).createV3Bridge;
@@ -706,17 +706,16 @@ export async function createInstalledBrowserBridge(factories, unavailable = inst
 }
 
 export async function prepareInstalledStartup(factory, unavailable = installedUnavailable) {
-  let bridge;
-  try { bridge = await (factory ?? (() => createInstalledBrowserBridge(undefined, unavailable)))(); }
-  catch (error) {
-    if (!['NATIVE_HELPERS_UNAVAILABLE', 'HOST_BUILD_BUSY', 'SELECTED_PATH_UNSAFE',
-      'SELECTED_PROCESS_UNPROVED', 'SELECTED_ENDPOINT_UNPROVED', 'SELECTED_LISTENER_UNPROVED',
-      'INSTALLED_WORKER_UNAVAILABLE', 'V3_RUNTIME_UNAVAILABLE', 'V3_WORKER_UNAVAILABLE'].includes(error.message)) throw error;
-    unavailable(error.message); return { directBrowser: undefined, directHost: undefined };
+  try {
+    const bridge = await (factory ?? (() => createInstalledBrowserBridge(undefined, unavailable)))();
+    if (!bridge) return { directBrowser: undefined, directHost: undefined };
+    return { directBrowser: isV3Bridge(bridge) ? createV3Frontend(bridge) : createInstalledFrontend(bridge), directHost: bridge,
+      turnHook: { close: () => bridge.detach() } };
+  } catch (error) {
+    const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_STARTUP_FAILED';
+    unavailable(code);
+    return { directBrowser: undefined, directHost: undefined, turboUnavailable: code };
   }
-  if (!bridge) return { directBrowser: undefined, directHost: undefined };
-  return { directBrowser: isV3Bridge(bridge) ? createV3Frontend(bridge) : createInstalledFrontend(bridge), directHost: bridge,
-    turnHook: { close: () => bridge.detach() } };
 }
 
 export function turboState(readConfig) {
@@ -779,7 +778,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const approval = approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
-    directBrowser,
+    directBrowser, turboUnavailable: prepared.turboUnavailable,
     directHost: prepared.directHost,
     startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
     browserChoice: browserSelection.choice,
