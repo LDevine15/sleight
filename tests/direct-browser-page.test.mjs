@@ -225,6 +225,55 @@ function hookFixture({ clock = Date } = {}) {
     MouseEvent, Event, EventTarget, opens };
 }
 
+test('CR8 pointer events stay plain when their first modifier read is after dispatch', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element(), retained = [];
+  const types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+  const read = event => [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+  try {
+    f.hook.prepare(button, 'pointer', 1000);
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Meta', type: 'keydown', isTrusted: true }));
+    for (const type of types) {
+      const event = Object.assign(new f.MouseEvent(), { type, nodes: [button], isTrusted: true, control: true, meta: true });
+      for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+      // Native composedPath is empty once dispatch has finished. No modifier
+      // getter ran in the page's synchronous handler.
+      event.nodes = []; retained.push(event);
+    }
+    t.mock.timers.tick(0);
+    assert.equal(retained.find(event => event.type === 'mouseup').metaKey, false, 'deferred mouseup.metaKey');
+    for (const event of retained) assert.deepEqual(read(event), [false, false, false, false], event.type);
+    f.hook.finish('pointer');
+    f.hook.prepare(button, 'next', 1000);
+    for (const event of retained) assert.deepEqual(read(event), [false, false, false, false], event.type + ' after retirement');
+  } finally { f.hook.off(); }
+  for (const type of types) assert.equal(f.window.captureListeners[type]?.size ?? 0, 0, type + ' listener removed');
+});
+
+test('CR8 pointer capture masks only trusted events on the prepared element during its click', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), button = new f.Element(), other = new f.Element(), retained = [];
+  const dispatch = (type, nodes, isTrusted = true) => {
+    const event = Object.assign(new f.MouseEvent(), { type, nodes, isTrusted, control: true, meta: true });
+    for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+    event.nodes = []; retained.push(event);
+  };
+  try {
+    dispatch('mouseup', [button]);
+    f.hook.prepare(button, 'scoped', 1000);
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Control', type: 'keydown', isTrusted: true }));
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      dispatch(type, [button], false); dispatch(type, [other]);
+    }
+    dispatch('click', [button]); retained.pop();
+    dispatch('mouseup', [button]);
+    t.mock.timers.tick(0);
+    dispatch('pointerup', [button]);
+    f.hook.finish('scoped');
+    for (const event of retained) assert.deepEqual([event.ctrlKey, event.metaKey], [true, true], event.type);
+  } finally { f.hook.off(); }
+});
+
 test('CR6 masked events stay plain after dispatch, finish, and another arm', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = hookFixture(), button = new f.Element();
