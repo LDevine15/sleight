@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 16:40 UTC, claim baseline runs the 10 non-Office tasks, Office waits for the owner)
+## Banner (2026-10-16 17:06 UTC, codex 16 claim runs in, Puddle's quiet gap, lcu next)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -45,6 +45,11 @@ Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle windo
   force-quit, so none of it counts. The 16:21 UTC rerun (one Puddle core busy throughout) passed calculator-click 11.8 s,
   calculator-menu 133.1 s, textedit-save 34.7 s and textedit-calculator 83.2 s. It failed textedit-drag, word-edit and
   excel-edit (300 s, Excel's recovery prompt), then Excel ignored quit and got a TERM signal.
+- codex r5 (16:48 UTC, `ledger/claims/CS4/runs/codex-*1648Z.log`): 16 runs, 8 pass. Passes are calculator-click 20.8, calculator-menu
+  19.7 and 14.0, textedit-save 32.4 and 39.2, finder-move 84.6, preview-read 9.8, local-wikipedia 10.6 and form-controls 59.5.
+  textedit-drag and textedit-calculator failed both runs, and tab-switching and one calculator-click failed. finder-move #2's
+  Codex drag left Finder in a mouse-down tracking loop. A HID mouse-up released it, and owner-away runs now post one before
+  cleanup (`17f61e86`). A stuck launched app other than Office now gets force-quit (`e38794c7`).
 - Office (word-edit, excel-edit) now runs last for every arm, after the owner answers Excel's recovery prompt. The other 10
   claim tasks run first (`claim-arm.sh ARM "<list>"`).
 - Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
@@ -97,7 +102,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing. A codex window for the 10 non-Office tasks was requested at 16:37 UTC.
+**Running now.** Nothing. Puddle has a 40-minute quiet gap (until 17:42 UTC at the latest) for its spin fix, then lcu.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
