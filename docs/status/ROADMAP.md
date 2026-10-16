@@ -48,7 +48,9 @@ Post-release work builds on branches now and merges after the tag (owner, 2026-1
    FowlBrowser, Codex, LCU, Cua, Peekaboo), published with failures. Runs use the owner's Anthropic account login, not API
    credits (owner, 2026-10-15). Since 2026-10-16 (owner) it is 12 tasks, 3 runs per arm (5 where within 20%), and arms are
    rerun only when they change (LAWS). The first baseline is about 4 hours, in one away window. After that each new
-   competitor or sleight refresh is about an hour.
+   competitor or sleight refresh is about an hour. The browser comparison stays in the gate's harness (`bench/fowl/rounds.sh
+   --world`) with a Codex arm added there, and the native claim is the native tasks (owner, 2026-10-16). The lcu arm gets lcu's
+   own Claude Code plugin, installed into the arm's isolated config only (owner OK, 2026-10-16).
 3. The Q1 error-message fixes. Q1-1 to Q1-6 are reviewed, and Q1-7 to Q1-17 are in review since 2026-10-15.
 4. Speed. The measured gap to FowlBrowser on Haiku 5.5 is mostly time before the first action (67%) and result size (3x larger),
    with code streaming 26% (`ledger/opus-less-code-report.md`), so those come first. Turbo's five tools already cut code per action
