@@ -22,14 +22,14 @@ is a projection only.
 `gate5.sh 5`, defaults), then the Opus head-to-head (`MODEL=opus gate5.sh`).
 
 **Native claim suite (owner agreed 2026-10-16 03:20 UTC).** Benches don't wait for Electron. First a pass of one run per arm per task
-to find where sleight loses, then the five-run claim. In flight: agent `world-login` on `arch/world-login` puts the native world runner on
-the owner's login per isolated arm config, as the fowl rounds do. It writes a dry-run plan to `ledger/claims/CS3/` and updates the checklist.
-Owner done tonight: native claude-cu arm login (installed by sleight-arch at `~/Library/Caches/sleight-bench/claude-cu`, 2.1.289,
-onboarding and folder trust done), CuaDriver and Terminal grants confirmed. That arm had no computer-use tool (Claude used AppleScript
-through Bash): the docs say the built-in `computer-use` MCP server is off by default and enabled per project with `/mcp` in an
-interactive session (owner step, in `claude-cu/work`). Its app approvals last one session, with no "always allow" in the CLI, so
-its runs need the owner present or are reported blocked. EPV3-1's consent run is still owed: its cards open from the "sleight"
-menu bar item, not a popup.
+(162 runs, `ledger/claims/CS3/plan-runs1.json`) to find where sleight loses, then the five-run claim. `arch/world-login` at
+`816c42dd` runs the native world suite on the owner's login, one isolated config per arm (focused tests pass). It merges into
+v3-gate after tonight's gate rounds, with a full check. The owner logged in all five native arm configs, and
+`node bench/world/login-readiness.mjs` reads them all as logged in. The claude-cu native root is installed (2.1.289), with onboarding,
+folder trust and `/mcp` computer-use enabled in `claude-cu/work`. Its app approvals last one session, with no "always allow" in the
+CLI, so its runs need the owner present. Whether the bench's strict empty MCP config hides its built-in `computer-use` server is
+unchecked. The first pass needs an away window for the other arms (they take focus). EPV3-1's consent run is still owed: its
+cards open from the "sleight" menu bar item, not a popup.
 
 **Electron.** Agent `epv3-2` builds EPV3-2 on `arch/epv3-2` (`2bbdf404` is v3-gate plus EPV3-1, with the v3-context conflict resolved
 by sleight-arch). Step 0 ports EPV3-1's electron-context test fake to AD1's seal evidence (43 of 50 failed on the merged base).
