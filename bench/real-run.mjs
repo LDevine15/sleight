@@ -1,4 +1,6 @@
 import { mkdirSync, rmSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { acquireLiveLock } from './live-lock.mjs';
 
 // The real suite and default tasks with retained fixtures use this lifecycle.
@@ -60,6 +62,9 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
         stop?.();
       } });
       Object.assign(result, response);
+      // An arm can leave a drag half done, and the app then sits in its mouse tracking loop and ignores Apple events (a Codex
+      // drag froze Finder, 2026-10-16). With the owner away, one mouse-up ends it before the check and cleanup read the app.
+      if (ctx.ownerAway) await (ctx.releaseInput ?? releaseHeldMouse)().catch(() => {});
       if (task.capture) await task.capture(ctx, response);
       const verdict = signal?.aborted || cleanupController.signal.aborted ? dialogReason() || 'run interrupted' :
         await task.check({ ...ctx, answer: response.out?.result ?? '' });
@@ -134,4 +139,9 @@ export function cleanupContained(result) {
     result.observerError || result.appDialog || result.approvalStop || result.groupClean === false) return false;
   const leases = result.fixtureDiagnostics ?? [];
   return leases.length > 0 && leases.every(item => item.launched === true && item.appQuit === true && item.helperCollectionConfirmed === true);
+}
+
+function releaseHeldMouse() {
+  return new Promise(resolve => execFile('/usr/bin/osascript', ['-l', 'JavaScript', fileURLToPath(new URL('./release-mouse.js', import.meta.url))],
+    { timeout: 5000 }, () => resolve()));
 }
