@@ -94,6 +94,9 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
     }
     const executable = texts.shift()?.split('/').at(-1);
     const operands = texts.filter(text => text && !text.startsWith('-'));
+    // `sleight-mcp turbo on|off` writes turbo.json for the user, so a model's shell may not run it. status stays allowed.
+    const names = [executable, ...texts.map(text => text.split('/').at(-1))], entry = names.findIndex(name => name === 'sleight-mcp' || name === 'launch.mjs');
+    if ((entry === 0 || entry === 1 && ['node', 'bash', 'sh', 'zsh'].includes(executable)) && names[entry + 1] === 'turbo' && ['on', 'off'].includes(names[entry + 2])) add('~/Library/Application Support/sleight/turbo.json', true);
     if (xargs && piped) operands.push(...piped.filter(word => !word.operator).map(word => word.text));
     if (executable === 'cd') {
       const next = operands[0];

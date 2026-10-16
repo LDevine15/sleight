@@ -8,6 +8,7 @@
 //   launch.mjs           run the server over stdio, through relay.mjs
 //   launch.mjs --doctor  print what would run, and check it exists
 //   launch.mjs setup     install the helper, open permission panes, run doctor
+//   launch.mjs turbo on [--browser chrome|helium] | off | status   turbo is on by default; these are the user's controls
 //   launch.mjs record|replay …  turn a finished run into a script, and run it again (replay.mjs)
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -133,10 +134,17 @@ const readForbiddenTargets = () => execFileSync(process.execPath, [join(LIB, 'pr
 const listLaunchdJobs = () => new Promise((resolve, reject) =>
   execFile(process.execPath, [join(LIB, 'probe-supervisor.mjs'), '--launchd-jobs'], { timeout: 6000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory } = {}) {
+// Read-only. The doctor prints it first so it shows even when the engine checks below stop early.
+async function turboDoctorLines() {
+  try { const turbo = await import('./direct-browser/turbo-setup.mjs'); return turbo.doctorLines(turbo.turboDiagnosis()); }
+  catch (err) { return ['turbo (direct browser path)', `PROBLEM   could not read turbo state (${err.message})`]; }
+}
+
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
+  for (const line of await turbo()) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
@@ -667,7 +675,20 @@ export async function createInstalledBrowserBridge(factories) {
   return (factories?.v3 ?? (await import('./direct-browser/worker.mjs')).createV3Bridge)();
 }
 
-export async function prepareInstalledStartup(factory, unavailable = installedUnavailable) {
+// Turbo is on by default: before the bridge is built, write turbo.json when it is absent or no longer matches this
+// install (a plugin update or a new node version). An opted-out or unsafe file is left alone. Any failure keeps the
+// engine path and logs one line. Only the launcher's own entry asks for this (run's ensureTurbo), so a test or tool
+// that imports run() or supplies a factory never writes the user's file.
+export async function ensureInstalledTurbo(log = text => process.stderr.write(text), options = {}) {
+  try {
+    const result = (await import('./direct-browser/turbo-setup.mjs')).ensureTurboConfig(options);
+    if (result.message) log(`sleight: ${result.message}\n`);
+    return result;
+  } catch { return undefined; }
+}
+
+export async function prepareInstalledStartup(factory, unavailable = installedUnavailable, { ensure, log = text => process.stderr.write(text) } = {}) {
+  try { await ensure?.(log); } catch { /* Setup never blocks startup. */ }
   try {
     const bridge = await (factory ?? (() => createInstalledBrowserBridge()))();
     if (!bridge) return { directBrowser: undefined, directHost: undefined };
@@ -684,8 +705,8 @@ export function turboState(readConfig) {
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser } = {}) {
-  const prepared = directBrowser === undefined ? await prepareInstalledStartup() : { directBrowser };
+  directBrowser, ensureTurbo = false } = {}) {
+  const prepared = directBrowser === undefined ? await prepareInstalledStartup(undefined, undefined, { ensure: ensureTurbo ? ensureInstalledTurbo : undefined }) : { directBrowser };
   directBrowser = prepared.directBrowser;
   const turnHook = prepared.turnHook;
   process.once('exit', () => { turnHook?.close(); });
@@ -949,7 +970,10 @@ export function allowCommand(args, { list = listPreapproved, remove = removePrea
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] === 'turbo-state') {
+  if (process.argv[2] === 'turbo') {
+    try { process.exitCode = (await import('./direct-browser/turbo-setup.mjs')).turboCommand(process.argv.slice(3)); }
+    catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
+  } else if (process.argv[2] === 'turbo-state') {
     const { readInstalledConfig } = await import('./direct-browser/installed-config.mjs');
     process.stdout.write(JSON.stringify(turboState(readInstalledConfig)) + '\n');
   } else if (process.argv[2] === 'allow') {
@@ -966,5 +990,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   else if (['record', 'replay'].includes(process.argv[2])) {
     try { process.exitCode = await replayCommand(process.argv.slice(2)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
-  } else run().catch(err => fail(err.message));
+  } else run({ ensureTurbo: true }).catch(err => fail(err.message));
 }

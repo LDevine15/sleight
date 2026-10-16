@@ -122,3 +122,13 @@ test(filename + ': inline write forms deny without probing code or long path-lik
   assert.equal(stats, 0, 'path operands longer than 511 characters are not probed');
 });
 }
+
+test('turbo on and off are the user\'s commands: a model shell may not run them, but status and other commands pass', async () => {
+  for (const command of ['sleight-mcp turbo on', 'sleight-mcp turbo off', '/x/plugins/sleight/bin/sleight-mcp turbo on --browser helium',
+    'node /x/plugins/sleight/lib/launch.mjs turbo off', 'cd /tmp && sleight-mcp turbo on', 'bash -c "sleight-mcp turbo off"', 'env A=1 sleight-mcp turbo on']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), true, command);
+  }
+  for (const command of ['sleight-mcp turbo status', 'sleight-mcp turbo-state', 'sleight-mcp --doctor', 'echo sleight-mcp turbo on', 'sleight-mcp allow list']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
+  }
+});

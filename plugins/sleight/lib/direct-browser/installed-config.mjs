@@ -10,10 +10,15 @@ const packageRoot = fileURLToPath(new URL('.', import.meta.url)).replace(/\/$/, 
 const inventoryRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const entries = ['../launch.mjs', '../../bin/sleight-mcp', '../../hooks/register.tsx'];
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+// The writer (turbo-setup.mjs) builds the file from these same values, never from a copy of its format.
+export const INSTALLED_PLUGIN_ROOT = inventoryRoot;
+export const INSTALLED_ENTRIES = Object.freeze([...entries]);
+export const sha256Hex = hash;
 // The operator-owned file is the only opt-in source. Neither HOME, environment,
 // MCP input nor a project settings file can select acceptance or a profile.
-export const installedConfigPath = () => join(userInfo().homedir, 'Library/Application Support/sleight/turbo.json');
-export function readInstalledConfig(path = installedConfigPath()) {
+export const installedConfigPath = (home = userInfo().homedir) => join(home, 'Library/Application Support/sleight/turbo.json');
+// The file itself: absent is null, anything unsafe throws. An opted-out file (enabled: false) is returned as it is.
+export function readInstalledConfigFile(path = installedConfigPath()) {
   let stat;
   try { stat = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return null; throw Error('INSTALLED_CONFIG_UNSAFE'); }
   try {
@@ -22,7 +27,12 @@ export function readInstalledConfig(path = installedConfigPath()) {
     const data = immutableJSON(JSON.parse(readFileSync(path, 'utf8')));
     if (!data || Object.keys(data).some(k => !['version', 'enabled', 'profileRoot', 'executable', 'receipt', 'entryHashes'].includes(k)) ||
         data.version !== 1 || typeof data.enabled !== 'boolean') throw Error();
-    if (!data.enabled) return null;
+    return data;
+  } catch { throw Error('INSTALLED_CONFIG_UNSAFE'); }
+}
+// The shape an enabled file must have. Throws INSTALLED_CONFIG_UNSAFE.
+export function validateEnabledConfig(data) {
+  try {
     if (['profileRoot', 'executable'].some(k => typeof data[k] !== 'string' || !isAbsolute(data[k]) || normalize(data[k]) !== data[k]) ||
         data.receipt?.node !== process.version || data.receipt.accepted !== true || data.receipt.protocol !== 1 ||
         data.receipt.helperMode !== 'source' || !Array.isArray(data.receipt.files) || !data.receipt.files.length ||
@@ -31,12 +41,19 @@ export function readInstalledConfig(path = installedConfigPath()) {
     return data;
   } catch { throw Error('INSTALLED_CONFIG_UNSAFE'); }
 }
-export function acceptedInstalledPackage(config) {
+export function readInstalledConfig(path = installedConfigPath()) {
+  const data = readInstalledConfigFile(path);
+  if (!data || !data.enabled) return null;
+  return validateEnabledConfig(data);
+}
+// pluginRoot is the installed loader's own folder. Only turbo-setup and tests pass another one, to check a copy.
+export function acceptedInstalledPackage(config, { pluginRoot = inventoryRoot } = {}) {
   if (!config) throw Error('DISTRIBUTION_ACCEPTANCE_REQUIRED');
-  const inventory = createPackageInventory({ root: inventoryRoot, receipt: config.receipt });
+  const root = pluginRoot, dir = pluginRoot === inventoryRoot ? packageRoot : join(pluginRoot, 'lib/direct-browser');
+  const inventory = createPackageInventory({ root, receipt: config.receipt });
   const current = () => inventory.current() && entries.every(path => {
     try {
-      const file = join(packageRoot, path), stat = lstatSync(file);
+      const file = join(dir, path), stat = lstatSync(file);
       return stat.isFile() && !stat.isSymbolicLink() && realpathSync(file) === file && !(stat.mode & 0o022) &&
         (stat.uid === process.getuid() || stat.uid === 0) && hash(readFileSync(file)) === config.entryHashes[path];
     } catch { return false; }

@@ -36,7 +36,7 @@ for (const [mode, code, message] of [
     // 2026-10-09, while benchmark runs went on).
     const timeoutMs = ['timeout', 'js-timeout', 'read-hang'].includes(mode) ? 100 : 2000;
     const startupTimeoutMs = mode === 'startup-hang' ? 200 : 5000;
-    assert.equal(await doctor({ env: { CODEX_HOME: bank, SLEIGHT_SURFACES: 'computer' }, log: line => lines.push(line), timeoutMs, startupTimeoutMs,
+    assert.equal(await doctor({ turbo: async () => [], env: { CODEX_HOME: bank, SLEIGHT_SURFACES: 'computer' }, log: line => lines.push(line), timeoutMs, startupTimeoutMs,
       launchctlList: async () => STALE_LISTING }), code);
     assert.match(lines.join('\n'), message);
   });
@@ -69,7 +69,7 @@ for (const [mode, entries, auditFails, expected] of [
       command: process.execPath, args: [script, mode, auditFile], env: { CUA_REPL_NODE_REPL_PATH: script, SKY_CUA_SERVICE_PATH: script },
     } } }));
     const lines = [];
-    assert.equal(await doctor({ app: 'Calculator', preapprovedIO, auditDirectory,
+    assert.equal(await doctor({ turbo: async () => [], app: 'Calculator', preapprovedIO, auditDirectory,
       env: { CODEX_HOME: bank, SLEIGHT_SURFACES: 'computer' }, log: line => lines.push(line),
       timeoutMs: 2000, forbiddenTargets: () => '0' }), 0);
     assert.match(lines.join('\n'), new RegExp(`app read ${expected}`));
@@ -90,7 +90,7 @@ for (const [mode, entries, auditFails, expected] of [
 
 test('doctor does not start a live read when required files are missing', async () => {
   const lines = [];
-  assert.equal(await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: line => lines.push(line) }), 1);
+  assert.equal(await doctor({ turbo: async () => [], env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: line => lines.push(line) }), 1);
   assert.match(lines.join('\n'), /no Codex computer-use plugin/);
 });
 
@@ -133,7 +133,7 @@ for (const [mode, app, code, message] of [
       command: process.execPath, args: [script, mode], env: { CUA_REPL_NODE_REPL_PATH: script, SKY_CUA_SERVICE_PATH: script },
     } } }));
     const lines = [];
-    assert.equal(await doctor({ app, env: { CODEX_HOME: bank, SLEIGHT_SURFACES: 'computer' },
+    assert.equal(await doctor({ turbo: async () => [], app, env: { CODEX_HOME: bank, SLEIGHT_SURFACES: 'computer' },
       log: line => lines.push(line), timeoutMs: 2000, forbiddenTargets: () => '0' }), code);
     assert.match(lines.join('\n'), /live read ok \(helper inventory\)/);
     assert.match(lines.join('\n'), message);
