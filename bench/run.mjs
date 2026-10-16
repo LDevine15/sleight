@@ -39,7 +39,7 @@ import { approveOnly, codexReady, codexConfigServers, runCodex } from './codex-a
 import { startFootprint, cpuSplit } from './footprint.mjs';
 import { watchAppWindows } from './app-windows.mjs';
 import { runTiming, traceTiming } from './timing.mjs';
-import { executeRealTask } from './real-run.mjs';
+import { executeRealTask, cleanupContained } from './real-run.mjs';
 import { observePermission } from './real-permission.mjs';
 import { runOwned } from './preapproved-process.mjs';
 import { acquireLiveLock } from './live-lock.mjs';
@@ -587,6 +587,8 @@ pass: for (let run = 1; run <= runs; run++) {
         // A shell or file edit could pass a check without the app, so it fails the run.
         if (result.forbidden?.length) { result.passed = false; result.reason = `used ${[...new Set(result.forbidden)].join(' and ')}`; }
         if (result.approvalStop) { result.passed = false; result.reason = result.approvalStop; controller.abort(new Error(result.approvalStop)); process.exitCode = 1; }
+        const contained = !task.privateMail && cleanupContained(result);
+        if (contained) { result.passed = result.taskPassed === true; result.cleanupContained = true; }
         const { out, code, forbidden: _forbidden, ...rest } = result;
         if (task.noScreenshot) { delete rest.screenshot; delete rest.cartShot; }
         results.push(task.privateMail ? privateMailResult(task, ctx, result, { arm: armName, run }) : { arm: armName, task: task.id, run, ...rest,
@@ -606,7 +608,8 @@ pass: for (let run = 1; run <= runs; run++) {
         // A private row has no reason; its code (CHAT_…, MIMESTREAM_…) carries no content, so the local log shows it.
         const privateCode = task.privateMail && !recorded.passed ? /^[A-Z][A-Z0-9_]+\b/.exec(String(result.reason ?? result.cleanupError ?? ''))?.[0] : undefined;
         console.error(`${recorded.passed ? 'PASS' : isDryRun ? 'DRY' : recorded.outcome ? 'STOP' : 'FAIL'} ${armName} ${task.id} #${run} ${recorded.seconds ?? 0}s${recorded.reason ? ` (${recorded.reason})` : privateCode ? ` (${privateCode})` : ''}`);
-        if (result.cleanupError || result.permissionPrompt || result.permissionRefusal || result.observerError || result.appDialog || result.groupClean === false) {
+        if (contained) console.error(`CONTINUE: ${scrub(result.cleanupError)} (every app this run launched exited)`);
+        else if (result.cleanupError || result.permissionPrompt || result.permissionRefusal || result.observerError || result.appDialog || result.groupClean === false) {
           // Which check and its code only (MIMESTREAM_…): codes carry no mail content.
           const privateStop = () => ['cleanupError', 'permissionPrompt', 'permissionRefusal', 'observerError', 'appDialog'].filter(key => result[key])
             .concat(result.groupClean === false ? ['groupClean'] : []).join(', ') + '; ' +

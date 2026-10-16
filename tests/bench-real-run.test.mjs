@@ -401,3 +401,20 @@ test('a check that returns a stop outcome records it with its reason and does no
   assert.equal(result.outcome, 'human-check');
   assert.equal(result.reason, 'stopped at a human check (press & hold; cart screenshot captured)');
 });
+
+test('a fixture cleanup failure continues the pass only when every launched app exited and nothing else went wrong', async () => {
+  const { cleanupContained } = await import('../bench/real-run.mjs');
+  const quit = { launched: true, appQuit: true, helperCollectionConfirmed: true };
+  const base = { cleanupError: 'Owned Preview fixture window cleanup unconfirmed: menu item unavailable', fixtureDiagnostics: [quit] };
+  assert.equal(cleanupContained(base), true);
+  assert.equal(cleanupContained({ ...base, fixtureDiagnostics: [quit, { ...quit, appQuit: false }] }), false, 'an app still running');
+  assert.equal(cleanupContained({ ...base, fixtureDiagnostics: [{ ...quit, launched: false }] }), false, 'an app the run did not launch');
+  assert.equal(cleanupContained({ ...base, fixtureDiagnostics: [{ ...quit, helperCollectionConfirmed: false }] }), false, 'a helper left running');
+  assert.equal(cleanupContained({ ...base, fixtureDiagnostics: [] }), false);
+  for (const key of ['permissionPrompt', 'permissionRefusal', 'observerError', 'appDialog', 'approvalStop']) {
+    assert.equal(cleanupContained({ ...base, [key]: true }), false, key);
+  }
+  assert.equal(cleanupContained({ ...base, groupClean: false }), false);
+  assert.equal(cleanupContained({ ...base, cleanupError: 'Fixture helper process group cleanup unconfirmed' }), false);
+  assert.equal(cleanupContained({ fixtureDiagnostics: [quit] }), false, 'no cleanup failure');
+});

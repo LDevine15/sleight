@@ -1,5 +1,12 @@
 # Benchmark
 
+## Claim suite
+
+The speed claim runs the 12 tasks in `bench/claim-tasks.txt`, one per skill. The native apps are Calculator (by click and by menu),
+TextEdit (edit-and-save and text drag), Finder (a move), Preview (a read), Word, Excel, and Calculator into TextEdit. The browser
+tasks are a page read, form controls and tabs. Each arm runs 3 times, and 5 where sleight and that arm are within 20%. An arm's results stand until that arm, the engine
+or the model changes. The rules are in LAWS. The full 26-task world suite runs once per release as a regression check.
+
 ## Parity battery
 
 The battery catalog has 31 tasks (2026-10-11).

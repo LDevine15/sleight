@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 15:12 UTC, sleight 12/15 and codex 6/9 in the native pass)
+## Banner (2026-10-16 15:40 UTC, claim suite set by the owner, baseline starting)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -25,7 +25,12 @@ Goal (owner): release 1.3.0, then the native claim and the video, then maintenan
 2. The release pass (`bench/release-pass.mjs`, on the login), with its native, gate, Opus and claim stages. It needs Puddle windows and the owner away.
 3. The 1.3.0 tag on the owner's call, then the public push (`SLEIGHT_RELEASE_PUSH=1`) and `gh release create`.
 
-**Native claim pass (owner approved running it with the owner away).** Plan: `ledger/claims/CS3/plan-runs1.json` (162 rows, 6 arms).
+**Claim suite (owner, 2026-10-16, in LAWS).** 12 tasks (`bench/claim-tasks.txt`), 3 runs per arm, 5 where within 20%, and an
+arm reruns only when it changes. A contained cleanup failure now continues the pass (`cleanupContained`, `bench/real-run.mjs`).
+Launcher: `RUNS=3 ledger/claims/CS3/claim-arm.sh ARM` (logs in `ledger/claims/CS4/runs/`, touches `/tmp/sleight-bench-done`).
+Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle window), then claude-cu with the owner present.
+
+**Native claim pass, first round (superseded by the claim suite, kept for its findings).** Plan: `ledger/claims/CS3/plan-runs1.json` (162 rows, 6 arms).
 Run one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM "$(cat ledger/claims/CS3/tasks-no-chess.txt)"` with
 `NATIVE_REPO=$HOME/Projects/sleight`. It logs to `ledger/claims/CS3/runs/` and touches `/tmp/sleight-bench-done` on exit. Order:
 sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (per-session app approval).
@@ -70,7 +75,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing, and the chain is stopped. Next: the sleight arm from textedit-replace-save on, then lcu.
+**Running now.** Nothing, and next is the claim baseline's sleight arm in Puddle's next window, owner away.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.

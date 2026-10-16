@@ -2,8 +2,8 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { acquireLiveLock } from './live-lock.mjs';
 
 // The real suite and default tasks with retained fixtures use this lifecycle.
-// A cleanup failure preserves its fixture and stops the pass. The cooperative
-// lock is released on exit, as the task brief requires.
+// A cleanup failure preserves its fixture and stops the pass, unless cleanupContained
+// says otherwise. The cooperative lock is released on exit, as the task brief requires.
 export async function executeRealTask(task, ctx, { drive, dryRun = false, setupOnly = false, signal, permissionCheck, stop, lockHeld = false } = {}) {
   let release, cleanupConfirmed = false, driverStarted = false;
   let monitor, observation;
@@ -64,6 +64,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       const verdict = signal?.aborted || cleanupController.signal.aborted ? dialogReason() || 'run interrupted' :
         await task.check({ ...ctx, answer: response.out?.result ?? '' });
       result.passed = response.code === 0 && verdict === true && !signal?.aborted && !result.permissionPrompt && !result.permissionRefusal && !result.observerError;
+      result.taskPassed = result.passed; // before cleanup can fail the run
       // A check may name a stop that isn't a plain failure, such as a shop's human check.
       if (verdict?.outcome && !signal?.aborted) result.outcome = verdict.outcome;
       result.reason = dialogReason() || (result.permissionPrompt ? 'macOS permission prompt: stopped' : result.permissionRefusal ? 'computer-use permission refused: stopped' : signal?.aborted ? 'run interrupted' :
@@ -122,4 +123,15 @@ export async function acquireFixture(ctx, key, operation) {
   catch (error) { if (error.noMutation === true) ctx.pendingAcquisitions.delete(key); throw error; }
   ctx.pendingAcquisitions.delete(key);
   return ctx[key];
+}
+
+// An unconfirmed fixture window cleanup stopped seven passes on 2026-10-16, each after the app this run launched had
+// already exited, which takes its windows with it. Such a failure continues the pass with the task's own verdict
+// (owner, 2026-10-16). Anything else (a dialog, a permission prompt, a stray process, an app still running or one the
+// run didn't launch) still stops it.
+export function cleanupContained(result) {
+  if (!/^Owned .+ fixture window cleanup unconfirmed/.test(result.cleanupError ?? '') || result.permissionPrompt || result.permissionRefusal ||
+    result.observerError || result.appDialog || result.approvalStop || result.groupClean === false) return false;
+  const leases = result.fixtureDiagnostics ?? [];
+  return leases.length > 0 && leases.every(item => item.launched === true && item.appQuit === true && item.helperCollectionConfirmed === true);
 }

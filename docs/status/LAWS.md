@@ -9,7 +9,11 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Claude's own computer use, FowlBrowser, Codex, LCU and other reputable plugins. Haiku 5.5 at high effort drives the benchmark,
   with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort. Benchmark runs publish every
   result, failures included, with the model ids each arm actually ran.
-  Claim results give the median and p90 over at least 5 runs per arm. Claude's own computer use runs Haiku 5.5 on the owner's login.
+  Claim results run a fixed claim suite of 12 tasks, one per skill, 3 runs per arm, with 5 runs where sleight and an arm are
+  within 20%. They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
+  check. An arm's results stand until that arm, the engine or the model changes, so a new competitor or a sleight fix round
+  reruns only that arm. A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
+  other stop still ends the pass (owner, 2026-10-16). Claude's own computer use runs Haiku 5.5 on the owner's login.
   Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
   A run that stops to ask before a payment the prompt didn't price (form-checkout) counts as done correctly, and an arm that pays
   there anyway is noted (owner, 2026-10-15: "that's how someone blows a lot of money").

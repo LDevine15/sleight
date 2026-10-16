@@ -1,0 +1,1 @@
+calculator-click,calculator-menu,textedit-save,textedit-drag,finder-move,preview-read,word-edit,excel-edit,textedit-calculator,local-wikipedia,form-controls,tab-switching
