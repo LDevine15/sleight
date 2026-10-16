@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 10:50 UTC, morning summary)
+## Banner (2026-10-16 11:15 UTC, morning summary)
 
 OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 
@@ -14,7 +14,7 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
   `find` alternation fix: 193 of 254 empty reads were `a|b` queries (docs/benchmarks/2026-10-16-turbo-ab.md).
 - **Opus head-to-head** on `66ada2bd` (09:18 to 09:50): turbo 675 s (p90 713) against FowlBrowser's 885 s (p90 935), 76%, faster in
   every round. FowlBrowser paid $268 unpriced in all 10 form-checkout runs (docs/benchmarks/2026-10-16-opus.md).
-- **Release build merged:** `pane/auto-mode` is `225f74ca`, which is v3-gate `66ada2bd` plus V8 and V8R (plugin 8,640 KB, down from
+- **Release build merged:** `pane/auto-mode` (now `2a51e695` with the fixture fix on top) took the merge at `225f74ca`, which is v3-gate `66ada2bd` plus V8 and V8R (plugin 8,640 KB, down from
   15,960 KB), merged by agent `release-merge` (`arch/release-merge` `6e7b7102`). The full check passed with exit 0 (5500 tests
   with 0 failing and 353 skipped, and validate and mod tests clean).
 - **Native first pass, sleight arm only:** 4 passes (calculator-click 7.5 s, calculator-menu 10.3 s, preview-pdf 21.7 s,
@@ -22,8 +22,9 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
   docs/known-problems.md: `closeOwnedWindow`'s title read (AX -25205), and a TextEdit launch without the persistence
   arguments. 17 of 27 sleight tasks and the other arms are not run yet. The fixture fixes come first.
 
-**Next (sleight-arch).** (1) Fix the fixture cleanup stop and TextEdit's launch arguments, then finish the native pass in Puddle
-windows. (2) The release pass (`bench/release-pass.mjs`) still reads the API key (`api-auth.mjs` readKey). Move it to the login
+**Next (sleight-arch).** (1) Done offline (`2a51e695`, full check passed, exit 0, 5502 tests with 0 failing): a window the task
+already closed (title unsupported, -25205) counts as closed only when the app's window list no longer holds it, and document fixtures
+launch with the persistence arguments. Not yet proven live. Finish the native pass in Puddle windows, with the fix's first live run. (2) The release pass (`bench/release-pass.mjs`) still reads the API key (`api-auth.mjs` readKey). Move it to the login
 before running it. (3) RP1's CHANGELOG and README with tonight's numbers. (4) Review EPV3-2 when its agent reports.
 
 **Owner items.**
