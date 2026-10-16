@@ -62,8 +62,9 @@ export function rewriteTabError(text, { read = false, code = '' } = {}) {
       out.push(`Browser action "${confirm[1]}" interrupted by JavaScript ${confirm[2]}: ${message} Input may already have been sent; do not retry the ${confirm[1]}. Next: const dialog = await tab.getJsDialog(); if (dialog) { ${accept}; }`);
     } else out.push(rewriteLine(lines[i], read, i === 0));
   }
-  const write = evaluateWriteAdvice(text);
+  const write = evaluateWriteAdvice(text), scope = evaluateScopeAdvice(text);
   if (write) out.push(write);
+  else if (scope) out.push(scope);
   else if (/^TypeError: Cannot read properties of (?:null|undefined)\b/m.test(text) &&
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
     out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties. Next read: `await tab.playwright.evaluate(selector => document.querySelector(selector) !== null, observedSelector)`. Use the selector already observed as observedSelector, then keep a null guard around the later property read.');
@@ -98,6 +99,15 @@ function browserBlockedAdvice(text) {
   const reason = extension ? 'An extension UI is blocking browser automation. The owner must clear that UI before continuing.'
     : 'Navigation was blocked by the client. Its cause is unconfirmed. The owner must review the block before continuing.';
   return `${reason} Next read, if available: await cua.listTabs(). Do not retry the refused call or change another session.`;
+}
+
+function evaluateScopeAdvice(text) {
+  if (!/^\s+at __playwrightEvaluate\b/m.test(text)) return;
+  const missing = /^(?:Error: )?(?:TypeError: (parseInt|getEventListeners) is not a function|ReferenceError: (parseInt|getEventListeners) is not defined)$/.exec(text.split('\n')[0]);
+  if (!missing) return;
+  const name = missing[1] || missing[2];
+  const next = name === 'parseInt' ? ' Apply parseInt to a returned string in the REPL after the read.' : '';
+  return `${name} is unavailable in this restricted read-only scope. Documented read primitives include locator.textContent({}), locator.getAttribute(name, {}) and tab.playwright.domSnapshot().${next} Keep the callback in the restricted scope and use supported DOM reads.`;
 }
 
 export function evaluateWriteAdvice(text) {

@@ -262,7 +262,8 @@ test('recorded evaluate writes name the failed operation and the replacement act
   }
   assert.match(rewriteTabError('Error: TypeError: DragEvent is not a constructor' + stack), /sleight\.dragTo/);
   const parse = 'TypeError: parseInt is not a function' + stack;
-  assert.equal(rewriteTabError(parse), parse);
+  assert.ok(rewriteTabError(parse).startsWith(parse));
+  assert.match(rewriteTabError(parse), /restricted read-only scope/);
   const fetch = 'TypeError: Cannot add property fetch, object is not extensible' + stack;
   assert.ok(rewriteTabError(fetch).startsWith(fetch));
   assert.match(rewriteTabError(fetch), /read-only/);
