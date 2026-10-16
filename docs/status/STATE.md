@@ -28,7 +28,7 @@ v3-gate after tonight's gate rounds, with a full check. The owner logged in all 
 `node bench/world/login-readiness.mjs` reads them all as logged in. The claude-cu native root is installed (2.1.289), with onboarding,
 folder trust and `/mcp` computer-use enabled in `claude-cu/work`. Its app approvals last one session, with no "always allow" in the
 CLI, so its runs need the owner present. Whether the bench's strict empty MCP config hides its built-in `computer-use` server is
-unchecked. The first pass needs an away window for the other arms (they take focus). EPV3-1's consent run is still owed: its
+unchecked. The owner is away 2026-10-16 until about 12:00 UTC and approved the first pass overnight without claude-cu (135 runs, 5 arms), one arm per Puddle gap, after the gate and Opus rounds. Stop by 12:00 UTC. Puddle's windows (agreed 03:50 UTC) open at about 04:00 for the gate and about 05:30 for Opus if the gate passes. After that each window holds one arm and is followed by about 45 min of Puddle's lanes. Arm order: sleight, Codex, LCU, Cua, Peekaboo. Resume an interrupted arm with `--tasks`. EPV3-1's consent run is still owed: its
 cards open from the "sleight" menu bar item, not a popup.
 
 **Electron.** Agent `epv3-2` builds EPV3-2 on `arch/epv3-2` (`2bbdf404` is v3-gate plus EPV3-1, with the v3-context conflict resolved
