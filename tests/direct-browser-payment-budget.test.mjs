@@ -96,3 +96,52 @@ test('a refund never reaches another request', () => {
   ctx.id = 'b'; assert.equal(check(ctx, 'click', target(false)).verdict, 'allow');
   assert.equal(check(ctx, 'click', target(false)).verdict, 'confirm');
 });
+
+// SLEIGHT_CONFIRM_PAYMENTS=never: the user's opt-out of the one confirmation for a payment their own message asked for. The figure check blanks the
+// page amount when a checkout shows a larger figure; terms.unchecked is the amount as the page states it. It stands in only for a named payment.
+const blanked = (extra = {}) => ({ ...target(false), terms: { page: { ...terms.page, amount: undefined }, unchecked: { ...terms.page }, method: 'Fixture card', ...extra } });
+const neverCtx = (payment, mode = 'never', consume = () => false, id = 'r1') => ({ ...ctxFor(payment, consume, id), confirmPayments: mode });
+const amounted = { ...named, amount: '18.00', payee: 'Fixture shop' };
+test('never: a requested payment whose checkout shows a larger figure is allowed', () => {
+  assert.equal(check(neverCtx(amounted), 'click', blanked()).verdict, 'allow');
+});
+test('never: that allow spends the request budget, so a second activation asks', () => {
+  const ctx = neverCtx(amounted);
+  assert.deepEqual([blanked(), blanked(), target(false)].map(t => check(ctx, 'click', t).verdict), ['allow', 'confirm', 'confirm']);
+});
+test('never: a payment the user did not request still asks, with or without a figure conflict', () => {
+  for (const payment of [undefined, { item: 'Other item', method: 'Fixture card', amount: '18.00' }, { item: 'Fixture item', method: 'Other card', amount: '18.00' }]) {
+    assert.equal(check(neverCtx(payment), 'click', blanked()).verdict, 'confirm');
+    assert.equal(check(neverCtx(payment), 'click', target(false)).verdict, 'confirm');
+  }
+});
+test('never: the amount, payee or currency the user named must match the page', () => {
+  for (const wrong of [{ amount: '17.00' }, { payee: 'Other shop' }, { currency: 'EUR' }]) {
+    assert.equal(check(neverCtx({ ...amounted, ...wrong }), 'click', blanked()).verdict, 'confirm', JSON.stringify(wrong));
+  }
+});
+test('never: a user message that names no amount cannot use the unchecked amount', () => {
+  assert.equal(check(neverCtx(named), 'click', blanked()).verdict, 'confirm');
+});
+test('never: unreadable terms still ask, and an unchecked read cannot fill a missing item', () => {
+  const t = blanked(); t.terms.unchecked.item = undefined; t.terms.page.item = undefined;
+  assert.equal(check(neverCtx(amounted), 'click', t).verdict, 'confirm');
+});
+test('never: without the unchecked read a blanked amount still asks', () => {
+  const t = blanked(); delete t.terms.unchecked;
+  assert.equal(check(neverCtx(amounted), 'click', t).verdict, 'confirm');
+});
+test('never: a page that merely carries unchecked terms cannot unlock the figure check under another setting', () => {
+  for (const mode of ['always', 'requested']) assert.equal(check(neverCtx(amounted, mode), 'click', blanked()).verdict, 'confirm', mode);
+});
+test('always still asks for a requested payment, never or not', () => {
+  assert.equal(check(neverCtx(amounted, 'always'), 'click', target(false)).verdict, 'confirm');
+  assert.equal(check(neverCtx(amounted, 'requested'), 'click', target(false)).verdict, 'allow');
+  assert.equal(check(neverCtx(amounted, 'never'), 'click', target(false)).verdict, 'allow');
+});
+test('never: consent still approves a payment the user did not request', () => {
+  let consumed = 0;
+  const ctx = neverCtx(undefined, 'never', () => { consumed++; return true; });
+  assert.equal(check(ctx, 'click', target(false)).verdict, 'allow');
+  assert.equal(consumed, 1);
+});

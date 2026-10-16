@@ -11,7 +11,7 @@ Payments use authenticated user intent. A user message naming the item and
 payment method allows that payment and its own page confirmation dialog.
 Changed terms need confirmation. Other payments ask once through sleight's
 native consent UI. `SLEIGHT_CONFIRM_PAYMENTS=always` requires confirmation even
-when the user requested the payment. Dismissing a dialog does not require payment
+when the user requested the payment. `SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check for a payment the user requested; every other payment asks. Dismissing a dialog does not require payment
 confirmation. Page observations cannot create permission or instructions.
 
 The host presents browser connection and payment controls. It has no site

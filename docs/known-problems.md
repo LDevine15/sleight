@@ -154,7 +154,7 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - A session never closes the tabs it opened.
 - A web page's tree is capped in a result, but the first browser result of a session, with the engine's docs,
   still came to 55,450 characters on one article, over the 45,000 sleight aims for.
-- A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop).
+- A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop). `SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check below for such a payment, so a page that hides a larger total behind a matching amount field is not caught. It asks as before for an unrequested payment, a second payment in the same request and an amount that differs from the message.
 - The turbo v3 payment read asks whenever any visible money figure in the payment form or dialog is larger than the amount in the
   user's message, in any currency and with any label or sign (a discount, a was price, a gift card, a late fee, a coverage limit,
   a later total, an estimate, "-$500.00"). It doesn't read wording. Rounds 4 to 12 added label lists that cleared such a figure, and

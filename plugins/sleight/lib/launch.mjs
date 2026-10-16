@@ -218,8 +218,11 @@ export function approvalLogging(preapproved, env = process.env, auditDirectory) 
 // prompt gives up (cancel) after five minutes; the engine waits that long.
 const LIB = dirname(fileURLToPath(import.meta.url));
 
+// 'always' keeps every payment confirmation. 'never' (the user's own opt-out, an MCP-server env var the model and pages cannot set) drops the
+// one confirmation for a payment the user's message asked for. Anything else, unset included, is 'requested'. Exact match, as for 'always'.
 export function paymentConfirmationSetting(env = process.env) {
-  return env.SLEIGHT_CONFIRM_PAYMENTS === 'always' ? 'always' : 'requested';
+  const value = env.SLEIGHT_CONFIRM_PAYMENTS;
+  return value === 'always' || value === 'never' ? value : 'requested';
 }
 
 // The skill's body, sent after the engine's first-call docs. Missing or unreadable means none.

@@ -194,10 +194,21 @@ export function check(ctx, kind, target = {}) {
       used.add(requestKey); historyRequests.set(ctx,used);
     }
     if (!risk.payment) return allow;
-    const page = target.terms?.page, terms = { item: page?.item, amount: page?.amount, payee: page?.payee, method: target.terms?.method,
-      ...(page?.currency !== undefined ? { currency: page.currency } : {}) };
+    const termsOf = page => ({ item: page?.item, amount: page?.amount, payee: page?.payee, method: target.terms?.method,
+      ...(page?.currency !== undefined ? { currency: page.currency } : {}) });
+    const complete = t => ['item', 'amount', 'payee', 'method'].every(key => text(t[key]));
+    // The user's own message names this payment: item and method, and every other term it names matches.
+    const named = t => user?.payment && ['item', 'method'].every(key => text(user.payment[key])) &&
+      ['item', 'method', 'amount', 'payee', 'currency'].every(key => user.payment[key] === undefined || user.payment[key] === t[key]);
+    const setting = ctx.confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS;
+    let terms = termsOf(target.terms?.page);
+    // 'never' (the user's opt-out): the figure check blanks the amount when a checkout shows a larger figure. For a payment the user's message
+    // named with an amount, the amount as the page states it (target.terms.unchecked) stands in, so that one ask goes. Any other payment keeps the blank.
+    if (setting === 'never' && !complete(terms) && target.terms?.unchecked && text(user?.payment?.amount)) {
+      const open = termsOf(target.terms.unchecked); if (complete(open) && named(open)) terms = open;
+    }
     const ask = () => ({ verdict: 'confirm', terms });
-    if (!['item', 'amount', 'payee', 'method'].every(key => text(terms[key])) || !sameDocument(target, target)) return ask();
+    if (!complete(terms) || !sameDocument(target, target)) return ask();
     let bank = payments.get(ctx); if (!bank) { bank = { used: new Set() }; payments.set(ctx, bank); }
     settleRefund(bank);
     if (kind === 'dialog' && bank.dialog &&
@@ -206,9 +217,7 @@ export function check(ctx, kind, target = {}) {
     }
     if (kind === 'dialog' && target.state.submitUnconfirmed && !sameDocument(bank.dialog, target)) return retry();
     const requestKey = user && JSON.stringify([user.session, user.turn, user.id]);
-    const requested = user?.payment && ['item', 'method'].every(key => text(user.payment[key])) &&
-      ['item', 'method', 'amount', 'payee', 'currency'].every(key => user.payment[key] === undefined || user.payment[key] === terms[key]);
-    const strict = (ctx.confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'always';
+    const requested = named(terms), strict = setting === 'always';
     // One payment activation per user request, whichever kind of control it is: a script-driven button may be Apply or a
     // disguised charge, so it spends the same budget as the real submit. Past the budget, the user is asked through consume.
     if (!(requested && !strict && !bank.used.has(requestKey)) && ctx.consent?.consume(terms, target) !== true) return ask();

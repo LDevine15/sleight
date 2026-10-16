@@ -13,6 +13,7 @@ export function verdict(intent, authority = {}) {
   } catch { return { verdict: 'deny', reason: 'origin' }; }
   if (intent.consequence === 'payment' && intent.args?.action !== 'dismiss') {
     if (authority.confirmed) return { verdict: 'allow', reason: 'confirmed-payment' };
+    // Only 'always' stops an exact user request here. 'never' acts as 'requested': this path has no figure check to skip.
     if (authority.exactRequest && authority.confirmPayments !== 'always') return { verdict: 'allow', reason: 'user-payment-request' };
     return { verdict: 'confirm', reason: 'payment' };
   }

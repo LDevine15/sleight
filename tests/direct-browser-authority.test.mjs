@@ -68,6 +68,12 @@ test('specific payment request covers identical terms and same-transaction dialo
   const always = fixture({ confirmPayments: 'always' });
   always.user('request', { session: 's1', consequence: 'payment', terms });
   assert.equal(always.authority.prepare(operation({ consequence: 'payment', terms })).verdict, 'confirm');
+  // 'never' acts as 'requested' here: an exact request goes through, anything else asks.
+  const never = fixture({ confirmPayments: 'never' });
+  never.user('request', { session: 's1', consequence: 'payment', terms });
+  assert.equal(never.authority.prepare(operation({ consequence: 'payment', id: 'exact', terms })).verdict, 'allow');
+  assert.equal(never.authority.prepare(operation({ consequence: 'payment', id: 'other', terms: { ...terms, amount: 'other' } })).verdict, 'confirm');
+  assert.equal(fixture({ confirmPayments: 'never' }).authority.prepare(operation({ consequence: 'payment', terms })).verdict, 'confirm');
 });
 
 test('observed is not verified; timeout and revoke after dispatch preserve unknown', () => {

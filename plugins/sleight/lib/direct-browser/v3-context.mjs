@@ -158,7 +158,9 @@ async function foldForwarded(handle, element) {
 // Two predicates: `visible` (STRICT, a person could read it) lets a term supply
 // authority; `looseLines` (LOOSE, anything rendered) can only force an ask when
 // it shows a different payable number. Whatever can't be established fails closed.
-export function readPaymentPage(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
+// lenient (true under SLEIGHT_CONFIRM_PAYMENTS=never) also returns `unchecked`: the terms with the amount read without the figure check.
+// The rules use it only for a payment the user's own message named, so a larger add-on figure no longer blanks the amount for that payment.
+export function readPaymentPage(el, lenient, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) {
   const doc = read(el, 'ownerDocument'), view = read(doc, 'defaultView');
   // Form ownership stops at a shadow root, but a control in one still acts for the form around its host. Climb host by host.
   const enclosing = (node, selector) => {
@@ -577,7 +579,7 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     return figures.some(f => f.mark || !same(f.cur, reference) || !(f.value <= A + eps)) ||
       figures.filter(f => f.chosen && !f.minus && Math.abs(f.value - A) >= eps).reduce((sum, f) => sum + f.value, 0) > A + eps;
   };
-  const field = key => {
+  const field = (key, figures = true) => {
     if (!root) return;
     const values = [], hidden = [];
     const valueOf = value => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').replace(new RegExp('^' + key + ':\\s*', 'i'), '') : '';
@@ -599,14 +601,16 @@ export function readPaymentPage(el, unused, read = (node, key) => { const value 
     }
     if (key === 'amount' && values.length === 1) {
       // Anything rendered that shows a different payable figure (LOOSE) leaves the terms ambiguous.
-      const lines = looseLines(); if (!lines || conflicts(lines, values[0], field('currency'))) return;
+      if (figures) { const lines = looseLines(); if (!lines || conflicts(lines, values[0], field('currency'))) return; }
     }
     return values.length === 1 && values[0].length <= 4096 && !hidden.some(value => value && value !== values[0]) ? values[0] : undefined;
   };
   const page = Object.fromEntries(['item', 'amount', 'payee', 'currency'].map(key => [key, field(key)]).filter(([,value]) => value !== undefined));
+  const loose = lenient === true && page.amount === undefined ? field('amount', false) : undefined;
+  const unchecked = lenient === true ? loose === undefined ? page : { ...page, amount: loose } : undefined;
   const labels = read(el, 'labels') ? [...read(el, 'labels')].map(label => read(label, 'innerText').trim()).filter(Boolean) : [];
   const name = read(el, 'getAttribute')('aria-label') || (labels.length === 1 ? labels[0] : '');
-  return { origin: read(view, 'location').origin, page, name };
+  return { origin: read(view, 'location').origin, page, name, ...(unchecked ? { unchecked } : {}) };
 }
 
 function dialogTerms(message) {
@@ -624,6 +628,7 @@ function dialogTerms(message) {
 export function createV3Context({ binding, browser, ui, confirmPayments, now = Date.now } = {}) {
   const bound = bindings.get(binding);
   if (!bound || !text(browser)) throw Error('TRUSTED_TURN_REQUIRED');
+  const never = (confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'never';
   const requested = requestedPayment(bound.message.text), documents = new Map(), targets = new WeakMap(), held = new Set();
   const watched = new Map();
   const uploads = new WeakMap(), offered = new Map(), tickets = new Map(), pending = new Map();
@@ -683,7 +688,8 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       !!dialogOwner?.dialog && dialogOwner.doc.valid,
     session: bound.message.session, turn: bound.message.turn, userMessage: () => {
     if (!current()) return;
-    const page = ruleTarget?.terms?.page;
+    // Under 'never' the user's own request is matched against the terms read without the figure check; the rules apply them only when it matches.
+    const page = (never && ruleTarget?.terms?.unchecked) || ruleTarget?.terms?.page;
     const observed = page && { ...page, method: requested?.method };
     // TS1 exactTerms equality: the whole observed terms object must match the
     // authenticated request, including optional currency. No provider echo.
@@ -725,7 +731,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       }
       const closed = closedDetails(handle);
       if (target.do === 'press' && !await focusProved(handle, true, closed)) throw Error(focusRequired);
-      const observed = await trustedRead(handle, readPaymentPage);
+      const observed = await trustedRead(handle, readPaymentPage, never);
       const parsed = new URL(frame.url());
       if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
       const identity = { browserIncarnation: browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
@@ -737,7 +743,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       const sealEvidence = { element: seal, ...await foldForwarded(handle, element) };
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: observed.origin,
-        sealEvidence, element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, method: requested?.method },
+        sealEvidence, element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, ...(never && observed.unchecked ? { unchecked: observed.unchecked } : {}), method: requested?.method },
         submit: intent(target.do ?? 'click', { ...target, element }).submit });
       return record;
     } catch (error) { held.delete(handle); await handle.dispose().catch(() => {}); throw error; }

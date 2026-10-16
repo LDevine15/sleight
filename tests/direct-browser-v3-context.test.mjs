@@ -26,7 +26,7 @@ function fixture(text = payText(terms), options = {}) {
       if (fn.name === 'inspectTarget') return { ...element, name: 'Continue', payment, formPayment: payment };
       if (fn.name === 'inspectElement') return { ...element, payment, formPayment: payment };
       if (fn.name === 'forwardInfo') return { label: false, areas: [] };
-      if (fn.name === 'readPaymentPage') return { origin, page: { ...terms, ...f.pageTerms }, name: inputName };
+      if (fn.name === 'readPaymentPage') { const page = Object.fromEntries(Object.entries({ ...terms, ...f.pageTerms }).filter(([, v]) => v !== undefined)); return { origin, page, name: inputName, ...(arg === true ? { unchecked: { ...page, ...f.uncheckedTerms } } : {}) }; }
       throw Error('unsupported page reader: ' + fn.name);
     },
     evaluateHandle: async fn => { assert.equal(fn.name, 'ownDocument'); return document; },
@@ -40,7 +40,7 @@ function fixture(text = payText(terms), options = {}) {
   const locator = { elementHandle: async () => handle };
   const binding = api.createV3TurnBinding({ source: 'user', session: 'session', turn: 'turn', id: 'request', text }, () => !ended);
   const ctx = api.createV3Context({ binding, browser: 'bfixture', ...options });
-  const f = { ctx, binding, handle, state, pageTerms: {}, focusOk: true,
+  const f = { ctx, binding, handle, state, pageTerms: {}, uncheckedTerms: {}, focusOk: true,
     target: extra => ({ page: new EventEmitter(), state, locator, ref: 'e1', element: { ...element }, ...extra }),
     navigate() { document = {}; }, changeOrigin() { origin = 'https://other.invalid'; }, end() { ended = true; },
     heading() { payment = false; Object.assign(element, { tag: 'h2', kind: 'text', submit: false, form: false }); },
@@ -66,6 +66,40 @@ test('private exact request pays once; user input is copied and page terms are i
 for (const key of ['item', 'amount', 'payee', 'currency']) test('changed page payment ' + key + ' cannot use the user request', async () => {
   const f = fixture(); f.pageTerms[key] = 'changed';
   assert.equal((await f.ctx.check('click', f.target())).verdict, 'confirm');
+});
+// SLEIGHT_CONFIRM_PAYMENTS=never. The figure check blanks the page amount when the checkout shows a larger figure (pageTerms.amount undefined);
+// the unchecked read (only asked for under 'never') still carries the amount the page states.
+const blankedAmount = f => { f.pageTerms.amount = undefined; f.uncheckedTerms.amount = '18.00'; return f; };
+test('never: a requested payment with a larger add-on figure on the checkout is allowed once; a second activation asks', async () => {
+  const f = blankedAmount(fixture(payText(terms), { confirmPayments: 'never' }));
+  assert.equal((await f.ctx.check('click', f.target())).verdict, 'allow');
+  assert.equal((await f.ctx.check('click', f.target())).verdict, 'confirm');
+  await f.ctx.dispose();
+});
+for (const setting of ['requested', 'always', undefined]) test('the same checkout asks without never: ' + setting, async () => {
+  const f = blankedAmount(fixture(payText(terms), { confirmPayments: setting }));
+  assert.equal((await f.ctx.check('click', f.target())).verdict, 'confirm');
+  await f.ctx.dispose();
+});
+test('never: a payment the user never asked for (a page-triggered one) still asks', async () => {
+  for (const text of ['Read only', payText({ ...terms, item: 'Another item' })]) {
+    const f = blankedAmount(fixture(text, { confirmPayments: 'never' }));
+    assert.equal((await f.ctx.check('click', f.target())).verdict, 'confirm');
+    await f.ctx.dispose();
+  }
+});
+test('never: an amount that differs from the one the user named asks, with or without a figure conflict', async () => {
+  const f = blankedAmount(fixture(payText({ ...terms, amount: '17.00' }), { confirmPayments: 'never' }));
+  assert.equal((await f.ctx.check('click', f.target())).verdict, 'confirm');
+  const g = fixture(payText(terms), { confirmPayments: 'never' }); g.pageTerms.amount = '99.00'; g.uncheckedTerms.amount = '99.00';
+  assert.equal((await g.ctx.check('click', g.target())).verdict, 'confirm');
+  await f.ctx.dispose(); await g.ctx.dispose();
+});
+test('never: a page-supplied unchecked field on the target is replaced by the trusted read', async () => {
+  const f = blankedAmount(fixture('Read only', { confirmPayments: 'never' })), t = f.target({ terms: { unchecked: { ...terms } } });
+  assert.equal((await f.ctx.check('click', t)).verdict, 'confirm');
+  assert.equal(t.terms.unchecked.amount, '18.00'); assert.equal(t.terms.page.amount, undefined);
+  await f.ctx.dispose();
 });
 for (const key of ['item', 'amount', 'payee', 'method']) test('missing requested payment ' + key + ' confirms', async () => {
   const requested = { ...terms }; delete requested[key]; const f = fixture(payText(requested));
@@ -242,6 +276,28 @@ test('V10R5 payment terms follow el.form and exclude an opacity-zero amount deco
     defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({...paint,visibility:'visible',display:'block',opacity:'1'})}};
   const observed=api.readPaymentPage({ownerDocument:doc,form:root,closest:() => wrong,getAttribute:() => null});
   assert.equal(observed.page.amount,undefined);
+});
+
+test('readPaymentPage returns the unchecked amount only when asked; a larger figure blanks the page amount but not the unchecked one', () => {
+  const box = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
+  const node = (value, extra = {}) => ({ localName: 'p', nodeType: 1, innerText: value, textContent: value, childNodes: [], getBoundingClientRect: () => box,
+    getClientRects: () => [box], checkVisibility: () => true, getAttribute: () => null, ...extra });
+  const read = (lenient, rendered) => {
+    const text = { nodeType: 3, textContent: rendered };
+    const root = node(rendered, { querySelectorAll: selector => selector.includes('amount') ? [node('Amount: 18.00')] : [], childNodes: [text] });
+    text.parentElement = root;
+    const paint = { color: 'rgb(0, 0, 0)', webkitTextFillColor: 'rgb(0, 0, 0)', backgroundColor: 'rgba(0, 0, 0, 0)', backgroundImage: 'none', filter: 'none', maskImage: 'none', mixBlendMode: 'normal', fontSize: '16px' };
+    const doc = { documentElement: {}, createRange() { let n; return { selectNodeContents(x) { n = x; }, getClientRects: () => (n.parentElement ?? n).getClientRects() }; },
+      createTreeWalker(n) { let done = false; return { nextNode() { if (done) return null; done = true; return n.innerText ? { parentElement: n, textContent: n.innerText } : null; } }; },
+      defaultView: { innerWidth: 800, innerHeight: 600, location: { origin: 'https://fixture.invalid' }, getComputedStyle: () => ({ ...paint, visibility: 'visible', display: 'block', opacity: '1' }) } };
+    return api.readPaymentPage({ ownerDocument: doc, form: root, closest: () => ({ querySelectorAll: () => [], innerText: '' }), getAttribute: () => null }, lenient);
+  };
+  for (const lenient of [undefined, false]) assert.equal('unchecked' in read(lenient, 'Total 18.00'), false);
+  const calm = read(true, 'Total $18.00');
+  assert.equal(calm.page.amount, '18.00'); assert.equal(calm.unchecked.amount, '18.00');
+  const busy = read(true, 'Total $18.00 Add-on $25.00');
+  assert.equal(busy.page.amount, undefined); assert.equal(busy.unchecked.amount, '18.00');
+  assert.equal(read(undefined, 'Total $18.00 Add-on $25.00').page.amount, undefined);
 });
 
 test('V10R6 dismissing a page dialog before an allowed click remains available', async () => {
