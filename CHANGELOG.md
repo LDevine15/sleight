@@ -2,7 +2,7 @@
 
 ## 1.3.0 (TODO: release date)
 
-Native actions read the app less, and browsers get an opt-in turbo path beside the engine's tools.
+Native actions read the app less, and browsers get a turbo path, on by default, beside the engine's tools.
 In the guard A/B on five native tasks (2026-10-14, Haiku 5.5 at high effort, three runs a side),
 the combined changes passed 15/15 against 14/15 and cut summed median tool time from 49.9 s to 32.5 s.
 After safety fixes, a follow-up passed 14/14 with one skipped run, at 43.9 s of tool time and
@@ -142,14 +142,20 @@ TODO: full release pass result.
 
 ### Turbo
 
-- Turbo is wired into the installed plugin, opt-in, with `browser_open`, `browser_read`,
-  `browser_act` and `browser_fill`. The engine stays the default. With turbo on, Claude can also
-  choose the engine's browser tools, including mobile viewport control. Each path keeps separate tabs
-  and refs. A safety refusal or an uncertain action must not be retried through the other path.
+- Turbo is on by default, with `browser_open`, `browser_read`, `browser_act` and `browser_fill`.
+  With turbo on, Claude can also choose the engine's browser tools, including mobile viewport control.
+  Each path keeps separate tabs and refs. A safety refusal or an uncertain action must not be retried
+  through the other path.
+- At startup sleight writes the operator-owned `~/Library/Application Support/sleight/turbo.json` for
+  Google Chrome (or Helium when Chrome isn't installed), and rewrites it after a plugin update or a
+  node version change. A file with `enabled: false` is never overwritten. With no supported browser,
+  or a write that fails, the engine path is used and one line says why. `sleight-mcp turbo on|off|status`
+  are the user's controls, and `--doctor` has a turbo section with the fix for each problem. Claude's
+  file edits and shell commands can't write the file or run `turbo on` or `turbo off`.
 - Turbo connects to the selected browser through its remote-debugging consent, without an extension.
-  The operator-owned `~/Library/Application Support/sleight/turbo.json` binds the accepted package
-  and selected browser profile. Missing or disabled configuration leaves turbo off. Installed setup
-  and native consent still need qualification before release.
+  Turning on remote debugging at `chrome://inspect/#remote-debugging` stays the user's one step.
+  A receipt that doesn't match the installed package never connects. Installed setup and native
+  consent still need qualification before release.
 - Page content never supplies instructions or permission. Payments follow the rule above. Before
   retrying a submit with an unknown effect, Claude must read fresh state. Input checks the target
   element, and incomplete page sensing does not alone block it. Pausing, losing consent or changing

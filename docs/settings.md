@@ -173,6 +173,29 @@ extension, otherwise `computer` only. Set it to `computer` or `browser,computer`
 An engine started from ChatGPT.app, when there's no Codex plugin, is computer-only unless you set
 it. [How it works](how-it-works.md#browser-surface).
 
+## Turbo
+
+Turbo, the direct Chrome DevTools path for browsers, is on by default. At startup sleight writes
+`~/Library/Application Support/sleight/turbo.json` when it is missing, and rewrites it when the plugin
+files or the node version no longer match it. The file records the browser, its profile folder and a
+hash of the installed plugin. A file with `enabled: false` is your opt-out, and sleight never
+overwrites it. Claude's own file edits and shell commands can't write the file or run `turbo on` and
+`turbo off`.
+
+- `sleight-mcp turbo status` prints whether turbo is on, the browser, its profile folder and whether
+  remote debugging is on (the profile's `DevToolsActivePort` file exists while the browser runs with it).
+- `sleight-mcp turbo off` writes the opt-out. Turbo stays off until you run `turbo on`.
+- `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.
+  Without it, Google Chrome is first and Helium second. A browser whose executable others can write
+  (mode 775 or 777) is skipped, because the connection refuses it.
+- Without a supported browser the launcher doesn't write the file and prints one line with the reason.
+- Remote debugging stays your step: turn it on at `chrome://inspect/#remote-debugging`. The browser
+  asks you to allow each connection.
+
+`sleight-mcp --doctor` starts with a turbo section. It reports the config state, the browser and whether
+the receipt is current, then whether the native helpers are compiled and whether remote debugging is on,
+each with the one fix. It only reads.
+
 ## Preapproved apps
 
 Write `~/Library/Application Support/sleight/preapproved.json` yourself to allow selected apps without

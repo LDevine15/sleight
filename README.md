@@ -93,26 +93,36 @@ Then start a new session. A running session keeps the version it started with.
 
 Also runs as a plain MCP server: see [other hosts](docs/other-hosts.md).
 
-### Turbo browser path (opt-in)
+### Turbo browser path (on by default)
 
 Turbo adds `browser_open`, `browser_read`, `browser_act` and `browser_fill` through a direct browser
-connection. The engine stays the default. With turbo enabled, Claude can choose either path, including
-the engine's mobile viewport tools. Each path uses its own tabs and refs. An uncertain action or safety
+connection. The engine's browser tools stay beside them. Claude can choose either path, including the
+engine's mobile viewport tools. Each path uses its own tabs and refs. An uncertain action or safety
 refusal must not be retried through the other path.
 
-Turbo needs the selected browser's remote-debugging consent and an operator-owned
-`~/Library/Application Support/sleight/turbo.json` binding the accepted plugin package and profile.
-It stays off when that configuration is missing or disabled. Its native helpers compile from checked
-source on first use, requiring Apple's command-line tools. A failed build leaves the engine available.
-The plugin includes `playwright-core` 1.64.0 with its hashes and license notices, loaded only for turbo.
-Native apps still use the ChatGPT engine.
+Turbo is on after install, with one step from you. When a session starts, sleight finds Google Chrome
+(then Helium), writes `~/Library/Application Support/sleight/turbo.json` for the installed plugin, and
+rewrites it after a plugin update or a node change. Then turn on remote debugging in the browser once,
+at `chrome://inspect/#remote-debugging`. Chrome asks you to allow each connection. If it isn't on yet,
+the engine's browser path is used.
+
+```bash
+sleight-mcp turbo status                        # on or off, the browser, and whether remote debugging is on
+sleight-mcp turbo off                           # turn turbo off; sleight never turns it back on
+sleight-mcp turbo on [--browser chrome|helium]  # turn it on, or pick the browser
+```
+
+`sleight-mcp --doctor` starts with a turbo section that lists each problem with its fix. Turbo's native
+helpers compile from checked source on first use, requiring Apple's command-line tools. A failed build
+leaves the engine available. The plugin includes `playwright-core` 1.64.0 with its hashes and license
+notices, loaded only for turbo. Native apps still use the ChatGPT engine.
 
 On FowlBrowser's 13 browser tasks (2026-10-16, Haiku 5.5 at high effort, five rounds, both browser
 orders), turbo's median round took 547 s (p90 590) with 0 errors against FowlBrowser's 720 s (p90 868)
 and 7 errors, 76% of its time. Both finished 26/26 under the owner's scoring. On Opus 5.5 it took 675 s
 against 885 s, 76% again ([gate](docs/benchmarks/2026-10-16-gate.md),
 [Opus](docs/benchmarks/2026-10-16-opus.md)). That covers FowlBrowser's tasks only, not native apps.
-Installed setup and native consent still need qualification. The earlier
+Installed setup and native consent still need qualification (see [known problems](docs/known-problems.md#turbo-on-by-default)). The earlier
 [prototype](docs/benchmarks/2026-10-14-turbo-prototype.md) passed 4/9 and skipped production consent.
 
 ## Why sleight
