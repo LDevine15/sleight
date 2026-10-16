@@ -69,6 +69,55 @@ test('selected-port guard precedes page exposure, fails private requests and sur
   assert.ok(f.calls.some(row=>row.method==='Fetch.enable'&&row.route==='child'));
   assert.ok(!f.calls.some(row=>row.method==='Fetch.enable'&&row.route==='foreign'));
 });
+test('a browser-level port guard precedes the first attachment and catches popups no page session sees', async t => {
+  const f = fixture(), create = await factory();
+  const first = create({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  const second = create({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => Promise.all([first.dispose(), second.dispose()]));
+  await first.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  await second.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const root = f.calls.filter(row => row.method === 'Fetch.enable' && row.route === 'root');
+  assert.equal(root.length, 1, 'one browser guard per connection');
+  assert.deepEqual(root[0].params.patterns, [{ urlPattern: '*://*:9222/*', requestStage: 'Request' }]);
+  assert.ok(f.calls.indexOf(root[0]) < f.calls.findIndex(row => row.method === 'Target.attachToTarget'));
+  // A popup's first navigation pauses at the browser session, with no sessionId.
+  f.emit({ method: 'Fetch.requestPaused', params: { requestId: 'popup', resourceType: 'Document', request: { url: 'http://127.0.0.1:9222/json/close/foreign' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls.filter(row => row.params.requestId === 'popup').map(row => [row.method, row.route, row.params.errorReason]),
+    [['Fetch.failRequest', 'root', 'BlockedByClient']]);
+});
+test('the browser-level guard on port 80 matches loopback hosts only', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 80 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const patterns = f.calls.find(row => row.method === 'Fetch.enable' && row.route === 'root').params.patterns.map(row => row.urlPattern);
+  assert.ok(patterns.includes('http://127.0.0.1/*') && patterns.includes('http://*.localhost/*') && patterns.includes('http://*@127.0.0.1/*') && patterns.includes('http://*.localhost./*'));
+  assert.ok(!patterns.some(pattern => /^\*|:\/\/\*\//.test(pattern)), 'no pattern pauses every request: ' + patterns);
+});
+test('the browser-level guard on port 443 also matches plain http on :443', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 443 });
+  t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  const patterns = f.calls.find(row => row.method === 'Fetch.enable' && row.route === 'root').params.patterns.map(row => row.urlPattern);
+  assert.ok(patterns.includes('*://*:443/*') && patterns.includes('https://*@localhost/*'));
+});
+test('a refused browser-level guard names itself, and a failed continue fails the request instead of leaving it paused', async t => {
+  const f = fixture(), send = f.session.send;
+  let refuse = true;
+  f.session.send = async (method, params, route = 'root') => {
+    if (method === 'Fetch.enable' && route === 'root' && refuse) { f.calls.push({ method, params, route }); throw Error('CDP_COMMAND_FAILED'); }
+    if (method === 'Fetch.continueRequest') { f.calls.push({ method, params, route }); throw Error('INVALID_CDP_COMMAND'); }
+    return send.call(f.session, method, params, route);
+  };
+  const filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  await assert.rejects(filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true }), /CDP_DEVTOOLS_GUARD_UNAVAILABLE/);
+  refuse = false;
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  f.emit({ method: 'Fetch.requestPaused', params: { requestId: 'odd', resourceType: 'Document', request: { url: 'https://x.invalid/a:9222/b' } } });
+  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls.filter(row => row.params?.requestId === 'odd').map(row => row.method), ['Fetch.continueRequest', 'Fetch.failRequest']);
+});
 for (const method of ['Page.bringToFront', 'Target.activateTarget', 'Browser.setWindowBounds', 'Browser.setContentsSize',
   'Browser.close', 'Browser.crash', 'Browser.grantPermissions', 'Browser.resetPermissions', 'Browser.setPermission',
   'Target.sendMessageToTarget', 'Target.createBrowserContext', 'Target.disposeBrowserContext', 'Target.exposeDevToolsProtocol']) {
@@ -225,8 +274,11 @@ test('guard installs recursive auto-attach and prepares received children before
     assert.ok(calls.indexOf('Target.setAutoAttach') > calls.indexOf('Fetch.enable'), type);
     assert.ok(calls.indexOf('Runtime.runIfWaitingForDebugger') > calls.indexOf('Target.setAutoAttach'), type);
   }
+  const sent = () => f.calls.filter(row => row.method === 'Target.setAutoAttach' && row.route === 's-owned');
+  assert.equal(sent().length, 1);
   await filter.session.send('Target.setAutoAttach', { autoAttach: false, flatten: true }, 's-owned');
-  assert.equal(f.calls.at(-1).params.autoAttach, true, 'client cannot remove guard auto-attach');
+  await filter.session.send('Target.setAutoAttach', { autoAttach: true, flatten: true }, 's-owned');
+  assert.deepEqual(sent().map(row => row.params.autoAttach), [true], 'client cannot remove guard auto-attach, and a repeat is not sent');
   f.emit({ method: 'Target.attachedToTarget', sessionId: 's-owned', params: { sessionId: 'wrong-opener',
     targetInfo: { targetId: 'foreign', type: 'page', openerId: 'foreign' }, waitingForDebugger: true } });
   await new Promise(resolve => setImmediate(resolve));
@@ -309,6 +361,28 @@ for (const method of ['Fetch.continueRequest', 'Fetch.failRequest']) test(method
   failure = 'transport disconnected';
   pause(); await new Promise(resolve => setImmediate(resolve));
   await assert.rejects(filter.session.send('Runtime.enable', {}, 's-owned'), /CDP_SESSION_NOT_OWNED/);
+});
+
+test('a page and an iframe get Target.setAutoAttach once, and only the page\'s first session gets it unasked', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'], protectedPort: 9222 });
+  t.after(() => filter.dispose());
+  const first = (await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true })).sessionId;
+  const autoAttach = route => f.calls.filter(row => row.method === 'Target.setAutoAttach' && row.route === route);
+  assert.equal(autoAttach(first).length, 1);
+  const second = (await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true })).sessionId;
+  assert.notEqual(second, first);
+  assert.equal(autoAttach(second).length, 0, 'a second session of the page is not auto-attached unasked');
+  await filter.session.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, second);
+  assert.deepEqual(autoAttach(second).map(row => row.params), [{ autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'iframe' }, { type: 'worker' }, { exclude: true }] }]);
+  await filter.session.send('Target.setAutoAttach', { autoAttach: true, flatten: true }, second);
+  await filter.session.send('Target.setAutoAttach', { autoAttach: true, flatten: true }, first);
+  assert.equal(autoAttach(first).length, 1);
+  assert.equal(autoAttach(second).length, 1);
+  f.emit({ method: 'Target.attachedToTarget', sessionId: first, params: { sessionId: 'frame', targetInfo: { targetId: 'frame', type: 'iframe' }, waitingForDebugger: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(autoAttach('frame').length, 1);
+  await filter.session.send('Target.setAutoAttach', { autoAttach: true, flatten: true }, 'frame');
+  assert.equal(autoAttach('frame').length, 1, 'the frame\'s own caller repeats it without effect');
 });
 
 test('auto-attach selects only owned iframe and dedicated-worker descendants', async t => {

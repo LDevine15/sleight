@@ -103,10 +103,10 @@ for (const event of ['navigation', 'document', 'dialog', 'popup', 'close']) test
     assert.equal(f.page.listenerCount(name), 0, name);
 });
 
-test('v3 never retries a timed out dispatched input and names a cover with its buttons', async () => {
+test('v3 never retries a timed out dispatched input and keeps the cover\'s page text out of the harness line', async () => {
   const f = fixture({ fail: 'Timeout 1000ms exceeded: Cookie notice intercepts pointer events' });
   const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e2' }], {});
-  assert.match(result.lines[0], /Cookie notice/); assert.match(result.lines[0], /Accept cookies/);
+  assert.match(result.lines[0], /covering element/); assert.doesNotMatch(result.lines[0], /Cookie notice|Accept cookies/); // page text belongs in the labelled blocker read
   assert.match(result.lines[1], /not reached/); assert.equal(f.actions.length, 1);
 });
 
@@ -116,6 +116,7 @@ test('v3 retains blocker button refs when the final page diff is unchanged', asy
     snapshot: async (page, options) => ({ text: options.find ? '- button "Accept cookies" [ref=e8]' : 'No visible changes.', number: 2 }) });
   const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], {});
   assert.match(result.observe.text, /Accept cookies.*ref=e8/);
+  assert.match(result.observe.text, /^Blocker controls \(untrusted page content\):\n- button "Accept cookies"/m, 'the blocker read is labelled'); // its page text may only appear under this label
 });
 
 test('v3 unknown submit prevents a second submit before the delivered read', async () => {
@@ -247,6 +248,19 @@ test('v3 passes the background-click disposition to the single Playwright click'
     snapshot: async () => ({ text: 'No visible changes.', number: 2 }) });
   await run(f.tab, [{ do: 'click', ref: 'e1' }], {});
   assert.equal(f.actions.length, 1); assert.deepEqual(f.actions[0][2], { timeout: 1000, modifiers: ['ControlOrMeta'] });
+});
+
+// The guard's two cancel messages (page.mjs): "not run" and "retry is safe" only when the page saw no press, release or click.
+for (const [name, message, pattern, absent] of [
+  ['safe', 'page changed during the click; read again. The page received no press, release or click, so a fresh read and one retry is safe.', /^1 click e1: not run: page changed during the click; read again\. The page received no press, release or click, so a fresh read and one retry is safe\./, /effect unconfirmed/],
+  ['after a press', 'page changed during the click; the page had already received part of it.', /^1 click e1: effect unconfirmed; read before retrying\. page changed during the click; the page had already received part of it\./, /not run|retry is safe/],
+]) test('v3 a guard-cancelled click is worded ' + name, async () => {
+  const f = fixture(); let time = 0;
+  const run = createActionRunner({ check: () => 'allow', now: () => time, sleep: async ms => { time += ms; },
+    backgroundClick: async (tab, loc, click) => { await click({}); throw Error(message); },
+    snapshot: async () => ({ text: 'No visible changes.', number: 2 }) });
+  const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], pattern); assert.doesNotMatch(result.lines[0], absent);
 });
 
 test('v3 scroll until finds the text in a bounded search and returns its ref', async () => {
@@ -465,4 +479,66 @@ test('v3 refuses a scroll step past 10000 as not run, with the way to reach a lo
     await assert.rejects(f.run(f.tab, [step], {}), error => error.notRun === true && /dy up to 10000 per step; give until the row text/.test(error.message));
   }
   assert.deepEqual(f.actions, []);
+});
+
+for (const [name, background, pageOpened, expected] of [
+  ['an unmodified click and a tab the page opened', false, true, /probably took the foreground/],
+  ['an unmodified click and a tab sleight opened', false, false, /opened background tab/],
+  ['a click with the background modifier', true, true, /opened background tab/],
+]) test(`AD1 backstop: the popup outcome for ${name}`, async () => {
+  const f = fixture({ onClick: page => page.emit('popup', { url: () => 'https://example.invalid/popup', isClosed: () => false }) });
+  f.tab.background = background; f.tab.pageOpened = () => pageOpened;
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], expected);
+});
+
+test('AD1 backstop: a popup counted at settle time is reported once, without a popup event', async () => {
+  const f = fixture(); let counted = 1;
+  f.tab.takeForeground = () => { const count = counted; counted = 0; return count; };
+  const first = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(first.lines[0], /probably took the foreground/);
+  const second = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.doesNotMatch(second.lines[0], /foreground/);
+});
+
+for (const [name, background, backgroundPopup, expected, notExpected] of [
+  ['a modified click and a popup no settling classified as background (a script opened it later)', true, false, /probably took the foreground \(the page opened it after a click, outside the background handling/, /opened background tab/],
+  ['a modified click and a popup its settling classified as background', true, true, /opened background tab/, /probably took the foreground/],
+]) test(`AD1 pop4: the popup outcome for ${name}`, async () => {
+  const f = fixture({ onClick: page => page.emit('popup', { url: () => 'https://example.invalid/popup', isClosed: () => false }) });
+  f.tab.background = background; f.tab.pageOpened = () => true; f.tab.popupIsBackground = () => backgroundPopup;
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], expected);
+  assert.doesNotMatch(result.lines[0], notExpected);
+});
+
+test('AD1 pop4: a popup counted late says why, and a modified click is not blamed for it', async () => {
+  const f = fixture(); f.tab.background = true; f.tab.takeForeground = () => 1;
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /A tab the page opened probably took the foreground \(the page opened it after a click, outside the background handling\)/);
+  assert.doesNotMatch(result.lines[0], /carried no background modifier|had no background modifier/);
+});
+
+test('AD1 pop4: tabs the page can raise are listed after a click or key press, and only then', async () => {
+  const f = fixture(); f.tab.raisablePopups = async () => ['t7', 't9'];
+  const clicked = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(clicked.lines[0], /Tabs t7, t9 \(opened by this page, another origin\) can be raised to the foreground by the page at any time, and sleight cannot block or detect that/);
+  f.tab.raisablePopups = async () => ['t7'];
+  const single = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(single.lines[0], /Tab t7 \(opened by this page, another origin\) can be raised/);
+  f.tab.raisablePopups = async () => [];
+  const none = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.doesNotMatch(none.lines[0], /can be raised/);
+  f.tab.raisablePopups = async () => { throw Error('closed'); };
+  const failed = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.doesNotMatch(failed.lines[0], /can be raised/, 'a failed lookup adds nothing and breaks nothing');
+});
+
+test('v3 accepts a literal space and a literal newline as keys, and still rejects an empty or oversized key', async () => {
+  const f = fixture();
+  for (const key of [' ', '\n', '\r']) {
+    const result = await f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {});
+    assert.equal(result.stoppedAt, null, JSON.stringify(key)); assert.ok(f.actions.some(a => a[0] === 'press' && a[2] === key), JSON.stringify(key));
+  }
+  for (const key of ['', 'a'.repeat(101), 1]) await assert.rejects(f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {}), /needs key/);
 });

@@ -130,11 +130,11 @@ test('real v3 a delayed dialog survives its pending click deadline and is explic
   assert.equal(await f.page.evaluate(() => window.next), 1);
 });
 
-test('real v3 cover outcome names the blocker and includes its dismiss button refs', { skip }, async t => {
+test('real v3 cover outcome keeps the blocker\'s page text out of the harness line and includes its dismiss button refs', { skip }, async t => {
   const f = await fixture(t, `<button id="target" style="position:absolute;top:20px">Target</button>
     <div role="dialog" aria-label="Cookie notice" style="position:fixed;inset:0;background:white"><button>Accept cookies</button></div>`);
   const result = await f.run(f.tab, [{ do: 'click', ref: await f.ref('Target') }], {});
-  assert.equal(result.stoppedAt, 1); assert.match(result.lines[0], /Cookie notice/); assert.match(result.lines[0], /Accept cookies/);
+  assert.equal(result.stoppedAt, 1); assert.match(result.lines[0], /covering element/); assert.doesNotMatch(result.lines[0], /Cookie notice|Accept cookies/); // page text belongs in the labelled blocker read
   assert.match(result.observe.text, /Accept cookies.*ref=/);
 });
 

@@ -3,15 +3,18 @@
 // No upstream source copied. All browser input stays on the owned Playwright page.
 import { stageUserUploads } from './files.mjs';
 import { isV3Context } from './v3-context.mjs';
-import { intent } from './rules.mjs';
+import { intent, deferRefund, refundableName, lineBreakRefusal } from './rules.mjs';
+import { observeActivity } from './activity.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 import { setViewport } from './viewport.mjs';
+import { originOf, pathOf, guardChooser } from './output-hygiene.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const TIMEOUT = 1000;
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const lineBreak = /[\r\n]/;
 const clean = value => String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 240);
 const refOf = value => typeof value === 'string' && /^(?:(?:f\d+)?e\d+|s\d+)$/.test(value) ? value : null;
 async function bounded(task, ms) {
@@ -23,6 +26,14 @@ async function bounded(task, ms) {
   } finally { clearTimeout(timer); }
 }
 
+// A key that activates the focused element, by what the page sees: every spelling of Enter (the numpad one and
+// the \r and \n characters included) is Enter, and Space is Space. A chord such as Shift+Enter ends in its key.
+const ENTER_KEYS = new Set(['enter', 'numpadenter', 'return', '\r', '\n']), SPACE_KEYS = new Set(['space', ' ', 'spacebar']);
+export function activationKey(key) {
+  const last = String(key).split('+').pop().toLowerCase();
+  return ENTER_KEYS.has(last) ? 'enter' : SPACE_KEYS.has(last) ? 'space' : null;
+}
+
 function validate(steps) {
   if (!Array.isArray(steps) || !steps.length || steps.length > 12) throw Error('steps needs 1 to 12 operations');
   for (const s of steps) {
@@ -31,7 +42,7 @@ function validate(steps) {
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
     if (s.ref !== undefined && !refOf(s.ref)) needs('a valid ref');
     if (s.do === 'type' && typeof s.text !== 'string') needs('text');
-    if (s.do === 'press' && (typeof s.key !== 'string' || !s.key.trim() || s.key.length > 100)) needs('key');
+    if (s.do === 'press' && (typeof s.key !== 'string' || !s.key || s.key.length > 100)) needs('key');
     if (s.do === 'select' && (!Array.isArray(s.values) || !s.values.length || s.values.some(v => typeof v !== 'string'))) needs('values');
     if (s.do === 'drag' && !refOf(s.to)) needs('to');
     if (s.do === 'upload' && (!Array.isArray(s.paths) || !s.paths.length || s.paths.some(p => typeof p !== 'string' || !p))) needs('paths');
@@ -68,17 +79,22 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
     return root && read(root, 'nodeType') === 11 ? enclosing(read(root, 'host'), 'form') : owner;
   };
   const form = formOf(), tag = read(el, 'localName'), role = read(el, 'getAttribute')('role'), name = words(el).trim().slice(0, 100);
+  const accName = (read(el, 'getAttribute')('aria-labelledby') ? '' : (read(el, 'getAttribute')('aria-label') || read(el, 'textContent') || read(el, 'getAttribute')('value') || read(el, 'getAttribute')('alt') || read(el, 'getAttribute')('title') || '')).replace(/\s+/g, ' ').trim().slice(0, 100);
   const button = tag === 'button' || tag === 'input' && /^(?:button|submit|image)$/.test(read(el, 'type')) || role === 'button';
+  // A label click forwards to its control, so a label for a file or color input opens the native picker like the input does.
+  const forwarded = (() => { try { const label = typeof HTMLLabelElement === 'undefined' ? null : Element.prototype.closest.call(el, 'label'), control = label && Object.getOwnPropertyDescriptor(HTMLLabelElement.prototype, 'control').get.call(label);
+    return control instanceof HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'type').get.call(control).toLowerCase() : ''; } catch { return ''; } })();
   const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
     /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
     read(node, 'localName') === 'iframe' || (read(node, 'localName') === 'button' || read(node, 'type') === 'submit') && payment(words(node)));
   const submit = !!(button && (read(el, 'type') === 'submit' && form || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
+  const scriptButton = !submit && !!(button && form && formPayment && read(el, 'type') !== 'reset');
   let hash = 2166136261;
   if (form) {
     const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');
     for (let i = 0; i < content.length; i++) hash = Math.imul(hash ^ content.charCodeAt(i), 16777619);
   }
-  return { name, tag, role, kind: button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit, payment: payment(name) || submit && formPayment,
+  return { name, accName, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
     formPayment, formSignature: form ? hash : null };
 }
 
@@ -117,6 +133,9 @@ function coverDetails(el) {
 function watch(page, state) {
   const pending = new Set(), completed = new Set(), listeners = []; let boundary, dialogResolve, stopped = false;
   const dialogReady = new Promise(resolve => { dialogResolve = resolve; });
+  // Settles when any boundary registers (navigation, new document, dialog, popup, close), so a caller can wait for one event, not a fixed time.
+  let boundaryResolve; const boundaryReady = new Promise(resolve => { boundaryResolve = resolve; });
+  const mark = value => { boundary = value; boundaryResolve(); };
   const stop = () => { stopped = true; for (const [event, fn] of listeners) page.off(event, fn); };
   const on = (event, fn) => {
     const listener = (...args) => { if (!stopped) fn(...args); };
@@ -125,12 +144,12 @@ function watch(page, state) {
   on('request', r => { if (['document', 'xhr', 'fetch', 'script', 'stylesheet'].includes(r.resourceType())) pending.add(r); });
   on('requestfinished', r => { if (pending.delete(r)) completed.add(r); });
   on('requestfailed', r => { pending.delete(r); });
-  on('framenavigated', frame => { if (frame === page.mainFrame()) boundary = { kind: 'navigation' }; });
-  on('load', () => { boundary ??= { kind: 'document' }; });
-  on('dialog', dialog => { state.dialog = dialog; boundary = { kind: 'dialog', dialog }; dialogResolve(boundary); });
-  on('popup', popup => { boundary = { kind: 'popup', popup }; });
-  on('close', () => { boundary = { kind: 'close' }; state.dialog = null; stop(); });
-  return { pending, completed, dialogReady, get boundary() { return boundary; },
+  on('framenavigated', frame => { if (frame === page.mainFrame()) mark({ kind: 'navigation' }); });
+  on('load', () => { if (!boundary) mark({ kind: 'document' }); });
+  on('dialog', dialog => { state.dialog = dialog; mark({ kind: 'dialog', dialog }); dialogResolve(boundary); });
+  on('popup', popup => { mark({ kind: 'popup', popup }); });
+  on('close', () => { mark({ kind: 'close' }); state.dialog = null; stop(); });
+  return { pending, completed, dialogReady, boundaryReady, get boundary() { return boundary; },
     stop };
 }
 
@@ -169,7 +188,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
-      let locator, target, started = false, armed, staging, submit, inputPending = false, stepFinished = false;
+      let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false;
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
         if (step.do === 'dialog' && !state.dialog) throw Error('no waiting dialog; read the page');
@@ -177,8 +196,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
-        const enter = step.do === 'press' && /(?:^|\+)(?:Enter|Return|Space)$/.test(step.key);
-        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && /Enter|Return/.test(step.key));
+        // Chrome treats text inserted into a single-line input as implicit submission when it is a lone line break, so a line
+        // break typed there is an Enter press that skipped the submit checks. Pressing Enter is the one way to send it.
+        if (step.do === 'type' && info.tag === 'input' && lineBreak.test(step.text)) throw Error(lineBreakRefusal);
+        const activation = step.do === 'press' ? activationKey(step.key) : null, enter = !!activation;
+        let submits = step.do === 'click' && info.submit || enter && (info.submit || info.form && activation === 'enter');
         target = { ...info, element: info, page, locator, state, ref: step.ref, do: step.do, key: step.key,
           paths: step.paths, submit: !!submits, payment: !!submits && (info.payment || info.formPayment),
           ...(step.do === 'dialog' ? { type: state.dialog.type(), message: state.dialog.message(), accept: step.accept } : {}) };
@@ -204,20 +226,34 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           staging = trusted ? await ctx.stageUploads(target, step.paths) : await stageUserUploads(ctx.files, step.paths, step.ref);
           if (!Array.isArray(staging?.payloads) || !staging.payloads.length) throw Error('user-named file staging required');
         }
+        guardChooser(page, state); const popupFrom = tab.popups?.length ?? 0;
         // Visible dialogs and panels before the input, to tell a submit that answered with one from a silent one.
         const overlayRead = async () => { try { return await trustedLocatorRead(locator, overlaySignature); } catch { return null; } };
         const overlayBase = locator && (step.do === 'click' || enter) ? await overlayRead() : null;
         armed = watch(page, state); const start = now();
+        // A script-driven control on the closed name list may be refunded later, if the whole network stays quiet (activity.mjs).
+        if (step.do === 'click' && info.scriptButton === true && refundableName(info.accName)) activity = observeActivity(page);
         const options = { timeout: TIMEOUT };
         const perform = async () => {
-          if (step.do === 'click') return backgroundClick(tab, locator, async extra => {
-            if (trusted) { await gate(); ctx.beginInput(target); }
+          if (step.do === 'click') return backgroundClick(tab, locator, async (extra, verifySeal) => {
+            // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
+            if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
             started = true; return locator.click({ ...options, ...extra });
           });
+          const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
+          // the key also goes through the key shield (armed before the key, every other frame locked), so the gate's verdict and the
+          // key it sends share one seal; `extra.between` lets the shield look at the page between the key going down and coming up.
+          if (step.do === 'press' && enter) return backgroundClick(tab, locator, async extra => {
+            if (trusted) { await gate(); ctx.beginInput(target); }
+            started = true;
+            if (extra.modifiers) await page.keyboard.down('ControlOrMeta');
+            return pressKey(extra);
+          }, { press: activation, keys: trusted });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           started = true;
           if (step.do === 'type') return locator.fill(step.text, options);
-          if (step.do === 'press') return trusted ? ctx.pressTarget(target, step.key, options) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
+          if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
           if (step.do === 'check') return locator.check(options);
           if (step.do === 'uncheck') return locator.uncheck(options);
@@ -244,7 +280,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
               if (step.until) {
                 const result = await read({ ref: step.ref, find: step.until, maxChars: 2000 });
                 const row = result.text.split('\n').find(line => line.toLocaleLowerCase().includes(step.until.toLocaleLowerCase()) && /\[ref=/.test(line));
-                if (row) return 'found ' + clean(row);
+                if (row) return 'found (untrusted page content): ' + clean(row);
                 if (n === 60 || now() >= end || armed.boundary) return 'text not found within 60 wheel steps or 4 s; read the list';
               } else if (n === 1) return;
               await page.mouse.wheel(dx, dy); await sleep(16);
@@ -272,12 +308,15 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // Repeated key presses and typing do not need their own observation: a step followed by another press
         // or type settles briefly and the last of the run settles fully. Enter, Return and Space can activate
         // a control, so they always settle in full, and so does any step that starts a submit.
-        const quiet = (step.do === 'type' || step.do === 'press' && !/(?:^|\+)(?:Enter|Return|NumpadEnter|Space| )$/.test(step.key)) && !submits;
-        const deferred = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes(steps[index + 1]?.do);
-        const settleUntil = deferred ? now() + 40 : start + (submits ? 5000 : 600);
+        const quiet = (step.do === 'type' || step.do === 'press' && !enter) && !submits;
+        const batched = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes(steps[index + 1]?.do);
+        const settleUntil = batched ? now() + 40 : start + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
-            formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature;
+            // A key can return before the navigation it started has committed, and the node is gone mid-read. Give the
+            // navigation boundary a moment to register; destroyed evidence without one still stops the batch.
+            try { formChanged = (await trustedLocatorRead(locator, inspectTarget)).formSignature !== info.formSignature; }
+            catch (error) { await Promise.race([armed.boundaryReady, sleep(150)]); if (!armed.boundary) throw error; }
             if (!formChanged && overlayBase) {
               const latest = await overlayRead();
               overlayShown = !!latest && (latest.count !== overlayBase.count || latest.hash !== overlayBase.hash);
@@ -287,45 +326,70 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           // A dialog or panel with no request in flight is the page's answer to the submit. Wait one second
           // from the click, which the delivered read needs to clear the unconfirmed submit, rather than five.
           if (submits && overlayShown && !armed.pending.size && now() >= start + 1000) break;
-          await sleep(Math.min(50, settleUntil - now()));
+          await Promise.race([armed.boundaryReady, sleep(Math.min(50, settleUntil - now()))]);
         }
-        if (deferred && !armed.boundary) carry = armed;
+        if (batched && !armed.boundary) carry = armed;
         const boundary = armed.boundary;
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
         if (submit && state.submitUnconfirmed === submit) {
           if (boundary?.kind === 'navigation' || boundary?.kind === 'document' || formChanged || armed.completed.size) state.submitUnconfirmed = false;
-          else submit.settledAt = now();
+          else {
+            submit.settledAt = now();
+            // No navigation, document, dialog or popup, no form change, no request in flight: the refund waits for the next payment check.
+            if (!boundary && !formChanged && !armed.pending.size && activity?.observable && await activity.verify()) deferred = trusted ? ctx.refund(target, activity) : deferRefund(ctx, target, activity);
+          }
         }
-        const outcome = boundary?.kind === 'navigation' ? 'navigated to ' + clean(page.url()) + ' (new page below)'
+        const popupTab = tab.popups?.slice(popupFrom).find(row => row.tab && !row.blocked)?.tab, navPath = boundary?.kind === 'navigation' ? pathOf(page.url()) : '';
+        // A tab the page opened during a click without the background modifier is probably in the foreground.
+        const clicked = ['click', 'press'].includes(step.do);
+        const foregroundTabs = clicked ? (await tab.takeForeground?.() ?? 0) + (boundary?.kind === 'popup' && tab.background === false
+          && tab.pageOpened?.(boundary.popup) === true ? 1 : 0)
+          + (boundary?.kind === 'popup' && tab.background === true && tab.popupIsBackground?.(boundary.popup) === false ? 1 : 0) : 0;
+        // The click carried the background modifier only if sleight sent it; a tab the page opened after the click's dispatch ended got no such help.
+        const why = tab.background === false ? 'this click carried no background modifier' : 'the page opened it after a click, outside the background handling';
+        const outcome = boundary?.kind === 'navigation' ? 'navigated, address (untrusted page content): ' + originOf(page.url()) + navPath + ' (new page below)'
           : boundary?.kind === 'document' ? 'new document (read below)'
-          : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} "${clean(boundary.dialog.message())}" is waiting`
+          : boundary?.kind === 'dialog' ? `dialog ${clean(boundary.dialog.type())} is waiting; message (untrusted page content): "${clean(boundary.dialog.message())}"`
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
-            : 'opened background tab with its opener: ' + clean(boundary.popup.url())
+            : foregroundTabs > 0 ? `opened a tab that probably took the foreground (${why}, and sleight cannot tell which tab was active before); opener below: ` + originOf(boundary.popup.url())
+            : `opened background tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (opener ${tab.tab ?? 'this tab'})`
           : boundary?.kind === 'close' ? 'tab closed'
+          : popupTab && foregroundTabs > 0 ? `opened a tab ${popupTab} that probably took the foreground (${why}, and sleight cannot tell which tab was active before); the opener's page is below`
+          : popupTab ? `opened background tab ${popupTab} (opener ${tab.tab ?? 'this tab'}); the opener's page is below`
           : typeof result === 'string' ? result
           : submits && state.submitUnconfirmed && overlayShown && !armed.pending.size ? 'submit unconfirmed: a dialog or panel opened and no request has started; read before resubmitting'
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
-        lines.push(label + ': ' + outcome);
+        // A script that opens a tab after the input (a timer, a fetch) is held in the background, never silently.
+        const heldOpenings = clicked ? await tab.takeHeld?.().catch(() => 0) : 0;
+        // A page can raise a window it opened from another origin with focus(); no patch in the page, and no CDP call, stops or reports that.
+        const raisable = clicked ? (await tab.raisablePopups?.().catch(() => []) ?? []) : [];
+        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' && !popupTab ? `. A tab the page opened probably took the foreground (${why})` : '')
+          + (raisable.length ? `. ${raisable.length > 1 ? 'Tabs' : 'Tab'} ${raisable.join(', ')} (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that` : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();
         let detail = step.do === 'upload' && started ? 'upload did not finish; inspect the control before retrying' : String(error.message);
         for (const value of [step.text, ...step.values ?? [], ...step.paths ?? []]) if (typeof value === 'string' && value) detail = detail.replaceAll(value, '[redacted]');
         detail = clean(detail);
+        if (/intercepts pointer events/i.test(error.message)) detail = 'covered by another element; dismiss the cover first'; // Playwright's message quotes the page's own markup
         if (/intercepts pointer events/i.test(error.message) && locator) {
           try {
             const cover = await locator.evaluate(coverDetails, undefined, { timeout: 250 });
             if (cover) {
-              detail = `covered by ${clean(cover.name)}; buttons: ${cover.buttons.map(clean).join(', ')}; dismiss the cover first`;
+              // The cover's name and buttons are page text; they reach the model only in the labelled blocker read below.
+              detail = 'covered by a covering element; dismiss the cover first (its controls are listed below)';
               blocker = await read({ find: cover.buttons[0] || cover.name, maxChars: 2000 });
             }
           } catch {}
         }
-        lines.push(label + ': ' + (started ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
+        // The shield cancelled the input before the page saw the click (backgroundClick says so); nothing was sent.
+        const cancelledByGuard = step.do === 'click' && /^page changed during the click; read again/.test(error.message);
+        lines.push(label + ': ' + (started && !cancelledByGuard ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;
+        if (activity && !deferred) activity.stop();
         if (isV3Context(ctx) && target) ctx.finishInput(target);
         if (carry && carry !== armed) { carry.stop(); carry = null; }
         // A deadline ends the call, not the underlying Playwright input. Keep

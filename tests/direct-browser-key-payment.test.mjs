@@ -24,10 +24,31 @@ test('text Enter submits a payment form, while textarea Enter and typing card da
   assert.equal(rules.check(f.ctx, 'press', f.target({ key: 'Enter', element: input({ tag: 'textarea', form: true, formPayment: true }) })).verdict, 'allow');
   assert.equal(rules.check(f.ctx, 'type', f.target({ element: input({ payment: true, formPayment: true }) })).verdict, 'allow');
 });
-for (const key of ['Shift+Enter', 'Meta+Enter', 'Control+Enter', 'Cmd+Enter', 'Alt+Space'])
-  test(`foreground activation chord ${key} is refused before input`, () => {
-    const f = fixture(); assert.equal(rules.check(f.ctx, 'press', f.target({ key })).verdict, 'refuse');
+for (const key of ['Shift+Enter', 'Meta+Enter', 'Control+Enter', 'Cmd+Enter', 'Alt+Space', 'Alt+Enter', 'Control+Shift+Enter', 'Shift+Space', 'Control+ '])
+  test(`foreground activation chord ${key} is refused before input on a button`, () => {
+    const f = fixture(), result = rules.check(f.ctx, 'press', f.target({ key, element: input({ kind: 'button', tag: 'button' }) }));
+    assert.equal(result.verdict, 'refuse'); assert.match(result.message, /engine browser path/);
   });
+for (const key of ['Meta+Enter', 'Cmd+Enter', 'Alt+Enter', 'Control+Shift+Enter', 'Shift+Space', 'Control+ ', 'Alt+Space'])
+  test(`activation chord ${key} is refused even in a text field`, () => {
+    const f = fixture(); assert.equal(rules.check(f.ctx, 'press', f.target({ key, element: input({}) })).verdict, 'refuse');
+  });
+for (const key of ['Shift+Enter', 'Control+Enter', 'Ctrl+Return']) for (const tag of ['input', 'textarea'])
+  test(`chat chord ${key} is allowed in a ${tag}, and counts as a submit in a payment form`, () => {
+    const f = fixture(), plain = input({ tag, form: true }), paying = input({ tag, form: true, formPayment: true });
+    assert.equal(rules.check(f.ctx, 'press', f.target({ key, element: plain })).verdict, 'allow');
+    assert.equal(rules.check(f.ctx, 'press', f.target({ key, element: paying })).verdict, 'confirm');
+  });
+test('a chat chord is allowed in a role=textbox element and refused in a link', () => {
+  const f = fixture();
+  assert.equal(rules.check(f.ctx, 'press', f.target({ key: 'Control+Enter', element: input({ tag: 'div', kind: 'text', role: 'textbox' }) })).verdict, 'allow');
+  assert.equal(rules.check(f.ctx, 'press', f.target({ key: 'Shift+Enter', element: input({ tag: 'a', kind: 'link' }) })).verdict, 'refuse');
+});
+test('activationKey spells Enter and Space for the page keyboard, with their modifiers', () => {
+  assert.deepEqual(['Return', '\r', '\n', 'NumpadEnter', 'Shift+Return', 'Ctrl+\n', ' ', 'Space', 'Cmd+Space', 'Option+ '].map(rules.activationKey),
+    ['Enter', 'Enter', 'Enter', 'Enter', 'Shift+Enter', 'Control+Enter', 'Space', 'Space', 'Meta+Space', 'Alt+Space']);
+  assert.equal(rules.activationKey('Tab'), undefined); assert.equal(rules.activationKey('Control+a'), undefined);
+});
 
 for (const control of ['link', 'image']) for (const key of ['Enter', 'Return'])
   test(`payment ${control} guards keyboard activation ${key}`, () => {

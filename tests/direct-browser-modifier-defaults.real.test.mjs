@@ -51,6 +51,11 @@ add('link in contenteditable', '<div contenteditable><a id="go" href="/landed" t
   { plain: true });
 add('link in designMode', '<a id="go" href="/landed" target="_blank">Editable link</a><script>document.designMode="on"</script>',
   { plain: true });
+add('non-editable island link', '<div contenteditable><a id="go" contenteditable="false" href="/landed" target="_blank">Island link</a></div>');
+add('non-editable island link descendant', '<div contenteditable><a contenteditable="false" href="/landed" target="_blank"><span id="go">Island link</span></a></div>');
+add('non-editable wrapper link', '<div contenteditable><span contenteditable="false"><a id="go" href="/landed" target="_blank">Island link</a></span></div>');
+add('non-editable mention chip', '<div contenteditable><span contenteditable="false"><button id="go" type="button" onclick="this.textContent=\'clicked\'">Mention</button></span></div>');
+add('re-enabled text inside island', '<div contenteditable><span contenteditable="false"><span id="go" contenteditable="true">Editable text</span></span></div>', { plain: true });
 add('plain text', '<p id="go">hello world here</p>');
 add('double click text', '<p id="go">hello world here</p>', { double: true });
 add('double click input', '<input id="go" value="hello world here">', { double: true });

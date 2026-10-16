@@ -7,6 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { createPageRegistry, backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { hookState } from './adversarial/fixtures/hook.mjs';
 
 const require = createRequire(import.meta.url);
 const { inprocess } = require('../plugins/sleight/vendor/playwright-core/lib/coreBundle.js');
@@ -160,10 +161,11 @@ test('real v3 same-tab link uses plain click and no popup preparation', { skip, 
 
 test('real v3 keep and handoff remove hooks and survive turn-end cleanup', { skip, timeout: 90000 }, async t => {
   const f = await fixture(t), a = await f.open('/shop'), b = await f.open('/account');
-  const kept = f.registry.tab(a.tab).page, handed = f.registry.tab(b.tab).page;
+  const kept = f.registry.tab(a.tab).page, handed = f.registry.tab(b.tab).page, hook = f.registry.tab(a.tab).hook;
+  assert.equal(await hookState(kept, hook), 'live'); assert.equal(await hookState(handed, hook), 'live');
   await f.registry.keep(a.tab); await f.registry.handoff(b.tab);
-  assert.equal(await kept.evaluate(() => !!window[Symbol.for('sleight.popup3')]), false);
-  assert.equal(await handed.evaluate(() => !!window[Symbol.for('sleight.popup3')]), false);
+  assert.equal(await hookState(kept, hook), 'off');
+  assert.equal(await hookState(handed, hook), 'off');
   assert.equal((await f.registry.endTurn()).cleanedUp, true);
   assert.equal(f.context.pages().length, 3);
   assert.equal(kept.isClosed(), false); assert.equal(handed.isClosed(), false);

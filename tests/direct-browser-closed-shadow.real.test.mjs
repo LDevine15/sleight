@@ -145,12 +145,13 @@ test('controls in nested closed roots take click, Space and a button click', { s
 test('a closed-root link opens an owned background tab like a light-DOM link', { skip, timeout: 90000 }, async () => {
   const w = await plain(), { tab } = await w.open();
   const light = await w.ref(tab, 'Open help light', 'link'), closed = await w.ref(tab, 'Open help closed', 'link');
-  for (const ref of [light, closed]) {
+  // The tab list names origins only (output hygiene), so each click is judged by the one new tab that has this tab as its opener.
+  const children = async () => (await w.call('browser_tabs', { do: 'list' })).text.split('\n').filter(line => line.includes('(opener ' + tab + ')')).length;
+  for (const [index, ref] of [light, closed].entries()) {
     const result = await w.act(tab, [{ do: 'click', ref }]);
     assert.doesNotMatch(result.text, /not run|unconfirmed/, result.text);
+    assert.equal(await children(), index + 1, result.text);
   }
-  const list = (await w.call('browser_tabs', { do: 'list' })).text;
-  for (const from of ['light', 'closed']) assert.equal(list.split('\n').filter(line => line.endsWith('/popped?from=' + from)).length, 1, list);
 });
 
 test('closed-root controls inside a same-origin iframe are acted on in that frame, including a key press', { skip, timeout: 90000 }, async () => {

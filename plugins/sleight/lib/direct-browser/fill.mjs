@@ -1,6 +1,7 @@
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { isV3Context } from './v3-context.mjs';
 import { readOptions, moveList, pickElement, findPopup, searchOptions, describeMiss, normalize, queries } from './pick-option.mjs';
+import { lineBreakRefusal } from './rules.mjs';
 // Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
 class FieldError extends Error {}
@@ -210,6 +211,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             };
             let result, inner;
             if (combo) {
+              if ((state.editableText && state.tag === 'input' || state.innerInput) && /[\r\n]/.test(value)) throw new FieldError(lineBreakRefusal);
               inner = state.editableText ? loc : state.innerInput ? loc.locator('input:not([type="hidden"]), textarea').first() : null;
               const enter = text => inner ? send(checked => checked.fill(text, options), 'type', inner) : send(checked => checked.click(options), 'click');
               const attempts = inner ? queries(value) : [value];
@@ -314,6 +316,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             if (!stopped && !(await trustedLocatorRead(loc, inspect, value.toLowerCase())).matched) throw new FieldError('color did not match; read the field');
           } else if (state.kind === 'text') {
             if (!['string', 'number'].includes(typeof value)) throw new FieldError('text fields need a string or number');
+            if (state.tag === 'input' && /[\r\n]/.test(String(value))) throw new FieldError(lineBreakRefusal);
             await send(checked => checked.fill(String(value), options));
             if (!stopped && !(await trustedLocatorRead(loc, inspect, value)).matched) rows[i].note = 'value was formatted or changed by the page; read it if exact text matters';
           } else throw new FieldError('unsupported field kind; use browser_act');

@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
-import { check, inspectElement } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { check, inspectElement, keyClass } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 const api = await import('../plugins/sleight/lib/direct-browser/v3-context.mjs').catch(e => {
   if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e; return {};
 });
@@ -25,6 +25,7 @@ function fixture(text = payText(terms), options = {}) {
       if (fn.name === 'ownDocument') return document;
       if (fn.name === 'inspectTarget') return { ...element, name: 'Continue', payment, formPayment: payment };
       if (fn.name === 'inspectElement') return { ...element, payment, formPayment: payment };
+      if (fn.name === 'forwardInfo') return { label: false, areas: [] };
       if (fn.name === 'readPaymentPage') return { origin, page: { ...terms, ...f.pageTerms }, name: inputName };
       throw Error('unsupported page reader: ' + fn.name);
     },
@@ -181,7 +182,9 @@ test('V10R1 dispatch never calls ElementHandle.press after checking focus', asyn
   const f = fixture('Read only'); f.ordinary(); const keys = [], page = new EventEmitter();
   Object.assign(f.handle, { press: async () => { throw Error('unsafe refocusing press'); } });
   page.getByRef = () => ({elementHandle:async () => f.handle, evaluate:async () => ({submit:false,form:false})});
+  // Enter goes out through the owned page keyboard under the key shield (backgroundClick with keys), never ElementHandle.press.
   page.keyboard = {press:async key => keys.push(key)};
+  page.frames = () => [];
   let clock = 0;
   const run = createActionRunner({check, snapshot:async () => ({text:'fixture',number:1}), now:() => clock, sleep:async ms => {clock += ms;}});
   const result = await run({page,state:f.state},[{do:'press',ref:'e1',key:'Enter'}],f.ctx);
@@ -233,9 +236,10 @@ test('V10R5 payment terms follow el.form and exclude an opacity-zero amount deco
   const hidden=node('Amount: 18.00',false), shown=node('Amount: 99.00');
   const root={...node(''),querySelectorAll:selector => selector.includes('amount') ? [hidden,shown] : []};
   const wrong={querySelectorAll:() => [],innerText:''};
-  const doc={createRange() {let node; return {selectNodeContents(n) {node=n;},getClientRects:() => node.parentElement.getClientRects()};},
+  const paint={color:'rgb(0, 0, 0)',webkitTextFillColor:'rgb(0, 0, 0)',backgroundColor:'rgba(0, 0, 0, 0)',backgroundImage:'none',filter:'none',maskImage:'none',mixBlendMode:'normal',fontSize:'16px'};
+  const doc={documentElement:{},createRange() {let node; return {selectNodeContents(n) {node=n;},getClientRects:() => (node.parentElement ?? node).getClientRects()};},
     createTreeWalker(node) { let read=false; return {nextNode() { if (read) return null; read=true; return node.innerText ? {parentElement:node,textContent:node.innerText} : null; }}; },
-    defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({visibility:'visible',display:'block',opacity:'1'})}};
+    defaultView:{innerWidth:800,innerHeight:600,location:{origin:'https://fixture.invalid'},getComputedStyle:() => ({...paint,visibility:'visible',display:'block',opacity:'1'})}};
   const observed=api.readPaymentPage({ownerDocument:doc,form:root,closest:() => wrong,getAttribute:() => null});
   assert.equal(observed.page.amount,undefined);
 });
@@ -285,4 +289,17 @@ for (const kind of ['reload','back','forward']) test('V10R2 explicit user histor
   const f=fixture(commands[kind]); f.state.submitUnconfirmed={startedAt:1,snapshotNo:0};
   assert.equal((await f.ctx.check(kind,{state:f.state})).verdict,'allow');
   assert.equal((await f.ctx.check(kind,{state:f.state})).verdict,'refuse'); await f.ctx.dispose();
+});
+
+test('every spelling of an activating key is one name; keys off the safe list are unknown', () => {
+  for (const key of ['Enter', 'Return', 'NumpadEnter', '\r', '\n']) assert.deepEqual(keyClass(key), { kind: 'Enter', name: 'Enter', chord: false }, key);
+  for (const key of ['Space', ' ']) assert.deepEqual(keyClass(key), { kind: 'Space', name: 'Space', chord: false }, key);
+  assert.equal(keyClass('Shift+NumpadEnter').chord, true); assert.equal(keyClass('Control+ ').name, 'Space');
+  for (const key of ['Tab', 'Escape', 'ArrowLeft', 'End', 'a', '+', '@', 'Shift+Tab', 'Control+a', 'F4', 'Alt+ArrowDown', 'Numpad5']) assert.equal(keyClass(key).kind, 'safe', key);
+  for (const key of ['', 'Enterr', 'NumpadEnterX', 'Bogus+Enter', 'Select', '\t\n', 'Accept']) assert.equal(keyClass(key).kind, 'unknown', key);
+});
+test('a pressed key the safe list does not know is refused before any input', async () => {
+  const f = fixture('Read only'); f.ordinary();
+  const result = await f.ctx.check('press', f.target({ key: 'Execute', ref: 'e1' }));
+  assert.equal(result.verdict, 'refuse'); assert.match(result.message, /Unsupported key/); await f.ctx.dispose();
 });

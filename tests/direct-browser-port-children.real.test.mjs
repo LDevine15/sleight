@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { readFileSync, mkdtempSync, rmSync, realpathSync, existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPageRegistry } from '../plugins/sleight/lib/direct-browser/page.mjs';
+import { createPageRegistry, hookProof } from '../plugins/sleight/lib/direct-browser/page.mjs';
 import { createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { snapshot } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
 import { createCDPFilter } from '../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
@@ -79,7 +79,7 @@ test('port guard continues false matches and protects related targets before the
       const {tab}=await pages.openTab({url:origin}),entry=pages.tab(tab);
       // Exercise the browser's native popup path, which scoped auto-attach does
       // not pause. This fixture removes only its own disposition hook.
-      await entry.page.evaluate(()=>window[Symbol.for('sleight.popup3')].off());
+      await entry.page.evaluate(({key,proof})=>window[key].off(proof),{key:entry.hook.key,proof:hookProof(entry.hook,'off')});
       const before=reads,focused=await foreign.evaluate(()=>document.hasFocus());
       const opening=context.waitForEvent('page',{timeout:5000});
       if(kind==='window.open')await entry.page.evaluate(url=>{window.open(url,'_blank');},protectedURL);
@@ -119,7 +119,7 @@ test('port guard continues false matches and protects related targets before the
     const pages=createPageRegistry({browser,session,upstream,ownTarget:filter.own,releaseTarget:filter.release,endpointBlocked:filter.endpointBlocked,endpoint:protectedURL});
     try{
       const {tab}=await pages.openTab({url:origin}),entry=pages.tab(tab);
-      await entry.page.evaluate(()=>window[Symbol.for('sleight.popup3')].off());
+      await entry.page.evaluate(({key,proof})=>window[key].off(proof),{key:entry.hook.key,proof:hookProof(entry.hook,'off')});
       await entry.page.evaluate(url=>{
         const safe=window.open('about:blank','safe-popup');safe.document.title='Safe blank popup';
         window.open(url,'blocked-popup');
@@ -210,7 +210,8 @@ test('port guard continues false matches and protects related targets before the
         });}finally{await registration.unregister();}
       });
       assert.equal(result,'blocked');
-      assert.ok(!calls.slice(before).some(row=>row.method==='Fetch.failRequest'),'service worker is outside owned page routes');
+      // The browser-level port guard may fail its request at the root; no session attaches to the service worker.
+      assert.ok(!calls.slice(before).some(row=>row.method==='Fetch.failRequest'&&row.route!=='root'),'service worker is outside owned page routes');
     }finally{await page.close();}
   });
   assert.equal(await foreign.title(),'Foreign untouched');assert.equal(foreign.isClosed(),false);
