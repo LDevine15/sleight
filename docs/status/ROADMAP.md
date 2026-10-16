@@ -60,7 +60,11 @@ Post-release work builds on branches now and merges after the tag (owner, 2026-1
    The skill (94 lines, up from 86 in 1.2.0) gets pruned with an A/B after the tag, not before the gate (owner, 2026-10-15).
 5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
 6. The AM1 speed map of app classes, parked until after 1.3.0. Its VS Code and Word fixtures still fail setup.
-7. Smaller queued work: NP-8 (native-path follow-up), FM3 (forms), TB2, CH1 (Chess save), AS-3 to AS-9, AM1FR.
+7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in
+   the target window, flourishes on the action and fades. It never moves the pointer, takes focus or catches clicks. It is drawn
+   by the existing consent-host helper, on by default with an off switch, kept out of benchmark timing, and its CPU cost is
+   measured. LoC's art director designs the hand to match the video. About a day, after the tag.
+8. Smaller queued work: NP-8 (native-path follow-up), FM3 (forms), TB2, CH1 (Chess save), AS-3 to AS-9, AM1FR.
 
 ## 3. Live checks still owed
 
