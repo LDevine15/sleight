@@ -121,11 +121,11 @@ test('v3 a cover refusal before input says not run, not effect unconfirmed', asy
   assert.match((await own.run(own.tab, [{ do: 'click', ref: 'e1' }], {})).lines[0], /not run: covered by its own label; use check or uncheck/);
 });
 
-test('v3 check and uncheck act through the control\'s own label when that label sits over it, and on the control otherwise', async () => {
+test('v3 check and uncheck click the control\'s own centre when its own label sits over it (never the label\'s centre), and wait for a clear hit otherwise', async () => {
   const f = fixture(); f.states.set('e1', { cover: 'label' });
   await f.run(f.tab, [{ do: 'check', ref: 'e1' }, { do: 'uncheck', ref: 'e1' }, { do: 'check', ref: 'e2' }, { do: 'check', ref: 'e3' }], {});
-  assert.deepEqual(f.actions.filter(a => /check/.test(a[0])).map(a => a.slice(0, 2)),
-    [['check', 'e1 xpath=ancestor::label[1]'], ['uncheck', 'e1 xpath=ancestor::label[1]'], ['check', 'e2'], ['check', 'e3']]);
+  assert.deepEqual(f.actions.filter(a => /check/.test(a[0])).map(a => [a[0], a[1], a[2]?.force === true]),
+    [['check', 'e1', true], ['uncheck', 'e1', true], ['check', 'e2', false], ['check', 'e3', false]]);
   const broken = fixture(); broken.states.set('e1', { cover: 'label' });
   broken.page.getByRef = ref => { const l = fixture().page.getByRef(ref); l.evaluate = async () => { throw Error('read failed'); }; return l; };
   await broken.run(broken.tab, [{ do: 'check', ref: 'e1' }], {}); // a failed read leaves the plain check

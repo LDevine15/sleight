@@ -145,13 +145,13 @@ export function placeClear(el, unused, read) {
   }
   return seen;
 }
-// check and uncheck on a control whose own label sits over it (a visually hidden radio or checkbox) act through that label,
-// which is the click a person makes. Anything else keeps the control. Never throws: a read that fails leaves the plain path.
+// check and uncheck on a control whose own label sits over it (a visually hidden radio or checkbox) click the control's own centre
+// without Playwright's hit-target wait: placeClear just proved that point is the label itself, never a link or button nested in it,
+// so the click is the one a person makes there. The label's own centre is not used: it may hold a nested link ("I agree to the terms").
+// Anything else keeps the plain path. Never throws: a read that fails leaves the plain path.
 async function aimedAt(locator) {
-  try {
-    if (await trustedLocatorRead(locator, placeClear) !== 'label') return locator;
-    return typeof locator.$ === 'function' ? await locator.$('xpath=ancestor::label[1]') ?? locator : locator.locator('xpath=ancestor::label[1]');
-  } catch { return locator; }
+  try { return await trustedLocatorRead(locator, placeClear) === 'label' ? { force: true } : {}; }
+  catch { return {}; }
 }
 
 function coverDetails(el) {
@@ -293,8 +293,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (step.do === 'type') return locator.fill(step.text, options);
           if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
-          if (step.do === 'check') return (await aimedAt(locator)).check(options);
-          if (step.do === 'uncheck') return (await aimedAt(locator)).uncheck(options);
+          if (step.do === 'check') return locator.check({ ...options, ...await aimedAt(locator) });
+          if (step.do === 'uncheck') return locator.uncheck({ ...options, ...await aimedAt(locator) });
           if (step.do === 'hover') return locator.hover(options);
           if (step.do === 'drag') return trusted ? ctx.dragTo(target, page.getByRef(step.to)) : locator.dragTo(page.getByRef(step.to), options);
           if (step.do === 'upload') return locator.setInputFiles(staging.payloads, options);
