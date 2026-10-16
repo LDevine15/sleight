@@ -417,6 +417,16 @@ native reference, and oversized first results defer the browser reference while 
   recovery files are in Excel's sandbox container, which macOS privacy protection hides from sleight's shell, so we don't know
   whose workbooks they are. The launch flags don't turn off Office AutoRecovery.
 
+## Benchmark environment
+
+- The world suite's browser tasks opened their fixture pages in Helium, and on 2026-10-16 some opened as tabs in the owner's own
+  Helium window beside logged-in mail and other tabs. The benchmark's leftovers were closed by exact fixture origin. Until browser
+  tasks run only in an isolated browser, the native claim runs native tasks only and browser comparisons run in the gate's
+  harness, which drives its own headless Chromium.
+- A full-screen `screencaptureui` window (layer 24, the whole display) stayed up from a screenshot session on 2026-10-15 and made
+  every drag target read as covered, so `drag` refused text drops in TextEdit. Quitting it on the owner's OK cleared it. Runs of
+  drag tasks after about 17:45 UTC that day are rerun.
+
 ## Turbo in unattended runs
 
 - In the claim baseline's sleight arm (2026-10-16, 15:34 UTC), all 3 browser tasks got "Turbo is unavailable for this turn",

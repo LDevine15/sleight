@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 17:06 UTC, codex 16 claim runs in, Puddle's quiet gap, lcu next)
+## Banner (2026-10-16 20:25 UTC, native-only claim runs, lcu and Peekaboo next, drag reruns after the overlay fix)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -50,6 +50,14 @@ Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle windo
   textedit-drag and textedit-calculator failed both runs, and tab-switching and one calculator-click failed. finder-move #2's
   Codex drag left Finder in a mouse-down tracking loop. A HID mouse-up released it, and owner-away runs now post one before
   cleanup (`17f61e86`). A stuck launched app other than Office now gets force-quit (`e38794c7`).
+- cua (18:53 UTC): 28 of 30 runs. textedit-drag failed 3 of 3, and textedit-calculator and local-wikipedia failed once each.
+  The cleanup skip continued the pass twice. Top-up (20:00 UTC): sleight passed calculator-click 7.6, calculator-menu 10.5,
+  textedit-save 10.9 and preview-read 5.1, and failed textedit-drag (a full-screen screencaptureui overlay covered it),
+  finder-move and textedit-calculator ("1,633"). codex passed calculator-click 10.6, calculator-menu 14.1, textedit-save 22.4,
+  textedit-calculator 57.4 and preview-read 11.1 and 11.0.
+- Browser tasks are out of the claim runs: fixture tabs opened in the owner's own Helium window (known-problems, "Benchmark
+  environment"). The remaining arms run the 7 native tasks. textedit-drag and finder-move get rerun for sleight, codex and cua
+  now that the overlay is gone. The lcu arm loads the hooks lcu's setup writes to its project settings (`c37d3fcf`).
 - Office (word-edit, excel-edit) now runs last for every arm, after the owner answers Excel's recovery prompt. The other 10
   claim tasks run first (`claim-arm.sh ARM "<list>"`).
 - Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
@@ -102,7 +110,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing. Puddle has a 40-minute quiet gap (until 17:42 UTC at the latest) for its spin fix, then lcu.
+**Running now.** Nothing. The lcu window (7 native tasks × 3) is being requested.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
