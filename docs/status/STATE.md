@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 13:55 UTC, flushed before the owner's clear)
+## Banner (2026-10-16 13:58 UTC, re-hydrated after the owner's clear)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -18,8 +18,8 @@ Goal (owner): release 1.3.0, then the native claim and the video, then maintenan
   owner's login, and native fixture fixes. The last full check passed at `a65350ba`. The flush commit adds one more fixture fix.
 
 **Release path, in order.**
-1. Live turbo qualification with the owner present (about 10 min). Start a fresh Claude Code session on the dev build and confirm
-   `turbo.json` (0600, browser Helium, since Chrome's executable here is mode 775 and refused). The owner turns on remote debugging
+1. Live turbo qualification with the owner present (about 10 min). `turbo.json` exists (0600, Helium, written 12:49 UTC; Chrome's
+   executable here is mode 775 and refused), and the doctor reads turbo on with remote debugging on. The owner turns on remote debugging
    in Helium (`chrome://inspect/#remote-debugging`, unverified in Helium) and clicks its consent prompt on the first browser task.
    Then `sleight-mcp turbo off` must still be off in a new session. Never the owner's main Chrome profile.
 2. The release pass (`bench/release-pass.mjs`, on the login), with its native, gate, Opus and claim stages. It needs Puddle windows and the owner away.
@@ -35,8 +35,8 @@ sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (
 - Peekaboo's grants belong to Terminal.app, so launch its arm from a Terminal window (`osascript -e 'tell application "Terminal"
   to do script "…"'`, owner away only).
 - Results so far, sleight arm: calculator-click, calculator-menu, preview-pdf, finder-files and textedit-save pass. textedit-edit
-  failed at 13:43 UTC and its cleanup stopped the pass (AX -25202 on the closed window's sheets, fixed in the flush commit, red test
-  on the old code). chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
+  did its task at 13:43 UTC (the file reads "alpha delta gamma") but counted as failed because its cleanup hit AX -25202 on the closed
+  window's sheets and stopped the pass. `fd47412f` fixed that (red test on the old code). chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
   (docs/known-problems.md).
 - Puddle paused the chain at the owner's clear. Ask "puddle arch" (ListAgents, SendMessage) to restart it, sleight arm first.
   sleight's windows have priority today (owner, 2026-10-16).
@@ -95,7 +95,7 @@ Next, in order:
 
 - The native claude-cu arm root `~/Library/Caches/sleight-bench/claude-cu` (Claude Code 2.1.289, installed 2026-10-16) is logged in
   on the owner's account, with onboarding, folder trust and `/mcp` computer-use enabled in its `work` folder.
-- `~/Library/Application Support/sleight/turbo.json` doesn't exist yet. The dev build writes it at its first session start.
+- `~/Library/Application Support/sleight/turbo.json` (0600, Helium, enabled) was written 2026-10-16 12:49 UTC by the dev build.
 - The FowlBrowser world arm's pinned Claude Code 2.1.289 is at `~/.config/sleight-bench/world/arms/fowlbrowser` (installed
   2026-10-14 for the prototype rounds, `node bench/world/arms/install.mjs fowlbrowser claude-only @anthropic-ai/claude-code@2.1.289`).
 - Benchmark arms installed 2026-10-14 (owner's 2026-10-12 OK, pinned with checksums). Cua 0.34.0 is at
