@@ -13,6 +13,14 @@ fully held (docs/benchmarks/2026-10-16-gate.md, last section). **OPUS HEAD-TO-HE
 against FowlBrowser's 885 s (p90 935), 76%. Both 26/26 under the owner's scoring, 0 focus events, 0 ToolSearch. FowlBrowser paid
 $268 unpriced in all 10 form-checkout runs (docs/benchmarks/2026-10-16-opus.md). W7 (moved up to about 10:20, cap 60) runs
 `ledger/claims/GATE2/window-native-rest.sh`, the sleight arm's 15 remaining native tasks.
+**W7 (10:26 to 10:30 UTC):** the sleight arm passed preview-pdf (21.7 s) and finder-files (74.7 s), then failed word-edit (74.6 s) and
+stopped on "Owned Microsoft Word fixture window cleanup unconfirmed" (AX -25205 AXTitle), the same cleanup read that stopped
+chess-drag. That read is the native pass's blocker, and it's being fixed offline. **The full check of `arch/release-cand` `cb20a697`
+passed** (exit 0, 5402 tests with 0 failing and 353 skipped, validate 2/2, mod 49/49). Merging it into `pane/auto-mode` conflicts in 5 files
+(bench/fowl preflight, rounds.sh, sleight-surface.patch with 14 hunks, known-problems, prompt-default fixture) against pane/auto-mode's
+engine-reconnect and claim-fixture commits. Agent `release-merge` resolves them on `arch/release-merge`, then a full check follows.
+Puddle has the Mac: no more windows are needed before 12:00. Native results so far, sleight arm: 4 passes (calculator-click 7.5 s,
+calculator-menu 10.3 s, preview-pdf 21.7 s, finder-files 74.7 s) and 3 fixture-stopped fails (textedit-save, chess-drag, word-edit).
 `arch/release-cand` `cb20a697` is v3-gate `66ada2bd` plus `arch/v8-int` (V8 and V8R, 8,640 KB). Its merge had no conflicts. Its
 focused files and 8 real-page files (headless) pass. Its full check is still owed, then it merges into `pane/auto-mode` for the release
 pass.
