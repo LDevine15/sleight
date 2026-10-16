@@ -1507,3 +1507,14 @@ test('document cleanup raises its own window only over a sibling fixture window 
     else { assert.throws(close, /lost focus/); assert.deepEqual(actions, [], label); }
   }
 });
+
+test('disabled document close uses the window close button in an app this run launched, without activating it', () => {
+  const { closeDocumentSafely } = nativeSource(), events = [];
+  const api = {
+    menu: () => { events.push('menu'); throw new Error('Fixture menu item unavailable or ambiguous'); },
+    activate: () => events.push('activate'),
+    button: validate => { validate(); events.push('button'); },
+  };
+  closeDocumentSafely({}, {}, () => events.push('validate'), api);
+  assert.deepEqual(events, ['menu', 'validate', 'button']);
+});

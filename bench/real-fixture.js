@@ -314,7 +314,7 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     raiseOverSibling(window, request, app, api);
     var validate = function () { noDialog(); validateOwnedFixture(window, request, app, api, true); };
     validate();
-    api.closeDocument(app, validate, request);
+    api.closeDocument(app, validate, request, window);
   } else api.closeButton(window, identity);
   for (var attempt = 0; attempt < 30; attempt++) {
     step('wait-' + attempt);
@@ -340,7 +340,12 @@ function raiseOverSibling(window, request, app, api) {
 function closeDocumentSafely(app, request, validate, api) {
   try { api.menu(app, validate); }
   catch (error) {
-    if (request.ownerAway !== true || error.menuCleanupError || error.message !== 'Fixture menu item unavailable or ambiguous') throw error;
+    var disabled = !error.menuCleanupError && error.message === 'Fixture menu item unavailable or ambiguous';
+    // macOS checks File > Close against the key window, which a background app may never set: Close stayed disabled even
+    // after activation (TextEdit 14:17, Preview 15:12 UTC, 2026-10-16). In an app this run launched, the validated window's
+    // own close button closes only the fixture, in the background.
+    if (disabled && api.button) return api.button(validate);
+    if (request.ownerAway !== true || !disabled) throw error;
     validate();
     api.activate(app);
     validate();
@@ -571,8 +576,10 @@ function nativeAX(state, clock) {
       if (validate) validate();
       press(button);
     },
-    closeDocument: function (app, validate, request) {
+    closeDocument: function (app, validate, request, window) {
+      var closeButton = this.closeButton;
       closeDocumentSafely(app, request, validate, {
+        button: window && state && state.setupCase === 'cold-launch' ? function (check) { closeButton(window, check); } : undefined,
         menu: function (target, beforePress) { fileMenu(target, ['Close Selected PDF Document', 'Close'], beforePress, request.refuseDialogs); },
         activate: function (target) {
           if (clock && clock.check) clock.check();
