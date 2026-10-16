@@ -338,13 +338,14 @@ function raiseOverSibling(window, request, app, api) {
 }
 
 function closeDocumentSafely(app, request, validate, api) {
+  // In an app this run launched, the validated window's own close button closes only the fixture, in the background. The
+  // File menu is never opened there: macOS checks Close against a key window a background app may never set, and a menu
+  // opened by Accessibility can stay in its tracking loop, after which the app ignores quit (TextEdit, Preview and Word,
+  // 2026-10-16; TextEdit's sample showed NSMenuTrackingSession).
+  if (api.button) return api.button(validate);
   try { api.menu(app, validate); }
   catch (error) {
     var disabled = !error.menuCleanupError && error.message === 'Fixture menu item unavailable or ambiguous';
-    // macOS checks File > Close against the key window, which a background app may never set: Close stayed disabled even
-    // after activation (TextEdit 14:17, Preview 15:12 UTC, 2026-10-16). In an app this run launched, the validated window's
-    // own close button closes only the fixture, in the background.
-    if (disabled && api.button) return api.button(validate);
     if (request.ownerAway !== true || !disabled) throw error;
     validate();
     api.activate(app);

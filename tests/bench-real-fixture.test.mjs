@@ -1508,7 +1508,9 @@ test('document cleanup raises its own window only over a sibling fixture window 
   }
 });
 
-test('disabled document close uses the window close button in an app this run launched, without activating it', () => {
+test('document close in an app this run launched uses the window close button and never opens a menu', () => {
+  // A File menu opened by Accessibility in a background app can stay in its tracking loop, and the app then ignores quit
+  // (TextEdit, Preview and Word, 2026-10-16; TextEdit's sample showed NSMenuTrackingSession).
   const { closeDocumentSafely } = nativeSource(), events = [];
   const api = {
     menu: () => { events.push('menu'); throw new Error('Fixture menu item unavailable or ambiguous'); },
@@ -1516,5 +1518,5 @@ test('disabled document close uses the window close button in an app this run la
     button: validate => { validate(); events.push('button'); },
   };
   closeDocumentSafely({}, {}, () => events.push('validate'), api);
-  assert.deepEqual(events, ['menu', 'validate', 'button']);
+  assert.deepEqual(events, ['validate', 'button']);
 });
