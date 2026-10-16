@@ -13,7 +13,14 @@ or 25/26. The extra time against the A/B is model turns on forms. 193 of 254 emp
 literal match never met. `arch/find-alt` `0d1bcfa0` fixes that and the hidden-radio click (focused and 8 real-page files pass).
 Puddle was told FAIL, so there's no Opus W2. **Find A/B (05:25 to 05:43):** find-alt median 572 s against 622 s over 3 rounds
 (faster in 2 of 3, empty finds 29 of 68 down to 9 of 83, docs/benchmarks/2026-10-16-turbo-ab.md). Next, after a full check it merges into
-v3-gate for a new gate. The sleight native arm started 05:43:44 (log in `ledger/claims/CS3/runs/`). The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
+v3-gate for a new gate. `arch/gate-next` `66ada2bd` is v3-gate plus find-alt plus world-login (focused tests pass). Its full
+check runs in the next window. **Sleight native arm, first try (05:43):** it stopped after 3 tasks. Calculator was still open from the
+owner's claude-cu test (sleight-arch quit it normally), and the TextEdit fixture couldn't quit TextEdit: it restored "Untitled 9" and
+"Untitled 10" from the owner's iCloud TextEdit folder, plus a window without a name (likely the iCloud Open panel). TextEdit is still
+running with them, untouched (owner's leftovers to decide). The world fixture's TextEdit launch lacks the
+`-ApplePersistenceIgnoreState YES -NSShowAppCentricOpenPanelInsteadOfUntitledFile NO -NSDocumentSaveNewDocumentsToCloud NO`
+arguments other bench launchers pass (fix before the 9 TextEdit tasks run). Next window (about 06:40, cap 60):
+`ledger/claims/GATE2/window-native-check.sh`, with the 18 non-TextEdit sleight tasks, then the full check of gate-next. The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
 turbo A/B of v3-gate against find-alt over 3 rounds (prefix `abf`), then the sleight native arm. One release touch ends it (cap 75 min, granted).
 
 **Rest of the night (owner asleep until about 12:00 UTC, all approved).**
