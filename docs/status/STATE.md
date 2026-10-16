@@ -18,7 +18,9 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). OWNER AWAKE 2026-10-16T12:
   in-process Playwright transport with no TCP port, and owner-only CDP sessions after a security finding). Focused tests: lifecycle 28,
   transport 18, adapter 14, channel 5, host 16, ownership 12, all red on the base. Its host acceptance (live) and EPV3-3 come next.
   It merges after the 1.3.0 tag (`ledger/claims/EPV3-2/REPORT.md`).
-- **Chess fixture:** W9 (12:49) failed again outside the first probe. `9d1dc6da` names the failing close step. W10 is at about 13:30.
+- **Chess fixture, cause found:** W10 (13:31) showed the stop comes from the app-dialog scan before cleanup. A focused Chess window
+  that isn't the fixture has no title (AXTitle -25205). `a65350ba` reads it as untitled (test red on the old code, full check passed).
+  A chess-drag window confirms it live before the native pass resumes.
 - **Owner-present list:** the turbo live qualification, the claude-cu arm's runs (per-session app approval), EPV3-1's consent run
   (menu bar "sleight" item), and closing TextEdit's leftover iCloud Open panel (Cmd+Q).
 
