@@ -60,7 +60,9 @@ TODO: full release pass result.
 - A drag of text formatted unlike its paragraph (a bold word in plain text) takes the posted or
   foreground path, since the Accessibility write came out plain in 3/3 trials. `drag` reads the
   window through Accessibility with a 0.5 s deadline instead of System Events, which took 9.4 s of an
-  11 to 14 s drag. The live timing of both changes is unmeasured.
+  11 to 14 s drag. In the native claim runs (2026-10-16, Haiku 5.5) the TextEdit text drag passed 2/2 at a 29.2 s median,
+  against 0/2 to 0/3 for Codex, lcu, Cua and Peekaboo. `drag` says it stays inside one window when asked to move a window or
+  drop text into another.
 - `hover` refuses a window that spans two displays, since its capture could include another app.
 - Replay and demonstration recording no longer report unconfirmed cleanup when their processes have
   exited but macOS still answers EPERM for the group. A group with a live member still reports it.
