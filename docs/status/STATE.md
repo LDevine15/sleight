@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 13:58 UTC, re-hydrated after the owner's clear)
+## Banner (2026-10-16 14:18 UTC, native sleight arm running)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -38,7 +38,7 @@ sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (
   did its task at 13:43 UTC (the file reads "alpha delta gamma") but counted as failed because its cleanup hit AX -25202 on the closed
   window's sheets and stopped the pass. `fd47412f` fixed that (red test on the old code). chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
   (docs/known-problems.md).
-- Puddle paused the chain at the owner's clear. Ask "puddle arch" (ListAgents, SendMessage) to restart it, sleight arm first.
+- Puddle holds each arm's window and stops the chain after it. sleight-arch runs the arm command itself on "HOLD live" and asks "puddle arch" for the next window.
   sleight's windows have priority today (owner, 2026-10-16).
 
 **After the tag (built, merge after 1.3.0).**
@@ -56,7 +56,7 @@ when the claim is measured.
 
 **Owner items.** Turbo live qualification, the claude-cu runs and EPV3-1's consent run (all owner-present), the 1.3.0 tag.
 
-**Running now.** Nothing of sleight's and no subagents, and Puddle's chain is paused. The owner asked for no new subagents before the clear.
+**Running now.** The native pass's sleight arm, started 14:16 UTC with the owner away (log `ledger/claims/CS3/runs/sleight-20261016T1416Z.log`). Puddle stops the chain after it, and the next arm (codex) waits for my request, with no subagents running. The window caps at 15:06 UTC.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
