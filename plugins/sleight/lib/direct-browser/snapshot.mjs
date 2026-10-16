@@ -339,7 +339,9 @@ function select(rows, ref, find) {
     selected = ancestors(rows, wanted);
   }
   if (find !== undefined) {
-    const wanted = new Set(selected.filter(row => row.line.toLowerCase().includes(find.toLowerCase())).map(row => row.key));
+    // "a|b" matches either: 193 of 254 empty finds in the 2026-10-16 rounds were alternations a literal match never met.
+    const terms = [find, ...find.split('|')].map(term => term.trim().toLowerCase()).filter(Boolean);
+    const wanted = new Set(selected.filter(row => terms.some(term => row.line.toLowerCase().includes(term))).map(row => row.key));
     selected = ancestors(rows, wanted);
   }
   return selected;

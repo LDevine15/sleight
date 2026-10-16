@@ -146,6 +146,11 @@ test('find and ref reads include matching controls and their ancestors only', as
   assert.doesNotMatch(scoped.text, /Elsewhere/);
   await assert.rejects(module.snapshot(page, { ref: 'e999' }), /Snapshot unavailable/);
   assert.match((await module.snapshot(page, { find: 'missing' })).text, /No matching/);
+  // An alternation finds rows matching any term, as the model writes it; one without a match still says so.
+  const either = await module.snapshot(page, { find: 'missing | NORCREST' });
+  assert.match(either.text, /Norcrest/); assert.doesNotMatch(either.text, /Elsewhere/);
+  assert.match((await module.snapshot(page, { find: 'Elsewhere|norcrest' })).text, /Norcrest[\s\S]*Elsewhere/);
+  assert.match((await module.snapshot(page, { find: 'missing|absent' })).text, /No matching/);
 });
 
 test('find inside a ref reads the matching rows of that subtree, and a missing ref says it is gone', async () => {

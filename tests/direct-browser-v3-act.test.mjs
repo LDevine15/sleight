@@ -126,6 +126,9 @@ test('v3 check and uncheck click the control\'s own centre when its own label si
   await f.run(f.tab, [{ do: 'check', ref: 'e1' }, { do: 'uncheck', ref: 'e1' }, { do: 'check', ref: 'e2' }, { do: 'check', ref: 'e3' }], {});
   assert.deepEqual(f.actions.filter(a => /check/.test(a[0])).map(a => [a[0], a[1], a[2]?.force === true]),
     [['check', 'e1', true], ['uncheck', 'e1', true], ['check', 'e2', false], ['check', 'e3', false]]);
+  const clicked = fixture(); clicked.states.set('e1', { cover: 'label' });
+  await clicked.run(clicked.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e2' }], {});
+  assert.deepEqual(clicked.actions.filter(a => a[0] === 'click').map(a => [a[1], a[2]?.force === true]), [['e1', true], ['e2', false]]);
   const broken = fixture(); broken.states.set('e1', { cover: 'label' });
   broken.page.getByRef = ref => { const l = fixture().page.getByRef(ref); l.evaluate = async () => { throw Error('read failed'); }; return l; };
   await broken.run(broken.tab, [{ do: 'check', ref: 'e1' }], {}); // a failed read leaves the plain check

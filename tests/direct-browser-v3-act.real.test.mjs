@@ -234,3 +234,13 @@ test('real v3 check through an own label never presses a link nested in that lab
   assert.doesNotMatch(f.page.url(), /\/next$/, 'the nested link was pressed');
   if (result.stoppedAt === null) assert.equal(await f.page.locator('#agree').isChecked(), true);
 });
+
+test('real v3 click reaches a visually hidden radio under its own label, clear of a sticky bottom bar', { skip }, async t => {
+  const f = await fixture(t, `<div style="height:900px">Top</div><fieldset><legend>Delivery</legend>
+    <label style="display:block;padding:12px"><input type="radio" name="d" id="std" style="${hidden}" checked>Standard</label>
+    <label style="display:block;padding:12px"><input type="radio" name="d" id="ovn" style="${hidden}">Overnight</label></fieldset>
+    <div style="height:900px">Bottom</div><div style="position:sticky;bottom:0;height:120px;background:#eee"><button>Pay now</button></div>`);
+  const result = await f.run(f.tab, [{ do: 'click', ref: await f.ref('Overnight') }], {});
+  assert.equal(result.stoppedAt, null, result.lines.join('\n'));
+  assert.equal(await f.page.locator('#ovn').isChecked(), true);
+});

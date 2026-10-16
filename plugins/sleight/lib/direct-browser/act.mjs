@@ -274,9 +274,12 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const options = { timeout: TIMEOUT };
         const perform = async () => {
           if (step.do === 'click') return backgroundClick(tab, locator, async (extra, verifySeal) => {
+            // A control under its own label (a visually hidden radio) is clicked at the point placeClear proved is that label, as
+            // check does: in the 2026-10-16 gate rounds a click on one came back "covered" 5 to 6 times per form-checkout run.
+            const aim = await aimedAt(locator);
             // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
-            started = true; return locator.click({ ...options, ...extra });
+            started = true; return locator.click({ ...options, ...extra, ...aim });
           });
           const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
