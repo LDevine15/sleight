@@ -263,6 +263,40 @@ test('a closed-root checkbox value is a label, not a secret that blanks the same
   assert.match(result.text, /checkbox "Newsletter" \[ref=s\d+\]/);
 });
 
+test('a short secret in a closed-root field blanks only that field, not the same letters elsewhere', async () => {
+  const { page } = closedFixture();
+  const context = page.context();
+  page.context = () => ({ newCDPSession: async frame => {
+    const session = await context.newCDPSession(frame), send = session.send;
+    session.send = async (method, params) => {
+      const result = await send(method, params);
+      if (method !== 'DOMSnapshot.captureSnapshot') return result;
+      result.strings.push('o'); result.documents.at(-1).nodes.inputValue = { index: [result.documents.at(-1).nodes.backendNodeId.indexOf(31)], value: [result.strings.length - 1] };
+      return result;
+    };
+    return session;
+  } });
+  page.ariaSnapshotJSON = async () => [{ role: 'heading', ref: 'e2', name: 'Account controls', text: 'Account controls: more options, old notes' }];
+  const result = await module.snapshot(page);
+  assert.match(result.text, /Account controls: more options, old notes/);
+  assert.match(result.text, /textbox "Password" \[ref=s\d+\]: "\[redacted\]"/);
+});
+
+test('a long secret echoed in a label is removed while a short one leaves the label alone', async () => {
+  const long = fixture([{ role: 'heading', name: 'Code sent: 482913', text: 'Enter 482913' }], ['482913']);
+  const longText = (await module.snapshot(long.page)).text;
+  assert.doesNotMatch(longText, /482913/);
+  const short = fixture([{ role: 'heading', name: 'Code 913 sent', text: 'Enter 913' }], ['913']);
+  assert.match((await module.snapshot(short.page)).text, /Code 913 sent.*Enter 913/);
+});
+
+test('a number field in a sensitive field keeps its own value hidden when the secret is short', async () => {
+  const { page } = fixture([{ role: 'spinbutton', name: 'CVV', ref: 'e1', text: '123' }, { role: 'spinbutton', name: 'Quantity', ref: 'e2', text: '123' }], ['123']);
+  const text = (await module.snapshot(page)).text;
+  assert.match(text, /spinbutton "CVV" \[ref=e1\]: "\[redacted\]"/);
+  assert.match(text, /spinbutton "Quantity".*: "123"/);
+});
+
 test('an ignored closed-root host cannot hide its native actionable descendants', async () => {
   const { page } = closedFixture({ emptyHostQuery: true });
   const result = await module.snapshot(page);

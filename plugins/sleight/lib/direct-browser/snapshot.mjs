@@ -103,10 +103,23 @@ function sensitiveValues({ strings, documents }) {
   return values;
 }
 
-function scrub(value, secrets) {
+// The field's own row is replaced whole (rowsOf), so this only removes echoes of a secret elsewhere.
+// 1-3 characters: nothing, since a match cannot be told from page text ("o" is in "Account controls").
+// 4-7 letters of a spaced script (a likely word, "test" is inside "latest"): whole tokens only.
+// Anything else (digits, symbols, 8+ letters, CJK and other unspaced scripts): wherever it appears.
+const SHORT_SECRET = 4, WORD_SECRET = 8;
+const SPACED_LETTERS = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{M}]+$/u;
+const escapeRegExp = text => text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+export function scrub(value, secrets) {
   let text = String(value ?? '');
-  const forms = [...new Set(secrets.flatMap(secret => [secret, normalized(secret)]).filter(Boolean))].sort((a, b) => b.length - a.length);
-  for (const secret of forms) text = text.split(secret).join('[redacted]');
+  const forms = [...new Set(secrets.flatMap(secret => [secret, normalized(secret)]).filter(Boolean))]
+    .map(secret => ({ secret, size: Array.from(secret).length })).filter(({ size }) => size >= SHORT_SECRET)
+    .sort((a, b) => b.size - a.size || b.secret.length - a.secret.length);
+  for (const { secret, size } of forms) {
+    if (size < WORD_SECRET && SPACED_LETTERS.test(secret)) {
+      text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}\\p{M}])${escapeRegExp(secret)}(?![\\p{L}\\p{N}\\p{M}])`, 'gu'), '[redacted]');
+    } else text = text.split(secret).join('[redacted]');
+  }
   return text.replace(/(?:\d[ -]?){12,19}/g, '[redacted]');
 }
 
@@ -280,8 +293,9 @@ function rowsOf(tree, secrets, viewport) {
       const node = typeof raw === 'string' ? { role: 'text', text: raw } : raw;
       const ref = REF.test(node.ref) ? node.ref : null;
       const role = /^[a-zA-Z][\w-]*$/.test(node.role) ? node.role : 'group';
-      const protectedValue = scalarRole(role) && (node.protected === true || secrets.unnamed ||
-        secrets.names?.has(normalized(node.name)) || SENSITIVE.test([node.name, node.placeholder].join(' ')));
+      const namedSensitive = node.protected === true || secrets.names?.has(normalized(node.name)) || SENSITIVE.test([node.name, node.placeholder].join(' '));
+      // A number field (a CVV, a PIN) shows its value in its own row, which scrub no longer removes for a short secret.
+      const protectedValue = scalarRole(role) && (namedSensitive || secrets.unnamed) || role === 'spinbutton' && node.text !== undefined && namedSensitive;
       let line = '- ' + role;
       if (node.name) line += ' ' + JSON.stringify(scrub(node.name, secrets));
       for (const flag of ['checked', 'disabled', 'expanded', 'active', 'pressed', 'selected', 'invalid', 'level']) {
