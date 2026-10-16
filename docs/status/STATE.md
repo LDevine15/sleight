@@ -12,6 +12,9 @@ FowlBrowser's 720 s (p90 868) and 7 errors, 76%. Both arms 26/26 under the owner
 fully held (docs/benchmarks/2026-10-16-gate.md, last section). Puddle's plan: W6 at about 09:15 is the Opus head-to-head (5 rounds,
 `MODEL=opus ledger/claims/GATE2/gate5.sh 5`, cap 90). W7 at about 11:10 to 11:20 runs `ledger/claims/GATE2/window-native-rest.sh`,
 the sleight arm's 15 remaining native tasks (cap 60).
+`arch/release-cand` `cb20a697` is v3-gate `66ada2bd` plus `arch/v8-int` (V8 and V8R, 8,640 KB). Its merge had no conflicts. Its
+focused files and 8 real-page files (headless) pass. Its full check is still owed, then it merges into `pane/auto-mode` for the release
+pass.
 
 **Gate on `adc5fbc9` (04:01 to 04:32 UTC) failed on time** (docs/benchmarks/2026-10-16-gate.md, second section): turbo median
 607 s (p90 634) against FowlBrowser's 685 s (p90 706), 89%. Errors, focus and ToolSearch targets are met, and both arms score 26/26
