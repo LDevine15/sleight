@@ -1208,7 +1208,8 @@ export function createRelay({
         const recovery = target ? `${constApp ? '' : 'let app = '}await ${target}` : 'await cua.getState()';
         const inventory = /\bcua\.(?:listApps|listWindows|getState)\(/.test(code)
           ? ' To look up apps or windows, send one expression, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
-        leaseStop(msg, `a bundle ID and full window header are required. Send exactly \u0060${recovery}\u0060 in js.${inventory} Use the handle returned by cua.getApp directly.`, true);
+        const missing = ['bundle ID', ...(typeof leaseWindow?.app !== 'string' || typeof leaseWindow?.title !== 'string' ? ['full window header'] : [])];
+        leaseStop(msg, `a bundle ID and full window header are required. Missing target identity: ${missing.join(', ')}. Send exactly \u0060${recovery}\u0060 in js.${inventory} Use the handle returned by cua.getApp directly.`, true);
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }
