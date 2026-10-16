@@ -28,6 +28,10 @@ async function fixtureHelper(request, signal) {
 // The child retains its AX window reference through cleanup. It never needs a
 // window inventory or an Apple Event. Only a retained reference permits closing
 // a window; a missing reference leaves cleanup unconfirmed.
+// A document app launched without these restores the owner's windows and iCloud "Untitled" documents (TextEdit did, 2026-10-16),
+// and then can't quit cleanly. The other bench launchers pass the same flags (bench/tasks.mjs).
+const DOCUMENT_LAUNCH = ['--args', '-ApplePersistenceIgnoreState', 'YES', '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO',
+  '-NSDocumentSaveNewDocumentsToCloud', 'NO'];
 export async function openFixture(ctx, request, { run = runOwned, open = execute, launch, helper = fixtureHelper } = {}) {
   const fixtureLaunch = webBrowsers.find(browser => browser.bundle === request.bundle)?.fixtureLaunch;
   const createdWindow = ['retained-url', 'new-instance'].includes(fixtureLaunch);
@@ -180,7 +184,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     beginLaunch();
     const args = fixtureLaunch === 'new-instance'
       ? ['-n', '-g', '-a', request.app, '--args', '--new-window', request.target]
-      : ['-g', '-a', request.app, ...(request.target ? [request.target] : [])];
+      : ['-g', '-a', request.app, ...(request.target ? [request.target] : []), ...(request.mode === 'document' ? DOCUMENT_LAUNCH : [])];
     await open('/usr/bin/open', args, { signal, timeout: 15000 });
   }
   writeControl('opened');

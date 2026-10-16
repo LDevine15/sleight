@@ -346,6 +346,22 @@ test('cleanup revalidates recovered focus before closing the retained document',
   }
 });
 
+test('cleanup treats a window with an unsupported title as closed only when the app no longer lists it', () => {
+  const list = items => ({ count: items.length, objectAtIndex: index => items[index] });
+  for (const [listing, expect] of [['absent', 'closed'], ['listed', 'stop'], ['unreadable', 'stop']]) {
+    const owned = {}, other = {}, app = {}, actions = [];
+    const fixture = cleanupNative((element, attribute) => {
+      if (element === app && attribute === 'AXWindows') return listing === 'unreadable' ? { code: -25204 } : { value: list(listing === 'listed' ? [other, owned] : [other]) };
+      return attribute === 'AXRole' ? { value: 'AXWindow' } : { code: -25205 };
+    });
+    fixture.native.AXUIElementPerformAction = () => { actions.push('close'); return 0; };
+    const api = { ...fixture.api, wait() {} };
+    const close = () => fixture.sandbox.closeOwnedWindow(owned, { mode: 'document', token: 'nonce' }, app, api);
+    if (expect === 'closed') close(); else assert.throws(close, /AX fixture read failed|unconfirmed|-25204/);
+    assert.deepEqual(actions, [], listing);
+  }
+});
+
 test('cleanup repeats document identity checks when final focus validation waited', () => {
   const owned = {}, actions = [];
   let focusReads = 0;
@@ -1415,4 +1431,28 @@ test('a collected helper refusal before any mutation confirms cleanup without an
   await closeFixtures(ctx);
   assert.equal(await ctx.windowLeases[0].dispose(), true);
   assert.throws(() => readFileSync(join(dir, 'window-0-control.json')), /ENOENT/);
+});
+
+test('a document fixture launches without window restoration or the iCloud open panel', async t => {
+  const { openFixture } = await import('../bench/real-fixture.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'real-document-launch-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const actions = [];
+  let finish;
+  const lease = await openFixture({ dir, ownerAway: true }, {
+    app: 'TextEdit', bundle: 'com.apple.TextEdit', target: join(dir, 'nonce.txt'), token: 'nonce.txt', mode: 'document',
+  }, {
+    helper: async () => ({ command: 'native-helper', args: [] }),
+    open: async (command, args) => { assert.equal(command, '/usr/bin/open'); actions.push(args); },
+    run: async (_command, _args, options) => {
+      options.onStdout('{"stage":"launch","running":false}\n');
+      setTimeout(() => options.onStdout('{"stage":"armed","running":false}\n{"stage":"ready","pid":123}\n'), 5);
+      return new Promise(resolve => { finish = resolve; });
+    },
+  });
+  assert.deepEqual(actions, [['-g', '-a', 'TextEdit', join(dir, 'nonce.txt'), '--args', '-ApplePersistenceIgnoreState', 'YES',
+    '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO', '-NSDocumentSaveNewDocumentsToCloud', 'NO']]);
+  const closed = lease.close();
+  finish({ exit: { code: 0 }, stdout: '{"stage":"closed"}\n', groupClean: true });
+  await closed;
 });

@@ -268,8 +268,17 @@ function chooseFileMenu(file, titles, api) {
   }
 }
 
+// A window the task already closed can keep answering AXRole while its title is unsupported (-25205): Chess and Word did after
+// their tasks saved and closed them (2026-10-16). It counts as closed only when the app's own window list, read successfully,
+// no longer holds it. Any other read failure, or a window still listed, keeps the stop.
+function closedUnderUs(window, app, api) {
+  if (!api.text || !api.listed) return false;
+  try { api.text(window, 'AXTitle'); return false; }
+  catch (error) { if (error.code !== -25205) throw error; return api.listed(app, window) === false; }
+}
+
 function closeOwnedWindow(window, request, app, api) {
-  if (!window || !api.exists(window)) return;
+  if (!window || !api.exists(window) || closedUnderUs(window, app, api)) return;
   if (!api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
   var noDialog = function () {
     if (request.refuseDialogs && api.dialog(app, window, request).length) throw new Error('Application dialog present; fixture cleanup refused');
@@ -282,7 +291,7 @@ function closeOwnedWindow(window, request, app, api) {
   } else api.closeButton(window, identity);
   for (var attempt = 0; attempt < 30; attempt++) {
     api.wait();
-    if (!api.exists(window)) return;
+    if (!api.exists(window) || closedUnderUs(window, app, api)) return;
     if (request.mode === 'document' && !api.matches(window, request, true)) return;
     if (!request.refuseDialogs) api.discard(window, identity);
   }
@@ -470,6 +479,13 @@ function nativeAX(state, clock) {
     focused: function (app) { return read(app, 'AXFocusedWindow'); },
     mainWindow: function (app) { return read(app, 'AXMainWindow'); },
     windowCount: function (app) { return children(app, 'AXWindows').length; },
+    // true or false only when the app's window list was read; undefined when it couldn't be.
+    listed: function (app, window) {
+      var values = read(app, 'AXWindows');
+      if (!values) return undefined;
+      for (var index = 0; index < Number(values.count); index++) if ($.CFEqual(values.objectAtIndex(index), window)) return true;
+      return false;
+    },
     exists: function (window) {
       try { return text(window, 'AXRole') === 'AXWindow'; }
       catch (error) { if (error.code === -25202) return false; throw error; }
