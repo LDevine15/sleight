@@ -232,8 +232,8 @@ Engine behavior that sleight works around or can't change:
 - After a kernel reset, sleight restores `tab` and `b` only for calls whose source it can parse: 87 of 403 recorded browser calls (21.6%)
   aren't tracked, and a name the call assigns isn't restored.
 
-- The benchmark's claude-cu arm setup (`bench/world/arms/claude-cu/setup.mjs`) runs Claude Code's `install.cjs` with the owner's
-  HOME. On 2026-10-16 it most likely removed `~/.local/bin/claude`, so `claude` fell back to an older Homebrew build until the
-  symlink was restored.
+- A benchmark arm's pinned Claude Code, started by hand in a normal terminal, runs its auto-updater against the owner's HOME. On
+  2026-10-16 that most likely removed `~/.local/bin/claude` ("Auto-update failed"), so `claude` fell back to an older Homebrew build
+  until the symlink was restored. Hand-run arm commands need `DISABLE_AUTOUPDATER=1`. The benchmark already sets it.
 - The world suite's native fixtures stop the whole pass on any cleanup they can't confirm. On 2026-10-16 the sleight arm stopped
   on a TextEdit that restored iCloud "Untitled" documents at launch and on a Chess window whose title read failed (AX -25205).

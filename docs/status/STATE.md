@@ -27,9 +27,10 @@ turbo A/B of v3-gate against find-alt over 3 rounds (prefix `abf`), then the sle
 chess-drag (73.2 s) and stopped on "Owned Chess fixture window cleanup unconfirmed" (AX read -25205 AXTitle). Chess isn't running
 now. The full check of `arch/gate-next` passed its tests (6873, 0 fail, 399 skipped) and mod tests (49/49). It failed
 `claude plugin validate` because `~/.local/bin/claude` had disappeared, so `claude` resolved to Homebrew's 2.1.231. sleight-arch
-restored the symlink to `~/.local/share/claude/versions/2.1.289`, and validation then passed. The cause is most likely the
-claude-cu arm's setup, which ran Claude Code's own `install.cjs` with the owner's HOME at 03:33 UTC (`~/.local/bin` mtime). That
-setup must not touch the owner's CLI (fix in `bench/world/arms/claude-cu/setup.mjs`). **v3-gate is now `66ada2bd`** (find-alt plus
+restored the symlink to `~/.local/share/claude/versions/2.1.289`, and validation then passed. `~/.local/bin` changed at 03:33 UTC,
+during the owner's interactive claude-cu sessions, which showed "Auto-update failed". The arm's own CLI ran its auto-updater with the
+owner's HOME (the benchmark sets `DISABLE_AUTOUPDATER=1`, the owner's terminal didn't), which most likely removed the symlink.
+`install.cjs` only copies the binary inside the package. Owner commands for arm CLIs need `DISABLE_AUTOUPDATER=1`. **v3-gate is now `66ada2bd`** (find-alt plus
 world-login, fast-forwarded and pushed). Asked Puddle for a gate window (5 rounds on `66ada2bd`) and a window for the sleight arm's
 other 15 tasks (without chess-drag and the 9 TextEdit tasks).
 
