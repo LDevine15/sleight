@@ -18,8 +18,24 @@ real-page files pass with `SLEIGHT_LIVE_DOM_TEST=1`. **v3-gate is now `adc5fbc9`
 holds `SLEIGHT_CONFIRM_PAYMENTS=never` and the forgive and form fixes. Against FowlBrowser's 677 s, 542 s would be 80%, which
 is a projection only.
 
-**Next.** Gate rounds (5) with both arms on v3-gate `adc5fbc9` under a Puddle HOLD (`gate5.sh 5`, defaults), then the Opus
-head-to-head.
+**Next.** Gate rounds (5) with both arms on v3-gate `adc5fbc9` when Puddle sends "HOLD live" (promised for about 04:00 UTC,
+`gate5.sh 5`, defaults), then the Opus head-to-head (`MODEL=opus gate5.sh`).
+
+**Native claim suite (owner agreed 2026-10-16 03:20 UTC).** Benches don't wait for Electron. First a pass of one run per arm per task
+to find where sleight loses, then the five-run claim. In flight: agent `world-login` on `arch/world-login` puts the native world runner on
+the owner's login per isolated arm config, as the fowl rounds do. It writes a dry-run plan to `ledger/claims/CS3/` and updates the checklist.
+Owner done tonight: native claude-cu arm login (installed by sleight-arch at `~/Library/Caches/sleight-bench/claude-cu`, 2.1.289,
+onboarding and folder trust done), CuaDriver and Terminal grants confirmed. That arm had no computer-use tool (Claude used AppleScript
+through Bash): the docs say the built-in `computer-use` MCP server is off by default and enabled per project with `/mcp` in an
+interactive session (owner step, in `claude-cu/work`). Its app approvals last one session, with no "always allow" in the CLI, so
+its runs need the owner present or are reported blocked. EPV3-1's consent run is still owed: its cards open from the "sleight"
+menu bar item, not a popup.
+
+**Electron.** Agent `epv3-2` builds EPV3-2 on `arch/epv3-2` (`2bbdf404` is v3-gate plus EPV3-1, with the v3-context conflict resolved
+by sleight-arch). Step 0 ports EPV3-1's electron-context test fake to AD1's seal evidence (43 of 50 failed on the merged base).
+
+**Video.** No work until the claim suite with native apps backs "fastest on macOS" (owner). LoC's draft paint round is parked unsent
+on LoC trunk `d8c3ef73` (`artifacts/ARCH-IMAGEGEN-R18/`). The storyboard is `340ba5e2`.
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
