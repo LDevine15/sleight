@@ -419,13 +419,14 @@ test('a fixture cleanup failure continues the pass only when every launched app 
   assert.equal(cleanupContained({ fixtureDiagnostics: [quit] }), false, 'no cleanup failure');
 });
 
-test('an owner-away run releases a held mouse button after the model and before fixture cleanup', async t => {
+test('an owner-away run releases a held mouse button before setup, and after the model before fixture cleanup', async t => {
   // A Codex drag left Finder in a mouse-down tracking loop (2026-10-16): it ignored Apple events until a mouse-up arrived.
   for (const ownerAway of [true, false]) {
     const execute = await runner(), ctx = { ...fixture(t), ownerAway }, calls = [];
     ctx.releaseInput = async () => { calls.push('release'); };
-    await execute({ setup() {}, prompt: () => 'fixture', check: () => { calls.push('check'); return true; }, cleanup: () => calls.push('cleanup') }, ctx,
+    const result = await execute({ setup() {}, prompt: () => 'fixture', check: () => { calls.push('check'); return true; }, cleanup: () => calls.push('cleanup') }, ctx,
       { drive: async () => { calls.push('drive'); return { code: 0, groupClean: true, out: {} }; } });
-    assert.deepEqual(calls, ownerAway ? ['drive', 'release', 'check', 'cleanup'] : ['drive', 'check', 'cleanup'], String(ownerAway));
+    assert.equal(result.inputReleased, ownerAway ? 2 : undefined, 'the result records each release');
+    assert.deepEqual(calls, ownerAway ? ['release', 'drive', 'release', 'check', 'cleanup'] : ['drive', 'check', 'cleanup'], String(ownerAway));
   }
 });

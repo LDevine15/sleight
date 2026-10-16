@@ -20,6 +20,10 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     result.appDialog = dialog;
     stop?.(); cleanupController.abort();
   };
+  const releaseInput = async () => {
+    await (ctx.releaseInput ?? releaseHeldMouse)().catch(() => {});
+    result.inputReleased = (result.inputReleased ?? 0) + 1;
+  };
   const dialogReason = () => result.appDialog && `${result.appDialog.app} ${result.appDialog.category} dialog: stopped`;
   const observe = async () => {
     try {
@@ -45,6 +49,8 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       }, 3000);
     }
     mkdirSync(ctx.dir, { recursive: true });
+    // A drag the previous run left half done keeps the app in its tracking loop and breaks this setup (Finder, 2026-10-16).
+    if (!dryRun && ctx.ownerAway) await releaseInput();
     await (dryRun ? task.prepare?.(ctx) : task.setup?.(ctx));
     signal?.throwIfAborted();
     const prompt = task.prompt(ctx);
@@ -64,7 +70,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       Object.assign(result, response);
       // An arm can leave a drag half done, and the app then sits in its mouse tracking loop and ignores Apple events (a Codex
       // drag froze Finder, 2026-10-16). With the owner away, one mouse-up ends it before the check and cleanup read the app.
-      if (ctx.ownerAway) await (ctx.releaseInput ?? releaseHeldMouse)().catch(() => {});
+      if (ctx.ownerAway) await releaseInput();
       if (task.capture) await task.capture(ctx, response);
       const verdict = signal?.aborted || cleanupController.signal.aborted ? dialogReason() || 'run interrupted' :
         await task.check({ ...ctx, answer: response.out?.result ?? '' });
