@@ -1476,3 +1476,15 @@ test('the app dialog scan skips the sheets of a fixture window the task already 
   });
   assert.equal(fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'TextEdit', token: 'nonce', mode: 'document' }).length, 0);
 });
+
+test('the app dialog scan skips a dialog that disappears while it is read', () => {
+  const owned = {}, alert = {}, app = {};
+  const fixture = cleanupNative((element, attribute) => {
+    if (element === app && attribute === 'AXFocusedWindow') return { value: alert };
+    // Word's "All done" alert, dismissed between the focus read and its contents (-25202, word-edit 2026-10-16).
+    if (element === alert) return attribute === 'AXChildren' ? { code: -25202 } : attribute === 'AXSubrole' ? { value: 'AXDialog' } :
+      attribute === 'AXRole' ? { value: 'AXWindow' } : { value: null };
+    return { value: attribute === 'AXRole' ? 'AXWindow' : attribute === 'AXTitle' ? 'Report nonce' : null };
+  });
+  assert.equal(fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'Microsoft Word', token: 'nonce', mode: 'document' }).length, 0);
+});

@@ -290,8 +290,8 @@ function closeOwnedWindow(window, request, app, api) {
   var phase = 'start';
   try { return closeOwnedWindowSteps(window, request, app, api, function (name) { phase = name; }); }
   catch (error) {
-    // A stop says which step failed and what the window answered then, so a fix is measured (Chess, 2026-10-16).
-    if (error && error.code === -25205 && api.read && error.message.indexOf('[phase=') === -1) {
+    // A stop says which step failed and what the window answered then, so a fix is measured (Chess and Word, 2026-10-16).
+    if (error && (error.code === -25205 || error.code === -25202) && api.read && error.message.indexOf('[phase=') === -1) {
       var probe = function (attribute) { try { var v = api.read(window, attribute); return v === null ? 'null' : 'ok'; } catch (e) { return String(e.code); } };
       var listed; try { listed = api.listed ? api.listed(app, window) : 'n/a'; } catch (e) { listed = String(e.code); }
       error.message += ' [phase=' + phase + ' listed=' + listed + ' role=' + probe('AXRole') + ' subrole=' + probe('AXSubrole') +
@@ -447,13 +447,17 @@ function nativeAX(state, clock) {
     var found = [];
     for (var index = 0; index < candidates.length; index++) {
       var candidate = candidates[index];
-      var info = { title: text(candidate, 'AXTitle'), subrole: text(candidate, 'AXSubrole'),
-        document: text(candidate, 'AXDocument') };
-      if (text(candidate, 'AXRole') === 'AXSheet') info.subrole = 'AXDialog';
-      if (['AXDialog', 'AXSystemDialog'].indexOf(info.subrole) !== -1 || /^(?:Microsoft )?(?:Word|Excel|PowerPoint|Mail)$/.test(info.title)) {
-        var content = dialogContents(candidate, { children: children, text: text });
-        info.buttons = content.buttons; info.text = content.text;
-      }
+      // A dialog dismissed while it is read becomes an invalid element (-25202, Word's "All done" alert at cleanup,
+      // 2026-10-16). It no longer exists, so it can't block cleanup.
+      try {
+        var info = { title: text(candidate, 'AXTitle'), subrole: text(candidate, 'AXSubrole'),
+          document: text(candidate, 'AXDocument') };
+        if (text(candidate, 'AXRole') === 'AXSheet') info.subrole = 'AXDialog';
+        if (['AXDialog', 'AXSystemDialog'].indexOf(info.subrole) !== -1 || /^(?:Microsoft )?(?:Word|Excel|PowerPoint|Mail)$/.test(info.title)) {
+          var content = dialogContents(candidate, { children: children, text: text });
+          info.buttons = content.buttons; info.text = content.text;
+        }
+      } catch (error) { if (error.code === -25202) continue; throw error; }
       var record = appDialogInfo(info, request.app, request.refuseDialogs);
       if (record) found.push(record);
     }
