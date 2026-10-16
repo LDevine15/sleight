@@ -396,15 +396,16 @@ test('debugger detail is retained and a caller sentence starting with its words 
     'Debugger unattached: a caller explanation']) assert.equal(rewriteTabError(text), text);
 });
 
-test('input timeouts use guarded short dialog advice and retain input uncertainty', () => {
+test('input timeouts offer read-only dialog inspection and retain input uncertainty', () => {
   const out = rewriteTabError('Error: Timed out after 2991ms waiting for CDP command Input.dispatchMouseEvent.');
   assert.match(out, /input may already have been sent/);
-  assert.match(out, /const dialog = await tab.getJsDialog\(\); if \(dialog\)/);
-  assert.match(out, /dialog\.dismiss\(\)/);
+  assert.match(out, /nodeRepl\.write.*await tab.getJsDialog\(\)/);
+  assert.match(out, /dialog is not confirmed/);
+  assert.doesNotMatch(out, /dialog\.(?:dismiss|accept)\(/);
   assert.doesNotMatch(out, /\/\*|alert\/beforeunload|read dialog\.type and message/);
   assert.match(out, /getAXState/);
   assert.doesNotMatch(out, /\} if a page dialog is open/);
-  assert.match(out, /\} Read the page before retrying input:/);
+  assert.match(out, /Read the page before retrying input:/);
 });
 
 test('regex literal quotes cannot hide actions from debugger error advice', t => {
