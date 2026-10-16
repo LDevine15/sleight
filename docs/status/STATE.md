@@ -17,10 +17,10 @@ forms). Each round takes about 8 minutes. The gate script is `~/Projects/sleight
 alternate the arm order per browser order, and an EXIT trap that touches `/tmp/sleight-bench-done`.
 
 **In flight at the flush.**
-- Agent `q1-integrator` (ends at the clear) is combining the 16 reviewed Q1 error-message branches (Q1-1 to Q1-11, Q1-2R3, Q1-13 to
-  Q1-17; Q1-12 failed review) on `arch/q1-int` in `~/Projects/sleight-wt/q1-int`, from pane/auto-mode, with the reviewers' small
-  fixes. Next session: read `ledger/claims/Q1/INTEGRATION.md` if it exists, else check the branch and redo from the reviews in
-  `ledger/claims/Q1-<n>/REVIEW.md`. Merges after the 1.3.0 tag.
+- Q1 is integrated on `arch/q1-int` at `0022e9c2` (`~/Projects/sleight-wt/q1-int`, from pane/auto-mode): all 17 error-message
+  fixes, Q1-12 reworked on live engine evidence (1-based line, 0-based column), 584/584 focused tests (`ledger/claims/Q1/INTEGRATION.md`).
+  It adds about 150 characters per error across 22 fixture errors. Q1-17's "execution is unconfirmed" notice also fired on a
+  runtime throw that did run: fix before merging. Merges after the 1.3.0 tag.
 - No gate round, benchmark or background job is running.
 
 Branches (all on `private`, pushed):
