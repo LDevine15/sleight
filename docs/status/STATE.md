@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 16:30 UTC, the cause of the stuck apps is fixed, claim baseline resumes)
+## Banner (2026-10-16 16:40 UTC, claim baseline runs the 10 non-Office tasks, Office waits for the owner)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -41,6 +41,12 @@ Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle windo
   Accessibility press, which is also what hung Preview and Word. `1e8be968` closes launched apps' documents by the window's
   close button and never opens a menu. codex calculator-click #1 and calculator-menu #1 overlap Puddle tests (16:01:21 to
   16:03:10 and 16:04:09 UTC), so they are marked exposed.
+- codex reruns: the 16:14 UTC retry ran under 4 of Puddle's spinning processes and stopped on Word's recovered fixture from the
+  force-quit, so none of it counts. The 16:21 UTC rerun (one Puddle core busy throughout) passed calculator-click 11.8 s,
+  calculator-menu 133.1 s, textedit-save 34.7 s and textedit-calculator 83.2 s. It failed textedit-drag, word-edit and
+  excel-edit (300 s, Excel's recovery prompt), then Excel ignored quit and got a TERM signal.
+- Office (word-edit, excel-edit) now runs last for every arm, after the owner answers Excel's recovery prompt. The other 10
+  claim tasks run first (`claim-arm.sh ARM "<list>"`).
 - Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
   after the owner-present turbo qualification. The gate measured turbo through a bench-only server
   (`bench/turbo/v3-server.mjs`) that begins the turn itself. Its numbers cover turbo's tools and worker, not the mod's
@@ -91,7 +97,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing. The next codex claim window is being requested.
+**Running now.** Nothing. A codex window for the 10 non-Office tasks was requested at 16:37 UTC.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
