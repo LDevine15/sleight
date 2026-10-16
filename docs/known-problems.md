@@ -9,7 +9,7 @@ our own runs. Dates and engine versions are given where they matter.
   and common shell writes to it (unit-tested, 2026-10-12), but any other process running as you can
   write it, and a path built at run time gets past the check.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
-- `sleight-mcp setup` (unreleased) hasn't had a full live run: macOS permissions always need the user's click.
+- `sleight-mcp setup` hasn't had a full live run: macOS permissions always need the user's click.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with
   their beta builds). The list is in the helper; [a setting](settings.md#driving-apps-the-engine-refuses)
   lifts it. sleight's `blocked_app` path was removed on 2026-10-11.
@@ -126,7 +126,13 @@ our own runs. Dates and engine versions are given where they matter.
   links and forms that target a new tab or window as background tabs, but it keeps the page's own click for inline handlers,
   links that need `window.opener`, downloads and anything a script opens, because the engine's read-only page access can't see
   or stop those. The extension's own popup interception sits behind a remote OpenAI flag with no local switch. Before the change,
-  sleight's arm took focus 7 times in a 13-task Haiku round on 2026-10-12, against 2 for FowlBrowser's. The rerun is pending.
+  sleight's arm took focus 7 times in a 13-task Haiku round on 2026-10-12, against 2 for FowlBrowser's.
+  After the change it took focus 9 and 8 times in the two orders of the first 2026-10-13 gate round,
+  and 18 times across both orders of the second, against 0 for FowlBrowser.
+- Forms failed most in the [2026-10-13 engine-path rounds](benchmarks/2026-10-13-gate.md).
+  Across the two gate rounds and one targeted check, 13 of 24 form runs passed, while every other
+  task passed 36/36. A custom two-factor switch and checkout failed in each round. These runs
+  predate production turbo.
 
 - In a browser started with `--remote-debugging-port`, such as the benchmark's own headless Chromium, a page's speculation rules
   (prefetch, prerender, or rules a script inserts) can request the DevTools HTTP endpoint and close another tab through
@@ -151,9 +157,9 @@ On FowlBrowser's own 13 tasks (2026-10-12), sleight passed 23/26 in 2,109 s agai
 in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from that list:
 
 - Chrome and Helium both report as "Chrome" in `listBrowsers`.
-- A session never closes the tabs it opened.
-- A web page's tree is capped in a result, but the first browser result of a session, with the engine's docs,
-  still came to 55,450 characters on one article, over the 45,000 sleight aims for.
+- An explicit turn end closes finished tabs the session created, but keeps tabs still loading,
+  edited forms, tabs handed to the user and deliverables. sleight's arm left 41 tabs open in a
+  26-run round on 2026-10-13, down from 74, against 0 for FowlBrowser.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop). `SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check below for such a payment, so a page that hides a larger total behind a matching amount field is not caught. It asks as before for an unrequested payment, a second payment in the same request and an amount that differs from the message.
 - The turbo v3 payment read asks whenever any visible money figure in the payment form or dialog is larger than the amount in the
   user's message, in any currency and with any label or sign (a discount, a was price, a gift card, a late fee, a coverage limit,
@@ -197,10 +203,28 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   2 of 6 such pages allow Pay (the quiet one and one with an already-loaded cross-origin image). Skipping requests to a
   URL the page already sent periodically would let a page hide a charge in its own heartbeat, so it asks.
 
-Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, and a tab's tree
-is capped with a note on how to read the rest.
+Fixed since: tab calls no longer take the native input lease, `SLEIGHT_SURFACES=browser` works, a
+tab's tree is capped with a note on how to read the rest. Browser-first sessions now defer the
+native reference, and oversized first results defer the browser reference while retaining safety text.
 
-Engine behavior that sleight works around or can't change:
+- On an unsorted list, `sleight.pickFromList` can pick a prefix match at its scroll limit before
+  reaching a later exact row. Its real-tab scroll and searches past index 360 are fixed.
+
+### Turbo (opt-in)
+
+- Turbo is wired in beside the engine's browser tools, and the engine path stays the default. Its
+  [gate](benchmarks/2026-10-16-gate.md) passed on 13 FowlBrowser tasks (547 s against 720 s, 0 errors,
+  Haiku 5.5, 5 rounds), but the installed approval flow is not qualified, and no native-app comparison has run.
+  The earlier [prototype](benchmarks/2026-10-14-turbo-prototype.md) passed 4/9 with all four forms failing.
+- The native helpers require Apple's command-line tools for their first build. A failed compiler
+  leaves the engine path available. Minimum macOS version and Intel builds are unqualified.
+- Native consent, selected-profile setup, idle connection longevity, package updates and cleanup
+  still need installed checks. Missing or disabled operator configuration keeps turbo off.
+- Turbo has no mobile viewport control. Use the engine's separate browser path for that task.
+  Tabs and refs cannot cross paths. Never retry a safety refusal or an uncertain action through
+  the other path. Embedded frame hosts are refused for input, while their page reads remain available.
+
+### Engine browser limits
 
 - `tab.drag` doesn't drop on an HTML5 drag-and-drop target when aimed at the target's center (0 drops in 14
   trials in Chrome and Helium). It moves in 8 equal steps, and the page sees `dragover`, which a drop needs,
@@ -269,9 +293,18 @@ Engine behavior that sleight works around or can't change:
   unnamed live popover button has not been checked with an approved app.
 - Exact window selection is unavailable on macOS. Engine docs say `getApp({ windowId })` is for Linux
   and Windows; macOS takes an app name, path or bundle ID.
-- The native guard still needs full AX reads after preceding actions. On 2026-10-08, Calculator reads
-  after Escape took median 413 to 437 ms, against 29 to 48 ms idle.
-- Literal numbers only: a call that computes an element number is refused in that state.
+- The native guard still reads for the first element lookup, after an action that can open a panel
+  and at the end of an acting call. On 2026-10-08, Calculator reads after Escape took median 413
+  to 437 ms, against 29 to 48 ms idle. The [2026-10-14 A/B](benchmarks/2026-10-14-guard-ab.md)
+  ran three times a side on five tasks. After safety fixes, a follow-up passed 14/14 with one run
+  skipped when TextEdit failed to launch. A plain button that swaps to a look-alike document still
+  keeps the old binding, since the macOS engine does not list windows to compare.
+- On macOS 27, engine capture adds an Accessibility dialog named "Window" with a
+  `WindowSharingSessionButton`, the system sharing indicator (2026-10-14). The benchmark focus probe
+  skips it. Whether it affects the plugin's window checks is unmeasured.
+- On macOS 27, TextEdit's Open panel belongs to `com.apple.appkit.xpc.openAndSavePanelService`.
+  After Cmd+O the app's focused element has no window (AX error -25212), so its focus cannot show
+  when the panel is ready (2026-10-14). The guard keeps the read after a panel opener.
 - Same-title replacement of a window cannot be detected (the engine doesn't give window ids).
 - `/sleight stop` collects owned engine and helpers, then leaves the shared computer-use helper running.
 - The engine keeps two keyboard event taps ("ChatGPT Computer Use") from its first key action until
@@ -304,6 +337,11 @@ Engine behavior that sleight works around or can't change:
 - TextEdit hung 3 times on 2026-10-05, each time after Claude set a document's text with `setValue`
   and then pressed a save shortcut. Its main thread waits forever on the document's save lock. The
   skill tells Claude to select and type in TextEdit instead of using `setValue`.
+- Lean calls remain off. After the cache fix, their A/B took 220.8 s against 194.4 s and passed
+  11/13 against 12/14 (summed medians, five native tasks, 2026-10-14). Chess drove the time gap.
+  Earlier Chess benchmark folders are now archived before each arm without deleting evidence;
+  the remembered Save directory's fallback still needs a live check.
+  [Lean-call measurements](benchmarks/2026-10-14-lean-calls-ab.md).
 - On 2026-10-06 TextEdit timed out every engine read after an AppleScript `close every document
   saving no`. It still answered AppleScript, but its only window was an orphan "Save Panel Accessory
   View" that Accessibility didn't list. A read now identifies a possible orphan when macOS lists only
@@ -334,7 +372,7 @@ Engine behavior that sleight works around or can't change:
   the helper that clicks and types comes only with the Mac ChatGPT app, and there's no ChatGPT desktop
   app for Linux (checked 2026-10-04). We haven't checked the Windows app.
 - Cursor and generic MCP clients can use sleight's native approval panel and idle turn cleanup
-  (unreleased). The panel shows the client's name (Cursor) in other
+  in 1.3.0. The panel shows the client's name (Cursor) in other
   hosts and Claude under Claude Code. It is unit-tested only: no live approval in another host has been
   checked. Unanswered relay forms expire after five minutes.
 - A name lookup can still launch an app that exited between the native check and `getApp`.
@@ -346,9 +384,6 @@ Engine behavior that sleight works around or can't change:
 - A pane replay is untested in Auto mode, where the classifier may refuse the mod's `replay` call
   because the mod doesn't approve it (the classifier refused the pane's snapshot on 2026-10-08).
 
-- `sleight.pickFromList` throws "needs a browser tab" on a real browser tab: it calls `tab.scroll`, which the engine's Tab doesn't have.
-  Its search also gives up before rows past about index 360 of a 1,000-row virtualized list. Found 2026-10-12 with real Playwright on
-  FowlBrowser's travel page. The fix is in progress.
 - After a kernel reset, sleight restores `tab` and `b` only for calls whose source it can parse: 87 of 403 recorded browser calls (21.6%)
   aren't tracked, and a name the call assigns isn't restored.
 
