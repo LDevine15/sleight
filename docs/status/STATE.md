@@ -24,8 +24,8 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 
 **Next (sleight-arch).** (1) Done offline (`2a51e695`, full check passed, exit 0, 5502 tests with 0 failing): a window the task
 already closed (title unsupported, -25205) counts as closed only when the app's window list no longer holds it, and document fixtures
-launch with the persistence arguments. Not yet proven live. Finish the native pass in Puddle windows, with the fix's first live run. (2) The release pass (`bench/release-pass.mjs`) still reads the API key (`api-auth.mjs` readKey). Move it to the login
-before running it. (3) RP1's CHANGELOG and README with tonight's numbers. (4) Review EPV3-2 when its agent reports.
+launch with the persistence arguments. Not yet proven live. Finish the native pass in Puddle windows, with the fix's first live run. (2) The release pass (`bench/release-pass.mjs`) still requires API funding for its Haiku stages. A started move to the login
+(`ledger/claims/RP-LOGIN/start.diff`, not committed) leaves 5 tests that encode API spend admission to rework before it runs. (3) RP1's CHANGELOG and README with tonight's numbers. (4) Review EPV3-2 when its agent reports.
 
 **Owner items.**
 - The 1.3.0 tag, after the release pass.
