@@ -75,7 +75,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing, and next is the claim baseline's sleight arm in Puddle's next window, owner away.
+**Running now.** The claim baseline's sleight arm, started 15:34 UTC with the owner away (`ledger/claims/CS4/runs/sleight-20261016T1534Z.log`, window caps 16:19 UTC). Puddle's architect is being cleared, so ask its next seat for codex.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
