@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 14:18 UTC, native sleight arm running)
+## Banner (2026-10-16 14:28 UTC, drag geometry fixed, sleight arm retry next)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -34,9 +34,11 @@ sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (
   --socket "$HOME/Library/Caches/sleight-bench/mcp-cua-arm/driver.sock"`, and check that the socket exists.
 - Peekaboo's grants belong to Terminal.app, so launch its arm from a Terminal window (`osascript -e 'tell application "Terminal"
   to do script "…"'`, owner away only).
-- Results so far, sleight arm: calculator-click, calculator-menu, preview-pdf, finder-files and textedit-save pass. textedit-edit
-  did its task at 13:43 UTC (the file reads "alpha delta gamma") but counted as failed because its cleanup hit AX -25202 on the closed
-  window's sheets and stopped the pass. `fd47412f` fixed that (red test on the old code). chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
+- Results so far, sleight arm: calculator-click, calculator-menu, preview-pdf, finder-files, textedit-save and textedit-edit pass
+  (textedit-edit after `fd47412f`). textedit-drag failed at 14:17 UTC on a real sleight bug: JXA's `Ref('CGPoint')` reads back as the
+  number 0, so `drag` never matched a window by frame (broken since `0afa13f6` on 2026-10-12, a day after the last pass).
+  `287c8679` reads geometry through a byte buffer, with a real-osascript test. Its cleanup then stopped the pass because TextEdit's
+  Close stayed disabled after activation, though the app quit cleanly with the file unchanged. chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
   (docs/known-problems.md).
 - Puddle holds each arm's window and stops the chain after it. sleight-arch runs the arm command itself on "HOLD live" and asks "puddle arch" for the next window.
   sleight's windows have priority today (owner, 2026-10-16).
@@ -56,7 +58,7 @@ when the claim is measured.
 
 **Owner items.** Turbo live qualification, the claude-cu runs and EPV3-1's consent run (all owner-present), the 1.3.0 tag.
 
-**Running now.** The native pass's sleight arm, started 14:16 UTC with the owner away (log `ledger/claims/CS3/runs/sleight-20261016T1416Z.log`). Puddle stops the chain after it, and the next arm (codex) waits for my request, with no subagents running. The window caps at 15:06 UTC.
+**Running now.** Nothing. The sleight arm retry waits for Puddle's next window (requested 14:27 UTC, owner away).
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
