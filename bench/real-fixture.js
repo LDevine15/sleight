@@ -274,7 +274,16 @@ function chooseFileMenu(file, titles, api) {
 function closedUnderUs(window, app, api) {
   if (!api.text || !api.listed) return false;
   try { api.text(window, 'AXTitle'); return false; }
-  catch (error) { if (error.code !== -25205) throw error; return api.listed(app, window) === false; }
+  catch (error) {
+    if (error.code !== -25205) throw error;
+    var listed = api.listed(app, window);
+    if (listed === false) return true;
+    // Still listed (or the list is unreadable): say what the window looks like, so the next fix is measured, not guessed.
+    var probe = function (attribute) { try { var v = api.read(window, attribute); return v === null ? 'null' : 'ok'; } catch (e) { return String(e.code); } };
+    error.message += ' [listed=' + listed + ' role=' + probe('AXRole') + ' subrole=' + probe('AXSubrole') + ' document=' + probe('AXDocument') +
+      ' sheets=' + probe('AXSheets') + ' children=' + probe('AXChildren') + ' minimized=' + probe('AXMinimized') + ']';
+    throw error;
+  }
 }
 
 function closeOwnedWindow(window, request, app, api) {
