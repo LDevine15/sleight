@@ -1,5 +1,5 @@
 // The engine reports a parse error as "[line:column-line:column]: message". Measured on engine
-// 26.1007.71326 (8 errors, 2026-10-15): the line is 1-based and the column 0-based, both counted in
+// 26.1007.71326 (7 parse errors, 2026-10-15): the line is 1-based and the column 0-based, both counted in
 // the code the relay transmitted, which starts with sleight's setup lines (1261 of them at the time).
 // Without this mapping the model sees "[1263:10-1263:11]" for line 2 of its own code.
 export function syntaxOrigin(sent, code) {
