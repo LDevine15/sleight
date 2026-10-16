@@ -1520,3 +1520,23 @@ test('document close in an app this run launched uses the window close button an
   closeDocumentSafely({}, {}, () => events.push('validate'), api);
   assert.deepEqual(events, ['validate', 'button']);
 });
+
+test('native quit force-terminates a launched app that ignores an accepted quit, except Word and Excel', () => {
+  // TextEdit deadlocked in a save and Preview and TextEdit sat in background menus (2026-10-16): each accepted quit, never exited,
+  // and stopped the pass. Office keeps the stop, because a forced end leaves recovery files that broke later runs.
+  const { quitFixtureApplication } = nativeSource();
+  for (const [bundle, expect] of [['com.apple.TextEdit', 'forced'], ['com.microsoft.Word', 'stop'], ['com.microsoft.Excel', 'stop']]) {
+    let forced = false, time = 0;
+    const events = [];
+    const app = { processIdentifier: 42, bundleIdentifier: bundle, terminate: true, get forceTerminate() { forced = true; return true; } };
+    const clock = { now: () => time, wait: ms => { time += ms; }, emit: e => events.push(e) };
+    const run = () => quitFixtureApplication(42, bundle, () => forced ? null : app, clock);
+    if (expect === 'forced') {
+      assert.equal(run(), true);
+      assert.equal(events.at(-1).quitWait.reason, 'force-terminated');
+    } else {
+      assert.throws(run, /quit unconfirmed after thirty seconds/);
+      assert.equal(forced, false, bundle);
+    }
+  }
+});

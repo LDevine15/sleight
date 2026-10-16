@@ -92,8 +92,24 @@ function quitFixtureApplication(pid, bundle, application, clock) {
     if (remaining <= 0) break;
     clock.wait(Math.min(100, remaining));
   }
+  // A launched app that accepted the quit and is still up after 30 s is stuck: TextEdit deadlocked in a save, and TextEdit and
+  // Preview sat in a background menu (2026-10-16). This run launched it with only its fixtures, so it is force-terminated by
+  // the same pid and bundle. Word and Excel keep the stop, because a forced end leaves recovery files that broke later runs.
+  if (/^com\.microsoft\.(Word|Excel|Powerpoint)$/.test(bundle)) {
+    receipt('deadline');
+    throw new Error('Launched app quit unconfirmed after thirty seconds (normal quit accepted; finishedLaunching=' + finishedLaunching + ')');
+  }
+  if (clock.check) clock.check();
+  if (!target.forceTerminate) { receipt('deadline'); throw new Error('Launched app refused force termination after thirty seconds'); }
+  var forcedAt = clock.now();
+  while (clock.now() - forcedAt < 5000) {
+    target = application();
+    if (!target) { receipt('force-terminated'); return true; }
+    identity(target);
+    clock.wait(100);
+  }
   receipt('deadline');
-  throw new Error('Launched app quit unconfirmed after thirty seconds (normal quit accepted; finishedLaunching=' + finishedLaunching + ')');
+  throw new Error('Launched app still running five seconds after force termination');
 }
 
 function officeDeadlineError(state) {
