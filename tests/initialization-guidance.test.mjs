@@ -21,7 +21,7 @@ function reply(content, isError = false, code = 'await app.click(3)') {
 test('docs-only initialization preserves documentation and marks execution unconfirmed', () => {
   const result = reply([{ type: 'text', text: docs }]);
   assert.equal(result.content[0].text, docs);
-  const hint = result.content.find(c => /execution is unconfirmed/.test(c.text ?? ''))?.text;
+  const hint = result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text;
   assert.match(hint, /only required API documentation/);
   assert.match(hint, /execution is unconfirmed/);
   assert.match(hint, /await cua.getState\(\)/);
@@ -30,16 +30,22 @@ test('docs-only initialization preserves documentation and marks execution uncon
 });
 test('browser docs-only initialization supplies a supported inventory read', () => {
   const result = reply([{ type: 'text', text: '# Other Browser APIs\nRequired API reference.' }], false, 'let tab = await cua.getTab("observed", { browser: "session" }); await tab.click(3)');
-  assert.match(result.content.find(c => /execution is unconfirmed/.test(c.text ?? ''))?.text, /await cua.listTabs\(\)/);
-  assert.match(result.content.find(c => /execution is unconfirmed/.test(c.text ?? ''))?.text, /execution is unconfirmed/);
+  assert.match(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /await cua.listTabs\(\)/);
+  assert.match(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /execution is unconfirmed/);
 });
 test('documentation plus a real error retains the error verdict and a distinct notice', () => {
   const raw = 'Error: app handle is missing';
   const result = reply([{ type: 'text', text: docs }, { type: 'text', text: raw }], true);
   assert.equal(result.isError, true);
   assert.ok(result.content.some(c => c.text === raw));
-  assert.match(result.content.find(c => /execution is unconfirmed/.test(c.text ?? ''))?.text, /documentation accompanied an error/);
-  assert.doesNotMatch(result.content.find(c => /execution is unconfirmed/.test(c.text ?? ''))?.text, /only required API documentation/);
+  assert.match(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /documentation accompanied an error/);
+  assert.doesNotMatch(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /only required API documentation/);
+  assert.match(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /may have run up to the error/);
+  assert.doesNotMatch(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /execution is unconfirmed/);
+});
+test('documentation plus a syntax error says the code did not run', () => {
+  const result = reply([{ type: 'text', text: docs }, { type: 'text', text: 'SyntaxError: Unexpected token' }], true);
+  assert.match(result.content.find(c => /^sleight: /.test(c.text ?? ''))?.text, /syntax error; the code did not run/);
 });
 test('successful setup with real state does not get a docs-only notice', () => {
   const state = 'Window: "Document", App: Editor.\n0 standard window Document\n1 button Save';
