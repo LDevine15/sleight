@@ -64,10 +64,9 @@ export function popupHook(options) {
   // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable-container
   // and iframe-embed-object.html, obsolete.html#frames; fenced frames:
   // https://wicg.github.io/fenced-frame/#fenced-frame-element. Do not cross documents.
-  const CR2_NESTED_DOCUMENT = focus => {
-    while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
-    return /^(iframe|object|embed|frame|fencedframe)$/.test(focus?.localName);
-  };
+  const CR2_FOCUSED = focus => { while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement; return focus; };
+  const CR2_NESTED_DOCUMENT = focus => /^(iframe|object|embed|frame|fencedframe)$/.test(CR2_FOCUSED(focus)?.localName);
+  const nativeBlur = globalThis.HTMLElement?.prototype.blur;
   const getAttribute = Element.prototype.getAttribute, hasAttribute = Element.prototype.hasAttribute;
   const nativeMatches = Element.prototype.matches;
   // Target decisions read only natives captured here, before any page script: a page can
@@ -788,7 +787,7 @@ export function popupHook(options) {
   const queryDocAll = uncurry(globalThis.Document?.prototype.querySelectorAll), queryFragAll = uncurry(globalThis.DocumentFragment?.prototype.querySelectorAll);
   const attrNS = uncurry(getAttributeNS), attr = uncurry(getAttribute), hasAttr = uncurry(hasAttribute), matchesNode = uncurry(nativeMatches), slice = uncurry(String.prototype.slice), charCodeAt = uncurry(String.prototype.charCodeAt);
   const stopNow = uncurry(Event.prototype.stopImmediatePropagation), cancel = uncurry(nativePrevent), pathOf = uncurry(composedPath);
-  const scrollInto = uncurry(Element.prototype.scrollIntoView), nativeTimeout = setTimeout, nativeClear = clearTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
+  const scrollInto = uncurry(Element.prototype.scrollIntoView), rectOf = uncurry(Element.prototype.getBoundingClientRect), pointHit = uncurry(globalThis.Document?.prototype.elementFromPoint), styleOf = window.getComputedStyle?.bind(window), nativeTimeout = setTimeout, nativeClear = clearTimeout, nativeFrame = window.requestAnimationFrame?.bind(window);
   const imul = Math.imul, ids = new WeakMap(), idsHas = uncurry(WeakMap.prototype.has), idsGet = uncurry(WeakMap.prototype.get), idsSet = uncurry(WeakMap.prototype.set);
   // Proofs. SHA-256 and HMAC written with typed arrays and operators only: a page cannot reach any step of them.
   // The constants come from the cube roots of the first 64 primes, the start state from the square roots of the first 8.
@@ -1320,7 +1319,17 @@ export function popupHook(options) {
       return bad;
     },
     // Scroll the element into view without animation, so the pointer can be moved onto it (the click would scroll anyway).
-    reveal(element) { scrollInto(element, { block: 'nearest', inline: 'nearest', behavior: 'instant' }); },
+    reveal(element) {
+      scrollInto(element, { block: 'nearest', inline: 'nearest', behavior: 'instant' });
+      // 'nearest' leaves the element at an edge, which is where a fixed or sticky bar sits: while one covers its centre, try the middle, then each edge.
+      try {
+        const covered = () => {
+          const r = rectOf(element), hit = r.width + r.height > 0 && r.top >= 0 && r.bottom <= innerHeight ? pointHit(document, r.x + r.width / 2, r.y + r.height / 2) : null;
+          return !!hit && hit !== element && ancestors(hit).some(node => { const p = styleOf(node).position; return p === 'fixed' || p === 'sticky'; }) && !ancestors(hit).includes(element);
+        };
+        for (const block of ['center', 'end', 'start']) { if (!covered()) break; scrollInto(element, { block, inline: 'nearest', behavior: 'instant' }); }
+      } catch { /* No hit test here: the plain scroll stands. */ }
+    },
     // Resolves after the next frame (or 40 ms if frames are throttled) and one more task, so swaps scheduled by the
     // pointer's arrival (events, observers, timers, animation frames) land before the seal is taken.
     settle(done) {
@@ -1333,7 +1342,11 @@ export function popupHook(options) {
       if (retired.has(token)) return false;
       held = 0;
       if (arm) finish(arm.token);
-      if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
+      // The modifier goes to the focused document, so a frame still holding focus (a card field just filled) is let go first; one that keeps it refuses.
+      if (CR2_NESTED_DOCUMENT(document.activeElement)) {
+        try { nativeBlur.call(CR2_FOCUSED(document.activeElement)); } catch { /* No native blur; the check below refuses. */ }
+        if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
+      }
       if (!isElement(element) || !isConnected(element) || !isFinite(capMs) || capMs <= 0) return false;
       // The native getter inherits editability and keeps a non-editable island inside an editor non-editable, so
       // only the element itself is asked, beside document.designMode (read through its captured getter).
@@ -1910,7 +1923,11 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         hook.reveal(reveal, element);
         return result;
       }, { key, prepare: hookProof(hook, 'prepare'), reveal: hookProof(hook, 'reveal'), token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs));
-    } catch { throw failure = Error('background popup preparation failed; use the engine browser path'); }
+    } catch (error) {
+      // The one refusal the hook states itself: name it, so the model is not sent to the engine path for a focus it can move.
+      throw failure = Error(/document focus is inside a frame/.test(error?.message) ? 'focus is held inside a frame (a card field, say) that would receive the background modifier; click a page element outside it first'
+        : 'background popup preparation failed; use the engine browser path');
+    }
     if (prepared?.kind === 'refuse') throw Error(prepared.reason === 'link'
       ? 'Enter would open this link in a new tab, and sleight cannot check where it goes; click the link instead'
       : 'Enter would submit this form into a new tab; click its submit button instead');

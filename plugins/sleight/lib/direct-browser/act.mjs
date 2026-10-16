@@ -126,10 +126,40 @@ function scrollPoint(el) {
   return { x: Math.max(1, Math.min(innerWidth - 1, r.x + r.width / 2)), y: Math.max(1, Math.min(innerHeight - 1, r.y + r.height / 2)) };
 }
 
+// Runs in the trusted utility world (closure-free, like inspectTarget). Puts the element clear of fixed and sticky bars, then says
+// what sits on its centre: 'clear', 'label' (its own label, whose click activates it), 'fixed' (a fixed or sticky cover that no
+// alignment moved), 'other', or 'off' (still out of view). Blocks are tried centre, end, start; a bar covers one edge, not the middle.
+export function placeClear(el, unused, read) {
+  const doc = read(el, 'ownerDocument'), label = read(el, 'closest')('label');
+  const box = () => read(el, 'getBoundingClientRect')();
+  const inView = () => { const r = box(); return r.width + r.height > 0 && r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth; };
+  const fixedOver = hit => { for (let n = hit; n; n = read(n, 'parentElement')) { const p = getComputedStyle(n).position; if (p === 'fixed' || p === 'sticky') return true; } return false; };
+  const own = hit => { if (!label || read(label, 'control') !== el || !read(label, 'contains')(hit)) return false;
+    const inner = read(hit, 'closest')('a,button,select,textarea,input,summary,[role=button],[role=link]'); return !inner || inner === el || !read(label, 'contains')(inner); };
+  const state = () => { if (!inView()) return 'off'; const r = box(), hit = read(doc, 'elementFromPoint')(r.x + r.width / 2, r.y + r.height / 2);
+    return !hit || hit === el || read(el, 'contains')(hit) ? 'clear' : own(hit) ? 'label' : fixedOver(hit) ? 'fixed' : 'other'; };
+  let seen = state();
+  for (const block of ['center', 'end', 'start']) {
+    if (seen !== 'off' && seen !== 'fixed') break;
+    read(el, 'scrollIntoView')({ block, inline: 'nearest', behavior: 'instant' }); seen = state();
+  }
+  return seen;
+}
+// check and uncheck on a control whose own label sits over it (a visually hidden radio or checkbox) act through that label,
+// which is the click a person makes. Anything else keeps the control. Never throws: a read that fails leaves the plain path.
+async function aimedAt(locator) {
+  try {
+    if (await trustedLocatorRead(locator, placeClear) !== 'label') return locator;
+    return typeof locator.$ === 'function' ? await locator.$('xpath=ancestor::label[1]') ?? locator : locator.locator('xpath=ancestor::label[1]');
+  } catch { return locator; }
+}
+
 function coverDetails(el) {
   const r = el.getBoundingClientRect(); let hit = el.ownerDocument.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
   while (hit?.shadowRoot?.elementFromPoint) { const next = hit.shadowRoot.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); if (!next || next === hit) break; hit = next; }
   if (!hit || hit === el || el.contains(hit)) return null;
+  const mine = el.closest('label');
+  if (mine && mine.control === el && mine.contains(hit)) return { own: true };
   const root = hit.closest('[role="dialog"],dialog,[aria-modal="true"]') ?? hit;
   return { name: (root.getAttribute('aria-label') || root.innerText || root.localName).slice(0, 100),
     buttons: [...root.querySelectorAll('button,[role="button"],input[type="button"]')].slice(0, 6)
@@ -263,8 +293,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (step.do === 'type') return locator.fill(step.text, options);
           if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
-          if (step.do === 'check') return locator.check(options);
-          if (step.do === 'uncheck') return locator.uncheck(options);
+          if (step.do === 'check') return (await aimedAt(locator)).check(options);
+          if (step.do === 'uncheck') return (await aimedAt(locator)).uncheck(options);
           if (step.do === 'hover') return locator.hover(options);
           if (step.do === 'drag') return trusted ? ctx.dragTo(target, page.getByRef(step.to)) : locator.dragTo(page.getByRef(step.to), options);
           if (step.do === 'upload') return locator.setInputFiles(staging.payloads, options);
@@ -387,7 +417,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         if (/intercepts pointer events/i.test(error.message) && locator) {
           try {
             const cover = await locator.evaluate(coverDetails, undefined, { timeout: 250 });
-            if (cover) {
+            if (cover?.own) detail = 'covered by its own label; use check or uncheck, or click the label';
+            else if (cover) {
               // The cover's name and buttons are page text; they reach the model only in the labelled blocker read below.
               detail = 'covered by a covering element; dismiss the cover first (its controls are listed below)';
               blocker = await read({ find: cover.buttons[0] || cover.name, maxChars: 2000 });
@@ -395,8 +426,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           } catch {}
         }
         // The shield cancelled the input before the page saw the click (backgroundClick says so); nothing was sent.
-        const cancelledByGuard = step.do === 'click' && /^page changed during the click; read again/.test(error.message);
-        lines.push(label + ': ' + (started && !cancelledByGuard ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
+        // Playwright's hit-target check also blocks the page's pointer events when a cover appears mid-action, so a covered target got no input.
+        const unsent = step.do === 'click' && /^page changed during the click; read again/.test(error.message) || /intercepts pointer events/i.test(error.message);
+        lines.push(label + ': ' + (started && !unsent ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;
