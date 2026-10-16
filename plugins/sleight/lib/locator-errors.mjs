@@ -65,7 +65,25 @@ function locatorAdvice(block) {
     : kind === 'covered' ? `${action} ${target} is covered by ${coveringElement(block) || 'another element'}`
     : kind === 'matched' ? `${action} ${target}: the action failed after the element matched`
     : `${action} ${target} timed out`;
-  return `${causeText}. Next: ${nextCall(kind)}.`;
+  const diagnostic = /Playwright selector deadline exceeded/.test(block) ? ` ${currentDiagnostic(diag, selector)}` : '';
+  return `${causeText}.${diagnostic} Next: ${nextCall(kind)}.${diagnostic ? ' Read before retrying input. Do not retry blindly.' : ''}`;
+}
+
+function currentDiagnostic(diag, selector) {
+  // actionError already takes one read-only, bounded engine snapshot. Reuse it
+  // rather than sending another read or replaying the failed action.
+  const short = (value, limit) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, limit) : '';
+  const frames = typeof selector === 'string' ? selector.split(/\s*>>\s*internal:control=enter-frame\s*>>\s*/).slice(0, -1) : [];
+  const frame = frames.length ? ` Frame: ${JSON.stringify(short(frames.join(' > '), 180))}.` : '';
+  if (!Number.isInteger(diag?.matchCount) || diag.matchCount < 0 || !Array.isArray(diag.matches)) {
+    return `Current diagnostic unavailable.${frame}`;
+  }
+  const rows = diag.matches.slice(0, 5).map(row => [
+    short(row?.role || impliedRole(row ?? {}), 30),
+    JSON.stringify(short(row?.ariaLabel || row?.text, 80)),
+    typeof row?.visible === 'boolean' ? `visible:${row.visible}` : '',
+  ].filter(Boolean).join(' '));
+  return `Current matches: ${diag.matchCount}${rows.length ? ' (up to 5): ' + rows.join('; ') : ''}.${frame}`;
 }
 
 function parseDiag(block) {

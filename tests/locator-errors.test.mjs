@@ -114,3 +114,39 @@ test('all recorded locator errors preserve their full engine diagnostics without
     assert.match(hint, /domSnapshot/, row.id);
   }
 });
+
+test('a selector deadline reports the engine read with zero current matches', () => {
+  const src = failure({ kind: 'no_matches', action: 'click', locator: '#gone', matchCount: 0, matches: [] });
+  const out = rewriteLocatorFailure(src);
+  assert.match(out.split('\n')[0], /Current matches: 0/);
+  assert.match(out.split('\n')[0], /Read before retrying input/);
+  assert.ok(out.endsWith(src));
+});
+
+test('an overlay deadline includes current matching text, role and frame context', () => {
+  const src = failure({ kind: 'intercepted', action: 'click',
+    locator: '#checkout >> internal:control=enter-frame >> button', matchCount: 1,
+    matches: [{ tag: 'button', text: 'Continue', visible: true, disabled: false }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /Current matches: 1.*button.*Continue/);
+  assert.match(hint, /Frame:.*#checkout/);
+  assert.match(hint, /covered by another element/);
+});
+
+test('a detached frame deadline reports unavailable diagnostics without an invented cause', () => {
+  const src = 'Error: Playwright selector deadline exceeded\nwaiting on click for selector iframe >> internal:control=enter-frame >> button\nFrame was detached';
+  const out = rewriteLocatorFailure(src), hint = out.split('\n')[0];
+  assert.match(hint, /Current diagnostic unavailable/);
+  assert.match(hint, /Frame:.*iframe/);
+  assert.doesNotMatch(hint, /is missing|is covered|sent no input/);
+  assert.ok(out.endsWith(src));
+});
+
+test('the current diagnostic is bounded and the engine snapshot is preserved', () => {
+  const src = failure({ kind: 'action_failed', action: 'click', locator: '#target', matchCount: 99,
+    matches: Array.from({length: 99}, () => ({tag: 'button', text: 'x'.repeat(10000), visible: true})) });
+  const out = rewriteLocatorFailure(src), hint = out.split('\n')[0];
+  assert.match(hint, /Current matches: 99/);
+  assert.ok(hint.length < 1800, hint.length);
+  assert.ok(out.endsWith(src));
+});

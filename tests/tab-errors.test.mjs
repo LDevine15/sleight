@@ -484,3 +484,22 @@ test('reorder, pickFromList and fillForm count as tab input', () => {
   }
   assert.equal(isTabBinding('await cua.getTab(id, { browser })'), true);
 });
+
+test('a selector diagnostic reuses the engine snapshot without any input retry or follow-up read', t => {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [], replies = [];
+  serverIn.on('data', data => sent.push(JSON.parse(data.toString())));
+  clientOut.on('data', data => replies.push(JSON.parse(data.toString())));
+  const relay = createRelay({clientIn, clientOut, serverIn, serverOut, changeReview: false});
+  t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
+  clientIn.write(JSON.stringify({id: 1, method: 'tools/call', params: {name: 'js', arguments: {
+    code: 'await tab.playwright.locator("#gone").click()' }}}) + '\n');
+  assert.equal(sent.length, 1);
+  const text = 'Error: Playwright selector deadline exceeded\nwaiting on click for selector #gone\n' +
+    'Locator diagnostics: {"kind":"no_matches","action":"click","locator":"#gone","matchCount":0,"matches":[]}';
+  serverOut.write(JSON.stringify({id: 1, result: {isError: true, content: [{type: 'text', text}]}}) + '\n');
+  assert.equal(sent.length, 1, 'the engine already read once for its diagnostic');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].result.isError, true);
+  assert.match(replies[0].result.content[0].text, /Current matches: 0/);
+});
