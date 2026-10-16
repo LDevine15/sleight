@@ -16,21 +16,14 @@ how forgiving an interface is, and Opus runs once at the end of a batch.
 Everything except turbo is release-ready and merged (owner, 2026-10-14). That covers public CI and the benchmark preflights, plus
 the release-pass and claim-suite runners. The release notes (RL1) wait on `codex/rl1`.
 
-1. Finish turbo v3 on `private/v3-gate`. V10R4, CR6, CR7 and AT1 are merged there. AD1 reached its finish line on 2026-10-15:
-   every branch is merged in `arch/ad1-int` (the figure-only payment rule the owner chose, 50/98 honest checkouts allowed), and it
-   merges into `v3-gate` as `arch/gate-ad1`.
-2. One full check on `v3-gate`, then gate rounds with the owner away or headless. On 2026-10-16, over 5 rounds, turbo's median was
-   603 s and 4 errors against FowlBrowser's 677 s and 8, which is 89% of FowlBrowser's time, short of the 85% target
-   (docs/benchmarks/2026-10-16-gate.md). Their interface misses and form time sinks are fixed in v3-gate `adc5fbc9`, which was faster than the
-   old build in all 5 rounds of a turbo A/B (542 s against 581 s, 0 errors, docs/benchmarks/2026-10-16-turbo-ab.md). Next is 5 gate
-   rounds with both arms on it.
-   The original gate runs Haiku 5.5 on both arms in both orders. It runs Haiku 5.5 on both arms in both
-   orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
-   ToolSearch calls, 0 focus events.
-3. One Opus head-to-head on the owner's account.
-   `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS), is built in v3-gate.
-4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB). They are integrated
-   onto v3-gate as `arch/v8-int` `59345e0b` (2026-10-16, 15,960 KB to 8,640 KB, focused tests pass, full check pending). Turbo v3 lacks
+1. Done: turbo v3 is finished on `private/v3-gate` at `66ada2bd`. Its commits since AD1 are listed in the gate records.
+2. Done 2026-10-16: the Haiku gate passed on `66ada2bd` (docs/benchmarks/2026-10-16-gate.md, last section). Turbo's median was
+   547 s with 0 errors in all 5 rounds, against FowlBrowser's 720 s, 76%. Both 26/26 under the owner's scoring, 0 focus events,
+   0 ToolSearch. Earlier rounds that night missed the 575 s target (603 s and 607 s) until the `find` alternation fix.
+3. Done 2026-10-16: the Opus head-to-head on `66ada2bd` (docs/benchmarks/2026-10-16-opus.md). Turbo 675 s against FowlBrowser's
+   885 s, 76%, faster in all 5 rounds.
+4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB). `arch/release-cand`
+   `cb20a697` is `66ada2bd` plus V8 and V8R (8,640 KB). Its focused and real-page tests pass, and its full check is pending. Turbo v3 lacks
    the hookup animation LAWS names for connecting. Its connected state shows through the consent host's menu bar item with Pause and
    Disconnect. V8R removed the unwired view model, `indicator.mjs`, which can be restored from `c407cb94`. Then the release
    pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
