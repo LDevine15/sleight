@@ -401,6 +401,7 @@ function nativeAX(state, clock) {
     return state && state.officeWaiting ? operation() : setupRead(operation, state, clock);
   }
   function text(element, attribute) { var value = read(element, attribute); return value ? String(ObjC.unwrap(value)) : ''; }
+  var textOf = text;
   function children(element, attribute) {
     var values = read(element, attribute || 'AXChildren'), result = [];
     if (values) for (var index = 0; index < Number(values.count); index++) result.push(values.objectAtIndex(index));
@@ -424,6 +425,16 @@ function nativeAX(state, clock) {
   }
   function dialog(app, owned, request) {
     if (!request.stopOnAppDialog && !request.refuseDialogs) return [];
+    // Another window of the app can lack a title (Chess, 2026-10-16: -25205 on AXTitle of the focused window at cleanup). In this
+    // scan a missing title reads as empty, so that window is still classified as a candidate instead of stopping the pass.
+    var text = function (element, attribute) {
+      try { return textOf(element, attribute); }
+      catch (error) { if (error.code === -25205 && attribute === 'AXTitle') return ''; throw error; }
+    };
+    var matches = function (window, request) {
+      try { return matchesOf(window, request); }
+      catch (error) { if (error.code === -25205 && error.attribute === 'AXTitle') return false; throw error; }
+    };
     var focused = read(app, 'AXFocusedWindow');
     var candidates = [];
     if (owned) candidates = candidates.concat(children(owned, 'AXSheets'));
@@ -477,6 +488,7 @@ function nativeAX(state, clock) {
     var url = $.NSURL.URLWithString(value);
     return url.isNil() || !url.isFileURL ? null : ObjC.unwrap(url.URLByResolvingSymlinksInPath.path);
   }
+  function matchesOf(window, request, retained) { return matches(window, request, retained); }
   function matches(window, request, retained) {
     var document = text(window, 'AXDocument');
     if (document) {

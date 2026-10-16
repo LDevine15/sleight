@@ -1456,3 +1456,13 @@ test('a document fixture launches without window restoration or the iCloud open 
   finish({ exit: { code: 0 }, stdout: '{"stage":"closed"}\n', groupClean: true });
   await closed;
 });
+
+test('the app dialog scan reads an untitled focused window as untitled instead of stopping', () => {
+  const owned = {}, other = {}, app = {};
+  const fixture = cleanupNative((element, attribute) => {
+    if (element === app && attribute === 'AXFocusedWindow') return { value: other };
+    if (element === other) return attribute === 'AXTitle' ? { code: -25205 } : attribute === 'AXRole' ? { value: 'AXWindow' } : { value: null };
+    return { value: attribute === 'AXRole' ? 'AXWindow' : attribute === 'AXTitle' ? 'Game nonce' : null };
+  });
+  assert.doesNotThrow(() => fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'Chess', token: 'nonce', mode: 'window' }));
+});
