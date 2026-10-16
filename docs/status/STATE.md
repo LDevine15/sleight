@@ -7,9 +7,9 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 **Now.** The smoke round's "unqualified" focus came from a stale NSWorkspace entry (pid 88121, listed as running, process gone):
 its subscription failed and nothing ever removed it. Fixed on v3-gate `ad602918` (bench-only, product code unchanged from
-`a544e303`), and the live observer reports `window:true`. The gate rounds (5) wait on Puddle's "HOLD live" (queued for about
-01:30 UTC, no `/tmp/sleight-hold` by agreement), run by `ledger/claims/GATE2/gate5.sh` (one release trap for all five).
-Both preflights pass. `SLEIGHT_CONFIRM_PAYMENTS=never` is being built by an agent on `arch/pay-never` (`~/Projects/sleight-wt/pay-never`).
+`a544e303`), and the live observer reports `window:true`. Puddle's HOLD went live at 01:28 UTC (no `/tmp/sleight-hold`, by
+agreement). The rounds started at 01:28:40 through `ledger/claims/GATE2/gate5.sh`, which has one release trap for all five. Both
+preflights pass. `SLEIGHT_CONFIRM_PAYMENTS=never` is being built by an agent on `arch/pay-never` (`~/Projects/sleight-wt/pay-never`).
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
@@ -25,8 +25,8 @@ alternate the arm order per browser order, and an EXIT trap that touches `/tmp/s
 **In flight at the flush.**
 - Q1 is integrated on `arch/q1-int` at `0022e9c2` (`~/Projects/sleight-wt/q1-int`, from pane/auto-mode): all 17 error-message
   fixes, Q1-12 reworked on live engine evidence (1-based line, 0-based column), 584/584 focused tests (`ledger/claims/Q1/INTEGRATION.md`).
-  It adds about 150 characters per error across 22 fixture errors. Q1-17's "execution is unconfirmed" notice also fired on a
-  runtime throw that did run: fix before merging. Merges after the 1.3.0 tag.
+  It adds about 150 characters per error across 22 fixture errors. Q1-17's notice now says what ran (`c0aa885c`: a syntax
+  error did not run, a runtime error may have run up to it). Merges after the 1.3.0 tag.
 - No gate round, benchmark or background job is running.
 
 Branches (all on `private`, pushed):
@@ -37,7 +37,7 @@ Branches (all on `private`, pushed):
   395 skipped (the real-page files skip without `SLEIGHT_LIVE_DOM_TEST=1`). A six-task smoke round there took 191 s against 216 s in
   round 3, and click latency is +4 ms. In that smoke round the focus column read "unqualified" because the host window observer
   logged `window:false`. Check that focus is measured again before the gate rounds.
-- `arch/epv3-1` at `ccf61a3b` (Electron step 1: the per-app debugger consent card and app-document identity, inert until EPV3-7,
+- `arch/epv3-1` at `f9e1e919` (Electron step 1: the per-app debugger consent card and app-document identity, inert until EPV3-7,
   `ledger/claims/EPV3-1/REPORT.md`). It needs an owner-operated consent run (command in the report). It merges after the tag.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
@@ -48,7 +48,7 @@ Next for the gate, in order:
    preflights with `--world`, then `~/Projects/sleight-wt/ledger/claims/GATE2/gate.sh`. Report the median per arm.
 2. `SLEIGHT_CONFIRM_PAYMENTS=never` (owner, LAWS), on v3-gate.
 3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
-4. EPV3-1's open question, decided by sleight-arch: close the Swift generic payment branch to once and cancel, like the JS side.
+4. Done: EPV3-1's Swift payment sheet accepts exactly once and cancel, like the JS side (`f9e1e919`).
 
 Bench setup facts (2026-10-15): the bench arms log in per config dir. `sleight-turbo` and `fowlbrowser` arm configs are logged in
 (Max). Without `--world`, the FowlBrowser arm uses `~/Library/Caches/sleight-bench/fowl-claude-config`, which is NOT logged in, so
