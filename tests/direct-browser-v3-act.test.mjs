@@ -2,7 +2,7 @@ import test from 'node:test';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createActionRunner, overlaySignature } from '../plugins/sleight/lib/direct-browser/act.mjs';
+import { createActionRunner, overlaySignature, inspectTarget, placeClear } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // Playwright boundary only. There is no engine object and no catch-all method fake.
@@ -13,6 +13,8 @@ function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = fa
     async evaluate(fn, arg) {
       if (fn.name === 'inspectTarget') return { ...metadata, ...(states.get(ref) ?? {}) };
       if (fn.name === 'overlaySignature') return overlay;
+      if (fn.name === 'placeClear') return states.get(ref)?.cover ?? 'clear';
+      if (fn.name === 'coverDetails' && states.get(ref)?.own) return { own: true };
       if (fn.name === 'scrollPoint') return { x: 10, y: 20 };
       if (fn.name === 'coverDetails') return { name: 'Cookie notice', buttons: ['Accept cookies'] };
       throw Error('unexpected evaluate ' + fn.name);
@@ -29,6 +31,7 @@ function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = fa
     async scrollIntoViewIfNeeded(options) { actions.push(['scrollIntoView', ref, options]); },
     async setInputFiles(paths, options) { actions.push(['upload', ref, paths, options]); },
     async waitFor(options) { actions.push(['wait', ref, options]); },
+    locator(selector) { return { async check(options) { actions.push(['check', ref + ' ' + selector, options]); }, async uncheck(options) { actions.push(['uncheck', ref + ' ' + selector, options]); } }; },
   });
   page.getByRef = loc; page.url = () => 'https://example.invalid/';
   page.locator = selector => { assert.equal(selector, ':focus'); return loc('e1'); };
@@ -108,6 +111,46 @@ test('v3 never retries a timed out dispatched input and keeps the cover\'s page 
   const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e2' }], {});
   assert.match(result.lines[0], /covering element/); assert.doesNotMatch(result.lines[0], /Cookie notice|Accept cookies/); // page text belongs in the labelled blocker read
   assert.match(result.lines[1], /not reached/); assert.equal(f.actions.length, 1);
+});
+
+test('v3 a cover refusal before input says not run, not effect unconfirmed', async () => {
+  const f = fixture({ fail: 'Timeout 1000ms exceeded: Cookie notice intercepts pointer events' });
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+  assert.match(result.lines[0], /^1 click e1: not run: covered by a covering element/); assert.doesNotMatch(result.lines[0], /unconfirmed/);
+  const own = fixture({ fail: 'Timeout 1000ms exceeded: label intercepts pointer events' }); own.states.set('e1', { own: true });
+  assert.match((await own.run(own.tab, [{ do: 'click', ref: 'e1' }], {})).lines[0], /not run: covered by its own label; use check or uncheck/);
+});
+
+test('v3 check and uncheck click the control\'s own centre when its own label sits over it (never the label\'s centre), and wait for a clear hit otherwise', async () => {
+  const f = fixture(); f.states.set('e1', { cover: 'label' });
+  await f.run(f.tab, [{ do: 'check', ref: 'e1' }, { do: 'uncheck', ref: 'e1' }, { do: 'check', ref: 'e2' }, { do: 'check', ref: 'e3' }], {});
+  assert.deepEqual(f.actions.filter(a => /check/.test(a[0])).map(a => [a[0], a[1], a[2]?.force === true]),
+    [['check', 'e1', true], ['uncheck', 'e1', true], ['check', 'e2', false], ['check', 'e3', false]]);
+  const broken = fixture(); broken.states.set('e1', { cover: 'label' });
+  broken.page.getByRef = ref => { const l = fixture().page.getByRef(ref); l.evaluate = async () => { throw Error('read failed'); }; return l; };
+  await broken.run(broken.tab, [{ do: 'check', ref: 'e1' }], {}); // a failed read leaves the plain check
+});
+
+test('placeClear centres a covered control, tries each edge once, and names an own label, a fixed cover or another cover', () => {
+  const run = (hits, { label = true, fixed = ['bar'], views = [true] } = {}) => {
+    let scrolls = [], at = 0, shown = 0;
+    const el = { id: 'el' }, lab = { id: 'lab', control: el }, bar = { id: 'bar' }, other = { id: 'other' }, kids = { lab, bar, other };
+    const nodes = new Map([[el, { closest: () => label ? lab : null, getBoundingClientRect: () => ({ x: 0, y: 500, width: 1, height: 1, top: 500, left: 0, bottom: 501, right: 1 }),
+      scrollIntoView: o => { scrolls.push(o.block); at++; }, contains: n => n === el }],
+      [lab, { contains: n => n === lab || n === el, closest: () => null, control: el }], [bar, { parentElement: null }], [other, { parentElement: null }],
+      [{ doc: 1 }, { elementFromPoint: () => kids[hits[Math.min(at, hits.length - 1)]] ?? el }]]);
+    const doc = [...nodes.keys()].at(-1); nodes.get(el).ownerDocument = doc;
+    const read = (n, k) => { const v = nodes.get(n)?.[k]; return typeof v === 'function' ? v : v; };
+    globalThis.innerHeight = 600; globalThis.innerWidth = 800;
+    globalThis.getComputedStyle = n => ({ position: fixed.includes(n.id) ? 'fixed' : 'static' });
+    try { return { seen: placeClear(el, undefined, read), scrolls }; } finally { delete globalThis.innerHeight; delete globalThis.innerWidth; delete globalThis.getComputedStyle; }
+  };
+  assert.deepEqual(run(['el']), { seen: 'clear', scrolls: [] });
+  assert.deepEqual(run(['lab']), { seen: 'label', scrolls: [] });
+  assert.deepEqual(run(['bar', 'el']), { seen: 'clear', scrolls: ['center'] }); // centring moved it clear
+  assert.deepEqual(run(['bar', 'bar', 'el']), { seen: 'clear', scrolls: ['center', 'end'] });
+  assert.deepEqual(run(['bar']), { seen: 'fixed', scrolls: ['center', 'end', 'start'] });
+  assert.deepEqual(run(['other']), { seen: 'other', scrolls: [] });
 });
 
 test('v3 retains blocker button refs when the final page diff is unchanged', async () => {
@@ -473,12 +516,49 @@ test('v3 a dialog opened by a deferred step ends the batch at once', async () =>
   assert.equal(f.actions.filter(a => a[0] === 'key').length, 1);
 });
 
-test('v3 refuses a scroll step past 10000 as not run, with the way to reach a long list', async () => {
+test('v3 refuses a non-finite scroll step as not run, and clamps a finite one past 10000 with a note', async () => {
   const f = fixture();
-  for (const step of [{ do: 'scroll', ref: 'e1', dy: 20000 }, { do: 'scroll', dx: -10001 }]) {
-    await assert.rejects(f.run(f.tab, [step], {}), error => error.notRun === true && /dy up to 10000 per step; give until the row text/.test(error.message));
+  for (const step of [{ do: 'scroll', ref: 'e1', dy: Infinity }, { do: 'scroll', dx: NaN }]) {
+    await assert.rejects(f.run(f.tab, [step], {}), error => error.notRun === true && /finite dx and dy .*give until the row text/.test(error.message));
   }
   assert.deepEqual(f.actions, []);
+  const result = await f.run(f.tab, [{ do: 'scroll', ref: 'e1', dy: 100000, dx: -20000 }], {});
+  assert.deepEqual(f.actions.filter(a => a[0] === 'wheel'), [['wheel', -10000, 10000]]);
+  assert.match(result.lines[0], /scrolled \(dx\/dy clamped to 10000\)/); assert.equal(result.stoppedAt, null);
+  const plain = await f.run(f.tab, [{ do: 'scroll', dy: 300 }], {});
+  assert.doesNotMatch(plain.lines[0], /clamped/);
+});
+
+test('v3 wait takes ms as a timed wait capped at 5000, and says so when it clamps', async () => {
+  const f = fixture();
+  const result = await f.run(f.tab, [{ do: 'wait', ms: 1500 }], {});
+  assert.equal(f.time(), 1500); assert.equal(f.actions.length, 0); assert.doesNotMatch(result.lines[0], /cap/);
+  const long = fixture(), capped = await long.run(long.tab, [{ do: 'wait', ms: 60000 }], {});
+  assert.equal(long.time(), 5000); assert.match(capped.lines[0], /waited 5000 ms \(cap, not 60000\)/);
+  await assert.rejects(fixture().run(fixture().tab, [{ do: 'wait', ms: -1 }], {}), /wait needs ms of 0 or more/);
+  const ref = fixture(); await ref.run(ref.tab, [{ do: 'wait', ref: 'e1', ms: 9000 }], {});
+  assert.deepEqual(ref.actions.map(a => a[0]), ['wait']); // a ref still waits for the element, not the clock
+});
+
+test('v3 navigate follows an http(s) link through the click path and refuses anything else before input', async () => {
+  const f = fixture({ onClick: page => page.emit('framenavigated', page) });
+  f.states.set('e1', { link: true });
+  const result = await f.run(f.tab, [{ do: 'navigate', ref: 'e1' }], {});
+  assert.deepEqual(f.actions.filter(a => a[0] === 'click').map(a => a[1]), ['e1']);
+  assert.equal(f.checks[0].kind, 'click'); assert.match(result.lines[0], /^1 navigate e1: navigated/);
+  const other = fixture(); other.states.set('e2', { link: false });
+  const refused = await other.run(other.tab, [{ do: 'navigate', ref: 'e2' }], {});
+  assert.match(refused.lines[0], /not run: navigate needs the ref of an http\(s\) link .*use click/);
+  assert.deepEqual(other.actions, []); assert.deepEqual(other.checks, []);
+  await assert.rejects(fixture().run(fixture().tab, [{ do: 'navigate' }], {}), /navigate needs the ref of an http\(s\) link/);
+});
+
+test('inspectTarget marks only an a or area with an http(s) href and no credentials as a link', () => {
+  const node = (tag, href, base = 'https://example.invalid/dir/') => ({ localName: tag, getAttribute: key => key === 'href' ? href : null, textContent: '', form: null,
+    ownerDocument: { baseURI: base }, closest: () => null, getRootNode: () => null });
+  assert.equal(inspectTarget(node('a', '/next')).link, true);
+  assert.equal(inspectTarget(node('area', 'https://x.invalid/')).link, true);
+  for (const bad of [node('a', null), node('a', 'javascript:void(0)'), node('a', 'mailto:a@b.invalid'), node('a', 'https://u:p@x.invalid/'), node('button', '/next')]) assert.equal(inspectTarget(bad).link, false);
 });
 
 for (const [name, background, pageOpened, expected] of [

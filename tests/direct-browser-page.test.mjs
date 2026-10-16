@@ -80,6 +80,24 @@ test('adopts only a popup whose CDP opener is owned, retaining opener through se
   await f.registry.endTurn();
 });
 
+test('closedOpener names the owned opener of a tab the page closed itself, and nothing else', async () => {
+  const f = fixture(), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  assert.equal(f.registry.closedOpener(tab), undefined); // open, no opener
+  const popup = f.page('popup', 'target-1'); await f.registry.idle();
+  const child = (await f.registry.list()).find(r => r.targetId === 'popup').tab;
+  assert.equal(f.registry.closedOpener(child), undefined); // still open
+  await popup.close();
+  assert.equal(f.registry.closedOpener(child), tab);
+  assert.equal(f.registry.closedOpener('tnone'), undefined);
+  const mine = f.page('mine', 'target-1'); await f.registry.idle();
+  const closedByUs = (await f.registry.list()).find(r => r.targetId === 'mine').tab;
+  await f.registry.close(closedByUs); // sleight's own close is not the page's
+  assert.equal(f.registry.closedOpener(closedByUs), undefined);
+  f.pages.find(p => p.info.targetId === 'target-1').closed = true; // a closed opener has nothing to read
+  assert.equal(f.registry.closedOpener(child), undefined);
+  await f.registry.endTurn();
+});
+
 test('adopts popup descendants and does not duplicate a named popup', async () => {
   const f = fixture(), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
   const popup = f.page('popup', 'target-1'); await f.registry.idle();
@@ -164,7 +182,7 @@ test('unproved popup preparation refuses before input and disarms a possible lat
   assert.deepEqual(f.calls, [['disarm']]);
 });
 
-function hookFixture({ clock = Date, handle, credentials: given, parent, rewritable = false, children = [], fresh = false } = {}) {
+function hookFixture({ clock = Date, handle, credentials: given, parent, rewritable = false, children = [], fresh = false, globals = {}, windowProps = {} } = {}) {
   class Event {
     get defaultPrevented() { return !!this.nativePrevented; }
     get returnValue() { return !this.nativePrevented; }
@@ -186,6 +204,9 @@ function hookFixture({ clock = Date, handle, credentials: given, parent, rewrita
     hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
     matches() { return !!this.interactive; }
     getRootNode() { return {}; }
+    scrollIntoView(options) { (this.scrolls ??= []).push(options.block); }
+    getBoundingClientRect() { return this.rect ?? { x: 0, y: 0, width: 0, height: 0, top: 0, bottom: 0 }; }
+    blur() { this.blurred = true; if (!this.keepsFocus && document.activeElement === this) document.activeElement = null; }
     get isContentEditable() {
       for (let node = this; node; node = node.parentElement ?? node.getRootNode().host) {
         if (node.attrs.contenteditable === 'false') return false;
@@ -227,6 +248,7 @@ function hookFixture({ clock = Date, handle, credentials: given, parent, rewrita
     disconnect() { this.disconnected = true; }
   }
   const opens = [], window = { listeners: {}, captureListeners: {}, parent, open(...args) { opens.push(args); return handle ?? { real: true }; } };
+  Object.assign(window, windowProps);
   const navigator = { userActivation: { isActive: true } };
   // Child windows by index and a native length getter, as a window has them; `fresh` is a document no script has run in yet.
   if (children.length) { Object.defineProperty(window, 'length', { get: () => children.length }); children.forEach((child, index) => { window[index] = child; }); }
@@ -242,7 +264,7 @@ function hookFixture({ clock = Date, handle, credentials: given, parent, rewrita
   const credentials = given ?? newHook();
   const context = vm.createContext({ window, document, navigator,
     MouseEvent, Element, HTMLElement: Element, ...(rewritable ? { Document } : {}), HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLLabelElement,
-    Event, EventTarget, MutationObserver, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask });
+    Event, EventTarget, MutationObserver, URL, Date: clock, setTimeout, clearTimeout, queueMicrotask, ...globals });
   const installed = vm.runInContext(hookSource(credentials), context);
   const raw = window[credentials.key];
   // Each call carries its own proof, as the controller sends it; tests that look at the proof use raw.
@@ -578,6 +600,42 @@ test('CR2 HTML navigable containers and plugin elements reject focus through ope
   } finally { f.hook.off(); }
 });
 
+test('CR2 a frame left holding focus is blurred before a modified click, and one that keeps focus still refuses', () => {
+  const f = hookFixture();
+  try {
+    const card = new f.Element('iframe');
+    f.document.activeElement = card;
+    assert.equal(f.hook.prepare(new f.Element(), 'after-fill', 1000), true); assert.equal(card.blurred, true);
+    const stubborn = new f.Element('iframe'); stubborn.keepsFocus = true;
+    f.document.activeElement = stubborn;
+    assert.throws(() => f.hook.prepare(new f.Element(), 'refocused', 1000), /document focus is inside a frame/);
+  } finally { f.hook.off(); }
+});
+
+test('a refusal because focus is inside a frame is named, not reported as a failed preparation', async () => {
+  const f = clickFixture(false); f.locator.evaluate = async () => { throw Error('locator.evaluate: Error: document focus is inside a frame\n    at ...'); };
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => f.calls.push(['click'])), /focus is held inside a frame .*click a page element outside it first/);
+  assert.deepEqual(f.calls, [['disarm']]);
+});
+
+test('reveal scrolls nearest, then tries centre and each edge while a fixed or sticky bar covers the element', () => {
+  const run = covers => {
+    let element, bar, inner, page;
+    const names = { bar: () => bar, inner: () => inner, page: () => page, none: () => null };
+    class Document { elementFromPoint() { return names[covers[Math.min(element.scrolls.length - 1, covers.length - 1)]](); } }
+    const f = hookFixture({ globals: { Document, innerHeight: 600 }, windowProps: { getComputedStyle: n => ({ position: n.position }) } });
+    const node = (position, parent = null) => Object.assign(new f.Element('div'), { position, parentElement: parent, parentNode: parent });
+    bar = node('fixed'); inner = node('static', bar); page = node('static');
+    element = new f.Element(); element.rect = { x: 0, y: 590, width: 20, height: 5, top: 590, bottom: 595 };
+    try { f.hook.reveal(element); return element.scrolls; } finally { f.hook.off(); }
+  };
+  assert.deepEqual(run(['none']), ['nearest']);
+  assert.deepEqual(run(['inner', 'page']), ['nearest', 'center']);
+  assert.deepEqual(run(['bar', 'bar', 'page']), ['nearest', 'center', 'end']);
+  assert.deepEqual(run(['bar']), ['nearest', 'center', 'end', 'start']);
+  assert.deepEqual(run(['page']), ['nearest']);
+});
+
 test('CR5 native controls and ARIA roles without a measured modifier default use masking', () => {
   const f = hookFixture();
   try {
@@ -904,7 +962,7 @@ test('CR7 leaves editable content plain and refuses detached nodes, frame focus 
     f.hook.finish('late');
     assert.equal(f.hook.prepare(new f.Element(), 'late', 1000), false);
     for (const localName of ['iframe', 'frame', 'fencedframe', 'object', 'embed']) {
-      f.document.activeElement = new f.Element(localName);
+      f.document.activeElement = new f.Element(localName); f.document.activeElement.keepsFocus = true; // one that refuses to let go
       assert.throws(() => f.hook.prepare(new f.Element(), localName, 1000), /frame|focus/i);
     }
   } finally { f.hook.off(); }

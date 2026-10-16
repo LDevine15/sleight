@@ -9,8 +9,9 @@ import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 import { setViewport } from './viewport.mjs';
 import { originOf, pathOf, guardChooser } from './output-hygiene.mjs';
-const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
+const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport navigate'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
+const WAIT_CAP = 5000, SCROLL_CAP = 10000, navigateNeeds = 'the ref of an http(s) link (browser_open takes a url); to press other elements use click';
 const TIMEOUT = 1000;
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -40,6 +41,7 @@ function validate(steps) {
     if (!s || !OPS.has(s.do)) throw Error('unsupported do operation');
     const needs = name => { throw Error(s.do + ' needs ' + name); };
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
+    if (s.do === 'navigate' && !refOf(s.ref)) needs(navigateNeeds);
     if (s.ref !== undefined && !refOf(s.ref)) needs('a valid ref');
     if (s.do === 'type' && typeof s.text !== 'string') needs('text');
     if (s.do === 'press' && (typeof s.key !== 'string' || !s.key || s.key.length > 100)) needs('key');
@@ -49,9 +51,10 @@ function validate(steps) {
     if (s.do === 'dialog' && typeof s.accept !== 'boolean') needs('accept');
     if (s.do === 'viewport' && ([s.width, s.height].filter(n => n === undefined).length === 1 ||
       [s.width, s.height].some(n => n !== undefined && !(Number.isInteger(n) && n >= 100 && n <= 10000)))) needs('width and height between 100 and 10000, or neither to restore');
+    if (s.do === 'wait' && s.ms !== undefined && !(Number.isFinite(s.ms) && s.ms >= 0)) needs('ms of 0 or more');
     if (s.do === 'scroll') {
       if (s.until !== undefined && (typeof s.until !== 'string' || !s.until.trim() || s.until.length > 500)) needs('until text');
-      if ([s.dx, s.dy].some(n => n !== undefined && (!Number.isFinite(n) || Math.abs(n) > 10000))) needs('finite dx and dy up to 10000 per step; give until the row text to find a row in a long list');
+      if ([s.dx, s.dy].some(n => n !== undefined && !Number.isFinite(n))) needs('finite dx and dy (beyond 10000 is clamped to it); give until the row text to find a row in a long list');
     }
   }
 }
@@ -87,6 +90,9 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
   const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
     /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
     read(node, 'localName') === 'iframe' || (read(node, 'localName') === 'button' || read(node, 'type') === 'submit') && payment(words(node)));
+  // navigate follows only a plain http(s) link; any other scheme, or an element with no href, is a click's job.
+  const link = (() => { try { if (tag !== 'a' && tag !== 'area') return false; const href = read(el, 'getAttribute')('href'); if (href == null) return false;
+    const url = new URL(href, read(read(el, 'ownerDocument'), 'baseURI')); return /^https?:$/.test(url.protocol) && !url.username && !url.password; } catch { return false; } })();
   const submit = !!(button && (read(el, 'type') === 'submit' && form || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
   const scriptButton = !submit && !!(button && form && formPayment && read(el, 'type') !== 'reset');
   let hash = 2166136261;
@@ -94,7 +100,7 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
     const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');
     for (let i = 0; i < content.length; i++) hash = Math.imul(hash ^ content.charCodeAt(i), 16777619);
   }
-  return { name, accName, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
+  return { name, accName, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, link, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
     formPayment, formSignature: form ? hash : null };
 }
 
@@ -120,10 +126,40 @@ function scrollPoint(el) {
   return { x: Math.max(1, Math.min(innerWidth - 1, r.x + r.width / 2)), y: Math.max(1, Math.min(innerHeight - 1, r.y + r.height / 2)) };
 }
 
+// Runs in the trusted utility world (closure-free, like inspectTarget). Puts the element clear of fixed and sticky bars, then says
+// what sits on its centre: 'clear', 'label' (its own label, whose click activates it), 'fixed' (a fixed or sticky cover that no
+// alignment moved), 'other', or 'off' (still out of view). Blocks are tried centre, end, start; a bar covers one edge, not the middle.
+export function placeClear(el, unused, read) {
+  const doc = read(el, 'ownerDocument'), label = read(el, 'closest')('label');
+  const box = () => read(el, 'getBoundingClientRect')();
+  const inView = () => { const r = box(); return r.width + r.height > 0 && r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth; };
+  const fixedOver = hit => { for (let n = hit; n; n = read(n, 'parentElement')) { const p = getComputedStyle(n).position; if (p === 'fixed' || p === 'sticky') return true; } return false; };
+  const own = hit => { if (!label || read(label, 'control') !== el || !read(label, 'contains')(hit)) return false;
+    const inner = read(hit, 'closest')('a,button,select,textarea,input,summary,[role=button],[role=link]'); return !inner || inner === el || !read(label, 'contains')(inner); };
+  const state = () => { if (!inView()) return 'off'; const r = box(), hit = read(doc, 'elementFromPoint')(r.x + r.width / 2, r.y + r.height / 2);
+    return !hit || hit === el || read(el, 'contains')(hit) ? 'clear' : own(hit) ? 'label' : fixedOver(hit) ? 'fixed' : 'other'; };
+  let seen = state();
+  for (const block of ['center', 'end', 'start']) {
+    if (seen !== 'off' && seen !== 'fixed') break;
+    read(el, 'scrollIntoView')({ block, inline: 'nearest', behavior: 'instant' }); seen = state();
+  }
+  return seen;
+}
+// check and uncheck on a control whose own label sits over it (a visually hidden radio or checkbox) click the control's own centre
+// without Playwright's hit-target wait: placeClear just proved that point is the label itself, never a link or button nested in it,
+// so the click is the one a person makes there. The label's own centre is not used: it may hold a nested link ("I agree to the terms").
+// Anything else keeps the plain path. Never throws: a read that fails leaves the plain path.
+async function aimedAt(locator) {
+  try { return await trustedLocatorRead(locator, placeClear) === 'label' ? { force: true } : {}; }
+  catch { return {}; }
+}
+
 function coverDetails(el) {
   const r = el.getBoundingClientRect(); let hit = el.ownerDocument.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
   while (hit?.shadowRoot?.elementFromPoint) { const next = hit.shadowRoot.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); if (!next || next === hit) break; hit = next; }
   if (!hit || hit === el || el.contains(hit)) return null;
+  const mine = el.closest('label');
+  if (mine && mine.control === el && mine.contains(hit)) return { own: true };
   const root = hit.closest('[role="dialog"],dialog,[aria-modal="true"]') ?? hit;
   return { name: (root.getAttribute('aria-label') || root.innerText || root.localName).slice(0, 100),
     buttons: [...root.querySelectorAll('button,[role="button"],input[type="button"]')].slice(0, 6)
@@ -187,7 +223,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     let observed, observeError, confirmation, blocker, carry;
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
-      const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
+      // navigate on a link is that link's click, so every click rule, guard and popup rule applies unchanged.
+      const named = steps[index], step = named.do === 'navigate' ? { ...named, do: 'click' } : named, label = `${index + 1} ${named.do}${step.ref ? ' ' + step.ref : ''}`;
       let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false;
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
@@ -196,6 +233,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
+        if (named !== step && info.link !== true) throw Error('navigate needs ' + navigateNeeds);
         // Chrome treats text inserted into a single-line input as implicit submission when it is a lone line break, so a line
         // break typed there is an Enter press that skipped the submit checks. Pressing Enter is the one way to send it.
         if (step.do === 'type' && info.tag === 'input' && lineBreak.test(step.text)) throw Error(lineBreakRefusal);
@@ -255,8 +293,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (step.do === 'type') return locator.fill(step.text, options);
           if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
-          if (step.do === 'check') return locator.check(options);
-          if (step.do === 'uncheck') return locator.uncheck(options);
+          if (step.do === 'check') return locator.check({ ...options, ...await aimedAt(locator) });
+          if (step.do === 'uncheck') return locator.uncheck({ ...options, ...await aimedAt(locator) });
           if (step.do === 'hover') return locator.hover(options);
           if (step.do === 'drag') return trusted ? ctx.dragTo(target, page.getByRef(step.to)) : locator.dragTo(page.getByRef(step.to), options);
           if (step.do === 'upload') return locator.setInputFiles(staging.payloads, options);
@@ -271,18 +309,21 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           }
           if (step.do === 'wait') {
             if (locator) return typeof locator.waitFor === 'function' ? locator.waitFor({ ...options, state: 'visible' }) : locator.waitForElementState('visible', options);
-            await sleep(100); return;
+            if (step.ms === undefined) { await sleep(100); return; }
+            await sleep(Math.min(step.ms, WAIT_CAP));
+            return step.ms > WAIT_CAP ? `waited ${WAIT_CAP} ms (cap, not ${step.ms}); page below` : undefined;
           }
           if (step.do === 'scroll') {
-            const end = now() + 4000, dx = step.dx ?? 0, dy = step.dy ?? 500;
+            const end = now() + 4000, clamp = n => Math.max(-SCROLL_CAP, Math.min(SCROLL_CAP, n)), dx = clamp(step.dx ?? 0), dy = clamp(step.dy ?? 500);
+            const note = dx !== (step.dx ?? 0) || dy !== (step.dy ?? 500) ? ` (dx/dy clamped to ${SCROLL_CAP})` : '';
             if (locator) { await locator.scrollIntoViewIfNeeded(options); const point = await locator.evaluate(scrollPoint); await page.mouse.move(point.x, point.y); }
             for (let n = 0; n <= (step.until ? 60 : 1); n++) {
               if (step.until) {
                 const result = await read({ ref: step.ref, find: step.until, maxChars: 2000 });
                 const row = result.text.split('\n').find(line => line.toLocaleLowerCase().includes(step.until.toLocaleLowerCase()) && /\[ref=/.test(line));
-                if (row) return 'found (untrusted page content): ' + clean(row);
-                if (n === 60 || now() >= end || armed.boundary) return 'text not found within 60 wheel steps or 4 s; read the list';
-              } else if (n === 1) return;
+                if (row) return 'found (untrusted page content): ' + clean(row) + note;
+                if (n === 60 || now() >= end || armed.boundary) return 'text not found within 60 wheel steps or 4 s; read the list' + note;
+              } else if (n === 1) return note && 'scrolled' + note + '; page below';
               await page.mouse.wheel(dx, dy); await sleep(16);
             }
           }
@@ -376,7 +417,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         if (/intercepts pointer events/i.test(error.message) && locator) {
           try {
             const cover = await locator.evaluate(coverDetails, undefined, { timeout: 250 });
-            if (cover) {
+            if (cover?.own) detail = 'covered by its own label; use check or uncheck, or click the label';
+            else if (cover) {
               // The cover's name and buttons are page text; they reach the model only in the labelled blocker read below.
               detail = 'covered by a covering element; dismiss the cover first (its controls are listed below)';
               blocker = await read({ find: cover.buttons[0] || cover.name, maxChars: 2000 });
@@ -384,8 +426,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           } catch {}
         }
         // The shield cancelled the input before the page saw the click (backgroundClick says so); nothing was sent.
-        const cancelledByGuard = step.do === 'click' && /^page changed during the click; read again/.test(error.message);
-        lines.push(label + ': ' + (started && !cancelledByGuard ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
+        // Playwright's hit-target check also blocks the page's pointer events when a cover appears mid-action, so a covered target got no input.
+        const unsent = step.do === 'click' && /^page changed during the click; read again/.test(error.message) || /intercepts pointer events/i.test(error.message);
+        lines.push(label + ': ' + (started && !unsent ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;
