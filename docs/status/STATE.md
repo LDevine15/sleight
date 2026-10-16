@@ -3,7 +3,13 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 01:20 UTC, flushed before the owner's clear)
+## Banner (2026-10-16 01:40 UTC)
+
+**Now.** The smoke round's "unqualified" focus came from a stale NSWorkspace entry (pid 88121, listed as running, process gone):
+its subscription failed and nothing ever removed it. Fixed on v3-gate `ad602918` (bench-only, product code unchanged from
+`a544e303`), and the live observer reports `window:true`. The gate rounds (5) wait on Puddle's "HOLD live" (queued for about
+01:30 UTC, no `/tmp/sleight-hold` by agreement), run by `ledger/claims/GATE2/gate5.sh` (one release trap for all five).
+Both preflights pass. `SLEIGHT_CONFIRM_PAYMENTS=never` is being built by an agent on `arch/pay-never` (`~/Projects/sleight-wt/pay-never`).
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
@@ -25,7 +31,7 @@ alternate the arm order per browser order, and an EXIT trap that touches `/tmp/s
 
 Branches (all on `private`, pushed):
 - `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
-- `v3-gate` at `a544e303` (`~/Projects/sleight-wt/v3-int`) is the release build. It is turbo v3 plus the bench funding, arm fixes,
+- `v3-gate` at `ad602918` (`~/Projects/sleight-wt/v3-int`, product code as of `a544e303`) is the release build. It is turbo v3 plus the bench funding, arm fixes,
   closed-root controls, form speed and option pickers (records in `ledger/claims/GATE2/`), all of AD1 merged as `9585d253`
   (`GATE2/gate-ad1-merge.md`), and the read-redaction fix. Full check on `9585d253` (2026-10-16 01:10 UTC) passed 6414 of 6809 with
   395 skipped (the real-page files skip without `SLEIGHT_LIVE_DOM_TEST=1`). A six-task smoke round there took 191 s against 216 s in
