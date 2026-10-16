@@ -145,16 +145,20 @@ test('failed turn cleanup is retained and blocks a replacement turn', async () =
   assert.ok(!f.events.includes('ui-close'));
 });
 
-test('installed launcher selects v3 first and keeps v2 as a typed fallback', async () => {
-  const { createInstalledBrowserBridge } = await import('../plugins/sleight/lib/launch.mjs');
-  const events = [];
-  const chosen = {};
-  assert.equal(await createInstalledBrowserBridge({ v3:async()=>chosen, v2:async()=>assert.fail('v2 after v3 success') }), chosen);
-  assert.equal(await createInstalledBrowserBridge({ v3:async()=>null, v2:async()=>assert.fail('v2 when turbo off') }), null);
-  assert.equal(await createInstalledBrowserBridge({ v3:async()=>{throw Error('V3_RUNTIME_UNAVAILABLE');},
-    v2:async()=>{events.push('v2');return null;} },code=>events.push(code)),null);
-  assert.deepEqual(events,['v2','V3_RUNTIME_UNAVAILABLE']);
-  await assert.rejects(createInstalledBrowserBridge({v3:async()=>{throw Error('HOST_PACKAGE_MISMATCH');},v2:async()=>assert.fail('unsafe fallback') }),/HOST_PACKAGE_MISMATCH/);
+test('v3 unavailability returns the engine route without constructing v2', async () => {
+  const { createInstalledBrowserBridge, prepareInstalledStartup } = await import('../plugins/sleight/lib/launch.mjs');
+  for (const code of ['V3_RUNTIME_UNAVAILABLE', 'V3_WORKER_UNAVAILABLE']) {
+    const notices = [];
+    const prepared = await prepareInstalledStartup(() => createInstalledBrowserBridge({
+      v3: async () => { throw Error(code); },
+      v2: async () => assert.fail('retired v2 factory was called'),
+    }), value => notices.push(value));
+    assert.equal(prepared.directBrowser, undefined);
+    assert.equal(prepared.directHost, undefined);
+    assert.deepEqual(notices, [code]);
+  }
+  assert.equal(await createInstalledBrowserBridge({ v3: async () => null }), null);
+  await assert.rejects(createInstalledBrowserBridge({ v3: async () => { throw Error('HOST_PACKAGE_MISMATCH'); } }), /HOST_PACKAGE_MISMATCH/);
 });
 
 async function controls(t) {

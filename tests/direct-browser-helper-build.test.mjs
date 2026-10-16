@@ -49,7 +49,7 @@ test('first use builds privately, records exact hashes and reuses verified binar
   assert.equal(lstatSync(first.record).mode & 0o777, 0o600);
   const second = await host.prepareNativeHelpers(f.options);
   assert.equal(second.status, 'ready'); assert.equal(second.directory, first.directory); assert.equal(f.builds(), 2);
-  assert.equal(typeof host.createNativePeerProvider(second.receipt), 'function');
+  assert.equal(typeof host.createNativeProcessProvider(second.receipt), 'function');
 });
 for (const what of ['binary', 'record', 'source']) test('tampered ' + what + ' is refused before launch and rebuilt from accepted source', { skip }, async t => {
   const f = fixture(t), first = await host.prepareNativeHelpers(f.options);
@@ -59,14 +59,14 @@ for (const what of ['binary', 'record', 'source']) test('tampered ' + what + ' i
     writeFileSync(join(f.sourceRoot, 'peer-host.c'), 'updated source');
     f.inventory.files[0].sha256 = hash('updated source');
   }
-  assert.throws(() => host.createNativePeerProvider(first.receipt), /HOST_PACKAGE_MISMATCH/);
+  assert.throws(() => host.createNativeProcessProvider(first.receipt), /HOST_PACKAGE_MISMATCH/);
   const next = await host.prepareNativeHelpers(f.options);
   assert.equal(next.status, 'ready'); assert.equal(f.builds(), 4);
-  assert.equal(typeof host.createNativePeerProvider(next.receipt), 'function');
+  assert.equal(typeof host.createNativeProcessProvider(next.receipt), 'function');
 });
 test('unaccepted source edits and forged local receipts never start a helper', { skip }, async t => {
   const f = fixture(t), first = await host.prepareNativeHelpers(f.options);
-  assert.throws(() => host.createNativePeerProvider({ ...first.receipt }), /DISTRIBUTION_ACCEPTANCE_REQUIRED/);
+  assert.throws(() => host.createNativeProcessProvider({ ...first.receipt }), /DISTRIBUTION_ACCEPTANCE_REQUIRED/);
   writeFileSync(join(f.sourceRoot, 'peer-host.c'), 'unaccepted replacement');
   const result = await host.prepareNativeHelpers(f.options);
   assert.equal(result.status, 'unavailable'); assert.equal(result.code, 'HOST_SOURCE_MISMATCH');
@@ -95,12 +95,6 @@ test('linked cache ancestor refuses before creating anything through the link', 
   assert.equal(result.status, 'unavailable'); assert.equal(result.code, 'HOST_CACHE_UNSAFE');
   assert.equal(existsSync(join(f.sourceRoot, 'new-cache')), false);
 });
-test('host returns unavailable before creating IPC or UI for mismatched source acceptance', { skip }, async t => {
-  const f = fixture(t);
-  const result = await host.startBrokerHost({ inventory: f.inventory, directory: join(f.root, 'never-created'), contract: {} });
-  assert.equal(result.status, 'unavailable'); assert.equal(result.code, 'HOST_SOURCE_MISMATCH');
-  assert.equal(result.fallback, 'engine'); assert.equal(existsSync(join(f.root, 'never-created')), false);
-});
 test('concurrent first use retains the builders lock and publishes one complete bank', { skip }, async t => {
   const f = fixture(t); let release;
   const wait = new Promise(resolve => release = resolve);
@@ -122,14 +116,14 @@ test('source mutation during compilation never publishes a usable receipt', { sk
 test('writable cached executable rebuilds and stale launch receipt refuses', { skip }, async t => {
   const f = fixture(t), first = await host.prepareNativeHelpers(f.options);
   chmodSync(join(first.directory, 'peer-host'), 0o777);
-  assert.throws(() => host.createNativePeerProvider(first.receipt), /HOST_PACKAGE_MISMATCH/);
+  assert.throws(() => host.createNativeProcessProvider(first.receipt), /HOST_PACKAGE_MISMATCH/);
   assert.equal((await host.prepareNativeHelpers(f.options)).status, 'ready'); assert.equal(f.builds(), 4);
 });
 test('peer provider checks again at invocation instead of trusting its earlier path', { skip }, async t => {
   const f = fixture(t), first = await host.prepareNativeHelpers(f.options);
-  const provider = host.createNativePeerProvider(first.receipt);
+  const provider = host.createNativeProcessProvider(first.receipt);
   writeFileSync(join(first.directory, 'peer-host'), 'replacement between calls');
-  await assert.rejects(provider(null), /HOST_PACKAGE_MISMATCH/);
+  await assert.rejects(provider(1, '/fixture/browser'), /SELECTED_PROCESS_UNPROVED/);
 });
 test('Darwin first-use compiler builds both real sources without launching consent UI', {
   skip: macCommandSkip('xcrun'),
@@ -159,5 +153,5 @@ test('Darwin first-use compiler builds both real sources without launching conse
   const result = await host.prepareNativeHelpers({ inventory, sourceRoot, cacheRoot: join(root, 'cache') });
   assert.equal(result.status, 'ready', JSON.stringify(result));
   for (const name of ['peer-host', 'consent-host']) assert.ok(lstatSync(join(result.directory, name)).size > 1000);
-  assert.equal(typeof host.createNativePeerProvider(result.receipt), 'function');
+  assert.equal(typeof host.createNativeProcessProvider(result.receipt), 'function');
 });

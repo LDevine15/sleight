@@ -5,9 +5,7 @@ import { userInfo } from 'node:os';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { immutableJSON, listenIPC } from './ipc.mjs';
-import { createBroker } from './broker.mjs';
-import { createConsentUi } from './consent-ui.mjs';
+import { immutableJSON } from './ipc.mjs';
 
 // Fixed entry. The installed loader supplies source acceptance outside model or
 // project input. Only this local compiler can issue a native launch receipt.
@@ -15,10 +13,8 @@ const sources = fileURLToPath(new URL('./native/', import.meta.url)).replace(/\/
 const nativeBuilds = new WeakMap();
 const helperSources = { 'peer-host': 'peer-host.c', 'consent-host': 'consent-host.swift' };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const trustedUi = new WeakSet();
 const processProviders = new WeakSet();
 export const isNativeProcessProvider = value => typeof value === 'function' && processProviders.has(value);
-export const isTrustedUi = value => !!value && trustedUi.has(value);
 function ordinary(path, mode) {
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path ||
@@ -134,26 +130,6 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = join(userInf
   }
 }
 
-export function createNativePeerProvider(receipt) {
-  executable('peer-host', receipt);
-  return socket => new Promise((resolve, reject) => {
-    // Node duplicates the connected UDS into fd 3. JSON never supplies an fd,
-    // PID, UID or incarnation to the native observer.
-    const child = spawn(executable('peer-host', receipt), ['--peer-fd', '3'], { env: environment(), stdio: ['ignore', 'pipe', 'ignore', socket] });
-    let bytes = '';
-    child.stdout.on('data', chunk => { bytes += chunk; if (bytes.length > 1024) child.stdout.destroy(); });
-    child.on('error', () => reject(Error('IPC_PEER_UNAVAILABLE')));
-    child.on('close', code => {
-      try {
-        const peer = immutableJSON(JSON.parse(bytes));
-        if (code !== 0 || peer.uid !== process.getuid() || !Number.isSafeInteger(peer.pid) || peer.pid < 1 ||
-            typeof peer.incarnation !== 'string' || !/^p[1-9]\d*-v\d+$/.test(peer.incarnation)) throw Error();
-        resolve(peer);
-      } catch { reject(Error('IPC_PEER_UNAVAILABLE')); }
-    });
-  });
-}
-
 // Private loader capability. Only the compiled, receipt-bound peer helper may
 // observe a selected PID; callers cannot supply native output or an executable
 // helper. The helper checks UID, canonical executable and birth on both reads.
@@ -216,7 +192,7 @@ export function createUiChannel({ read, write, onLoss = () => {} }) {
     revoke() { pending.clear(); },
     close() { lose(); write.end(); },
   });
-  trustedUi.add(channel); return channel;
+  return channel;
 }
 
 export function createNativeUi(receipt, onLoss) {
@@ -225,172 +201,4 @@ export function createNativeUi(receipt, onLoss) {
   const channel = createUiChannel({ read: child.stdout, write: child.stdin, onLoss });
   child.on('error', () => channel.close()); child.on('close', () => channel.close());
   return channel;
-}
-
-// The factory is the fixed accepted native UI provider, never a page/IPC value.
-// Loss retires its private authentication channel. A replacement gets a fresh
-// nonce and only the stopping broker's Cleanup control; it cannot reconnect.
-export function createRecoverableUi({ createUi, onLoss, onReady, schedule = setTimeout, cancel = clearTimeout }) {
-  if ([createUi, onLoss, onReady, schedule, cancel].some(fn => typeof fn !== 'function')) throw Error('TRUSTED_UI_UNAVAILABLE');
-  let entry, retry, stopped = false;
-  function later() {
-    if (stopped || retry !== undefined) return;
-    retry = schedule(() => { retry = undefined; try { start(); } catch {} }, 1000);
-  }
-  function lose(token) {
-    if (stopped || entry?.token !== token) return;
-    const old = entry; entry = undefined;
-    try { old.channel?.close(); } catch {}
-    try { onLoss(); } catch {}
-    later();
-  }
-  function start() {
-    if (stopped) throw Error('TRUSTED_UI_UNAVAILABLE');
-    if (entry) return;
-    const token = {}; entry = { token };
-    try {
-      const channel = createUi(() => lose(token));
-      if (entry?.token !== token) { channel.close(); throw Error('TRUSTED_UI_UNAVAILABLE'); }
-      entry.channel = channel;
-      onReady();
-      if (entry?.token !== token) throw Error('TRUSTED_UI_UNAVAILABLE');
-    } catch { lose(token); throw Error('TRUSTED_UI_UNAVAILABLE'); }
-  }
-  const ui = Object.freeze({ start,
-    present(...args) {
-      if (!entry?.channel || stopped) throw Error('TRUSTED_UI_UNAVAILABLE');
-      const current = entry;
-      try { return current.channel.present(...args); }
-      catch { lose(current.token); throw Error('TRUSTED_UI_UNAVAILABLE'); }
-    },
-    authenticate(event) {
-      if (!entry?.channel || stopped) return false;
-      const current = entry;
-      try { return current.channel.authenticate(event); } catch { lose(current.token); return false; }
-    },
-    revoke() { entry?.channel?.revoke(); },
-    close() {
-      stopped = true; if (retry !== undefined) { cancel(retry); retry = undefined; }
-      const current = entry; current?.channel?.close(); entry = undefined;
-    },
-  });
-  trustedUi.add(ui); return ui;
-}
-
-export function createNativeConsent({ ui, checkCurrent, onDecision }) {
-  if (!ui || typeof checkCurrent !== 'function' || typeof onDecision !== 'function') throw Error('TRUSTED_CONTRACT_REQUIRED');
-  const consent = createConsentUi({ authenticate: event => ui.authenticate(event), checkCurrent,
-    present(view, operation) {
-      ui.present(view.id, { view, operation }, view.choices, event => {
-        const ticket = consent.respond(event);
-        if (ticket) {
-          const receipt = consent.consume(ticket, operation);
-          // P2 binds this trusted decision to its operation-specific authority.
-          // No ticket or private operation is returned on a model endpoint.
-          onDecision(Object.freeze({ kind: view.kind, choice: event.choice, operation, receipt }));
-        }
-      });
-    } });
-  return Object.freeze({ request: consent.request,
-    revoke() { consent.revoke(); ui.revoke(); } });
-}
-
-export function createBrokerControls({ broker, ui, revokeSessions }) {
-  let sequence = 0;
-  function status(value) {
-    const state = value.cleanup?.pending || value.stopping ? 'cleanup-required' : value.state === 'connected' ? value.clients ? 'connected' : 'connected-idle'
-      : value.state === 'paused' ? 'paused' : 'disconnected';
-    const choices = state === 'cleanup-required' ? ['cleanup'] : state.startsWith('connected') ? ['pause', 'disconnect']
-      : state === 'paused' ? ['disconnect'] : value.cleanup?.connecting ? ['cancel'] : ['connect'];
-    ui.present('control-' + (++sequence), { status: state }, choices, async event => {
-      if (!ui.authenticate(event)) return;
-      try {
-        if (event.action === 'connect') await broker.connect({ userInitiated: true });
-        else if (event.action === 'cleanup') await broker.cleanup({ userInitiated: true });
-        else if (event.action === 'pause') { broker.pause(); revokeSessions(); }
-        else { const closing = broker.loseConnection(); revokeSessions(); await closing; }
-      } catch { broker.loseConnection(); revokeSessions(); }
-      // A completed Cleanup can retire the host and close this UI before the refresh; UI loss has its own onLoss path.
-      try { status(broker.status()); } catch {}
-    }, { deadline: Date.now() + 300000 });
-  }
-  return Object.freeze({ status });
-}
-
-export function createHostLifecycle({ broker, listener, ui, revokeSessions, timer }) {
-  let stopping = false, busy, revoked = false, listenerClosed = false, uiClosed = false, released = false;
-  const receipt = (closed, error) => ({ closed, cleanup: broker.status().cleanup, ...(error ? { error } : {}) });
-  function close() {
-    if (released) return Promise.resolve(receipt(true));
-    if (busy) return busy;
-    stopping = true;
-    // shutdown fences requests synchronously, before any await or teardown.
-    // It observes a pending close without issuing another physical close.
-    const closure = broker.shutdown();
-    busy = (async () => {
-      try {
-        if (!revoked) {
-          const result = revokeSessions();
-          if (result && typeof result.then === 'function') {
-            result.catch(() => {}); throw Error('TEARDOWN_UNCONFIRMED');
-          }
-          revoked = true;
-        }
-        if (await closure !== true) return receipt(false);
-        // Keep exclusion and the authenticated status/cleanup channel alive
-        // while the exact browser connection or revocation is unconfirmed.
-        if (!listenerClosed) { await listener.close(); listenerClosed = true; }
-        if (!uiClosed) { await ui?.close(); uiClosed = true; }
-        clearInterval(timer); released = true;
-        return receipt(true);
-      } catch { await closure.catch(() => {}); return receipt(false, 'TEARDOWN_UNCONFIRMED'); }
-    })().finally(() => { busy = undefined; });
-    return busy;
-  }
-  return Object.freeze({ broker, listener, ui, close,
-    reconcile() { return stopping ? close() : Promise.resolve(receipt(false)); } });
-}
-
-export async function startBrokerHost({ inventory, directory, contract, revokeSessions }) {
-  // Build/verify before creating any socket or native UI. Unavailable turbo
-  // leaves the loader on the engine path, with no partial host or UI.
-  const built = await prepareNativeHelpers({ inventory });
-  if (built.status !== 'ready') return built;
-  const nativeReceipt = built.receipt;
-  executable('consent-host', nativeReceipt);
-  const peerIdentity = createNativePeerProvider(nativeReceipt);
-  if (typeof revokeSessions !== 'function') throw Error('TRUSTED_CONTRACT_REQUIRED');
-  let ui, broker, controls, host, lastStatus = { state: 'disconnected', clients: 0 };
-  const status = value => {
-    lastStatus = value;
-    try { controls?.status(value); } catch { controls = undefined; broker?.loseConnection(); }
-    // A late closure or authenticated Cleanup can finish a previously refused
-    // shutdown. The heartbeat/status callback never retries physical closure.
-    if (value.stopping && !value.cleanup?.pending && !value.cleanup?.connecting)
-      Promise.resolve().then(() => host?.reconcile());
-  };
-  const data = { ...contract, idlePolicy: 'retain', onStatus: status };
-  broker = createBroker(data);
-  const listener = await listenIPC({ directory, broker, uid: data.uid, secret: data.secret, peerIdentity });
-  try {
-    ui = createRecoverableUi({ createUi: onLoss => createNativeUi(nativeReceipt, onLoss),
-      onLoss() {
-        controls = undefined;
-        // Permanently stop the broker rather than letting an absent UI approve
-        // more work. Host close retains singleton/cleanup ownership on failure.
-        if (host) host.close(); else { broker.shutdown(); try { revokeSessions(); } catch {} }
-      },
-      onReady() { controls = createBrokerControls({ broker, ui, revokeSessions }); status(broker.status()); } });
-    ui.start();
-  } catch {
-    // No connection is offered before the initial private UI is ready.
-    // Cancel any UI factory retry before releasing a proven-empty host.
-    if (await broker.shutdown() === true) { ui?.close(); await listener.close(); }
-    throw Error('TRUSTED_UI_UNAVAILABLE');
-  }
-  // Reissue status controls before their authenticated envelope expires. Session
-  // authority is never renewed by this timer, and a disconnected UI fences work.
-  const timer = setInterval(() => status(broker.status()), 60000);
-  host = createHostLifecycle({ broker, listener, ui, revokeSessions, timer });
-  return host;
 }

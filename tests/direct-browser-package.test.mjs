@@ -13,7 +13,7 @@ test('the engine route never loads the bundled Playwright runtime', () => {
   assert.equal(worlds.loadPlaywrightCore(), null);
   assert.equal(Object.keys(require.cache).some(p => p.includes('/vendor/playwright-core/')), false);
 });
-test('the opted-in runtime loads the pinned complete package without connecting', () => {
+test('the opted-in runtime loads the pinned runtime package without connecting', () => {
   const runtime = worlds.loadPlaywrightCore({ turbo: true });
   assert.equal(runtime.getPlaywrightVersion(), '1.64.0');
   assert.equal(typeof runtime.server.createPlaywright, 'function');
