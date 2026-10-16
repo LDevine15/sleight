@@ -16,7 +16,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Codex's numbers on the same tasks are the speed bar. sleight is light enough that nobody notices it running, and its skill, tool
   descriptions and notices count against one small budget. When a competitor releases, sleight answers with a same-day head-to-head.
   Releasing on speed before footprint parity is the owner's call.
-- sleight-arch builds the launch video. The owner publishes the launch post.
+- An art-direction architect, which the owner boots, directs the launch video's art (owner, 2026-10-16). sleight-arch supplies the
+  real captures, the race runs and the measured numbers. The owner publishes the launch post.
 - The owner parked Windows, the Anthropic directory listing, scoped approvals and the stable-controls mode.
 - Releases are a git tag plus a GitHub release from the CHANGELOG, bigger and less often. Work in progress goes to the private
   `Land-o-Clusters/sleight-dev`. The public repo gets pushes only at release, after public CI passes (a pre-push hook enforces it).

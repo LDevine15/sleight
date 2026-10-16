@@ -31,7 +31,10 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS), is built in v3-gate.
 4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB), then the release
    pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
-5. Then the claim post (owner publishes) and the launch video (sleight-arch builds it from the measured claim).
+5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). The art-direction architect the
+   owner boots directs the art (owner, 2026-10-16). sleight-arch supplies single-window captures of the trick (in an away window),
+   the race from a published run, and the playbill numbers. Puddle's records don't show the Puddle launch film the storyboard's first
+   line names, so the art architect should check that line.
 
 Before the gate, the owner reloads FowlBrowser's extension in Helium and runs the sleight-arm login. Chrome's Allow and
 `ledger/claim-suite-owner-checklist.md` are the owner's too.
