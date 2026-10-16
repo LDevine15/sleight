@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-15 22:40 UTC, flushed before the owner's clear)
+## Banner (2026-10-16 01:20 UTC, flushed before the owner's clear)
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
@@ -17,37 +17,32 @@ forms). Each round takes about 8 minutes. The gate script is `~/Projects/sleight
 alternate the arm order per browser order, and an EXIT trap that touches `/tmp/sleight-bench-done`.
 
 **In flight at the flush.**
-- Agent `gate-ad1-merge` (ends at the clear) was merging `arch/ad1-int` `c25095a9` into `arch/gate-ad1` (from v3-gate `cddc7895`) in
-  `~/Projects/sleight-wt/gate-ad1`. The merge was in progress and NOT committed or pushed: MERGE_HEAD set, conflicts in act, fill,
-  page, rules, tools, v3-context, known-problems and a v3-act test, partly resolved in the index. Next session: read
-  `ledger/claims/GATE2/gate-ad1-merge.md` if it exists; otherwise `git -C ~/Projects/sleight-wt/gate-ad1 merge --abort` and redo the
-  merge with the earlier integration notes (`ledger/claims/AD1/int-*.md`) and the GATE2 notes (arm-fix, closed-shadow, form-speed,
-  combobox) as the guide. The merge drops nothing from either side. Closed-root (s-ref) elements must go
-  through the AD1 shield, popup hook, payment and key paths.
-- No background job, gate round or benchmark is running. Puddle's hold is released (`/tmp/sleight-bench-done` exists).
+- Agent `q1-integrator` (ends at the clear) is combining the 16 reviewed Q1 error-message branches (Q1-1 to Q1-11, Q1-2R3, Q1-13 to
+  Q1-17; Q1-12 failed review) on `arch/q1-int` in `~/Projects/sleight-wt/q1-int`, from pane/auto-mode, with the reviewers' small
+  fixes. Next session: read `ledger/claims/Q1/INTEGRATION.md` if it exists, else check the branch and redo from the reviews in
+  `ledger/claims/Q1-<n>/REVIEW.md`. Merges after the 1.3.0 tag.
+- No gate round, benchmark or background job is running.
 
-Branches (all on `private`, all pushed, worktrees clean except gate-ad1):
-- `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). Full check 2026-10-15 22:55 UTC passed 5729 of 5788 with 59 skipped.
-  `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
-- `v3-gate` at `cddc7895` (`~/Projects/sleight-wt/v3-int`): turbo v3 plus funding on the login (`83fbf6b4`), arm fixes (`941ee17d`),
-  closed-root controls (`68c1b383`), form speed (`fe9cb4d9`), option pickers (`f0e7cc6c`, `cddc7895`). Records in
-  `ledger/claims/GATE2/`. No full check on it yet.
-- `arch/ad1-int` at `c25095a9` (`~/Projects/sleight-wt/adfix-int`): AD1 done. The bank, port guard, hyg, CR8, CR9, swap r4, pop r5,
-  the final payment check (any figure above the user's amount asks), kb with the init-script lock and once-per-session auto-attach,
-  iframe read sessions, hook-key hardening. Every bank file passes (page-natives 284, swap-shield 75, payment-checkouts 2528,
-  keyboard 92, endpoint 136). No full check yet. Status: `ledger/claims/AD1/OPEN-REVIEWS.md`.
+Branches (all on `private`, pushed):
+- `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
+- `v3-gate` at `a544e303` (`~/Projects/sleight-wt/v3-int`) is the release build. It is turbo v3 plus the bench funding, arm fixes,
+  closed-root controls, form speed and option pickers (records in `ledger/claims/GATE2/`), all of AD1 merged as `9585d253`
+  (`GATE2/gate-ad1-merge.md`), and the read-redaction fix. Full check on `9585d253` (2026-10-16 01:10 UTC) passed 6414 of 6809 with
+  395 skipped (the real-page files skip without `SLEIGHT_LIVE_DOM_TEST=1`). A six-task smoke round there took 191 s against 216 s in
+  round 3, and click latency is +4 ms. In that smoke round the focus column read "unqualified" because the host window observer
+  logged `window:false`. Check that focus is measured again before the gate rounds.
+- `arch/epv3-1` at `ccf61a3b` (Electron step 1: the per-app debugger consent card and app-document identity, inert until EPV3-7,
+  `ledger/claims/EPV3-1/REPORT.md`). It needs an owner-operated consent run (command in the report). It merges after the tag.
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Next for the gate, in order:
-1. Finish `arch/gate-ad1` (above), run one full `npm run check` on it, a turbo smoke round of the form tasks, then fast-forward
-   v3-gate to it.
-2. At least 5 gate rounds on that build. The owner OK'd running them whenever (2026-10-15 21:30 UTC). Before each: ask Puddle's
-   architect for HOLD (`ListAgents`, `SendMessage` to "puddle arch"), wait for "HOLD live", delete `/tmp/sleight-bench-done`, check
-   the Mac has been idle a few minutes (`ioreg -c IOHIDSystem | awk '/HIDIdleTime/'`), run both preflights with `--world`. Report the
-   median per arm.
-3. `SLEIGHT_CONFIRM_PAYMENTS=never` (owner, LAWS) and two small turbo bugs: a read's redaction blanks matching characters elsewhere on
-   the page, which closed-root values make worse.
-4. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
+1. At least 5 gate rounds on v3-gate `a544e303` (the owner OK'd running them whenever, 2026-10-15 21:30 UTC). Before each: ask
+   Puddle's architect for HOLD (`ListAgents`, `SendMessage` to "puddle arch"), wait for "HOLD live", delete
+   `/tmp/sleight-bench-done`, check the Mac has been idle a few minutes (`ioreg -c IOHIDSystem | awk '/HIDIdleTime/'`), run both
+   preflights with `--world`, then `~/Projects/sleight-wt/ledger/claims/GATE2/gate.sh`. Report the median per arm.
+2. `SLEIGHT_CONFIRM_PAYMENTS=never` (owner, LAWS), on v3-gate.
+3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
+4. EPV3-1's open question, decided by sleight-arch: close the Swift generic payment branch to once and cancel, like the JS side.
 
 Bench setup facts (2026-10-15): the bench arms log in per config dir. `sleight-turbo` and `fowlbrowser` arm configs are logged in
 (Max). Without `--world`, the FowlBrowser arm uses `~/Library/Caches/sleight-bench/fowl-claude-config`, which is NOT logged in, so
