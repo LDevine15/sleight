@@ -37,6 +37,8 @@ test('installed acceptance covers the whole plugin including relay, hook and ven
   function walk(prefix = '') {
     for (const name of readdirSync(join(root, prefix))) {
       const path = prefix + name;
+      // Claude Code writes these into a loaded plugin's folder; the package walk leaves them out (session-host.mjs).
+      if (['.in_use', '.claude-plugin/types'].includes(path)) continue;
       if (lstatSync(join(root, path)).isDirectory()) walk(path + '/');
       else { const bytes = readFileSync(join(root, path)); files.push({ path, bytes: bytes.length,
         sha256: createHash('sha256').update(bytes).digest('hex') }); }
