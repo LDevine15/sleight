@@ -5,7 +5,7 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 ## Banner (2026-10-16 10:55 UTC, morning summary)
 
-OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
+OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). OWNER AWAKE 2026-10-16T12:01:40Z (/goodmorning). Night Shift off.
 
 **Overnight results (owner away, all on the owner's login, Puddle windows W1 to W7).**
 - **Gate passed** on v3-gate `66ada2bd` (07:38 to 08:08): turbo median 547 s (p90 590) and 0 errors in all 5 rounds, against
