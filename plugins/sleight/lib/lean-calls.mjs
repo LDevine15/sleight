@@ -1,8 +1,8 @@
 // Opt-in native call guidance. Default prompt sources stay byte-identical.
 export function leanCallRules(text) {
   return text?.replace('Keep the handle and `await` every action.', 'Keep the app handle across calls; `await` every action.')
-    .replace('Each result shows what changed since the last full tree you saw. A full read is',
-      'End on the action; results show headers and changed lines. Request a full tree with');
+    .replace('Results show changes since the last full tree. Read again with',
+      'End on the action; results show headers and changed lines. Read again with');
 }
 
 export function leanCallDescription(description) {

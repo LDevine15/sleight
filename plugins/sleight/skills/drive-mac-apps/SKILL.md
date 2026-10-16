@@ -15,28 +15,28 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 ## Calls
 
-- `let app = await cua.getApp("<name or bundle ID>")` returns UI state. Batch known actions with
-  acquisition: sleight checks the window before input. Keep the handle and `await` every action.
+- `let app = await cua.getApp("<name or bundle ID>")` returns UI state. Put known actions in that
+  call: sleight checks the window before input. Keep the handle and `await` every action.
 - Use element numbers, or stable IDs and labels when actions renumber the window:
   `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
-  Batch clicks you're sure of in one call.
-- Each result shows what changed since the last full tree you saw. A full read is
-  `await app.getAXState({ disableDiffing: true })`.
-- If acquisition returns an empty tree, read again.
-- If a result says the user changed the app, or a header changed or disappeared after an action,
-  read again before retrying. The user may be working in it.
-- To choose among several windows, call `select_window` with the app and an exact `url` or `title`,
-  then acquire the app in a call of its own and check its Window line.
-- Multiply tap coordinates by the result's screenshot multiplier.
+- Results show changes since the last full tree. Read again with `await app.getAXState()`.
+- If acquisition returns an empty tree, or a result says the user changed the app or a header
+  changed, read again before retrying.
+- Among several windows, call `select_window` with the app and an exact `url` or `title`, then
+  acquire the app alone and check its Window line.
+- Multiply tap coordinates by the screenshot multiplier.
 
 ## Text, menus and files
 
 - For exact text, `await app.paste("text")` avoids autocorrect and capitalization. Replace a whole
   document with select-all and paste in one call, then read back and compare.
-- Use a menu item's shortcut when it has one. Otherwise open the menu and choose the item by label
-  in the same call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
+- Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
+  call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
   `menu_bar` is only for status icons.
+- Acquire a document that's already open. Don't reopen it.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
+- Type numbers moved between apps as digits, since displays add separators.
+- Move files or list items with Cut/Copy and Paste or Move, not a drag.
 - In a Save panel, send Go to Folder, the folder, Return, the name and the final Return in one call,
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
