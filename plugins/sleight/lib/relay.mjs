@@ -97,6 +97,7 @@ import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
+import { initializationAdvice } from './initialization-guidance.mjs';
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
@@ -2681,6 +2682,8 @@ export function createRelay({
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
+    const initializationNote = jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
+    if (initializationNote) msg.result.content.push({ type: 'text', text: initializationNote });
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (jsCode !== undefined) replWarmup.attach(msg);
