@@ -193,7 +193,7 @@ test('lean changes relay additions without changing engine text or safety refusa
   assert.ok(lean.content.at(-1).text.length < normal.content.at(-1).text.length);
   assert.equal(lean.refusal.isError, true);
   assert.equal(normal.refusal.isError, true);
-  assert.match(lean.refusal.content[0].text, /stopped this call before it ran:.*Add await and send it again\./);
+  assert.match(lean.refusal.content[0].text, /stopped this call before it ran:.*Add await at line \d+ and send it again\./);
 });
 
 // Lean was 30% under the default until both gained the same browser lines (29.7%, 2026-10-12).

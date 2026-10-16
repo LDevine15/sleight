@@ -34,10 +34,15 @@ for (const [name, invoke, code] of [
   try { invoke(f); } catch (caught) { error = caught; }
   assert.ok(error);
   const out = rewriteTabError(error.message, {code});
-  assert.match(out, /App.*cua.getApp\(bundleId\)/);
-  assert.match(out, /cua.getTab\(tabId, \{ browser: browserId \}\).*string/);
   assert.match(out, /getAXState|cua.listTabs/);
-  if (name !== 'native window number used as a tab reference') {
+  if (name === 'stale numeric index') {
+    assert.match(out, /Use an index from a fresh read\./);
+    assert.ok(out.length < 220, out.length);
+  } else {
+    assert.match(out, /App.*cua.getApp\(bundleId\)/);
+    assert.match(out, /cua.getTab\(tabId, \{ browser: browserId \}\).*string/);
+  }
+  if (name !== 'native window number used as a tab reference' && name !== 'stale numeric index') {
     assert.match(out, /numeric.*index/);
     assert.match(out, /null.*text.*key|text.*key.*null/);
   }

@@ -5,11 +5,12 @@ import { rewriteTabError } from '../plugins/sleight/lib/tab-errors.mjs';
 for (const raw of [
   'Automation is blocking automation because another extension UI is open.',
   'Error: net::ERR_BLOCKED_BY_CLIENT at https://example.invalid/page',
-]) test('blocked browser reason receives inventory and owner guidance without retry instructions', () => {
+]) test('blocked browser reason receives inventory and user guidance without retry instructions', () => {
   const out = rewriteTabError(raw);
   assert.ok(out.startsWith(raw));
   assert.match(out, /await cua.listTabs\(\)/);
-  assert.match(out, /owner/);
+  assert.match(out, /user must/);
+  assert.doesNotMatch(out, /owner/);
   assert.match(out, /Do not retry/);
   assert.doesNotMatch(out, /\.close\(|\.goto\(|\.reload\(|disable.*extension/i);
 });
@@ -24,4 +25,9 @@ test('ordinary caller output and other navigation failures remain unchanged', ()
     'Error: net::ERR_CONNECTION_RESET',
     'caller output\nAutomation is blocking automation because another extension UI is open.',
   ]) assert.equal(rewriteTabError(raw), raw);
+});
+test('guidance starts a new line when the error carries a call log', () => {
+  const raw = 'Error: page.goto: net::ERR_BLOCKED_BY_CLIENT at https://example.invalid/page\nCall log:\n  - navigating';
+  const out = rewriteTabError(raw);
+  assert.ok(out.startsWith(raw + '\n'));
 });

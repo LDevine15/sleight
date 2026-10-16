@@ -11,9 +11,8 @@ for (const reason of [
 ]) test(`${reason} gets a guarded read without a guessed selector`, () => {
   const raw = 'TypeError: ' + reason + stack, out = rewriteTabError(raw);
   assert.ok(out.startsWith(raw));
-  assert.match(out, /document\.querySelector\(selector\) !== null/);
-  assert.match(out, /observedSelector/);
-  assert.match(out, /Use the selector already observed/);
+  assert.match(out, /document\.querySelector\(s\) !== null, selector\)/);
+  assert.match(out, /with a selector you already observed/);
   assert.doesNotMatch(out, /querySelector\(["']|\.click\(|\.fill\(|\.children\b/);
 });
 test('the suggested read returns existence without dereferencing a missing element', async () => {
@@ -28,7 +27,7 @@ test('the suggested read returns existence without dereferencing a missing eleme
     const playwright = new Proxy({ async evaluate(fn, arg) { reads++; return fn(arg); } }, {
       get(target, key) { if (!(key in target)) throw new Error(`unsupported method ${String(key)}`); return target[key]; },
     });
-    assert.equal(await runInNewContext(`(async () => ${code})()`, { tab: { playwright }, document, observedSelector: '#observed' }), element !== null);
+    assert.equal(await runInNewContext(`(async () => ${code})()`, { tab: { playwright }, document, selector: '#observed' }), element !== null);
     assert.equal(reads, 1); assert.equal(queries, 1);
   }
 });

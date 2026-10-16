@@ -26,7 +26,8 @@ for (const [label, code, line, correction] of [
     assert.equal(h.replies[0].result.isError, true);
     const text = h.replies[0].result.content[0].text;
     assert.match(text, new RegExp(`line ${line}\\b`));
-    assert.ok(text.includes(correction));
+    assert.match(text, /Add await at line/);
+    assert.ok(text.includes(correction.slice(6, correction.indexOf('('))), text);
     assert.doesNotMatch(text, /private|secret/);
   } finally { h.relay.dispose(); }
 });

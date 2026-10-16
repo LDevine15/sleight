@@ -31,9 +31,8 @@ for (const name of ['drag', 'hover']) test(`declined ${name} stops before any he
   assert.equal(result.isError, true);
   const text = result.content[0].text;
   assert.match(text, /The user didn't allow/);
-  assert.match(text, /Permission declined/);
-  assert.match(text, /user.*decide/);
   assert.match(text, /don't work around it/);
+  assert.doesNotMatch(text, /Permission declined/);
   assert.equal(approvals, 1);
   assert.equal(helpers, 0);
 });

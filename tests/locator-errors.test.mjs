@@ -180,10 +180,24 @@ test('a long label is bounded without suggesting a truncated label as an exact m
   assert.doesNotMatch(hint, /getByLabel\("private/);
 });
 
-test('strict errors without structured diagnostics still name the documented exact-label form', () => {
+test('strict errors without structured diagnostics make the suggested locators exact', () => {
   const raw = "Error: strict mode violation: locator('button') resolved to 2 elements:\n  1) <button>Save</button> aka getByRole('button', { name: 'Save' })\n  2) <button>Save as</button> aka getByRole('button', { name: 'Save as' })";
   const hint = rewriteLocatorFailure(raw).split('\n')[0];
-  assert.match(hint, /getByLabel\(label, \{ exact: true \}\)/);
-  assert.match(hint, /observed full label/);
+  assert.match(hint, /getByRole\('button', \{ name: 'Save', exact: true \}\)/);
+  assert.match(hint, /getByRole\('button', \{ name: 'Save as', exact: true \}\)/);
+  assert.doesNotMatch(hint, /observed full label/);
   assert.ok(rewriteLocatorFailure(raw).endsWith(raw));
+});
+
+test('a strict error that lists no matches does not claim a truncated listing', () => {
+  const hint = rewriteLocatorFailure("Error: strict mode violation: locator('button') resolved to 14 elements:").split('\n')[0];
+  assert.doesNotMatch(hint, /showing 0 of/);
+});
+
+test('rows without a label or role show their text so identical controls can be told apart', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: [{ tag: 'div', text: 'First card' }, { tag: 'div', text: 'Second card' }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /"First card"/);
+  assert.match(hint, /"Second card"/);
 });

@@ -14,7 +14,8 @@ test('a CDP timeout reports operation, deadline and unknown input before suggest
   assert.match(out, /dialog is not confirmed/);
   assert.match(out, /getJsDialog\(\)/);
   assert.match(out, /Read the page before retrying input/);
-  assert.doesNotMatch(out, /\.dismiss\(|\.accept\(/);
+  assert.match(out, /if one is open, answer it with dialog\.accept\(\) or dialog\.dismiss\(\)/);
+  assert.doesNotMatch(out, /\bawait dialog\.(?:dismiss|accept)/);
 });
 
 test('a confirmed interruption retains the actual dialog type and supported response choices', () => {
@@ -41,7 +42,7 @@ test('an explicitly pre-dispatch deadline retains its stronger evidence', () => 
 test('a reported kernel reset names handle recovery and never advises replaying unknown input', () => {
   const out = rewriteTabError(reset);
   assert.ok(out.startsWith(reset));
-  assert.match(out, /JavaScript execution.*duration not reported/);
+  assert.doesNotMatch(out, /JavaScript execution timed out/);
   assert.match(out, /input outcome is unknown/);
   assert.match(out, /Do not rerun the failed action/);
   assert.match(out, /cua.listTabs\(\).*cua.getTab/);

@@ -402,7 +402,8 @@ test('input timeouts offer read-only dialog inspection and retain input uncertai
   assert.match(out, /input may already have been sent/);
   assert.match(out, /nodeRepl\.write.*await tab.getJsDialog\(\)/);
   assert.match(out, /dialog is not confirmed/);
-  assert.doesNotMatch(out, /dialog\.(?:dismiss|accept)\(/);
+  assert.match(out, /if one is open, answer it with dialog\.accept\(\) or dialog\.dismiss\(\)/);
+  assert.doesNotMatch(out, /\bawait dialog\.(?:dismiss|accept)/);
   assert.doesNotMatch(out, /\/\*|alert\/beforeunload|read dialog\.type and message/);
   assert.match(out, /getAXState/);
   assert.doesNotMatch(out, /\} if a page dialog is open/);

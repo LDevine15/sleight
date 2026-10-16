@@ -9,9 +9,9 @@ export function initializationAdvice(content, failed, code = '') {
   if (!error && outside.some(text => /^(?:Window: |Browser tab: |Tab: )/m.test(text))) return;
   if (!error && texts.some(text => text.trim() && !DOCS.test(text))) return;
   const browser = texts.some(text => /^#(?:#)? (?:Other Browser APIs|Browser APIs)\n/.test(text)) ||
-    /\bcua\.(?:getBrowser|getTab|listTabs)\(/.test(code);
+    /\bcua\.(?:getBrowser|getTab|listTabs|createBrowserTab)\(/.test(code);
   const read = browser ? 'await cua.listTabs()' : 'await cua.getState()';
-  const kind = error ? 'Initialization documentation accompanied an error' : 'The engine returned only required API documentation';
+  const kind = error ? 'sleight: initialization documentation accompanied an error' : 'sleight: the engine returned only required API documentation';
   return `${kind}; execution is unconfirmed. Complete the documented initialization with one supported read: ${read}. Read current state before deciding what remains. Do not replay the pending input automatically. Existing approval requirements still apply.`;
 }
 

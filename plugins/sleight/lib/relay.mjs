@@ -2112,7 +2112,7 @@ export function createRelay({
       typeof originalCode === 'string' && unawaitedCall(originalCode);
     if (unawaited) {
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text:
-        promptNotice(`sleight stopped this call before it ran: \u0060${unawaited.method}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await and send it again. Source line ${unawaited.line}: use \u0060await ${unawaited.method}…)\u0060, preserving the original arguments and chain.`, prompt) }] } });
+        promptNotice(`sleight stopped this call before it ran: \u0060${unawaited.method}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await at line ${unawaited.line} and send it again.`, prompt) }] } });
       return;
     }
     if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
@@ -2683,7 +2683,7 @@ export function createRelay({
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
     const initializationNote = jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
-    if (initializationNote) msg.result.content.push({ type: 'text', text: initializationNote });
+    if (initializationNote) msg.result.content.push({ type: 'text', text: promptNotice(initializationNote, prompt) });
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (jsCode !== undefined) replWarmup.attach(msg);

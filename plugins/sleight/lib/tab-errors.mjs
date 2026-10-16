@@ -39,9 +39,10 @@ export const EVALUATE_WRITE = [
 export function rewriteTabError(text, { read = false, code = '' } = {}) {
   if (typeof text !== 'string') return text;
   const blocked = browserBlockedAdvice(text);
-  if (blocked) return text + ' ' + blocked;
-  if (/^(?:Error: )?Capability is not available: viewport$/.test(text.split('\n')[0])) {
-    return text + ' Requested capability viewport is unavailable in this backend. Next: await tab.capabilities.list() to read supported capability IDs. Choose only from documented available capabilities.';
+  const gap = text.includes('\n') ? '\n' : ' ';
+  if (blocked) return text + gap + blocked;
+  if (/^(?:Error: )?Capability is not available: viewport\s*$/.test(text.split('\n')[0])) {
+    return text + gap + 'Requested capability viewport is unavailable in this backend. Next: await tab.capabilities.list() to read supported capability IDs. Choose only from documented available capabilities.';
   }
   text = rewriteLocatorFailure(text);
   const lines = text.split('\n'), out = [];
@@ -67,12 +68,12 @@ export function rewriteTabError(text, { read = false, code = '' } = {}) {
   else if (scope) out.push(scope);
   else if (/^TypeError: Cannot read properties of (?:null|undefined)\b/m.test(text) &&
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
-    out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties. Next read: `await tab.playwright.evaluate(selector => document.querySelector(selector) !== null, observedSelector)`. Use the selector already observed as observedSelector, then keep a null guard around the later property read.');
+    out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties. Next read: `await tab.playwright.evaluate(s => document.querySelector(s) !== null, selector)` with a selector you already observed.');
   }
   const shape = inputShapeAdvice(text, code, out.join('\n'));
   const rewritten = shape ? out.join('\n') + ' ' + shape : out.join('\n');
   if (/^(?:Error: )?Browser Use rejected this action due to browser security policy\.(?:\n|$)/.test(text)) {
-    return rewritten + '\nPermission or security policy refused this operation. Keep the action stopped. The user must decide whether to continue with an allowed operation. Do not retry or change permissions. Read-only inventory: await cua.listBrowsers().';
+    return rewritten + '\nPermission or security policy refused this operation. Keep the action stopped. The user must decide whether to continue with an allowed operation. Read-only inventory: await cua.listBrowsers().';
   }
   if (/^(?:Error: )?[\w -]{1,40} requested permissions to use a tool, but you haven't granted it yet\.(?:\n|$)/.test(text)) {
     return rewritten + '\nTool permission has not been granted. Keep the action stopped. The user must decide whether to grant permission in a later request.';
@@ -88,16 +89,17 @@ function inputShapeAdvice(text, code, rewritten) {
   }
   if (!/^(?:Error: )?(?:Browser input requires an element index|Accessibility action requires an element index or point|Accessibility element \d+ is stale or missing|Accessibility capture belongs to a previous page)/.test(first)) return;
   const read = rewritten.includes('.getAXState(') ? '' : ' Next: await tab.getAXState({ disableDiffing: true }).';
-  return `Use a current numeric element index (a nonnegative integer) for indexed tab input. Click and scroll also accept documented [x, y] points; null is only the focus form for tab text and key input. App text and key calls omit the tab index. ${selectors}${read} Do not guess an index or retry the refused input automatically.`;
+  if (/stale or missing|previous page/.test(first)) return `Use an index from a fresh read.${read}`;
+  return `Use a current numeric element index (a nonnegative integer) for indexed tab input. Click and scroll also accept documented [x, y] points; null is only the focus form for tab text and key input. ${selectors}${read} Do not guess an index or retry the refused input automatically.`;
 }
 
 function browserBlockedAdvice(text) {
   const first = text.split('\n')[0];
-  const extension = /^(?:Error: )?Automation is blocking automation because another extension UI is open\.$/.test(first);
-  const client = /^(?:Error: )?(?:page\.goto: )?net::ERR_BLOCKED_BY_CLIENT(?: at \S+)?$/.test(first);
+  const extension = /^(?:Error: )?Automation is blocking automation because another extension UI is open\.\s*$/.test(first);
+  const client = /^(?:Error: )?(?:page\.goto: )?net::ERR_BLOCKED_BY_CLIENT(?: at \S+)?\s*$/.test(first);
   if (!extension && !client) return;
-  const reason = extension ? 'An extension UI is blocking browser automation. The owner must clear that UI before continuing.'
-    : 'Navigation was blocked by the client. Its cause is unconfirmed. The owner must review the block before continuing.';
+  const reason = extension ? 'An extension UI is blocking browser automation. The user must clear that UI before continuing.'
+    : 'Navigation was blocked by the client. Its cause is unconfirmed. The user must review the block before continuing.';
   return `${reason} Next read, if available: await cua.listTabs(). Do not retry the refused call or change another session.`;
 }
 
@@ -106,8 +108,8 @@ function evaluateScopeAdvice(text) {
   const missing = /^(?:Error: )?(?:TypeError: (parseInt|getEventListeners) is not a function|ReferenceError: (parseInt|getEventListeners) is not defined)$/.exec(text.split('\n')[0]);
   if (!missing) return;
   const name = missing[1] || missing[2];
-  const next = name === 'parseInt' ? ' Apply parseInt to a returned string in the REPL after the read.' : '';
-  return `${name} is unavailable in this restricted read-only scope. Documented read primitives include locator.textContent({}), locator.getAttribute(name, {}) and tab.playwright.domSnapshot().${next} Keep the callback in the restricted scope and use supported DOM reads.`;
+  if (name === 'getEventListeners') return 'getEventListeners is unavailable in this restricted read-only scope, and no supported read lists event listeners.';
+  return `${name} is unavailable in this restricted read-only scope. Read a string with locator.textContent({}), locator.getAttribute(name, {}) or tab.playwright.domSnapshot(), then apply parseInt to it in the REPL.`;
 }
 
 export function evaluateWriteAdvice(text) {
@@ -133,7 +135,7 @@ export function isTabBinding(code = '') {
 function rewriteLine(text, read, firstLine) {
   const reset = firstLine && /^(?:Error: )?(?:js|JavaScript) execution timed out(?: after (\d+)ms)?;\s*kernel reset\b/i.exec(text);
   if (reset) {
-    return `${text}. JavaScript execution timed out ${reset[1] ? 'after ' + reset[1] + 'ms' : '(duration not reported)'}. The input outcome is unknown after the reported kernel reset. Do not rerun the failed action. Next: await cua.listTabs(); rebind only a previously observed session tab with await cua.getTab(tabId, { browser: browserId }) and read it before input.`;
+    return `${text}.${reset[1] ? ` JavaScript execution timed out after ${reset[1]}ms.` : ''} The input outcome is unknown after the reported kernel reset. Do not rerun the failed action. Next: await cua.listTabs(); rebind only a previously observed session tab with await cua.getTab(tabId, { browser: browserId }) and read it before input.`;
   }
   const covered = /Accessibility element (\d+) is covered by (\S+) or otherwise not hittable/.exec(text);
   if (covered) {
@@ -147,11 +149,11 @@ function rewriteLine(text, read, firstLine) {
   if (cdp) {
     const command = cdp[2].replace(/\.$/, '');
     if (/^Input\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. A dialog is not confirmed by this timeout. Inspect with ${DIALOG}. Read the page before retrying input: ${READ}.`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. A dialog is not confirmed by this timeout. Inspect with ${DIALOG}; if one is open, answer it with dialog.accept() or dialog.dismiss() first. Read the page before retrying input: ${READ}.`;
     }
     const input = /^Emulation\./.test(command) ? 'this command sent no input' : 'whether this command sent input is unknown';
     if (/^Emulation\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG}. An open page dialog may be blocking the command. ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG}. An open page dialog may be blocking the command; if one is open, answer it with dialog.accept() or dialog.dismiss(). ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
     }
     return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${READ} (do not retry the timed-out call).`;
   }

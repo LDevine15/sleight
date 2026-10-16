@@ -574,7 +574,7 @@ async function performDrag(args, runLocal) {
 export async function callLocalTool(name, args, approve, runLocal = runScript) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
-      return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it. Permission declined. The user must decide whether to allow this capability in a later request.`, true);
+      return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
     const { ok, image, ...rest } = await runLocal('hover.js', args);
     const result = text(rest, !ok);
@@ -590,7 +590,7 @@ export async function callLocalTool(name, args, approve, runLocal = runScript) {
   }
   if (name === 'drag') {
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
-      return text(`The user didn't allow dragging in ${args.app}. Stop and tell them; don't work around it. Permission declined. The user must decide whether to allow this capability in a later request.`, true);
+      return text(`The user didn't allow dragging in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
     const operation = performDrag(args, runLocal);
     pendingDrags.add(operation);
