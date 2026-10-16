@@ -236,4 +236,6 @@ Engine behavior that sleight works around or can't change:
   2026-10-16 that most likely removed `~/.local/bin/claude` ("Auto-update failed"), so `claude` fell back to an older Homebrew build
   until the symlink was restored. Hand-run arm commands need `DISABLE_AUTOUPDATER=1`. The benchmark already sets it.
 - The world suite's native fixtures stop the whole pass on any cleanup they can't confirm. On 2026-10-16 the sleight arm stopped
-  on a TextEdit that restored iCloud "Untitled" documents at launch and on a Chess window whose title read failed (AX -25205).
+  three times. TextEdit restored iCloud "Untitled" documents at launch. A Chess window and a Word window whose task had already
+  saved or closed them failed their title read during cleanup (AX -25205, attribute unsupported), in `closeOwnedWindow`
+  (`bench/real-fixture.js`). Each stop also ends the remaining tasks of the pass.
