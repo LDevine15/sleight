@@ -3,7 +3,25 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 02:10 UTC)
+## Banner (2026-10-16 04:15 UTC)
+
+**Running now.** Gate rounds 1 to 5 with both arms on v3-gate `adc5fbc9` started 04:01:18 UTC under Puddle's window W1 (log
+`ledger/claims/GATE2/gate5-20261016T0401Z.log`). Sum each pass's table per arm, reading columns from the end of the row. Round 1 had 19 s of
+Puddle load (04:02:29 to 04:02:48). W1 ends with the gate's touch of `/tmp/sleight-bench-done`. Then tell Puddle pass or fail (pass
+means turbo median 575 s or less, 26/26 under the owner's scoring, 9 errors or fewer, 0 focus events). Puddle's seat was replaced at
+about 04:10, and the new seat has the plan. If no Puddle seat answers within 30 min of W1 ending, message the same socket again.
+
+**Rest of the night (owner asleep until about 12:00 UTC, all approved).**
+1. If the gate passes, W2 opens at about 05:30 for Opus (5 rounds, `MODEL=opus ledger/claims/GATE2/gate5.sh 5`). A full check of
+   `arch/world-login` merged into v3-gate follows in the same window, which a second touch releases. If it fails: study the slow runs, fix, A/B, and retry.
+2. The native first pass, one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM [tasks to resume]`, in the order sleight,
+   codex, lcu, cua, peekaboo. It runs from `~/Projects/sleight-wt/world-login`, logs to `ledger/claims/CS3/runs/`, stops by 12:00 UTC,
+   and skips claude-cu (owner-present only).
+3. Review the EPV3-2 agent's report (`arch/epv3-2`, `ledger/claims/EPV3-2/REPORT.md`) when the agent finishes.
+4. `arch/v8-int` `59345e0b` (V8 and V8R on v3-gate, 8,640 KB) needs a full check before it merges.
+5. Rewrite and push this banner after every result (owner: trust disk over compaction).
+
+loc-arch is paused (video held). The owner may stop its monitors.
 
 **Gate rounds 1 to 5, 01:28 to 02:00 UTC** ([docs/benchmarks/2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md), v3-gate
 `ad602918`, product code as of `a544e303`, Haiku 5.5 high, owner's login, `--world`, Puddle held). Turbo median 603 s (p90 646 s),
