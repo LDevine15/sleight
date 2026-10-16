@@ -24,7 +24,10 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 
 **Next (sleight-arch).** (1) Done offline (`2a51e695`, full check passed, exit 0, 5502 tests with 0 failing): a window the task
 already closed (title unsupported, -25205) counts as closed only when the app's window list no longer holds it, and document fixtures
-launch with the persistence arguments. Not yet proven live. Finish the native pass in Puddle windows, with the fix's first live run. (2) Done: the release pass runs on the owner's login (`5ddea59f`, full check passed). Running it needs an away window plus Puddle
+launch with the persistence arguments. Its first live run (W8, 11:20 UTC) didn't help Chess: chess-drag
+failed (90.7 s) and stopped the pass on the same AXTitle read, so the Chess window was still in the app's list. The Word case is
+untested. Next: read the window's other attributes at cleanup (subrole, AXDocument, sheets) to see what Chess leaves, then rerun
+the native pass in Puddle windows with chess-drag last. (2) Done: the release pass runs on the owner's login (`5ddea59f`, full check passed). Running it needs an away window plus Puddle
 windows (native sleight and codex at 3 runs, gate both orders twice, Opus once, claim). (3) Drafted for owner review: the 1.3.0 CHANGELOG, README and known-problems on `arch/rl1-int` `4473baab` (codex/rl1
 merged and brought up to tonight's numbers, lint clean, not yet merged into pane/auto-mode). (4) Review EPV3-2 when its agent reports.
 

@@ -358,7 +358,8 @@ Engine behavior that sleight works around or can't change:
 - The world suite's native fixtures stop the whole pass on any cleanup they can't confirm. On 2026-10-16 the sleight arm stopped
   three times. TextEdit restored iCloud "Untitled" documents at launch. A Chess window and a Word window whose task had already
   saved or closed them failed their title read during cleanup (AX -25205, attribute unsupported), in `closeOwnedWindow`
-  (`bench/real-fixture.js`). Each stop also ends the remaining tasks of the pass.
+  (`bench/real-fixture.js`). Each stop also ends the remaining tasks of the pass. Treating an unlisted window as closed
+  (`2a51e695`) didn't fix Chess: on the 11:20 UTC rerun its window was still in the app's list with the title unsupported.
 
 ## Turbo popups, the hook and the click seal
 
