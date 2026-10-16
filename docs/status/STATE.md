@@ -3,18 +3,25 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 01:40 UTC)
+## Banner (2026-10-16 02:10 UTC)
 
-**Now.** The smoke round's "unqualified" focus came from a stale NSWorkspace entry (pid 88121, listed as running, process gone):
-its subscription failed and nothing ever removed it. Fixed on v3-gate `ad602918` (bench-only, product code unchanged from
-`a544e303`), and the live observer reports `window:true`. Puddle's HOLD went live at 01:28 UTC (no `/tmp/sleight-hold`, by
-agreement). The rounds started at 01:28:40 through `ledger/claims/GATE2/gate5.sh`, which has one release trap for all five. Both
-preflights pass. `SLEIGHT_CONFIRM_PAYMENTS=never` is being built by an agent on `arch/pay-never` (`~/Projects/sleight-wt/pay-never`).
+**Gate rounds 1 to 5, 01:28 to 02:00 UTC** ([docs/benchmarks/2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md), v3-gate
+`ad602918`, product code as of `a544e303`, Haiku 5.5 high, owner's login, `--world`, Puddle held). Turbo median 603 s (p90 646 s),
+197 calls, 4 errors. FowlBrowser median 677 s (p90 711 s), 292 calls, 8 errors. Turbo took 89% of FowlBrowser's time; the 575 s
+target (85%) isn't met (rounds of 573 s and 580 s came close). Both 26/26 under the owner's scoring in every round, 0 focus events
+(observer coverage full after the stale-pid fix), 0 ToolSearch. FowlBrowser paid $268 unpriced in 8 of 10 form-checkout runs.
+
+**Next.** `arch/gate-cand` at `fbed0cae` (`~/Projects/sleight-wt/gate-cand`) is v3-gate plus `arch/pay-never` (`c01244c6`,
+`SLEIGHT_CONFIRM_PAYMENTS=never`, reviewed) and `arch/turbo-forgive` (`70197b82`): fixes for the interface misses in these rounds
+(listed in its commits) and form-checkout's
+two time sinks (a visually hidden radio under its own label, and a label click refused while the card iframe held focus). 13 focused
+files pass there. Before it can replace v3-gate: the real-page tests for act and page (`SLEIGHT_LIVE_DOM_TEST=1`, headless), then a
+turbo-only A/B of 5 rounds under a new Puddle HOLD against tonight's turbo numbers, then a full check.
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
 
-**Gate round 3, 2026-10-15 21:19 UTC: turbo faster** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
+**Earlier: gate round 3, 2026-10-15 21:19 UTC** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
 v3-gate `cddc7895`, Haiku 5.5 high, owner's login, `--world`). Turbo 26/26 under the owner's scoring (form-checkout asks before an
 unpriced payment, LAWS; the runner shows 24/26), 590 s, 197 calls, 2 errors. FowlBrowser 26/26 (paid $268 unpriced twice), 750 s,
 276 calls, 7 errors. Both 0 focus events and 0 ToolSearch. A claim needs the median of at least 5 rounds on the release build.
@@ -27,7 +34,7 @@ alternate the arm order per browser order, and an EXIT trap that touches `/tmp/s
   fixes, Q1-12 reworked on live engine evidence (1-based line, 0-based column), 584/584 focused tests (`ledger/claims/Q1/INTEGRATION.md`).
   It adds about 150 characters per error across 22 fixture errors. Q1-17's notice now says what ran (`c0aa885c`: a syntax
   error did not run, a runtime error may have run up to it). Merges after the 1.3.0 tag.
-- No gate round, benchmark or background job is running.
+- No gate round or benchmark is running. HOLD was released at 02:00:30 UTC.
 
 Branches (all on `private`, pushed):
 - `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
@@ -42,11 +49,12 @@ Branches (all on `private`, pushed):
 - After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
 
 Next for the gate, in order:
-1. At least 5 gate rounds on v3-gate `a544e303` (the owner OK'd running them whenever, 2026-10-15 21:30 UTC). Before each: ask
+1. Done 2026-10-16 (5 rounds, above). For the candidate's A/B and any later gate rounds (the owner OK'd running them whenever,
+   2026-10-15 21:30 UTC), before each: ask
    Puddle's architect for HOLD (`ListAgents`, `SendMessage` to "puddle arch"), wait for "HOLD live", delete
    `/tmp/sleight-bench-done`, check the Mac has been idle a few minutes (`ioreg -c IOHIDSystem | awk '/HIDIdleTime/'`), run both
-   preflights with `--world`, then `~/Projects/sleight-wt/ledger/claims/GATE2/gate.sh`. Report the median per arm.
-2. `SLEIGHT_CONFIRM_PAYMENTS=never` (owner, LAWS), on v3-gate.
+   preflights with `--world`, then `~/Projects/sleight-wt/ledger/claims/GATE2/gate5.sh [rounds]`. Report the median per arm.
+2. Built: `SLEIGHT_CONFIRM_PAYMENTS=never` on `arch/pay-never`, in the candidate.
 3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 4. Done: EPV3-1's Swift payment sheet accepts exactly once and cancel, like the JS side (`f9e1e919`).
 

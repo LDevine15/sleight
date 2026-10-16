@@ -19,8 +19,10 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
 1. Finish turbo v3 on `private/v3-gate`. V10R4, CR6, CR7 and AT1 are merged there. AD1 reached its finish line on 2026-10-15:
    every branch is merged in `arch/ad1-int` (the figure-only payment rule the owner chose, 50/98 honest checkouts allowed), and it
    merges into `v3-gate` as `arch/gate-ad1`.
-2. One full check on `v3-gate`, then gate rounds with the owner away or headless. Round 3 on 2026-10-15 had turbo at 590 s and
-   2 errors against FowlBrowser's 750 s and 7 (docs/benchmarks/2026-10-15-gate.md). The claim needs the median of at least 5 rounds.
+2. One full check on `v3-gate`, then gate rounds with the owner away or headless. On 2026-10-16, over 5 rounds, turbo's median was
+   603 s and 4 errors against FowlBrowser's 677 s and 8, which is 89% of FowlBrowser's time, short of the 85% target
+   (docs/benchmarks/2026-10-16-gate.md). Next is `arch/gate-cand`, which adds fixes for the interface misses and form time sinks those
+   rounds showed. It replaces v3-gate only if a turbo A/B of 5 rounds shows a gain.
    The original gate runs Haiku 5.5 on both arms in both orders. It runs Haiku 5.5 on both arms in both
    orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
    ToolSearch calls, 0 focus events.
