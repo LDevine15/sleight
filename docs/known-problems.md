@@ -400,8 +400,9 @@ native reference, and oversized first results defer the browser reference while 
 - The world suite's native fixtures stop the whole pass on any cleanup they can't confirm. On 2026-10-16 the sleight arm stopped
   three times. TextEdit restored iCloud "Untitled" documents at launch. A Chess window and a Word window whose task had already
   saved or closed them failed their title read during cleanup (AX -25205, attribute unsupported), in `closeOwnedWindow`
-  (`bench/real-fixture.js`). Each stop also ends the remaining tasks of the pass. Treating an unlisted window as closed
-  (`2a51e695`) didn't fix Chess: on the 11:20 UTC rerun its window was still in the app's list with the title unsupported.
+  (`bench/real-fixture.js`). Each stop also ends the remaining tasks of the pass. The Chess stops came from the app-dialog scan before
+  cleanup, which read the title of a focused Chess window that isn't the fixture. With that read tolerated (`a65350ba`), the scan's
+  inspection of that window exceeds its bound instead, so chess-drag is parked from the native pass.
 
 ## Turbo popups, the hook and the click seal
 
