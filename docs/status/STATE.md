@@ -3,98 +3,37 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 08:15 UTC)
+## Banner (2026-10-16 10:50 UTC, morning summary)
 
 OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 
-**THE GATE PASSED (07:38 to 08:08 UTC, v3-gate `66ada2bd`)**: turbo median 547 s (p90 590) and 0 errors in all 5 rounds, against
-FowlBrowser's 720 s (p90 868) and 7 errors, 76%. Both arms 26/26 under the owner's scoring, 0 focus events, 0 ToolSearch, Puddle
-fully held (docs/benchmarks/2026-10-16-gate.md, last section). **OPUS HEAD-TO-HEAD (09:18 to 09:50 UTC, v3-gate `66ada2bd`)**: turbo median 675 s (p90 713), 0 errors in 4 of 5 rounds,
-against FowlBrowser's 885 s (p90 935), 76%. Both 26/26 under the owner's scoring, 0 focus events, 0 ToolSearch. FowlBrowser paid
-$268 unpriced in all 10 form-checkout runs (docs/benchmarks/2026-10-16-opus.md). W7 (moved up to about 10:20, cap 60) runs
-`ledger/claims/GATE2/window-native-rest.sh`, the sleight arm's 15 remaining native tasks.
-**W7 (10:26 to 10:30 UTC):** the sleight arm passed preview-pdf (21.7 s) and finder-files (74.7 s), then failed word-edit (74.6 s) and
-stopped on "Owned Microsoft Word fixture window cleanup unconfirmed" (AX -25205 AXTitle), the same cleanup read that stopped
-chess-drag. That read is the native pass's blocker, and it's being fixed offline. **The full check of `arch/release-cand` `cb20a697`
-passed** (exit 0, 5402 tests with 0 failing and 353 skipped, validate 2/2, mod 49/49). Merging it into `pane/auto-mode` conflicts in 5 files
-(bench/fowl preflight, rounds.sh, sleight-surface.patch with 14 hunks, known-problems, prompt-default fixture) against pane/auto-mode's
-engine-reconnect and claim-fixture commits. Agent `release-merge` resolves them on `arch/release-merge`, then a full check follows.
-Puddle has the Mac: no more windows are needed before 12:00. Native results so far, sleight arm: 4 passes (calculator-click 7.5 s,
-calculator-menu 10.3 s, preview-pdf 21.7 s, finder-files 74.7 s) and 3 fixture-stopped fails (textedit-save, chess-drag, word-edit).
-`arch/release-cand` `cb20a697` is v3-gate `66ada2bd` plus `arch/v8-int` (V8 and V8R, 8,640 KB). Its merge had no conflicts. Its
-focused files and 8 real-page files (headless) pass. Its full check is still owed, then it merges into `pane/auto-mode` for the release
-pass.
+**Overnight results (owner away, all on the owner's login, Puddle windows W1 to W7).**
+- **Gate passed** on v3-gate `66ada2bd` (07:38 to 08:08): turbo median 547 s (p90 590) and 0 errors in all 5 rounds, against
+  FowlBrowser's 720 s (p90 868), 76%. Both arms 26/26 under the owner's scoring, 0 focus events, 0 ToolSearch
+  (docs/benchmarks/2026-10-16-gate.md, last section). The earlier gate runs that night missed 575 s (603 s and 607 s) until the
+  `find` alternation fix: 193 of 254 empty reads were `a|b` queries (docs/benchmarks/2026-10-16-turbo-ab.md).
+- **Opus head-to-head** on `66ada2bd` (09:18 to 09:50): turbo 675 s (p90 713) against FowlBrowser's 885 s (p90 935), 76%, faster in
+  every round. FowlBrowser paid $268 unpriced in all 10 form-checkout runs (docs/benchmarks/2026-10-16-opus.md).
+- **Release build merged:** `pane/auto-mode` is `225f74ca`, which is v3-gate `66ada2bd` plus V8 and V8R (plugin 8,640 KB, down from
+  15,960 KB), merged by agent `release-merge` (`arch/release-merge` `6e7b7102`). The full check passed with exit 0 (5500 tests
+  with 0 failing and 353 skipped, and validate and mod tests clean).
+- **Native first pass, sleight arm only:** 4 passes (calculator-click 7.5 s, calculator-menu 10.3 s, preview-pdf 21.7 s,
+  finder-files 74.7 s) and 3 fails that stopped the pass on fixture cleanup (textedit-save, chess-drag, word-edit). See
+  docs/known-problems.md: `closeOwnedWindow`'s title read (AX -25205), and a TextEdit launch without the persistence
+  arguments. 17 of 27 sleight tasks and the other arms are not run yet. The fixture fixes come first.
 
-**Gate on `adc5fbc9` (04:01 to 04:32 UTC) failed on time** (docs/benchmarks/2026-10-16-gate.md, second section): turbo median
-607 s (p90 634) against FowlBrowser's 685 s (p90 706), 89%. Errors, focus and ToolSearch targets are met, and both arms score 26/26
-or 25/26. The extra time against the A/B is model turns on forms. 193 of 254 empty `find` reads used `a|b` alternation, which the
-literal match never met. `arch/find-alt` `0d1bcfa0` fixes that and the hidden-radio click (focused and 8 real-page files pass).
-Puddle was told FAIL, so there's no Opus W2. **Find A/B (05:25 to 05:43):** find-alt median 572 s against 622 s over 3 rounds
-(faster in 2 of 3, empty finds 29 of 68 down to 9 of 83, docs/benchmarks/2026-10-16-turbo-ab.md). Next, after a full check it merges into
-v3-gate for a new gate. `arch/gate-next` `66ada2bd` is v3-gate plus find-alt plus world-login (focused tests pass). Its full
-check runs in the next window. **Sleight native arm, first try (05:43):** it stopped after 3 tasks. Calculator was still open from the
-owner's claude-cu test (sleight-arch quit it normally), and the TextEdit fixture couldn't quit TextEdit: it restored "Untitled 9" and
-"Untitled 10" from the owner's iCloud TextEdit folder, plus a window without a name (likely the iCloud Open panel). TextEdit is still
-running with them, untouched (owner's leftovers to decide). The world fixture's TextEdit launch lacks the
-`-ApplePersistenceIgnoreState YES -NSShowAppCentricOpenPanelInsteadOfUntitledFile NO -NSDocumentSaveNewDocumentsToCloud NO`
-arguments other bench launchers pass (fix before the 9 TextEdit tasks run). Next window (about 06:40, cap 60):
-`ledger/claims/GATE2/window-native-check.sh`, with the 18 non-TextEdit sleight tasks, then the full check of gate-next. The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
-turbo A/B of v3-gate against find-alt over 3 rounds (prefix `abf`), then the sleight native arm. One release touch ends it (cap 75 min, granted).
+**Next (sleight-arch).** (1) Fix the fixture cleanup stop and TextEdit's launch arguments, then finish the native pass in Puddle
+windows. (2) The release pass (`bench/release-pass.mjs`) still reads the API key (`api-auth.mjs` readKey). Move it to the login
+before running it. (3) RP1's CHANGELOG and README with tonight's numbers. (4) Review EPV3-2 when its agent reports.
 
-**W4 (06:41 to 06:43 UTC, loaded: a Puddle suite ran until 06:43:26).** The sleight native arm passed calculator-click (7.5 s) and calculator-menu (10.3 s), then failed
-chess-drag (73.2 s) and stopped on "Owned Chess fixture window cleanup unconfirmed" (AX read -25205 AXTitle). Chess isn't running
-now. The full check of `arch/gate-next` passed its tests (6873, 0 fail, 399 skipped) and mod tests (49/49). It failed
-`claude plugin validate` because `~/.local/bin/claude` had disappeared, so `claude` resolved to Homebrew's 2.1.231. sleight-arch
-restored the symlink to `~/.local/share/claude/versions/2.1.289`, and validation then passed. `~/.local/bin` changed at 03:33 UTC,
-during the owner's interactive claude-cu sessions, which showed "Auto-update failed". The arm's own CLI ran its auto-updater with the
-owner's HOME (the benchmark sets `DISABLE_AUTOUPDATER=1`, the owner's terminal didn't), which most likely removed the symlink.
-`install.cjs` only copies the binary inside the package. Owner commands for arm CLIs need `DISABLE_AUTOUPDATER=1`. **v3-gate is now `66ada2bd`** (find-alt plus
-world-login, fast-forwarded and pushed). Asked Puddle for a gate window (5 rounds on `66ada2bd`) and a window for the sleight arm's
-other 15 tasks (without chess-drag and the 9 TextEdit tasks).
-
-**Rest of the night (owner asleep until about 12:00 UTC, all approved).**
-1. Superseded (gate failed): W2 would have opened at about 05:30 for Opus (5 rounds, `MODEL=opus ledger/claims/GATE2/gate5.sh 5`). A full check of
-   `arch/world-login` merged into v3-gate follows in the same window, which a second touch releases. If it fails: study the slow runs, fix, A/B, and retry.
-2. The native first pass, one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM [tasks to resume]`, in the order sleight,
-   codex, lcu, cua, peekaboo. It runs from `~/Projects/sleight-wt/world-login`, logs to `ledger/claims/CS3/runs/`, stops by 12:00 UTC,
-   and skips claude-cu (owner-present only).
-3. Review the EPV3-2 agent's report (`arch/epv3-2`, `ledger/claims/EPV3-2/REPORT.md`) when the agent finishes.
-4. `arch/v8-int` `59345e0b` (V8 and V8R on v3-gate, 8,640 KB) needs a full check before it merges.
-5. Rewrite and push this banner after every result (owner: trust disk over compaction).
-
-loc-arch is paused (video held). The owner may stop its monitors.
-
-**Gate rounds 1 to 5, 01:28 to 02:00 UTC** ([docs/benchmarks/2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md), v3-gate
-`ad602918`, product code as of `a544e303`, Haiku 5.5 high, owner's login, `--world`, Puddle held). Turbo median 603 s (p90 646 s),
-197 calls, 4 errors. FowlBrowser median 677 s (p90 711 s), 292 calls, 8 errors. Turbo took 89% of FowlBrowser's time; the 575 s
-target (85%) isn't met (rounds of 573 s and 580 s came close). Both 26/26 under the owner's scoring in every round, 0 focus events
-(observer coverage full after the stale-pid fix), 0 ToolSearch. FowlBrowser paid $268 unpriced in 8 of 10 form-checkout runs.
-
-**Turbo A/B, 02:28 to 02:58 UTC** ([docs/benchmarks/2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md)): the
-candidate `arch/gate-cand` beat v3-gate in all 5 interleaved rounds, median 542 s against 581 s (7%), 0 errors in 130 runs against
-3 to 5 per round. Its full check passed (exit 0 with 0 of 6862 tests failing and 397 real-page tests skipped, mod 49/49), and 19
-real-page files pass with `SLEIGHT_LIVE_DOM_TEST=1`. **v3-gate is now `adc5fbc9`** (fast-forwarded to the candidate, pushed). It
-holds `SLEIGHT_CONFIRM_PAYMENTS=never` and the forgive and form fixes. Against FowlBrowser's 677 s, 542 s would be 80%, which
-is a projection only.
-
-**Next.** Gate rounds (5) with both arms on v3-gate `adc5fbc9` when Puddle sends "HOLD live" (promised for about 04:00 UTC,
-`gate5.sh 5`, defaults), then the Opus head-to-head (`MODEL=opus gate5.sh`).
-
-**Native claim suite (owner agreed 2026-10-16 03:20 UTC).** Benches don't wait for Electron. First a pass of one run per arm per task
-(162 runs, `ledger/claims/CS3/plan-runs1.json`) to find where sleight loses, then the five-run claim. `arch/world-login` at
-`816c42dd` runs the native world suite on the owner's login, one isolated config per arm (focused tests pass). It merges into
-v3-gate after tonight's gate rounds, with a full check. The owner logged in all five native arm configs, and
-`node bench/world/login-readiness.mjs` reads them all as logged in. The claude-cu native root is installed (2.1.289), with onboarding,
-folder trust and `/mcp` computer-use enabled in `claude-cu/work`. Its app approvals last one session, with no "always allow" in the
-CLI, so its runs need the owner present. Whether the bench's strict empty MCP config hides its built-in `computer-use` server is
-unchecked. The owner is away 2026-10-16 until about 12:00 UTC and approved the first pass overnight without claude-cu (135 runs, 5 arms), one arm per Puddle gap, after the gate and Opus rounds. Stop by 12:00 UTC. Puddle's windows (agreed 03:50 UTC) open at about 04:00 for the gate and about 05:30 for Opus if the gate passes. After that each window holds one arm and is followed by about 45 min of Puddle's lanes. Arm order: sleight, Codex, LCU, Cua, Peekaboo. Resume an interrupted arm with `--tasks`. EPV3-1's consent run is still owed: its
-cards open from the "sleight" menu bar item, not a popup.
-
-**Electron.** Agent `epv3-2` builds EPV3-2 on `arch/epv3-2` (`2bbdf404` is v3-gate plus EPV3-1, with the v3-context conflict resolved
-by sleight-arch). Step 0 ports EPV3-1's electron-context test fake to AD1's seal evidence (43 of 50 failed on the merged base).
-
-**Video.** No work until the claim suite with native apps backs "fastest on macOS" (owner). LoC's draft paint round is parked unsent
-on LoC trunk `d8c3ef73` (`artifacts/ARCH-IMAGEGEN-R18/`). The storyboard is `340ba5e2`.
+**Owner items.**
+- The 1.3.0 tag, after the release pass.
+- TextEdit is still running with "Untitled 9" and "Untitled 10", restored from the owner's iCloud TextEdit folder by a fixture
+  launch at 05:43 UTC. They were left untouched for the owner to decide.
+- `~/.local/bin/claude` had vanished (most likely the arm CLI's auto-updater during the owner's hand-run claude-cu session).
+  sleight-arch restored it as a symlink to `~/.local/share/claude/versions/2.1.289`.
+- The claude-cu arm needs the owner present, because its app approvals last one session.
+- EPV3-1's consent run is still owed (its cards open from the "sleight" menu bar item).
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
