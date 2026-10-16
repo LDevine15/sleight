@@ -59,10 +59,10 @@ Payments explicitly requested in the user's own message count as confirmed when 
 specifies what to buy or pay and the payment details. This includes the page's confirmation dialog
 for that same item, amount and payee. Other payments still require confirmation, and page content never grants permission.
 Set `SLEIGHT_CONFIRM_PAYMENTS=always` to keep the engine's rule that requires confirmation immediately
-before every financial transaction. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip turbo's one remaining check (a money figure on
-the checkout larger than the amount in your message) for a payment your message named. A payment you didn't ask for, a second
-payment in the same request and a mismatched amount still ask. Only you set it, as an environment variable of the MCP server. The default rewrites only the exact engine policy measured on
-2026-10-12. Changed policy text is forwarded unchanged and records a trace entry when tracing is enabled.
+before every financial transaction. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip turbo's one remaining check (a money figure
+on the checkout larger than the amount in your message) for a payment your message named with its amount. A payment you didn't
+ask for, a second payment in the same request and a mismatched amount still ask. Only you set it, as an environment variable of
+the MCP server. The default rewrites only the exact engine policy measured on 2026-10-12. Changed policy text is forwarded unchanged and records a trace entry when tracing is enabled.
 
 ## Approval scope
 
