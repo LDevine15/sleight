@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareInstalledStartup, turboState, createInstalledBrowserBridge } from '../plugins/sleight/lib/launch.mjs';
-import { createInstalledFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
+import { createV3Frontend } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PassThrough } from 'node:stream';
 
@@ -11,7 +11,7 @@ test('ordinary installed startup stays off without an operator setting', async (
   assert.equal(value.directHost, undefined);
 });
 test('installed startup refuses a project supplied frontend or bridge', async () => {
-  assert.throws(() => createInstalledFrontend({ browser: 'bfixture', call() {} }), /TRUSTED_ROUTE_REQUIRED/);
+  assert.throws(() => createV3Frontend({ browser: 'bfixture', call() {} }), /TRUSTED_ROUTE_REQUIRED/);
   const value=await prepareInstalledStartup(() => ({ browser: 'bfixture' }),()=>{});
   assert.equal(value.directBrowser,undefined);assert.equal(value.turboUnavailable,'TRUSTED_ROUTE_REQUIRED');
 });
@@ -25,20 +25,18 @@ test('unavailable selected connection keeps the ordinary engine route with a typ
   const value = await prepareInstalledStartup(() => { throw Error('SELECTED_ENDPOINT_UNPROVED'); }, code => notices.push(code));
   assert.equal(value.directBrowser, undefined); assert.deepEqual(notices, ['SELECTED_ENDPOINT_UNPROVED']);
 });
-test('launcher stderr names the v2 turbo or engine route that actually started', async t => {
-  const messages=[];t.mock.method(process.stderr,'write',text=>{messages.push(text);return true;});
-  const bridge={};
-  assert.equal(await createInstalledBrowserBridge({v3:async()=>{throw Error('V3_RUNTIME_UNAVAILABLE');},v2:async()=>bridge}),bridge);
-  assert.match(messages.pop(),/using v2 turbo/);
-  await prepareInstalledStartup(()=>{throw Error('INSTALLED_WORKER_UNAVAILABLE');});
-  assert.match(messages.pop(),/using the engine/);
-  assert.equal(await createInstalledBrowserBridge({v3:async()=>{throw Error('V3_WORKER_UNAVAILABLE');},v2:async()=>null}),null);
-  assert.match(messages.pop(),/using the engine/);
+test('launcher stderr names the engine route after v3 unavailability', async t => {
+  const messages = []; t.mock.method(process.stderr, 'write', text => { messages.push(text); return true; });
+  for (const code of ['V3_RUNTIME_UNAVAILABLE', 'V3_WORKER_UNAVAILABLE']) {
+    const result = await prepareInstalledStartup(() => createInstalledBrowserBridge({ v3: async () => { throw Error(code); } }));
+    assert.equal(result.directBrowser, undefined);
+    assert.match(messages.pop(), /using the engine/);
+  }
 });
 for(const code of ['HOST_PACKAGE_MISMATCH','HOST_SOURCE_MISMATCH','HOST_CACHE_UNSAFE','INSTALLED_CONFIG_UNSAFE','UNEXPECTED_FAILURE']) test('startup disables turbo and preserves working engine tools on '+code,async t=>{
   const notices=[],value=await prepareInstalledStartup(()=>{throw Error(code);},message=>notices.push(message));
   assert.equal(value.directBrowser,undefined);assert.equal(value.turboUnavailable,code);assert.deepEqual(notices,[code]);
-  await assert.rejects(createInstalledBrowserBridge({v3:async()=>{throw Error(code);},v2:async()=>assert.fail('unsafe fallback')}),new RegExp(code));
+  await assert.rejects(createInstalledBrowserBridge({v3:async()=>{throw Error(code);}}),new RegExp(code));
   const clientIn=new PassThrough(),clientOut=new PassThrough(),serverIn=new PassThrough(),serverOut=new PassThrough(),replies=[],sent=[];
   clientOut.on('data',bytes=>replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
   serverIn.on('data',bytes=>sent.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
