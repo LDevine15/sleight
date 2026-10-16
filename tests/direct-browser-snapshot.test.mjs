@@ -148,6 +148,18 @@ test('find and ref reads include matching controls and their ancestors only', as
   assert.match((await module.snapshot(page, { find: 'missing' })).text, /No matching/);
 });
 
+test('find inside a ref reads the matching rows of that subtree, and a missing ref says it is gone', async () => {
+  const { page } = fixture([{ role: 'main', ref: 'e1', children: [
+    { role: 'group', name: 'Teams', ref: 'e2', children: [{ role: 'link', name: 'MAO Ops', ref: 'e3' }, { role: 'link', name: 'Other', ref: 'e4' }] },
+    { role: 'link', name: 'MAO outside', ref: 'e5' },
+  ] }]);
+  const both = await module.snapshot(page, { ref: 'e2', find: 'MAO' });
+  assert.match(both.text, /Teams.*MAO Ops/s); assert.doesNotMatch(both.text, /Other|outside/);
+  await assert.rejects(module.snapshot(page, { ref: 'e186', find: 'MAO' }), /^Error: Snapshot unavailable: ref e186 is not on the page now; read again without ref/);
+  page.ariaSnapshotJSON = async () => { throw Error('timeout'); };
+  await assert.rejects(module.snapshot(page), /^Error: Snapshot unavailable; try browser_read again$/);
+});
+
 test('a cut names a continuation ref that advances with ancestors and bounded output', async () => {
   const { page } = fixture([{ role: 'main', ref: 'e1', children: Array.from({ length: 70 }, (_, i) =>
     ({ role: 'button', ref: 'e' + (i + 2), name: 'Choice ' + i + ' x'.repeat(12) })) }]);

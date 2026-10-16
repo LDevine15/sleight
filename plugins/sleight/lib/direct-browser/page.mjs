@@ -2533,6 +2533,12 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       return [...records.values()].filter(r => !r.closed && !r.released && !r.blocked).map(r => ({ tab: r.tab, targetId: r.targetId,
         opener: r.opener, url: r.page.url() }));
     },
+    // A tab the page closed itself (a sign-in popup) reads as its opener, while this session still owns that opener and it is open.
+    closedOpener(id) {
+      const entry = records.get(id), opener = entry?.opener && records.get(entry.opener);
+      return !ended && entry && (entry.closed || entry.page.isClosed()) && !entry.closedByUs && !entry.released && !entry.blocked
+        && opener && !opener.closed && !opener.released && !opener.releasing && !opener.blocked && !opener.page.isClosed() ? opener.tab : undefined;
+    },
     enqueue(id, run) {
       const entry = tab(id), task = entry.queue.then(async () => { tab(id); await assertEndpointRead(entry.page); return run(entry); });
       queued.set(entry, (queued.get(entry) ?? 0) + 1);
@@ -2541,7 +2547,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       entry.queue = task.catch(() => {}); return track(task);
     },
     async close(id) {
-      const entry = tab(id); await deadline(() => entry.page.close({ runBeforeUnload: false }), timeoutMs);
+      const entry = tab(id); entry.closedByUs = true; await deadline(() => entry.page.close({ runBeforeUnload: false }), timeoutMs);
       return { tab: id, closed: entry.page.isClosed() };
     },
     keep: id => release(id, 'keep'), handoff: id => release(id, 'handoff'),

@@ -80,6 +80,24 @@ test('adopts only a popup whose CDP opener is owned, retaining opener through se
   await f.registry.endTurn();
 });
 
+test('closedOpener names the owned opener of a tab the page closed itself, and nothing else', async () => {
+  const f = fixture(), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
+  assert.equal(f.registry.closedOpener(tab), undefined); // open, no opener
+  const popup = f.page('popup', 'target-1'); await f.registry.idle();
+  const child = (await f.registry.list()).find(r => r.targetId === 'popup').tab;
+  assert.equal(f.registry.closedOpener(child), undefined); // still open
+  await popup.close();
+  assert.equal(f.registry.closedOpener(child), tab);
+  assert.equal(f.registry.closedOpener('tnone'), undefined);
+  const mine = f.page('mine', 'target-1'); await f.registry.idle();
+  const closedByUs = (await f.registry.list()).find(r => r.targetId === 'mine').tab;
+  await f.registry.close(closedByUs); // sleight's own close is not the page's
+  assert.equal(f.registry.closedOpener(closedByUs), undefined);
+  f.pages.find(p => p.info.targetId === 'target-1').closed = true; // a closed opener has nothing to read
+  assert.equal(f.registry.closedOpener(child), undefined);
+  await f.registry.endTurn();
+});
+
 test('adopts popup descendants and does not duplicate a named popup', async () => {
   const f = fixture(), { tab } = await f.registry.openTab({ url: 'https://fixture.invalid/' });
   const popup = f.page('popup', 'target-1'); await f.registry.idle();

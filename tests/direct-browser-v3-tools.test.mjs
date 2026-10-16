@@ -26,7 +26,7 @@ function fixture() {
   } });
   const pages = strict({ openTab: async args => { calls.push(['open', args]); return { tab: 't1' }; },
     tab: id => { assert.equal(id, 't1'); return tab; }, enqueue: async (id, fn) => fn(tab),
-    list: async () => [{ tab: 't1', url: page.url() }],
+    list: async () => [{ tab: 't1', url: page.url() }], closedOpener: () => undefined,
     close: async id => ({ tab: id, closed: true }), keep: async id => ({ tab: id, kept: true }),
     handoff: async id => ({ tab: id, handoff: true }), endTurn: async () => ({ cleanedUp: true, rows: [] }) });
   let number = 0;
@@ -145,4 +145,42 @@ test('observe none still delivers the read when a step returned a found row with
   assert.match(found.text, /\[ref=e9\]/); assert.match(found.text, /\+ row/);
   const plain = await make(['1 scroll e1: input sent']).call({ name: 'browser_act', arguments: args });
   assert.doesNotMatch(plain.text, /\+ row/);
+});
+
+test('act accepts wait ms and navigate, and a rejected field or value says which', async () => {
+  const { dispatcher: d, calls } = fixture();
+  const ok = await d.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'wait', ms: 1500 }, { do: 'navigate', ref: 'e1' }], observe: 'none' } });
+  assert.equal(ok.isError, false); assert.deepEqual(calls.find(c => c[0] === 'act')[1], [{ do: 'wait', ms: 1500 }, { do: 'navigate', ref: 'e1' }]);
+  const field = await d.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'wait', secs: 2 }] } });
+  assert.match(field.text, /arguments\.steps has an unknown field: secs/);
+  const verb = await d.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'goto', ref: 'e1' }] } });
+  assert.match(verb.text, /arguments\.steps\.do has an unsupported value; use click, .*navigate/);
+  const bare = await d.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'navigate' }] } });
+  assert.equal(bare.isError, true); assert.match(bare.text, /^navigate needs the ref of an http\(s\) link .*use click\. Use the engine/);
+});
+
+test('an error that already ends in a period gets one period before the hint, not two', async () => {
+  const entry = { page: { url: () => 'https://example.invalid/', title: async () => 'x' }, state: {} };
+  const d = createToolDispatcher({ browser: 'bfixture', pages: { enqueue: async (id, run) => run(entry), tab: () => entry },
+    snapshot: async () => { throw Error('Snapshot unavailable; try again.'); }, runSteps: async () => assert.fail('no'), fillFields: async () => assert.fail('no') });
+  const out = await d.call({ name: 'browser_read', arguments: { tab: 't1' } });
+  assert.equal(out.text, 'Snapshot unavailable; try again. Use the engine browser path if needed.');
+  assert.doesNotMatch(out.text, /\.\./);
+});
+
+test('a read of a tab the page closed itself returns its owned opener with a one-line note', async () => {
+  const calls = [], opener = { page: { url: () => 'https://example.invalid/app', title: async () => 'App' }, state: { snapshotNo: 0 } };
+  const closed = new Set(['t2']);
+  const pages = { tab: id => { if (closed.has(id)) throw Error('owned tab closed; read its opener'); return opener; },
+    closedOpener: id => closed.has(id) ? 't1' : undefined, enqueue: async (id, run) => { pages.tab(id); calls.push(id); return run(opener); } };
+  const d = createToolDispatcher({ browser: 'bfixture', pages, snapshot: async (p, options) => { calls.push(options); return { text: 'opener page', number: 1 }; },
+    runSteps: async () => assert.fail('no'), fillFields: async () => assert.fail('no') });
+  const out = await d.call({ name: 'browser_read', arguments: { tab: 't2', ref: 'e9', find: 'Signed in' } });
+  assert.equal(out.isError, false); assert.equal(out.text, 't2 closed itself; reading its opener t1.\nopener page');
+  assert.deepEqual(calls, ['t1', { find: 'Signed in', maxChars: 8000 }]); // the closed tab's ref means nothing on the opener
+  const act = await d.call({ name: 'browser_act', arguments: { tab: 't2', steps: [{ do: 'click', ref: 'e1' }] } });
+  assert.equal(act.isError, true); assert.match(act.text, /^owned tab closed; read its opener\./); // only a read follows the opener
+  closed.add('t3'); pages.closedOpener = () => undefined;
+  const lost = await d.call({ name: 'browser_read', arguments: { tab: 't3' } });
+  assert.equal(lost.isError, true); assert.match(lost.text, /^owned tab closed; read its opener\. Use the engine browser path if needed\.$/);
 });

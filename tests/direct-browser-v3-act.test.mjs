@@ -2,7 +2,7 @@ import test from 'node:test';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createActionRunner, overlaySignature } from '../plugins/sleight/lib/direct-browser/act.mjs';
+import { createActionRunner, overlaySignature, inspectTarget } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // Playwright boundary only. There is no engine object and no catch-all method fake.
@@ -473,12 +473,49 @@ test('v3 a dialog opened by a deferred step ends the batch at once', async () =>
   assert.equal(f.actions.filter(a => a[0] === 'key').length, 1);
 });
 
-test('v3 refuses a scroll step past 10000 as not run, with the way to reach a long list', async () => {
+test('v3 refuses a non-finite scroll step as not run, and clamps a finite one past 10000 with a note', async () => {
   const f = fixture();
-  for (const step of [{ do: 'scroll', ref: 'e1', dy: 20000 }, { do: 'scroll', dx: -10001 }]) {
-    await assert.rejects(f.run(f.tab, [step], {}), error => error.notRun === true && /dy up to 10000 per step; give until the row text/.test(error.message));
+  for (const step of [{ do: 'scroll', ref: 'e1', dy: Infinity }, { do: 'scroll', dx: NaN }]) {
+    await assert.rejects(f.run(f.tab, [step], {}), error => error.notRun === true && /finite dx and dy .*give until the row text/.test(error.message));
   }
   assert.deepEqual(f.actions, []);
+  const result = await f.run(f.tab, [{ do: 'scroll', ref: 'e1', dy: 100000, dx: -20000 }], {});
+  assert.deepEqual(f.actions.filter(a => a[0] === 'wheel'), [['wheel', -10000, 10000]]);
+  assert.match(result.lines[0], /scrolled \(dx\/dy clamped to 10000\)/); assert.equal(result.stoppedAt, null);
+  const plain = await f.run(f.tab, [{ do: 'scroll', dy: 300 }], {});
+  assert.doesNotMatch(plain.lines[0], /clamped/);
+});
+
+test('v3 wait takes ms as a timed wait capped at 5000, and says so when it clamps', async () => {
+  const f = fixture();
+  const result = await f.run(f.tab, [{ do: 'wait', ms: 1500 }], {});
+  assert.equal(f.time(), 1500); assert.equal(f.actions.length, 0); assert.doesNotMatch(result.lines[0], /cap/);
+  const long = fixture(), capped = await long.run(long.tab, [{ do: 'wait', ms: 60000 }], {});
+  assert.equal(long.time(), 5000); assert.match(capped.lines[0], /waited 5000 ms \(cap, not 60000\)/);
+  await assert.rejects(fixture().run(fixture().tab, [{ do: 'wait', ms: -1 }], {}), /wait needs ms of 0 or more/);
+  const ref = fixture(); await ref.run(ref.tab, [{ do: 'wait', ref: 'e1', ms: 9000 }], {});
+  assert.deepEqual(ref.actions.map(a => a[0]), ['wait']); // a ref still waits for the element, not the clock
+});
+
+test('v3 navigate follows an http(s) link through the click path and refuses anything else before input', async () => {
+  const f = fixture({ onClick: page => page.emit('framenavigated', page) });
+  f.states.set('e1', { link: true });
+  const result = await f.run(f.tab, [{ do: 'navigate', ref: 'e1' }], {});
+  assert.deepEqual(f.actions.filter(a => a[0] === 'click').map(a => a[1]), ['e1']);
+  assert.equal(f.checks[0].kind, 'click'); assert.match(result.lines[0], /^1 navigate e1: navigated/);
+  const other = fixture(); other.states.set('e2', { link: false });
+  const refused = await other.run(other.tab, [{ do: 'navigate', ref: 'e2' }], {});
+  assert.match(refused.lines[0], /not run: navigate needs the ref of an http\(s\) link .*use click/);
+  assert.deepEqual(other.actions, []); assert.deepEqual(other.checks, []);
+  await assert.rejects(fixture().run(fixture().tab, [{ do: 'navigate' }], {}), /navigate needs the ref of an http\(s\) link/);
+});
+
+test('inspectTarget marks only an a or area with an http(s) href and no credentials as a link', () => {
+  const node = (tag, href, base = 'https://example.invalid/dir/') => ({ localName: tag, getAttribute: key => key === 'href' ? href : null, textContent: '', form: null,
+    ownerDocument: { baseURI: base }, closest: () => null, getRootNode: () => null });
+  assert.equal(inspectTarget(node('a', '/next')).link, true);
+  assert.equal(inspectTarget(node('area', 'https://x.invalid/')).link, true);
+  for (const bad of [node('a', null), node('a', 'javascript:void(0)'), node('a', 'mailto:a@b.invalid'), node('a', 'https://u:p@x.invalid/'), node('button', '/next')]) assert.equal(inspectTarget(bad).link, false);
 });
 
 for (const [name, background, pageOpened, expected] of [

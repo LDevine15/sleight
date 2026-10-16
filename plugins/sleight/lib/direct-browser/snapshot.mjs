@@ -328,10 +328,12 @@ function ancestors(rows, wanted) {
   return rows.filter(row => wanted.has(row.key));
 }
 
+// A reason the caller can act on (our own text, never page content); anything else collapses to the generic message.
+const hinted = text => Object.assign(Error(text), { hinted: true });
 function select(rows, ref, find) {
   let selected = rows;
   if (ref) {
-    if (!rows.some(row => row.ref === ref)) throw Error('Ref unavailable');
+    if (!rows.some(row => row.ref === ref)) throw hinted(`ref ${ref} is not on the page now; read again without ref (find narrows) for fresh refs`);
     const wanted = new Set([ref]);
     for (const row of rows) if (wanted.has(row.parent)) wanted.add(row.key);
     selected = ancestors(rows, wanted);
@@ -409,9 +411,9 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
     const tree = acquired[0].value, closed = acquired[1].value, secrets = closed.secrets;
     publicRefs(tree, state);
     const rows = rowsOf([...tree, ...closed.sections], secrets, closed.viewport);
-    if (generation !== state.generation || url !== page.url()) throw Error('Page changed; try browser_read again.');
+    if (generation !== state.generation || url !== page.url()) throw hinted('the page changed during the read; read again');
     const continuation = MORE.test(ref) ? state.continuations.get(ref) : null;
-    if (MORE.test(ref) && (!continuation || continuation.source !== JSON.stringify(rows))) throw Error('Continuation expired');
+    if (MORE.test(ref) && (!continuation || continuation.source !== JSON.stringify(rows))) throw hinted('that continuation expired because the page changed; read again from the top');
     const scope = continuation?.scope ?? JSON.stringify([ref ?? null, find ?? null]);
     const selected = continuation?.selected ?? select(rows, ref, find);
     const baseline = continuation?.baseline ?? state.history.get(since);
@@ -440,6 +442,6 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
   } catch (error) {
     state.deliveredClosed.clear();
     if (error.message === 'blocked: DevTools endpoint') throw error;
-    throw Error('Snapshot unavailable; try browser_read again or use the engine browser path.');
+    throw Error(error.hinted ? 'Snapshot unavailable: ' + error.message : 'Snapshot unavailable; try browser_read again');
   } finally { state.busy = false; }
 }

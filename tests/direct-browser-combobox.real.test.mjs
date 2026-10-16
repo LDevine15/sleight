@@ -132,12 +132,11 @@ test('a focused div that hosts a closed shadow root still refuses keys', { skip,
   assert.deepEqual(h.logs, []);
 });
 
-test('a scroll step past the 10000 limit is refused as not run, and a long list is reached with until', { skip, timeout: 60000 }, async () => {
+test('a scroll step past the 10000 limit is clamped, and a long list is reached with until', { skip, timeout: 60000 }, async () => {
   const h = await harness(), { tab } = await h.open(), ref = await h.ref(tab, 'Departing from', 'listbox');
-  const refused = await h.act(tab, [{ do: 'scroll', ref, dy: 20000 }]);
-  assert.equal(refused.isError, true, refused.text);
-  assert.match(refused.text, /dy up to 10000 per step.*until.*Nothing was sent/s, refused.text);
-  assert.doesNotMatch(refused.text, /unconfirmed/);
+  const clamped = await h.act(tab, [{ do: 'scroll', ref, dy: 20000 }]);
+  assert.equal(clamped.isError, false, clamped.text);
+  assert.match(clamped.text, /clamped to 10000/, clamped.text);
   // The row a scroll finds can be clicked at once, even when the call asked for no observation.
   const found = await h.act(tab, [{ do: 'scroll', ref, until: label(AIRPORTS[150]), dy: 300 }], 'none');
   const row = /found[^\n]*option "[^"]*"[^\n]*\[ref=(e\d+)\]/.exec(found.text);

@@ -9,8 +9,9 @@ import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 import { setViewport } from './viewport.mjs';
 import { originOf, pathOf, guardChooser } from './output-hygiene.mjs';
-const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport'.split(' '));
+const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport navigate'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
+const WAIT_CAP = 5000, SCROLL_CAP = 10000, navigateNeeds = 'the ref of an http(s) link (browser_open takes a url); to press other elements use click';
 const TIMEOUT = 1000;
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -40,6 +41,7 @@ function validate(steps) {
     if (!s || !OPS.has(s.do)) throw Error('unsupported do operation');
     const needs = name => { throw Error(s.do + ' needs ' + name); };
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
+    if (s.do === 'navigate' && !refOf(s.ref)) needs(navigateNeeds);
     if (s.ref !== undefined && !refOf(s.ref)) needs('a valid ref');
     if (s.do === 'type' && typeof s.text !== 'string') needs('text');
     if (s.do === 'press' && (typeof s.key !== 'string' || !s.key || s.key.length > 100)) needs('key');
@@ -49,9 +51,10 @@ function validate(steps) {
     if (s.do === 'dialog' && typeof s.accept !== 'boolean') needs('accept');
     if (s.do === 'viewport' && ([s.width, s.height].filter(n => n === undefined).length === 1 ||
       [s.width, s.height].some(n => n !== undefined && !(Number.isInteger(n) && n >= 100 && n <= 10000)))) needs('width and height between 100 and 10000, or neither to restore');
+    if (s.do === 'wait' && s.ms !== undefined && !(Number.isFinite(s.ms) && s.ms >= 0)) needs('ms of 0 or more');
     if (s.do === 'scroll') {
       if (s.until !== undefined && (typeof s.until !== 'string' || !s.until.trim() || s.until.length > 500)) needs('until text');
-      if ([s.dx, s.dy].some(n => n !== undefined && (!Number.isFinite(n) || Math.abs(n) > 10000))) needs('finite dx and dy up to 10000 per step; give until the row text to find a row in a long list');
+      if ([s.dx, s.dy].some(n => n !== undefined && !Number.isFinite(n))) needs('finite dx and dy (beyond 10000 is clamped to it); give until the row text to find a row in a long list');
     }
   }
 }
@@ -87,6 +90,9 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
   const formPayment = !!form && [...read(form, 'querySelectorAll')('input,button,iframe')].some(node =>
     /^cc-/i.test(read(node, 'getAttribute')('autocomplete') ?? '') || /(?:card|cc[-_ ]?(?:number|csc)|cvv|cvc)/i.test(read(node, 'id') + ' ' + read(node, 'getAttribute')('name')) ||
     read(node, 'localName') === 'iframe' || (read(node, 'localName') === 'button' || read(node, 'type') === 'submit') && payment(words(node)));
+  // navigate follows only a plain http(s) link; any other scheme, or an element with no href, is a click's job.
+  const link = (() => { try { if (tag !== 'a' && tag !== 'area') return false; const href = read(el, 'getAttribute')('href'); if (href == null) return false;
+    const url = new URL(href, read(read(el, 'ownerDocument'), 'baseURI')); return /^https?:$/.test(url.protocol) && !url.username && !url.password; } catch { return false; } })();
   const submit = !!(button && (read(el, 'type') === 'submit' && form || /\b(?:save|submit|send|confirm|book|pay|place order|finish|complete)\b/i.test(name) || payment(name)));
   const scriptButton = !submit && !!(button && form && formPayment && read(el, 'type') !== 'reset');
   let hash = 2166136261;
@@ -94,7 +100,7 @@ export function inspectTarget(el, unused, read = (node, key) => { const value = 
     const content = read(form, 'textContent') + [...read(form, 'querySelectorAll')('input,select,textarea')].map(n => [read(n, 'value'), read(n, 'checked'), read(n, 'selectedIndex')].join(':')).join('|');
     for (let i = 0; i < content.length; i++) hash = Math.imul(hash ^ content.charCodeAt(i), 16777619);
   }
-  return { name, accName, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
+  return { name, accName, tag, role, kind: ['file', 'color'].includes(forwarded) ? forwarded : button ? 'button' : ['file', 'color'].includes(read(el, 'type')) ? read(el, 'type') : tag === 'select' ? 'select' : 'text', button, form: !!form, link, submit: submit || scriptButton, scriptButton, payment: payment(name) || submit && formPayment,
     formPayment, formSignature: form ? hash : null };
 }
 
@@ -187,7 +193,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     let observed, observeError, confirmation, blocker, carry;
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
-      const step = steps[index], label = `${index + 1} ${step.do}${step.ref ? ' ' + step.ref : ''}`;
+      // navigate on a link is that link's click, so every click rule, guard and popup rule applies unchanged.
+      const named = steps[index], step = named.do === 'navigate' ? { ...named, do: 'click' } : named, label = `${index + 1} ${named.do}${step.ref ? ' ' + step.ref : ''}`;
       let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false;
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
@@ -196,6 +203,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
+        if (named !== step && info.link !== true) throw Error('navigate needs ' + navigateNeeds);
         // Chrome treats text inserted into a single-line input as implicit submission when it is a lone line break, so a line
         // break typed there is an Enter press that skipped the submit checks. Pressing Enter is the one way to send it.
         if (step.do === 'type' && info.tag === 'input' && lineBreak.test(step.text)) throw Error(lineBreakRefusal);
@@ -271,18 +279,21 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           }
           if (step.do === 'wait') {
             if (locator) return typeof locator.waitFor === 'function' ? locator.waitFor({ ...options, state: 'visible' }) : locator.waitForElementState('visible', options);
-            await sleep(100); return;
+            if (step.ms === undefined) { await sleep(100); return; }
+            await sleep(Math.min(step.ms, WAIT_CAP));
+            return step.ms > WAIT_CAP ? `waited ${WAIT_CAP} ms (cap, not ${step.ms}); page below` : undefined;
           }
           if (step.do === 'scroll') {
-            const end = now() + 4000, dx = step.dx ?? 0, dy = step.dy ?? 500;
+            const end = now() + 4000, clamp = n => Math.max(-SCROLL_CAP, Math.min(SCROLL_CAP, n)), dx = clamp(step.dx ?? 0), dy = clamp(step.dy ?? 500);
+            const note = dx !== (step.dx ?? 0) || dy !== (step.dy ?? 500) ? ` (dx/dy clamped to ${SCROLL_CAP})` : '';
             if (locator) { await locator.scrollIntoViewIfNeeded(options); const point = await locator.evaluate(scrollPoint); await page.mouse.move(point.x, point.y); }
             for (let n = 0; n <= (step.until ? 60 : 1); n++) {
               if (step.until) {
                 const result = await read({ ref: step.ref, find: step.until, maxChars: 2000 });
                 const row = result.text.split('\n').find(line => line.toLocaleLowerCase().includes(step.until.toLocaleLowerCase()) && /\[ref=/.test(line));
-                if (row) return 'found (untrusted page content): ' + clean(row);
-                if (n === 60 || now() >= end || armed.boundary) return 'text not found within 60 wheel steps or 4 s; read the list';
-              } else if (n === 1) return;
+                if (row) return 'found (untrusted page content): ' + clean(row) + note;
+                if (n === 60 || now() >= end || armed.boundary) return 'text not found within 60 wheel steps or 4 s; read the list' + note;
+              } else if (n === 1) return note && 'scrolled' + note + '; page below';
               await page.mouse.wheel(dx, dy); await sleep(16);
             }
           }
