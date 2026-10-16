@@ -55,6 +55,9 @@ our own runs. Dates and engine versions are given where they matter.
   out. A pass with the Claude app in Split View failed 8 of 21 runs, all in TextEdit, Chess and the
   simulator (`docs/benchmarks/2026-10-08-await-split-view.json`). Moving a window into a full-screen
   Space needs private macOS APIs, so leave full screen while sleight drags.
+- `drag` can't drop text into another window. `from` and `to` are offsets from one window and must sit in the same text area,
+  so the benchmark's textedit-window-drag can't pass through it (0/1 on 2026-10-16, its first run). Whether the engine's
+  `app.drag` can move selected text between windows is unmeasured.
 
 - The benchmark's drag audit (`bench/world/method-check.mjs`) credits a drag that follows a nested labeled block whose inner
   `break` targets the outer label (`outer: { inner: { break outer; } await app.drag() }`), though that drag never runs. A peer
@@ -403,6 +406,11 @@ native reference, and oversized first results defer the browser reference while 
   (`bench/real-fixture.js`). Each stop also ends the remaining tasks of the pass. The Chess stops came from the app-dialog scan before
   cleanup, which read the title of a focused Chess window that isn't the fixture. With that read tolerated (`a65350ba`), the scan's
   inspection of that window exceeds its bound instead, so chess-drag is parked from the native pass.
+  Later the same day, a sheet and a Word alert that vanished mid-read (AX -25202) stopped two more passes, both fixed. A task
+  that left its second fixture window focused stopped one, and cleanup now raises its own window over a sibling fixture.
+- Excel opened the excel-edit fixture with "Open recovered workbooks?" on 2026-10-16, and the run stopped there correctly. The
+  recovery files are in Excel's sandbox container, which macOS privacy protection hides from sleight's shell, so we don't know
+  whose workbooks they are. The launch flags don't turn off Office AutoRecovery.
 
 ## Turbo popups, the hook and the click seal
 

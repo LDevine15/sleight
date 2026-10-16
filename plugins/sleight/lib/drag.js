@@ -162,13 +162,13 @@ function validatePoints(info, bounds, from, to, app) {
   const start = at(bounds, from), end = at(bounds, to);
   for (const [name, point] of [['from', start], ['to', end]]) {
     if (!inside(bounds, point) || info.toolbars.some(b => inside(b, point)) || !info.areas.some(a => inside(a.bounds, point))) {
-      throw new Error(`${name} is outside the window content area (title bar, toolbar or frame); nothing was pressed`);
+      throw new Error(`${name} is outside the window content area (title bar, toolbar or frame); nothing was pressed. drag stays inside one window's content`);
     }
   }
   let text = null;
   const fields = info.areas.filter(a => ['AXTextArea', 'AXTextField'].includes(a.role) && inside(a.bounds, start));
   if (fields.length) {
-    if (fields.length !== 1 || !inside(fields[0].bounds, end)) throw new Error(`${app} from and to must be inside the same visible text area or field; nothing was pressed`);
+    if (fields.length !== 1 || !inside(fields[0].bounds, end)) throw new Error(`${app} from and to must be inside the same visible text area or field; nothing was pressed. drag can't drop text in another window`);
     const el = fields[0].el;
     const value = el.value(), selected = el.attributes.byName('AXSelectedText').value();
     if (typeof value !== 'string' || typeof selected !== 'string' || !selected.trim()) throw new Error(`Select non-whitespace ${app} text in this window before dragging; nothing was pressed`);

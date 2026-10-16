@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 14:40 UTC, 8 of the sleight arm's tasks pass, second retry requested)
+## Banner (2026-10-16 15:12 UTC, sleight 12/15 and codex 6/9 in the native pass)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -34,13 +34,18 @@ sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (
   --socket "$HOME/Library/Caches/sleight-bench/mcp-cua-arm/driver.sock"`, and check that the socket exists.
 - Peekaboo's grants belong to Terminal.app, so launch its arm from a Terminal window (`osascript -e 'tell application "Terminal"
   to do script "…"'`, owner away only).
-- Results so far, sleight arm (retry at 14:25 UTC): calculator-click, calculator-menu, textedit-save, textedit-edit, textedit-drag,
-  preview-pdf, finder-files and textedit-calculator pass. word-edit did its task, but cleanup stopped on Word's "All done" alert,
-  which vanished while the dialog scan read it (-25202 on AXChildren). `7d2e5c06` skips such a dialog, and a -25202 stop at close now
-  reports its step. Before that, textedit-drag failed at 14:17 UTC on a real sleight bug: JXA's `Ref('CGPoint')` reads back as the
-  number 0, so `drag` never matched a window by frame (broken since `0afa13f6` on 2026-10-12, a day after the last pass).
-  `287c8679` reads geometry through a byte buffer, with a real-osascript test. Its cleanup then stopped the pass because TextEdit's
-  Close stayed disabled after activation, though the app quit cleanly with the file unchanged. chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
+- sleight arm, retry 3 (14:34 UTC, `ledger/claims/CS3/runs/sleight-20261016T1433Z.log`): 12 of 15 pass, word-edit and
+  textedit-drag included. Each earlier stop was a fixed bug: `drag` couldn't read window geometry in JXA (`287c8679`), and two
+  cleanup reads hit vanished elements (`fd47412f`, `7d2e5c06`). Failures:
+  - finder-files, where Claude's two `drag` attempts hit the sidebar, then Cmd+X (disabled for files in Finder) and Cmd+V pasted
+    a text clipping into Archive. A Haiku probe on a 1840×872 image gave the dot's exact pixel (2/2), so drag's pixel-to-point
+    halving is right, and the miss was the model's points. It passed in retry 2.
+  - textedit-window-drag, where `drag` can't drop text into another window (known-problems). Claude then stopped to ask. Its cleanup
+    stop (the other fixture window was focused) is fixed: cleanup raises its own window over a sibling fixture of the same run.
+  - excel-edit, where Excel showed "Open recovered workbooks?" and Claude stopped correctly. The recovery files are in Excel's sandbox
+    container, which privacy protection hides from sleight's shell. An owner item.
+  The pending commit also says in `drag`'s refusals that it stays inside one window. Next sleight retry resumes from the task
+  after textedit-window-drag. chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
   (docs/known-problems.md).
 - Puddle holds each arm's window and stops the chain after it. sleight-arch runs the arm command itself on "HOLD live" and asks "puddle arch" for the next window.
   sleight's windows have priority today (owner, 2026-10-16).
@@ -58,9 +63,14 @@ sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (
 (`340ba5e2`). LoC's draft paint round is parked unsent on LoC trunk `d8c3ef73` (`artifacts/ARCH-IMAGEGEN-R18/`). Message "loc arch"
 when the claim is measured.
 
-**Owner items.** Turbo live qualification, the claude-cu runs and EPV3-1's consent run (all owner-present), the 1.3.0 tag.
+**Owner items.** Quit Word from the Dock. Excel's recovered workbooks, which may be yours, so only you open or discard them in Excel. Also turbo live qualification, the claude-cu runs and EPV3-1's consent run (all owner-present), the 1.3.0 tag.
 
-**Running now.** Nothing. The second retry of the sleight arm waits for Puddle's next window (requested 14:40 UTC, owner away).
+- codex arm (14:49 UTC, `ledger/claims/CS3/runs/codex-20261016T1449Z.log`): 6 of 9 pass. textedit-drag failed (file unchanged),
+  and word-edit timed out at 300 s. Word then ignored quit, which stopped the pass. ChatGPT's approval list was restored byte for byte.
+  Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
+  recovery files like Excel's. The owner can quit it from the Dock.
+
+**Running now.** Nothing, and the chain is stopped. Next: the sleight arm from textedit-replace-save on, then lcu.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.

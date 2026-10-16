@@ -311,6 +311,7 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
   var identity = function () { noDialog(); validateOwnedFixture(window, request, app, api, false); };
   step('close');
   if (request.mode === 'document') {
+    raiseOverSibling(window, request, app, api);
     var validate = function () { noDialog(); validateOwnedFixture(window, request, app, api, true); };
     validate();
     api.closeDocument(app, validate, request);
@@ -323,6 +324,17 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     if (!request.refuseDialogs) api.discard(window, identity);
   }
   throw new Error('Owned fixture window is still open');
+}
+
+// File > Close acts on the focused document, and a task with two fixture windows can leave the other one focused
+// (textedit-window-drag, 2026-10-16). Only when the focused window is a fixture of this run (its title carries the run's
+// nonce) is this one raised in the background. Any other focused window keeps the lost-focus refusal.
+function raiseOverSibling(window, request, app, api) {
+  if (!api.raise || !request.token) return;
+  var focused = api.focused(app);
+  if (!focused || api.equal(focused, window) || api.text(focused, 'AXTitle').indexOf(request.token) === -1) return;
+  api.raise(window);
+  for (var attempt = 0; attempt < 20 && !api.equal(api.focused(app), window); attempt++) api.wait();
 }
 
 function closeDocumentSafely(app, request, validate, api) {
@@ -547,6 +559,11 @@ function nativeAX(state, clock) {
           pathAvailable: !!current, pathMatchesNormalizedTarget: !!current && current === normalizedTarget };
       }
       return { focused: describe(read(app, 'AXFocusedWindow')), main: describe(read(app, 'AXMainWindow')) };
+    },
+    raise: function (window) {
+      if (clock && clock.check) clock.check();
+      if (Number($.AXUIElementPerformAction(window, $('AXRaise'))) !== 0) throw new Error('Owned fixture window raise failed');
+      $.AXUIElementSetAttributeValue(window, $('AXMain'), $.kCFBooleanTrue);
     },
     closeButton: function (window, validate) {
       var button = read(window, 'AXCloseButton');

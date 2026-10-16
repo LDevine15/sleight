@@ -329,6 +329,7 @@ test('cleanup revalidates recovered focus before closing the retained document',
     let exists = true;
     const fixture = cleanupNative((element, attribute, time) => {
       if (attribute === 'AXFocusedWindow') return time < 12000 ? { code: -25204 } : { value: focusChanged ? other : owned };
+      if (element === other && attribute === 'AXTitle') return { value: 'Notes' };
       assert.equal(element, owned);
       return { value: attribute === 'AXRole' ? exists ? 'AXWindow' : '' : attribute === 'AXTitle' ? 'Report nonce' : null };
     });
@@ -1487,4 +1488,22 @@ test('the app dialog scan skips a dialog that disappears while it is read', () =
     return { value: attribute === 'AXRole' ? 'AXWindow' : attribute === 'AXTitle' ? 'Report nonce' : null };
   });
   assert.equal(fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'Microsoft Word', token: 'nonce', mode: 'document' }).length, 0);
+});
+
+test('document cleanup raises its own window only over a sibling fixture window of the same run', () => {
+  for (const [label, siblingTitle, expect] of [['sibling', 'Source-nonce.txt', 'closed'], ['stranger', 'Notes.txt', 'refused']]) {
+    const owned = {}, sibling = {}, actions = [];
+    let focused = sibling, exists = true;
+    const fixture = cleanupNative((element, attribute) => {
+      if (attribute === 'AXFocusedWindow') return { value: focused };
+      if (element === sibling) return { value: attribute === 'AXTitle' ? siblingTitle : attribute === 'AXRole' ? 'AXWindow' : null };
+      return { value: attribute === 'AXRole' ? exists ? 'AXWindow' : '' : attribute === 'AXTitle' ? 'Target-nonce.txt' : null };
+    });
+    fixture.native.AXUIElementPerformAction = (element, action) => { actions.push(action); if (action === 'AXRaise' && element === owned) focused = owned; return 0; };
+    fixture.native.AXUIElementSetAttributeValue = () => 0;
+    const api = { ...fixture.api, wait() {}, closeDocument: (_app, validate) => { validate(); actions.push('close'); exists = false; } };
+    const close = () => fixture.sandbox.closeOwnedWindow(owned, { mode: 'document', token: 'nonce' }, {}, api);
+    if (expect === 'closed') { close(); assert.deepEqual(actions, ['AXRaise', 'close'], label); }
+    else { assert.throws(close, /lost focus/); assert.deepEqual(actions, [], label); }
+  }
 });
