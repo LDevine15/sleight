@@ -204,3 +204,40 @@ test('a refusal includes the fresh tab tree', async () => {
   });
   assert.deepEqual(f.actions, []);
 });
+
+test('a refused multi-index call includes its unique current row from the existing read', async () => {
+  const f = fixture(tree(['\t17 button Continue, ID: continue', '\t18 button Cancel, ID: cancel']),
+    tree(['\t17 button Back', '\t22 button Continue, ID: continue, Value: current', '\t23 button Cancel, ID: cancel']));
+  await assert.rejects(f.run("var tab = await cua.getTab('1', {browser:'one'}); await tab.click(17); await tab.click(18);"), err => {
+    assert.match(err.message, /Current unique row 22:.*button Continue, ID: continue, Value: current/);
+    return true;
+  });
+  assert.equal(f.reads.length, 1);
+  assert.deepEqual(f.actions, []);
+});
+
+test('a followed row reports its bounded current identity instead of an unbounded old line', async () => {
+  const row = 'button Continue, ID: continue, Description: ' + 'x'.repeat(2000);
+  const f = fixture(tree(['\t17 ' + row]), tree(['\t22 ' + row]));
+  await f.run("var tab = await cua.getTab('1', {browser:'one'}); await tab.click(17);");
+  const note = f.notes.join('\n');
+  assert.match(note, /Current unique row 22:.*ID: continue/);
+  assert.match(note, /truncated/);
+  assert.ok(note.length < 700, note.length);
+  assert.equal(f.reads.length, 1);
+  assert.deepEqual(f.actions.map(a => a.args[0]), [22]);
+});
+
+for (const [label, after] of [
+  ['missing', tree(['\t22 button Other'])],
+  ['duplicate', tree(['\t22 button Continue, ID: continue', '\t23 button Continue, ID: continue'])],
+  ['previous page', tree(['\t22 button Continue, ID: continue']).replace('example.com', 'other.example')],
+]) test(`${label} refuses without a current identity hint`, async () => {
+  const f = fixture(tree(['\t17 button Continue, ID: continue']), after);
+  await assert.rejects(f.run("var tab = await cua.getTab('1', {browser:'one'}); await tab.click(17);"), err => {
+    assert.doesNotMatch(err.message, /Current unique row/);
+    return true;
+  });
+  assert.equal(f.reads.length, 1);
+  assert.deepEqual(f.actions, []);
+});
