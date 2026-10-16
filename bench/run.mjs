@@ -93,9 +93,9 @@ const controller = new AbortController();
 process.on('SIGINT', () => controller.abort(new Error('run interrupted')));
 process.on('SIGTERM', () => controller.abort(new Error('run interrupted')));
 const armOption = option('arm', 'sleight');
-if (world && !isDryRun && option('auth', 'auto') === 'login' && armOption.split(',').some(name => !['codex', 'claude-cu'].includes(name))) {
-  throw new Error('world refuses --auth login: isolated arm configs have no login; use --auth api');
-}
+// The world suite runs its Claude arms on the owner's account login by default (LAWS, 2026-10-15): each arm
+// has its own isolated config dir and its own login, checked before any task. --auth api stays available.
+const authMode = option('auth', world ? 'login' : 'auto');
 const ARM_HOME = process.env.BENCH_ARM_HOME || join(homedir(), 'Library', 'Caches', 'sleight-bench');
 const ARMS = {
   // Each arm runs from its own empty folder outside any git repo, so neither
@@ -236,16 +236,14 @@ if (privatePass && (selected.some(task => !task.privateMail) || armNames.some(na
 // (--auth api|login|auto), up to a monthly cap (bench/api-auth.mjs).
 const auth = !preparationErrors.length && !isDryRun && armNames.some(name => !ARMS[name].codex && !ARMS[name].unsupported && !ARMS[name].interactive)
   ? (() => {
-    try { return benchAuth({ mode: option('auth', 'auto'), capUsd: Number(process.env.SLEIGHT_BENCH_API_CAP_USD || DEFAULT_CAP_USD) }); }
+    try { return benchAuth({ mode: authMode, capUsd: Number(process.env.SLEIGHT_BENCH_API_CAP_USD || DEFAULT_CAP_USD) }); }
     catch (error) {
       if (/spend|unpriced/i.test(error.message)) error.message += `\nFix: ${quote('nano')} ${quote(LEDGER_FILE)}`;
       throw error;
     }
   })()
   : { mode: 'login', env: {}, unset: [] };
-if (world && !isDryRun && !preparationErrors.length && armNames.some(name => !ARMS[name].codex && !ARMS[name].interactive && !ARMS[name].unsupported) && auth.mode === 'login') {
-  throw new Error('world auth resolved to login: isolated Claude arm configs have no login; configure the benchmark API key');
-}
+if (world && auth.mode === 'login' && !isDryRun) console.log('Claude arms run on the account login, one isolated config per arm.');
 if (auth.mode === 'api') console.log(`Claude arms run on the API key: $${auth.spent.toFixed(2)} of the $${auth.capUsd} monthly cap spent.`);
 if (armNames.includes('claude-cu') && !isDryRun) console.log('claude-cu uses its isolated direct-plan login.');
 // A pass started from a Claude session inherits that session's identity: CLAUDE_CODE_ENTRYPOINT,
@@ -299,6 +297,7 @@ function armServers(arm) {
       if (!result.groupClean) throw new Error('Arm preflight process group cleanup unconfirmed');
       if (!catalog) throw new Error('Arm preflight returned no init event');
       if (auth.mode === 'api' && keySource !== 'ANTHROPIC_API_KEY') throw new Error(`Arm preflight used ${keySource ?? 'an unknown credential'}, not the benchmark API key`);
+      if (world && auth.mode === 'login' && keySource === 'ANTHROPIC_API_KEY') throw new Error('Arm preflight used an API key, not the account login');
       if (privatePass) assertPrivateClaudePolicy();
       controller.signal.throwIfAborted();
       return catalog;
@@ -311,19 +310,24 @@ function armServers(arm) {
 // until settings.json turned off the installed sleight).
 const otherServers = Object.values(ARMS).flatMap(a => a.servers ?? [a.server]).filter(Boolean);
 async function checkArms() {
-if (!isDryRun && !isSetupOnly) {
-  // Admit every selected arm before discovery can start an MCP server or a fixture.
-  for (const name of armNames.filter(name => !ARMS[name].codex && !ARMS[name].unsupported && !ARMS[name].rejected)) {
-    const arm = ARMS[name];
-    if (arm.interactive) {
-      const plan = interactivePlan({ armDir: arm.cwd, prompt: 'login preflight only', model, effort });
-      assertLogin(plan);
-    } else if (auth.mode === 'login') assertLogin({ command: claudeBin, cwd: arm.cwd, env: armEnv(arm) });
-  }
-  if (selected.some(task => task.surface === 'extension')) await assertEngineSockets();
-}
 if (world && !isDryRun && armNames.some(name => !ARMS[name].codex && !ARMS[name].interactive && !ARMS[name].unsupported && !ARMS[name].rejected)) {
   assertWorldCLI(claudeBin, execFileSync);
+}
+if (!isDryRun && !isSetupOnly) {
+  // Admit every selected arm before discovery can start an MCP server or a fixture. Every arm that is not
+  // logged in is named, each with its own login command, so one refusal covers the whole pass.
+  const notLoggedIn = [];
+  for (const name of armNames.filter(name => !ARMS[name].codex && !ARMS[name].unsupported && !ARMS[name].rejected)) {
+    const arm = ARMS[name];
+    try {
+      if (arm.interactive) {
+        const plan = interactivePlan({ armDir: arm.cwd, prompt: 'login preflight only', model, effort });
+        assertLogin(plan);
+      } else if (auth.mode === 'login') assertLogin({ command: claudeBin, cwd: arm.cwd, env: armEnv(arm) });
+    } catch (error) { notLoggedIn.push(world ? `${name}: ${error.message}` : error.message); }
+  }
+  if (notLoggedIn.length) throw new Error(notLoggedIn.join('\n'));
+  if (selected.some(task => task.surface === 'extension')) await assertEngineSockets();
 }
 if (calculatorGate) await calculatorReady('preflight');
 for (const name of armNames.filter(n => !ARMS[n].codex && !ARMS[n].unsupported && !isSetupOnly && !isDryRun)) {
