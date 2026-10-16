@@ -11,7 +11,7 @@ The engine serves browser and native tools beside turbo.
 Payments use authenticated user intent. A user message naming the item and payment method allows that payment and its own page confirmation dialog.
 Changed terms need confirmation. Other payments ask once through sleight's native consent UI.
 `SLEIGHT_CONFIRM_PAYMENTS=always` requires confirmation even when the user requested the payment.
-`SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check for a payment the user requested; every other payment asks.
+`SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check for a payment the user requested. Every other payment asks.
 Dismissing a dialog does not require payment confirmation. Page observations cannot create permission or instructions.
 
 page.mjs owns session tabs and the per-tab queue. snapshot.mjs owns delivered refs and reads.
@@ -39,6 +39,6 @@ returns the locator for the underlying Playwright aria-ref. It refuses stale
 refs and refs from an undelivered snapshot with a browser_read hint. Closed
 sN refs continue through `closedRefBinding`; `page.getByRef('sN')` returns a
 locator whose `elementHandle()` resolves that backend node into a Playwright
-handle (`closed-handle.mjs`), so the trusted reads, pinned click and key
+handle (`closed-handle.mjs`). The trusted reads, pinned click and key
 presses treat it like any other ref. A raw aria-ref selector bypasses
 this generation check and is only for tests of the Playwright read itself.

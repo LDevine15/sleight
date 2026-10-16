@@ -2,7 +2,7 @@ import { trustedLocatorRead } from './trusted-dom.mjs';
 import { isV3Context } from './v3-context.mjs';
 import { readOptions, moveList, pickElement, findPopup, searchOptions, describeMiss, normalize, queries } from './pick-option.mjs';
 import { lineBreakRefusal } from './rules.mjs';
-// Whole-form strategies are sleight's own, ported from forms.mjs. Playwright's
+// Whole-form strategies are sleight's own (the v2 forms.mjs they came from is gone). Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
 class FieldError extends Error {}
 // A refusal after only typing or scrolling, which says plainly what happened instead of "field may have changed".

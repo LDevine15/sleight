@@ -25,7 +25,7 @@ The sleight loader in `lib/direct-browser/worlds.mjs` verifies the inventory bef
 
 ## Original shared modules
 
-The original sleight ref, closed-root, attachment, download and user-file modules retain their design references to
+The original sleight user-file modules and the action layer retain their design references to
 FowlBrowser 8b689249ba4e33d2626487aad930605c62e2c6a7 (MIT) and
 Playwright e8149b8257d32dcf8f72573ecc43e72439da7080 (Apache-2.0).
 These modules contain independently authored sleight code. The 1.64.0 distribution pin is separate from the source-study revision.
