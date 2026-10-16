@@ -7,14 +7,15 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 
-**Running now.** Gate rounds 1 to 5 with both arms on v3-gate `adc5fbc9` started 04:01:18 UTC under Puddle's window W1 (log
-`ledger/claims/GATE2/gate5-20261016T0401Z.log`). Sum each pass's table per arm, reading columns from the end of the row. Round 1 had 19 s of
-Puddle load (04:02:29 to 04:02:48). W1 ends with the gate's touch of `/tmp/sleight-bench-done`. Then tell Puddle pass or fail (pass
-means turbo median 575 s or less, 26/26 under the owner's scoring, 9 errors or fewer, 0 focus events). Puddle's seat was replaced at
-about 04:10, and the new seat has the plan. If no Puddle seat answers within 30 min of W1 ending, message the same socket again.
+**Gate on `adc5fbc9` (04:01 to 04:32 UTC) failed on time** (docs/benchmarks/2026-10-16-gate.md, second section): turbo median
+607 s (p90 634) against FowlBrowser's 685 s (p90 706), 89%. Errors, focus and ToolSearch targets are met, and both arms score 26/26
+or 25/26. The extra time against the A/B is model turns on forms. 193 of 254 empty `find` reads used `a|b` alternation, which the
+literal match never met. `arch/find-alt` `0d1bcfa0` fixes that and the hidden-radio click (focused and 8 real-page files pass).
+Puddle was told FAIL, so there's no Opus W2. The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
+turbo A/B of v3-gate against find-alt over 3 rounds (prefix `abf`), then the sleight native arm. One release touch ends it (cap 75 min, granted).
 
 **Rest of the night (owner asleep until about 12:00 UTC, all approved).**
-1. If the gate passes, W2 opens at about 05:30 for Opus (5 rounds, `MODEL=opus ledger/claims/GATE2/gate5.sh 5`). A full check of
+1. Superseded (gate failed): W2 would have opened at about 05:30 for Opus (5 rounds, `MODEL=opus ledger/claims/GATE2/gate5.sh 5`). A full check of
    `arch/world-login` merged into v3-gate follows in the same window, which a second touch releases. If it fails: study the slow runs, fix, A/B, and retry.
 2. The native first pass, one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM [tasks to resume]`, in the order sleight,
    codex, lcu, cua, peekaboo. It runs from `~/Projects/sleight-wt/world-login`, logs to `ledger/claims/CS3/runs/`, stops by 12:00 UTC,
