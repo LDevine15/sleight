@@ -37,6 +37,8 @@ Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle windo
   answering Apple events and ignored quit, which ended the pass.
 - Word (behind an off-screen Insert Table panel from the codex run) and Preview were both the benchmark's own launches. Preview
   got a TERM signal, and Word was force-quit on the owner's OK (both exited on TERM). Still to do: sleight's runs 2 and 3 of the rest.
+- Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
+  after the owner-present turbo qualification. Codex's claim arm started 16:02 UTC (window caps 17:02 UTC).
 
 **Native claim pass, first round (superseded by the claim suite, kept for its findings).** Plan: `ledger/claims/CS3/plan-runs1.json` (162 rows, 6 arms).
 Run one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM "$(cat ledger/claims/CS3/tasks-no-chess.txt)"` with
@@ -83,7 +85,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing. The codex claim window was requested at 15:57 UTC.
+**Running now.** The codex claim arm, started 16:02 UTC with the owner away.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.

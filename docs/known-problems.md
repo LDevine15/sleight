@@ -412,6 +412,14 @@ native reference, and oversized first results defer the browser reference while 
   recovery files are in Excel's sandbox container, which macOS privacy protection hides from sleight's shell, so we don't know
   whose workbooks they are. The launch flags don't turn off Office AutoRecovery.
 
+## Turbo in unattended runs
+
+- In the claim baseline's sleight arm (2026-10-16, 15:34 UTC), all 3 browser tasks got "Turbo is unavailable for this turn",
+  so Claude used the engine's browser path. `doctor` read turbo as on, with Helium's remote debugging on. The worker drops the
+  reason (`plugins/sleight/lib/direct-browser/worker.mjs`, the generic `failure()`), so we don't know whether a consent
+  prompt in Helium, the connection check or the browser choice refused it. Turbo's live qualification with the owner present
+  hasn't happened yet. Until it does, sleight's browser numbers in the claim come from the engine path.
+
 ## Turbo popups, the hook and the click seal
 
 - Turbo v3 reports a new-tab link click as unconfirmed when a same-origin window it can get at has a `preventDefault`
