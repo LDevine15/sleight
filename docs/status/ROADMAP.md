@@ -31,8 +31,9 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS), is built in v3-gate.
 4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB), then the release
    pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
-5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). The film comes out after 1.3.0 and
-   the claim suite (2.2), because its playbill billing repeats the claim post's measured words and nothing wider (owner, 2026-10-16).
+5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). No work on the film, art included,
+   starts until the claim suite (2.2), native apps included, backs the claim that sleight is the fastest at computer use on macOS, in the world. The film costs
+   too much time and tokens to make for a narrower claim (owner, 2026-10-16). Its billing then repeats the claim post's words.
    The art-direction architect the owner boots (LoC architect) directs the art. sleight-arch supplies single-window captures of the
    trick (in an away window), the race from a published run, and the numbers.
 
