@@ -23,7 +23,7 @@ arguments other bench launchers pass (fix before the 9 TextEdit tasks run). Next
 `ledger/claims/GATE2/window-native-check.sh`, with the 18 non-TextEdit sleight tasks, then the full check of gate-next. The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
 turbo A/B of v3-gate against find-alt over 3 rounds (prefix `abf`), then the sleight native arm. One release touch ends it (cap 75 min, granted).
 
-**W4 (06:41 to 06:43 UTC).** The sleight native arm passed calculator-click (7.5 s) and calculator-menu (10.3 s), then failed
+**W4 (06:41 to 06:43 UTC, loaded: a Puddle suite ran until 06:43:26).** The sleight native arm passed calculator-click (7.5 s) and calculator-menu (10.3 s), then failed
 chess-drag (73.2 s) and stopped on "Owned Chess fixture window cleanup unconfirmed" (AX read -25205 AXTitle). Chess isn't running
 now. The full check of `arch/gate-next` passed its tests (6873, 0 fail, 399 skipped) and mod tests (49/49). It failed
 `claude plugin validate` because `~/.local/bin/claude` had disappeared, so `claude` resolved to Homebrew's 2.1.231. sleight-arch
