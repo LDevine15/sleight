@@ -13,7 +13,7 @@ const fixture = t => {
 const ready = () => ({ liveLock: false, hold: false, ownerAway: true, apiReady: true, loginReady: true,
   extensionsReady: true, productionTurboReady: true });
 const stage = (id = 'native') => ({ id, runner: 'native', args: ['--suite', id === 'claim' ? 'world' : 'default',
-  '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'api', '--owner-away'],
+  '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'],
   artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] });
 const events = model => JSON.stringify({ type: 'assistant', message: { model } }) + '\n';
 
@@ -49,7 +49,7 @@ test('fake runners publish failures and all text evidence and verify event model
   assert.doesNotMatch(readFileSync(join(out, 'native/raw/failure.log'), 'utf8'), /Jane|Owner/);
 });
 
-for (const key of ['liveLock', 'hold', 'ownerAway', 'apiReady']) test(`precondition ${key} blocks before runner`, async t => {
+for (const key of ['liveLock', 'hold', 'ownerAway', 'loginReady']) test(`precondition ${key} blocks before runner`, async t => {
   const root = fixture(t);
   const conditions = { ...ready(), [key]: ['liveLock', 'hold'].includes(key) };
   const plan = createPlan({ root, stages: [stage()], conditions });
@@ -134,7 +134,7 @@ test('API admission refuses malformed and unresolved spend without creating a co
 test('stage arguments enforce model, effort, funding and order', () => {
   for (const args of [stage().args.map(a => a === 'claude-haiku-5-5' ? 'claude-haiku-4-5' : a),
     stage().args.map(a => a === 'high' ? 'low' : a), [...stage().args, '--dry-run'],
-    stage().args.map(a => a === 'api' ? 'login' : a)]) {
+    stage().args.map(a => a === 'login' ? 'api' : a)]) {
     assert.throws(() => createPlan({ stages: [{ ...stage(), args }], conditions: ready() }));
   }
 });
@@ -176,7 +176,7 @@ test('a malformed result still preserves the remaining failure evidence', async 
 test('approved defaults run both surfaces in both orders twice on Haiku and once on Opus', t => {
   const root = fixture(t);
   const plan = createPlan({ root, home: '/home/tester', scratch: join(root, 'scratch'), date: '2026-10-14', conditions: ready() });
-  assert.deepEqual(plan.stages[0].commandArgs, ['bench/run.mjs', '--arm', 'sleight,codex', '--runs', '3', '--owner-away']);
+  assert.deepEqual(plan.stages[0].commandArgs, ['bench/run.mjs', '--arm', 'sleight,codex', '--runs', '3', '--owner-away', '--auth', 'login']);
   assert.deepEqual(plan.stages[0].expectedModels, ['claude-haiku-5-5', 'gpt-6-luna']);
   const gates = plan.stages.filter(s => s.id.startsWith('gate-'));
   const opus = plan.stages.filter(s => s.id.startsWith('opus-'));
@@ -224,7 +224,7 @@ test('native collection includes scratch and isolated Claude and Codex sessions 
 
 test('one arm transcript cannot cover a missing native rival transcript', async t => {
   const root = fixture(t);
-  const native = { ...stage(), args: ['--arm', 'sleight,codex', '--runs', '3', '--owner-away'], expectedModels: ['claude-haiku-5-5', 'gpt-6-luna'] };
+  const native = { ...stage(), args: ['--arm', 'sleight,codex', '--runs', '3', '--owner-away', '--auth', 'login'], expectedModels: ['claude-haiku-5-5', 'gpt-6-luna'] };
   const result = await executePass(createPlan({ root, stages: [native], conditions: ready() }), {
     root, names: ['Owner'], date: '2026-10-14', conditions: ready, run: async () => {
       mkdirSync(join(root, 'raw'));

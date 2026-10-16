@@ -12,7 +12,7 @@ const fixture = t => {
   t.after(() => rmSync(root, { recursive: true, force: true })); return root;
 };
 const native = (id = 'native') => ({ id, runner: 'native', args: ['--suite', id === 'claim' ? 'world' : 'default',
-  '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'api', '--owner-away'],
+  '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'],
   artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] });
 const opus = args => ({ id: 'opus', runner: 'fowl', args: ['--world', '--model', 'opus', '--effort', 'high',
   '--out', '/private/tmp/fb-rounds/review-only', ...args], artifacts: ['raw'], expectedModels: ['claude-opus-5-5'] });

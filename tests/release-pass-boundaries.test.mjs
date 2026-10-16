@@ -18,7 +18,7 @@ for (const ledger of [{}, { usd: 199 }, { month: 'not-a-month', usd: 199 }]) tes
 test('published file paths scrub owner names and match the manifest', async t => {
   const root = mkdtempSync(join(tmpdir(), 'rp2-name-repro-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'api', '--owner-away'], artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] };
+  const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'], artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] };
   const conditions = () => ({ liveLock: false, hold: false, ownerAway: true, apiReady: true, loginReady: true, extensionsReady: true, productionTurboReady: true });
   const result = await executePass(createPlan({ root, stages: [stage], conditions: conditions() }), {
     root, names: ['Jane Owner', 'janeowner'], home: '/Users/janeowner', date: '2026-10-14', conditions,
@@ -58,9 +58,10 @@ test('spend rollover accepts only valid prior records and refuses unknown accoun
     assert.deepEqual(JSON.parse(readFileSync(ledgerFile)), ledger, 'admission never rewrites the ledger');
   }
   writeFileSync(ledgerFile, '{}');
-  const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'api', '--owner-away'], artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] };
+  const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'], artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] };
+  // Claude stages run on the account login (LAWS, 2026-10-15): an unverified login blocks before a runner, whatever the spend ledger says.
   const conditions = () => ({ liveLock: false, hold: false, ownerAway: true,
-    apiReady: inspectConditions({ keyFile, ledgerFile, now }).apiReady, loginReady: true });
+    apiReady: inspectConditions({ keyFile, ledgerFile, now }).apiReady, loginReady: false });
   let dispatched = 0;
   const result = await executePass(createPlan({ root, stages: [stage], conditions: conditions() }), {
     root, names: ['Owner'], date: '2026-10-14', conditions, run: async () => { dispatched++; return { code: 0 }; } });
@@ -75,7 +76,7 @@ test('scrubbed roots, slug directories and colliding names preserve every artifa
     'Jane Owner.txt', 'janeowner.txt/session.log',
     'Jane Owner/same.log', 'janeowner/same.log', '-Users-janeowner-Projects-fixture/session.log',
     'JÓSE_NÚÑEZ.log', 'Jóse Núñez'.normalize('NFD') + '/same.log'];
-  const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'api', '--owner-away'], artifacts: [raw], expectedModels: ['claude-haiku-5-5'] };
+  const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'], artifacts: [raw], expectedModels: ['claude-haiku-5-5'] };
   const conditions = () => ({ liveLock: false, hold: false, ownerAway: true, apiReady: true, loginReady: true });
   const result = await executePass(createPlan({ root, stages: [stage], conditions: conditions() }), {
     root, names: ['Jane Owner', 'janeowner', 'Jóse Núñez'], home: '/Users/janeowner', date: '2026-10-14', conditions,

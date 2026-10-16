@@ -12,7 +12,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const IDS = ['native', 'gate-normal', 'gate-swap', 'opus', 'claim'];
 const HAIKU = 'claude-haiku-5-5', OPUS = 'claude-opus-5-5';
 const CODEX = 'gpt-6-luna';
-const NATIVE_ARGS = ['--arm', 'sleight,codex', '--runs', '3', '--owner-away'];
+// Every Claude arm runs on the owner's account login, never API credits (owner, 2026-10-15, LAWS).
+const NATIVE_ARGS = ['--arm', 'sleight,codex', '--runs', '3', '--owner-away', '--auth', 'login'];
 const DROPPED = ['codex-cu', 'devtools'].map(arm => ({ arm, status: 'not run', reason: 'bridge code not in the repo (owner decision, 2026-10-14)' }));
 const kind = id => IDS.includes(id) ? id : /^gate-(normal|swap)-r[12]-(sleight-turbo|fowlbrowser)$/.exec(id)?.[1]
   ? id.startsWith('gate-normal') ? 'gate-normal' : 'gate-swap'
@@ -42,9 +43,7 @@ function problems(stage, conditions) {
   if (conditions.liveLock !== false) issues.push('live lock held or unreadable');
   if (conditions.hold !== false) issues.push('hold file present or unreadable');
   if (conditions.ownerAway !== true) issues.push('owner-away window not confirmed');
-  if (group === 'opus' ? conditions.loginReady !== true : conditions.apiReady !== true) {
-    issues.push(group === 'opus' ? 'isolated login not verified' : 'API key or spend admission not ready');
-  }
+  if (conditions.loginReady !== true) issues.push('isolated login not verified');
   if (stage.id !== 'native' && conditions.extensionsReady !== true) issues.push('extension sockets and connection not verified');
   if (stage.id.startsWith('gate') || group === 'opus') {
     if (conditions.productionTurboReady !== true) issues.push('production turbo not qualified; prototype cannot be the release gate');
@@ -65,7 +64,7 @@ function validateStage(stage) {
   if (!approvedNative && (args.filter(arg => arg === '--model').length !== 1 || ![model, ...(stage.runner === 'fowl' ? [group === 'opus' ? 'opus' : 'haiku'] : [])].includes(option(args, '--model')))) throw new Error('Pin the stage model id');
   if (!approvedNative && (args.filter(arg => arg === '--effort').length !== 1 || option(args, '--effort') !== 'high')) throw new Error('Pin the stage effort');
   if (args.some(arg => ['--plan', '--dry-run', '--setup-only', '--owner-present', '--remote', '--remote-held'].includes(arg))) throw new Error('Release stages must use local live runners');
-  if (!approvedNative && stage.runner === 'native' && (option(args, '--auth') !== (group === 'opus' ? 'login' : 'api') || !args.includes('--owner-away'))) throw new Error('Native stages require explicit funding and --owner-away');
+  if (!approvedNative && stage.runner === 'native' && (option(args, '--auth') !== 'login' || !args.includes('--owner-away'))) throw new Error('Native stages require explicit funding and --owner-away');
   if (stage.id === 'native' && (stage.runner !== 'native' || !approvedNative && (option(args, '--suite') !== 'default' || option(args, '--arm') !== 'sleight'))) throw new Error('Native release suite uses sleight default');
   if (stage.id === 'claim' && stage.runner === 'native' && option(args, '--suite') !== 'world') throw new Error('Claim requires world suite');
   if (stage.id.startsWith('gate') && stage.runner !== 'fowl') throw new Error('Gate uses the Fowl runner');
