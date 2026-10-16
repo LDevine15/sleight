@@ -265,9 +265,11 @@ Engine behavior that sleight works around or can't change:
 - A page that swaps the clicked control on mousedown gets the matching pointerup and mouseup on the new control, and no click. The
   closed-root and light-DOM controls behave the same (2 fixtures, 2026-10-15), because Playwright's hit-target check covers only the
   first event of a click. A swap when the pointer arrives is caught in both: the new control received 0 events in 2 of 2 fixtures.
-- The read blanks a closed-root text field's current value wherever the same characters appear on the page. After typing "o" into a
-  closed-root field, "Account controls" read as "Acc[redacted]unt c[redacted]ntr[redacted]ls" (2026-10-15). Checkbox, radio and button
-  values no longer do this (a checkbox's default "on" blanked every "on" before 2026-10-15).
+- A protected field's value is removed from the rest of a read only when it has 4 or more characters. A value of 1 to 3 characters
+  (a 3-digit CVV, a 2-character PIN) is hidden in its own row and nowhere else, so a page that echoes it elsewhere shows it. A
+  value of 4 to 7 letters in a Latin, Greek or Cyrillic script is removed only as a whole token, so it still shows when glued to
+  other letters or digits ("test" in "test1"). Before 2026-10-15 the value was blanked wherever its characters appeared, and "o"
+  turned "Account controls" into "Acc[redacted]unt c[redacted]ntr[redacted]ls". Checkbox, radio and button values are not scrubbed.
 
 ## Turbo option lists
 
