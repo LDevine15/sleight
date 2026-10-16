@@ -9,7 +9,8 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 
 **THE GATE PASSED (07:38 to 08:08 UTC, v3-gate `66ada2bd`)**: turbo median 547 s (p90 590) and 0 errors in all 5 rounds, against
 FowlBrowser's 720 s (p90 868) and 7 errors, 76%. Both arms 26/26 under the owner's scoring, 0 focus events, 0 ToolSearch, Puddle
-fully held (docs/benchmarks/2026-10-16-gate.md, last section). Puddle's plan: W6 at about 09:15 is the Opus head-to-head (5 rounds,
+fully held (docs/benchmarks/2026-10-16-gate.md, last section). **Running: the Opus head-to-head started 09:18:17 under W6** (log `ledger/claims/GATE2/opus5-*.log`, run folders `opus-*`, cap
+10:41:56. Its first pass ran on `claude-opus-5-5`.) Puddle's plan: W6 at about 09:15 is the Opus head-to-head (5 rounds,
 `MODEL=opus ledger/claims/GATE2/gate5.sh 5`, cap 90). W7 at about 11:10 to 11:20 runs `ledger/claims/GATE2/window-native-rest.sh`,
 the sleight arm's 15 remaining native tasks (cap 60).
 `arch/release-cand` `cb20a697` is v3-gate `66ada2bd` plus `arch/v8-int` (V8 and V8R, 8,640 KB). Its merge had no conflicts. Its
