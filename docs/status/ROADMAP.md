@@ -16,16 +16,12 @@ how forgiving an interface is, and Opus runs once at the end of a batch.
 Everything except turbo is release-ready and merged (owner, 2026-10-14). That covers public CI and the benchmark preflights, plus
 the release-pass and claim-suite runners. The release notes (RL1) wait on `codex/rl1`.
 
-1. Finish turbo v3 on `private/v3-gate`, where every reviewed piece is merged and the full check passes. Remaining fixes, each merged
-   after its review: V10R4 (trusted reads that page-named elements can't shadow) and CR7 (new-tab submits, links in editable
-   text). CR6 (masking for the whole click, named link targets) is reviewed. The behavior atlas (AT1) is merged.
-   AD1 (the adversarial page bank and its fixes) does not block the gate round (owner, 2026-10-15: it "will never end"). It has a
-   finish line: pay's last round built the rule wording can't beat (any money figure above the amount in the user's message asks, no
-   exemptions; the owner chose it over label rules on 2026-10-15, 46/98 honest checkouts allowed); kb, pop and the iframe reads get one last review each; a high finding is fixed, and anything that needs a page
-   built to attack sleight goes into `docs/known-problems.md`. AD1 merges into `v3-gate` before the release pass.
-   Only fixes that change safety or what the gate measures block it. Rare-case polish (CR8 deferred pointer reads, CR9
-   non-editable islands in editors) merges before the release pass, which re-runs the rounds on the final build.
-2. One full check on `v3-gate`, then the gate round with the owner away or headless. It runs Haiku 5.5 on both arms in both
+1. Finish turbo v3 on `private/v3-gate`. V10R4, CR6, CR7 and AT1 are merged there. AD1 reached its finish line on 2026-10-15:
+   every branch is merged in `arch/ad1-int` (the figure-only payment rule the owner chose, 50/98 honest checkouts allowed), and it
+   merges into `v3-gate` as `arch/gate-ad1`.
+2. One full check on `v3-gate`, then gate rounds with the owner away or headless. Round 3 on 2026-10-15 had turbo at 590 s and
+   2 errors against FowlBrowser's 750 s and 7 (docs/benchmarks/2026-10-15-gate.md). The claim needs the median of at least 5 rounds.
+   The original gate runs Haiku 5.5 on both arms in both orders. It runs Haiku 5.5 on both arms in both
    orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
    ToolSearch calls, 0 focus events.
 3. One Opus head-to-head on the owner's account.
@@ -42,11 +38,11 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
 Post-release work builds on branches now and merges after the tag (owner, 2026-10-14).
 
 1. Electron on turbo v3: EPV3-1 to EPV3-8 (`ledger/electron-v3-plan.md`), carrying over EP-2's cleanup and EP-6's build
-   qualification. EPV3-1 is in a lane, and the rest follow in the plan's order.
+   qualification. EPV3-1 is building on `arch/epv3-1` since 2026-10-15, and the rest follow in the plan's order.
 2. The full claim suite comes before the parity battery (owner, 2026-10-15). It runs every arm on the same tasks (Claude in Chrome, Claude's own computer use on the newest Claude Desktop,
    FowlBrowser, Codex, LCU, Cua, Peekaboo), median and p90 over at least 5 runs, published with failures. Runs use the owner's
    Anthropic account login, not API credits (owner, 2026-10-15).
-3. The Q1 error-message fixes. Q1-1 to Q1-6 are reviewed, and Q1-7 to Q1-17 have branches that need review.
+3. The Q1 error-message fixes. Q1-1 to Q1-6 are reviewed, and Q1-7 to Q1-17 are in review since 2026-10-15.
 4. Speed. The measured gap to FowlBrowser on Haiku 5.5 is mostly time before the first action (67%) and result size (3x larger),
    with code streaming 26% (`ledger/opus-less-code-report.md`), so those come first. Turbo's five tools already cut code per action
    for the browser. IN1 to IN4 proceed on sleight-arch's calls (owner, 2026-10-15): IN1 narrowed to default browser snapshots,
