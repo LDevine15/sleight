@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { acceptedInstalledPackage, INSTALLED_ENTRIES, readInstalledConfig } from '../plugins/sleight/lib/direct-browser/installed-config.mjs';
@@ -261,4 +261,13 @@ test('doctor prints the turbo section first, read-only', async t => {
   assert.equal(code, 1);
   assert.equal(lines[0], 'turbo (direct browser path)'); assert.match(lines.join('\n'), /not set up yet/);
   assert.equal(existsSync(w.configPath), false);
+});
+
+test('the package walk leaves out what Claude Code writes into a plugin folder, and nothing else', t => {
+  const root = mkdtempSync(join(tmpdir(), 'turbo-walk-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [path, body] of [['host.mjs', 'x'], ['.in_use/4242', ''], ['.claude-plugin/plugin.json', '{}'], ['.claude-plugin/types/a.d.ts', ''], ['lib/.in_use', 'y']]) {
+    mkdirSync(join(root, dirname(path)), { recursive: true }); writeFileSync(join(root, path), body, { mode: 0o644 });
+  }
+  assert.deepEqual(packageFiles(root).sort(), ['.claude-plugin/plugin.json', 'host.mjs', 'lib/.in_use']);
 });
