@@ -26,7 +26,9 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    `cb20a697` is `66ada2bd` plus V8 and V8R (8,640 KB). Its focused and real-page tests pass, and its full check is pending. Turbo v3 lacks
    the hookup animation LAWS names for connecting. Its connected state shows through the consent host's menu bar item with Pause and
    Disconnect. V8R removed the unwired view model, `indicator.mjs`, which can be restored from `c407cb94`. Then the release
-   pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
+   pass, RP1's CHANGELOG and README changes (approved by the owner 2026-10-16), turbo as the default (owner, 2026-10-16), and the
+   1.3.0 tag on the owner's call. After 1.3.0, Electron, the native claim and the video, sleight moves to maintenance and benchmarking
+   as competitors improve (owner, 2026-10-16).
 5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). No work on the film, art included,
    starts until the claim suite (2.2), native apps included, backs the claim that sleight is the fastest at computer use on macOS, in the world. The film costs
    too much time and tokens to make for a narrower claim (owner, 2026-10-16). Its billing then repeats the claim post's words.

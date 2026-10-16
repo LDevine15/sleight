@@ -33,10 +33,12 @@ merged and brought up to tonight's numbers, lint clean, not yet merged into pane
 
 **Owner items.**
 - The 1.3.0 tag, after the release pass. Review the release notes on `arch/rl1-int`.
-- LAWS says turbo "becomes the default once its benchmark proves it". The gate and the Opus head-to-head passed, so 1.3.0 can make
-  it the default (Chrome's consent prompt still comes first). Owner's call on wording and timing.
-- The honest-checkout figure differs between LAWS (46 of 98 ask) and known-problems (50 of 98 allowed). Owner or sleight-arch to
-  settle which measurement stands.
+- Decided (owner, 2026-10-16 morning): turbo is the default in 1.3.0, and the release notes on `arch/rl1-int` are approved. Today
+  sleight's Puddle windows get priority. The owner trashed TextEdit's Untitled 9 and 10 (done; TextEdit itself still shows its
+  iCloud Open panel and won't quit from a script). The gate measured turbo through a benchmark-only server, and nothing in the
+  product writes `turbo.json` yet. An agent is mapping the real-user enable path before the default is built.
+- Settled: AD1's final measurement is 50 of 98 honest checkouts allowed (`claims/AD1/pay-final.md`). The 46 was a stricter first
+  cut, and LAWS now cites known-problems instead of a number.
 - TextEdit is still running with "Untitled 9" and "Untitled 10", restored from the owner's iCloud TextEdit folder by a fixture
   launch at 05:43 UTC. They were left untouched for the owner to decide.
 - `~/.local/bin/claude` had vanished (most likely the arm CLI's auto-updater during the owner's hand-run claude-cu session).

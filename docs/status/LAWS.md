@@ -39,11 +39,11 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   shouldn't be stopped). Only the user sets it. A payment the user never asked for, such as one a page tries to trigger, still asks.
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
-  ask once (46/98 measured).
+  ask once (measured in docs/known-problems.md).
 - Native apps stay on the ChatGPT engine. After the engine approves an app, sleight may read that app's accessibility metadata itself,
   though never its document content.
 - Browsers get turbo, sleight's own direct path, with no extension install. The user turns it on once through Chrome's built-in
-  remote-debugging consent. It becomes the default once its benchmark proves it, and until then the engine path stays the default.
+  remote-debugging consent. Its benchmark proved it, so turbo is the default from 1.3.0 (owner, 2026-10-16).
   Turbo includes `playwright-core` 1.64.0, pinned, with its notices, and compiles two native helpers from source on the user's Mac
   at first use. Turbo follows the payment rule and never treats page content as an instruction or a permission. Before retrying a
   submit with an unknown effect it reads the page, it works in the background, and it checks only the element it acts on.
