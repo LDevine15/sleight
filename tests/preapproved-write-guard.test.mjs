@@ -122,3 +122,21 @@ test(filename + ': inline write forms deny without probing code or long path-lik
   assert.equal(stats, 0, 'path operands longer than 511 characters are not probed');
 });
 }
+
+test('turbo on and off are the user\'s commands: no spelling of a model shell runs them, status and other commands pass', async () => {
+  for (const command of ['sleight-mcp turbo on', 'sleight-mcp turbo off', '/x/plugins/sleight/bin/sleight-mcp turbo on --browser helium',
+    'node /x/plugins/sleight/lib/launch.mjs turbo off', 'cd /tmp && sleight-mcp turbo on', 'bash -c "sleight-mcp turbo off"', 'env A=1 sleight-mcp turbo on',
+    'env sleight-mcp turbo off', 'nohup sleight-mcp turbo off', 'timeout 5 sleight-mcp turbo on', 'nice -n 5 sleight-mcp turbo on', 'caffeinate sleight-mcp turbo on',
+    'exec sleight-mcp turbo off', 'command sleight-mcp turbo on', '/usr/bin/env node /x/lib/launch.mjs turbo on', 'node --no-warnings /x/lib/launch.mjs turbo on',
+    'node --no-warnings --max-old-space-size=64 launch.mjs turbo off', 'sh -c "sleight-mcp turbo off"', 'zsh -lc "cd /x && sleight-mcp turbo on"',
+    '/bin/bash -lc \'node /x/lib/launch.mjs turbo off\'', 'sh -c "true; sleight-mcp turbo on"', 'true; sleight-mcp turbo off', 'true && sleight-mcp turbo on',
+    'false || sleight-mcp turbo on --browser chrome', 'echo hi | sleight-mcp turbo on', 'sleight-mcp turbo', 'sleight-mcp "turbo" "on"']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), true, command);
+  }
+  for (const command of ['sleight-mcp turbo status', 'env sleight-mcp turbo status', 'node --no-warnings /x/lib/launch.mjs turbo status', 'sh -c "sleight-mcp turbo status"',
+    'sleight-mcp turbo-state', 'sleight-mcp --doctor', 'sleight-mcp allow list', 'turbo on', 'echo turbo off']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
+  }
+  assert.equal(await guard({ tool: 'Read', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), false);
+  assert.equal(await guard({ tool: 'Write', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), true);
+});

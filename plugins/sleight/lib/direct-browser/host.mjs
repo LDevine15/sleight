@@ -70,18 +70,35 @@ async function compileNative({ name, source, binary, moduleCache }) {
   await promisify(execFile)('/usr/bin/xcrun', args, { env: environment(), timeout: 300000, maxBuffer: 65536 });
 }
 
-// Internal loader options, never exposed as tool arguments. Compile staged exact
-// source bytes and publish the bank only after both artifacts pass validation.
-export async function prepareNativeHelpers({ inventory, cacheRoot = join(userInfo().homedir, 'Library/Caches/sleight/turbo-host'),
-  sourceRoot = sources, compile = compileNative } = {}) {
-  if (inventory?.accepted !== true || inventory.protocol !== 1 || inventory.helperMode !== 'source' ||
-      inventory.node !== process.version || !Array.isArray(inventory.files)) throw Error('DISTRIBUTION_ACCEPTANCE_REQUIRED');
+function helperSourceHashes(inventory) {
   const hashes = {};
   for (const name of Object.values(helperSources)) {
     const entries = inventory.files.filter(file => file.path === 'native/' + name || file.path?.endsWith('/native/' + name));
     if (entries.length !== 1 || !/^[a-f0-9]{64}$/.test(entries[0].sha256 ?? '')) throw Error('DISTRIBUTION_ACCEPTANCE_REQUIRED');
     hashes[name] = entries[0].sha256;
   }
+  return hashes;
+}
+const helperBuildKey = hashes => digest(JSON.stringify({ protocol: 1, arch: process.arch, sources: hashes }));
+const defaultHelperCache = () => join(userInfo().homedir, 'Library/Caches/sleight/turbo-host');
+
+// Read-only: whether the helpers for this receipt are already compiled. Doctor uses it. It never builds or validates a binary.
+export function nativeHelpersBuilt({ inventory, cacheRoot = defaultHelperCache() } = {}) {
+  try {
+    const hashes = helperSourceHashes(inventory), directory = join(cacheRoot, helperBuildKey(hashes));
+    const data = JSON.parse(readFileSync(join(directory, 'build.json'), 'utf8'));
+    return data.protocol === 1 && data.arch === process.arch && JSON.stringify(data.sources) === JSON.stringify(hashes) &&
+      Object.keys(helperSources).every(name => lstatSync(join(directory, name)).isFile());
+  } catch { return false; }
+}
+
+// Internal loader options, never exposed as tool arguments. Compile staged exact
+// source bytes and publish the bank only after both artifacts pass validation.
+export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelperCache(),
+  sourceRoot = sources, compile = compileNative } = {}) {
+  if (inventory?.accepted !== true || inventory.protocol !== 1 || inventory.helperMode !== 'source' ||
+      inventory.node !== process.version || !Array.isArray(inventory.files)) throw Error('DISTRIBUTION_ACCEPTANCE_REQUIRED');
+  const hashes = helperSourceHashes(inventory);
   const unavailable = code => Object.freeze({ status: 'unavailable', code, fallback: 'engine',
     message: code === 'NATIVE_HELPERS_UNAVAILABLE' ? 'Turbo native helpers need Apple command-line tools and a successful local build. Keep using the engine path.'
       : 'Turbo native helpers are unavailable. Keep using the engine path.' });
@@ -91,7 +108,7 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = join(userInf
   try {
     const bytes = sourceBytes(sourceRoot, hashes);
     createPrivateCache(cacheRoot);
-    const key = digest(JSON.stringify({ protocol: 1, arch: process.arch, sources: hashes }));
+    const key = helperBuildKey(hashes);
     const directory = join(cacheRoot, key), record = join(directory, 'build.json');
     const cached = () => {
       const contents = ordinary(record, 0o600), data = JSON.parse(contents);

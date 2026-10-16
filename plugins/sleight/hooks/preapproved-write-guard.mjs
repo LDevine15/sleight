@@ -58,6 +58,22 @@ function shellWords(command) {
   return words;
 }
 
+const launcher = name => name === 'sleight-mcp' || name === 'launch.mjs';
+const turboArgument = value => value.replace(/^['"]+|[;&|)'"]+$/g, '');
+// True when the words run the launcher's turbo command with anything but status, as separate words or inside a -c string.
+function turboToggle(words) {
+  const names = words.map(word => word.split('/').at(-1)), first = names.findIndex(launcher);
+  if (first >= 0) {
+    const turbo = names.indexOf('turbo', first + 1);
+    if (turbo >= 0 && turboArgument(names[turbo + 1] ?? '') !== 'status') return true;
+  }
+  return words.some(word => {
+    if (!/\s/.test(word)) return false;
+    const hit = /(?<![\w.-])(?:\S*\/)?(?:sleight-mcp|launch\.mjs)(?=[\s'"]|$)/.exec(word);
+    return !!hit && [...word.slice(hit.index).matchAll(/(?<![\w-])turbo(?![\w-])\s*(\S*)/g)].some(match => turboArgument(match[1]) !== 'status');
+  });
+}
+
 function shellWritePaths(command, initialDirectory, depth = 0) {
   if (depth > 8) return [];
   const paths = [], segments = [{ words: [] }];
@@ -81,6 +97,7 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
         if (['>', '>>', '>|', '>&'].includes(operator) && target && !target.operator) add(target.text);
       } else texts.push(segment[i].text);
     }
+    const allWords = [...texts];
     let xargs = false;
     while (texts.length) {
       if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(texts[0])) { texts.shift(); continue; }
@@ -94,6 +111,9 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
     }
     const executable = texts.shift()?.split('/').at(-1);
     const operands = texts.filter(text => text && !text.startsWith('-'));
+    // `sleight-mcp turbo on|off` writes turbo.json for the user, so a model's shell may not run it. Position-free on purpose:
+    // env, nohup, timeout, interpreter flags and sh -c strings all reach it. Only `turbo status` passes. When in doubt, deny.
+    if (turboToggle(allWords)) add('~/Library/Application Support/sleight/turbo.json', true);
     if (xargs && piped) operands.push(...piped.filter(word => !word.operator).map(word => word.text));
     if (executable === 'cd') {
       const next = operands[0];

@@ -210,9 +210,9 @@ native reference, and oversized first results defer the browser reference while 
 - On an unsorted list, `sleight.pickFromList` can pick a prefix match at its scroll limit before
   reaching a later exact row. Its real-tab scroll and searches past index 360 are fixed.
 
-### Turbo (opt-in)
+### Turbo (on by default)
 
-- Turbo is wired in beside the engine's browser tools, and the engine path stays the default. Its
+- Turbo is on by default from 1.3.0, beside the engine's browser tools, with Chrome's remote-debugging consent as the user's step. Its
   [gate](benchmarks/2026-10-16-gate.md) passed on 13 FowlBrowser tasks (547 s against 720 s, 0 errors,
   Haiku 5.5, 5 rounds), but the installed approval flow is not qualified, and no native-app comparison has run.
   The earlier [prototype](benchmarks/2026-10-14-turbo-prototype.md) passed 4/9 with all four forms failing.
@@ -220,6 +220,13 @@ native reference, and oversized first results defer the browser reference while 
   leaves the engine path available. Minimum macOS version and Intel builds are unqualified.
 - Native consent, selected-profile setup, idle connection longevity, package updates and cleanup
   still need installed checks. Missing or disabled operator configuration keeps turbo off.
+- The package check lists every file under the plugin folder. Files Claude Code adds there while sessions run
+  (`.in_use/<pid>` and `.claude-plugin/types/`, seen in other plugins' cache folders on 2026-10-16) make the
+  receipt stale until the next session start rewrites it. Whether they appear in sleight's installed folder
+  mid-session, and so turn turbo off for a running session, hasn't been measured.
+- Turbo refuses a browser executable that others can write. On the Mac we tested, Google Chrome's is mode 775,
+  so setup picks Helium (755) or skips Chrome, and `--doctor` says why. Whether `chmod go-w` on Chrome's
+  binary stays after Chrome updates is unmeasured.
 - Turbo has no mobile viewport control. Use the engine's separate browser path for that task.
   Tabs and refs cannot cross paths. Never retry a safety refusal or an uncertain action through
   the other path. Embedded frame hosts are refused for input, while their page reads remain available.
