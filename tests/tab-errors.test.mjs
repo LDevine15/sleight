@@ -242,12 +242,12 @@ test('recorded evaluate writes name the failed operation and the replacement act
     ['TypeError: prioList.appendChild is not a function', /appendChild/, /sleight\.dragTo/],
     ['TypeError: DragEvent is not a constructor', /DragEvent/, /sleight\.dragTo/],
     ['TypeError: DataTransfer is not a constructor', /DataTransfer/, /sleight\.dragTo/],
-    ['TypeError: PointerEvent is not a constructor', /PointerEvent/, /locator\.click/],
-    ['TypeError: MouseEvent is not a constructor', /MouseEvent/, /locator\.click/],
-    ['TypeError: Event is not a constructor', /Event cannot run|so Event cannot/, /locator\.click/],
-    ['TypeError: document.createEvent is not a function', /createEvent/, /locator\.click/],
+    ['TypeError: PointerEvent is not a constructor', /PointerEvent/, /evaluate/],
+    ['TypeError: MouseEvent is not a constructor', /MouseEvent/, /evaluate/],
+    ['TypeError: Event is not a constructor', /Event cannot run|so Event cannot/, /evaluate/],
+    ['TypeError: document.createEvent is not a function', /createEvent/, /evaluate/],
     ['TypeError: Cannot set property checked of [object Object] which has only a getter', /checked/, /locator\.setChecked/],
-    ['TypeError: CustomEvent is not a constructor', /CustomEvent/, /locator\.click/],
+    ['TypeError: CustomEvent is not a constructor', /CustomEvent/, /evaluate/],
     ['TypeError: Cannot set property selectedIndex of [object Object] which has only a getter', /selectedIndex/, /selectOption/],
   ];
   for (const [msg, op, next] of cases) {
@@ -264,7 +264,8 @@ test('recorded evaluate writes name the failed operation and the replacement act
   const parse = 'TypeError: parseInt is not a function' + stack;
   assert.equal(rewriteTabError(parse), parse);
   const fetch = 'TypeError: Cannot add property fetch, object is not extensible' + stack;
-  assert.equal(rewriteTabError(fetch), fetch);
+  assert.ok(rewriteTabError(fetch).startsWith(fetch));
+  assert.match(rewriteTabError(fetch), /read-only/);
   const formData = 'TypeError: FormData is not a constructor' + stack;
   assert.equal(rewriteTabError(formData), formData);
   for (const operation of ['innerHTML', 'textContent', 'className']) {
@@ -301,6 +302,19 @@ test('evaluate write hints skip array bugs and unnamed setAttribute', () => {
   const out = rewriteTabError(array);
   assert.match(out, /If this call meant to change the page/);
   assert.doesNotMatch(out, /The page scope is read-only/);
+});
+
+test('non-extensible evaluate page objects retain the error and explain the read-only boundary', () => {
+  const stack = '\n    at __playwrightEvaluate (<anonymous>:10:2)';
+  for (const property of ['fetch', 'draggable', 'cssText']) {
+    const raw = `TypeError: Cannot add property ${property}, object is not extensible` + stack;
+    const out = rewriteTabError(raw);
+    assert.ok(out.startsWith(raw));
+    assert.match(out, /read-only/);
+    assert.match(out, /If this was a page object/);
+    assert.doesNotMatch(out, /locator\.click|locator\.fill|sleight\.dragTo/);
+    assert.equal(rewriteTabError(raw.replace('__playwrightEvaluate', 'ownFunction')), raw.replace('__playwrightEvaluate', 'ownFunction'));
+  }
 });
 
 test('covered, stale and page-dialog errors preserve surrounding result lines', () => {
