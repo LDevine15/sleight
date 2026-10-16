@@ -182,3 +182,17 @@ test('native peer-host compiles and binds metadata to an owned synthetic child (
     await assert.rejects(run(helper, ['--process-pid', '+1', expected], { timeout: 3000, maxBuffer: 1024 }), error => error.code === 64);
   } finally { child.stdin.end(); await closed; }
 });
+test('v3 filters bind only to the explicitly connected provider and fence on socket loss', async t => {
+  const f = fixture(t), provider = await createSelectedConnection(f.options);
+  assert.equal(typeof provider.createFilter, 'function');
+  assert.throws(() => provider.createFilter(['owned']), /SELECTED_CONNECTION_CLOSED/);
+  await f.connect(provider);
+  const filter = provider.createFilter(['owned']); t.after(() => filter.dispose());
+  assert.equal(filter.owns('owned'), true); assert.equal(filter.owns('foreign'), false);
+  const snapshot = filter.session.send('Target.getTargets');
+  const request = f.sockets[0].frames.at(-1);
+  f.sockets[0].message({ id: request.id, result: { targetInfos: [{ targetId: 'owned', type: 'page' }, { targetId: 'foreign', type: 'page' }] } });
+  assert.deepEqual((await snapshot).targetInfos.map(v => v.targetId), ['owned']);
+  f.sockets[0].closed();
+  await assert.rejects(filter.session.send('Target.getTargets'), /CDP_FILTER_CLOSED/);
+});

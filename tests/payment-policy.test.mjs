@@ -55,8 +55,14 @@ test('ordinary results containing policy text are not rewritten', t => {
   assert.equal(reply(t, page).text, page);
 });
 
-test('the launcher selects strict payments only for the exact always setting', () => {
-  for (const [value, expected] of [[undefined, 'requested'], ['always', 'always'], ['ALWAYS', 'requested'], ['0', 'requested']]) {
+test('never rewrites the engine policy exactly as requested does', t => {
+  assert.equal(reply(t, docs, { confirmPayments: 'never' }).text, reply(t, docs, { confirmPayments: 'requested' }).text);
+  assert.notEqual(reply(t, docs, { confirmPayments: 'never' }).text, docs);
+});
+
+test('the launcher selects strict payments only for the exact always setting and the opt-out only for the exact never setting', () => {
+  for (const [value, expected] of [[undefined, 'requested'], ['always', 'always'], ['ALWAYS', 'requested'], ['0', 'requested'],
+    ['never', 'never'], ['Never', 'requested'], ['NEVER', 'requested'], [' never', 'requested'], ['', 'requested'], ['requested', 'requested']]) {
     assert.equal(launch.paymentConfirmationSetting?.({ SLEIGHT_CONFIRM_PAYMENTS: value }), expected);
   }
 });

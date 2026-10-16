@@ -4,10 +4,11 @@
 
 Copyright (c) Microsoft Corporation. Licensed under Apache License 2.0.
 
-The complete package is retained unchanged at `vendor/playwright-core/` from the owner's
-accepted 1.64.0 FowlBrowser cache distribution. It contains 115 files (13,655,528 bytes).
-`lib/direct-browser/inspectors/playwright-files.json` records the SHA-256 of every file.
-The manifest SHA-256 is `1aa229ee7e6943ee675f5ff74f0982573073ed04f426ee444a9f702566b97ed7`.
+The runtime at `vendor/playwright-core/` comes from the owner's accepted 1.64.0 FowlBrowser cache distribution.
+The `lib/vite`, `types`, `lib/webp_codec.wasm`, `lib/tools` and `bin` groups are omitted.
+The remaining 25 files total 6,926,344 bytes.
+`lib/direct-browser/inspectors/playwright-files.json` records the SHA-256 of every retained file.
+The manifest SHA-256 is `007e376d16f021289548f7b8b622d3cfd8923842605eb6213ae5f2299326131c`.
 `lib/coreBundle.js` has SHA-256 `2325ca4c1c83070e89dc49fb82525508f0a68e0cf12e2a624277968da216b7e0`.
 
 The package's full [LICENSE](vendor/playwright-core/LICENSE) and [NOTICE](vendor/playwright-core/NOTICE)
@@ -19,25 +20,17 @@ are retained. Its upstream NOTICE states:
 > This software contains code derived from the Puppeteer project (https://github.com/puppeteer/puppeteer),
 > available under the Apache 2.0 license (https://github.com/puppeteer/puppeteer/blob/master/LICENSE).
 
-There are no modifications to this distribution. The original sleight loader in
-`lib/direct-browser/worlds.mjs` verifies its inventory and loads it only for a trusted turbo caller.
-This source bank has no browser connection, launch hook or runtime activation.
+Retained upstream files are unchanged. LICENSE, NOTICE and ThirdPartyNotices.txt remain in the distribution.
+The sleight loader in `lib/direct-browser/worlds.mjs` verifies the inventory before loading the runtime for a trusted turbo caller.
 
-## Original semantic modules
+## Original shared modules
 
-The original sleight ref, world, closed-root and protected-proof modules are selected from the
-reviewed BP2-4R4 and BP2-5R source banks. Their comments retain design references to
+The original sleight user-file modules and the action layer retain their design references to
 FowlBrowser 8b689249ba4e33d2626487aad930605c62e2c6a7 (MIT) and
 Playwright e8149b8257d32dcf8f72573ecc43e72439da7080 (Apache-2.0).
-These modules contain independently authored sleight code. No FowlBrowser or monorepo
-Playwright source is copied into these modules. Their production changes join the ref
-identity and closed-root namespace, invalidate in-flight observations on world loss,
-and add inventory verification. The 1.64.0 package pin is separate from the source-study revision.
+These modules contain independently authored sleight code. The 1.64.0 distribution pin is separate from the source-study revision.
 
-The reads, input, effects and waits modules retain the reviewed BP2-4R4 and BP2-6R3
-sources. The attachment, popup and download modules retain the merged BP2-8R3/T
-ownership bank. Their production changes bind leased reads and typed input to the
-host, preserve delivered refs, and limit uncertain-submit recovery to a fresh read.
-The new form and user-file providers are original sleight code. They call the
-unchanged pinned Playwright module through the host's closed node interface.
-No additional dependency or native binary is distributed by this semantic join.
+## Turbo v3 background popups and closed roots
+
+The CR1 popup and closed-root implementations are original sleight code (owner, 2026-10-15). No FowlBrowser code is included.
+

@@ -130,7 +130,7 @@ test('read-only host observer compiles on macOS without starting observation', {
   assert.equal(checked.status, 0, checked.stderr);
   const report = JSON.parse(checked.stdout);
   assert.equal(report.kind, 'subscription-self-test');
-  for (const key of ['partial', 'recovered', 'backgroundLaunch', 'failedLaunch', 'terminated', 'pendingBeforeSubscribe'])
+  for (const key of ['partial', 'recovered', 'backgroundLaunch', 'failedLaunch', 'terminated', 'pendingBeforeSubscribe', 'gone'])
     assert.equal(report[key], true, key);
 });
 

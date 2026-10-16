@@ -14,6 +14,14 @@ function canonical(path) {
   return resolve(realpathSync(parent), relative(parent, resolve(path)));
 }
 
+// The one command that logs an arm's isolated config in. Both the refusal and the readiness report print it. USER stays:
+// without it Claude Code on macOS stores and finds the login under another keychain entry (status read false with only
+// HOME and PATH for a config the owner had just logged in, 2026-10-16).
+export function loginFix({ command, env }) {
+  const assignments = ['HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR'].filter(key => typeof env[key] === 'string').map(key => `${key}=${env[key]}`);
+  return 'env -i ' + commandLine([...assignments, `CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`, command, 'auth', 'login']);
+}
+
 export function assertLogin({ command, env, cwd }, { run = execFileSync, home = homedir() } = {}) {
   const config = env?.CLAUDE_CONFIG_DIR;
   if (!config || !isAbsolute(config) || canonical(config) === canonical(join(home, '.claude'))) {
@@ -28,9 +36,7 @@ export function assertLogin({ command, env, cwd }, { run = execFileSync, home = 
     env: clean, ...(cwd && existsSync(cwd) ? { cwd } : {}), timeout: 10000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   })); } catch { /* A failed or malformed status never admits an arm. */ }
   if (status?.loggedIn === true && status.authMethod === 'claude.ai') return;
-  const assignments = ['HOME', 'PATH', 'TMPDIR'].filter(key => clean[key] !== undefined).map(key => `${key}=${clean[key]}`);
-  throw new Error(`Not logged in to the arm's isolated Claude account (${config}).\nFix: env -i ${commandLine([...assignments,
-    `CLAUDE_CONFIG_DIR=${config}`, command, 'auth', 'login'])}`);
+  throw new Error(`Not logged in to the arm's isolated Claude account (${config}).\nFix: ${loginFix({ command, env: clean })}`);
 }
 
 export function assertSpend({ file = LEDGER_FILE, capUsd = 200, now = new Date() } = {}) {

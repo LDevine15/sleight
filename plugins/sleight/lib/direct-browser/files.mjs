@@ -3,11 +3,20 @@ import { createFileAuthority } from './host-files.mjs';
 import { sameAuthority } from './protected-proof.mjs';
 import { canonical } from './authority.mjs';
 
+// V3 actions consume the existing private-channel provider's single-use bytes.
+// Neither a tool's paths nor the inspected page can supply event or binding.
+export async function stageUserUploads(files, paths, ref) {
+  if (!files?.event || files.binding?.ref !== ref || typeof files.provider?.offer !== 'function' ||
+      typeof files.provider?.stage !== 'function') throw Error('user-named file provider required; use the engine browser path');
+  const handle = files.provider.offer(files.event, paths, ref);
+  return files.provider.stage([handle], files.binding);
+}
+
 // readUserMessage is the private authenticated user channel, never an IPC field
 // or page string. It returns the user's exact message and owning session.
 export function createUserFileProvider({ readUserMessage, resolveInput, current, now = Date.now } = {}) {
   if ([readUserMessage, resolveInput, current, now].some(f => typeof f !== 'function')) throw Error('USER_FILE_PROVIDER_REQUIRED');
-  const offers = new Map(), stages = new Map(); let approval, closed = false;
+  const offers = new Map(), stages = new Map(), requests = new Map(); let approval, closed = false;
   const authority = createFileAuthority({ now, approve: data => approval && canonical(data) === canonical(approval) });
   const reject = () => { throw Error('USER_NAMED_FILE_REQUIRED'); };
   const names = name => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
@@ -37,11 +46,18 @@ export function createUserFileProvider({ readUserMessage, resolveInput, current,
         namedPaths = match[1].split(/,\s*(?=["'])/).map(path => path.replace(/^(["'])(.*)\1$/, '$2'));
       }
       if (!Array.isArray(namedPaths) || canonical(namedPaths) !== canonical(paths) || typeof namedInput !== 'string' || names(namedInput) !== names(input.name)) reject();
+      const first = requests.get(event);
+      if (first) {
+        const entry = offers.get(first);
+        if (!entry || canonical(entry.input) !== canonical(input) || canonical(entry.paths) !== canonical(paths)) reject();
+        return first;
+      }
       // Snapshot canonical identity and bytes while the authenticated request is
       // fresh. A path mentioned only by a page cannot reach this entry.
       const snapshot = authority.checkPaths(paths), issued = now();
       if (!Number.isFinite(issued) || issued < 0) reject();
       const handle = 'f' + randomBytes(16).toString('hex');
+      requests.set(event, handle);
       offers.set(handle, { input: structuredClone(input), paths: [...paths], snapshot, issued });
       return handle;
     },
@@ -60,6 +76,6 @@ export function createUserFileProvider({ readUserMessage, resolveInput, current,
       } finally { approval = undefined; }
     },
     cleanup,
-    dispose() { closed = true; approval = undefined; offers.clear(); return cleanup(); },
+    dispose() { closed = true; approval = undefined; offers.clear(); requests.clear(); return cleanup(); },
   });
 }

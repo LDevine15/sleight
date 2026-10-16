@@ -9,16 +9,18 @@ import { modelId, tokenCost, roundPlan } from '../bench/fowl/accounting.mjs';
 import { roundCost, addRoundSpend } from '../bench/fowl/add-spend.mjs';
 
 const recorded = JSON.parse(readFileSync(new URL('fixtures/fowl-haiku-5-5-result.json', import.meta.url)));
-test('Chrome uses isolated account auth at Haiku high and mixed funding must split rounds', async () => {
+test('Chrome uses isolated account auth at Haiku high and Browser Use must split rounds', async () => {
   const { roundAuth } = await import('../bench/fowl/accounting.mjs');
   assert.equal(typeof roundAuth, 'function');
   assert.equal(roundAuth('haiku', ['claude-in-chrome']), 'account');
   assert.equal(roundAuth('haiku', []), 'account', 'an unsupported-only cohort needs no Claude funding');
   assert.equal(roundAuth('haiku', ['']), 'account', 'empty CLI funding output needs no Claude funding');
   assert.equal(roundAuth('haiku', ['claude-cu', 'claude-in-chrome']), 'account');
-  assert.equal(roundAuth('haiku', ['playwright-mcp']), 'api');
+  assert.equal(roundAuth('haiku', ['playwright-mcp']), 'account', 'every Claude arm runs on the owner login');
+  assert.equal(roundAuth('haiku', ['sleight', 'claude-in-chrome']), 'account');
   assert.equal(roundAuth('opus', ['browser-use']), 'api');
-  assert.throws(() => roundAuth('haiku', ['sleight', 'claude-in-chrome']), /separate rounds/);
+  assert.equal(roundAuth('opus', ['browser-use', 'claude-cu']), 'api');
+  assert.throws(() => roundAuth('haiku', ['sleight', 'browser-use']), /round of its own/);
   assert.equal(roundPlan(['--plan', '--surface', 'claude-in-chrome', '--model', 'haiku']).auth, 'account');
 });
 test('the actual wrapper auth block admits a Haiku Chrome round without reading an API key', t => {

@@ -7,7 +7,7 @@ import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { validateRequest, testEnvironment, tapReport, createRunner, runCommand } from '../scripts/live-dom-runner.mjs';
 
 const commit = 'a'.repeat(40);
-const request = { branch: 'codex/forms', commit, tests: ['tests/fill-form.test.mjs', 'bench/direct-browser2/test/forms-page.test.mjs'], timeoutMs: 1000 };
+const request = { branch: 'codex/forms', commit, tests: ['tests/fill-form.test.mjs', 'bench/direct-native/test/controls.test.mjs'], timeoutMs: 1000 };
 async function fixture(t, options = {}) {
   const root = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-dom-runner-test-')));
   t.after(() => rm(root, { recursive: true, force: true }));

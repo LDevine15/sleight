@@ -29,7 +29,7 @@ function auth(t, { model, surface, tasks, only = '', world = false, remote = '',
 }
 
 test('only-selected login tasks do not require API funding for an excluded browser arm', t => {
-  const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'browser', surface: 'sleight' }];
+  const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'browser', surface: 'browser-use' }];
   assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, only: 'login', spent: 190 }), 'account:');
   assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks, only: 'browser', spent: 190, status: 1 }), '');
 });
@@ -58,8 +58,8 @@ for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']
   });
 }
 for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5']) {
-  test(`a mixed interactive and print cohort keeps API auth for ${model}`, t => {
-    assert.equal(auth(t, { model, surface: 'claude-cu', tasks: [{ surface: 'claude-cu' }, { surface: 'sleight' }] }), 'api:sk-ant-fixture');
+  test(`a mixed interactive and print cohort runs on the login for ${model}`, t => {
+    assert.equal(auth(t, { model, surface: 'claude-cu', tasks: [{ surface: 'claude-cu' }, { surface: 'sleight' }] }), 'account:');
     assert.equal(auth(t, { model, surface: 'sleight', tasks: [{ surface: 'claude-cu' }] }), 'account:');
   });
   for (const surface of ['', 'fowlbrowser']) {
@@ -67,11 +67,11 @@ for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5']) {
       const tasks = [{ name: 'login', surface: 'claude-cu' }, { name: 'default' }];
       if (!loginFirst) tasks.reverse();
       const name = `${model}, ${surface ? 'explicit' : 'implicit'} FowlBrowser, login ${loginFirst ? 'first' : 'last'}`;
-      test(`a default task retains API auth: ${name}`, t => {
-        assert.equal(auth(t, { model, surface, tasks }), 'api:sk-ant-fixture');
+      test(`a default task runs on the login: ${name}`, t => {
+        assert.equal(auth(t, { model, surface, tasks }), 'account:');
       });
-      test(`a default task still refuses at the API cap: ${name}`, t => {
-        assert.equal(auth(t, { model, surface, tasks, spent: 190, status: 1 }), '');
+      test(`a default task ignores the API cap: ${name}`, t => {
+        assert.equal(auth(t, { model, surface, tasks, spent: 190 }), 'account:');
       });
     }
   }
@@ -80,8 +80,11 @@ for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5']) {
 test('Browser Use keeps API auth when mixed with an Opus interactive arm', t => {
   assert.equal(auth(t, { model: 'claude-opus-5-5', surface: 'claude-cu', tasks: [{ surface: 'claude-cu' }, { surface: 'browser-use' }] }), 'api:sk-ant-fixture');
 });
-test('the API cap refuses a mixed cohort and leaves a pure login cohort eligible', t => {
-  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', spent: 190, status: 1 }), '');
+test('Browser Use beside another Claude arm is refused, since that arm would see the API key', t => {
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', tasks: [{}, { surface: 'browser-use' }], status: 1 }), '');
+});
+test('the API cap refuses a Browser Use cohort and leaves a pure login cohort eligible', t => {
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'browser-use', spent: 190, status: 1 }), '');
   assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'claude-cu', spent: 190 }), 'account:');
 });
 
@@ -141,14 +144,14 @@ test('unresolved API cost survives the month boundary without a ledger rewrite',
 });
 for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5']) {
   for (const tasks of [[{ surface: 'claude-cu' }, {}], [{}, { surface: 'claude-cu' }]]) {
-    test(`default browser task keeps API admission in either order: ${model}, ${JSON.stringify(tasks)}`, t => {
-      assert.equal(auth(t, { model, surface: '', tasks }), 'api:sk-ant-fixture');
-      assert.equal(auth(t, { model, surface: '', tasks, spent: 190, status: 1 }), '');
+    test(`default browser task runs on the login in either order: ${model}, ${JSON.stringify(tasks)}`, t => {
+      assert.equal(auth(t, { model, surface: '', tasks }), 'account:');
+      assert.equal(auth(t, { model, surface: '', tasks, spent: 190 }), 'account:');
     });
   }
 }
 test('a prior-month unresolved cost still refuses API admission', t => {
-  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'sleight', spent: 0,
+  assert.equal(auth(t, { model: 'claude-haiku-5-5', surface: 'browser-use', spent: 0,
     month: '2020-01', unpriced: true, status: 1 }), '');
 });
 test('month rollover retains unresolved cost and owner metadata', t => {

@@ -8,9 +8,10 @@ import Foundation
 // The same policy runs with injected registrations in the offline self-test.
 final class WindowSubscriptions {
     private var registered = [Int: Bool]()
-    private let subscribe: (Int) -> Bool
+    // nil means the process is already gone: it can't take focus, so it counts as terminated.
+    private let subscribe: (Int) -> Bool?
     private let report: ([String: Any]) -> Void
-    init(subscribe: @escaping (Int) -> Bool, report: @escaping ([String: Any]) -> Void) {
+    init(subscribe: @escaping (Int) -> Bool?, report: @escaping ([String: Any]) -> Void) {
         self.subscribe = subscribe
         self.report = report
     }
@@ -18,7 +19,7 @@ final class WindowSubscriptions {
     func watch(_ pid: Int) {
         if registered[pid] == true { return }
         report(["kind": "host-window-watch", "pid": pid, "covered": false, "pending": true])
-        let covered = subscribe(pid)
+        guard let covered = subscribe(pid) else { return remove(pid) }
         registered[pid] = covered
         report(["kind": "host-window-watch", "pid": pid, "covered": covered, "pending": false])
     }
@@ -37,13 +38,16 @@ func emit(_ fields: [String: Any]) {
     }
 }
 if Array(CommandLine.arguments.dropFirst()) == ["--self-test"] {
-    var permitted = [10: true, 20: false, 30: true]
+    var permitted: [Int: Bool?] = [10: true, 20: false, 30: true, 50: nil]
     var attempts = [Int](), records = [[String: Any]](), pendingBeforeSubscribe = true
     let subscriptions = WindowSubscriptions(subscribe: { pid in
         attempts.append(pid)
         pendingBeforeSubscribe = pendingBeforeSubscribe && records.last?["pending"] as? Bool == true
         return permitted[pid] ?? false
     }, report: { records.append($0) })
+    subscriptions.watch(50) // Quit between the app listing and the subscription.
+    let gone = subscriptions.complete && records.last?["terminated"] as? Bool == true
+    attempts.removeAll()
     subscriptions.watch(10)
     subscriptions.watch(20)
     let partial = !subscriptions.complete
@@ -57,10 +61,10 @@ if Array(CommandLine.arguments.dropFirst()) == ["--self-test"] {
     let failedLaunch = !subscriptions.complete
     subscriptions.remove(40)
     let terminated = subscriptions.complete
-    guard partial && recovered && launched && failedLaunch && terminated && pendingBeforeSubscribe else { exit(1) }
+    guard gone && partial && recovered && launched && failedLaunch && terminated && pendingBeforeSubscribe else { exit(1) }
     emit(["kind": "subscription-self-test", "partial": partial, "recovered": recovered,
           "backgroundLaunch": launched, "failedLaunch": failedLaunch, "terminated": terminated,
-          "pendingBeforeSubscribe": pendingBeforeSubscribe])
+          "pendingBeforeSubscribe": pendingBeforeSubscribe, "gone": gone])
     exit(0) // Before any NSWorkspace, AX or window metadata access.
 }
 func windowID(_ pid: pid_t) -> Int? {
@@ -92,8 +96,9 @@ func watchWindow(_ app: NSRunningApplication) -> Bool {
 }
 let trusted = AXIsProcessTrusted() // Never request a permission prompt.
 let subscriptions = WindowSubscriptions(subscribe: { pid in
-    guard let app = NSRunningApplication(processIdentifier: pid_t(pid)) else { return false }
-    return watchWindow(app)
+    guard let app = NSRunningApplication(processIdentifier: pid_t(pid)), !app.isTerminated else { return nil }
+    if watchWindow(app) { return true }
+    return kill(pid_t(pid), 0) == 0 || errno != ESRCH ? false : nil
 }, report: emit)
 if trusted {
     for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {

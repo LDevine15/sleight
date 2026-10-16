@@ -1,6 +1,6 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
-# (bench/fowl/sleight-surface.patch). Runs on the owner's API key with no CLAUDE* variables from the host session.
+# (bench/fowl/sleight-surface.patch). Claude arms run on the owner's account login with no CLAUDE* variables from the host session.
 # Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser|fowl+sleight|browser-use [rounds.mjs options]
 set -eu
 PIN=8b68924
@@ -29,13 +29,14 @@ if ! git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
   git checkout -q -- . && git checkout -q "$PIN" && git apply "$REPO/bench/fowl/sleight-surface.patch"
 fi
 [ "$(git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
-# Opus runs on the owner's Claude account (owner, 2026-10-12: parity with FowlBrowser's published runs without
-# spending the API credit). Other models run on the API key, whose monthly credit stops at $200 (LAWS): refuse a round
-# from $190, and add each round's cost to the ledger.
+# Every Claude arm runs on the owner's account login, never the API credit (owner, 2026-10-15, LAWS). Browser Use
+# needs an API key by design, so it runs only in a round of its own (computer use keeps its login beside it), and the
+# spend ledger still refuses it from $190.
 SPEND="$HOME/Library/Logs/sleight/bench-api-spend.json"
-# Task overrides determine whether any arm needs the API key. Computer use always uses its login.
+# Task overrides determine which arms run. Computer use always uses its login.
 SURFACES="$(node "$REPO/bench/fowl/preflight.mjs" --funding-surfaces "$@")"
-AUTH=$(node "$REPO/bench/fowl/accounting.mjs" --auth-mode "$MODEL" "$SURFACES")
+# roundAuth refuses Browser Use beside any Claude arm other than computer use, and answers api only for Browser Use.
+AUTH=$(node "$REPO/bench/fowl/accounting.mjs" --auth-mode "$MODEL" "$SURFACES") || exit 1
 if [ "$AUTH" = account ]; then
   KEY=""
 else

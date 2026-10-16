@@ -3,12 +3,15 @@ import { pathToFileURL } from 'node:url';
 
 export const modelId = model => ({ haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' }[model] ?? model);
 
+// Every Claude arm runs on the owner's account login (owner, 2026-10-15). Only Browser Use needs the API key, and it
+// runs in a round of its own (computer use keeps its login beside it).
 export function roundAuth(model, surfaces) {
   surfaces = surfaces.filter(Boolean);
-  const modes = new Set(surfaces.map(surface => ['claude-cu', 'claude-in-chrome'].includes(surface) ? 'account'
-    : surface === 'browser-use' ? 'api' : /opus/.test(modelId(model)) ? 'account' : 'api'));
-  if (modes.size > 1 && surfaces.includes('claude-in-chrome')) throw new Error('Claude in Chrome and API arms need separate rounds');
-  return modes.has('api') ? 'api' : 'account';
+  if (!surfaces.includes('browser-use')) return 'account';
+  if (surfaces.some(surface => !['browser-use', 'claude-cu'].includes(surface))) {
+    throw new Error('Claude arms run on the owner\'s login; run browser-use, which needs the API key, in a round of its own');
+  }
+  return 'api';
 }
 
 export function roundPlan(args) {

@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..bd3e0f5 100644
+index e7f1db8..db5746f 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,6 @@
@@ -141,7 +141,7 @@ index e7f1db8..bd3e0f5 100644
 +    if (remote) throw new Error('Turbo bench is local only');
 +    const extra = require(path.join(SLEIGHT_REPO, 'bench/turbo/setup.mjs')).turboSetup({ task, repo: SLEIGHT_REPO, dir, prompt: taskPrompt });
 +    mcpServers = extra.mcpServers; allowed = extra.allowed; arm = extra;
-+    prompt = extra.promptPrefix + `${find} and ${open}.\n\n` + prompt;
++    prompt = extra.promptPrefix + prompt; // no engine find/open sentence: it sent the model to cua.listBrowsers() first
 +  } else if (surface === 'sleight') {
 +    // sleight's own launcher with its default surfaces when the extension is connected (browser-only breaks, 2026-10-12), its plugin loaded from the repo for the skill and hooks.
 +    mcpServers = { 'plugin:sleight:computer': { command: path.join(SLEIGHT_REPO, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'browser,computer' } } };
@@ -170,7 +170,7 @@ index e7f1db8..bd3e0f5 100644
 +  if (world) {
 +    const common = require(path.join(SLEIGHT_REPO, 'bench/world/arms/browser.mjs')).worldAgentSetup({ surface: surface === 'sleight-turbo' ? 'fowlbrowser' : surface, dir });
 +    arm = { ...common, ...arm, args: arm?.args || common.args };
-+    prompt = common.promptPrefix + (surface === 'sleight-turbo' ? arm.promptPrefix + `${find} and ${open}.\n\n` : `When cua.createBrowserTab is available, open tabs with cua.createBrowserTab(browserId, url, { sessionName: '${labelOf(task.name)}' }). Other tools accepting sessionName use the same label.\n\n`) + (arm.setupPrefix || '') + taskPrompt;
++    prompt = common.promptPrefix + (surface === 'sleight-turbo' ? arm.promptPrefix : `When cua.createBrowserTab is available, open tabs with cua.createBrowserTab(browserId, url, { sessionName: '${labelOf(task.name)}' }). Other tools accepting sessionName use the same label.\n\n`) + (arm.setupPrefix || '') + taskPrompt;
 +  }
    const args = ['-p', '--model', model, '--effort', effort, '--input-format', 'stream-json', '--output-format', 'stream-json',
      '--verbose', '--strict-mcp-config', '--mcp-config', path.join(dir, 'mcp.json'), '--settings', settings,
@@ -282,7 +282,7 @@ index e7f1db8..bd3e0f5 100644
      if (app && app !== front) { write({ kind: 'front', app, initial: firstFront || undefined }); front = app; }
      firstFront = false;
    };
-@@ -876,25 +979,86 @@ async function startMonitor(hosts, file) {
+@@ -876,25 +979,89 @@ async function startMonitor(hosts, file) {
      }
    };
    const done = Promise.all([loop(tickFront, 250, (t) => ticks.push(t)), loop(tickInventory, 1000)]);
@@ -358,7 +358,10 @@ index e7f1db8..bd3e0f5 100644
 +    // A version-only command cannot start a browser, model session or installer.
 +    if (!versionVerified) verifyWorldAgents([task], { surfaceOf: () => surface, dir });
 +    setup.metadata.versionVerified = true;
-+    fs.writeFileSync(settings, JSON.stringify({ ...roundSettings(surface, { mcpRoot, codex }), ...setup.settingsOverrides }, null, 2));
++    // An arm's hooks join the round's (Stop, Elicitation) per event instead of replacing them.
++    const round = roundSettings(surface, { mcpRoot, codex }), over = setup.settingsOverrides || {};
++    const events = [...new Set([...Object.keys(round.hooks || {}), ...Object.keys(over.hooks || {})])];
++    fs.writeFileSync(settings, JSON.stringify({ ...round, ...over, hooks: Object.fromEntries(events.map((e) => [e, [...(round.hooks?.[e] || []), ...(over.hooks?.[e] || [])]])) }, null, 2));
 +  }
    if (setup.mcpConfig) fs.writeFileSync(path.join(dir, 'mcp.json'), JSON.stringify(setup.mcpConfig, null, 2));
 -  const run = { name: task.name, started: Date.now(), firstToolAt: null, tools: [], result: null, resultAt: null, exitCode: null, killed: false };
@@ -376,7 +379,7 @@ index e7f1db8..bd3e0f5 100644
    // Each stream-json line as it arrived, stamped with `t` (parseTranscript times calls and errors by it). A Codex
    // agent's own events go to codex-events.jsonl, translated into events.jsonl.
    const events = fs.createWriteStream(path.join(dir, 'events.jsonl'));
-@@ -929,20 +1093,24 @@ function runAgent(task, out, { model, effort, mcpRoot, hosts, surface, codex })
+@@ -929,20 +1096,24 @@ function runAgent(task, out, { model, effort, mcpRoot, hosts, surface, codex })
    return (async () => {
      await gotResult;
      clearTimeout(cap);
@@ -410,7 +413,7 @@ index e7f1db8..bd3e0f5 100644
      return run;
    })();
  }
-@@ -977,7 +1145,7 @@ function htmlReport(rows) {
+@@ -977,7 +1148,7 @@ function htmlReport(rows) {
  // (a Mac without the user entry). Preflight: the proxy, ChatGPT's node and a live Codex browser socket.
  function loadCodex(args) {
    const home = os.homedir();
@@ -419,7 +422,7 @@ index e7f1db8..bd3e0f5 100644
    if (!entry) {
      const pluginDir = path.join(home, '.codex/plugins/cache/openai-bundled/unified-computer-use');
      const version = fs.existsSync(pluginDir) ? fs.readdirSync(pluginDir).sort().at(-1) : null;
-@@ -1035,7 +1203,7 @@ export async function takeoverAct(task, hosts, finished) {
+@@ -1035,7 +1206,7 @@ export async function takeoverAct(task, hosts, finished) {
      const tab = Object.values(await inventory(hosts)).filter((t) => tagged(task.name, t.url)).sort((a, b) => b.id - a.id)[0];
      if (!tab) return { error: 'no tab of the agent on the demo site' };
      from = Date.now();
@@ -428,7 +431,7 @@ index e7f1db8..bd3e0f5 100644
      await sleep(600);
      const windows = (await cua('list_windows', { on_screen_only: true })).windows
        .filter((w) => w.app_name === BROWSER_APP[tab.browser]).sort((a, b) => (b.z_index ?? 0) - (a.z_index ?? 0));
-@@ -1066,7 +1234,7 @@ function listDownloads(dir) {
+@@ -1066,7 +1237,7 @@ function listDownloads(dir) {
  // --- Main ---
  
  async function main() {
@@ -437,7 +440,7 @@ index e7f1db8..bd3e0f5 100644
    const args = {};
    for (let i = 2; i < process.argv.length; i++) {
      const a = process.argv[i].slice(2);
-@@ -1083,24 +1251,60 @@ async function main() {
+@@ -1083,24 +1254,60 @@ async function main() {
      tasks = tasks.filter((t) => !t.takeover);
    }
    const surface = args.surface || 'fowlbrowser';
@@ -502,13 +505,13 @@ index e7f1db8..bd3e0f5 100644
  
    // --serve: the sites the tasks grade against (forms.json, codex-h2h.json), up before the agents and killed after grading.
    let server = null;
-@@ -1120,8 +1324,11 @@ async function main() {
+@@ -1120,8 +1327,11 @@ async function main() {
    }
  
    // Only browsers with FowlBrowser connected are watched; a task in one that isn't stops the round before it starts.
 -  const hosts = Object.fromEntries((await Promise.all(BROWSERS.map(async (b) => [b, await connectHost(b).catch(() => null)]))).filter(([, host]) => host));
 -  const missing = [...new Set(tasks.map((t) => t.browser))].filter((b) => !hosts[b]);
-+  const watchBrowsers = [...new Set(tasks.filter((t) => surfaceOf(t) !== 'browser-use').map((t) => t.browser))];
++  const watchBrowsers = [...new Set(tasks.filter((t) => !['browser-use', 'sleight-turbo'].includes(surfaceOf(t))).map((t) => t.browser))];
 +  const hosts = watchBrowsers.length
 +    ? Object.fromEntries((await Promise.all(BROWSERS.map(async (b) => [b, await connectHost(b).catch(() => null)]))).filter(([, host]) => host))
 +    : {};
@@ -516,7 +519,7 @@ index e7f1db8..bd3e0f5 100644
    if (missing.length) {
      console.error(`Not connected: ${missing.join(', ')} (no FowlBrowser socket in ${remote ? `${remote.host}:~/.fowlbrowser` : SOCKET_DIR}). Open the browser with the extension loaded, ` +
        'or pick tasks with --only, or move them to the other browser with --swap.');
-@@ -1132,19 +1339,22 @@ async function main() {
+@@ -1132,19 +1342,22 @@ async function main() {
    const roundStart = Date.now();
    const start = await inventory(hosts);
    const startKeys = new Set(Object.keys(start));
@@ -542,7 +545,7 @@ index e7f1db8..bd3e0f5 100644
    const grades = await Promise.all(tasks.map((t) => t.grade && getJson(t.grade)));
    const sites = await Promise.all(tasks.map((t) => t.site && getJson(t.site.log)));
    sites.forEach((site, i) => site && fs.writeFileSync(path.join(out, tasks[i].name, 'site.json'), JSON.stringify(site, null, 1)));
-@@ -1152,6 +1362,9 @@ async function main() {
+@@ -1152,6 +1365,9 @@ async function main() {
    server?.kill();
  
    // Grade
@@ -552,7 +555,7 @@ index e7f1db8..bd3e0f5 100644
    const journals = tasks.map((t) => readJsonl(path.join(out, t.name, 'journal.jsonl')));
    const transcripts = tasks.map((t) => parseTranscript(readJsonl(path.join(out, t.name, 'events.jsonl')) || []));
    const elicitations = tasks.map((t, i) => elicitationsOf(readJsonl(path.join(out, t.name, 'elicitations.jsonl')) || [], transcripts[i].calls));
-@@ -1181,19 +1394,23 @@ async function main() {
+@@ -1181,19 +1397,23 @@ async function main() {
    const rows = tasks.map((task, i) => {
      const run = runs[i]; const journal = journals[i]; const site = sites[i]; const mySurface = surfaceOf(task);
      const controlled = controlledBy(mySurface, task.name);
@@ -586,7 +589,7 @@ index e7f1db8..bd3e0f5 100644
      const timing = gradeTime({ task, run, journal });
      const tokens = gradeTokens(run);
      const callCell = gradeCalls(transcripts[i], elicitations[i]);
-@@ -1201,14 +1418,15 @@ async function main() {
+@@ -1201,14 +1421,15 @@ async function main() {
      for (const p of outcome.problems) problems.push(`${task.name} · outcome · ${p}`);
      for (const p of checks) problems.push(`${task.name} · ${p}`);
      for (const p of cursor.problems) problems.push(`${task.name} · cursor · ${p}`);
@@ -604,7 +607,7 @@ index e7f1db8..bd3e0f5 100644
    });
    const touched = new Set([...journals.flatMap((journal) => (journal || []).map((e) => e.tab).filter(Boolean)),
      ...tasks.flatMap((t, i) => (isCodex(surfaceOf(t)) ? transcripts[i].tabRefs.map((id) => `${t.browser}:${id}`) : surfaceOf(t) === 'devtools' ? [...runs[i].tabs] : []))]);
-@@ -1225,14 +1443,14 @@ async function main() {
+@@ -1225,14 +1446,14 @@ async function main() {
    const created = new Set(tasks.flatMap((t, i) => (isCodex(surfaceOf(t)) ? [...codexCreatedTabs({ browser: t.browser, transcript: transcripts[i], startKeys })]
      : surfaceOf(t) === 'devtools' ? [...runs[i].tabs].filter((k) => !startKeys.has(k)) : [...createdTabs([journals[i]], startKeys)])));
    if (!args['keep-tabs']) {
@@ -621,7 +624,7 @@ index e7f1db8..bd3e0f5 100644
        catch (err) { problems.push(`round · teardown · could not close ${k}: ${err.message}`); }
      }
    }
-@@ -1253,11 +1471,13 @@ async function main() {
+@@ -1253,11 +1474,13 @@ async function main() {
    for (const host of Object.values(hosts)) host.close();
    if (remote) for (const p of await remote.close()) problems.push(`round · remote · ${p}`);
  

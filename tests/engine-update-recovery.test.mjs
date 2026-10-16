@@ -6,7 +6,8 @@ import { createContext, runInContext } from 'node:vm';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
 import { createStartupCache } from '../plugins/sleight/lib/startup-cache.mjs';
-import { createFrontend } from '../plugins/sleight/lib/direct-browser/surface.mjs';
+import { EventEmitter } from 'node:events';
+import { createV3Bridge, createV3Frontend, serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,25 @@ const approval = (app = 'Example') => ({ id: 'permission', method: 'elicitation/
   _meta: { connector_id: 'computer-use', persist: ['session'], tool_params: { app }, riskLevel: 'low' } } });
 const flush = async () => { for (let n = 0; n < 10; n++) await setImmediate(); };
 const until = async condition => { for (let n = 0; n < 200 && !condition(); n++) await setImmediate(); };
+
+// A turbo v3 frontend over an in-process worker channel. `ends` counts the end frames the worker received.
+async function v3Frontend(t, call = async () => ({ text: 'plain result', isError: false })) {
+  const child = new EventEmitter(), endpoint = new EventEmitter(), counts = { ends: 0 };
+  child.connected = endpoint.connected = true;
+  child.send = value => { queueMicrotask(() => endpoint.emit('message', structuredClone(value))); };
+  endpoint.send = value => { queueMicrotask(() => child.emit('message', structuredClone(value))); };
+  child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
+  child.unref = () => {};
+  endpoint.on('message', frame => { if (frame.method === 'end') counts.ends++; });
+  const session = serveV3Worker({ channel: endpoint, browser: 'bfixture', async begin() {
+    return { call, delivered: () => true, async end() { return { revoked: true, cleanup: [] }; } };
+  } });
+  const bridge = await createV3Bridge({}, { readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
+    forkWorker() { queueMicrotask(() => session.ready()); return child; } });
+  t.after(() => bridge.detach());
+  assert.equal(await bridge.bind({ ...bridge.bootstrapEnvelope(), event: 'begin', turn: 'turn1', text: 'read the page' }), true);
+  return { directBrowser: createV3Frontend(bridge), counts };
+}
 
 function fixture(t, options = {}) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), replies = [], engines = [];
@@ -218,17 +238,17 @@ test('Stop after a failed reconnect makes the next engine start a fresh turn', a
 });
 
 test('an engine that dies on its own revokes direct browser work and still recovers on the next call', async t => {
-  let ended = 0;
-  const directBrowser = await createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true, status: () => 'connected',
-    redact: value => value, endSession: () => { ended++; return { revoked: true, cleanup: [] }; }, client: { request: () => ({}) } });
+  const { directBrowser, counts } = await v3Frontend(t);
   const h = fixture(t, { relay: { directBrowser } });
   h.call(1, 'await cua.getApp("Example")'); h.reply(1);
   h.relay.engineEnded('Engine exited (25).');
-  assert.equal(ended, 1);
+  await until(() => counts.ends === 1);
+  assert.equal(counts.ends, 1);
   h.call(2, 'await cua.getApp("Example")');
   await until(() => h.engines[1]?.sent.some(msg => msg.id === 2));
   assert.equal(h.starts, 1);
-  assert.equal(ended, 1, 'the recovery does not end the work twice');
+  await flush();
+  assert.equal(counts.ends, 1, 'the recovery does not end the work twice');
   h.reply(2);
   await flush();
   assert.ok(!h.replies.find(msg => msg.id === 2).result.isError);
@@ -267,17 +287,15 @@ test('a handle rebound to another app by a read is reacquired by the new app, no
 
 test('a direct browser call running when the engine dies is answered once', async t => {
   let finish;
-  const directBrowser = await createFrontend({ proof: {}, verifyOptIn: () => true, packageCurrent: () => true, status: () => 'connected',
-    redact: value => value, endSession: () => ({ revoked: true, cleanup: [] }),
-    client: { request: () => new Promise(resolve => { finish = resolve; }) } });
+  const { directBrowser } = await v3Frontend(t, () => new Promise(resolve => { finish = resolve; }));
   const h = fixture(t, { relay: { directBrowser } });
-  h.send({ id: 7, method: 'tools/call', params: { name: 'browser_act', arguments: { tab: 't1', op: 'click', ref: 'r1' } } });
-  await flush();
+  h.send({ id: 7, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' } } });
+  await until(() => finish);
   h.relay.engineEnded('Engine exited (25).');
   await flush();
   assert.equal(h.replies.filter(msg => msg.id === 7).length, 1);
   assert.equal(h.replies.find(msg => msg.id === 7).result.isError, true);
-  finish?.({ completed: 1, effect: 'verified', observation: { complete: true } });
+  finish?.({ text: 'late result', isError: false });
   await flush();
   assert.equal(h.replies.filter(msg => msg.id === 7).length, 1, 'the late direct result is not a second reply');
 });

@@ -21,8 +21,7 @@ import { discoverExtensions, createBrowserSelection } from './browser-discovery.
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
-import { isFrontend, isFrontendSession, createInstalledFrontend } from './direct-browser/surface.mjs';
-import { createTurnHookChannel } from './direct-browser/lifecycle.mjs';
+import { isV3Frontend, createV3Frontend } from './direct-browser/worker.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
@@ -217,8 +216,11 @@ export function approvalLogging(preapproved, env = process.env, auditDirectory) 
 // prompt gives up (cancel) after five minutes; the engine waits that long.
 const LIB = dirname(fileURLToPath(import.meta.url));
 
+// 'always' keeps every payment confirmation. 'never' (the user's own opt-out, an MCP-server env var the model and pages cannot set) drops the
+// one confirmation for a payment the user's message asked for. Anything else, unset included, is 'requested'. Exact match, as for 'always'.
 export function paymentConfirmationSetting(env = process.env) {
-  return env.SLEIGHT_CONFIRM_PAYMENTS === 'always' ? 'always' : 'requested';
+  const value = env.SLEIGHT_CONFIRM_PAYMENTS;
+  return value === 'always' || value === 'never' ? value : 'requested';
 }
 
 // The skill's body, sent after the engine's first-call docs. Missing or unreadable means none.
@@ -640,7 +642,7 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
 // branded frontend. Environment and project settings cannot supply one.
 export function directBrowserServer(server, frontend) {
   if (frontend === undefined) return server;
-  if (!isFrontend(frontend)) throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (!isV3Frontend(frontend)) throw Error('TRUSTED_ROUTE_REQUIRED');
   return { ...server, env: { ...server.env, CUA_REPL_ENABLED_SURFACES: 'browser,computer' } };
 }
 
@@ -648,57 +650,33 @@ export function directBrowserServer(server, frontend) {
 // the compact browser section; default and lean engine skills stay unchanged.
 export function directBrowserRules(rules, frontend) {
   if (frontend === undefined) return rules;
-  if (!isFrontend(frontend) || !/^b[A-Za-z0-9_-]{1,63}$/.test(frontend.browser ?? '') || typeof rules !== 'string') throw Error('TRUSTED_ROUTE_REQUIRED');
+  if (!isV3Frontend(frontend) || !/^b[A-Za-z0-9_-]{1,63}$/.test(frontend.browser ?? '') || typeof rules !== 'string') throw Error('TRUSTED_ROUTE_REQUIRED');
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
   if (!section.test(rules)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  const compact = readFileSync(join(LIB, '../skills/drive-mac-apps/BROWSERS.turbo.md'), 'utf8').trimEnd()
-    .replace('{browser}', frontend.browser);
+  const compact = readFileSync(join(LIB, '../skills/drive-mac-apps/BROWSERS.turbo-v3.md'), 'utf8').trimEnd()
+    .replace('{browser}', frontend.browser).replace('{application}', frontend.application ? ` (${frontend.application})` : '');
   return rules.replace(section, compact + '\n');
 }
 
-// Only the fixed installed host supplies these dedicated inherited pipes. They
-// are not environment settings, MCP arguments or the model's input stream.
-export function directBrowserTurnHook(frontend, pipes) {
-  if (frontend === undefined && pipes === undefined) return undefined;
-  if (!isFrontend(frontend) || !pipes) throw Error('TRUSTED_ROUTE_REQUIRED');
-  return createTurnHookChannel({ ...pipes, frontend });
+// Typed v3 unavailability is handled by installed startup, which keeps the
+// engine route available. Retired factories never get a second connection.
+function installedUnavailable(code) {
+  process.stderr.write(`sleight: turbo unavailable (${code}); using the engine. Check turbo settings and run sleight-mcp --doctor before retrying turbo.\n`);
+}
+export async function createInstalledBrowserBridge(factories) {
+  return (factories?.v3 ?? (await import('./direct-browser/worker.mjs')).createV3Bridge)();
 }
 
-// Private loader join. A controller is branded by the concrete broker host;
-// settings, environment and MCP input cannot provide one. Validate inherited
-// hook ownership before offering opt-in, and fence partial startup on failure.
-export async function prepareDirectBrowser({ directSession, directBrowser, directTurnHook } = {}) {
-  if (directSession === undefined) return { directBrowser, turnHook: directBrowserTurnHook(directBrowser, directTurnHook) };
-  if (!isFrontendSession(directSession) || directBrowser !== undefined) throw Error('TRUSTED_ROUTE_REQUIRED');
+export async function prepareInstalledStartup(factory, unavailable = installedUnavailable) {
   try {
-    const ownership = directSession.ownership;
-    if (!directTurnHook || ['session', 'turn', 'brokerEpoch'].some(key => directTurnHook[key] !== ownership[key]) ||
-        ['read', 'write'].some(key => typeof directTurnHook[key]?.on !== 'function' || typeof directTurnHook[key]?.off !== 'function') ||
-        typeof directTurnHook.write.write !== 'function') throw Error('TRUSTED_ROUTE_REQUIRED');
-    const frontend = await directSession.enable();
-    if (!frontend) { await directSession.end(); return { directBrowser: undefined, turnHook: undefined }; }
-    return { directBrowser: frontend, turnHook: directBrowserTurnHook(frontend, directTurnHook) };
-  } catch (error) { await directSession.end(); throw error; }
-}
-
-export async function prepareInstalledBrowser(runtime) {
-  const { isInstalledRuntime } = await import('./direct-browser/startup.mjs');
-  if (!isInstalledRuntime(runtime)) throw Error('TRUSTED_ROUTE_REQUIRED');
-  return { directBrowser: await runtime.ready(), turnHook: { close: () => runtime.close() } };
-}
-
-export async function prepareInstalledStartup(factory, unavailable = code => process.stderr.write(`sleight: turbo unavailable (${code}); using the engine.\n`)) {
-  let bridge;
-  try { bridge = await (factory ?? (await import('./direct-browser/installed-bridge.mjs')).createInstalledBridge)(); }
-  catch (error) {
-    if (!['NATIVE_HELPERS_UNAVAILABLE', 'HOST_BUILD_BUSY', 'HOST_CACHE_UNSAFE', 'SELECTED_PATH_UNSAFE',
-      'SELECTED_PROCESS_UNPROVED', 'SELECTED_ENDPOINT_UNPROVED', 'SELECTED_LISTENER_UNPROVED',
-      'INSTALLED_WORKER_UNAVAILABLE'].includes(error.message)) throw error;
-    unavailable(error.message); return { directBrowser: undefined, directHost: undefined };
+    const bridge = await (factory ?? (() => createInstalledBrowserBridge()))();
+    if (!bridge) return { directBrowser: undefined, directHost: undefined };
+    return { directBrowser: createV3Frontend(bridge), directHost: bridge, turnHook: { close: () => bridge.detach() } };
+  } catch (error) {
+    const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_STARTUP_FAILED';
+    unavailable(code);
+    return { directBrowser: undefined, directHost: undefined, turboUnavailable: code };
   }
-  if (!bridge) return { directBrowser: undefined, directHost: undefined };
-  return { directBrowser: createInstalledFrontend(bridge), directHost: bridge,
-    turnHook: { close: () => bridge.detach() } };
 }
 
 export function turboState(readConfig) {
@@ -706,9 +684,8 @@ export function turboState(readConfig) {
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directSession, directBrowser, directTurnHook } = {}) {
-  const prepared = directSession === undefined && directBrowser === undefined && directTurnHook === undefined
-    ? await prepareInstalledStartup() : await prepareDirectBrowser({ directSession, directBrowser, directTurnHook });
+  directBrowser } = {}) {
+  const prepared = directBrowser === undefined ? await prepareInstalledStartup() : { directBrowser };
   directBrowser = prepared.directBrowser;
   const turnHook = prepared.turnHook;
   process.once('exit', () => { turnHook?.close(); });
@@ -791,7 +768,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const approval = approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
-    directBrowser,
+    directBrowser, turboUnavailable: prepared.turboUnavailable,
     directHost: prepared.directHost,
     startupCache: createStartupCache({ identity: startupIdentity(activeServer, join(LIB, '..')) }),
     browserChoice: browserSelection.choice,
