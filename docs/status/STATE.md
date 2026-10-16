@@ -9,11 +9,11 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). OWNER AWAKE 2026-10-16T12:
 
 **Today (owner, 2026-10-16 morning): release 1.3.0, then the video.** Turbo is the default and the release notes are approved
 (merged, `370cff01`, full check passed). sleight's Puddle windows have priority today.
-- **Release blocker found:** nothing in the product writes `turbo.json`, so no real user can enable turbo. The gate measured
-  turbo's modules through a benchmark-only server. Agent `turbo-default` is building the install path on `arch/turbo-default`:
-  `turbo-setup.mjs`, startup (re)write unless the user set `enabled: false`, `sleight-mcp turbo on|off|status`, a doctor
-  section, and docs. Then a live qualification with the owner present (Chrome or Helium consent, never the owner's main Chrome
-  profile), then the release pass.
+- **Turbo on by default is merged** (`pane/auto-mode` `7d4f46a6`, full check passed). `turbo-setup.mjs` writes `turbo.json` at
+  startup unless the user ran `sleight-mcp turbo off`. `turbo on|off|status` and a doctor section are added, the write guard
+  refuses wrapped spellings (env, nohup, timeout, interpreter flags, sh -c, chains), and the package walk ignores `.in_use` and `.claude-plugin/types`, which Claude Code writes into
+  the plugin folder. Chrome's executable on this Mac is mode 775, so setup picks Helium. Next is a live qualification with the
+  owner present in Helium (never the owner's main Chrome profile). The release pass follows.
 - **Chess fixture:** diagnostics are in `c1aed25c`. Asked Puddle for 10 min at 12:40 (`ledger/claims/GATE2/window-chess.sh`).
 - **Electron:** agent `epv3-2b` continues EPV3-2 from `d7538b05` on `arch/epv3-2`.
 - **Owner-present list:** the turbo live qualification, the claude-cu arm's runs (per-session app approval), EPV3-1's consent run
