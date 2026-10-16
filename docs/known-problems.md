@@ -55,6 +55,11 @@ our own runs. Dates and engine versions are given where they matter.
   out. A pass with the Claude app in Split View failed 8 of 21 runs, all in TextEdit, Chess and the
   simulator (`docs/benchmarks/2026-10-08-await-split-view.json`). Moving a window into a full-screen
   Space needs private macOS APIs, so leave full screen while sleight drags.
+- A menu opened by Accessibility in a background app can remain in its tracking loop. The app then ignores quit and window
+  closes. On 2026-10-16 the benchmark's own cleanup did this to TextEdit, Preview and Word (TextEdit's main thread sample showed
+  `NSMenuTrackingSession`), and AXCancel on every menu didn't release TextEdit. The cleanup no longer opens menus in apps it
+  launched. Claude can still open one through the engine. The relay warns that Escape doesn't always close a background
+  menu, and how often a session leaves one open is unmeasured.
 - `drag` can't drop text into another window. `from` and `to` are offsets from one window and must sit in the same text area,
   so the benchmark's textedit-window-drag can't pass through it (0/1 on 2026-10-16, its first run). Whether the engine's
   `app.drag` can move selected text between windows is unmeasured.
