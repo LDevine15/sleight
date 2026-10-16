@@ -287,18 +287,36 @@ function closedUnderUs(window, app, api) {
 }
 
 function closeOwnedWindow(window, request, app, api) {
+  var phase = 'start';
+  try { return closeOwnedWindowSteps(window, request, app, api, function (name) { phase = name; }); }
+  catch (error) {
+    // A stop says which step failed and what the window answered then, so a fix is measured (Chess, 2026-10-16).
+    if (error && error.code === -25205 && api.read && error.message.indexOf('[phase=') === -1) {
+      var probe = function (attribute) { try { var v = api.read(window, attribute); return v === null ? 'null' : 'ok'; } catch (e) { return String(e.code); } };
+      var listed; try { listed = api.listed ? api.listed(app, window) : 'n/a'; } catch (e) { listed = String(e.code); }
+      error.message += ' [phase=' + phase + ' listed=' + listed + ' role=' + probe('AXRole') + ' subrole=' + probe('AXSubrole') +
+        ' sheets=' + probe('AXSheets') + ' children=' + probe('AXChildren') + ' minimized=' + probe('AXMinimized') + ']';
+    }
+    throw error;
+  }
+}
+
+function closeOwnedWindowSteps(window, request, app, api, step) {
   if (!window || !api.exists(window) || closedUnderUs(window, app, api)) return;
+  step('identity');
   if (!api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
   var noDialog = function () {
     if (request.refuseDialogs && api.dialog(app, window, request).length) throw new Error('Application dialog present; fixture cleanup refused');
   };
   var identity = function () { noDialog(); validateOwnedFixture(window, request, app, api, false); };
+  step('close');
   if (request.mode === 'document') {
     var validate = function () { noDialog(); validateOwnedFixture(window, request, app, api, true); };
     validate();
     api.closeDocument(app, validate, request);
   } else api.closeButton(window, identity);
   for (var attempt = 0; attempt < 30; attempt++) {
+    step('wait-' + attempt);
     api.wait();
     if (!api.exists(window) || closedUnderUs(window, app, api)) return;
     if (request.mode === 'document' && !api.matches(window, request, true)) return;
