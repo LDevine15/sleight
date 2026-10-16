@@ -21,13 +21,14 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    merges into `v3-gate` as `arch/gate-ad1`.
 2. One full check on `v3-gate`, then gate rounds with the owner away or headless. On 2026-10-16, over 5 rounds, turbo's median was
    603 s and 4 errors against FowlBrowser's 677 s and 8, which is 89% of FowlBrowser's time, short of the 85% target
-   (docs/benchmarks/2026-10-16-gate.md). Next is `arch/gate-cand`, which adds fixes for the interface misses and form time sinks those
-   rounds showed. It replaces v3-gate only if a turbo A/B of 5 rounds shows a gain.
+   (docs/benchmarks/2026-10-16-gate.md). Their interface misses and form time sinks are fixed in v3-gate `adc5fbc9`, which was faster than the
+   old build in all 5 rounds of a turbo A/B (542 s against 581 s, 0 errors, docs/benchmarks/2026-10-16-turbo-ab.md). Next is 5 gate
+   rounds with both arms on it.
    The original gate runs Haiku 5.5 on both arms in both orders. It runs Haiku 5.5 on both arms in both
    orders, through V9's arm. The targets are 26/26 tasks, at most 85% of FowlBrowser's 677 s (575 s), at most 9 errors (soft failures included), 0
    ToolSearch calls, 0 focus events.
 3. One Opus head-to-head on the owner's account.
-   Before the release pass: `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS).
+   `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS), is built in v3-gate.
 4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB), then the release
    pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
 5. Then the claim post (owner publishes) and the launch video (sleight-arch builds it from the measured claim).

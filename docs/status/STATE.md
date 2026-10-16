@@ -11,13 +11,15 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 target (85%) isn't met (rounds of 573 s and 580 s came close). Both 26/26 under the owner's scoring in every round, 0 focus events
 (observer coverage full after the stale-pid fix), 0 ToolSearch. FowlBrowser paid $268 unpriced in 8 of 10 form-checkout runs.
 
-**Next.** `arch/gate-cand` at `adc5fbc9` (`~/Projects/sleight-wt/gate-cand`) is v3-gate plus `arch/pay-never` (`c01244c6`,
-`SLEIGHT_CONFIRM_PAYMENTS=never`, reviewed) and `arch/turbo-forgive` (`70197b82`): fixes for the interface misses in these rounds
-(listed in its commits) and form-checkout's
-two time sinks (a visually hidden radio under its own label, and a label click refused while the card iframe held focus). 13 focused
-files and all 19 real-page files that cover act and page pass there (`SLEIGHT_LIVE_DOM_TEST=1`, headless). A new real test of the
-hidden radio fails on `ad602918` with the round's "covered" error and passes on the candidate. Before it can replace v3-gate: a
-turbo-only A/B of 5 rounds under a new Puddle HOLD (`SPECS` alternating baseline and candidate in `gate5.sh`), then a full check.
+**Turbo A/B, 02:28 to 02:58 UTC** ([docs/benchmarks/2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md)): the
+candidate `arch/gate-cand` beat v3-gate in all 5 interleaved rounds, median 542 s against 581 s (7%), 0 errors in 130 runs against
+3 to 5 per round. Its full check passed (exit 0 with 0 of 6862 tests failing and 397 real-page tests skipped, mod 49/49), and 19
+real-page files pass with `SLEIGHT_LIVE_DOM_TEST=1`. **v3-gate is now `adc5fbc9`** (fast-forwarded to the candidate, pushed). It
+holds `SLEIGHT_CONFIRM_PAYMENTS=never` and the forgive and form fixes. Against FowlBrowser's 677 s, 542 s would be 80%, which
+is a projection only.
+
+**Next.** Gate rounds (5) with both arms on v3-gate `adc5fbc9` under a Puddle HOLD (`gate5.sh 5`, defaults), then the Opus
+head-to-head.
 
 Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
 the video. ROADMAP.md is the plan. Read it whole.
@@ -39,7 +41,7 @@ alternate the arm order per browser order, and an EXIT trap that touches `/tmp/s
 
 Branches (all on `private`, pushed):
 - `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
-- `v3-gate` at `ad602918` (`~/Projects/sleight-wt/v3-int`, product code as of `a544e303`) is the release build. It is turbo v3 plus the bench funding, arm fixes,
+- `v3-gate` at `adc5fbc9` (`~/Projects/sleight-wt/v3-int`) is the release build. It is turbo v3 plus the bench funding, arm fixes,
   closed-root controls, form speed and option pickers (records in `ledger/claims/GATE2/`), all of AD1 merged as `9585d253`
   (`GATE2/gate-ad1-merge.md`), and the read-redaction fix. Full check on `9585d253` (2026-10-16 01:10 UTC) passed 6414 of 6809 with
   395 skipped (the real-page files skip without `SLEIGHT_LIVE_DOM_TEST=1`). A six-task smoke round there took 191 s against 216 s in
@@ -55,7 +57,7 @@ Next for the gate, in order:
    Puddle's architect for HOLD (`ListAgents`, `SendMessage` to "puddle arch"), wait for "HOLD live", delete
    `/tmp/sleight-bench-done`, check the Mac has been idle a few minutes (`ioreg -c IOHIDSystem | awk '/HIDIdleTime/'`), run both
    preflights with `--world`, then `~/Projects/sleight-wt/ledger/claims/GATE2/gate5.sh [rounds]`. Report the median per arm.
-2. Built: `SLEIGHT_CONFIRM_PAYMENTS=never` on `arch/pay-never`, in the candidate.
+2. Done: `SLEIGHT_CONFIRM_PAYMENTS=never` is in v3-gate `adc5fbc9`.
 3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
 4. Done: EPV3-1's Swift payment sheet accepts exactly once and cancel, like the JS side (`f9e1e919`).
 
