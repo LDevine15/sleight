@@ -2683,7 +2683,7 @@ export function createRelay({
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
       const rewritten = text => rewriteDragAttempt(
-        rewriteTabError(text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }), jsCode);
+        rewriteTabError(text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode), code: jsCode }), jsCode);
       if (jsCode !== undefined && createdTabCall(jsCode) && !openedReads.has(msg.id)) {
         openedReads.add(msg.id);
         const probeId = `sleight-opened-tabs-${nextInternalId++}`, generation = stopGeneration;
