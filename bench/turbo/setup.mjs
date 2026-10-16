@@ -1,10 +1,10 @@
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { compactTools } from '../../plugins/sleight/lib/direct-browser/surface.mjs';
+import { browserTools } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
 import { worldAgentSetup } from '../world/arms/browser.mjs';
 
 export const SURFACE = 'sleight-turbo';
-export const MEASUREMENT = 'production turbo tools and modules plus engine companion; installed path excluded';
+export const MEASUREMENT = 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded';
 export function fixturePolicy(origins) {
   if (!Array.isArray(origins) || !origins.length || origins.some(origin => {
     try { const u = new URL(origin); return u.origin !== origin || u.protocol !== 'http:' ||
@@ -27,28 +27,34 @@ export function fixtureOrigins(task) {
 }
 export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
   const origins = fixtureOrigins(task); if (origins.length) fixturePolicy(origins);
+  // Like the installed surface, the arm shows an opaque browser id plus the application name. The arm drives its own headless
+  // Chromium, which stands in for the browser the task names (as the installed config names the user's Chrome), so the model
+  // matches "in Helium" to the tools it was given.
+  const browser = 'bbench', application = ' (' + (task.browser === 'helium' ? 'Helium' : 'Google Chrome') + ')';
   // Keep setup synchronous for the pinned runner's require(). launch.mjs has
   // top-level await, so read its same skill body without importing the launcher.
   const rules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/'
     + (env.SLEIGHT_PROMPT === 'lean' ? 'SKILL.lean.md' : 'SKILL.md'), import.meta.url), 'utf8')
     .replace(/^---\n[\s\S]*?\n---\n+/, '').trim();
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
-  const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo.md', import.meta.url), 'utf8')
-    .trimEnd().replace('{browser}', 'bbench');
+  const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8')
+    .trimEnd().replace('{browser}', browser).replace('{application}', application);
   if (!section.test(rules)) throw Error('Installed browser skill is missing');
   const installed = rules.replace(section, browserRules + '\n');
   const common = worldAgentSetup({ surface: 'fowlbrowser', dir, hostEnv: env });
   const configDir = join(dirname(dirname(common.env.CLAUDE_CONFIG_DIR)), SURFACE, 'claude-config');
-  return { command: common.command, args: common.args, settings: common.settings,
+  const guard = { matcher: 'mcp__plugin_sleight_computer__js', hooks: [{ type: 'command', timeout: 5,
+    command: `node "${join(repo, 'bench/turbo/engine-browser-guard.mjs')}" ${browser}` }] };
+  return { command: common.command, args: common.args, settings: { ...common.settings, hooks: { PreToolUse: [guard] } },
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
       env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none' } },
-      'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/server.mjs')],
-      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt } } },
-    allowed: [...compactTools().map(tool => 'mcp__sleight-turbo__' + tool.name),
+      'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
+      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
+    allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',
     env: { ...common.env, CLAUDE_CONFIG_DIR: configDir },
     metadata: { ...common.metadata, configDir, surface: SURFACE, measurement: MEASUREMENT,
-      path: 'model-selected', playwright: '1.64.0', profile: 'owned-temporary', headless: true,
-      safety: 'turbo fixture-only; engine approvals and guards', focus: 'host monitor' } };
+      path: 'model-selected', turboVersion: 3, standsInFor: application.slice(2, -1), runtime: 'V10 join required', playwright: '1.64.0', profile: 'owned-temporary', headless: true,
+      safety: 'turbo drives its own headless Chromium (public web reachable, the product guards on top); engine approvals and guards; engine browser calls refused by a bench hook', focus: 'host monitor' } };
 }

@@ -14,6 +14,7 @@ import { webBrowsers } from '../bench/tasks-web.mjs';
 import { WORLD_APPS } from '../bench/world/tasks.mjs';
 import { isNativeArm, nativeArmPlan } from '../bench/world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/world/native-world.mjs';
+import { LOGIN_ARMS, loginTarget } from '../bench/world/login-readiness.mjs';
 import { packageSkip } from './requirements.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
@@ -66,9 +67,9 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
     privateDriverEnvironment, assertPrivateClaudePolicy: () => calls.push('policy audit'),
-    DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: () => auth, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
+    DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: options => { calls.push(['auth mode', options.mode]); return auth; }, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
     CONFIG_DIR: '/isolated/claude',
-    assertLogin: plan => { calls.push(['login preflight', plan]); if (loginError) throw new Error(loginError); },
+    assertLogin: plan => { calls.push(['login preflight', plan]); const message = typeof loginError === 'function' ? loginError(plan) : loginError; if (message) throw new Error(message); },
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
     prepareGenericArm: () => {
       if (preparationError) throw new Error(preparationError);
@@ -120,7 +121,7 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
     },
     runOwned: async (_command, _args, options) => {
       commands.push(_command);
-      envs.push(options.env); options.onStdout(JSON.stringify({ type: 'system', subtype: 'init', apiKeySource: keySource, mcp_servers: [{ name: arm === 'lcu' ? 'lcu' : 'plugin:sleight:computer', status: 'connected' }, ...(extraServer ? [{ name: extraServer, status: 'connected' }] : [])] }) + '\n');
+      envs.push(options.env); options.onStdout(JSON.stringify({ type: 'system', subtype: 'init', apiKeySource: keySource, mcp_servers: [{ name: arm === 'lcu' || /\/lcu-arm$/.test(options.cwd ?? '') ? 'lcu' : 'plugin:sleight:computer', status: 'connected' }, ...(extraServer ? [{ name: extraServer, status: 'connected' }] : [])] }) + '\n');
       preflightDone = true;
       return { groupClean: true };
     },
@@ -247,20 +248,69 @@ test('world live fixtures require an explicit owner-away boundary before CLI sta
   assert.equal(result.envs.length, 0);
 });
 
-test('world refuses login auth before preparing an empty isolated config', async () => {
-  const result = await runner({ suite: 'world', extraArgs: ['--owner-away', '--auth', 'login'] });
-  assert.match(result.error?.message ?? '', /world.*--auth login.*isolated/i);
-  assert.equal(result.directories.length, 0);
-  assert.equal(result.envs.length, 0);
+const loginTargets = () => LOGIN_ARMS.map(name => loginTarget(name, { armHome: '/owner/Library/Caches/sleight-bench', env: {} }));
+const WORLD_ARMS = 'sleight,lcu,cua,peekaboo,claude-cu,codex';
+const LOGIN = { mode: 'login', env: {}, unset: [] };
+const HOME = '/owner/Library/Caches/sleight-bench';
+
+test('world defaults to the account login and keeps the API path behind --auth api', async () => {
+  const modeOf = result => result.calls.find(call => Array.isArray(call) && call[0] === 'auth mode')?.[1];
+  assert.equal(modeOf(await runner({ suite: 'world', arm: 'sleight', auth: LOGIN, extraArgs: ['--owner-away'] })), 'login');
+  assert.equal(modeOf(await runner({ suite: 'world', arm: 'sleight', extraArgs: ['--owner-away', '--auth', 'api'] })), 'api');
+  assert.equal(modeOf(await runner({ suite: 'default', arm: 'sleight' })), 'auto');
 });
 
-test('world refuses auto auth that resolves to login before server or monitor startup', async () => {
-  const result = await runner({ suite: 'world', extraArgs: ['--owner-away', '--auth', 'auto'],
-    auth: { mode: 'login', env: {}, unset: [] } });
-  assert.match(result.error?.message ?? '', /world.*auth.*login.*isolated/i);
-  assert.equal(result.calls.includes('lock'), false);
-  assert.equal(result.calls.includes('real run'), false);
+test('world login checks every Claude arm against its own isolated config and skips Codex', async () => {
+  const result = await runner({ suite: 'world', arm: WORLD_ARMS, auth: LOGIN, drive: true, outcome: { passed: true },
+    base: { CLAUDE_CONFIG_DIR: '/caller/throwaway' }, extraArgs: ['--owner-away', '--auth', 'login'],
+    tasks: [{ id: 'world-fixture', app: 'Preview', prompt: () => 'fixture', timeoutMs: 17000 }] });
+  assert.equal(result.error, undefined, result.logs.join('\n'));
+  assert.ok(result.calls.includes('real run'), result.logs.join('\n'));
+  const plans = result.calls.filter(call => Array.isArray(call) && call[0] === 'login preflight').map(call => call[1]);
+  assert.equal(plans.length, 5);
+  const configs = plans.map(plan => plan.env.CLAUDE_CONFIG_DIR);
+  assert.equal(new Set(configs).size, 5);
+  assert.deepEqual(configs.sort(), loginTargets().map(target => target.config).sort());
+  for (const config of configs) assert.ok(!['/caller/throwaway', '/owner/.claude'].includes(config));
+  for (const plan of plans.filter(plan => plan.env.CLAUDE_CONFIG_DIR !== `${HOME}/claude-cu/claude`)) assert.equal(plan.command, worldCLI(HOME));
+  assert.equal(result.calls.filter(call => call === 'real run').length, 18);
+});
+
+test('world login arms start with no host Claude identity or credential and one config each', async () => {
+  const base = { CLAUDE_CONFIG_DIR: '/caller/throwaway', CLAUDE_CODE_ENTRYPOINT: 'desktop', CLAUDE_SESSION_ID: 'host', CLAUDE_CUSTOM: 'host',
+    ANTHROPIC_API_KEY: 'sk-ant-host', ANTHROPIC_AUTH_TOKEN: 'host', CLAUDE_CODE_OAUTH_TOKEN: 'host' };
+  const result = await runner({ suite: 'world', arm: WORLD_ARMS, auth: LOGIN, drive: true, outcome: { passed: true }, base,
+    extraArgs: ['--owner-away', '--auth', 'login'], tasks: [{ id: 'world-fixture', app: 'Preview', prompt: () => 'fixture', timeoutMs: 17000 }] });
+  assert.equal(result.error, undefined);
+  assert.ok(result.envs.length >= 10);
+  const allowed = new Set(['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY']);
+  for (const env of result.envs) {
+    assert.deepEqual(Object.keys(env).filter(key => /^CLAUDE/.test(key) && !allowed.has(key)), []);
+    for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(env[key], undefined);
+    assert.ok(loginTargets().some(target => target.config === env.CLAUDE_CONFIG_DIR), env.CLAUDE_CONFIG_DIR);
+  }
+  assert.equal(new Set(result.envs.map(env => env.CLAUDE_CONFIG_DIR)).size, 5);
+});
+
+test('world login refuses before any server or task and names every arm that is not logged in with its command', async () => {
+  const result = await runner({ suite: 'world', arm: WORLD_ARMS, auth: LOGIN, drive: true, extraArgs: ['--owner-away', '--auth', 'login'],
+    loginError: plan => /\/(lcu-arm|mcp-peekaboo-arm)\//.test(plan.env.CLAUDE_CONFIG_DIR)
+      ? `Not logged in to the arm's isolated Claude account (${plan.env.CLAUDE_CONFIG_DIR}).\nFix: login ${plan.env.CLAUDE_CONFIG_DIR}` : undefined });
+  assert.equal(result.exitCode, 1);
+  const text = result.logs.join('\n');
+  assert.match(text, /lcu: Not logged in.*\nFix: login ~\/Library\/Caches\/sleight-bench\/lcu-arm\/claude/);
+  assert.match(text, /peekaboo: Not logged in.*\nFix: login ~\/Library\/Caches\/sleight-bench\/mcp-peekaboo-arm\/claude/);
+  assert.doesNotMatch(text, /sleight: Not logged in|cua: Not logged in|claude-cu: Not logged in/);
+  assert.equal(result.commands.length, 0);
   assert.equal(result.envs.length, 0);
+  assert.equal(result.calls.includes('real run'), false);
+});
+
+test('world login refuses a discovery that used an API key instead of the account login', async () => {
+  const result = await runner({ suite: 'world', arm: 'sleight', auth: LOGIN, keySource: 'ANTHROPIC_API_KEY', extraArgs: ['--owner-away', '--auth', 'login'] });
+  assert.equal(result.exitCode, 1);
+  assert.ok(result.logs.some(line => /API key, not the account login/.test(line)));
+  assert.equal(result.calls.includes('real run'), false);
 });
 
 test('only world runs widen the Claude environment filter', async () => {
