@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 20:25 UTC, native-only claim runs, lcu and Peekaboo next, drag reruns after the overlay fix)
+## Banner (2026-10-16 22:30 UTC, claim baseline nearly complete, claude-cu waits for the owner)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -59,6 +59,19 @@ Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle windo
 - Browser tasks are out of the claim runs: fixture tabs opened in the owner's own Helium window (known-problems, "Benchmark
   environment"). The remaining arms run the 7 native tasks. textedit-drag and finder-move get rerun for sleight, codex and cua
   now that the overlay is gone. The lcu arm loads the hooks lcu's setup writes to its project settings (`c37d3fcf`).
+- Native-task medians over passing runs (passes/runs), through 21:38 UTC. Excluded: exposed windows, setup failures, and
+  textedit-drag before the overlay was quit.
+  calculator-click sleight 7.6 (3/3), lcu 8.5 (3/4), codex 11.8 (4/5), cua 30.1 (3/4), peekaboo 33.1 (3/3).
+  calculator-menu sleight 14.9 (3/3), lcu 12.7 (3/4), codex 14.1 (4/5), cua 30.9, peekaboo 27.7.
+  textedit-save sleight 14.6 (3/3), lcu 10.9 (3/4), codex 32.4 (5/5), cua 31.4, peekaboo 0/3.
+  textedit-drag sleight 29.2 (2/2), lcu 0/3, codex 0/2, cua 0/2, peekaboo 0/3.
+  finder-move sleight 33.1 (4/6), lcu 23.4 (1/4), codex 84.6 (1/5), cua 76 (7/7), peekaboo 0/3.
+  preview-read sleight 5.1 (2/3), lcu 5.9, codex 11.0, cua 7.6, peekaboo 4.7 (all 3/3).
+  textedit-calculator sleight 65.1 (1/3), lcu 0/3, codex 57.4 (2/5), cua 81.1 (2/3), peekaboo 0/3.
+  Office, 21:40 UTC: sleight word-edit 3/3 (median 94.9 s) and excel-edit 2/3, codex 0/3 and 0/2, lcu excel-edit 0/2. Stuck
+  Office apps (dialogs the failing arms left) blocked cua's and Peekaboo's setups. A rerun window started at 22:23 UTC.
+  Next: 2 more runs on the close pairs (calculator-click, calculator-menu, preview-read, for sleight, lcu, codex and peekaboo),
+  then claude-cu with the owner present, then the scoring as time to complete the set.
 - Office (word-edit, excel-edit) now runs last for every arm, after the owner answers Excel's recovery prompt. The other 10
   claim tasks run first (`claim-arm.sh ARM "<list>"`).
 - Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
@@ -111,7 +124,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** Nothing. The lcu window (7 native tasks × 3) is being requested.
+**Running now.** The Office rerun chain (cua, Peekaboo, lcu, codex), started 22:23 UTC from a Terminal window.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
