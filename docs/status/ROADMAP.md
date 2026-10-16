@@ -29,7 +29,10 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    ToolSearch calls, 0 focus events.
 3. One Opus head-to-head on the owner's account.
    `SLEIGHT_CONFIRM_PAYMENTS=never`, the user's opt-out of the purchase confirmation (owner, 2026-10-15, in LAWS), is built in v3-gate.
-4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB), then the release
+4. Merge `v3-gate` into `pane/auto-mode`, then V8 and V8R (the v1/v2 removal and slimming, 15.4 MB to 8.2 MB). They are integrated
+   onto v3-gate as `arch/v8-int` `59345e0b` (2026-10-16, 15,960 KB to 8,640 KB, focused tests pass, full check pending). Turbo v3 lacks
+   the hookup animation LAWS names for connecting. Its connected state shows through the consent host's menu bar item with Pause and
+   Disconnect. V8R removed the unwired view model, `indicator.mjs`, which can be restored from `c407cb94`. Then the release
    pass, RP1's CHANGELOG and README changes, and the 1.3.0 tag on the owner's call.
 5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). No work on the film, art included,
    starts until the claim suite (2.2), native apps included, backs the claim that sleight is the fastest at computer use on macOS, in the world. The film costs
