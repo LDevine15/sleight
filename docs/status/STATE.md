@@ -22,7 +22,8 @@ Goal (owner): release 1.3.0, then the native claim and the video, then maintenan
    executable here is mode 775 and refused), and the doctor reads turbo on with remote debugging on. The owner turns on remote debugging
    in Helium (`chrome://inspect/#remote-debugging`, unverified in Helium) and clicks its consent prompt on the first browser task.
    Then `sleight-mcp turbo off` must still be off in a new session. Never the owner's main Chrome profile.
-2. The release pass (`bench/release-pass.mjs`, on the login), with its native, gate, Opus and claim stages. It needs Puddle windows and the owner away.
+2. The release pass, slimmed (owner, 2026-10-16): only the browser gate and the Opus round on the release commit, about an hour
+   with the owner away. Native and claim are covered by the claim baseline. It runs after the turbo live check.
 3. The 1.3.0 tag on the owner's call, then the public push (`SLEIGHT_RELEASE_PUSH=1`) and `gh release create`.
 
 **Claim suite (owner, 2026-10-16, in LAWS).** 12 tasks (`bench/claim-tasks.txt`), 3 runs per arm, 5 where within 20%, and an
