@@ -1466,3 +1466,13 @@ test('the app dialog scan reads an untitled focused window as untitled instead o
   });
   assert.doesNotThrow(() => fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'Chess', token: 'nonce', mode: 'window' }));
 });
+
+test('the app dialog scan skips the sheets of a fixture window the task already closed', () => {
+  const owned = {}, app = {};
+  const fixture = cleanupNative((element, attribute) => {
+    if (element === app && attribute === 'AXFocusedWindow') return { value: null };
+    if (element === owned && attribute === 'AXSheets') return { code: -25202 };
+    return { value: null };
+  });
+  assert.equal(fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'TextEdit', token: 'nonce', mode: 'document' }).length, 0);
+});

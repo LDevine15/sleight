@@ -437,7 +437,8 @@ function nativeAX(state, clock) {
     };
     var focused = read(app, 'AXFocusedWindow');
     var candidates = [];
-    if (owned) candidates = candidates.concat(children(owned, 'AXSheets'));
+    // A fixture window the task already closed is an invalid element (-25202, TextEdit 2026-10-16): it has no sheets left to scan.
+    if (owned) { try { candidates = candidates.concat(children(owned, 'AXSheets')); } catch (error) { if (error.code !== -25202) throw error; } }
     if (focused && (!owned || !$.CFEqual(focused, owned))) {
       if (['AXDialog', 'AXSystemDialog'].indexOf(text(focused, 'AXSubrole')) !== -1 || text(focused, 'AXRole') === 'AXSheet') candidates.push(focused);
       else if (matches(focused, request)) candidates = candidates.concat(children(focused, 'AXSheets'));

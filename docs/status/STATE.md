@@ -3,137 +3,76 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 12:25 UTC, day plan)
+## Banner (2026-10-16 13:55 UTC, flushed before the owner's clear)
 
-OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). OWNER AWAKE 2026-10-16T12:01:40Z (/goodmorning). Night Shift off.
+Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
+2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
 
-**Today (owner, 2026-10-16 morning): release 1.3.0, then the video.** Turbo is the default and the release notes are approved
-(merged, `370cff01`, full check passed). sleight's Puddle windows have priority today.
-- **Turbo on by default is merged** (`pane/auto-mode` `7d4f46a6`, full check passed). `turbo-setup.mjs` writes `turbo.json` at
-  startup unless the user ran `sleight-mcp turbo off`. `turbo on|off|status` and a doctor section are added, the write guard
-  refuses wrapped spellings (env, nohup, timeout, interpreter flags, sh -c, chains), and the package walk ignores `.in_use` and `.claude-plugin/types`, which Claude Code writes into
-  the plugin folder. Chrome's executable on this Mac is mode 775, so setup picks Helium. Next is a live qualification with the
-  owner present in Helium (never the owner's main Chrome profile). The release pass follows.
-- **Electron:** EPV3-2 is built on `arch/epv3-2` `2817c762` (inert, not imported: the app pipe kept outside turn workers, an
-  in-process Playwright transport with no TCP port, and owner-only CDP sessions after a security finding). Focused tests: lifecycle 28,
-  transport 18, adapter 14, channel 5, host 16, ownership 12, all red on the base. Its host acceptance (live) and EPV3-3 come next.
-  It merges after the 1.3.0 tag (`ledger/claims/EPV3-2/REPORT.md`).
-- **Chess fixture, cause found:** W10 (13:31) showed the stop comes from the app-dialog scan before cleanup. A focused Chess window
-  that isn't the fixture has no title (AXTitle -25205). `a65350ba` reads it as untitled (test red on the old code, full check passed).
-  W11 (13:34) stopped at the next check instead: the scan now treats that window as a candidate, and "Application dialog inspection
-  exceeded its bound" stops it. chess-drag is parked. The native pass resumes without it, one arm per Puddle window.
-- **Owner-present list:** the turbo live qualification, the claude-cu arm's runs (per-session app approval), EPV3-1's consent run
-  (menu bar "sleight" item), and closing TextEdit's leftover iCloud Open panel (Cmd+Q).
+**Where it stands.** `pane/auto-mode` (private) is the release line, with the full check passing at every merge today.
+- Gate passed 2026-10-16 07:38 to 08:08 UTC on v3-gate `66ada2bd`: turbo median 547 s (p90 590) and 0 errors in all 5 rounds,
+  against FowlBrowser's 720 s (p90 868), 76%. The Opus head-to-head gave 675 s against 885 s, 76%
+  (docs/benchmarks/2026-10-16-gate.md and -opus.md).
+- Merged into `pane/auto-mode` today: the release build (v3-gate plus V8 and V8R, plugin 8,640 KB), the 1.3.0 release notes (owner
+  approved), turbo on by default (owner's call, `turbo-setup.mjs`, `sleight-mcp turbo on|off|status`, a doctor section, a write
+  guard for wrapped shell spellings, and a package walk that ignores `.in_use` and `.claude-plugin/types`), the release pass on the
+  owner's login, and native fixture fixes. The last full check passed at `a65350ba`. The flush commit adds one more fixture fix.
 
-**Overnight results (owner away, all on the owner's login, Puddle windows W1 to W7).**
-- **Gate passed** on v3-gate `66ada2bd` (07:38 to 08:08): turbo median 547 s (p90 590) and 0 errors in all 5 rounds, against
-  FowlBrowser's 720 s (p90 868), 76%. Both arms 26/26 under the owner's scoring, 0 focus events, 0 ToolSearch
-  (docs/benchmarks/2026-10-16-gate.md, last section). The earlier gate runs that night missed 575 s (603 s and 607 s) until the
-  `find` alternation fix: 193 of 254 empty reads were `a|b` queries (docs/benchmarks/2026-10-16-turbo-ab.md).
-- **Opus head-to-head** on `66ada2bd` (09:18 to 09:50): turbo 675 s (p90 713) against FowlBrowser's 885 s (p90 935), 76%, faster in
-  every round. FowlBrowser paid $268 unpriced in all 10 form-checkout runs (docs/benchmarks/2026-10-16-opus.md).
-- **Release build merged:** `pane/auto-mode` (now `5ddea59f`, with the fixture fix and the release pass on login on top) took the merge at `225f74ca`, which is v3-gate `66ada2bd` plus V8 and V8R (plugin 8,640 KB, down from
-  15,960 KB), merged by agent `release-merge` (`arch/release-merge` `6e7b7102`). The full check passed with exit 0 (5500 tests
-  with 0 failing and 353 skipped, and validate and mod tests clean).
-- **Native first pass, sleight arm only:** 4 passes (calculator-click 7.5 s, calculator-menu 10.3 s, preview-pdf 21.7 s,
-  finder-files 74.7 s) and 3 fails that stopped the pass on fixture cleanup (textedit-save, chess-drag, word-edit). See
-  docs/known-problems.md: `closeOwnedWindow`'s title read (AX -25205), and a TextEdit launch without the persistence
-  arguments. 17 of 27 sleight tasks and the other arms are not run yet. The fixture fixes come first.
+**Release path, in order.**
+1. Live turbo qualification with the owner present (about 10 min). Start a fresh Claude Code session on the dev build and confirm
+   `turbo.json` (0600, browser Helium, since Chrome's executable here is mode 775 and refused). The owner turns on remote debugging
+   in Helium (`chrome://inspect/#remote-debugging`, unverified in Helium) and clicks its consent prompt on the first browser task.
+   Then `sleight-mcp turbo off` must still be off in a new session. Never the owner's main Chrome profile.
+2. The release pass (`bench/release-pass.mjs`, on the login), with its native, gate, Opus and claim stages. It needs Puddle windows and the owner away.
+3. The 1.3.0 tag on the owner's call, then the public push (`SLEIGHT_RELEASE_PUSH=1`) and `gh release create`.
 
-**Next (sleight-arch).** (1) Done offline (`2a51e695`, full check passed, exit 0, 5502 tests with 0 failing): a window the task
-already closed (title unsupported, -25205) counts as closed only when the app's window list no longer holds it, and document fixtures
-launch with the persistence arguments. Its first live run (W8, 11:20 UTC) didn't help Chess: chess-drag
-failed (90.7 s) and stopped the pass on the same AXTitle read, so the Chess window was still in the app's list. The Word case is
-untested. Next: read the window's other attributes at cleanup (subrole, AXDocument, sheets) to see what Chess leaves, then rerun
-the native pass in Puddle windows with chess-drag last. (2) Done: the release pass runs on the owner's login (`5ddea59f`, full check passed). Running it needs an away window plus Puddle
-windows (native sleight and codex at 3 runs, gate both orders twice, Opus once, claim). (3) Drafted for owner review: the 1.3.0 CHANGELOG, README and known-problems on `arch/rl1-int` `4473baab` (codex/rl1
-merged and brought up to tonight's numbers, lint clean, not yet merged into pane/auto-mode). (4) Review EPV3-2 when its agent reports.
+**Native claim pass (owner approved running it with the owner away).** Plan: `ledger/claims/CS3/plan-runs1.json` (162 rows, 6 arms).
+Run one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM "$(cat ledger/claims/CS3/tasks-no-chess.txt)"` with
+`NATIVE_REPO=$HOME/Projects/sleight`. It logs to `ledger/claims/CS3/runs/` and touches `/tmp/sleight-bench-done` on exit. Order:
+sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (per-session app approval).
+- Before cua: start its driver with `/usr/bin/open -n -g --env CUA_DRIVER_RS_TELEMETRY_ENABLED=0 --env CUA_TELEMETRY_ENABLED=0 --env
+  CUA_DRIVER_RS_UPDATE_CHECK=false --env DO_NOT_TRACK=1 "$HOME/Library/Caches/sleight-bench/mcp-cua-arm/CuaDriver.app" --args serve
+  --socket "$HOME/Library/Caches/sleight-bench/mcp-cua-arm/driver.sock"`, and check that the socket exists.
+- Peekaboo's grants belong to Terminal.app, so launch its arm from a Terminal window (`osascript -e 'tell application "Terminal"
+  to do script "…"'`, owner away only).
+- Results so far, sleight arm: calculator-click, calculator-menu, preview-pdf, finder-files and textedit-save pass. textedit-edit
+  failed at 13:43 UTC and its cleanup stopped the pass (AX -25202 on the closed window's sheets, fixed in the flush commit, red test
+  on the old code). chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
+  (docs/known-problems.md).
+- Puddle paused the chain at the owner's clear. Ask "puddle arch" (ListAgents, SendMessage) to restart it, sleight arm first.
+  sleight's windows have priority today (owner, 2026-10-16).
 
-**Owner items.**
-- The 1.3.0 tag, after the release pass. Review the release notes on `arch/rl1-int`.
-- Decided (owner, 2026-10-16 morning): turbo is the default in 1.3.0, and the release notes on `arch/rl1-int` are approved. Today
-  sleight's Puddle windows get priority. The owner trashed TextEdit's Untitled 9 and 10 (done; TextEdit itself still shows its
-  iCloud Open panel and won't quit from a script). The gate measured turbo through a benchmark-only server, and nothing in the
-  product writes `turbo.json` yet. An agent is mapping the real-user enable path before the default is built.
-- Settled: AD1's final measurement is 50 of 98 honest checkouts allowed (`claims/AD1/pay-final.md`). The 46 was a stricter first
-  cut, and LAWS now cites known-problems instead of a number.
-- TextEdit is still running with "Untitled 9" and "Untitled 10", restored from the owner's iCloud TextEdit folder by a fixture
-  launch at 05:43 UTC. They were left untouched for the owner to decide.
-- `~/.local/bin/claude` had vanished (most likely the arm CLI's auto-updater during the owner's hand-run claude-cu session).
-  sleight-arch restored it as a symlink to `~/.local/share/claude/versions/2.1.289`.
-- The claude-cu arm needs the owner present, because its app approvals last one session.
-- EPV3-1's consent run is still owed (its cards open from the "sleight" menu bar item).
+**After the tag (built, merge after 1.3.0).**
+- `arch/epv3-2` `2817c762`: EPV3-2, the Electron app pipe outside turn workers (inert; 93 focused tests; host acceptance owed,
+  `ledger/claims/EPV3-2/REPORT.md`). EPV3-3 is next in `ledger/electron-v3-plan.md`.
+- `arch/epv3-1` `f9e1e919`: EPV3-1, merged into epv3-2's base. Its consent run is owed with the owner (the cards open from the
+  "sleight" menu bar item: `cd ~/Projects/sleight-wt/epv3-1 && node bench/electron-consent-run.mjs --receipt
+  ~/Projects/sleight-wt/ledger/claims/EPV3-1/consent-receipt.json`).
+- `arch/q1-int` `c0aa885c`: the Q1 error-message fixes.
+- IN1 to IN4 (native speed) wait for the native pass to show where sleight loses.
 
-Goal (owner): the published head-to-head showing sleight is the fastest computer use plugin for Mac, then 1.3.0, the claim post and
-the video. ROADMAP.md is the plan. Read it whole.
+**Video.** No work until the native claim backs "fastest on macOS" (owner). The storyboard is `docs/design/video-storyboard.md`
+(`340ba5e2`). LoC's draft paint round is parked unsent on LoC trunk `d8c3ef73` (`artifacts/ARCH-IMAGEGEN-R18/`). Message "loc arch"
+when the claim is measured.
 
-**Earlier: gate round 3, 2026-10-15 21:19 UTC** ([docs/benchmarks/2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md),
-v3-gate `cddc7895`, Haiku 5.5 high, owner's login, `--world`). Turbo 26/26 under the owner's scoring (form-checkout asks before an
-unpriced payment, LAWS; the runner shows 24/26), 590 s, 197 calls, 2 errors. FowlBrowser 26/26 (paid $268 unpriced twice), 750 s,
-276 calls, 7 errors. Both 0 focus events and 0 ToolSearch. A claim needs the median of at least 5 rounds on the release build.
-Earlier that day, the 18:26 UTC round had turbo at 14/26 checked with 31 errors (arm limits), and the 20:07 UTC round at 855 s (slow
-forms). Each round takes about 8 minutes. The gate script is `~/Projects/sleight-wt/ledger/claims/GATE2/gate.sh`: four passes that
-alternate the arm order per browser order, and an EXIT trap that touches `/tmp/sleight-bench-done`.
+**Owner items.** Turbo live qualification, the claude-cu runs and EPV3-1's consent run (all owner-present), the 1.3.0 tag.
 
-**In flight at the flush.**
-- Q1 is integrated on `arch/q1-int` at `0022e9c2` (`~/Projects/sleight-wt/q1-int`, from pane/auto-mode): all 17 error-message
-  fixes, Q1-12 reworked on live engine evidence (1-based line, 0-based column), 584/584 focused tests (`ledger/claims/Q1/INTEGRATION.md`).
-  It adds about 150 characters per error across 22 fixture errors. Q1-17's notice now says what ran (`c0aa885c`: a syntax
-  error did not run, a runtime error may have run up to it). Merges after the 1.3.0 tag.
-- No gate round or benchmark is running. HOLD was released at 02:00:30 UTC.
+**Running now.** Nothing of sleight's and no subagents, and Puddle's chain is paused. The owner asked for no new subagents before the clear.
 
-Branches (all on `private`, pushed):
-- `pane/auto-mode` at the commit holding this banner (RC1 to RC1R3). `~/Projects/sleight` is fast-forwarded to it. 0 open PRs.
-- `v3-gate` at `adc5fbc9` (`~/Projects/sleight-wt/v3-int`) is the release build. It is turbo v3 plus the bench funding, arm fixes,
-  closed-root controls, form speed and option pickers (records in `ledger/claims/GATE2/`), all of AD1 merged as `9585d253`
-  (`GATE2/gate-ad1-merge.md`), and the read-redaction fix. Full check on `9585d253` (2026-10-16 01:10 UTC) passed 6414 of 6809 with
-  395 skipped (the real-page files skip without `SLEIGHT_LIVE_DOM_TEST=1`). A six-task smoke round there took 191 s against 216 s in
-  round 3, and click latency is +4 ms. In that smoke round the focus column read "unqualified" because the host window observer
-  logged `window:false`. Check that focus is measured again before the gate rounds.
-- `arch/epv3-1` at `f9e1e919` (Electron step 1: the per-app debugger consent card and app-document identity, inert until EPV3-7,
-  `ledger/claims/EPV3-1/REPORT.md`). It needs an owner-operated consent run (command in the report). It merges after the tag.
-- After the gate (owner): `codex/v8` `813bca75`, then V8R (queued).
+How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
+with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
+Benchmark windows come from Puddle's architect. Ask with a length and a cap, start on "HOLD live", and release with one fresh
+touch of `/tmp/sleight-bench-done`. The scripts in `ledger/claims/GATE2/` (gate5.sh with `REPO`, `SPECS`, `PREFIX` and `MODEL`) do the touch.
 
-Next for the gate, in order:
-1. Done 2026-10-16 (5 rounds, above). For the candidate's A/B and any later gate rounds (the owner OK'd running them whenever,
-   2026-10-15 21:30 UTC), before each: ask
-   Puddle's architect for HOLD (`ListAgents`, `SendMessage` to "puddle arch"), wait for "HOLD live", delete
-   `/tmp/sleight-bench-done`, check the Mac has been idle a few minutes (`ioreg -c IOHIDSystem | awk '/HIDIdleTime/'`), run both
-   preflights with `--world`, then `~/Projects/sleight-wt/ledger/claims/GATE2/gate5.sh [rounds]`. Report the median per arm.
-2. Done: `SLEIGHT_CONFIRM_PAYMENTS=never` is in v3-gate `adc5fbc9`.
-3. One Opus head-to-head, then merge v3-gate into pane/auto-mode, V8 and V8R, the release pass, RP1's CHANGELOG/README, the tag.
-4. Done: EPV3-1's Swift payment sheet accepts exactly once and cancel, like the JS side (`f9e1e919`).
+This session works in `.claude/worktrees/boot-sleight-arch-*`, because a hook refuses edits in the main checkout: commit there,
+`git push private HEAD:pane/auto-mode`, then `git -C ~/Projects/sleight merge --ff-only <branch>`. A release also pushes
+`HEAD:refs/heads/main` and the tag to `origin` with `SLEIGHT_RELEASE_PUSH=1` (owner's call), then `gh release create` from the
+CHANGELOG section. Public CI is Linux, without `npm install`, on Claude Code 2.1.288. Released so far: `v1.2.0` to `v1.2.5`
+(2026-10-11, public `main` `b2eb9d8`). The owner's install is 1.2.5. Public `origin/pane/auto-mode` stays at `332e3ca`.
 
-Bench setup facts (2026-10-15): the bench arms log in per config dir. `sleight-turbo` and `fowlbrowser` arm configs are logged in
-(Max). Without `--world`, the FowlBrowser arm uses `~/Library/Caches/sleight-bench/fowl-claude-config`, which is NOT logged in, so
-gate rounds use `--world` (both arms on the pinned Claude Code 2.1.289). FowlBrowser's extension is loaded unpacked from
-`~/Library/Application Support/FowlBrowser/extension` in Chrome's "sleight benchmark" profile and in Helium (sockets in
-`~/.fowlbrowser/`). macOS denies reading Chrome's Local State from this session; `ledger/claims/CS2/plans.json` named the profile
-folder `Profile 7`, but `open --args --profile-directory="Profile 7"` opened the owner's normal profile, so that mapping is unreliable.
-
-Haiku 5.5 latency (2026-10-15, turbo arm, 138 gaps): median 2.0 s between tool calls, p90 3.5 s, max 4.4 s. Thinking took a median 0.35 s.
-
-After 1.3.0 (ROADMAP section 2) come Electron on v3 (EPV3-1 to EPV3-8, plan `ledger/electron-v3-plan.md` reviewed MERGE), the claim
-suite, Q1-7 to Q1-17 reviews, IN1 to IN4 on sleight-arch's calls.
-
-How work runs: agents (Sonnet high) build and review, and sleight-arch integrates and runs one full check per merge. Every
-real-page test needs `SLEIGHT_LIVE_DOM_TEST=1` or it skips silently. Agents never `pkill -f`. Competitor code is never adapted
-(LAWS). No Codex lane is running. The real-page runner (`node scripts/live-dom-runner.mjs`, pid 39609) is still up from 2026-10-14.
-
-Owner items: OpenUsage.app may relock the "Claude Code-credentials" keychain item on a token refresh (owner keeps it, 2026-10-14).
-A lane worktree from 2026-10-13 sits inside the main checkout at `private/codex/fm1`. Remove it with `git worktree remove` once
-FM1's evidence is no longer needed. About 20 temporary browser profiles named `sleight-bench-v3-*` remain in the temp dir, left by bench runs.
-
-Released 2026-10-11, each with a GitHub release and green CI: `v1.2.0` through `v1.2.5` (`b2eb9d8`,
-public `main`). The owner's install is 1.2.5. `pane/auto-mode` (private) is at the commit holding this
-banner, and `~/Projects/sleight` is fast-forwarded to it.
-
-This session works in `.claude/worktrees/boot-sleight-arch-*`, because a hook refuses edits in the main
-checkout: fast-forward the worktree branch to `pane/auto-mode`, commit there, `git push private
-HEAD:pane/auto-mode`, then `git -C ~/Projects/sleight merge --ff-only <branch>`. A release also pushes
-`HEAD:refs/heads/main` and the tag to `origin` with `SLEIGHT_RELEASE_PUSH=1` (owner's release call),
-then `gh release create` from the CHANGELOG section. Public CI is Linux, without `npm install`, on
-Claude Code 2.1.288: check new tests for macOS binaries, `/private/tmp` and dev-dependency imports first.
+Bench setup: every Claude arm runs on the owner's login in its own config (`node bench/world/login-readiness.mjs` reads all five
+native arms as logged in, 2026-10-16). The gate uses `--world` (both arms on the pinned Claude Code 2.1.289). Hand-run arm CLIs need
+`DISABLE_AUTOUPDATER=1`: an arm's updater most likely removed `~/.local/bin/claude` on 2026-10-16 (restored as a symlink to
+`~/.local/share/claude/versions/2.1.289`). FowlBrowser's extension is unpacked in Chrome's "sleight benchmark" profile and in Helium.
 
 The away-sitting tool reads its steps from the list below, pinned by hash in `bench/away-sitting.mjs`.
 Its first step (live checks with the owner present) is older than the Next list above.
@@ -152,26 +91,11 @@ Next, in order:
 4. If the gate is met, the full release pass and the release (ROADMAP 5b), including README's
    release-pass numbers, then update the owner's installed copy and confirm its `gitCommitSha`.
 
-**Waiting on the owner.** The 20 extension ids can run now with `--surfaces browser,computer --extension-sites-allowed`
-(127.0.0.1 is allowed since 2026-10-13). For the full battery
-they seed 5 self-messages (Slack, Discord, WhatsApp, Messages, Mail) and 5 app items (Music, Maps,
-Photos, Spotify, Zoom) and name local Notes, Reminders and Calendar containers. Leftovers for them:
-guest carts with test items in Safari on Target and Best Buy, one benchmark Helium tab on 127.0.0.1.
-Optional: `sleight-mcp setup` in a fresh macOS user (README says it's untested there).
-
-**Where work goes.** Work in progress is private between releases (LAWS): `remote.pushDefault
-private` sends pushes to `Land-o-Clusters/sleight-dev`, and a pre-push hook refuses the public repo
-without `SLEIGHT_RELEASE_PUSH=1`. Public `origin/pane/auto-mode` stays at `332e3ca`.
-
-**Benchmark.** Claude arms run on the owner's Anthropic account login, Haiku 5.5 at high (LAWS, 2026-10-15). `bench/fowl/rounds.sh`
-runs every Claude arm on the login since `83fbf6b4`. Browser Use needs an API key and runs only in its own round. `--surfaces browser,computer` runs the real suite with the extension browser API. Chains of
-live runs live in `.dev/passes/`. Compare A/Bs with `node .dev/tools/ab-compare.mjs <log>.log`.
-
-Branches and worktrees: `pane/auto-mode` in `~/Projects/sleight` is the working branch.
-`~/Projects/sleight-wt/` contains only owned-abort. `perf/screenshot-scale` (`1aa574b`) is parked.
-
 ## Machine state outside the repo
 
+- The native claude-cu arm root `~/Library/Caches/sleight-bench/claude-cu` (Claude Code 2.1.289, installed 2026-10-16) is logged in
+  on the owner's account, with onboarding, folder trust and `/mcp` computer-use enabled in its `work` folder.
+- `~/Library/Application Support/sleight/turbo.json` doesn't exist yet. The dev build writes it at its first session start.
 - The FowlBrowser world arm's pinned Claude Code 2.1.289 is at `~/.config/sleight-bench/world/arms/fowlbrowser` (installed
   2026-10-14 for the prototype rounds, `node bench/world/arms/install.mjs fowlbrowser claude-only @anthropic-ai/claude-code@2.1.289`).
 - Benchmark arms installed 2026-10-14 (owner's 2026-10-12 OK, pinned with checksums). Cua 0.34.0 is at
