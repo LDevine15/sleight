@@ -5,6 +5,8 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 ## Banner (2026-10-16 04:15 UTC)
 
+OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
+
 **Running now.** Gate rounds 1 to 5 with both arms on v3-gate `adc5fbc9` started 04:01:18 UTC under Puddle's window W1 (log
 `ledger/claims/GATE2/gate5-20261016T0401Z.log`). Sum each pass's table per arm, reading columns from the end of the row. Round 1 had 19 s of
 Puddle load (04:02:29 to 04:02:48). W1 ends with the gate's touch of `/tmp/sleight-bench-done`. Then tell Puddle pass or fail (pass
