@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 22:30 UTC, claim baseline nearly complete, claude-cu waits for the owner)
+## Banner (2026-10-16 23:15 UTC, unattended claim baseline done, claude-cu waits for the owner)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -72,6 +72,12 @@ Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle windo
   Office apps (dialogs the failing arms left) blocked cua's and Peekaboo's setups. A rerun window started at 22:23 UTC.
   Next: 2 more runs on the close pairs (calculator-click, calculator-menu, preview-read, for sleight, lcu, codex and peekaboo),
   then claude-cu with the owner present, then the scoring as time to complete the set.
+- Score after the last window (`ledger/claims/CS4/score-20261016T2310Z.txt`): expected seconds to a correct result, which is the
+  mean attempt time divided by the pass rate, over 9 native tasks. sleight completed 9/9 tasks (29/35 runs passed, 638 s summed).
+  lcu completed 6/9 (22/37), codex 6/9 (23/42), cua 7/9 (22/27) and peekaboo 3/9 (15/30). sleight is the only arm that passed
+  textedit-drag, and it was fastest or tied on 4 tasks. lcu was quicker on save, peekaboo on preview-read, and cua on Finder,
+  Calculator-to-TextEdit and Excel (one run). Recommended to the owner: claim "completed every task", not "fastest". claude-cu
+  runs with the owner present before any wording is final.
 - Office (word-edit, excel-edit) now runs last for every arm, after the owner answers Excel's recovery prompt. The other 10
   claim tasks run first (`claim-arm.sh ARM "<list>"`).
 - Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
@@ -124,7 +130,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** The Office rerun chain (cua, Peekaboo, lcu, codex), started 22:23 UTC from a Terminal window.
+**Running now.** Nothing of sleight's. Puddle has the Mac until 15 minutes' notice before claude-cu or the release pass.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
