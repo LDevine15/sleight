@@ -4,6 +4,15 @@ ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
 const windowEpoch = ObjC.unwrap($.NSUUID.UUID.UUIDString);
 const windowReferences = [];
+// JXA's Ref('CGPoint') reads back as the number 0, so this fallback never matched (macOS 27.0.1, 2026-10-16).
+// Copy the struct into bytes and read it back through NSValue.
+function axPair(value, type) {
+  const bytes = $.NSMutableData.dataWithLength(16);
+  if (!$.AXValueGetValue(value, type, bytes.mutableBytes)) return null;
+  const boxed = $.NSValue.valueWithBytesObjCType(bytes.bytes, type === 1 ? '{CGPoint=dd}' : '{CGSize=dd}');
+  const s = ObjC.deepUnwrap(type === 1 ? boxed.pointValue : boxed.sizeValue);
+  return type === 1 ? [s.x, s.y] : [s.width, s.height];
+}
 function run(argv) {
   try {
     if (!$.AXIsProcessTrusted()) return JSON.stringify({ status: 'denied' });
@@ -37,9 +46,9 @@ function run(argv) {
           const list = ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll | $.kCGWindowListExcludeDesktopElements, 0));
           cg = Array.from({ length: Number(list.count) }, (_, i) => ObjC.deepUnwrap(list.objectAtIndex(i)));
         }
-        const position = Ref('CGPoint'), size = Ref('CGSize');
-        if (!$.AXValueGetValue(attr(window, 'AXPosition'), 1, position) || !$.AXValueGetValue(attr(window, 'AXSize'), 2, size)) return null;
-        const bounds = [position[0].x, position[0].y, size[0].width, size[0].height];
+        const position = axPair(attr(window, 'AXPosition'), 1), size = axPair(attr(window, 'AXSize'), 2);
+        if (!position || !size) return null;
+        const bounds = [...position, ...size];
         if (!bounds.every(Number.isFinite)) return null;
         const matches = cg.filter(info => Number(info.kCGWindowOwnerPID) === pid && info.kCGWindowLayer === 0 &&
           ['X', 'Y', 'Width', 'Height'].every((key, i) => Math.abs(info.kCGWindowBounds?.[key] - bounds[i]) < 0.5));

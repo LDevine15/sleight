@@ -33,7 +33,9 @@ function inspect(request, numbers, focused = 1, cg = false) {
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
     AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
     AXUIElementCopyAttributeValue: (element, name, value) => { value[0] = element[name] ?? null; return 0; },
-    CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, ref) => { ref[0] = value; return !!value; },
+    CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
+    NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
+    NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
     CGWindowListCopyWindowInfo: () => list(cg ? windows.map((window, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0,
       kCGWindowNumber: 11 + i, kCGWindowBounds: { X: window.AXPosition.x, Y: 20, Width: 300, Height: 200 } })) : []) });
   return JSON.parse(runInNewContext(source + '\nrun([JSON.stringify(request)])', { $, request, Ref: () => [],

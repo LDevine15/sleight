@@ -97,16 +97,25 @@ function axAttribute(el, name) {
 function axElements(value) {
   return Array.from({ length: Number(value.count) }, (_, i) => axElement(value.objectAtIndex(i)));
 }
+// JXA's Ref('CGPoint') reads back as the number 0, so x and y came back undefined and no window ever matched
+// (textedit-drag, macOS 27.0.1, 2026-10-16). Copy the struct into bytes and read it back through NSValue.
+function axPair(value, type) {
+  const bytes = $.NSMutableData.dataWithLength(16);
+  if (!$.AXValueGetValue(value, type, bytes.mutableBytes)) return null;
+  const boxed = $.NSValue.valueWithBytesObjCType(bytes.bytes, type === 1 ? '{CGPoint=dd}' : '{CGSize=dd}');
+  const s = ObjC.deepUnwrap(type === 1 ? boxed.pointValue : boxed.sizeValue);
+  return type === 1 ? [s.x, s.y] : [s.width, s.height];
+}
 function axElement(el) {
   const scalar = name => ObjC.unwrap(axAttribute(el, name));
-  const geometry = (name, type, keys) => {
-    const out = Ref(type === 1 ? 'CGPoint' : 'CGSize');
-    if (!$.AXValueGetValue(axAttribute(el, name), type, out)) throw new Error('AX geometry is unavailable');
-    return keys.map(key => out[0][key]);
+  const geometry = (name, type) => {
+    const pair = axPair(axAttribute(el, name), type);
+    if (!pair) throw new Error('AX geometry is unavailable');
+    return pair;
   };
   return {
     role: () => scalar('AXRole'), subrole: () => scalar('AXSubrole'), name: () => scalar('AXTitle'),
-    position: () => geometry('AXPosition', 1, ['x', 'y']), size: () => geometry('AXSize', 2, ['width', 'height']),
+    position: () => geometry('AXPosition', 1), size: () => geometry('AXSize', 2),
     value: () => scalar('AXValue'), uiElements: () => axElements(axAttribute(el, 'AXChildren')),
     attributes: { byName: name => ({
       get value() { return () => scalar(name); },

@@ -111,11 +111,13 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
         return 0;
       } catch { return -25205; }
     },
-    AXValueGetValue: (value, _type, out) => { out[0] = value; return true; },
+    AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return true; },
+    NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
+    NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
     AXUIElementSetAttributeValue: (el, name, value) => { el.attributes.byName(name).value = value; return 0; },
     AXUIElementPerformAction: (el, name) => { el.actions.byName(name).perform(); return 0; },
   });
-  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); if (slowDelays) clock += 30000; },
+  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); if (slowDelays) clock += 30000; },
     Date: { now: () => clock },
     Application: () => ({ processes: { whose: () => [proc] } }) });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);

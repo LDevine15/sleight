@@ -16,7 +16,9 @@ function harness({ timeoutError = 0 } = {}) {
       if (!(name in el)) return -25205;
       out[0] = Array.isArray(el[name]) ? list(el[name]) : el[name]; return 0;
     },
-    AXValueGetValue: (value, _type, out) => { out[0] = value; return !!value; },
+    AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
+    NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
+    NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
     AXUIElementSetAttributeValue: (el, name, value) => { el[name] = value; return 0; },
     AXUIElementPerformAction: (el, name) => { el.action = name; return 0; },
   });
@@ -27,7 +29,7 @@ function harness({ timeoutError = 0 } = {}) {
   const win = { ...element('AXWindow', 100, 100, 600, 400, [toolbar, area]), AXWindowNumber: 11, AXTitle: 'document' };
   const app = { AXWindows: [win] };
   const context = vm.createContext({ $, Ref: () => [], Application: () => assert.fail('no Apple events'),
-    ObjC: { import() {}, unwrap: v => v, castRefToObject: v => v } });
+    ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v } });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);
   const bounds = { X: 100, Y: 100, Width: 600, Height: 400 };
   const window = () => context.axWindow(7, { id: 11, title: 'document', bounds });
