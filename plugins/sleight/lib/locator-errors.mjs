@@ -65,8 +65,10 @@ function locatorAdvice(block) {
     : kind === 'covered' ? `${action} ${target} is covered by ${coveringElement(block) || 'another element'}`
     : kind === 'matched' ? `${action} ${target}: the action failed after the element matched`
     : `${action} ${target} timed out`;
+  const truncated = kind === 'strict' && matches.length && (diag?.truncated || Number(total) > matches.length)
+    ? ` (showing ${matches.length} of ${total} matches; truncated)` : '';
   const diagnostic = /Playwright selector deadline exceeded/.test(block) ? ` ${currentDiagnostic(diag, selector)}` : '';
-  return `${causeText}.${diagnostic} Next: ${nextCall(kind)}.${diagnostic ? ' Read before retrying input. Do not retry blindly.' : ''}`;
+  return `${causeText}${truncated}.${diagnostic} Next: ${nextCall(kind)}.${diagnostic ? ' Read before retrying input. Do not retry blindly.' : ''}`;
 }
 
 function currentDiagnostic(diag, selector) {
@@ -113,7 +115,7 @@ function describeMatches(diag, akas, selector) {
     const row = rows[i] || {};
     const name = row.ariaLabel || /name:\s*['"]([^'"]+)['"]/.exec(akas[i] || '')?.[1] || '';
     const role = row.role || impliedRole(row);
-    const loc = akas[i] || locatorFor(row, i, selector, name, role);
+    const loc = row.ariaLabel ? locatorFor(row, name, role) : akas[i] || locatorFor(row, name, role);
     const visible = typeof row.visible === 'boolean' ? `visible:${row.visible}` : '';
     out.push([role, name && `"${name.replace(/\s+/g, ' ').trim().slice(0, 40)}"`, `via ${loc}`, visible].filter(Boolean).join(' '));
   }
@@ -126,10 +128,11 @@ function impliedRole(row) {
   return row.tag || '';
 }
 
-function locatorFor(row, i, selector, name, role) {
-  if (role && name) return `getByRole('${role}', { name: '${name.replace(/'/g, "\\'")}' })`;
-  if (selector) return `locator(${JSON.stringify(selector)}).nth(${i})`;
-  return `nth(${i})`;
+function locatorFor(row, name, role) {
+  if (name.length > 120) return 'read the full label (label truncated)';
+  if (row.ariaLabel) return `getByLabel(${JSON.stringify(name)}, { exact: true })`;
+  if (role && name) return `getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(name)}, exact: true })`;
+  return 'read current labels before selecting';
 }
 
 function coveringElement(block) {
@@ -137,7 +140,7 @@ function coveringElement(block) {
 }
 
 function nextCall(kind) {
-  if (kind === 'strict') return `${READ} and resolve one matching locator`;
+  if (kind === 'strict') return `${READ} and resolve one matching locator. For an observed full label, use getByLabel(label, { exact: true }) and confirm it is unambiguous`;
   if (kind === 'missing') return `${READ} and use a locator that matches now`;
   return READ;
 }

@@ -150,3 +150,40 @@ test('the current diagnostic is bounded and the engine snapshot is preserved', (
   assert.ok(hint.length < 1800, hint.length);
   assert.ok(out.endsWith(src));
 });
+
+test('strict matches distinguish duplicate text with exact escaped labels without choosing one', () => {
+  const labels = ['Save "draft"\\copy', "Save owner's final"];
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: labels.map(ariaLabel => ({ tag: 'button', role: 'button', text: 'Save', ariaLabel, visible: true })) });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  for (const label of labels) assert.ok(hint.includes(`getByLabel(${JSON.stringify(label)}, { exact: true })`), hint);
+  assert.match(hint, /button/);
+  assert.match(hint, /resolve one matching locator/);
+  assert.doesNotMatch(hint, /\.first\(|\.nth\(|\.click\(/);
+  assert.ok(rewriteLocatorFailure(src).endsWith(src));
+});
+
+test('strict diagnostics explicitly report the bounded match listing', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 8, truncated: true,
+    matches: Array.from({ length: 8 }, (_, i) => ({ tag: 'button', ariaLabel: `Save ${i}` })) });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /showing 5 of 8 matches; truncated/);
+  assert.equal((hint.match(/getByLabel\("/g) ?? []).length, 5);
+});
+
+test('a long label is bounded without suggesting a truncated label as an exact match', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: [{ role: 'button', ariaLabel: 'private'.repeat(100) }, { role: 'button', ariaLabel: 'Done' }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.ok(hint.length < 900);
+  assert.match(hint, /label truncated/);
+  assert.doesNotMatch(hint, /getByLabel\("private/);
+});
+
+test('strict errors without structured diagnostics still name the documented exact-label form', () => {
+  const raw = "Error: strict mode violation: locator('button') resolved to 2 elements:\n  1) <button>Save</button> aka getByRole('button', { name: 'Save' })\n  2) <button>Save as</button> aka getByRole('button', { name: 'Save as' })";
+  const hint = rewriteLocatorFailure(raw).split('\n')[0];
+  assert.match(hint, /getByLabel\(label, \{ exact: true \}\)/);
+  assert.match(hint, /observed full label/);
+  assert.ok(rewriteLocatorFailure(raw).endsWith(raw));
+});
