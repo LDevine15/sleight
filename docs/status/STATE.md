@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 15:40 UTC, claim suite set by the owner, baseline starting)
+## Banner (2026-10-16 15:58 UTC, claim baseline: sleight 20 of 36 runs, codex next)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
 2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
@@ -29,6 +29,14 @@ Goal (owner): release 1.3.0, then the native claim and the video, then maintenan
 arm reruns only when it changes. A contained cleanup failure now continues the pass (`cleanupContained`, `bench/real-run.mjs`).
 Launcher: `RUNS=3 ledger/claims/CS3/claim-arm.sh ARM` (logs in `ledger/claims/CS4/runs/`, touches `/tmp/sleight-bench-done`).
 Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle window), then claude-cu with the owner present.
+- sleight, 15:34 UTC (`ledger/claims/CS4/runs/sleight-20261016T1534Z.log`), 20 of 36 runs before a stop. Passes: calculator
+  4/4, textedit-save 2/2, textedit-drag 2/2, finder-move 2/2, preview-read 1/2, tab-switching 1/1, textedit-calculator 1/2.
+  word-edit failed setup twice (the codex run's Word was still up), and excel-edit stopped at Excel's recovery prompt twice.
+  local-wikipedia fenced its right JSON (the prompt says "only JSON", so it stays a miss). textedit-calculator #2 pasted
+  "1,725". form-controls couldn't confirm a checkbox (diagnosis running). preview-read #2 did its task, then Preview stopped
+  answering Apple events and ignored quit, which ended the pass.
+- Word (behind an off-screen Insert Table panel from the codex run) and Preview were both the benchmark's own launches. Preview
+  got a TERM signal, and Word was force-quit on the owner's OK (both exited on TERM). Still to do: sleight's runs 2 and 3 of the rest.
 
 **Native claim pass, first round (superseded by the claim suite, kept for its findings).** Plan: `ledger/claims/CS3/plan-runs1.json` (162 rows, 6 arms).
 Run one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM "$(cat ledger/claims/CS3/tasks-no-chess.txt)"` with
@@ -75,7 +83,7 @@ when the claim is measured.
   Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
   recovery files like Excel's. The owner can quit it from the Dock.
 
-**Running now.** The claim baseline's sleight arm, started 15:34 UTC with the owner away (`ledger/claims/CS4/runs/sleight-20261016T1534Z.log`, window caps 16:19 UTC). Puddle's architect is being cleared, so ask its next seat for codex.
+**Running now.** Nothing. The codex claim window was requested at 15:57 UTC.
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
