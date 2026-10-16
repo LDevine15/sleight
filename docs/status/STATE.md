@@ -3,9 +3,21 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-16 10:55 UTC, morning summary)
+## Banner (2026-10-16 12:25 UTC, day plan)
 
 OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). OWNER AWAKE 2026-10-16T12:01:40Z (/goodmorning). Night Shift off.
+
+**Today (owner, 2026-10-16 morning): release 1.3.0, then the video.** Turbo is the default and the release notes are approved
+(merged, `370cff01`, full check passed). sleight's Puddle windows have priority today.
+- **Release blocker found:** nothing in the product writes `turbo.json`, so no real user can enable turbo. The gate measured
+  turbo's modules through a benchmark-only server. Agent `turbo-default` is building the install path on `arch/turbo-default`:
+  `turbo-setup.mjs`, startup (re)write unless the user set `enabled: false`, `sleight-mcp turbo on|off|status`, a doctor
+  section, and docs. Then a live qualification with the owner present (Chrome or Helium consent, never the owner's main Chrome
+  profile), then the release pass.
+- **Chess fixture:** diagnostics are in `c1aed25c`. Asked Puddle for 10 min at 12:40 (`ledger/claims/GATE2/window-chess.sh`).
+- **Electron:** agent `epv3-2b` continues EPV3-2 from `d7538b05` on `arch/epv3-2`.
+- **Owner-present list:** the turbo live qualification, the claude-cu arm's runs (per-session app approval), EPV3-1's consent run
+  (menu bar "sleight" item), and closing TextEdit's leftover iCloud Open panel (Cmd+Q).
 
 **Overnight results (owner away, all on the owner's login, Puddle windows W1 to W7).**
 - **Gate passed** on v3-gate `66ada2bd` (07:38 to 08:08): turbo median 547 s (p90 590) and 0 errors in all 5 rounds, against
