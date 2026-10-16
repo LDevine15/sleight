@@ -11,7 +11,9 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 607 s (p90 634) against FowlBrowser's 685 s (p90 706), 89%. Errors, focus and ToolSearch targets are met, and both arms score 26/26
 or 25/26. The extra time against the A/B is model turns on forms. 193 of 254 empty `find` reads used `a|b` alternation, which the
 literal match never met. `arch/find-alt` `0d1bcfa0` fixes that and the hidden-radio click (focused and 8 real-page files pass).
-Puddle was told FAIL, so there's no Opus W2. The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
+Puddle was told FAIL, so there's no Opus W2. **Find A/B (05:25 to 05:43):** find-alt median 572 s against 622 s over 3 rounds
+(faster in 2 of 3, empty finds 29 of 68 down to 9 of 83, docs/benchmarks/2026-10-16-turbo-ab.md). Next, after a full check it merges into
+v3-gate for a new gate. The sleight native arm started 05:43:44 (log in `ledger/claims/CS3/runs/`). The about-05:30 window runs `ledger/claims/GATE2/window-ab-then-native.sh`. It first runs a
 turbo A/B of v3-gate against find-alt over 3 rounds (prefix `abf`), then the sleight native arm. One release touch ends it (cap 75 min, granted).
 
 **Rest of the night (owner asleep until about 12:00 UTC, all approved).**
