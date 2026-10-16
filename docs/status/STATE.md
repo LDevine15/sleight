@@ -25,10 +25,15 @@ OWNER ASLEEP since 2026-10-16T04:21:57Z (/goodnight). Night Shift on.
 **Next (sleight-arch).** (1) Done offline (`2a51e695`, full check passed, exit 0, 5502 tests with 0 failing): a window the task
 already closed (title unsupported, -25205) counts as closed only when the app's window list no longer holds it, and document fixtures
 launch with the persistence arguments. Not yet proven live. Finish the native pass in Puddle windows, with the fix's first live run. (2) Done: the release pass runs on the owner's login (`5ddea59f`, full check passed). Running it needs an away window plus Puddle
-windows (native sleight and codex at 3 runs, gate both orders twice, Opus once, claim). (3) RP1's CHANGELOG and README with tonight's numbers. (4) Review EPV3-2 when its agent reports.
+windows (native sleight and codex at 3 runs, gate both orders twice, Opus once, claim). (3) Drafted for owner review: the 1.3.0 CHANGELOG, README and known-problems on `arch/rl1-int` `4473baab` (codex/rl1
+merged and brought up to tonight's numbers, lint clean, not yet merged into pane/auto-mode). (4) Review EPV3-2 when its agent reports.
 
 **Owner items.**
-- The 1.3.0 tag, after the release pass.
+- The 1.3.0 tag, after the release pass. Review the release notes on `arch/rl1-int`.
+- LAWS says turbo "becomes the default once its benchmark proves it". The gate and the Opus head-to-head passed, so 1.3.0 can make
+  it the default (Chrome's consent prompt still comes first). Owner's call on wording and timing.
+- The honest-checkout figure differs between LAWS (46 of 98 ask) and known-problems (50 of 98 allowed). Owner or sleight-arch to
+  settle which measurement stands.
 - TextEdit is still running with "Untitled 9" and "Untitled 10", restored from the owner's iCloud TextEdit folder by a fixture
   launch at 05:43 UTC. They were left untouched for the owner to decide.
 - `~/.local/bin/claude` had vanished (most likely the arm CLI's auto-updater during the owner's hand-run claude-cu session).
