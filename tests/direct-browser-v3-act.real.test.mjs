@@ -212,3 +212,25 @@ test('real v3 a submit that only opens a confirm dialog settles in about a secon
   const silent = await quiet.run(quiet.tab, [{ do: 'click', ref: await quiet.ref('Save') }], {});
   assert.match(silent.lines[0], /unconfirmed after 5 s/); assert.ok(Date.now() - started >= 5000);
 });
+
+// A visually hidden radio or checkbox sits under its own label, so Playwright's hit test always lands on the label (form-checkout,
+// gate round 2026-10-16). check acts at the control's own point, which placeClear proved is the label, and a sticky bar is moved off.
+const hidden = 'position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0';
+test('real v3 check reaches a visually hidden radio under its own label, clear of a sticky bottom bar', { skip }, async t => {
+  const f = await fixture(t, `<div style="height:900px">Top</div><fieldset><legend>Delivery</legend>
+    <label style="display:block;padding:12px"><input type="radio" name="d" id="std" style="${hidden}" checked>Standard</label>
+    <label style="display:block;padding:12px"><input type="radio" name="d" id="ovn" style="${hidden}">Overnight</label></fieldset>
+    <div style="height:900px">Bottom</div><div style="position:sticky;bottom:0;height:120px;background:#eee"><button>Pay now</button></div>`);
+  const result = await f.run(f.tab, [{ do: 'check', ref: await f.ref('Overnight') }], {});
+  assert.equal(result.stoppedAt, null, result.lines.join('\n'));
+  assert.equal(await f.page.locator('#ovn').isChecked(), true);
+});
+
+test('real v3 check through an own label never presses a link nested in that label', { skip }, async t => {
+  const f = await fixture(t, `<label style="display:inline-block;padding:4px"><input type="checkbox" id="agree" style="${hidden}">I agree to
+    the <a href="/next">terms of service and the privacy policy of this shop</a></label>`);
+  const line = (await f.page.ariaSnapshot({ mode: 'ai' })).split('\n').find(row => row.includes('checkbox'));
+  const result = await f.run(f.tab, [{ do: 'check', ref: /\[ref=(e\d+)\]/.exec(line ?? '')?.[1] }], {});
+  assert.doesNotMatch(f.page.url(), /\/next$/, 'the nested link was pressed');
+  if (result.stoppedAt === null) assert.equal(await f.page.locator('#agree').isChecked(), true);
+});

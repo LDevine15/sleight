@@ -137,6 +137,7 @@ test('a scroll step past the 10000 limit is clamped, and a long list is reached 
   const clamped = await h.act(tab, [{ do: 'scroll', ref, dy: 20000 }]);
   assert.equal(clamped.isError, false, clamped.text);
   assert.match(clamped.text, /clamped to 10000/, clamped.text);
+  await h.act(tab, [{ do: 'scroll', ref, dy: -20000 }], 'none'); // back to the top: until scrolls one way
   // The row a scroll finds can be clicked at once, even when the call asked for no observation.
   const found = await h.act(tab, [{ do: 'scroll', ref, until: label(AIRPORTS[150]), dy: 300 }], 'none');
   const row = /found[^\n]*option "[^"]*"[^\n]*\[ref=(e\d+)\]/.exec(found.text);
