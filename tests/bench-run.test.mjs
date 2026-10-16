@@ -17,6 +17,7 @@ import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/worl
 import { LOGIN_ARMS, loginTarget } from '../bench/world/login-readiness.mjs';
 import { packageSkip } from './requirements.mjs';
 import { cleanupContained as realCleanupContained } from '../bench/real-run.mjs';
+import { mergeArmHooks as realMergeArmHooks } from '../bench/arm-hooks.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
@@ -128,6 +129,7 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
     },
     runDriver: async (_command, args, options) => { commands.push(_command); calls.push(['driver', ...args]); envs.push(options.env); driverOptions.push(options); options.onSpawn?.(1234); return { code: 0, out: { total_cost_usd: 0.25, ...driverOut }, groupClean: true }; },
     cleanupContained: realCleanupContained,
+    mergeArmHooks: realMergeArmHooks,
     executeRealTask: async (_task, ctx, options) => {
       ctx.windowLeases = leases;
       if (setupOnly) assert.equal(options.setupOnly, true);

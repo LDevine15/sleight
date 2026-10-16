@@ -40,6 +40,7 @@ import { startFootprint, cpuSplit } from './footprint.mjs';
 import { watchAppWindows } from './app-windows.mjs';
 import { runTiming, traceTiming } from './timing.mjs';
 import { executeRealTask, cleanupContained } from './real-run.mjs';
+import { mergeArmHooks } from './arm-hooks.mjs';
 import { observePermission } from './real-permission.mjs';
 import { runOwned } from './preapproved-process.mjs';
 import { acquireLiveLock } from './live-lock.mjs';
@@ -129,6 +130,7 @@ const ARMS = {
       args: ['--mcp-config', join(dir, '.mcp.json'), '--allowedTools', 'mcp__lcu__js'],
       env: { PATH: `${prefix}:${process.env.PATH}` },
       server: 'lcu',
+      ownHooks: join(dir, '.claude', 'settings.local.json'),
       check: () => existsSync(join(dir, '.mcp.json')) || `no LCU registration in ${dir}`,
     };
   })(),
@@ -175,7 +177,7 @@ for (const name of armNames) {
     arm.env.BENCH_ARM_SERVERS = JSON.stringify(arm.servers);
     arm.env.BENCH_APPROVAL_STOP = arm.stopFile;
     arm.settings = join(arm.cwd, 'bench-settings.json');
-    const settings = genericSettings(arm, ROOT);
+    const settings = arm.ownHooks ? mergeArmHooks(genericSettings(arm, ROOT), arm.ownHooks) : genericSettings(arm, ROOT);
     if (!isDryRun) writeFileSync(arm.settings, JSON.stringify(world ? worldSettings(settings) : settings), { mode: 0o600 });
   }
   if (cleanArms && name === 'sleight' && !guardedPass) {
