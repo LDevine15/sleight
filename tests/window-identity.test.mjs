@@ -33,7 +33,7 @@ function inspect(request, numbers, focused = 1, cg = false, events = [], setup =
   Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => true,
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
     AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
-    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); value[0] = element[name] ?? null; return 0; },
+    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); if (element.missing?.includes(name)) return -25212; value[0] = element[name] ?? null; return 0; },
     CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
     NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
     NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
@@ -61,6 +61,17 @@ test('native identity maps AX geometry to CG numbers and detects a known number 
   assert.equal(selected.matches, 1); assert.equal(selected.windowNumber, 12);
   assert.equal(inspect({ ...target, nativeIdentity: { windowNumber: 99 } }, [11, 22]).status, 'mismatch');
   assert.notEqual(inspect({ ...target, nativeIdentity: { windowNumber: 99 } }, [null, null]).status, 'mismatch');
+});
+
+test('a window without a title (Finder\'s desktop) is skipped instead of failing the identity', () => {
+  const finder = { appId: 'com.apple.finder', title: 'rename-abc123', url: 'file:///private/tmp/x/rename-abc123/' };
+  const result = inspect(finder, [11, 22], 1, false, [], (app, windows) => {
+    windows[0].missing = ['AXTitle', 'AXDocument'];
+    Object.assign(windows[1], { AXTitle: finder.title, AXDocument: finder.url });
+  });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.matches, 1);
+  assert.equal(inspect({ ...target, title: null }, [11], 0, false, [], (app, windows) => { windows[0].missing = ['AXTitle']; }).matches, 0);
 });
 
 test('native identity includes the HID system idle duration without requesting trust', () => {

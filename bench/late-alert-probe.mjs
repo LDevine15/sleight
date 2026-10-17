@@ -27,8 +27,10 @@ const HOLD = '/tmp/sleight-hold';
 const SEED = 'late-alert fixture\n';
 
 export const GROUPS = {
+  // TextEdit works on the probe's own saved file: Save As (Option-Shift-Cmd-S) gives the sheet. Never an
+  // untitled document, which can autosave into the owner's iCloud TextEdit folder.
   textedit: { bundle: 'com.apple.TextEdit', mustNotRun: true, scenarios: [
-    ['textedit-find-open', 'super+f'], ['textedit-find-escape', 'Escape'], ['textedit-save-sheet', 'super+s'],
+    ['textedit-find-open', 'super+f'], ['textedit-find-escape', 'Escape'], ['textedit-save-sheet', 'super+alt+shift+s'],
     ['textedit-replace-prompt', 'Return'], ['textedit-replace-escape', 'Escape'], ['textedit-sheet-escape', 'Escape']] },
   finder: { bundle: 'com.apple.finder', mustNotRun: false, scenarios: [
     ['finder-rename-start', 'Return'], ['finder-rename-taken', 'Return'], ['finder-alert-return', 'Return'],
@@ -201,8 +203,10 @@ const TRIALS = {
   async textedit(t) {
     await t.measure('textedit-find-open');
     await t.measure('textedit-find-escape');
-    await t.measure('textedit-save-sheet');
-    if (!((await t.gate()).sheets >= 1)) throw new TrialError('Save sheet absent after Cmd+S; nothing typed');
+    // The engine's name for Option isn't confirmed: a rejected key name gets one retry with "option".
+    const save = await t.measure('textedit-save-sheet', { tryKey: true });
+    if (save.rejected) await t.measure('textedit-save-sheet', { key: 'super+option+shift+s' });
+    if (!((await t.gate()).sheets >= 1)) throw new TrialError('Save As sheet absent; nothing typed');
     // The save panel goes to the bank folder (cmd+shift+G) and takes a name that exists there.
     await t.input('await app.pressKey("super+shift+g")', { sheet: true });
     await t.input(`await app.typeText(${JSON.stringify(t.fixture.bank)})`, { sheet: true });
@@ -225,11 +229,16 @@ const TRIALS = {
     await t.measure('finder-alert-return', { dialog: true });
     await t.measure('finder-rename-escape', { dialog: true });
   },
+  // A1 accepts only 1 to 10. On 2026-10-17 typeText("abc") left Excel's focus on the window itself (AXWindow) in
+  // 5 of 5 trials and no alert came, so the value goes in as key presses, and the readouts record what A1 held.
   async excel(t) {
-    await t.input('await app.typeText("abc")');
+    await t.input('await app.pressKey("9"); await app.pressKey("9")');
+    await t.readout('after-typing');
     await t.measure('excel-validation-alert');
+    await t.readout('after-return');
     await t.measure('excel-alert-escape', { dialog: true });
     await t.input('await app.pressKey("Escape")', { dialog: true });
+    await t.readout('after-trial');
   },
 };
 
@@ -249,7 +258,7 @@ async function settle(t, group) {
 export async function runProbe(options, io) {
   const report = { started: new Date(io.now()).toISOString(), dryRun: options.dryRun, trials: options.trials,
     groups: options.groups, windowMs: WINDOW_MS, intervalMs: INTERVAL_MS, lightWaitMs: LIGHT_TIMING.waitMs,
-    results: [], trialErrors: [], skipped: [], cleanup: [] };
+    results: [], trialErrors: [], skipped: [], cleanup: [], readouts: [], keyAttempts: [] };
   const save = () => io.persist(report);
   const pre = await io.preflight(options.groups.map(group => GROUPS[group].bundle));
   report.preflight = { running: pre.running };
@@ -336,9 +345,22 @@ function trialContext({ io, group, fixture, pre, report, trial, save }) {
       if (result.isError && !options.cleanup) throw new TrialError(`Engine call failed: ${result.errorText ?? 'error'}`);
       return result;
     },
+    // What the engine's tree says about the cell (A1/A2 lines, the tab's used range), plus alert windows.
+    async readout(phase) {
+      const state = await gate({ dialog: true });
+      const read = await io.engine('await app.getAXState({ disableDiffing: true })');
+      const lines = read.text.split('\n').filter(line => /\bA[12]\b|Used range|Blank sheet|formula bar|edit mode/i.test(line))
+        .slice(0, 8).map(line => line.trim().slice(0, 200));
+      report.readouts.push({ group, trial, phase, dialogs: state.dialogs, sheets: state.sheets, readError: read.isError || undefined, lines });
+    },
     async measure(scenario, options = {}) {
       const { window } = await gate(options);
-      const result = await measure(io, { scenario, key: keys[scenario], window }, io.timing);
+      const result = await measure(io, { scenario, key: options.key ?? keys[scenario], window }, io.timing);
+      // A key name the engine rejects (no change seen) is a key-name probe, not a trial.
+      if (options.tryKey && result.engineError && !result.seen) {
+        report.keyAttempts.push({ group, trial, scenario, key: result.key, engineError: result.engineError });
+        return { ...result, rejected: true };
+      }
       report.results.push({ group, trial, ...result });
       await save();
       if (result.error) throw new TrialError(`${scenario}: ${result.error}`);
@@ -437,11 +459,15 @@ async function liveIO({ bank, report: output }) {
       output.launched = true;
       const started = Date.now();
       if (group === 'textedit') {
+        // The probe's own saved file, never an untitled document. On 2026-10-17 a bare launch with the
+        // launch arguments still showed an untitled panel (AXDialog) and an "Untitled 6" window.
         for (const name of ['taken.txt', 'taken.rtf']) await writeFile(join(bank, name), SEED);
-        await run('/usr/bin/open', ['-g', '-b', 'com.apple.TextEdit', '--args', '-ApplePersistenceIgnoreState', 'YES',
+        const path = join(bank, `doc-${nonce}.txt`);
+        await writeFile(path, SEED);
+        await run('/usr/bin/open', ['-g', '-a', 'TextEdit', path, '--args', '-ApplePersistenceIgnoreState', 'YES',
           '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO'], { timeout: 10000 });
-        const fixture = { bundle: 'com.apple.TextEdit', ...(await bind('com.apple.TextEdit', started)), title: 'Untitled', stem: 'Untitled', front: pre.front };
-        await ownedFocused(group, fixtureRequest(fixture), 20000);
+        const fixture = { bundle: 'com.apple.TextEdit', ...(await bind('com.apple.TextEdit', started)), stem: `doc-${nonce}`, path, front: pre.front };
+        fixture.windowTitle = (await ownedFocused(group, fixtureRequest(fixture), 20000)).windows[0].title;
         return fixture;
       }
       if (group === 'finder') {
@@ -483,14 +509,14 @@ async function liveIO({ bank, report: output }) {
     },
     targetsFixture(group, fixture, text) {
       const window = windowFromText(text);
-      if (group !== 'excel') return window?.title === fixture.title;
+      if (group === 'finder') return window?.title === fixture.title;
       if (!window?.url) return !!fixture.windowTitle && window?.title === fixture.windowTitle;
       try { return decodeURIComponent(new URL(window.url).pathname).replace(/^\/private/, '') === fixture.path.replace(/^\/private/, ''); }
       catch { return false; }
     },
     async checkFiles(group, fixture) {
       if (group === 'textedit') {
-        const contents = await Promise.all(['taken.txt', 'taken.rtf'].map(name => readFile(join(bank, name), 'utf8').catch(() => null)));
+        const contents = await Promise.all(['taken.txt', 'taken.rtf', basename(fixture.path)].map(name => readFile(join(bank, name), 'utf8').catch(() => null)));
         return { unchanged: contents.every(text => text === SEED), replaced: contents.map(text => text !== SEED) };
       }
       if (group === 'finder') {
@@ -508,7 +534,7 @@ async function liveIO({ bank, report: output }) {
         await host('finder-dismiss', { ...fixtureRequest(fixture), text: 'taken.txt' }).catch(() => {});
         return host('finder-close', fixtureRequest(fixture));
       }
-      return host('quit', fixtureRequest(fixture));
+      return host('quit', { ...fixtureRequest(fixture), closeOwn: group === 'textedit' });
     },
     async close() { clearInterval(watch); process.off('SIGINT', cancel); process.off('SIGTERM', cancel); await health.close(); },
   };
@@ -524,7 +550,7 @@ export function virtualClock(start = Date.UTC(2026, 9, 17)) {
 }
 
 // The fake shows each key's effect after a fixed simulated delay. Its numbers are plumbing, not measurements.
-export function fakeIO({ delays = {} } = {}) {
+export function fakeIO({ delays = {}, rejectKeys = [] } = {}) {
   const clock = virtualClock();
   const world = { group: undefined, stack: [], pending: undefined };
   const apply = () => { if (world.pending && clock.now() >= world.pending.at) { world.stack = world.pending.stack; world.pending = undefined; } };
@@ -532,7 +558,7 @@ export function fakeIO({ delays = {} } = {}) {
     const top = stack.at(-1), g = world.group;
     if (key === 'Escape') return top ? stack.slice(0, -1) : stack;
     if (g === 'textedit' && key === 'super+f') return [...stack, 'find'];
-    if (g === 'textedit' && key === 'super+s') return [...stack, 'sheet'];
+    if (g === 'textedit' && /^super\+(?:alt|option)\+shift\+s$/.test(key)) return [...stack, 'sheet'];
     if (key === 'Return') {
       if (g === 'textedit' && top === 'sheet') return [...stack, 'alert'];
       if (g === 'finder') return top === 'alert' ? stack.slice(0, -1) : top === 'rename' ? [...stack, 'alert'] : [...stack, 'rename'];
@@ -561,7 +587,7 @@ export function fakeIO({ delays = {} } = {}) {
     },
     async launch(group) {
       world.group = group; world.stack = []; world.pending = undefined;
-      return { bundle: GROUPS[group].bundle, pid: 2, bank, title: group === 'excel' ? 'late-alert.xlsx' : 'Untitled' };
+      return { bundle: GROUPS[group].bundle, pid: 2, bank, title: { textedit: 'doc.txt', finder: 'rename', excel: 'late-alert.xlsx' }[group], path: `${bank}/doc.txt` };
     },
     async state(group, fixture) {
       const { separate, sheets } = view();
@@ -580,6 +606,7 @@ export function fakeIO({ delays = {} } = {}) {
         return { text: '', isError: false };
       }
       apply();
+      if (rejectKeys.includes(key)) { await clock.after(200); return { text: 'unknown key name', isError: true, errorText: 'unknown key name' }; }
       const scenario = GROUPS[world.group].scenarios.find(([, k]) => k === key)?.[0];
       const delay = delays[key] ?? 40 + ((counter++ * 97) % 360);
       const keyStart = clock.now() + 300, keyDone = keyStart + 15;

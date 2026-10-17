@@ -37,7 +37,10 @@ function run(argv) {
     if (Number(windows.count) > 64) throw new Error('Too many windows');
     for (let i = 0; i < Number(windows.count); i++) {
       const window = windows.objectAtIndex(i);
-      if (scalar(attr(window, 'AXTitle')) === request.title && scalar(attr(window, 'AXDocument', true)) === request.url) matches.push(window);
+      // Finder's desktop window has no AXTitle (-25212), and requiring one failed every Finder identity
+      // (late-alert probe, 2026-10-17: 5 of 5 baselines empty). A window without a title matches no header.
+      const title = scalar(attr(window, 'AXTitle', true));
+      if (title !== null && title === request.title && scalar(attr(window, 'AXDocument', true)) === request.url) matches.push(window);
     }
     // Before the number or focus narrows them: a caller with no number for the window needs exactly one.
     const headerMatches = matches.length;
