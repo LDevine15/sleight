@@ -104,8 +104,16 @@ function run(argv) {
           node = attr(node, 'AXParent', true);
         }
       }
+      // A web area above the focused element (Gecko names it HTML content) puts it in a page, where a tab continuation's
+      // typing must not land. Walks up to the window, like the search above.
+      let inPage = false;
+      for (let node = element, depth = 0; node && depth < 40 && !inPage && !$.CFEqual(node, window); depth++) {
+        const role = scalar(attr(node, 'AXRole', true)), description = scalar(attr(node, 'AXRoleDescription', true));
+        inPage = role === 'AXWebArea' || /html content/i.test(String(role ?? '')) || /html content/i.test(String(description ?? ''));
+        node = attr(node, 'AXParent', true);
+      }
       focus = { sheets, role: element ? scalar(attr(element, 'AXRole', true)) : null,
-        subrole: element ? scalar(attr(element, 'AXSubrole', true)) ?? null : null, inWindow };
+        subrole: element ? scalar(attr(element, 'AXSubrole', true)) ?? null : null, inWindow, inPage };
     }
     return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title,
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,

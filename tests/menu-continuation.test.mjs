@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal } from '../plugins/sleight/lib/menu-continuation.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
   for (const separator of ['; ', '\n', '; /* ; } */\n']) {
@@ -280,16 +280,106 @@ test('DR1: stop notes name methods, keys and selectors, never typed text', () =>
   const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End"); await app.typeText("hunter2"); await app.setValue(4, "pin 1234"); await app.click(7); await app.click([1, 2]);');
   const stop = { index: 1, windowStop: true, completed: 1, name: 'pressKey', error: 'Input lease stopped this action: window or URL changed.' };
   const note = stopNote(stop, plan);
-  assert.equal(note, 'sleight: this call ran 1 action (click id "ok"); not sent: pressKey "super+End", typeText, setValue, click 7 and 1 more.');
+  // AB1: a stop after an action ran gives the two-call recipe; one before any action has nothing to split.
+  const recipe = ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.';
+  assert.equal(note, 'sleight: this call ran 1 action (click id "ok"); not sent: pressKey "super+End", typeText, setValue, click 7 and 1 more.' + recipe);
   assert.doesNotMatch(note, /hunter2|1234/);
   assert.equal(stopNote({ ...stop, index: 0, completed: 0 }, plan), 'sleight: this call ran 0 actions; not sent: click id "ok", pressKey "super+End", typeText, setValue and 2 more.');
   // LW1 review: label text and keys that type a character stay out.
   const typed = splitMenuActions('await app.click({ label: "Card 4242" }); await app.pressKey("a"); await app.pressKey("shift+B"); await app.pressKey("ctrl+c");');
-  assert.equal(stopNote(stop, typed), 'sleight: this call ran 1 action (click); not sent: pressKey, pressKey, pressKey "ctrl+c".');
+  assert.equal(stopNote(stop, typed), 'sleight: this call ran 1 action (click); not sent: pressKey, pressKey, pressKey "ctrl+c".' + recipe);
   const named = splitMenuActions('await app.click("Card 4242"); await app.pressKey("Return"); await app.pressKey("shift+Tab"); await app.pressKey("ArrowDown"); await app.pressKey("7");');
-  assert.equal(stopNote(stop, named), 'sleight: this call ran 1 action (click); not sent: pressKey "Return", pressKey "shift+Tab", pressKey "ArrowDown", pressKey.');
-  assert.equal(stopNote(stop), 'sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent.');
-  assert.equal(stopNote({ ...stop, completed: 0 }, undefined, 2), 'sleight: this call ran 2 actions; the stopped pressKey and everything after it were not sent.');
+  assert.equal(stopNote(stop, named), 'sleight: this call ran 1 action (click); not sent: pressKey "Return", pressKey "shift+Tab", pressKey "ArrowDown", pressKey.' + recipe);
+  assert.equal(stopNote(stop), 'sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent.' + recipe);
+  assert.equal(stopNote({ ...stop, completed: 0 }, undefined, 2), 'sleight: this call ran 2 actions; the stopped pressKey and everything after it were not sent.' + recipe);
+  assert.equal(stopNote({ ...stop, completed: 0 }), 'sleight: this call ran 0 actions; the stopped pressKey and everything after it were not sent.');
   assert.equal(stopNote({ ...stop, windowStop: false }, plan), undefined);
   assert.equal(stopNote({ ...stop, error: 'Input lease stopped this action: app changed. 1 earlier action in this call ran' }, plan), undefined);
+});
+
+// AB1: the Firefox race round's new-tab shape (2026-10-17), with the engine's own role names.
+const markerTree = 'Window: "Marker", App: Fixture Browser.\n0 standard window Marker, Secondary Actions: Raise\n\t1 tab group\n' +
+  '\t\t2 tab (selected) Value: Marker, Marker\nClose tab\n\t\t3 button Open a new tab\n\t4 combo box (settable) Address\n\t5 HTML Content Description: Marker';
+const newTabTree = 'Window: "New Tab", App: Fixture Browser.\n0 standard window New Tab, Secondary Actions: Raise\n\t1 tab group\n' +
+  '\t\t2 tab (selectable) Value: Marker, Marker\nClose tab\n\t\t3 tab (selected) Value: New Tab, New Tab\nClose tab\n\t\t4 button Open a new tab\n' +
+  '\t5 combo box (settable) Address\n\t6 HTML Content Description: New Tab\n\t\t7 text field Search\n\nThe focused UI element is 5 combo box (settable) Address';
+const linesOf = tree => Object.fromEntries([...tree.matchAll(/^\t*(\d+) (.*)$/gm)].map(([, n, line]) => [n, line]));
+
+test('AB1: a trailing getAXState is a read, so the new-tab call splits; a read between actions still does not', () => {
+  const plan = splitMenuActions('await app.pressKey("super+t");\nawait app.typeText("u");\nawait app.pressKey("Return");\nawait app.getAXState()');
+  assert.equal(plan.actions.length, 3);
+  assert.equal(splitMenuActions('await app.pressKey("super+t"); await app.typeText("u"); await app.getAXState({ disableDiffing: true });').actions.length, 2);
+  for (const code of ['await app.pressKey("super+t"); await app.getAXState(); await app.typeText("u");',
+    'await app.pressKey("super+t"); await other.getAXState();', 'await app.pressKey("super+t"); await app.getAXState(next());'])
+    assert.equal(splitMenuActions(code), undefined, code);
+});
+
+test('AB1: a tab remainder needs the call\'s own Cmd+T or Ctrl+T, one new selected tab and focus in an app field', () => {
+  const plan = splitMenuActions('await app.pressKey("super+t"); await app.typeText("u"); await app.pressKey("Return");');
+  const expected = { title: 'Marker', app: 'Fixture Browser', url: null };
+  const content = [{ type: 'text', text: 'Input lease stopped this action: window or URL changed.\n' + newTabTree }];
+  const receipt = { index: 1, prev: { kind: 'key', value: 'super+t' }, root: '0 standard window New Tab, Secondary Actions: Raise', windowStop: true };
+  const before = linesOf(markerTree);
+  const tree = text => [{ type: 'text', text }];
+  for (const [args, reason] of [
+    [[plan, undefined, expected, content, before], 'no-receipt'], [[plan, { ...receipt, windowStop: false }, expected, content, before], 'not-a-window-stop'],
+    [[undefined, receipt, expected, content, before], 'unsplit-call'], [[plan, { ...receipt, prev: { kind: 'key', value: 'super+n' } }, expected, content, before], 'receipt-mismatch'],
+    [[splitMenuActions('await app.pressKey("super+shift+t"); await app.typeText("u");'), { ...receipt, prev: { kind: 'key', value: 'super+shift+t' } }, expected, content, before], 'not-a-tab-shortcut'],
+    [[splitMenuActions('await app.pressKey("Return"); await app.typeText("u");'), { ...receipt, prev: { kind: 'key', value: 'Return' } }, expected, content, before], 'not-a-tab-shortcut'],
+    [[plan, { ...receipt, root: '0 x' }, expected, content, before], 'tree-mismatch'],
+    [[plan, receipt, { ...expected, app: 'Other' }, content, before], 'other-app'],
+    [[plan, { ...receipt, root: '0 sheet New Tab, Secondary Actions: Raise' }, expected, tree(newTabTree.replace('0 standard window', '0 sheet')), before], 'root-not-standard'],
+    [[plan, receipt, { ...expected, title: 'New Tab' }, content, before], 'same-header'],
+    ...['sheet', 'dialog', 'system dialog'].map(role => [[plan, receipt, expected, tree(newTabTree.replace('\t5 combo box', `\t8 ${role} Confirm\n\t5 combo box`)), before], 'sheet']),
+    [[plan, receipt, expected, content, undefined], 'no-earlier-tree'],
+    [[plan, receipt, expected, content, linesOf(newTabTree)], 'no-new-tab'],
+    [[plan, receipt, expected, tree(newTabTree.replace('(selectable) Value: Marker', '(selected) Value: Marker')), before], 'no-new-tab'],
+    [[plan, receipt, expected, tree(newTabTree.replace('Value: Marker, Marker', 'Value: Other, Other')), before], 'no-new-tab'],
+    [[plan, receipt, expected, tree(newTabTree.replace(/The focused UI element is .*/, '')), before], 'focus-not-app-field'],
+    [[plan, receipt, expected, tree(newTabTree.replace(/The focused UI element is .*/, 'The focused UI element is 4 button Open a new tab')), before], 'focus-not-app-field'],
+    [[plan, receipt, expected, tree(newTabTree.replace(/The focused UI element is .*/, 'The focused UI element is 7 text field Search')), before], 'focus-in-document'],
+    [[plan, receipt, expected, content, before], undefined],
+  ]) assert.equal(tabRefusal(...args), reason, reason);
+  // A new tab with the same label as an older one still counts once.
+  const twin = newTabTree.replaceAll('Value: Marker, Marker', 'Value: New Tab, New Tab');
+  assert.equal(tabRefusal(plan, receipt, expected, tree(twin), linesOf(markerTree.replaceAll('Value: Marker, Marker', 'Value: New Tab, New Tab'))), undefined);
+  // Review 6: a header that differs only in its URL is a change; the same title and URL is not.
+  const withUrl = url => tree(newTabTree.replace('0 standard window New Tab, Secondary', `0 standard window New Tab, URL: ${url}, Secondary`));
+  const urlReceipt = url => ({ ...receipt, root: `0 standard window New Tab, URL: ${url}, Secondary Actions: Raise` });
+  assert.equal(tabRefusal(plan, urlReceipt('https://b.test/'), { ...expected, title: 'New Tab', url: 'https://a.test/' }, withUrl('https://b.test/'), before), undefined);
+  assert.equal(tabRefusal(plan, urlReceipt('https://a.test/'), { ...expected, title: 'New Tab', url: 'https://a.test/' }, withUrl('https://a.test/'), before), 'same-header');
+  // Review 2: only Cmd+T or Ctrl+T.
+  for (const key of ['super+n', 'cmd+d', 'ctrl+l']) {
+    const other = splitMenuActions(`await app.pressKey("${key}"); await app.typeText("u");`);
+    assert.equal(tabRefusal(other, { ...receipt, prev: { kind: 'key', value: key } }, expected, content, before), 'not-a-tab-shortcut', key);
+  }
+  for (const key of ['Super+T', 'cmd+t', 'command+t', 'meta+t', 'control+t']) {
+    const own = splitMenuActions(`await app.pressKey("${key}"); await app.typeText("u");`);
+    assert.equal(tabRefusal(own, { ...receipt, prev: { kind: 'key', value: key } }, expected, content, before), undefined, key);
+  }
+  const remainder = tabRemainder(plan, receipt, expected, content, before);
+  assert.equal(remainder.code, 'await app.typeText("u"); await app.pressKey("Return");');
+  assert.deepEqual([remainder.tab, remainder.navigation, remainder.window.title], [true, true, 'New Tab']);
+  assert.equal(tabRemainder(plan, receipt, expected, content, undefined), undefined);
+});
+
+test('AB1: the helper must see no sheet and a non-password text field or combo box focused in the window', () => {
+  const focus = { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false };
+  assert.equal(tabFocusRefusal({ focus }), undefined);
+  assert.equal(tabFocusRefusal({ focus: { ...focus, role: 'AXTextField', subrole: 'AXSearchField' } }), undefined);
+  for (const [observed, reason] of [[undefined, 'no-native-focus'], [{ focus: true }, 'no-native-focus'], [{ focus: { ...focus, sheets: 1 } }, 'native-sheet'],
+    [{ focus: { ...focus, sheets: undefined } }, 'native-sheet'], [{ focus: { ...focus, inWindow: false } }, 'focus-outside-window'],
+    [{ focus: { ...focus, role: 'AXTextField', subrole: 'AXSecureTextField' } }, 'secure-field'], [{ focus: { ...focus, role: 'AXWebArea' } }, 'focus-not-text-field'],
+    // Review 1: a page's own text field passes the tree check when the tree omits its page; the helper's walk refuses it.
+    [{ focus: { ...focus, role: 'AXTextField', inPage: true } }, 'focus-in-page'], [{ focus: { ...focus, inPage: undefined } }, 'focus-in-page']])
+    assert.equal(tabFocusRefusal(observed), reason, reason);
+});
+
+test('TW2: a navigation into a page names it in any case', () => {
+  const plan = splitMenuActions('await app.pressKey("Return"); await app.click("Other");');
+  const receipt = { index: 1, prev: { kind: 'key', value: 'Return' }, root: '0 standard window Child', windowStop: true };
+  const expected = { title: 'Parent', app: 'Fixture Editor', url: null };
+  const page = role => [{ type: 'text', text: `Window: "Child", App: Fixture Editor.\n0 standard window Child\n\t1 ${role} Child` }];
+  assert.equal(menuRemainder(plan, receipt, expected, page('group')).navigation, true);
+  for (const role of ['HTML Content', 'HTML content', 'Web Area']) assert.equal(menuRemainder(plan, receipt, expected, page(role)), undefined, role);
 });

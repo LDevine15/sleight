@@ -80,12 +80,19 @@ test('the light check after Return gets sheets and the focused element only when
   assert.equal(focusOf(target, (app, windows) => { app.AXFocusedUIElement = field(windows[0]); }), undefined);
   const request = { ...target, focus: true };
   assert.deepEqual(focusOf(request, (app, windows, list) => { app.AXFocusedUIElement = field(windows[0]); windows[0].AXChildren = list([{ AXRole: 'AXGroup' }]); }),
-    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: true });
+    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: true, inPage: false });
   assert.deepEqual(focusOf(request, (app, windows, list) => { app.AXFocusedUIElement = field(windows[0], false); windows[0].AXChildren = list([{ AXRole: 'AXSheet' }]); }),
-    { sheets: 1, role: 'AXLayoutArea', subrole: null, inWindow: true });
+    { sheets: 1, role: 'AXLayoutArea', subrole: null, inWindow: true, inPage: false });
   assert.deepEqual(focusOf(request, app => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXWindow: { AXRole: 'AXWindow' } }; }),
-    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: false });
-  assert.deepEqual(focusOf(request, () => {}), { sheets: 0, role: null, subrole: null, inWindow: false });
+    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: false, inPage: false });
+  assert.deepEqual(focusOf(request, () => {}), { sheets: 0, role: null, subrole: null, inWindow: false, inPage: false });
   assert.deepEqual(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXSubrole: 'AXSecureTextField', AXWindow: windows[0] }; }),
-    { sheets: 0, role: 'AXTextField', subrole: 'AXSecureTextField', inWindow: true });
+    { sheets: 0, role: 'AXTextField', subrole: 'AXSecureTextField', inWindow: true, inPage: false });
+  // AB1 review: a page's own field, under a web area or Gecko's HTML content, is in a page; an address field above it isn't.
+  for (const page of [{ AXRole: 'AXWebArea' }, { AXRole: 'AXGroup', AXRoleDescription: 'HTML Content' }]) {
+    assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXWindow: windows[0],
+      AXParent: { AXRole: 'AXGroup', AXParent: { ...page, AXParent: windows[0] } } }; }).inPage, true, JSON.stringify(page));
+  }
+  assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXComboBox', AXWindow: windows[0],
+    AXParent: { AXRole: 'AXToolbar', AXParent: windows[0] } }; windows[0].AXParent = { AXRole: 'AXWebArea' }; }).inPage, false);
 });
