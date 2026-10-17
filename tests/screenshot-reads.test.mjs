@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { PassThrough } from 'node:stream';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const tree = rows => ['Window: "Draft", App: Fixture Editor.',
@@ -34,15 +38,56 @@ test('text inside the document area makes the screenshot hint unnecessary', () =
   }
 });
 
-test('the hint follows full guard observations even when the visible result is a no-change diff', () => {
+test('the hint is shown once per document even when subsequent guards are no-change diffs', () => {
   const c = createReadCompactor({ screenshotReads: true }), value = tree([
     ...pane, ...Array.from({ length: 30 }, (_, i) => `\t${i + 6} button Toolbar ${i}`),
   ]);
   read(c, value);
   const result = read(c, GUARD_MARK + value + GUARD_END);
   assert.match(result[0].text, /no change since/);
-  assert.equal(result.at(-1).text, note);
-  assert.equal(result.filter(item => item.text === note).length, 1);
+  assert.equal(result.filter(item => item.text === note).length, 0);
+});
+
+test('action results never hint and do not consume the next read-only hint', () => {
+  const c = createReadCompactor({ screenshotReads: true }), value = tree(pane);
+  assert.doesNotMatch(output(read(c, value, { action: { code: 'await app.click(5)' } })), /Read the window with/);
+  assert.equal(read(c, GUARD_MARK + value + GUARD_END).filter(item => item.text === note).length, 1);
+  assert.equal(read(c, value).filter(item => item.text === note).length, 0);
+});
+
+test('a screenshot suppresses future hints for that document but not another one', () => {
+  const c = createReadCompactor({ screenshotReads: true }), value = tree(pane);
+  const image = { type: 'image', mimeType: 'image/png', data: 'fixture' };
+  c.process([text(value), image]);
+  assert.doesNotMatch(output(read(c, value)), /Read the window with/);
+  const other = value.replaceAll('Draft', 'Other').replace('file:///tmp/draft', 'file:///tmp/other');
+  assert.equal(read(c, other).filter(item => item.text === note).length, 1);
+  assert.doesNotMatch(output(read(c, value)), /Read the window with/);
+});
+
+for (const header of [false, true]) test('a screenshot-only result is associated with its exact supplied window, header=' + header, () => {
+  const c = createReadCompactor({ screenshotReads: true });
+  c.process([...(header ? [text('Window: "Draft", App: Fixture Editor.')] : []),
+    { type: 'image', mimeType: 'image/png', data: 'fixture' }], {
+    screenshotWindow: { title: 'Draft', app: 'Fixture Editor', url: 'file:///tmp/draft' },
+  });
+  assert.doesNotMatch(output(read(c, tree(pane))), /Read the window with/);
+});
+
+test('duplicate observations emit at most one hint and document URLs distinguish windows', () => {
+  const c = createReadCompactor({ screenshotReads: true }), value = tree(pane);
+  assert.equal(c.process([text(value), text(value)]).filter(item => item.text === note).length, 1);
+  assert.equal(read(c, value.replace('file:///tmp/draft', 'file:///tmp/second')).filter(item => item.text === note).length, 1);
+  assert.equal(read(c, value).filter(item => item.text === note).length, 0);
+});
+
+test('session hint and screenshot history survive rebuilding the read compactor', () => {
+  for (const screenshot of [false, true]) {
+    const readHints = {}, options = { screenshotReads: true, readHints };
+    const first = createReadCompactor(options), value = tree(pane);
+    first.process([text(value), ...(screenshot ? [{ type: 'image', mimeType: 'image/png', data: 'fixture' }] : [])]);
+    assert.doesNotMatch(output(read(createReadCompactor(options), value)), /Read the window with/);
+  }
 });
 
 test('an existing screenshot, error or user-change refusal needs no screenshot hint', () => {
@@ -85,4 +130,32 @@ test('the environment selects the screenshot compactor variant with an exact val
     if (original === undefined) delete process.env.SLEIGHT_SKILL;
     else process.env.SLEIGHT_SKILL = original;
   }
+});
+
+for (const mismatch of [false, true]) test('the relay associates a screenshot-only result with its acquired handle, mismatch=' + mismatch, async t => {
+  const original = process.env.SLEIGHT_SKILL;
+  process.env.SLEIGHT_SKILL = 'screenshot';
+  t.after(() => { if (original === undefined) delete process.env.SLEIGHT_SKILL; else process.env.SLEIGHT_SKILL = original; });
+  const directory = mkdtempSync('/tmp/sleight-fl1-');
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams, replies = [];
+  clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
+    inputLease: new InputLease({ directory, holder: 'fl1-fixture' }) });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); rmSync(directory, { recursive: true, force: true }); });
+  const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const call = async (id, code, content, appId = 'example.fixture') => {
+    clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+    await tick();
+    serverOut.write(JSON.stringify({ id, result: { content,
+      _meta: { 'codex/toolSurface': { app: { appId } } } } }) + '\n');
+    await tick();
+    return replies.find(reply => reply.id === id)?.result;
+  };
+  // Acquire a readable document, so no textless hint has been spent yet.
+  await call(1, 'var app = await cua.getApp("example.fixture")', [text(tree([pane[0], '\t\t2 text Value: alpha']))]);
+  await call(2, 'nodeRepl.emitImage(await app.getScreenshot())', [{ type: 'image', mimeType: 'image/png', data: 'fixture' }], mismatch ? 'example.other' : 'example.fixture');
+  const result = await call(3, 'await app.getAXState()', [text(GUARD_MARK + tree(pane) + GUARD_END)]);
+  assert.equal(result?.isError, undefined);
+  assert.equal(/Read the window with/.test(output(result.content)), mismatch);
 });

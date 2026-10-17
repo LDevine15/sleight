@@ -545,7 +545,7 @@ export function dropAcquisitionTree(head, rest) {
   });
 }
 
-function trimSiblingRows(text) {
+function trimSiblingRows(text, fullRead = '') {
   if (text.length < 25000 || !hasFullTree(text) || !windowFromText(text)) return;
   const lines = text.split('\n'), names = [windowFromText(text).title];
   for (const line of lines) {
@@ -587,7 +587,7 @@ function trimSiblingRows(text) {
     const flush = () => {
       if (!run.length) return;
       replacements.set(run[0].start, { end: run.at(-1).end,
-        text: `sleight: ${run.length} sibling rows omitted. Full tree: getAXState({ disableDiffing: true }).` });
+        text: `sleight: ${run.length} sibling rows omitted (${run.reduce((count, row) => count + row.end - row.start, 0)} lines).${replacements.size ? '' : fullRead}` });
       for (const row of run) for (const line of lines.slice(row.start, row.end)) {
         const num = parse(line).num; if (num !== undefined) hidden.add(num);
       }
@@ -606,7 +606,7 @@ function trimSiblingRows(text) {
   return { text: out.join('\n'), hidden };
 }
 
-function trimAcquisition(text) {
+function trimAcquisition(text, fullRead = '', hinted = new Set()) {
   if (!hasFullTree(text) || !windowFromText(text) || /…\(\d+\)/.test(text)) return;
   const starts = [...text.matchAll(/^Window: /gm)];
   if (starts.length > 1) {
@@ -614,7 +614,7 @@ function trimAcquisition(text) {
     const hidden = new Set();
     for (let i = 0; i < starts.length; i++) {
       const section = text.slice(starts[i].index, starts[i + 1]?.index), body = section.replace(/\n+$/, '');
-      const trimmed = trimAcquisition(body);
+      const trimmed = trimAcquisition(body, fullRead, hinted);
       out += trimmed ? trimmed.text + section.slice(body.length) : section;
       for (const num of trimmed?.hidden ?? []) hidden.add(num);
     }
@@ -641,9 +641,12 @@ function trimAcquisition(text) {
     else hidden.add(Number(match[2]));
   }
   if (!hidden.size) return;
-  out.push(`sleight: ${hidden.size} hidden; getAXState({ disableDiffing: true }) gives the full tree.`);
+  const key = documentKey(windowFromText(text));
+  out.push(`sleight: ${hidden.size} static or structural lines omitted.${hinted.has(key) ? '' : fullRead}`);
   const compacted = text.slice(0, at) + out.join('\n');
-  return compacted.length < text.length ? { text: compacted, hidden } : undefined;
+  if (compacted.length >= text.length) return;
+  hinted.add(key);
+  return { text: compacted, hidden };
 }
 
 // Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
@@ -729,7 +732,7 @@ function actedToolbars(code, action, lines, window) {
   return kept;
 }
 
-function trimToolbars(text, code, action) {
+function trimToolbars(text, code, action, fullRead = '') {
   const window = windowFromText(text);
   if (!window || !hasFullTree(text) || /…\(\d+\)/.test(text)) return;
   const lines = text.split('\n'), at = lines.findIndex(line => /^Window: /.test(line));
@@ -738,6 +741,7 @@ function trimToolbars(text, code, action) {
   let end = at + 1;
   while (end < lines.length && ELEMENT.test(lines[end])) end++;
   if (lines.slice(end).some(line => line.trim() && !/^The focused UI element (?:is|was) \d+ /.test(line))) return;
+  if (textlessDocument({ root: parse(lines[at + 1]).key, lines: lines.slice(at, end) })) return;
   const kept = actedToolbars(code, action, lines, window);
   if (!kept) return;
   const groups = toolbarGroups(lines), hidden = new Set(), out = [];
@@ -746,37 +750,63 @@ function trimToolbars(text, code, action) {
     const children = group && lines.slice(i + 1, group.end);
     const count = children?.filter(line => control(parse(line).key.trim())).length ?? 0;
     if (!group || count <= 20 || kept.has(group.key)) { out.push(lines[i++]); continue; }
-    out.push(lines[i] + ` — sleight: ${count} controls omitted; expand with a filtered getAXState() read or getAXState({ disableDiffing: true }).`);
+    out.push(lines[i] + ` — sleight: ${count} controls omitted (${children.length} lines).${hidden.size ? '' : fullRead}`);
     for (const line of children) hidden.add(parse(line).num);
     i = group.end;
   }
   return hidden.size ? { text: out.join('\n'), hidden } : undefined;
 }
 
-// Only identical full numbered blocks, within this one result. Notices, docs,
-// focus footers, images and differing snapshots retain their original order.
-function dedupeTrees(content) {
-  const shown = new Set();
-  return content.flatMap(item => {
-    if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
-    const text = item.text.replace(/^Window: [^\n]*\n(?:(?:\t*\d+ [^\n]*)(?:\n|$))+/gm, (block, at) => {
-      if (!hasFullTree(block) || /^sleight: (?:lines changed|no change since)/.test(item.text.slice(at + block.length))) return block;
-      const tree = block.replace(/\n+$/, '');
-      if (shown.has(tree)) return '';
-      shown.add(tree);
-      return block;
+// Copies must match numbered lines in order, including values and indentation.
+// Keep differing snapshots, non-tree output and ambiguous windowless copies.
+function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = false) {
+  const blocks = content.flatMap((item, index) => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return [];
+    return [...item.text.matchAll(/^(?:Window: [^\n]*\n)?(?:\t*\d+ [^\n]*(?:\n|$))+/gm)].map(match => {
+      const text = match[0].replace(/\n+$/, ''), lines = text.split('\n');
+      const diff = /^sleight: (?:lines changed|no change since)/.test(item.text.slice(match.index + match[0].length));
+      const omitted = item.text.lastIndexOf(GUARD_OMIT_MARK, match.index) > item.text.lastIndexOf(GUARD_END, match.index);
+      return { index, at: match.index, length: match[0].length, lines,
+        full: !diff && !omitted && hasFullTree(text), diff, omitted,
+        marked: item.text.lastIndexOf(GUARD_MARK, match.index) > item.text.lastIndexOf(GUARD_END, match.index),
+        window: windowFromText(text) };
     });
-    return text === item.text ? [item] : text ? [{ ...item, text }] : [];
+  });
+  const removed = new Set();
+  for (const block of blocks) {
+    if (block.diff || block.omitted || copiesOnly && block.marked) continue;
+    const matches = blocks.filter(other => {
+      if (other === block || !other.full || other.lines.length < block.lines.length ||
+          (copiesOnly && other.lines.length === block.lines.length) ||
+          (!allowCopies && other.lines.length !== block.lines.length)) return false;
+      let at = 0;
+      for (const line of other.lines) if (line === block.lines[at] ||
+          sliced && block.window && at === block.lines.length - 1 && line.startsWith(block.lines[at])) at++;
+      return at === block.lines.length;
+    });
+    if (!block.window && new Set(matches.map(other => documentKey(other.window))).size !== 1) continue;
+    const keeper = matches.sort((a, b) => b.lines.length - a.lines.length || blocks.indexOf(a) - blocks.indexOf(b))[0];
+    if (keeper && (keeper.lines.length > block.lines.length || blocks.indexOf(keeper) < blocks.indexOf(block))) removed.add(block);
+  }
+  return content.flatMap((item, index) => {
+    const spans = blocks.filter(block => block.index === index && removed.has(block)).reverse();
+    if (!spans.length) return [item];
+    let text = item.text;
+    for (const block of spans) text = text.slice(0, block.at) + text.slice(block.at + block.length);
+    return text ? [{ ...item, text }] : [];
   });
 }
 
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
-  compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1' } = {}) {
+  compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {} } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map();
+  const omissionHints = readHints.omissionHints ??= new Set();
+  const screenshotHints = readHints.screenshotHints ??= new Set();
+  const screenshotWindows = readHints.screenshotWindows ??= new Set();
   let latest, observedInResult, observationId = 0;
   function observe(tree, window, lines) {
     const root = parse(lines[1] ?? '').key;
@@ -931,7 +961,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, filterMark = FILTERED_MARK } = {}) {
+    process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK } = {}) {
       if (!Array.isArray(content)) return content;
       let filtered, typed;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -960,6 +990,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       // Only a call that took no input: an action's result needs its tree diff and UI-change note.
       const filter = !forceFull && !failed && !stopped && !action &&
         (typeof visible === 'string' || Array.isArray(visible) && visible.every(line => typeof line === 'string'));
+      const sliced = /\.\s*slice\s*\(/.test(maskCode(code ?? ''));
+      if (compactToolbars && !filter && !failed && !stopped && !action) content = dedupeTrees(content, true, true, sliced);
       const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
       observedInResult = undefined;
@@ -1066,18 +1098,20 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
       }
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
-      if (compactToolbars) out = dedupeTrees(out);
+      if (compactToolbars) out = dedupeTrees(out, false, !action && !failed && !stopped, sliced);
       if ((resultTrim || firstAcquisition || compactToolbars) && !full) for (let i = 0; i < out.length; i++) {
         const item = out[i];
         if (item?.type !== 'text' || typeof item.text !== 'string') continue;
         const key = documentKey(windowFromText(item.text));
-        let trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text)
-          : resultTrim ? trimSiblingRows(item.text) : undefined;
+        const fullRead = key && !omissionHints.has(key) ? ' A full read includes the omitted lines.' : '';
+        let trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text, fullRead)
+          : resultTrim ? trimSiblingRows(item.text, fullRead) : undefined;
         if (compactToolbars && !failed && !stopped) {
-          const toolbar = trimToolbars(trimmed?.text ?? item.text, code ?? action?.code, action);
+          const toolbar = trimToolbars(trimmed?.text ?? item.text, code ?? action?.code, action, trimmed ? '' : fullRead);
           if (toolbar) trimmed = { text: toolbar.text, hidden: new Set([...(trimmed?.hidden ?? []), ...toolbar.hidden]) };
         }
         if (!trimmed) continue;
+        if (key) omissionHints.add(key);
         const entry = seen.get(key);
         if (entry) {
           entry.valid = new Set([...(entry.valid ?? numbered(entry.lines).map(([num]) => num))].filter(num => !trimmed.hidden.has(num)));
@@ -1085,8 +1119,18 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
         out[i] = { ...item, text: trimmed.text };
       }
-      if (screenshotReads && !failed && !stopped && !action?.overlap &&
-          !content.some(item => item?.type === 'image') && textlessDocument(observedInResult)) {
+      const hasScreenshot = content.some(item => item?.type === 'image');
+      if (screenshotReads && hasScreenshot && !failed && !stopped) {
+        const text = content.filter(item => item?.type === 'text').map(item => item.text).join('\n');
+        let window = windowFromText(text) ?? screenshotWindow;
+        if (window && !window.url && !hasFullTree(text) && window.app === screenshotWindow?.app &&
+            window.title === screenshotWindow.title) window = screenshotWindow;
+        if (window) screenshotWindows.add(documentKey({ title: window.title, app: window.app, url: window.url }));
+      }
+      const screenshotKey = documentKey(observedInResult?.window);
+      if (screenshotReads && !failed && !stopped && !action && !hasScreenshot &&
+          !screenshotHints.has(screenshotKey) && !screenshotWindows.has(screenshotKey) && textlessDocument(observedInResult)) {
+        screenshotHints.add(screenshotKey);
         out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
       }
       return trimBrowserResults(out, code);

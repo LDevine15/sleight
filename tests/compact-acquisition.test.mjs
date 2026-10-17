@@ -31,7 +31,8 @@ test('first acquisitions keep the header, actions, menu names and short static t
     assert.equal(c.staleIndex(window, `app.click(${number})`), undefined);
   }
   assert.doesNotMatch(out, /Layout|Decorative|Decoration|full document readback/);
-  assert.match(out, /getAXState\(\{ disableDiffing: true \}\).*full tree/i);
+  assert.match(out, /4.*lines.*omitted.*full read/i);
+  assert.doesNotMatch(out, /disableDiffing|getAXState/);
   assert.ok(out.length < tree().length / 2);
 });
 
@@ -52,6 +53,13 @@ test('hidden static rows never become known or remappable, including duplicate t
     assert.deepEqual(c.staleIndex(window, 'app.click(8)'), { number: 8 });
     assert.equal(c.seenLines(window, [8]), undefined, 'an unchanged guard never invents a hidden receipt');
   }
+});
+
+test('duplicate acquisition trees give full-read guidance once for their document', () => {
+  const c = createReadCompactor({ compactAcquisition: true });
+  const out = compact(c, tree() + '\n' + tree());
+  assert.equal(out.match(/full read/gi)?.length, 1);
+  assert.doesNotMatch(compact(c, tree()), /full read/i);
 });
 
 test('one explicit full read restores a long document value and its number', () => {
