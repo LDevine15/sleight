@@ -247,6 +247,7 @@ export function promptNotice(text, prompt) {
   return text
     .replace('send numbered actions on one handle per call. Read that window before acting.', 'numbered actions need one handle. Read it first.')
     .replace('REPL preparation was stopped before this call ran.', 'REPL setup stopped. Call skipped.')
+    .replace('the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', 'window changed first; actions not sent. Use the numbers above, { id } or { label }.')
     .replace('For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.', 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.')
     .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
     .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
@@ -2164,7 +2165,7 @@ export function createRelay({
     // Split even for the app the lease holds: the guard's setup refers to `app` before a `let app`
     // in the same script, which throws (2/3 simulator-form runs, 2026-10-08).
     const prefixId = `sleight-acquire-${nextInternalId++}`;
-    const generation = stopGeneration;
+    const generation = stopGeneration, trees = literalNumbers(rest).length > 0 && compactor.trees();
     callGenerations.set(prefixId, generation);
     splitCalls.set(prefixId, reply => {
       const raw = rawHeads.get(prefixId); rawHeads.delete(prefixId);
@@ -2186,6 +2187,15 @@ export function createRelay({
       if (saveBaseline && expected) {
         leaseWindow = lastConfirmedWindow = expected;
         if (handleBundles.has(saveHandle)) handleBundles.set(saveHandle, expected);
+      }
+      // The rest's literal numbers name lines in the tree Claude had before this call. When the head shows
+      // another tree, an inserted line may have shifted them, and the head's own read makes every number
+      // look current to the stale check: click(58) meant for a row would land on a popup above it (LS1).
+      if (trees && compactor.treeChanged(trees, reply.result?.content)) {
+        trace('acquisition-changed', { id: msg.id });
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
+          { type: 'text', text: promptNotice('sleight: the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', prompt) }] } });
+        return;
       }
       splitHeads.set(msg.id, reply.result?.content ?? []); splitCodes.set(msg.id, rest);
       const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };

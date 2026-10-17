@@ -212,3 +212,34 @@ test('replay: the first 4 results of excel-edit run 1 lose at least 40% of their
   const before = run(false), after = run(true);
   assert.ok(after <= before * 0.6, `${before} -> ${after} characters`);
 });
+
+test('relay: a head that changed the window stops the rest when it has literal numbers (LS1)', async t => {
+  // 60 items after row 16 take numbers 20 to 79; a popup inserted before item 38 takes 58 and moves item 38 to 59.
+  const items = Array.from({ length: 60 }, (_, i) => `\t\t0 button Item ${i}`);
+  const plain = tree({ tail: items }), popup = tree({ tail: items.toSpliced(38, 0, '\t\t0 button POPUP') });
+  assert.match(plain, /^\t\t58 button Item 38$/m);
+  for (const compactReacquire of [true, false]) {
+    const h = harness(t, { compactReacquire });
+    h.call(1, 'let app = await cua.getApp("example.fixture")'); await tick();
+    h.reply(1, plain); await tick();
+    h.call(2, 'let app = await cua.getApp("example.fixture"); await app.click(58)'); await tick();
+    h.reply(prefixId(h), popup); await tick();
+    assert.equal(h.sent.some(m => m.id === 2), false, 'no input went to the engine');
+    const stopped = h.replies.find(m => m.id === 2).result;
+    assert.equal(stopped.isError, true);
+    assert.match(output(stopped.content), /^(?:\+ )?\t\t58 button POPUP$/m, 'the head shows the new numbers');
+    assert.match(output(stopped.content), /^(?:\+ )?\t\t59 button Item 38$/m);
+    assert.match(output(stopped.content), /window changed before this call's actions ran, so nothing after the acquisition was sent/);
+    h.call(3, 'let app = await cua.getApp("example.fixture"); await app.click(59)'); await tick();
+    h.reply(prefixId(h), popup); await tick();
+    assert.ok(h.sent.some(m => m.id === 3), 'an unchanged head lets the rest run');
+    h.reply(3, GUARD_MARK + popup + GUARD_END); await tick();
+    for (const [id, code, head] of [[4, 'await app.click({ label: "Item 38" })', plain], [5, 'await app.click({ id: "item-38" })', popup],
+      [6, 'nodeRepl.write("done")', plain]]) {
+      h.call(id, `let app = await cua.getApp("example.fixture"); ${code}`); await tick();
+      h.reply(prefixId(h), head); await tick();
+      assert.ok(h.sent.some(m => m.id === id), `a changed head lets ${code} run`);
+      h.reply(id, 'done'); await tick();
+    }
+  }
+});

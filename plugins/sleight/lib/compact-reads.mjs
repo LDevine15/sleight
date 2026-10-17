@@ -1336,6 +1336,17 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       for (const n of numbers ?? believed.keys()) if (believed.has(n)) out[n] = believed.get(n).replace(/^\t*/, '');
       return Object.keys(out).length ? out : undefined;
     },
+    // Each window's last full tree, for treeChanged to compare a later read against.
+    trees() { return new Map([...seen].map(([key, entry]) => [key, entry.lines])); },
+    // Whether the last window read in `content` is a tree other than that window's in `trees`,
+    // numbering included. False for a window with no earlier tree, which leaves nothing to compare.
+    treeChanged(trees, content) {
+      const text = (Array.isArray(content) ? content : []).filter(item => item?.type === 'text' && typeof item.text === 'string')
+        .map(item => item.text).join('\n');
+      const at = text.lastIndexOf('Window: '), window = at >= 0 && windowFromText(text.slice(at));
+      const before = window && trees.get(documentKey(window)), now = window && seen.get(documentKey(window))?.lines;
+      return !!before && !!now && before.join('\n') !== now.join('\n');
+    },
     // The numbers whose line was on no other element in the tree Claude saw, so the same line
     // elsewhere later can only be that element.
     uniqueSeen(window, numbers) {
