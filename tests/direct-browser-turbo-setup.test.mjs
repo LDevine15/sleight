@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -290,6 +290,33 @@ test('a group-writable signed browser passes setup only when its bundle signatur
   assert.match(executableProblem(chrome, undefined, { appRoots: ['/Applications'], verify: () => true }), /^writable by others/, 'outside the app roots');
   assert.match(doctorLines({ state: 'current', browsers: [], browser: { name: 'Google Chrome', executable: chrome, qualified: true }, executableProblem: check(chrome, false), helpers: true, port: true }).join('\n'),
     /fix: reinstall Google Chrome from its maker/);
+});
+
+test('setup tolerates group write only for admin (80) or the user\'s primary group', t => {
+  const w = world(t, { chrome: true, chromeMode: 0o775 }), chrome = join(w.apps, 'Google Chrome.app/Contents/MacOS/Google Chrome');
+  const gid = lstatSync(chrome).gid, check = primaryGid => executableProblem(chrome, undefined, { appRoots: [w.apps], verify: () => true, primaryGid });
+  assert.equal(check(gid), undefined, 'the user\'s own primary group');
+  assert.match(check(gid + 1000), new RegExp(`^writable by others \\(mode 775\\) through group ${gid}, which is neither admin nor your own group$`),
+    'staff (or whatever group the file has) when the user\'s primary group is another');
+  if (process.platform === 'darwin' && process.getgroups().includes(12)) {
+    chownSync(chrome, -1, 12);
+    assert.match(check(20), /through group 12, which is neither admin nor your own group$/, 'everyone');
+  }
+  if (process.platform === 'darwin' && process.getgroups().includes(80)) {
+    chownSync(chrome, -1, 80); assert.equal(check(gid + 1000), undefined, 'admin');
+  }
+});
+
+test('the group-write relaxation never covers Chrome Beta, Dev or Canary, even with SLEIGHT_TURBO_UNQUALIFIED=1', t => {
+  const w = world(t), before = process.env.SLEIGHT_TURBO_UNQUALIFIED, calls = [];
+  t.after(() => { if (before === undefined) delete process.env.SLEIGHT_TURBO_UNQUALIFIED; else process.env.SLEIGHT_TURBO_UNQUALIFIED = before; });
+  process.env.SLEIGHT_TURBO_UNQUALIFIED = '1';
+  for (const name of ['Google Chrome Beta', 'Google Chrome Dev', 'Google Chrome Canary']) {
+    w.install(name, name, 0o775);
+    assert.match(executableProblem(join(w.apps, `${name}.app/Contents/MacOS/${name}`), undefined,
+      { appRoots: [w.apps], verify: () => { calls.push(name); return true; } }), /^writable by others \(mode 775\)$/, name);
+  }
+  assert.deepEqual(calls, []);
 });
 
 test('writes are atomic: no partial file, no temp leftovers, the old file survives a failed write', t => {

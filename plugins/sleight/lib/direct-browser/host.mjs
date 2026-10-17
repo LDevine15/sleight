@@ -147,24 +147,36 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelpe
   }
 }
 
+/** Parses peer-host output for pid: --process-pid (code false) or --code-status (code true, which adds the kernel's
+ *  code-signing status flags, the running architecture and the running cdhash). Throws on any other shape. */
+export function parseProcessMetadata(stdout, pid, code = false) {
+  const metadata = immutableJSON(JSON.parse(stdout));
+  if (Object.keys(metadata).length !== (code ? 7 : 4) || metadata.uid !== process.getuid() || metadata.pid !== pid ||
+      !Number.isFinite(metadata.start) || metadata.start <= 0 ||
+      !new RegExp('^p' + pid + '-s[1-9]\\d*-u\\d+$').test(metadata.incarnation)) throw Error();
+  if (code && (!Number.isSafeInteger(metadata.flags) || metadata.flags < 0 || metadata.flags > 0xffffffff ||
+      !/^(arm64e?|x86_64h?)$/.test(metadata.arch) || !/^[0-9a-f]{40}$/.test(metadata.cdhash))) throw Error();
+  return metadata;
+}
+
 // Private loader capability. Only the compiled, receipt-bound peer helper may
 // observe a selected PID; callers cannot supply native output or an executable
 // helper. The helper checks UID, canonical executable and birth on both reads.
+// provider.codeStatus reads the same metadata plus the live code-signing status (executable-trust.mjs).
 export function createNativeProcessProvider(receipt) {
   executable('peer-host', receipt);
-  const provider = async (pid, expected) => {
+  const read = (mode, code, failure) => async (pid, expected) => {
     if (!Number.isSafeInteger(pid) || pid < 1 || typeof expected !== 'string' ||
-        !isAbsolute(expected) || normalize(expected) !== expected) throw Error('SELECTED_PROCESS_UNPROVED');
+        !isAbsolute(expected) || normalize(expected) !== expected) throw Error(failure);
     try {
       const { stdout } = await promisify(execFile)(executable('peer-host', receipt),
-        ['--process-pid', String(pid), expected], { env: environment(), timeout: 3000, maxBuffer: 1024 });
-      const metadata = immutableJSON(JSON.parse(stdout));
-      if (Object.keys(metadata).length !== 4 || metadata.uid !== process.getuid() || metadata.pid !== pid ||
-          !Number.isFinite(metadata.start) || metadata.start <= 0 ||
-          !new RegExp('^p' + pid + '-s[1-9]\\d*-u\\d+$').test(metadata.incarnation)) throw Error();
-      return metadata;
-    } catch { throw Error('SELECTED_PROCESS_UNPROVED'); }
+        [mode, String(pid), expected], { env: environment(), timeout: 3000, maxBuffer: 1024 });
+      return parseProcessMetadata(stdout, pid, code);
+    } catch { throw Error(failure); }
   };
+  const provider = read('--process-pid', false, 'SELECTED_PROCESS_UNPROVED');
+  provider.codeStatus = read('--code-status', true, 'SELECTED_SIGNATURE_UNPROVED');
+  Object.freeze(provider);
   processProviders.add(provider); return provider;
 }
 

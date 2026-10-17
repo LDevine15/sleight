@@ -25,14 +25,14 @@ const appRootsFor = (home, apps) => [apps ?? '/Applications', join(home, 'Applic
 // executable-trust.mjs), so a browser turbo would refuse at connect time is never written into the file. A
 // group-writable signed browser passes here on its bundle's signature on disk; the connection then proves the
 // running process.
-export function executableProblem(path, uid = process.getuid(), { appRoots, verify = verifiedOnDisk } = {}) {
+export function executableProblem(path, uid = process.getuid(), { appRoots, verify = verifiedOnDisk, primaryGid = process.getgid() } = {}) {
   let stat;
   try { stat = lstatSync(path); } catch { return 'missing'; }
   try {
     if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path) return 'not a plain file';
     if (stat.uid !== uid && stat.uid !== 0) return 'owned by another user';
-    const writers = writeClass(stat.mode), mode = 'writable by others (mode ' + (stat.mode & 0o777).toString(8) + ')';
-    if (!writers) return mode;
+    const writers = writeClass(stat, primaryGid), mode = 'writable by others (mode ' + (stat.mode & 0o777).toString(8) + ')';
+    if (!writers) return stat.mode & 0o002 ? mode : `${mode} through group ${stat.gid}, which is neither admin nor your own group`;
     if (writers === 'signature') {
       const signed = signedBrowserAt(path, appRoots ? { appRoots } : {});
       if (!signed) return mode;
