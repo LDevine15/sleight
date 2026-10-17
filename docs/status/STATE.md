@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 11:04 UTC, sleight claim arm rerun on the fixed build; word-edit and preview-read studies)
+## Banner (2026-10-17 11:40 UTC, owner preparing a clear; three Fable studies and two lanes in flight)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -73,6 +73,24 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    Lanes PR1 (docs held back until the first js call), TC1 (stop message, select_window, menu Cancel, same-window menu) and SW1
    (save classification, swap note on RW1R) are running. Then review, merge, full check, and a sleight-only claim rerun (LAWS:
    a sleight fix round reruns only that arm).
+11. In flight at the owner's clear (no new subagents after these, owner):
+   - Fable study A (a6fc500f): why the claude-cu arm doesn't call tools, and whether its approvals can come from the allowlist.
+     Told to wait for "go live" before any live session, and it may ask. Scratch /private/tmp/claude-501/fable-cu/.
+   - Fable study B (a4434178): token and turn waste across all 9 claim tasks, replays only. Scratch /private/tmp/claude-501/fable-audit/.
+   - Fable study C (aa709f2d): how the engine delivers background clicks and keys, the cause of Excel's tab swap and Word's
+     misplaced typing, offline (Ghidra at nice 20). Scratch /private/tmp/claude-501/fable-input/.
+   - Lanes SH1 (screenshot with open_file's first read, flag SLEIGHT_OPEN_SHOT=1) and JD1 (every tool description under 2,048
+     chars; Claude Code truncates sleight's js description from 3,511) on codex/sh1 and codex/jd1. Review, merge, full check.
+   - Puddle window w-flagab-1017 (cap 75) queued behind Puddle's own measurement (~11:50Z): sleight-only claim rerun on the new
+     build (exclude sleight's 10-25 to 10-51 rows first, by file prefix with arm sleight), then an A/B of SLEIGHT_WARM_ENGINE=1,
+     SLEIGHT_OPEN_FAST=1 and SLEIGHT_OPEN_SHOT=1 on preview-read, calculator-click and textedit-save. If nobody is ready at the
+     HOLD, release it with a fresh touch of /tmp/sleight-bench-done and tell puddle arch.
+   - The first Fable study (preview-read): the extra thinking comes from text-only results. Haiku checks the tree when it is the
+     only source. A consistent screenshot took turn-2 thinking to 0 in 5/6 replays (output 478 to 312). Its harness is in
+     /private/tmp/claude-501/fable-why/.
+   - Merged since the rerun (full check 6,247 exit 0, pushed at `7909da1d` plus CHANGELOG): WM1/WM1R stuck-menu and misplaced-
+     typing warnings, PW1/PW1R opt-in latency flags, BR2S/BR2SR Safari gate (refuses on any window without profile evidence. A
+     fresh Safari likely opens a default window and refuses, and the read-only probe needs a Safari with no owner windows).
 10. Fix round merged (PR1+PR1R docs held for open_file, TC1+TC1R stop wording and select_window and menu Cancel and
    handle-bound reads, RW1+RW1R+SW1+SW1R save classification and sibling-swap note, then `5a6ba6c0` narrowing the swap note's
    sort guard after Excel's ribbon "Sort & Filter" hid it), each reviewed by Sonnet-high agents, full check 6,191 exit 0.
