@@ -107,7 +107,8 @@ export function recordSteps(entries) {
         }
         if (!REPLAYED.has(call.tool)) { skipped.push(call.tool); continue; }
         if (call.tool === 'drag') {
-          const args = { ...call.input }, positions = [];
+          // A window id is bound to the recording session; the relay refuses it in a new one.
+          const { windowId, ...args } = call.input, positions = [];
           for (const name of ['from', 'to']) {
             const endpoint = args[name];
             if (Number.isSafeInteger(endpoint) && endpoint >= 0) {
@@ -123,8 +124,11 @@ export function recordSteps(entries) {
               else positions.push(`element ${endpoint} has no unique identity in the observed app window`);
             } else if (Array.isArray(endpoint)) {
               if (!positions.includes('drag points')) positions.push('drag points');
-            } else if (!(name === 'from' && endpoint === 'the current text selection') &&
-                !(name === 'to' && typeof endpoint === 'string' && /^end of line [1-9]\d*$/.test(endpoint))) positions.push('unresolved drag endpoint');
+            } else if (name === 'from' && endpoint === 'the current text selection' ||
+                name === 'to' && typeof endpoint === 'string' && /^end of line [1-9]\d*$/.test(endpoint)) {
+              // The selection is whatever is selected at replay time, and visual lines move with the window's width.
+              if (!positions.includes('text selection or line layout')) positions.push('text selection or line layout');
+            } else positions.push('unresolved drag endpoint');
           }
           steps.push({ tool: 'drag', args, positions });
           continue;
@@ -196,9 +200,7 @@ function retryPrefix(step) {
 function dragPositions(args) {
   const line = value => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 &&
     typeof value.line === 'string' && value.line.length > 0;
-  const from = line(args.from) || args.from === 'the current text selection';
-  const to = line(args.to) || (typeof args.to === 'string' && /^end of line [1-9]\d*$/.test(args.to) && Number.isSafeInteger(Number(args.to.slice(12))));
-  return from && to ? [] : ['drag points'];
+  return line(args.from) && line(args.to) ? [] : ['drag points'];
 }
 
 function validateReplay(script, allowPositions, waitMs) {
