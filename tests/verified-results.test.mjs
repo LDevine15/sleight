@@ -291,13 +291,14 @@ test('a save is observed when the document\'s file on disk changes during the ca
 });
 
 function saveAfterClick(t, { role = 'text entry area (settable)', prefix = '', suffix = '', write = true,
-  after = doc => doc, failed = false, overlap = false, target = '1' } = {}) {
+  after = doc => doc, failed = false, overlap = false, target = '1', baseline = true,
+  edit = 'await app.pressKey("super+a"); await app.paste("759");' } = {}) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-clicksave-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, 'a.txt'); writeFileSync(file, 'before'); utimesSync(file, 1000, 1000);
   const doc = tree([`\t1 ${role} Editor, Value: before`, '\t2 button Save'], 'a.txt', pathToFileURL(file).href, 'Editor');
-  const c = createReadCompactor(); c.process([text(doc)]);
-  const action = c.beginAction(`${prefix}await app.click(${target}); await app.pressKey("super+a"); await app.paste("after"); await app.pressKey("super+s");${suffix}`);
+  const c = createReadCompactor(); if (baseline) c.process([text(doc)]);
+  const action = c.beginAction(`${prefix}await app.click(${target}); ${edit} await app.pressKey("super+s");${suffix}`);
   action.overlap = overlap;
   if (write) { writeFileSync(file, 'after'); utimesSync(file, 2000, 2000); }
   return c.process([text(GUARD_MARK + after(doc).replace('Value: before', 'Value: after') + GUARD_END)], { action, failed })
@@ -309,6 +310,33 @@ for (const role of ['text entry area (settable)', 'text area', 'text field', 'st
     assert.match(saveAfterClick(t, { role }), /saved: observed ".*a\.txt" \(its file on disk changed during this call\)/);
   });
 }
+
+for (const [name, options] of [
+  ['an ID click', { target: '{ id: "First Text View" }' }],
+  ['an unresolved number', { target: '99' }],
+  ['coordinates', { target: '{ x: 10, y: 20 }' }],
+  ['select-all alone', { target: '{ id: "First Text View" }', edit: 'await app.pressKey("super+a");' }],
+  ['plain typing', { target: '{ id: "First Text View" }', edit: 'await app.typeText("759");' }],
+]) test(`a subsequent edit on the same handle resolves ${name} for file-time save evidence`, t => {
+  assert.match(saveAfterClick(t, options), /saved: observed .* \(its file on disk changed during this call\)/);
+});
+
+for (const role of ['button', 'menu item', 'row', 'link']) {
+  test(`a resolved ${role} remains navigation when followed by editing and save`, t => {
+    const note = saveAfterClick(t, { role });
+    assert.match(note, /saved: not confirmed \(mixed save targets\)/);
+    assert.doesNotMatch(note, /saved: observed/);
+  });
+}
+
+test('a click without an earlier tree leaves save proof unavailable rather than mixed', t => {
+  assert.match(saveAfterClick(t, { target: '2', baseline: false }), /saved: not confirmed \(no earlier read\)/);
+});
+
+test('an inferred editable click still needs a file write or modified-state evidence', t => {
+  assert.match(saveAfterClick(t, { target: '{ id: "First Text View" }', write: false }),
+    /saved: not confirmed \(no document save state change seen\)/);
+});
 
 test('an editable click after save can retain mixedSave while the same file write is observed', t => {
   assert.match(saveAfterClick(t, { suffix: 'await app.click(1)' }), /saved: observed .* \(its file on disk changed during this call\)/);
@@ -326,9 +354,10 @@ for (const [name, options] of [
   ['a different title', { after: doc => doc.replace('Window: "a.txt"', 'Window: "b.txt"').replace('standard window a.txt,', 'standard window b.txt,') }],
   ['a different app', { after: doc => doc.replace('App: Editor.', 'App: Other.') }],
   ['no disk write', { write: false }],
-  ...['button', 'menu item', 'row', 'link', 'button (settable)', 'button Description: text area'].map(role => [role, { role }]),
-  ['an unknown click target', { target: '99' }],
-  ['a coordinate click', { target: '{ x: 10, y: 20 }' }],
+  ...['button', 'menu item', 'row', 'link', 'button (settable)', 'button Description: text area'].map(role => [role, { role, edit: '' }]),
+  ['an unknown click target without an edit', { target: '99', edit: '' }],
+  ['a coordinate click without an edit', { target: '{ x: 10, y: 20 }', edit: '' }],
+  ['an edit on another handle', { target: '99', edit: 'await other.typeText("759");' }],
   ...['super+o', 'super+n', 'super+w', 'Return', 'Escape'].map(key => [key, { prefix: `await app.pressKey("${key}");` }]),
   ['another handle read after save', { suffix: 'await other.getAXState()' }],
   ['another acquisition after save', { suffix: 'await cua.getApp("Other")' }],
