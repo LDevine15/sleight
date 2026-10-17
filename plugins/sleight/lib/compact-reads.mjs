@@ -646,8 +646,36 @@ function trimAcquisition(text) {
   return compacted.length < text.length ? { text: compacted, hidden } : undefined;
 }
 
+// Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
+function textlessDocument(observation) {
+  if (!observation || observation.invalid || observation.incomplete || observation.degraded ||
+      !/^(?:standard|floating) window\b/.test(observation.root)) return false;
+  const lines = observation.lines.map(parse);
+  return lines.some((line, i) => {
+    if (line.num === undefined) return false;
+    const key = line.key.trimStart();
+    if (!/^(?:layout area|table|document|text (?:entry )?area)\b/.test(key) &&
+        !/^(?:split group|group|container|scroll area)\b/.test(key)) return false;
+    if (!/^(?:layout area|table|document|text (?:entry )?area)\b/.test(key) &&
+        !/\b(?:document pane|document area|content area)\b/i.test(key)) return false;
+    const depth = line.key.length - key.length;
+    for (let j = i; j < lines.length; j++) {
+      const child = lines[j], body = child.key.trimStart();
+      if (j > i && child.num !== undefined && child.key.length - body.length <= depth) break;
+      if (child.num === undefined || !/^(?:(?:static )?text|cell|row)\b/.test(body)) continue;
+      const value = /\bValue:\s*(.*)/.exec(body)?.[1];
+      if (value !== undefined) {
+        if (value.split(/,?\s*(?:ID|Help|Description|Secondary Actions):/)[0].trim().replace(/^(?:""|'')$/, '')) return false;
+      } else if (/^(?:static text|text)\s+(?!entry area\b|area\b|field\b)/.test(body) &&
+          !/^(?:static text|text)\s+(?:ID|Help|Description|Secondary Actions):/.test(body)) return false;
+    }
+    return true;
+  });
+}
+
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
-  compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1' } = {}) {
+  compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
+  screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map();
@@ -951,6 +979,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           entry.believed = new Map([...(entry.believed ?? numbered(entry.lines))].filter(([num]) => !trimmed.hidden.has(num)));
         }
         out[i] = { ...item, text: trimmed.text };
+      }
+      if (screenshotReads && !failed && !stopped && !action?.overlap &&
+          !content.some(item => item?.type === 'image') && textlessDocument(observedInResult)) {
+        out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
       }
       return trimBrowserResults(out, code);
     },
