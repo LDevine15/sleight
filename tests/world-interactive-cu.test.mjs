@@ -76,6 +76,25 @@ test('transcript waits for complete lines, counts each message once and ignores 
   assert.equal(events[1].message.content[0].tool_use_id, 'call');
 });
 
+test('a foreign tool Claude Code refused lets the run continue; one that ran, or never answers, stops it', t => {
+  const use = (tid, name) => JSON.stringify(assistant(tid, [{ type: 'tool_use', id: tid, name, input: {} }])) + '\n';
+  const result = (tid, content, is_error) => JSON.stringify({ type: 'user', sessionId: id, message: { content: [{ type: 'tool_result', tool_use_id: tid, content, is_error }] } }) + '\n';
+  const refused = new SessionTranscript(id);
+  refused.append(use('read', 'Read'));
+  refused.append(result('read', '<tool_use_error>Error: No such tool available: Read. Read is disabled for this session.</tool_use_error>', true));
+  refused.append(use('read', 'Read'));
+  assert.equal(refused.summary().foreignTool, false);
+  const ran = new SessionTranscript(id);
+  ran.append(use('bash', 'Bash')); ran.append(result('bash', 'file contents', false));
+  assert.equal(ran.summary().foreignTool, true);
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  const silent = new SessionTranscript(id);
+  silent.append(use('bash', 'Bash'));
+  assert.equal(silent.summary().foreignTool, false);
+  t.mock.timers.tick(2001);
+  assert.equal(silent.summary().foreignTool, true);
+});
+
 test('terminal gates reject approval, trust and login prompts even beside a ready glyph', () => {
   assert.equal(terminalGate('\x1b[32m❯ \x1b[0m\n').ready, true);
   for (const text of ['Allow for this session', 'Grant Accessibility and Screen Recording', 'Do you trust the files in this folder?', 'Sign in to Claude']) {

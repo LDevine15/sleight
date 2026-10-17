@@ -105,6 +105,10 @@ export class SessionTranscript {
         for (const block of event.message.content) if (block.type === 'tool_result' && this.tools.has(block.tool_use_id) && !this.results.has(block.tool_use_id)) {
           this.results.add(block.tool_use_id);
           const content = Array.isArray(block.content) ? block.content.filter(c => c.type === 'text') : block.content;
+          if (this.foreignPending?.delete(block.tool_use_id)) {
+            const text = typeof content === 'string' ? content : (content ?? []).map(c => c.text).join('\n');
+            if (!(block.is_error && /No such tool available/.test(text))) this.foreignTool = true;
+          }
           this.onEvent?.({ type: 'user', t, message: { content: [{ ...block, content }] }, imagesOmitted: Array.isArray(block.content) && block.content.some(c => c.type === 'image') });
         }
       }
@@ -117,7 +121,11 @@ export class SessionTranscript {
           if (/request_access$/.test(block.name ?? '') && typeof block.input?.reason === 'string') this.accessReason = block.input.reason;
           if (!this.tools.has(block.id)) this.onEvent?.({ type: 'assistant', t, message: { id: m.id, content: [block], usage: m.usage } });
           this.tools.add(block.id);
-          if (!/^(?:mcp__computer[-_]use__|ToolSearch$|WaitForMcpServers$)/.test(block.name ?? '')) this.foreignTool = true;
+          // Claude Code refuses a tool outside --tools with "No such tool available", and Claude carries on, as on every other arm
+          // (textedit-calculator #2, 17:30Z: a refused Read stopped the run at 6.9 s). Only a foreign tool that ran, or whose
+          // result doesn't arrive within 2 s, stops the harness.
+          if (!/^(?:mcp__computer[-_]use__|ToolSearch$|WaitForMcpServers$)/.test(block.name ?? '') && !this.results.has(block.id))
+            (this.foreignPending ??= new Map()).set(block.id, Date.now());
         }
         if (block.type === 'text') {
           this.lastText = block.text;
@@ -155,7 +163,7 @@ export class SessionTranscript {
         for (const [key, source] of Object.entries({ inputTokens: 'input_tokens', outputTokens: 'output_tokens', cacheReadInputTokens: 'cache_read_input_tokens', cacheCreationInputTokens: 'cache_creation_input_tokens' })) u[key] += m.usage[source] ?? 0;
       }
     }
-    return { answer: this.answer, lastText: this.lastText, accessReason: this.accessReason, calls: this.tools.size, modelCalls: this.messages.size, usage, modelUsage, foreignTool: !!this.foreignTool };
+    return { answer: this.answer, lastText: this.lastText, accessReason: this.accessReason, calls: this.tools.size, modelCalls: this.messages.size, usage, modelUsage, foreignTool: !!this.foreignTool || [...(this.foreignPending?.values() ?? [])].some(at => Date.now() - at > 2000) };
   }
 }
 
