@@ -159,5 +159,15 @@
       "reason": "the word was not moved; the file was unchanged",
       "why": "recorded as 'approval required' by the claude-cu harness's dialog text gate, which matched Claude's own closing prose above the input box (fixed in 96e9347d); no approval was pending"
     }
+  ],
+  "runsNote": "A run exclusion drops one run (file, arm, task, run) that a harness fault stopped before the model could work; the arm reruns it.",
+  "runs": [
+    {
+      "file": "2026-10-17T17-26-06-121Z.json",
+      "arm": "claude-cu",
+      "task": "textedit-calculator",
+      "run": 2,
+      "why": "claude-cu harness stopped the session at 6.9 s when Claude Code refused a Read call (\"No such tool available\"); other arms carry on after a refused tool (harness fixed in f644b96b)"
+    }
   ]
 }

@@ -108,3 +108,11 @@ test('a regrade replaces only the shown reason of the one run it names, and neve
   assert.equal(regradeFor({ ...row, run: 2 }, file, rules), undefined);
   assert.equal(regradeFor(row, '2026-10-17T15-57-44-594Z.json', rules), undefined);
 });
+
+test('a run exclusion drops only the named run of that arm, task and file', () => {
+  const rules = { tasks: ['textedit-calculator'], reasons: [], files: [], windows: [],
+    runs: [{ file: 'f.json', arm: 'claude-cu', task: 'textedit-calculator', run: 2, why: 'harness stop' }] };
+  assert.equal(excluded({ arm: 'claude-cu', task: 'textedit-calculator', run: 2, seconds: 6.9 }, 'f.json', rules), 'harness stop');
+  for (const [row, file] of [[{ run: 1 }, 'f.json'], [{ run: 2 }, 'g.json'], [{ run: 2, arm: 'lcu' }, 'f.json']])
+    assert.equal(excluded({ arm: 'claude-cu', task: 'textedit-calculator', seconds: 7, ...row }, file, rules), undefined);
+});

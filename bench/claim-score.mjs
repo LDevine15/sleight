@@ -23,6 +23,7 @@ export function excluded(row, file, rules) {
   if (row.skipped || row.seconds == null) return 'skipped';
   for (const r of rules.reasons) if (new RegExp(r.match, 'i').test(row.reason ?? '')) return r.why;
   for (const f of rules.files) if ((f.names ? f.names.includes(file) : file.startsWith(f.prefix)) && (!f.arm || f.arm === row.arm)) return f.why;
+  for (const r of rules.runs ?? []) if (r.file === file && r.arm === row.arm && r.task === row.task && r.run === row.run) return r.why;
   for (const w of rules.windows) if (w.tasks.includes(row.task) && (!w.arm || w.arm === row.arm) && file < w.before) return w.why;
   return undefined;
 }
@@ -100,7 +101,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       if (why) { if (why !== 'not a claim task') dropped[why] = (dropped[why] ?? 0) + 1; continue; }
       const passed = !!(row.passed || (row.cleanupContained && row.taskPassed)), g = !passed && regradeFor(row, file, rules);
       rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run,
-        ...(!passed && { reason: g ? g.reason : row.reason ?? 'no reason recorded', ...(g && { recorded: row.reason, regraded: g.why }) }) });
+        ...(!passed && { reason: (g && g.reason) || (row.reason ?? 'no reason recorded'), ...(g && { recorded: row.reason, regraded: g.why }) }) });
     }
   }
   const table = score(rows), verdict = claim(table, rules), warned = warnings(rows, rules, since), failures = rows.filter(r => !r.passed);
