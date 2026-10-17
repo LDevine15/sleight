@@ -17,7 +17,7 @@ runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 46
 headline's wording to the browser race, which isn't done.
 
 **Fixes for the three losses, all lanes finished by 21:35Z** (Fable loss studies 20:5xZ, items in `~/Projects/sleight-wt/ledger/LEDGER.md`,
-last section; each committed on its own branch; worktrees under `.claude/worktrees/agent-<id>`):
+last section; each committed on its own local branch `worktree-agent-<id>`, also pushed to `private` as `arch/lane-<id>`):
 - agent-aa17fa2300d3ec00c (compact-reads): done, cb88e02b on worktree-agent-aa17fa2300d3ec00c, unmerged pending a Sonnet-high review.
   It confirms a save from the app's last standard-window read when the pre-save read was a menu or missing, drops stale "a menu is open"
   notes, attaches the moved-click note in calls with several clicks (with Undo first in its wording), and matches combined
