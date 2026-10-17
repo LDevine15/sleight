@@ -3,11 +3,27 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 21:48 UTC, A/B queued)
+## Banner (2026-10-17 22:31 UTC)
 
 Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
-no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. Build work runs as
-Claude subagents (Opus high builds, Sonnet high reviews, Fable studies). Nothing live is running at the clear, and no lock or hold is set.
+no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. The owner is away
+from the PC but home and reachable by phone (since 21:46Z), so live runs are allowed.
+
+**Tonight's state (details and numbers in `~/Projects/sleight-wt/ledger/LEDGER.md`, sections ASTRA-1017 and AB-LOSS).**
+- All three Astra lanes finished (native 21:38Z, office ~22:00Z, browser ~22:05Z). Reports `ledger/astra-1017-<name>-report.md`, items
+  AN1 to AN7, AO1 to AO5, AB1 to AB5. No product code from them.
+- Merged and pushed (`3ff925db`, full check 6583 pass, prose lint clean): the five reviewed loss-fix branches, AN1 (switch tabs by
+  key, not click), AN4 (open_file adds a screenshot when the tree has no document text), AN6 (bench timing parts add up), AO1 (one
+  paste for a known block of cells), AO5 (cleanup confirms exits independently), AB4 (one coordinate frame note), AN2 (results that
+  name supported alternatives and what ran), MS1 (stuck menu-bar note escalates), AB2 (one call's repeated reads compacted). Each had a
+  Sonnet-high review and fixes.
+- In review: AB1 (continue across a tab the call opened, after its safety review) and AB3 (fresh numbers after an invalid-ID stop).
+- First A/B (old 369bc9a2, new c34549ff, 6 rounds): no clear win. Expected s: excel 57.1 to 44.7, save 10.6 to 9.8, preview 4.4 to
+  4.9, word 75.9 to 113.3 (one model-variance failure, passing mean 78.9).
+- Running now, A/B 2 (`sitting-1017c/ab2.sh`, old 369bc9a2, new 3ff925db, 6 tasks, 5 rounds, started 22:30Z).
+- Late-alert probe (AN3, light Return check): first live run unusable (Finder baseline, Excel alert never triggered, TextEdit open
+  panel), so it went back to its lane. The light check stays off.
+- The owner made the Safari profile named "sleight benchmark" on 2026-10-16.
 
 **Native claim: the scorer says "fastest"** (`~/Projects/sleight-wt/sitting-1017c/claim-score-final.{txt,json}`). sleight's final
 claim run (bb6f99f6, 2026-10-17 19:07-19:32Z, results copied into the main checkout's `bench/results`) passed 44 of 45, and the one
@@ -16,47 +32,11 @@ runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 46
 10.5 against 10.4), preview-read (Peekaboo 4.4 against 4.6 median) and excel-edit (claude-cu 54 against 74). LAWS ties the
 headline's wording to the browser race, which isn't done.
 
-**Loss fixes and pending branches: all five reviewed (Sonnet high), fixed by Opus lanes and merged in this worktree
-(4254b08a, 2026-10-17 21:45Z)**. Full check 6513 pass, 0 fail, 353 skipped, prose lint clean:
-- compact-reads (cb88e02b, fixes 754927aa): save confirmed after a menu read, stale menu notes dropped only on the same
-  window's full tree, `{ id, label }` locators everywhere with no label-only fallback.
-- guard after Return (a69c1d55, fixes ba6f3c0c): the light check is off by default (`SLEIGHT_GUARD_LIGHT_RETURN=1`), with a
-  250 ms margin, an age bound, a secure-field refusal and a trace event. It stays off until a live measurement of how late
-  alerts appear after Return.
-- rules-first, open_file, textless note, save skill line (044434df, fixes 33c11a4f): the open skip needs the app's main
-  window, the result says so when the header shows another file, the textless note needs a non-empty file, and a failed
-  lookup withdraws its approval.
-- turbo group-writable Chrome (bf60a6a2, fixes 5d0182ea): `csops` live status and the running cdhash verified against the
-  Team ID requirement, admin or own group only, qualified browsers only. The live turbo-on-Chrome check is still to run.
-- dialog continuation LW2 to LW4 (f3c15d05, fd834163, LW4 fixes): a remembered window belongs to one process, and a dialog over a
-  URL-less window needs a certified identity. The staleness bound blocks the Escape and Cmd+H Word shape (speed, not safety).
-
-**Running now (owner away from the PC since 21:46Z, home and reachable by phone).** Loss-fix A/B
-`~/Projects/sleight-wt/sitting-1017c/ab-loss.sh` (old 369bc9a2 against new c34549ff, textedit-save, preview-read, excel-edit,
-word-edit, 5 alternating rounds, log `ab-loss.log`, per-round `ab-loss-<side>-r<n>.log`), waiting on the live lock that the
-Astra browser lane holds. Opus build lanes AN1 (sheet switching without tab clicks), AN4 (open_file result packaging) and AN6
-(bench timing split) run in their own worktrees, with no live runs.
-
-**Astra native finished (21:38Z)**: report `~/Projects/sleight-wt/ledger/astra-1017-native-report.md`, items AN1 to AN7 in
-the ledger. Excel needs reliability plus about 16 s per attempt for a 20% lead. The office lane measured background sheet
-switches by Option+Left/Right at 586 to 656 ms. Office and browser lanes are still running.
-Next: full check, then
-A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
-sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
-
-**Astra lanes running (separate processes, kept across the clear).** Three headless `codex exec -m gpt-6-astra -c model_reasoning_effort=xhigh` lanes
-started 2026-10-17 21:20Z with open-ended briefs (`~/Projects/sleight-wt/ledger/astra-1017-<name>-prompt.md`, logs
-`astra-1017-<name>.log`, reports `astra-1017-<name>-report.md`, branches `codex/astra-1017-<name>`): native (fastest on all 9),
-office (Word and Excel in the background), browser (the engine path in Safari and Firefox). They take the live lock
-(`/tmp/sleight-live.lock`) for live work and honor `/tmp/sleight-hold`, so sleight-arch's own live runs wait on them or vice versa.
-Check with `pgrep -f 'codex exec'`. The owner corrected that Astra is gpt-6-astra (Fable-class, deep perf, open-ended prompts) and
-gpt-6.1-sol is the builder model.
-
 **Browser race (real windows), started.** Harness `bench/fowl/rounds.sh --world --real-browser <chrome|helium|firefox|safari>
 --surface <arm> --model haiku --effort high`; arms sleight-turbo (Chrome, Helium), sleight (Safari, Firefox: engine path, now with
 `SLEIGHT_TURBO=0`), lcu, cua, peekaboo (from Terminal.app), codex. Firefox, sleight: round 1 5/12 (harness bugs), round 2 12/12
 (`/tmp/fb-rounds/real-f6f636c8-b44e-407e-a37e-d55e1fbfa2c5-sleight`, form-checkout stopped before paying). LCU, Cua and Codex rounds are
-harness failures, being triaged. Safari, Chrome and Helium haven't run. macOS denies this session's shell reading Chrome's and
+harness failures, being triaged. Safari, Chrome and Helium haven't run. The owner made Safari's "sleight benchmark" profile on 2026-10-16 (owner, 2026-10-17). macOS denies this session's shell reading Chrome's and
 Firefox's data folders (EPERM, App Data protection), so Chrome-family rounds and the Claude in Chrome dry run must run from
 Terminal.app (`open -a Terminal x.command`, output to a file). Firefox now launches through LaunchServices (`open -n -a`); a direct
 spawn showed "Profile Missing".
