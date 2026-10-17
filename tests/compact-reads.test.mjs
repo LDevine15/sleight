@@ -84,6 +84,8 @@ test('loaded content renumbers later elements: they are left out and counted, an
   const [out] = apply(c, GUARD_MARK + grown);
   assert.match(out, /\+ \t3 link Breaking story/);
   assert.match(out, /59 other elements have new numbers/);
+  assert.match(out, /getAXState\(\)/);
+  assert.doesNotMatch(out, /disableDiffing/);
   assert.doesNotMatch(out, /Story 30/);
   assert.equal(c.staleIndex(window, 'await app.click(2)'), undefined, 'a number before the insert is unchanged');
   assert.equal(c.staleIndex(window, 'await app.click(3)'), undefined, 'a number from a + line is current');
@@ -267,4 +269,61 @@ test('a split acquisition\'s tree is left out only when the rest of its call ret
   assert.equal(hasFullTree(diff), false);
   assert.equal(dropAcquisitionTree(head, [{ type: 'text', text: diff }]), head, 'a diff needs the tree it was taken against');
   assert.equal(dropAcquisitionTree(head, [{ type: 'text', text: 'saved' }]), head);
+});
+
+
+test('an action full read drops an identical guard tree across text items and retains its delta', () => {
+  const c = createReadCompactor();
+  apply(c, tree([...sidebar, '\t60 text field Value: before']));
+  const action = c.beginAction('await app.typeText("after")');
+  const after = tree([...sidebar, '\t60 text field Value: after']);
+  const out = c.process([text(after), text(GUARD_MARK + after + GUARD_END)],
+    { explicitFull: true, action }).map(i => i.text).join('\n');
+  assert.equal(out.match(/standard window/g)?.length, 1);
+  assert.match(out, /UI changed \(value\)/);
+});
+
+
+for (const split of [false, true]) {
+  test('duplicate marked action reads keep the full read and its UI note, split=' + split, () => {
+    const c = createReadCompactor();
+    apply(c, tree([...sidebar, '\t60 text field Value: before']));
+    const action = c.beginAction('await app.typeText("after")');
+    const after = tree([...sidebar, '\t60 text field Value: after']);
+    const marked = GUARD_MARK + after + GUARD_END;
+    const out = c.process((split ? [marked, marked] : [marked + marked]).map(text),
+      { explicitFull: true, action }).map(i => i.text).join('\n');
+    assert.equal(out.match(/standard window/g)?.length, 1);
+    assert.match(out, /UI changed \(value\)/);
+  });
+}
+
+test('a different guard tree stays visible and invalidates numbers absent from it', () => {
+  const c = createReadCompactor();
+  const before = tree([...sidebar, '\t60 button Old']);
+  apply(c, before);
+  const action = c.beginAction('await app.click(60)');
+  const after = tree([...sidebar, '\t61 button New']);
+  const out = c.process([text(before), text(GUARD_MARK + after + GUARD_END)],
+    { explicitFull: true, action }).map(i => i.text).join('\n');
+  assert.equal(out.match(/standard window/g)?.length, 2);
+  assert.match(out, /61 button New/);
+  assert.equal(c.seenLines({ title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' }, [60]), undefined);
+});
+
+test('a plain read after renumbering shows current numbers for previously visible lines', () => {
+  const c = createReadCompactor();
+  const window = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
+  const before = tree([...sidebar, '\t60 button First', '\t61 button Second']);
+  const after = tree([...sidebar, '\t61 button First', '\t60 button Second']);
+  apply(c, before);
+  apply(c, GUARD_MARK + after + GUARD_END);
+  assert.deepEqual(c.staleIndex(window, 'app.click(60)'), { number: 60 });
+  const out = c.process([text(GUARD_MARK + after + GUARD_END)],
+    { code: 'await app.getAXState()' }).map(i => i.text).join('\n');
+  assert.match(out, /\+ \t61 button First/);
+  assert.match(out, /\+ \t60 button Second/);
+  assert.doesNotMatch(out, /Chat 49/);
+  assert.equal(c.staleIndex(window, 'app.click(60)'), undefined);
+  assert.equal(c.staleIndex(window, 'app.click(61)'), undefined);
 });
