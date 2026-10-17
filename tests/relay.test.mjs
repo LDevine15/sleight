@@ -1682,7 +1682,7 @@ test('a leased click batch follows its own sheet or dialog and stops at other wi
       { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
     if (allowed) await run;
     else await assert.rejects(run, /App: Other\b/.test(after)
-      ? /app changed\. 1 earlier actions in this call ran/ : /window or URL changed/);
+      ? /app changed\. 1 earlier action in this call ran/ : /window or URL changed/);
     assert.deepEqual(clicks, allowed ? [19, 9] : [19]);
     flowAnswer(h, 2, ui);
   }

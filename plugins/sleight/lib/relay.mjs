@@ -1130,8 +1130,8 @@ export function createRelay({
     return `Begin js with \u0060${constApp ? '' : 'let app = '}await cua.getApp(${JSON.stringify(selectedWindow.appId)})\u0060 (name or bundle ID); actions may follow on its returned handle.`;
   }
   function selectedCancel(code) {
-    return selectedWindow && leaseWindow?.appId === selectedWindow.appId && leaseWindow.app === selectedWindow.app &&
-      leaseWindow.title === selectedWindow.title && isChangeCancel(code, lastWindowText);
+    return selectedWindow && selectedWindow.windowNumber !== undefined && leaseWindow?.appId === selectedWindow.appId &&
+      sameWindow(leaseWindow, selectedWindow) && isChangeCancel(code, lastWindowText);
   }
   let constApp = false;
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
@@ -1266,7 +1266,7 @@ export function createRelay({
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
-      if (selectedWindow && !selectedCancel(code) && (!selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameWindow(leaseWindow, selectedWindow))) {
+      if (selectedWindow && !selectedCancel(code) && (isChangeCancel(code, lastWindowText) || !selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameWindow(leaseWindow, selectedWindow))) {
         leaseStop(msg, `selected window is not confirmed. ${confirmRecovery()}`); return false;
       }
       if (!leaseWindow?.appId) {
@@ -2017,7 +2017,9 @@ export function createRelay({
         leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return;
       }
       if (reply.error || reply.result?.isError) { toClient({ ...reply, id: msg.id }); return; }
-      if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected))) {
+      const acquiredNumber = acquire.match(/cua\.getApp\(\s*\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}\s*\)/)?.[1];
+      if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
+          (!selectedWindow || !acquiredNumber || Number(acquiredNumber) === expected.windowNumber))) {
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
           { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
         return;

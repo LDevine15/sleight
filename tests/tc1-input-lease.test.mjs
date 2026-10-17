@@ -18,11 +18,12 @@ const target = { appId: 'org.test.editor', app: 'Fixture Editor', title: 'report
 const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 
 // Only mock engine calls run in this realm; native window/focus evidence stays in the relay.
-async function fixture(t, { selected = true, confirm = true, nativeChange, ...options } = {}) {
+async function fixture(t, { selected = true, confirm = true, nativeChange, selectedTarget = { ...target, windowNumber: 22 }, rejectInput = false, ...options } = {}) {
   let text = document, active = 'org.test.editor', writes = [];
   const inputs = [], sent = [], received = [];
   const native = { windowNumber: 22, hidIdleSeconds: 1000, status: 'ok' };
   const input = (app, kind, value) => {
+    if (rejectInput) throw new Error('Fixture input rejected');
     inputs.push({ app, kind, value });
     if (kind === 'click' && value === 2) text = menu;
     if (kind === 'click' && value === 4 || value === 'Escape') text = document;
@@ -47,9 +48,9 @@ async function fixture(t, { selected = true, confirm = true, nativeChange, ...op
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: false,
     windowIdentity: async expected => ({ ...expected, ...native, matches: 1,
       epoch: 'helper', window: 1, pid: 123, processStart: 1 }),
-    localTools: { tools: [SELECT_WINDOW_TOOL], target: async () => target,
-      call: async () => ({ content: [{ type: 'text', text: JSON.stringify({ ok: true, target,
-        identity: { pid: 123, windowNumber: 22 } }) }] }) }, ...options });
+    localTools: { tools: [SELECT_WINDOW_TOOL], target: async () => selectedTarget,
+      call: async () => ({ content: [{ type: 'text', text: JSON.stringify({ ok: true, target: selectedTarget,
+        identity: { pid: 123, windowNumber: selectedTarget.windowNumber } }) }] }) }, ...options });
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); });
   clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
   serverIn.on('data', data => sent.push(...data.toString().trim().split('\n').map(JSON.parse)));
@@ -112,22 +113,22 @@ for (const mismatch of ['title', 'url', 'app']) test(`TC1: combined selection ac
   assert.equal(h.sent.length, 1, 'only the acquisition reaches the engine');
 });
 
-test('TC1: selected menu Escape is admitted when its header omits the selected URL', async t => {
+test('TC1R: selected menu Escape refuses a header that omits the selected URL', async t => {
   const h = await fixture(t, { confirm: false });
   h.setText(menu);
   await h.call('app = await cua.getApp("Fixture Editor");');
   const result = await h.call('await app.pressKey("Escape");');
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  assert.deepEqual(h.inputs.map(input => input.value), ['Escape']);
+  assert.equal(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.inputs, []);
 });
 
-test('TC1: selected button Cancel is admitted when its header omits the selected URL', async t => {
+test('TC1R: selected button Cancel refuses a header that omits the selected URL', async t => {
   const h = await fixture(t, { confirm: false });
   h.setText(menu + '\n\t5 button Cancel');
   await h.call('app = await cua.getApp("Fixture Editor");');
   const result = await h.call('await app.click(5);');
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  assert.deepEqual(h.inputs.map(input => input.value), [5]);
+  assert.equal(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.inputs, []);
 });
 
 for (const mismatch of ['title', 'app']) test(`TC1: Cancel cannot bypass selected ${mismatch} identity`, async t => {
@@ -151,7 +152,7 @@ test('TC1: an unconfirmed selected menu still refuses Save', async t => {
 for (const change of ['window', 'focus']) for (const cancel of ['await app.pressKey("Escape");', 'await app.click(5);']) {
   test(`TC1: selected Cancel retains native ${change} protection: ${cancel}`, async t => {
     const h = await fixture(t, { confirm: false });
-    h.setText(menu + '\n\t5 button Cancel');
+    h.setText(menu + `\nURL: ${target.url}\n\t5 button Cancel`);
     await h.call('app = await cua.getApp("Fixture Editor");');
     if (change === 'window') h.native.windowNumber = 23;
     else h.native.status = 'mismatch';
@@ -177,9 +178,10 @@ for (const selected of [false, true]) for (const earlier of [0, 1, 2]) {
     assert.equal(result.isError, true);
     assert.deepEqual(h.inputs.map(input => input.value), Array(earlier).fill('Super+C'));
     const output = JSON.stringify(result);
-    assert.match(output, new RegExp(`${earlier} earlier actions? in this call ran`));
+    assert.match(output, new RegExp(`${earlier} earlier action${earlier === 1 ? '' : 's'} in this call ran`));
     assert.match(output, /nothing was sent to (?:the new app|Other Editor)/i);
-    assert.match(output, /lease is now on the observed window/i);
+    assert.match(output, /the next action will lease the observed window/i);
+    assert.doesNotMatch(output, /lease is now on the observed window/i);
     assert.match(output, /resend only the remaining actions without select_window/i);
     const remaining = await h.call('await other.click("Next");');
     assert.notEqual(remaining.isError, true, JSON.stringify(remaining));
@@ -193,5 +195,68 @@ test('TC1: flow rules refuse a combined selected acquisition before input', asyn
   const result = await h.call('let editor = await cua.getApp("Fixture Editor"); await editor.typeText("SECRET");');
   assert.equal(result.isError, true);
   assert.match(JSON.stringify(result), /secret/);
+  assert.deepEqual(h.inputs, []);
+});
+
+for (const cancel of ['await app.pressKey("Escape");', 'await app.click(5);']) {
+  for (const url of ['file:///tmp/report.txt', 'file:///tmp/elsewhere/report.txt', null]) {
+    test(`TC1R: selected Cancel requires equal URLs on both sides: ${url}, ${cancel}`, async t => {
+      const h = await fixture(t, { confirm: false });
+      h.setText(menu + (url ? `\nURL: ${url}` : '') + '\n\t5 button Cancel');
+      await h.call('app = await cua.getApp("Fixture Editor");');
+      const result = await h.call(cancel);
+      assert.equal(!!result.isError, url !== target.url, JSON.stringify(result));
+      assert.equal(h.inputs.length, url === target.url ? 1 : 0);
+    });
+  }
+  for (const windowNumber of [22, undefined]) {
+    test(`TC1R: URL-less selection Cancel requires a selected native number: ${windowNumber}, ${cancel}`, async t => {
+      const h = await fixture(t, { confirm: false, selectedTarget: { ...target, url: null, windowNumber } });
+      h.setText(menu + '\n\t5 button Cancel');
+      await h.call('app = await cua.getApp("Fixture Editor");');
+      const result = await h.call(cancel);
+      assert.equal(!!result.isError, windowNumber === undefined, JSON.stringify(result));
+      assert.equal(h.inputs.length, windowNumber === undefined ? 0 : 1);
+    });
+  }
+  test(`TC1R: Cancel refuses a URL when the selection has none: ${cancel}`, async t => {
+    const h = await fixture(t, { confirm: false, selectedTarget: { ...target, url: null, windowNumber: 22 } });
+    h.setText(menu + `\nURL: ${target.url}\n\t5 button Cancel`);
+    await h.call('app = await cua.getApp("Fixture Editor");');
+    const result = await h.call(cancel);
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.deepEqual(h.inputs, []);
+  });
+}
+
+for (const selected of [false, true]) test(`TC1R: acquisition read cannot authorize a stale app handle (${selected})`, async t => {
+  const h = await fixture(t, { selected: false });
+  await h.call('app = await cua.getApp("Other Editor");');
+  if (selected) await h.call(undefined, 'select_window');
+  const result = await h.call('let editor = await cua.getApp("Fixture Editor"); await app.pressKey("Super+C");');
+  assert.equal(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.inputs, [], 'no key may reach the stale handle');
+});
+
+for (const earlier of [0, 1, 2]) test(`TC1R: cross-app count excludes caught guard refusals after ${earlier} completions`, async t => {
+  const h = await fixture(t, { selected: false });
+  const result = await h.call(`${'await app.pressKey("Super+C"); '.repeat(earlier)}try { await app.click("Missing"); } catch {} await other.click("Next");`);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.inputs.map(input => input.value), Array(earlier).fill('Super+C'));
+  assert.match(JSON.stringify(result), new RegExp(`${earlier} earlier action${earlier === 1 ? '' : 's'} in this call ran`));
+});
+
+test('TC1R: cross-app count excludes a caught engine rejection', async t => {
+  const h = await fixture(t, { selected: false, rejectInput: true });
+  const result = await h.call('try { await app.pressKey("Super+C"); } catch {} await other.click("Next");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.inputs, []);
+  assert.match(JSON.stringify(result), /0 earlier actions in this call ran/);
+});
+
+test('TC1R: combined windowId acquisition cannot confirm a different native number', async t => {
+  const h = await fixture(t, { confirm: false });
+  const result = await h.call('let editor = await cua.getApp({ windowId: 23 }); await editor.click("Other");');
+  assert.equal(result.isError, true, JSON.stringify(result));
   assert.deepEqual(h.inputs, []);
 });
