@@ -98,6 +98,7 @@ import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
+import { compactJsDescription } from './tool-description.mjs';
 
 // Compile without executing. A complete prefix excludes function bodies and blocks; an invalid
 // token in place of return distinguishes executable code from comments, strings and regexes.
@@ -3340,8 +3341,13 @@ export function createRelay({
         .filter(t => !HIDDEN_TOOLS.has(t.name))
         .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
         .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t) : t))
-        .map(t => (firstCallBatch && t.name === 'js' ? { ...t, description: batchingDescription(t.description, firstCallBatch, prompt) } : t))
-        .map(t => (leanCalls && t.name === 'js' ? { ...t, description: leanCallDescription(t.description) } : t))
+        .map(t => {
+          if (t.name !== 'js') return t;
+          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls);
+          if (compact !== undefined) return { ...t, description: compact };
+          const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt) : t.description;
+          return { ...t, description: leanCalls ? leanCallDescription(description) : description };
+        })
         .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], directBrowser?.tools() ?? [])
         // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
         // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions

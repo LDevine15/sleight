@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { skillRules, localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
 import { batchingDescription, createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { compactJsDescription } from '../plugins/sleight/lib/tool-description.mjs';
 // The budget script parses relay.mjs with the typescript dev dependency, which CI doesn't install.
 const budget = await import('../bench/prompt-budget.mjs').catch(error => {
   if (error.code === 'ERR_MODULE_NOT_FOUND') return null;
@@ -281,4 +282,11 @@ test('the offline budget command measures all sources and stays about 30 percent
   assert.ok(report.rows.some(row => row.source === 'tool descriptions'));
   assert.ok(report.rows.some(row => row.source === 'shared notices'));
   assert.ok(report.total.lean.characters <= report.total.default.characters * 0.71, JSON.stringify(report.total));
+});
+
+test('the delivered default js prompt stays pinned within Claude Code’s description budget', () => {
+  const engine = readFileSync(new URL('fixtures/engine-js-description.txt', import.meta.url), 'utf8').trimEnd();
+  const description = compactJsDescription(engine, true, false);
+  assert.equal(hash(description), baseline.js);
+  assert.ok(description.length <= 2048);
 });
