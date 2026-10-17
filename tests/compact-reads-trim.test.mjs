@@ -27,7 +27,9 @@ test('result trimming keeps folders, selection and the name field match in 198 f
     assert.doesNotMatch(out, /file-101\.txt/);
     const omitted = [...out.matchAll(/sleight: (\d+) sibling rows omitted/g)].reduce((sum, m) => sum + Number(m[1]), 0);
     assert.equal(omitted, 195);
-    assert.match(out, /getAXState\(\{ disableDiffing: true \}\)/);
+    assert.doesNotMatch(out, /disableDiffing|getAXState/);
+    assert.match(out, /150 lines/);
+    assert.equal(out.match(/full read/gi)?.length, 1);
     assert.deepEqual(c.staleIndex(window, 'app.click(306)'), { number: 306 });
     assert.equal(c.staleIndex(window, 'app.click(303)'), undefined, 'selected row remains current');
     assert.equal(c.seenLines(window, [306]), undefined, 'hidden rows are not receipts');

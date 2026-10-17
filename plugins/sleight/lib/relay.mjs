@@ -538,7 +538,8 @@ export function createRelay({
       });
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
-  let compactor = createReadCompactor({ leanCalls, compactAcquisition });
+  const readHints = {};
+  let compactor = createReadCompactor({ leanCalls, compactAcquisition, readHints });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -691,7 +692,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
@@ -3444,8 +3445,12 @@ export function createRelay({
       }
       // Explicit reads stay whole unless Claude printed a derived value. Recovery still forces
       // full output; neither choice skips the action's UI comparison.
+      const screenshotHandles = new Set([...(jsCode ?? '').matchAll(/\b([A-Za-z_$][\w$]*)\.(?:getScreenshot|getAXStateAndScreenshot)\s*\(/g)].map(match => match[1]));
+      const screenshotTarget = screenshotHandles.size === 1 && handleBundles.get([...screenshotHandles][0]);
+      const screenshotAppId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
+      const screenshotWindow = screenshotTarget && (!screenshotAppId || screenshotAppId === screenshotTarget.appId) ? screenshotTarget : undefined;
       if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(dropRepeatedText(msg.result.content), prompt),
-        { code: jsCode, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
+        { code: jsCode, screenshotWindow, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });

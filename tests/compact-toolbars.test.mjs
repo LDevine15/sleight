@@ -19,7 +19,7 @@ const enabled = () => createReadCompactor({ compactToolbars: true });
 
 test('large ribbons become one line while document, menu and small toolbar stay visible', () => {
   const c = enabled(), out = run(c);
-  assert.match(out, /1 tab group Description: ribbon.*23 controls omitted.*filtered.*getAXState/);
+  assert.match(out, /1 tab group Description: ribbon.*23 controls.*omitted/);
   assert.doesNotMatch(out, /Command 0|80 tab Home/);
   for (const kept of ['0 standard window Draft', '91 button Save', '100 text entry area', '111 File']) assert.ok(out.includes(kept));
   assert.ok(out.length < tree().length / 2);
@@ -172,4 +172,93 @@ test('an acted-in ribbon keeps its contents when the click removes its target an
   const code = 'await app.click(3)', action = c.beginAction(code);
   const changed = tree().replace('Details: Home', 'Details: Review').replace('\t\t\t3 button Command 0, ID: command-0\n', '');
   assert.doesNotMatch(run(c, changed, { action, code }), /controls omitted/);
+});
+
+test('textless document windows keep the entire ribbon and its element receipts', () => {
+  for (const document of ['100 table', '100 text entry area (settable) Value: ',
+    '100 split group Document Pane\n\t\t101 scroll area']) {
+    const value = tree().replace('100 text entry area (settable) Value: Draft', document);
+    const c = enabled();
+    assert.equal(run(c, value), value);
+    assert.equal(c.staleIndex(window, 'app.click(3)'), undefined);
+  }
+});
+
+test('fold notices count omitted lines and offer the full read only once per document key', () => {
+  const c = enabled();
+  for (const [value, hint] of [[tree(), true], [tree(), false], [tree().replaceAll('Draft', 'Other'), true], [tree(), false]]) {
+    const out = run(c, value);
+    assert.doesNotMatch(out, /disableDiffing|getAXState|filtered/);
+    assert.match(out, /24 lines/);
+    assert.equal(/full read/i.test(out), hint);
+  }
+});
+
+test('sliced and filtered copies do not resend an already returned tree in either order', () => {
+  const lines = tree().split('\n');
+  for (const copy of [lines.slice(0, 10).join('\n'), lines.slice(4, 10).join('\n'),
+    lines.filter(line => /Command [135],/.test(line)).join('\n')]) {
+    for (const content of [[text(tree()), text(copy)], [text(copy), text(tree())],
+      [text(copy + '\nseparate output\n' + GUARD_MARK + tree() + GUARD_END)]]) {
+      const out = output(enabled().process(content, { explicitFull: true }));
+      assert.equal(out.match(/4 button Command 1,/g)?.length, 1);
+      assert.equal(out.match(/^Window:/gm)?.length, 1);
+      if (content.length === 1) assert.match(out, /separate output/);
+    }
+  }
+});
+
+test('a slice before the guard does not replace the full tree with a diff against that slice', () => {
+  const copy = tree().split('\n').slice(0, 10).join('\n');
+  const out = run(enabled(), copy + '\n' + GUARD_MARK + tree() + GUARD_END);
+  assert.equal(out.match(/^Window:/gm)?.length, 2, 'the slice names ribbon controls the fold could hide, so it stays');
+  assert.equal(out.match(/4 button Command 1,/g)?.length, 2, 'the full tree beside it is not folded either');
+  assert.doesNotMatch(out, /controls omitted/);
+});
+
+test('character slices ending in the middle of a numbered line dedupe only with slice provenance', () => {
+  const copy = tree().slice(0, tree().indexOf('Command 5') + 6);
+  for (const [code, copies] of [['nodeRepl.write(state.slice(0, 300))', 1], [undefined, 2]]) {
+    const out = output(enabled().process([text(tree()), text(copy)], { explicitFull: true, code }));
+    assert.equal(out.match(/^Window:/gm)?.length, copies);
+  }
+});
+
+test('a filtered copy of folded controls survives, and differing filtered values survive', () => {
+  const c = enabled(), copy = tree().split('\n').slice(4, 10).join('\n');
+  const out = output(c.process([text(tree()), text(copy)]));
+  assert.match(out, /23 controls.*omitted/);
+  assert.equal(out.match(/4 button Command 1,/g)?.length, 1, 'Claude keeps the lines it filtered out of the folded tree');
+  assert.deepEqual(c.staleIndex(window, 'app.click(4)'), { number: 4 }, 'the copy grants no receipt for a folded control');
+  const outside = tree().split('\n').filter(line => /^\t?11[01] /.test(line)).join('\n');
+  assert.equal(output(enabled().process([text(tree()), text(outside)])).match(/111 File/g)?.length, 1, 'lines outside the fold still dedupe');
+  const changed = '\t100 text entry area (settable) Value: Changed';
+  assert.match(output(enabled().process([text(tree()), text(changed)], { explicitFull: true })), /Value: Changed/);
+});
+
+test('a smaller action snapshot is not discarded as a filtered copy of its earlier tree', () => {
+  const c = enabled(); run(c, tree(), { explicitFull: true });
+  const code = 'await app.click(100)', action = c.beginAction(code);
+  const changed = tree().replace('\t111 File', '');
+  const out = run(c, tree() + '\n' + GUARD_MARK + changed + GUARD_END, { action, code, explicitFull: true });
+  assert.equal(out.match(/^Window:/gm)?.length, 2);
+});
+
+// Two windows with one title and no URL differ only by the root element's ID.
+const withId = (id, value = tree()) => value.replace('0 standard window Draft', `0 standard window Draft, ID: ${id}`);
+
+test('windows with one title and no URL keep separate hint state when the tree carries an ID', () => {
+  const c = enabled();
+  for (const [id, hint] of [['win-a', true], ['win-a', false], ['win-b', true], ['win-b', false], ['win-a', false]]) {
+    assert.equal(/full read/i.test(run(c, withId(id))), hint, id + ' ' + hint);
+  }
+});
+
+test('an acquisition of several windows registers each one, so a later read of any repeats nothing', () => {
+  const long = tree().replace('\t100 text', '\t99 static text Value: ' + 'x'.repeat(200) + '\n\t100 text');
+  const both = withId('win-a', long) + '\n' + withId('win-b', long);
+  const c = createReadCompactor({ compactToolbars: true, compactAcquisition: true });
+  const first = output(c.process([text(both)], { acquisition: true }));
+  assert.equal(first.match(/static or structural lines omitted/g)?.length, 2);
+  for (const id of ['win-b', 'win-a']) assert.doesNotMatch(run(c, withId(id)), /full read/i, id);
 });
