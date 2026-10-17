@@ -95,7 +95,8 @@ TODO: full release pass result.
 - Guard stops say whether any input was sent. When a label matches a menu-bar item and exactly one
   element in the window, the click goes to the window's element, and other ambiguities list the candidates.
 - A call whose own key or click moves a window without editable document content to another place,
-  such as a folder, goes on in the same call, on the same window and input evidence as menus.
+  such as a folder, goes on in the same call, on the same window and input evidence as menus. A
+  key often counts as input there, so navigation by key can still stop (known problems).
 - When an action leaves the same element focused but changes its description, such as another sheet
   becoming active, the result says so. A changed selected tab is reported too.
 - A window's close button is never clicked by element number. Close a window by label or Cmd+W.

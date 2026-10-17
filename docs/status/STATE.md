@@ -3,29 +3,30 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 02:20 UTC, overnight sitting starting on the owner's goodnight)
+## Banner (2026-10-17 02:50 UTC, overnight sitting running: the A/B started 02:41)
 
-OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight); Night Shift on. Read "vaya con dios" after the boot report's "waiting for
-your go" as the go; the phone was pinged with that reading.
+OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
+your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
+Microsoft Error Reporting dialogs with their restart boxes unticked first, so neither Word nor Excel restarted.
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
 
-**Next, the overnight sitting.** The owner approved it (2026-10-17: "do overnight but let's not start it yet") and will say go in a
-fresh session. Its plan, tightened by Fable's final review, runs as follows. First check `timeout 10 gh auth token` (124 means the
-keychain is locked: stop). Then message "puddle arch" for an about 6.5 hour quiet window, and start on "HOLD live".
-1. Live checks. Run textedit-drag on TT3's endpoint path. Check that engine background clicks leave HID idle untouched (TT1N2's
-   premise, never measured). If they touch it, the continuations never fire: strip their two CHANGELOG entries and note the 33 ms
-   admission cost in known-problems.
-2. The A/B, `OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh`, with no NEW_ENV so it measures the release build (TK1 stays a
-   flag). It covers 9 claim tasks plus 11 native tasks outside the claim suite, Office last, about 2 hours. Score with
-   `bench/ab-score.mjs` and read only the paired round totals and pass counts.
-3. A 15-minute triage gate. Read the new side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only
-   if new passes aren't below old and no new stop class appears. Any revert is decided from traces and labeled that way.
-4. The all-arms native claim run, one arm at a time (sleight, lcu, codex, cua, peekaboo; peekaboo from a Terminal window), Office
-   tasks last, with Word and Excel checked quit between arms. Before it starts, set `since` in bench/claim-exclusions.json to its
-   start stamp with the reason. Score with `bench/claim-score.mjs`, and word the claim by the LAWS rule. Call the 11 extra tasks
-   "tasks outside the claim suite", not held-out.
+**The overnight sitting** (Puddle window w-overnight-1017, HOLD sent 02:36:22Z, cap 420 min, auto-release about 09:36Z; release
+earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in `~/Projects/sleight-wt/sitting-1017/`.
+1. Done: HID idle. Engine background clicks left it untouched in 10 of 10, as menu continuation assumes. Keys reset it:
+   `typeText` 3 of 3, `pressKey` 3 of 3 right after a click and 0 of 4 right after a key. Navigation by key can still stop. The
+   CHANGELOG navigation entry and known-problems say so (`hid-probe.mjs`, `hid-probe.json`). textedit-drag and chess-drag run
+   inside the A/B instead of a separate check.
+2. Running: the A/B, `OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh` (since stamp `2026-10-17T02-41`, log `ab.log`), 9
+   claim tasks plus 11 tasks outside the claim suite, Office last, about 2 hours. Score with `bench/ab-score.mjs --old
+   ~/Projects/sleight-wt/ab-old/bench/results --new ~/Projects/sleight-wt/ab-new/bench/results --since 2026-10-17T02-41`, reading
+   only paired round totals and pass counts.
+3. Then a 15-minute triage gate: the new side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only
+   if new passes aren't below old and no new stop class appears.
+4. Then the all-arms claim run: `sitting-1017/claim.sh` (sleight, lcu, codex, cua; Word and Excel quit between arms), then peekaboo
+   from a Terminal window with `ARMS=peekaboo`. Set `since` in bench/claim-exclusions.json to its start stamp first. Score with
+   `bench/claim-score.mjs` and word the claim by the LAWS rule.
 
 **The build is frozen** at `ef833641`, with every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each reviewed by a Sonnet-high
 agent with findings fixed under tests that failed first. The full check exited 0 on 5,872 tests, and the private
@@ -35,8 +36,8 @@ is measured live yet. Fable's final review said "lock in the code as is; change 
 **In flight.**
 - BR1 (`a069a845`), BR1F (`b838ec52`) and BR1G (`private/codex/br1g` `2dae81fb`) are done, reviewed and NOT merged: the harness that
   races browsers in a real window. A Sonnet-high review of BR1F found a census that failed open on short `ps` names, a stray tab
-  aborting the reset, evidence lost on unproved cleanup, and no census after launch. BR1G fixed all of them test-first (62 tests,
-  read by sleight-arch). The review also confirmed BR1's `codex-arm.mjs` change leaves native Codex runs as they were. Merge
+  aborting the reset, evidence lost on unproved cleanup, and no census after launch. BR1G fixed those four test-first (62 tests;
+  sleight-arch read the diff). The review also confirmed BR1's `codex-arm.mjs` change leaves native Codex runs as they were. Merge
   br1g (it contains both) after the overnight sitting. The marker tab in `startKeys` is latent (no task uses keepMin).
 - Queued after BR1 merges: BR2, which adds Safari and Firefox to that harness (`queue/tt/BR2.md`). Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt

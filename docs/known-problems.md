@@ -13,6 +13,10 @@ our own runs. Dates and engine versions are given where they matter.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with
   their beta builds). The list is in the helper; [a setting](settings.md#driving-apps-the-engine-refuses)
   lifts it. sleight's `blocked_app` path was removed on 2026-10-11.
+- A call goes on past its own menu or navigation stop only if macOS's HID idle time covers the whole call. The engine's
+  background clicks leave it alone (10 of 10 clicks in Calculator, 2026-10-17), but some of its key presses reset it:
+  `typeText` 3 of 3, and `pressKey` 3 of 3 right after a click, 0 of 4 right after another key. So a call that opens a menu
+  or navigates by key (Cmd+Down in Finder) may stop as before. We don't know why a key after a key doesn't count.
 
 ## The pointer, drags and hover
 
