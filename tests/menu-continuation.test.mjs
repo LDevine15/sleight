@@ -314,7 +314,7 @@ test('AB1: a trailing getAXState is a read, so the new-tab call splits; a read b
     assert.equal(splitMenuActions(code), undefined, code);
 });
 
-test('AB1: a tab remainder needs the call\'s own one-letter shortcut, one new selected tab and focus in an app field', () => {
+test('AB1: a tab remainder needs the call\'s own Cmd+T or Ctrl+T, one new selected tab and focus in an app field', () => {
   const plan = splitMenuActions('await app.pressKey("super+t"); await app.typeText("u"); await app.pressKey("Return");');
   const expected = { title: 'Marker', app: 'Fixture Browser', url: null };
   const content = [{ type: 'text', text: 'Input lease stopped this action: window or URL changed.\n' + newTabTree }];
@@ -330,7 +330,7 @@ test('AB1: a tab remainder needs the call\'s own one-letter shortcut, one new se
     [[plan, receipt, { ...expected, app: 'Other' }, content, before], 'other-app'],
     [[plan, { ...receipt, root: '0 sheet New Tab, Secondary Actions: Raise' }, expected, tree(newTabTree.replace('0 standard window', '0 sheet')), before], 'root-not-standard'],
     [[plan, receipt, { ...expected, title: 'New Tab' }, content, before], 'same-header'],
-    [[plan, receipt, expected, tree(newTabTree.replace('\t5 combo box', '\t8 sheet Confirm\n\t5 combo box')), before], 'sheet'],
+    ...['sheet', 'dialog', 'system dialog'].map(role => [[plan, receipt, expected, tree(newTabTree.replace('\t5 combo box', `\t8 ${role} Confirm\n\t5 combo box`)), before], 'sheet']),
     [[plan, receipt, expected, content, undefined], 'no-earlier-tree'],
     [[plan, receipt, expected, content, linesOf(newTabTree)], 'no-new-tab'],
     [[plan, receipt, expected, tree(newTabTree.replace('(selectable) Value: Marker', '(selected) Value: Marker')), before], 'no-new-tab'],
@@ -343,6 +343,20 @@ test('AB1: a tab remainder needs the call\'s own one-letter shortcut, one new se
   // A new tab with the same label as an older one still counts once.
   const twin = newTabTree.replaceAll('Value: Marker, Marker', 'Value: New Tab, New Tab');
   assert.equal(tabRefusal(plan, receipt, expected, tree(twin), linesOf(markerTree.replaceAll('Value: Marker, Marker', 'Value: New Tab, New Tab'))), undefined);
+  // Review 6: a header that differs only in its URL is a change; the same title and URL is not.
+  const withUrl = url => tree(newTabTree.replace('0 standard window New Tab, Secondary', `0 standard window New Tab, URL: ${url}, Secondary`));
+  const urlReceipt = url => ({ ...receipt, root: `0 standard window New Tab, URL: ${url}, Secondary Actions: Raise` });
+  assert.equal(tabRefusal(plan, urlReceipt('https://b.test/'), { ...expected, title: 'New Tab', url: 'https://a.test/' }, withUrl('https://b.test/'), before), undefined);
+  assert.equal(tabRefusal(plan, urlReceipt('https://a.test/'), { ...expected, title: 'New Tab', url: 'https://a.test/' }, withUrl('https://a.test/'), before), 'same-header');
+  // Review 2: only Cmd+T or Ctrl+T.
+  for (const key of ['super+n', 'cmd+d', 'ctrl+l']) {
+    const other = splitMenuActions(`await app.pressKey("${key}"); await app.typeText("u");`);
+    assert.equal(tabRefusal(other, { ...receipt, prev: { kind: 'key', value: key } }, expected, content, before), 'not-a-tab-shortcut', key);
+  }
+  for (const key of ['Super+T', 'cmd+t', 'command+t', 'meta+t', 'control+t']) {
+    const own = splitMenuActions(`await app.pressKey("${key}"); await app.typeText("u");`);
+    assert.equal(tabRefusal(own, { ...receipt, prev: { kind: 'key', value: key } }, expected, content, before), undefined, key);
+  }
   const remainder = tabRemainder(plan, receipt, expected, content, before);
   assert.equal(remainder.code, 'await app.typeText("u"); await app.pressKey("Return");');
   assert.deepEqual([remainder.tab, remainder.navigation, remainder.window.title], [true, true, 'New Tab']);
@@ -350,12 +364,14 @@ test('AB1: a tab remainder needs the call\'s own one-letter shortcut, one new se
 });
 
 test('AB1: the helper must see no sheet and a non-password text field or combo box focused in the window', () => {
-  const focus = { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true };
+  const focus = { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false };
   assert.equal(tabFocusRefusal({ focus }), undefined);
   assert.equal(tabFocusRefusal({ focus: { ...focus, role: 'AXTextField', subrole: 'AXSearchField' } }), undefined);
   for (const [observed, reason] of [[undefined, 'no-native-focus'], [{ focus: true }, 'no-native-focus'], [{ focus: { ...focus, sheets: 1 } }, 'native-sheet'],
     [{ focus: { ...focus, sheets: undefined } }, 'native-sheet'], [{ focus: { ...focus, inWindow: false } }, 'focus-outside-window'],
-    [{ focus: { ...focus, role: 'AXTextField', subrole: 'AXSecureTextField' } }, 'secure-field'], [{ focus: { ...focus, role: 'AXWebArea' } }, 'focus-not-text-field']])
+    [{ focus: { ...focus, role: 'AXTextField', subrole: 'AXSecureTextField' } }, 'secure-field'], [{ focus: { ...focus, role: 'AXWebArea' } }, 'focus-not-text-field'],
+    // Review 1: a page's own text field passes the tree check when the tree omits its page; the helper's walk refuses it.
+    [{ focus: { ...focus, role: 'AXTextField', inPage: true } }, 'focus-in-page'], [{ focus: { ...focus, inPage: undefined } }, 'focus-in-page']])
     assert.equal(tabFocusRefusal(observed), reason, reason);
 });
 

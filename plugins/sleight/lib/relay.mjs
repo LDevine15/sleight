@@ -72,7 +72,7 @@ import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, menuIdentity,
-  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal } from './menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -524,7 +524,7 @@ export function createRelay({
   keyboardTaps,
   windowIdentity,
   menuContinuationTimeoutMs = 600,
-  // A tab the call's own Cmd/Ctrl shortcut opened in the leased window carries the call on (menu-continuation.mjs
+  // A tab the call's own Cmd+T or Ctrl+T opened in the leased window carries the call on (menu-continuation.mjs
   // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
   tabContinuation = process.env.SLEIGHT_TAB_CONTINUATION !== '0',
   // Milliseconds for the dialog continuation's HID-idle windows; tests inject one.
@@ -2444,6 +2444,10 @@ export function createRelay({
     }
     if (remainder?.dialog && !call.baseline) refuse('no-baseline');
     if (remainder?.tab && !call.baseline) refuseTab('no-baseline');
+    // The tab's native check pins the window by its number, so a baseline without one can't continue.
+    if (remainder?.tab && call.baseline && !(Number.isSafeInteger(call.baseline.windowNumber) && call.baseline.windowNumber > 0)) {
+      refuseTab('no-window-number'); return false;
+    }
     if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
     // A tab continuation also asks the helper for the window's sheets and focused element.
@@ -2463,8 +2467,8 @@ export function createRelay({
       // The covered window must have been seen standard in the process the dialog's baseline has.
       const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && (covered.seen?.process !== processKey(call.baseline)
         ? 'covered-process-changed' : returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at, covered.seenAt), clock()))
-        : !unchangedMenuWindow(expected, call.baseline, observed, since) ? 'menu-window-changed'
-        : remainder.tab && tabFocusRefusal(observed);
+        : remainder.tab ? menuWindowRefusal(expected, call.baseline, observed, since) || tabFocusRefusal(observed)
+        : !unchangedMenuWindow(expected, call.baseline, observed, since) && 'menu-window-changed';
       if (refusal || !observed) {
         if (remainder.dialog && refusal) refuse(refusal);
         // Without an observation, menuIdentity already traced why.

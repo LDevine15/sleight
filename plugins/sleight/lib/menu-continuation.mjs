@@ -211,10 +211,10 @@ export function menuRemainder(plan, receipt, expected, content) {
 }
 
 // A tab this call's own shortcut opened in the window it leased. In the Firefox race round (2026-10-17) Cmd+T
-// retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing. Only a Cmd or Ctrl shortcut on one letter, and only when the tree shows exactly one tab more
+// retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing. Only Cmd+T or Ctrl+T, and only when the tree shows exactly one tab more
 // than the window Claude last saw, that tab selected, no sheet or dialog, and focus on an editable field outside
 // any page or document, where the rest's typing lands. `before` is the earlier tree's lines by element number.
-const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+[a-z]$/i;
+const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+t$/i;
 const tabsOf = lines => lines.flatMap(line => {
   const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(line);
   return tab ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) }] : [];
@@ -263,7 +263,8 @@ export function tabRemainder(plan, receipt, expected, content, before) {
     navigation: true, tab: true };
 }
 // The native side of the same check, from the helper's focus observation of the window: no sheet, and focus on a
-// text field or combo box in it that isn't a password field.
+// text field or combo box in it that isn't a password field and has no web area (or HTML content) above it. A helper
+// that doesn't report the page check refuses.
 export function tabFocusRefusal(observed) {
   const focus = observed?.focus;
   if (!focus || typeof focus !== 'object') return 'no-native-focus';
@@ -271,6 +272,7 @@ export function tabFocusRefusal(observed) {
   if (focus.inWindow !== true) return 'focus-outside-window';
   if (focus.subrole === 'AXSecureTextField') return 'secure-field';
   if (!['AXTextField', 'AXComboBox'].includes(focus.role)) return 'focus-not-text-field';
+  if (focus.inPage !== false) return 'focus-in-page';
 }
 
 // The lease held a dialog or sheet, the call's own action closed it, and the window in front is the one the lease
@@ -373,9 +375,13 @@ export async function menuIdentity(identity, expected, timeoutMs = 600, refused)
   finally { clearTimeout(timer); }
 }
 
-export function unchangedMenuWindow(expected, baseline, observed, forwardedAt, now = performance.now()) {
-  if (!baseline || !observed || !Number.isSafeInteger(baseline.windowNumber) || baseline.windowNumber <= 0 ||
-      observed.windowNumber !== baseline.windowNumber || !idle(observed, forwardedAt, now)) return false;
-  try { verifyWindowIdentity({ ...expected, nativeIdentity: baseline }, observed); return true; }
-  catch { return false; }
+// Why a menu, navigation or tab continuation's window isn't the one the call started in, or undefined when it is.
+export function menuWindowRefusal(expected, baseline, observed, forwardedAt, now = performance.now()) {
+  if (!baseline || !Number.isSafeInteger(baseline.windowNumber) || baseline.windowNumber <= 0) return 'no-window-number';
+  if (!observed) return 'identity-unavailable';
+  if (observed.windowNumber !== baseline.windowNumber) return 'window-number-changed';
+  if (!idle(observed, forwardedAt, now)) return 'hid-input';
+  try { verifyWindowIdentity({ ...expected, nativeIdentity: baseline }, observed); } catch { return 'identity-mismatch'; }
 }
+export const unchangedMenuWindow = (expected, baseline, observed, forwardedAt, now = performance.now()) =>
+  !menuWindowRefusal(expected, baseline, observed, forwardedAt, now);

@@ -82,7 +82,7 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
   await call('await cua.getApp("Fixture Editor");');
   // The setup read's process probe doesn't count.
   sent.length = received.length = 0; cursor = 0; text = initial ?? base; identityChecks = 0;
-  return { clicks, keys, values, typed, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
+  return { clicks, keys, values, typed, native, sent, received, relay, call, send: msg => clientIn.write(JSON.stringify(msg) + '\n'), identityChecks: () => identityChecks, setText: value => { text = value; } };
 }
 
 const navigation = 'Window: "Parent", App: Fixture Editor.\n0 standard window Parent, URL: file:///tmp/Parent\n\t2 row Child, ID: child\n\t3 button Other';
@@ -641,7 +641,7 @@ const newTab = 'Window: "New Tab", App: Fixture Editor.\n0 standard window New T
   '\t\t2 tab (selectable) Value: Marker, Marker\nClose tab\n\t\t3 tab (selected) Value: New Tab, New Tab\nClose tab\n\t\t4 button Open a new tab\n' +
   '\t5 combo box (settable) Address\n\t6 HTML Content Description: New Tab\n\t\t7 link Shortcuts\n\nThe focused UI element is 5 combo box (settable) Address';
 const shop = newTab.replaceAll('New Tab', 'Shop').replace(/The focused UI element is .*/, 'The focused UI element is 7 link Shortcuts');
-const fieldFocus = { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true };
+const fieldFocus = { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false };
 const tabCall = 'await app.pressKey("super+t");\nawait app.typeText("http://127.0.0.1:5420/shop");\nawait app.pressKey("Return");\nawait app.getAXState();';
 const tabScript = (opened = newTab) => (name, argument, text) => name === 'pressKey' && argument === 'super+t' ? opened
   : name === 'pressKey' && argument === 'Return' ? shop : text;
@@ -685,9 +685,9 @@ test('AB1: Ctrl+T without a trailing read continues too', async t => {
 for (const [name, options, reason] of [
   ['the baseline flag', { tabContinuation: false }, 'off'],
   ['careful mode', { guardMode: 'careful' }, 'careful'],
-  ['user HID input since the call began', { nativeChange: 'focus' }, 'menu-window-changed'],
+  ['user HID input since the call began', { nativeChange: 'focus' }, 'hid-input'],
   ['another window in front', { nativeChange: 'window' }, 'identity: Input lease: the selected window number changed. Read the intended window again before acting.'],
-  ['the window no longer focused', { nativeChange: 'unfocused' }],
+  ['the window no longer focused', { nativeChange: 'unfocused' }, 'identity: Input lease: the native window changed. Read the intended window again before acting.'],
   ['a new process', { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
     pid: count === 1 ? 123 : 456, processStart: 1 }) }, 'identity: Input lease: the native window or its process changed. Read the intended window again before acting.'],
   ['a sheet only the helper sees', { focus: { ...fieldFocus, sheets: 1 } }, 'native-sheet'],
@@ -741,4 +741,46 @@ test('AB1: a sheet the helper sees only at the final check stops the remainder',
   stoppedAtTab(h, await h.call(tabCall));
   assert.equal(h.identityChecks(), 3);
   assert.deepEqual(h.refusals, ['final-check']);
+});
+
+const tabIdentity = change => async (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
+  pid: 123, processStart: 1, ...change(count) });
+test('AB1 review: a baseline without a window number never continues', async t => {
+  const h = await tabFixture(t, { identity: tabIdentity(count => count === 1 ? { windowNumber: null } : {}) });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.deepEqual(h.refusals, ['no-window-number']);
+});
+
+test('AB1 review: a helper that matches other than one window never continues', async t => {
+  for (const matches of [0, 2]) {
+    const h = await tabFixture(t, { identity: tabIdentity(count => count === 2 ? { matches } : {}) });
+    stoppedAtTab(h, await h.call(tabCall));
+    assert.deepEqual(h.refusals, [`identity: Input lease: window identity is ambiguous (${matches} matching windows). Read the intended window again before acting.`]);
+  }
+});
+
+test('AB1 review: a lease that moved while the helper looked never continues', async t => {
+  let h;
+  h = await tabFixture(t, { identity: async (expected, native, count) => {
+    if (count === 2) {
+      h.send({ jsonrpc: '2.0', id: 99, method: 'tools/call', params: { name: 'js_reset', arguments: {} } });
+      for (let i = 0; i < 5; i++) await tick();
+    }
+    return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+  } });
+  const result = await h.call(tabCall);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, ['super+t']);
+  assert.deepEqual(h.typed, []);
+  assert.equal(h.sent.filter(msg => msg.params?.name === 'js').length, 1, 'the js_reset only, no remainder');
+  assert.deepEqual(h.refusals, ['lease-moved']);
+});
+
+// The remainder's numbers come from the tree Claude read before the call; the guard checks them against the new tab's.
+test('AB1 review: a numbered click in the remainder after a tab continuation stops as stale', async t => {
+  const h = await tabFixture(t);
+  const result = await h.call('await app.pressKey("super+t"); await app.click(5);');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, []);
+  assert.match(JSON.stringify(result), /element 5 changed since you read the window/);
 });
