@@ -45,6 +45,21 @@ test('return normalization leaves nested returns, comments, literals, ASI and no
   assert.equal(rewrite('function f() { return 1; }\nreturn f();'), 'function f() { return 1; }\nf();');
 });
 
+test('a final return value never joins an unterminated previous line', () => {
+  const rewrite = relayModule.finalReturnCode;
+  for (const [code, expected] of [
+    ['let app = await cua.getApp("X")\nreturn (await app.getAXState())', 'let app = await cua.getApp("X")\n;(await app.getAXState())'],
+    ['const s = await f()\nreturn [s.a, s.b]', 'const s = await f()\n;[s.a, s.b]'],
+    ['x = y\nreturn {a: 1}', 'x = y\n;({a: 1})'],
+    ['foo()\nreturn /x/.test(s)', 'foo()\n;/x/.test(s)'],
+    ['foo()\nreturn `${x}`', 'foo()\n;`${x}`'],
+    ['foo()\nreturn -1', 'foo()\n;-1'],
+    ['return (1)', '(1)'],
+    ['foo();\nreturn [1]', 'foo();\n[1]'],
+  ]) assert.equal(rewrite(code), expected, code);
+  for (const code of ['$return(foo)', 'const $return = 1; $return;']) assert.equal(rewrite(code), code, code);
+});
+
 test('the relay normalizes a returned acquisition before lease read classification', t => {
   const h = harness(t);
   h.call(1, 'let app = await cua.getApp("Example"); return app;');

@@ -101,14 +101,14 @@ import { leanCallDescription } from './lean-calls.mjs';
 // Compile without executing. A complete prefix excludes function bodies and blocks; an invalid
 // token in place of return distinguishes executable code from comments, strings and regexes.
 export function finalReturnCode(code) {
-  if (typeof code !== 'string' || code.length > 32768 || !/\breturn\b/.test(code)) return code;
+  if (typeof code !== 'string' || code.length > 32768 || !/(?<![\w$])return(?![\w$])/.test(code)) return code;
   const valid = body => {
     try { new Script(`async function __sleightReturn() {\n${body}\n}`); return true; }
     catch { return false; }
   };
   if (!valid(code)) return code;
   const trivia = '(?:\\s|//[^\\n]*(?:\\n|$)|/\\*[\\s\\S]*?\\*/)*';
-  const returns = [...code.matchAll(/\breturn\b/g)];
+  const returns = [...code.matchAll(/(?<![\w$])return(?![\w$])/g)];
   if (returns.length > 128) return code;
   for (const match of returns) {
     const prefix = code.slice(0, match.index), tail = code.slice(match.index + 6);
@@ -120,7 +120,11 @@ export function finalReturnCode(code) {
     const expression = value.slice(0, end);
     if (!expression.trim() || !valid(`return (\n${expression}\n);`)) continue;
     const wrapped = /^(?:\{|(?:async\s+)?function\b|class\b)/.test(expression) ? `(${expression})` : expression;
-    return prefix + wrapped + value.slice(end);
+    // A `;` keeps a value that starts with ( [ ` / + - from joining an unterminated previous line:
+    // `x\nreturn (y)` must not become `x(y)`.
+    const joins = /^[([`/+-]/.test(wrapped) && prefix.trim() && !prefix.trimEnd().endsWith(';');
+    const rewritten = prefix + (joins ? ';' : '') + wrapped + value.slice(end);
+    if (valid(rewritten)) return rewritten;
   }
   return code;
 }
@@ -1919,7 +1923,7 @@ export function createRelay({
     // Only for a bundle ID the engine confirmed: an unconfirmed name keeps the refusal.
     // The call goes on only when the acquisition shows the window the lease last had: after an
     // error the front window may have changed, and keys or text would land in it unseen.
-    let expected, saveBaseline = false;
+    let expected, saveBaseline = false, saveHandle;
     // Without an earlier tree there is no AXDocument URL to stat. Read it inside this tool call,
     // then beginAction samples its mtime before forwarding Save. No file contents are read.
     if (!rest && saveRead && (!inputLease || leaseWindow?.appId)) {
@@ -1927,7 +1931,7 @@ export function createRelay({
       if (handle && nativeHandles.has(handle)) {
         acquire = `await ${handle}.getAXState({ disableDiffing: true })`; rest = code;
         expected = inputLease ? leaseWindow : undefined;
-        saveBaseline = true;
+        saveBaseline = true; saveHandle = handle;
       }
     }
     if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code)) {
@@ -1951,7 +1955,10 @@ export function createRelay({
       }
       // A metadata read must not replace the lease's native identity with the newly observed one.
       // The action still checks the window and focus against the target from before this read.
-      if (saveBaseline && expected) leaseWindow = lastConfirmedWindow = expected;
+      if (saveBaseline && expected) {
+        leaseWindow = lastConfirmedWindow = expected;
+        if (handleBundles.has(saveHandle)) handleBundles.set(saveHandle, expected);
+      }
       splitHeads.set(msg.id, reply.result?.content ?? []);
       const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };
       if (!splitSave(next)) handleClient(next);
