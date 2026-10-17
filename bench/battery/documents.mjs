@@ -14,7 +14,7 @@ function crc32(bytes) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 // Stored ZIP entries need no dependency or external fixture writer.
-function zip(entries) {
+export function zip(entries) {
   const locals = [], central = [];
   let offset = 0;
   for (const [name, value] of Object.entries(entries)) {
