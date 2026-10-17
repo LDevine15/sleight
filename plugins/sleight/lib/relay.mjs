@@ -187,7 +187,8 @@ const FIRST_CALL_RULE = 'execute exactly one of the API calls shown below, optio
 // entry is cua.getState(), and 50 of 80 runs spent their first turn on it. With this wording 0 of 12
 // did, with turns 7.91 to 7.17 and total time 30.6 s to 27.0 s a run, every run passing (A/B, 2026-10-11).
 const FIRST_CALL_BATCH = 'start with one of the API calls shown below, assigning the app to a variable. For a Mac app you can name, start with `let app = await cua.getApp("Calculator")` (its name or bundle ID): it returns that app\'s UI state. Use cua.getState() only to find an app or browser you can\'t name. When you already know the first actions on that app, put them after it in the same call: sleight acquires the app and checks its window before they run. Chain every later action whose target you already know (keys, text, `{ id }` or `{ label }` clicks) in one call too, but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.';
-function selectedMenuItem(text) {
+// The selected item under the menu bar, as its number and its title.
+function selectedMenuEntry(text) {
   if (typeof text !== 'string' || /^\d+ menu(?: |$)(?!bar\b)/m.test(text)) return;
   let bar;
   for (const line of text.split('\n')) {
@@ -196,18 +197,24 @@ function selectedMenuItem(text) {
     if (bar !== undefined && item[1].length <= bar) bar = undefined;
     if (/^menu bar(?: |$)/.test(item[3]) && !/^menu bar item\b/.test(item[3])) bar = item[1].length;
     else if (bar !== undefined && item[1].length === bar + 1 && /\([^)]*\bselected\b[^)]*\)/.test(item[3])) {
-      return item[2];
+      return { number: item[2], title: item[3].replace(/^menu bar item /, '').replace(/\([^)]*\)\s*/g, '').replace(/,.*$/, '') };
     }
   }
 }
+const selectedMenuItem = text => selectedMenuEntry(text)?.number;
+const OPEN_MENU = /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel\b/m;
 
 // An open menu in front of a window reads as "0 menu Secondary Actions: Cancel". Escape left it open in
 // 3 of 3 tries in the head-to-head (TextEdit and Finder, 2026-10-09), and its Cancel action closed it.
-export function openMenuNote(text, prompt, repeated = false) {
-  const menu = typeof text === 'string' && /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel\b/m.exec(text);
+// `shown` counts earlier stuck-menu notes for this window. In word-edit-1 (2026-10-17) the short note
+// repeated through 15 calls of Escape and clicks while typing never reached the document.
+export function openMenuNote(text, prompt, shown = 0) {
+  const menu = typeof text === 'string' && OPEN_MENU.exec(text);
   if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
   const number = selectedMenuItem(text);
-  if (number) return repeated ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
+  if (!number) return;
+  if (shown >= 2) return `sleight: a menu may still be stuck open (menu-bar item ${number}), and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.`;
+  return shown ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
     promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number (\`app.click(${number})\`); if it still stays, tell the user.`, prompt);
 }
 
@@ -223,13 +230,17 @@ export function dropStaleMenuNotes(head, rest) {
   if (at < 0) return head;
   const tree = text.slice(at), header = headerLine(tree);
   // A compacted view keeps only the root line, so a root with a Cancel action counts as a menu here.
-  if (!/^0 /m.test(tree) || /…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree) ||
-      /^0 [^\n]*\bSecondary Actions: [^\n]*\bCancel\b/m.test(tree) || menuRoot(tree) || openMenuNote(tree)) return head;
+  if (!/^0 /m.test(tree) || /^0 [^\n]*\bSecondary Actions: [^\n]*\bCancel\b/m.test(tree) || menuRoot(tree) || OPEN_MENU.test(tree)) return head;
+  // A last tree, whole or a diff, that adds a selected menu-bar item and no menu: the menu closed and the
+  // stuck-menu note covers what is left, so only an earlier "is open" note goes. word-edit-1 kept both (2026-10-17).
+  const stuck = !!selectedMenuItem(tree) || /^\+ \t*\d+ (?:menu bar item )?\([^)]*\bselected\b[^)]*\)/m.test(tree);
+  if (!stuck && /…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree)) return head;
   let changed = false, before = '';
   const out = head.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
     // Each note belongs to the last Window header before it, in this item or an earlier one.
     const kept = item.text.replace(MENU_NOTE_LINE, (note, offset) => {
+      if (stuck && !note.startsWith('sleight: a menu is open')) return note;
       const preceding = before + item.text.slice(0, offset);
       const from = preceding.lastIndexOf('Window: ');
       return from >= 0 && headerLine(preceding.slice(from)) === header ? '' : note;
@@ -953,7 +964,7 @@ export function createRelay({
   const forgetGuard = () => { guardReady = false; guardGeneration++; };
   const screenshots = new Map(); // lowercased app name -> { latest, byTitle } pixel sizes of its engine screenshots
   const framesNoted = new Set(); // [app, title, size] keys whose coordinate frame note Claude has seen
-  const stuckMenus = new Set();
+  const stuckMenus = new Map(); // window key -> { title, shown } of its selected menu-bar item
   // Every tools/call gets the next number. An acquisition's read can stand in for the guard's
   // first read only in the call right after it (priorRead.seq + 1).
   let callSeq = 0, priorRead;
@@ -3788,8 +3799,11 @@ export function createRelay({
         const text = msg.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
         const tree = text.slice(Math.max(0, text.lastIndexOf('Window: ')));
         const key = documentKey(windowFromText(tree));
-        const note = openMenuNote(tree, prompt, key && stuckMenus.has(key));
-        if (key && selectedMenuItem(tree)) stuckMenus.add(key);
+        // A different selected title in the same episode starts its count at the short note.
+        const entry = selectedMenuEntry(tree), prior = key ? stuckMenus.get(key) : undefined;
+        const shown = !prior ? 0 : prior.title === entry?.title ? prior.shown : 1;
+        const note = openMenuNote(tree, prompt, shown);
+        if (key && entry) stuckMenus.set(key, { title: entry.title, shown: OPEN_MENU.test(tree) ? shown : shown + 1 });
         else if (key && !msg.result.isError && /^\d+ (?:standard window|window|sheet|dialog)\b/m.test(tree) &&
             !/…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree)) stuckMenus.delete(key);
         if (note) msg.result.content.push({ type: 'text', text: note });
