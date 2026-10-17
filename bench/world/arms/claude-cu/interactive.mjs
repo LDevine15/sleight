@@ -216,7 +216,9 @@ function sessionCard(text, allowedApps, allowedGrants = []) {
   const cursors = lines.filter(line => line.startsWith('❯'));
   if (cursors.length !== 1) return { blocked: 'computer-use approval selection is ambiguous' };
   if (lines[allow].startsWith('❯')) return { answer: '\r' };
-  if (lines[deny].startsWith('❯')) return { answer: '\x1b[B' };
+  // Down and Enter go in one write: Claude Code's select resets to Deny on a re-render within milliseconds of a lone Down (live
+  // 15:47 and 15:51Z). With two options, Enter after a reset lands on Deny, so the worst case is a refusal.
+  if (lines[deny].startsWith('❯')) return { answer: '\x1b[B\r' };
   return { blocked: 'computer-use approval selection is ambiguous' };
 }
 

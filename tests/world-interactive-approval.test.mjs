@@ -85,6 +85,11 @@ async function session(p, { screens = [card()], cancel = false, afterDown = card
           if (cancel) controller.abort();
           output(screens[0]);
           if (screens.length > 1) timer = setTimeout(() => output(screens[1]), 15);
+        } else if (value === '\x1b[B\r') {
+          downs++; const shown = Array.isArray(afterDown) ? afterDown.at(-1) : afterDown;
+          if (Array.isArray(afterDown)) output(afterDown[0]);
+          if (shown && /❯\s*Allow/.test(shown.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ''))) { answer = 'RESULT ok'; output('\x1b[2J\x1b[H❯ Try "write a test"\n'); }
+          else if (shown) output(shown);
         } else if (value === '\x1b[B') { downs++; if (Array.isArray(afterDown)) { output(afterDown[0]); timer = setTimeout(() => output(afterDown[1]), 20); } else if (afterDown !== null) output(afterDown); }
         // Accepting erases the card, as Claude Code's redraw does; the harness no longer clears its own copy of the screen.
         else if (value === '\r') { answer = 'RESULT ok'; output('\x1b[2J\x1b[H❯ Try "write a test"\n'); }
@@ -105,7 +110,7 @@ function assertBlock(result, events, reason) {
 test('a complete allowlisted card navigates from Deny and confirms only the selected session option', async t => {
   const p = fixture(t), { result, writes } = await session(p);
   assert.equal(result.is_error, false, result.reason);
-  assert.deepEqual(writes, ['\x1b[200~' + p.prompt + '\x1b[201~\r', '\x1b[B', '\r', '\x04', '\x04']);
+  assert.deepEqual(writes, ['\x1b[200~' + p.prompt + '\x1b[201~\r', '\x1b[B\r', '\x04', '\x04']);
 });
 test('fragmented cards wait for the whole app list and both options before accepting', async t => {
   const p = fixture(t), full = card(['Fixture Editor'], 'allow'), split = full.indexOf('Allow for');
@@ -145,7 +150,7 @@ for (const [name, screen] of [['foreign app', card(['Fixture Editor', 'Other App
 test('the live-rendered card (cursor-forward spacing, reason box, ◉ marker) is accepted for an allowlisted app', async t => {
   const { result, writes } = await session(fixture(t), { screens: [live()], afterDown: live('allow') });
   assert.equal(result.is_error, false, result.reason);
-  assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
+  assert.equal(writes[1], '\x1b[B\r');
 });
 // Verbatim from the 15:23Z live run's approval-block.json: some lines lose their spaces, the card ends on spaces, a ⏺ follows.
 const seen = selected => '\nComputer Use wants to control these apps\n\n\n   │ I need to use Calculator to clear the input and compute 80 × 55 by clicking its buttons.\n  \n\n◉Calculator\n\n\n\n7otherappswillbehiddenwhileClaudeworks.\n\n\n\n' +
@@ -155,7 +160,7 @@ test('the card exactly as the 15:23Z live run rendered it is answered for an all
   const p = fixture(t); p.allowedApps = ['Calculator'];
   const { result, writes } = await session(p, { screens: [seen('deny')], afterDown: seen('allow') });
   assert.equal(result.is_error, false, result.reason);
-  assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
+  assert.equal(writes[1], '\x1b[B\r');
   const other = fixture(t); other.allowedApps = ['Calculator Pro'];
   const refused = await session(other, { screens: [seen('deny')] });
   assertBlock(refused.result, refused.events, 'computer-use approval is outside the task allowlist or unsupported');
@@ -175,7 +180,7 @@ test('the live redraw after Down overwrites the card in place, and the whole upd
   const p = fixture(t); p.allowedApps = ['Calculator'];
   const { result, writes } = await session(p, { screens: [frame()], afterDown: downTail });
   assert.equal(result.is_error, false, result.reason);
-  assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
+  assert.equal(writes[1], '\x1b[B\r');
   const term = new VirtualTerminal();
   term.write(frame()); term.write(downTail);
   const lines = term.render().split('\n');
@@ -201,25 +206,15 @@ test('the virtual terminal moves, erases, saves and wraps as a terminal does and
   assert.equal(draw('typed\x1b[1G'), 'typed\n');
 });
 // From the Allow row (cursor parked at column 3): up five rows to the app row, rewrite it, back down.
-for (const [name, afterDown] of [['app row rewritten in place', downTail + '\x1b[5A\x1b[6GTerminal\x1b[K\x1b[5B'],
-  ['second card naming Terminal', downTail + '\x1b[10A\r\x1b[J' + frame('Terminal').replace(/\x1b\[5A\x1b\[3C$/, '') +
-    '\x1b[5A\r\x1b[3C \x1b[1B\r\x1b[3C❯\x1b[1A']]) {
-  test(`a redraw after Down is validated again and refused: ${name}`, async t => {
-    const p = fixture(t); p.allowedApps = ['Calculator'];
-    const { result, writes, events } = await session(p, { screens: [frame()], afterDown });
-    assertBlock(result, events, 'computer-use approval is outside the task allowlist or unsupported');
-    assert.match(result.approvalBlock.cardText, /Terminal/);
-    assert.deepEqual(writes.slice(1), ['\x1b[B']);
-  });
-}
+// Down and Enter now go in one write, so no redraw can come between them. Claude Code draws a new card only after the shown
+// one is answered, so the card validated before the write is the one answered; foreign-app cards never get a key (tests above).
 // Live 15:47Z: the spinner line under the card changed before the Down redraw arrived, the harness read Deny as still selected
 // and pressed Down again, which wrapped the selection back to Deny.
 test('a frame that changes only the spinner after Down never sends Down twice', async t => {
   const spinner = card() + '⏺\n';
   const { result, writes } = await session(fixture(t), { screens: [card()], afterDown: [spinner, card(['Fixture Editor'], 'allow')] });
   assert.equal(result.is_error, false, result.reason);
-  assert.equal(writes.filter(value => value === '\x1b[B').length, 1);
-  assert.equal(writes.filter(value => value === '\r').length, 1);
+  assert.equal(writes.filter(value => value === '\x1b[B\r').length, 1);
 });
 test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
   const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });
@@ -276,8 +271,7 @@ for (const afterDown of [null, card()]) {
   test(`navigation waits for a different fresh render: ${afterDown === null ? 'no redraw' : 'identical redraw'}`, async t => {
     const { result, writes, events } = await session(fixture(t), { afterDown });
     assertBlock(result, events, 'computer-use approval did not render a fresh selection');
-    assert.equal(writes.filter(value => value === '\x1b[B').length, 1);
-    assert.equal(writes.includes('\r'), false);
+    assert.equal(writes.filter(value => value === '\x1b[B\r').length, 1);
   });
 }
 
