@@ -49,6 +49,12 @@ test('native duplicate-title identity uses the focused window number or an expli
   assert.notEqual(inspect({ ...target, windowNumber: 11 }, [11, 22]).status, 'ok');
   assert.notEqual(inspect(target, [null, null]).matches, 1, 'missing numbers remain inconclusive');
 });
+test('LW1: native identity reports how many windows had the header before focus narrowed them', () => {
+  assert.equal(inspect(target, [11, 22]).headerMatches, 2);
+  assert.equal(inspect({ ...target, windowNumber: 22 }, [11, 22]).headerMatches, 2);
+  assert.equal(inspect(target, [11], 0).headerMatches, 1);
+  assert.equal(inspect(target, [11, 22, 33], 2).headerMatches, 3);
+});
 test('native identity maps AX geometry to CG numbers and detects a known number disappearing', () => {
   const selected = inspect({ ...target, windowNumber: 12 }, [null, null], 1, true);
   assert.equal(selected.matches, 1); assert.equal(selected.windowNumber, 12);

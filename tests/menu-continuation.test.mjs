@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, returnedWindow, stopNote, menuIdentity,
   unchangedMenuWindow } from '../plugins/sleight/lib/menu-continuation.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -153,4 +153,97 @@ test('LA1R: trailing writes of the handle\'s reads still split', () => {
     const plan = splitMenuActions('let te = await cua.getApp("TextEdit"); await te.click("File"); await te.click("Save"); const t = await te.getAXState(); ' + write);
     assert.deepEqual(plan?.actions.map(a => a.selector.value), ['File', 'Save'], write);
   }
+});
+
+// DR1: the calls that clicked OK on Word's Replace All alert in word-edit (2026-10-17), paths scrubbed.
+const dialogShapes = [
+  ['const a = __sleightOpenedApp3; await a.click({ id: "action-button--998" }); await a.pressKey("super+End"); await a.pressKey("Return"); await a.click({ label: "Table" }); const s = await a.getAXState({ disableDiffing: true }); s.split("\\n").filter(l => /Insert|Table|menu|Page 1 content|Keep this/i.test(l)).slice(0, 40).join("\\n")', 'a', 4],
+  ['await app.click({ label: "OK" });\nawait app.click([600, 401]);\nawait app.pressKey("super+End");\nawait app.pressKey("Return");\nconst sh3 = await app.getScreenshot();\n"done"', 'app', 4],
+  ['await app.click({ id: "action-button--998" });\nawait app.pressKey("super+Home");\nawait app.pressKey("super+alt+1");\nlet s = await app.getAXState();\nnodeRepl.write(s.split("\\n").filter(l => /Heading|Report|Window|dialog|alert/i.test(l)).join("\\n"));', 'app', 3],
+  ['let app = await cua.getApp("Microsoft Word");\nawait app.click({ id: "action-button--998" });\nawait app.pressKey("super+End");\nconst st = await app.getAXState();\nst.split("\\n").filter(l => /Table|menu|Insert/i.test(l)).slice(0, 40).join("\\n")', 'app', 2],
+  ['let app = await cua.getApp("Microsoft Word");\nawait app.click({ id: "action-button--998" });\nawait app.pressKey("super+End");\nconst st = await app.getAXState();\nnodeRepl.write(st.split("\\n").filter(l => /Page 1 content|dialog|alert|OK|focused/i.test(l)).join("\\n"));', 'app', 2],
+];
+test('DR1: a renamed handle, screenshots, a final literal and regex-filtered reads still split', () => {
+  for (const [code, handle, count] of dialogShapes) {
+    const plan = splitMenuActions(code);
+    assert.equal(plan?.actions.length, count, code);
+    assert.ok(plan.actions.every(a => a.handle === handle), code);
+    assert.match(code.slice(plan.actions[1].start), /^\s*await \w+\.(?:pressKey|click)\(/);
+  }
+});
+
+test('DR1: callbacks that do more than test one regex, and renames of non-names, leave the call unsplit', () => {
+  const head = 'await app.click("OK"); await app.pressKey("super+End"); const s = await app.getAXState(); ';
+  for (const tail of [
+    's.split("\\n").filter(l => app.click(3))', 's.split("\\n").filter(l => /x/.test(m))', 's.split("\\n").filter(l => /x/.exec(l))',
+    's.split("\\n").filter(l => /x/.test(l) && app.click(3))', 's.split("\\n").map(l => /x/.test(l))', 's.split("\\n").filter(l => /x/.test(l), app)',
+    's.split("\\n").filter(l => { return /x/.test(l); })', 's.split("\\n").filter(async l => /x/.test(l))', 's.split("\\n").filter(/x/.test)',
+    'nodeRepl.write(s.split("\\n").filter(l => /x/.test(l)).map(l => l))', 'const shot = await other.getScreenshot()', 'await app.getScreenshot()',
+  ]) assert.equal(splitMenuActions(head + tail), undefined, tail);
+  for (const code of ['const a = cua; await a.click("OK"); await a.pressKey("x");', 'const a = app.click; await a.click("OK"); await a.pressKey("x");',
+    'await app.click(l => /x/.test(l)); await app.pressKey("x");', 'let a = await cua.getApp(l => /x/.test(l)); await a.click("OK"); await a.pressKey("x");',
+    'const a = b; await b.click("OK"); await b.pressKey("x");']) assert.equal(splitMenuActions(code), undefined, code);
+});
+
+// LW1 review: a rename counts only for open_file's handles or a name the relay binds to the leased app.
+test('LW1: only vouched-for handles may be renamed', () => {
+  const code = name => `const a = ${name}; await a.click({ id: "ok" }); await a.pressKey("Return");`;
+  assert.equal(splitMenuActions(code('__sleightOpenedApp12'))?.actions.length, 2);
+  for (const name of ['other', 'finder', '__sleightOpenedApp', 'x__sleightOpenedApp3']) assert.equal(splitMenuActions(code(name)), undefined, name);
+  assert.equal(splitMenuActions(code('word'), { alias: name => name === 'word' })?.actions.length, 2);
+  assert.equal(splitMenuActions(code('__sleightOpenedApp3'), { alias: () => false }), undefined);
+});
+
+test('DR1: only the covered window, after the receipt\'s own action, is a dialog remainder', () => {
+  const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End");');
+  const covered = { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report', appId: 'org.test' };
+  const content = [{ type: 'text', text: 'Error: Input lease stopped this action: window or URL changed.\nWindow: "report", App: Fixture Editor.\n0 standard window report, URL: file:///tmp/report\n\t1 text area' }];
+  const receipt = { index: 1, prev: { kind: 'id', value: 'ok' }, root: '0 standard window report, URL: file:///tmp/report', windowStop: true };
+  assert.equal(dialogRemainder(plan, receipt, covered, content).code, 'await app.pressKey("super+End");');
+  for (const invalid of [{ ...receipt, windowStop: false }, { ...receipt, windowStop: undefined }, { ...receipt, index: 0 },
+    { ...receipt, prev: { kind: 'id', value: 'cancel' } }, { ...receipt, root: '0 standard window other' }]) {
+    assert.equal(dialogRemainder(plan, invalid, covered, content), undefined);
+  }
+  for (const other of [{ title: 'other' }, { url: 'file:///tmp/other' }, { url: null }, { app: 'Other' }]) {
+    assert.equal(dialogRemainder(plan, receipt, { ...covered, ...other }, content), undefined);
+  }
+  assert.equal(dialogRemainder(plan, receipt, undefined, content), undefined);
+});
+
+test('DR1: the returned window needs one focused match, the same process, its certified number and HID idle', () => {
+  const covered = { title: 'report', app: 'Fixture Editor', url: null, appId: 'org.test' };
+  const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
+  const baseline = { ...observed, title: '', window: 2, windowNumber: 31 }, since = performance.now() - 100;
+  assert.equal(returnedWindow(covered, baseline, observed, since), true);
+  assert.equal(returnedWindow(covered, undefined, observed, since), true);
+  for (const changed of [{ hidIdleSeconds: 0.01 }, { hidIdleSeconds: null }, { matches: 2 }, { status: 'mismatch' }, { pid: 9 },
+    { processStart: 2 }, { epoch: 'other' }, { title: 'other' }, { url: 'file:///x' }, { appId: 'other' }, { windowNumber: null }]) {
+    assert.equal(returnedWindow(covered, baseline, { ...observed, ...changed }, since), false, JSON.stringify(changed));
+  }
+  // LW1 review: without a certified window, a second same-title window (narrowed to the focused one) stops.
+  for (const headerMatches of [2, 0, undefined]) assert.equal(returnedWindow(covered, baseline, { ...observed, headerMatches }, since), false);
+  assert.equal(returnedWindow(covered, baseline, observed, NaN), false, 'a parent without its time never continues');
+  const certified = { ...covered, nativeIdentity: observed };
+  assert.equal(returnedWindow(certified, baseline, observed, since), true);
+  assert.equal(returnedWindow(certified, baseline, { ...observed, headerMatches: 2 }, since), true);
+  assert.equal(returnedWindow(certified, baseline, { ...observed, windowNumber: 23 }, since), false);
+  assert.equal(returnedWindow(certified, baseline, { ...observed, window: 3 }, since), false);
+});
+
+test('DR1: stop notes name methods, keys and selectors, never typed text', () => {
+  const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End"); await app.typeText("hunter2"); await app.setValue(4, "pin 1234"); await app.click(7); await app.click([1, 2]);');
+  const stop = { index: 1, windowStop: true, completed: 1, name: 'pressKey', error: 'Input lease stopped this action: window or URL changed.' };
+  const note = stopNote(stop, plan);
+  assert.equal(note, 'sleight: this call ran 1 action (click id "ok"); not sent: pressKey "super+End", typeText, setValue, click 7 and 1 more.');
+  assert.doesNotMatch(note, /hunter2|1234/);
+  assert.equal(stopNote({ ...stop, index: 0, completed: 0 }, plan), 'sleight: this call ran 0 actions; not sent: click id "ok", pressKey "super+End", typeText, setValue and 2 more.');
+  // LW1 review: label text and keys that type a character stay out.
+  const typed = splitMenuActions('await app.click({ label: "Card 4242" }); await app.pressKey("a"); await app.pressKey("shift+B"); await app.pressKey("ctrl+c");');
+  assert.equal(stopNote(stop, typed), 'sleight: this call ran 1 action (click); not sent: pressKey, pressKey, pressKey "ctrl+c".');
+  const named = splitMenuActions('await app.click("Card 4242"); await app.pressKey("Return"); await app.pressKey("shift+Tab"); await app.pressKey("ArrowDown"); await app.pressKey("7");');
+  assert.equal(stopNote(stop, named), 'sleight: this call ran 1 action (click); not sent: pressKey "Return", pressKey "shift+Tab", pressKey "ArrowDown", pressKey.');
+  assert.equal(stopNote(stop), 'sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent.');
+  assert.equal(stopNote({ ...stop, completed: 0 }, undefined, 2), 'sleight: this call ran 2 actions; the stopped pressKey and everything after it were not sent.');
+  assert.equal(stopNote({ ...stop, windowStop: false }, plan), undefined);
+  assert.equal(stopNote({ ...stop, error: 'Input lease stopped this action: app changed. 1 earlier action in this call ran' }, plan), undefined);
 });

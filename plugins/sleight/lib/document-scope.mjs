@@ -704,7 +704,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           pending.catch(error => {
             if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
               prev: state.lastAction, root: /^\\d+ .*$/m.exec(attempt.text ?? '')?.[0] ?? null,
-              attempts: state.actionIndex, windowStop: !!attempt.windowStop,
+              attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));
           });
