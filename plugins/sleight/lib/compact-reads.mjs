@@ -220,7 +220,12 @@ function actionKind(code, before) {
   const otherTarget = navigates || otherRead || acquisitionAfterSave || calls.some(call => receiver(call) !== saveHandle);
   const clickAndTyping = !reorders && calls.some(call => call[1] === 'click') && calls.every(call =>
     ['click', 'typeText', 'paste'].includes(call[1]) || call[1] === 'pressKey' && /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''));
-  return { save, opens, deletes, clickAndTyping, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
+  const first = calls[0], number = first[1] === 'click' && /^\s*(\d+)\s*$/.exec(argsOf(first))?.[1];
+  const clicked = number && before?.lines.map(parse).find(line => line.num === Number(number));
+  const typedTarget = clicked && textField(clicked.key) && calls[1]?.[1] === 'typeText' && calls.slice(1).every((call, index) =>
+    receiver(call) === receiver(first) && (index === 0 || call[1] === 'pressKey' && index === calls.length - 2 &&
+      /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''))) ? clicked : undefined;
+  return { save, opens, deletes, clickAndTyping, typedTarget, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
 
@@ -259,6 +264,44 @@ function fileTime(url) {
 }
 const withoutValue = line => line.replace(/(?:, )?Value: ?.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '')
   .replace(/, (?=(?:Secondary Actions|ID|Help|Description):)/g, ' ').replace(/ +/g, ' ').trimEnd();
+
+const textField = line => /^\s*(?:text (?:entry area|area|field)|search (?:text )?field|combo box)\b/.test(line) &&
+  /\([^)]*\bsettable\b[^)]*\)/.test(line);
+const fieldKey = line => withoutValue(line).replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+const fieldValue = line => stateFields(line).find(field => field.startsWith('value:'))?.slice(6).toLowerCase();
+// Match a field at the same position under the same ancestors, independent of AX numbering.
+function positionedFields(lines) {
+  const stack = [], fields = [];
+  let roots = 0;
+  for (const line of lines) {
+    const match = ELEMENT.exec(line);
+    if (!match) continue;
+    const depth = match[1].length;
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const parent = stack.at(-1), position = parent ? parent.children++ : roots++;
+    const node = { ...parse(line), depth, children: 0,
+      path: `${parent?.path ?? ''}/${depth}:${position}:${fieldKey(match[3])}` };
+    stack.push(node);
+    if (textField(node.key)) fields.push(node);
+  }
+  return fields;
+}
+function misplacedTextNote(action, observation, typed) {
+  if (!action.typedTarget || !Array.isArray(typed) || typed.length !== 1 || typeof typed[0] !== 'string' || typed[0].trim().length < 3) return;
+  const value = typed[0].trim().toLowerCase(), target = fieldKey(action.typedTarget.key);
+  const before = positionedFields(action.before.lines), after = positionedFields(observation.lines);
+  const clicked = after.filter(line => fieldKey(line.key) === target);
+  if (before.filter(line => fieldKey(line.key) === target).length !== 1 || clicked.length !== 1 || fieldValue(clicked[0].key)?.includes(value)) return;
+  const landed = after.filter(line =>
+    fieldKey(line.key) !== target && fieldValue(line.key)?.includes(value) &&
+    !before.some(old => old.path === line.path && fieldValue(old.key)?.includes(value)));
+  if (landed.length !== 1 || !before.some(old => old.path === landed[0].path)) return;
+  const describe = line => {
+    const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(line.key)?.[1];
+    return `element ${line.num}` + (label ? ` (${label})` : '');
+  };
+  return `sleight: typed text landed in ${describe(landed[0])}, not in the clicked ${describe(clicked[0])}.`;
+}
 
 function tabSelections(lines) {
   const groups = new Map(), stack = [];
@@ -686,6 +729,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           !now.fields.some(field => field.startsWith('value:'))) clearedFields += was.fields.filter(field => field.startsWith('value:')).length;
     }
     observation.delta = { baseline: before.observation.id,
+      addedLines: [...addedNodes.values()],
       selectedTabs: [...selectedTabChanges(before.lines, lines), ...focusedDescriptionChange(before.lines, lines)],
       semantic: removedState.length > 0 && addedState.length > 0 && JSON.stringify(removedState.sort()) !== JSON.stringify(addedState.sort()),
       panel: changedPanel, renumbered, element,
@@ -763,13 +807,17 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Claude's other output. Each is compacted against what Claude saw before it.
     process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, filterMark = FILTERED_MARK } = {}) {
       if (!Array.isArray(content)) return content;
-      let filtered;
+      let filtered, typed;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
       const markPattern = filterMark && new RegExp(filterMark.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^\\r\\n]*)(?:\\r?\\n|$)', 'g');
       if (markPattern) content = content.flatMap(item => {
         if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
         const text = item.text.replace(markPattern, (_, json) => {
-          try { filtered = JSON.parse(json); } catch { filtered = { full: true }; }
+          try {
+            const record = JSON.parse(json);
+            if (Object.hasOwn(record, 'typed')) typed = record.typed;
+            else filtered = record;
+          } catch { filtered = { full: true }; }
           return '';
         });
         return text === item.text ? [item] : text ? [{ ...item, text }] : [];
@@ -881,6 +929,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           observedInResult && !observedInResult.invalid && !observedInResult.incomplete && !observedInResult.degraded &&
           !observedInResult.delta?.degraded && observedInResult.delta?.baseline === action.before.id &&
           documentKey(action.before.window) === documentKey(observedInResult.window)) {
+        const misplaced = misplacedTextNote(action, observedInResult, typed);
+        if (misplaced) out.push({ type: 'text', text: misplaced });
         const swap = swappedSiblings(action.before.lines, observedInResult.lines);
         if (swap) {
           pendingSwaps.set(swapDocumentKey(observedInResult.window), swap);
