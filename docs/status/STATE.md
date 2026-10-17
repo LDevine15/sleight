@@ -3,56 +3,49 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 05:15 UTC: build frozen at `ef833641`, 5,872 tests; overnight sitting approved by the owner, waiting for their start)
+## Banner (2026-10-17 02:20 UTC, flushed before the owner's clear; the overnight sitting waits for the owner's "go")
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
 
-**Plan now (owner, 2026-10-17, ROADMAP 1b).** Go heads-down: build every token, turn and reliability fix found on 2026-10-16, merge
-and freeze the harness, then (1) one combined A/B, today's sleight vs all-fixes sleight on the claim tasks plus held-out native
-tasks (about 1 hour, owner away), (2) the all-arms claim run in one window (sleight, lcu, codex, cua, peekaboo; 5 runs wherever
-any arm fails; about 4 hours, owner away; peekaboo needs a Terminal launch), (3) claude-cu and the turbo live check with the owner
-present (about 55 min), (4) the slimmed release pass (browser gate plus Opus on the release commit, about 1 hour), (5) the tag on
-the owner's call. Score only with `node bench/claim-score.mjs --results ~/Projects/sleight/bench/results` (exclusions with reasons in
-`bench/claim-exclusions.json`; add a rule there, never filter by hand). Claim rules are in LAWS.
+**Next, the overnight sitting.** The owner approved it (2026-10-17: "do overnight but let's not start it yet") and will say go in a
+fresh session. Its plan, tightened by Fable's final review, runs as follows. First check `timeout 10 gh auth token` (124 means the
+keychain is locked: stop). Then message "puddle arch" for an about 6.5 hour quiet window, and start on "HOLD live".
+1. Live checks. Run textedit-drag on TT3's endpoint path. Check that engine background clicks leave HID idle untouched (TT1N2's
+   premise, never measured). If they touch it, the continuations never fire: strip their two CHANGELOG entries and note the 33 ms
+   admission cost in known-problems.
+2. The A/B, `OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh`, with no NEW_ENV so it measures the release build (TK1 stays a
+   flag). It covers 9 claim tasks plus 11 native tasks outside the claim suite, Office last, about 2 hours. Score with
+   `bench/ab-score.mjs` and read only the paired round totals and pass counts.
+3. A 15-minute triage gate. Read the new side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only
+   if new passes aren't below old and no new stop class appears. Any revert is decided from traces and labeled that way.
+4. The all-arms native claim run, one arm at a time (sleight, lcu, codex, cua, peekaboo; peekaboo from a Terminal window), Office
+   tasks last, with Word and Excel checked quit between arms. Before it starts, set `since` in bench/claim-exclusions.json to its
+   start stamp with the reason. Score with `bench/claim-score.mjs`, and word the claim by the LAWS rule. Call the 11 extra tasks
+   "tasks outside the claim suite", not held-out.
 
-**Build lanes in flight.** They run as headless `codex exec` (gpt-6.1-sol high) under launchd, so the clear doesn't stop them.
-Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with the prompt `queue/tt/lane-prompt-tt.md`. Logs go to `ledger/lane-runs/`.
-- Merged and pushed (`2ea5ee12`, full check exit 0, 5,751 tests, 0 fail), each after a Sonnet-high review whose findings were
-  fixed here with tests that failed first: TT2 (open_file returns the window, top-level `return`, save by mtime), TT3 (endpoint-only
-  non-text drags; its text path relies on `$.CFEqual`, probed read-only in 6 apps), TT4 and TV2R (filtered reads, now also bare
-  final values and console.log, which the engine never printed, so 58 of 78 recorded filtered reads lost their value). Also TS13 and the
-  Copy-then-Move skill line, TK3 (browser how-to deferred, safety lines kept first), TK1 (compact first acquisition behind
-  `SLEIGHT_COMPACT_ACQUISITION=1`), TT1N2 (same-call menu continuation on window identity and HID idle; its admission costs a
-  33 ms median helper call, p90 147, over 160 recorded calls), TV1 (a focus click before Cmd+S no longer hides an observed save),
-  TV3 (numbers checked against the acting app's window). TK2 and TV2 closed STALE with evidence in their claims.
-- Also merged since: TV4 (`disableDiffing: true` no longer turns a whole call's trees full), TV5 (guard stops say whether input
-  was sent; a label in both the menu bar and the window goes to the window's element), BR3 (Chromium browser table, unqualified;
-  an unqualified browser connects only with SLEIGHT_TURBO_UNQUALIFIED=1 in the server's environment). Still building: BR1 (pid
-  77797, the real-window gate race harness). Queued: BR2 (Safari and Firefox in that harness, after BR1). Review each branch with a Sonnet-high reviewer, one full check per merge batch, push, fast-forward.
-- Round two merged at `ef833641` (each reviewed, findings fixed with tests that failed first): TW2 (navigation continuation only
-  into windows without editable document content; HID idle from the baseline sample), TW3 plus a focused-description note (the
-  excel-edit-1 sheet switch), TW4 (no numbered close-button clicks), duplicate acquisition trees dropped by default for the same
-  window, and the skill's re-acquire-when-switching-apps line.
-- Overnight sitting (owner, 2026-10-17: "do overnight but let's not start it yet"), tightened after Fable's final review: when they
-  say go, check `timeout 10 gh auth token` (124 means the keychain is locked: stop), message "puddle arch" for the quiet window, then
-  (1) live checks: textedit-drag on TT3's path, and engine background clicks vs HID idle. If engine clicks touch HID idle, the
-  continuations never fire: strip their two CHANGELOG entries and note the 33 ms admission cost in known-problems. (2) The A/B,
-  `OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh`, with no NEW_ENV, so it measures the release build itself (TK1 stays a flag).
-  Read only the paired round totals and pass counts, never per-task medians from 3 runs. (3) A 15-minute triage gate: read the new
-  side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only if new passes aren't below old and
-  no new stop class appears. A revert creates a build the A/B never measured, so any revert is decided from traces and labeled that way.
-  (4) The all-arms native claim run, one arm at a time, Office tasks last (claim-tasks.txt), checking Word and Excel aren't
-  running between arms. Before it starts, set `since` in bench/claim-exclusions.json to its start stamp with the reason, so
-  yesterday's pre-fix rows don't mix in. Call the 11 extra tasks "tasks outside the claim suite", not held-out: several drove fixes.
-- Combined A/B scored by `bench/ab-score.mjs` (paired round totals). 9 claim tasks plus 11 native tasks outside the claim suite, about 1.7 to 2 hours, owner
-  away. Live checks owed then too: textedit-drag on TT3's path, and engine background clicks leaving HID idle untouched (TT1N2).
-- Owner decisions today (in LAWS and ROADMAP): browser tasks race only turbo, so the native claim suite is 9 tasks; the headline
-  "fastest plugin on macOS" needs the real-window browser race (BR1, BR2) before the launch post, not before the tag; Chromium
-  browsers installed for qualification (Brave 155.1.97.56, Edge 155.0.4283.45, Vivaldi 8.2.4133.84, Chrome Beta 157.0.8103.6, by
-  Homebrew cask, never launched). The studies found Firefox turbo isn't possible without a relaunch flag today; Safari's only fit is a
-  hybrid behind Develop > Allow JavaScript from Apple Events.
+**The build is frozen** at `ef833641`, with every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each reviewed by a Sonnet-high
+agent with findings fixed under tests that failed first. The full check exited 0 on 5,872 tests, and the private
+`pane/auto-mode` is at `78ecde7a` (docs and bench config since the freeze). The CHANGELOG 1.3.0 section lists the fixes, and none
+is measured live yet. Fable's final review said "lock in the code as is; change the plan", and the plan above includes its changes.
+
+**In flight.**
+- BR1F, pid 27925, a detached `codex exec` that keeps running through the clear, started 2026-10-17 02:12 UTC. It fixes BR1's review findings on
+  a new branch `codex/br1f` cut from `private/codex/br1` `a069a845` (the harness that races browsers in a real window; reviewed, NOT merged).
+  It reports in `~/Projects/sleight-wt/ledger/claims/BR1F/`. Merge BR1 plus BR1F only after the overnight sitting, since it edits
+  `bench/codex-arm.mjs`, which the claim run's Codex arm uses. Review the BR1F branch first.
+- Queued after BR1 merges: BR2, which adds Safari and Firefox to that harness (`queue/tt/BR2.md`). Lane launch command: `nohup codex exec -m
+  gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
+  --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
+  ledger/lane-runs/prompt-<id>.md`, with the prompt made from `prompt-tt4.md` by replacing TT4 and tt4.
 - Not ours: PID 41395, a read-only `codex exec` started 2026-10-16 01:46 local. Leave it.
+
+**Browser decisions (owner, 2026-10-17, in LAWS and ROADMAP).** Browser tasks race only turbo, so the native claim suite is 9 tasks.
+The headline "fastest plugin on macOS" needs the real-window race against lcu, Cua, Peekaboo and Codex in Chrome and Helium (BR1),
+plus Safari and Firefox (BR2), before the launch post, not before the tag. Brave 155.1.97.56, Edge 155.0.4283.45, Vivaldi
+8.2.4133.84 and Chrome Beta 157.0.8103.6 were installed by Homebrew cask for qualification and never launched. The studies found
+Firefox turbo impossible without a relaunch flag today, and Safari's only fit is a hybrid behind Develop > Allow JavaScript from
+Apple Events. Both are post-1.3.0 options.
 
 **Where the claim stands** (scored, 2026-10-16 runs; expected seconds to a correct result, passes/runs). sleight completed 9/9
 native tasks; lcu 6/9, codex 6/9, cua 7/9, peekaboo 3/9. After skill fix `14327dd4` (rerun 2026-10-17 00:05 UTC, load 4.5 at start)
@@ -61,14 +54,14 @@ lcu 122), and ties calculator-click 8 with lcu. It trails on 5 tasks: calculator
 preview-read 12 vs Peekaboo 5, finder-move 136 vs cua 97, excel-edit 184 vs cua 133 (one cua run). Trace studies found sleight's
 best runs tie lcu and Peekaboo turn for turn, and the losses are turns wasted by sleight's own tools (lease stops on same-call menu
 clicks, open_file on open documents, Finder drags inside sleight's guards) plus a 25,000-character first result against
-Peekaboo's 4,600. Recommended wording to the owner: "completed every task" rather than "fastest", until the claim run.
+Peekaboo's 4,600. The claim wording follows the LAWS rule the owner set on 2026-10-17.
 Fable's review (2026-10-17) found the skill fix was tuned on the claim's own failures, so check it on held-out tasks and say so in
 the publication. Codex runs gpt-6-luna, not Haiku. Publish pass counts and median-of-passes beside expected time.
 
 **Release path.** Turbo live check with the owner (about 10 min; the release pass refuses the gate without it), then the slimmed
 release pass, then the tag. The CHANGELOG 1.3.0 drag entry carries its live measurement. Turbo in `claude -p` never activates,
 because the mod's `prompt.submit` hook doesn't fire there, and the gate measured turbo through a bench-only server
-(`bench/turbo/v3-server.mjs`). The browser comparison stays in the gate's harness with a Codex arm to add (owner, 2026-10-16).
+(`bench/turbo/v3-server.mjs`) on headless Chromium. BR1 adds the real-window race with a Codex arm.
 
 **After the tag.** `arch/epv3-2` `2817c762` (EPV3-2, inert; EPV3-3 next in `ledger/electron-v3-plan.md`), `arch/epv3-1` `f9e1e919`
 (consent run owed with the owner), `arch/q1-int` `c0aa885c` (Q1 error messages), the ghost hand (ROADMAP 2.7; LoC's architect has the
@@ -77,7 +70,8 @@ design request queued), the speed items in ROADMAP 2.4.
 **Video.** No film work until the claim is measured (owner). Storyboard `docs/design/video-storyboard.md`; LoC's draft paint round
 waits on LoC trunk. Message "loc arch" when the claim run is scored.
 
-**Owner items.** Turbo live check, claude-cu runs and EPV3-1's consent run (owner present), the claim wording, the tag.
+**Owner items.** Say go for the overnight sitting. With the owner present: the turbo live check, claude-cu runs, EPV3-1's consent run,
+and each Chromium browser's qualification. Then the tag.
 
 **Machine notes from 2026-10-16.** Office was cleared by hand three times: arms leave Word or Excel behind dialogs (Find and Replace)
 and a force-quit leaves a "Recovered" fixture. Before an Office window, check that Word and Excel aren't running, and close any
