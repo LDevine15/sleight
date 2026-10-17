@@ -86,6 +86,14 @@ TODO: full release pass result.
   after a read of another was stopped as stale.
 - The skill's browser how-to arrives with the first browser result instead of in every native
   session. Its submit and redaction rules still come first.
+- A read whose value is derived from the tree is printed when the call ends on it or on
+  `console.log`, and then the tree is left out. The engine printed nothing for a bare final value,
+  so 58 of 78 recorded filtered reads lost their value and Claude read the whole tree instead.
+- `getAXState({ disableDiffing: true })` no longer turns every tree in the call whole. A filtered
+  read still filters, and an acting call keeps its change note. 105 of 108 recorded Office calls
+  passed it.
+- Guard stops say whether any input was sent. When a label matches a menu-bar item and exactly one
+  element in the window, the click goes to the window's element, and other ambiguities list the candidates.
 - `SLEIGHT_COMPACT_ACQUISITION=1` sends an app's first tree with only the elements that take actions
   and short text, and refuses a click on a number it left out.
   TODO: these entries' A/B result.
