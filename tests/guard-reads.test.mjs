@@ -372,6 +372,12 @@ for (const line of ['button Delete, ID: opener', 'button Description: Delete, ID
         const f = fixture({ strict: true,
           current: () => tree(expected, changed ? '\t3 sheet Confirm\n\t1 button Cancel\n\t2 button Confirm unrelated deletion'
             : '\t1 ' + line + '\n\t2 button Second'), action: () => { changed = true; } });
+        if (target === '1' && line.startsWith('close button')) {
+          await assert.rejects(f.run(`await app.click(${target}); await app.click(2);`, { bind: true, careful }),
+            /element 1 is the window's close button; close a window by label or with Cmd\+W/);
+          assert.deepEqual(f.calls.map(c => c[0]), ['read']);
+          return;
+        }
         await assert.rejects(f.run(`await app.click(${target}); await app.click(2);`, { bind: true, careful }),
           /changed what element 2 is/);
         assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read']);
