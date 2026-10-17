@@ -3,7 +3,10 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 02:20 UTC, flushed before the owner's clear; the overnight sitting waits for the owner's "go")
+## Banner (2026-10-17 02:20 UTC, overnight sitting starting on the owner's goodnight)
+
+OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight); Night Shift on. Read "vaya con dios" after the boot report's "waiting for
+your go" as the go; the phone was pinged with that reading.
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
