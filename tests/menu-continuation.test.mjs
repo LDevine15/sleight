@@ -194,6 +194,14 @@ test('LW2: refusal reasons name the first failing condition', () => {
     [[plan, receipt, undefined, content], 'no-covered-window'], [[undefined, receipt, covered, content], 'unsplit-call'],
     [[plan, { ...receipt, prev: { kind: 'id', value: 'no' } }, covered, content], 'receipt-mismatch'], [[plan, { ...receipt, root: '0 x' }, covered, content], 'tree-mismatch'],
     [[plan, receipt, { ...covered, url: null }, content], 'other-url'], [[plan, receipt, covered, content], undefined]]) assert.equal(dialogRefusal(...args), reason);
+  // LW4 review 2: a dialog or sheet over a window without a URL needs its certified native identity.
+  const bare = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 standard window report' }];
+  const bareReceipt = { ...receipt, root: '0 standard window report' };
+  for (const over of ['dialog', 'sheet', 'system dialog']) {
+    assert.equal(dialogRefusal(plan, bareReceipt, { ...covered, url: null, over }, bare), 'untitled-needs-certified-window', over);
+    assert.equal(dialogRefusal(plan, bareReceipt, { ...covered, url: null, over, nativeIdentity: { windowNumber: 22, epoch: 'e', pid: 1 } }, bare), undefined, over);
+    assert.equal(dialogRefusal(plan, bareReceipt, { ...covered, url: null, over, nativeIdentity: { windowNumber: 22, epoch: 'e' } }, bare), 'untitled-needs-certified-window', over);
+  }
   const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'e', window: 1, windowNumber: 22, pid: 1, processStart: 1, hidIdleSeconds: 1000 };
   const since = performance.now() - 10;
   const b = { ...observed, title: '', window: 2, windowNumber: 31 };

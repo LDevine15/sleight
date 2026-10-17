@@ -215,6 +215,8 @@ export function dialogRemainder(plan, receipt, covered, content) {
   return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree, dialog: true,
     closeCheck: !!refusal };
 }
+const certifiedWindow = identity => Number.isSafeInteger(identity?.windowNumber) && identity.windowNumber > 0 &&
+  typeof identity.epoch === 'string' && identity.epoch !== '' && Number.isSafeInteger(identity.pid);
 // Why a stop is no dialog remainder, for the relay's trace: live runs showed only that none fired (word-edit, 2026-10-17).
 export function dialogRefusal(plan, receipt, covered, content) {
   if (!receipt) return 'no-receipt';
@@ -228,6 +230,9 @@ export function dialogRefusal(plan, receipt, covered, content) {
   if (key) return `other-${key}`;
   // A dialog over the document closing onto another dialog under its title (Word's sheet root) is not the document.
   if (!/^standard window(?: |,|$)/.test(stopped.line)) return 'returned-root-not-standard';
+  // "Don't Save" on an untitled document's dialog or sheet closes the document too, and focus can land on another window
+  // with its title. Without a URL, only the native window certified when it was read tells them apart.
+  if (!covered.url && ['dialog', 'sheet', 'system dialog'].includes(covered.over) && !certifiedWindow(covered.nativeIdentity)) return 'untitled-needs-certified-window';
   // A palette that stays open hands focus back without closing; only Escape or a native check that it is gone counts.
   if (['window', 'floating window'].includes(covered.over) && !(receipt.prev?.kind === 'key' && /^(?:escape|esc)$/i.test(receipt.prev.value))) return 'palette-needs-close-check';
 }
@@ -241,20 +246,20 @@ export async function windowGone(identity, window, timeoutMs = 600) {
   finally { clearTimeout(timer); }
 }
 
-const idle = (observed, since) => Number.isFinite(observed.hidIdleSeconds) && Number.isFinite(since) &&
-  observed.hidIdleSeconds >= (performance.now() - since) / 1000 + 0.05;
+const idle = (observed, since, now = performance.now()) => Number.isFinite(observed.hidIdleSeconds) && Number.isFinite(since) &&
+  observed.hidIdleSeconds >= (now - since) / 1000 + 0.05;
 
 // The covered window is the app's focused one again: its certified native window, or else the only window with its
 // title and URL before focus narrows them (a second same-title window would take the rest otherwise), the process
 // the dialog's baseline had, and no user input since the dialog was leased and the call was sampled.
-export const returnedWindow = (covered, baseline, observed, since) => !returnRefusal(covered, baseline, observed, since);
-export function returnRefusal(covered, baseline, observed, since) {
+export const returnedWindow = (covered, baseline, observed, since, now) => !returnRefusal(covered, baseline, observed, since, now);
+export function returnRefusal(covered, baseline, observed, since, now = performance.now()) {
   if (!covered) return 'no-covered-window';
   if (!observed) return 'identity-unavailable';
   // The dialog's own identity from before the call ties the returned window to the same process.
   if (!baseline) return 'no-baseline';
   if (!Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0) return 'no-window-number';
-  if (!idle(observed, since)) return 'hid-input';
+  if (!idle(observed, since, now)) return 'hid-input';
   if (['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return 'process-changed';
   const certified = covered.nativeIdentity;
   if (!certified && observed.headerMatches !== 1) return `header-matches-${observed.headerMatches ?? 'missing'}`;
@@ -297,9 +302,9 @@ export async function menuIdentity(identity, expected, timeoutMs = 600, refused)
   finally { clearTimeout(timer); }
 }
 
-export function unchangedMenuWindow(expected, baseline, observed, forwardedAt) {
+export function unchangedMenuWindow(expected, baseline, observed, forwardedAt, now = performance.now()) {
   if (!baseline || !observed || !Number.isSafeInteger(baseline.windowNumber) || baseline.windowNumber <= 0 ||
-      observed.windowNumber !== baseline.windowNumber || !idle(observed, forwardedAt)) return false;
+      observed.windowNumber !== baseline.windowNumber || !idle(observed, forwardedAt, now)) return false;
   try { verifyWindowIdentity({ ...expected, nativeIdentity: baseline }, observed); return true; }
   catch { return false; }
 }

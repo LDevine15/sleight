@@ -79,7 +79,8 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
     throw new Error('Fixture did not receive a client result');
   };
   await call('await cua.getApp("Fixture Editor");');
-  sent.length = received.length = 0; cursor = 0; text = initial ?? base;
+  // The setup read's process probe doesn't count.
+  sent.length = received.length = 0; cursor = 0; text = initial ?? base; identityChecks = 0;
   return { clicks, keys, values, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
 }
 
@@ -362,6 +363,12 @@ async function dialogFixture(t, { bare, ...options } = {}) {
   return { ...h, sentSince: () => h.sent.length - start };
 }
 const dismiss = 'await app.click({ id: "ok" }); await app.pressKey("super+End");';
+// The document loses focus once the alert is up (the alert's own probe has an empty title).
+const lostFocus = () => {
+  let alerted = false;
+  return (expected, native) => expected.title === '' ? (alerted = true, dialogIdentity(expected, native))
+    : alerted ? { status: 'mismatch', error: 'Focused window differs' } : dialogIdentity(expected, native);
+};
 
 test('DR1: OK on an alert the lease moved to continues on the document it covered', async t => {
   const h = await dialogFixture(t);
@@ -385,7 +392,7 @@ for (const [name, options] of [
   ['another app', { afterItem: page.replace('App: Fixture Editor.', 'App: Other Editor.') }],
   ['another window of the app', { afterItem: 'Window: "Styles", App: Fixture Editor.\n0 standard window Styles\n\t1 button Apply' }],
   ['user input during the call', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { hidIdleSeconds: 0 } : {}) }) }],
-  ['a lost focus', { identity: (expected, native) => expected.title === '' ? dialogIdentity(expected, native) : { status: 'mismatch', error: 'Focused window differs' } }],
+  ['a lost focus', { identity: lostFocus() }],
   ['a dialog read without the window it covered', { bare: true }],
   // LW1 review: window-identity narrows two same-title windows to the focused one.
   ['a second window with the same title and URL', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { headerMatches: 2 } : {}) }) }],
@@ -486,7 +493,7 @@ for (const [name, options, reason] of [
   ['another document', { afterItem: page.replaceAll('report.txt', 'other.txt') }, 'other-title'],
   ['a second same-title window', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { headerMatches: 2 } : {}) }) }, 'header-matches-2'],
   ['HID input', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { hidIdleSeconds: 0 } : {}) }) }, 'hid-input'],
-  ['lost focus', { identity: (expected, native) => expected.title === '' ? dialogIdentity(expected, native) : { status: 'mismatch', error: 'Focused window differs' } }, 'identity: Input lease: Focused window differs'],
+  ['lost focus', { identity: lostFocus() }, 'identity: Input lease: Focused window differs'],
 ]) test(`LW2: the trace names why a dialog stop did not continue (${name})`, async t => {
   const events = [];
   const h = await dialogFixture(t, { ...options, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
@@ -541,12 +548,19 @@ test('LW3: the alert closing onto a dialog root under the document\'s title stop
 });
 
 // LW3 review 4: HID idle runs from when the covered window was last seen standard, and a new process forgets it.
-test('LW3: input since the document was last seen standard stops', async t => {
-  const h = await fixture(t, { base: page, after: alert, afterItem: page, identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: 0.2 }) });
-  await new Promise(resolve => setTimeout(resolve, 300));
+// The relay's clock is injected: the document is seen standard at 1 s, the alert opens and closes at 11 s, and the
+// helper reports the last input 5 s ago (at 6 s, after the document was seen). With 20 s idle the same calls continue.
+for (const [idleSeconds, continues] of [[5, false], [20, true]]) test(`LW3: ${continues ? 'no input' : 'input'} since the document was last seen standard ${continues ? 'continues' : 'stops'}`, async t => {
+  let ms = 1000;
+  const events = [];
+  const h = await fixture(t, { base: page, after: alert, afterItem: page, clock: () => ms,
+    identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: idleSeconds }),
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  ms = 11000;
   assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
-  assert.equal((await h.call(dismiss)).isError, true);
-  assert.deepEqual(h.keys, []);
+  assert.equal((await h.call(dismiss)).isError === true, !continues);
+  assert.deepEqual(h.keys, continues ? ['super+End'] : []);
+  assert.deepEqual(events, continues ? [] : ['hid-input']);
 });
 
 test('LW3: a relaunched app forgets the standard windows it showed before', async t => {
@@ -563,11 +577,44 @@ test('LW3: a relaunched app forgets the standard windows it showed before', asyn
   assert.ok(events.includes('no-covered-window'), JSON.stringify(events));
 });
 
+// LW4 review 1: nothing noted a process before the alert, so a relaunch between the document's read and the alert left
+// the old process's window looking current. The read now asks for the process, and a note drops windows it can't place.
+for (const [name, unknownAtRead] of [['the read learned', false], ['the read could not learn', true]]) test(`LW4: a relaunch after the document's read, before any other process note, never continues (${name} the process)`, async t => {
+  let pid = 123, alerted = false;
+  const events = [];
+  const h = await fixture(t, { base: page, after: alert, afterItem: page,
+    identity: (expected, native) => {
+      if (expected.title === '') alerted = true;
+      return unknownAtRead && !alerted ? { status: 'unknown', error: 'probe unavailable' } : { ...dialogIdentity(expected, native), pid };
+    },
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  pid = 456;
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(events, ['no-covered-window']);
+});
+
+// LW4 review 2: "Don't Save" on a never-saved document's alert closes the document, and focus can land on another
+// window with its title. Without a URL, a dialog needs the covered window's certified native identity. (A title of
+// Untitled or Untitled n doesn't reach this: the guard adopts it as a window the click opened.)
+test('LW4: a document without a URL or a certified window never continues after its dialog closes', async t => {
+  const untitled = page.replace(', URL: file:///tmp/report.txt', '').replaceAll('report.txt', 'Document1');
+  const events = [];
+  const h = await fixture(t, { base: untitled, after: alert, afterItem: untitled, identity: dialogIdentity,
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(events, ['untitled-needs-certified-window']);
+});
+
 // LW1 review: two untitled dialogs compare equal, so a later one could inherit an earlier one's parent. Continuing
 // needs HID idle since the parent was recorded.
 test('LW1: input after the dialog appeared, though none during the call, stops', async t => {
-  const h = await dialogFixture(t, { identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: 0.2 }) });
-  await new Promise(resolve => setTimeout(resolve, 300));
+  let ms = 1000;
+  const h = await dialogFixture(t, { clock: () => ms, identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: 5 }) });
+  ms = 11000;
   const result = await h.call(dismiss);
   assert.equal(result.isError, true);
   assert.deepEqual(h.keys, []);

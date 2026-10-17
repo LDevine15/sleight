@@ -22,6 +22,17 @@ our own runs. Dates and engine versions are given where they matter.
   continuation also needs HID idle since the document was last seen as a standard window, so any mouse or key input
   after that stops the rest. It also stops when the app has a second window with the same title and URL, when the
   dialog's own native identity couldn't be read before the call, and when a palette closed by a button can't be shown gone.
+- A plain `window` root (a palette, Word's Styles) that its own button closes continues into the standard window it covered
+  once the native check shows it gone. That's intended.
+- Since `typeText` and `pressKey` can reset HID idle, a dialog-close continuation won't fire after keys sent after the
+  document's last standard read. The Word Replace All run sent Escape and Cmd+H after that read.
+- Over a window without a URL, a dialog or sheet continues only when that window's native identity was certified at its
+  read, so a never-saved document usually stops. A window titled Untitled (or Untitled 2) that a click brings to the
+  front passes the guard as one the click opened, so "Don't Save" can still end up in another Untitled window.
+- The helper quits after about 20 s idle, and its new epoch may refuse a certified identity read before a long gap.
+  We haven't seen it happen. The first live Word trace should show whether it does.
+- A standard window counts as covered only if its app's process was known when it was read. The relay probes the
+  helper once per app; if that fails, the next dialog close over a window read before any other process note stops.
 
 ## The pointer, drags and hover
 
