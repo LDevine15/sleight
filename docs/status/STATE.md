@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 21:50 UTC, five branches merged)
+## Banner (2026-10-17 21:48 UTC, A/B queued)
 
 Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
 no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. Build work runs as
@@ -30,6 +30,12 @@ headline's wording to the browser race, which isn't done.
   Team ID requirement, admin or own group only, qualified browsers only. The live turbo-on-Chrome check is still to run.
 - dialog continuation LW2 to LW4 (f3c15d05, fd834163, LW4 fixes): a remembered window belongs to one process, and a dialog over a
   URL-less window needs a certified identity. The staleness bound blocks the Escape and Cmd+H Word shape (speed, not safety).
+
+**Running now (owner away from the PC since 21:46Z, home and reachable by phone).** Loss-fix A/B
+`~/Projects/sleight-wt/sitting-1017c/ab-loss.sh` (old 369bc9a2 against new c34549ff, textedit-save, preview-read, excel-edit,
+word-edit, 5 alternating rounds, log `ab-loss.log`, per-round `ab-loss-<side>-r<n>.log`), waiting on the live lock that the
+Astra browser lane holds. Opus build lanes AN1 (sheet switching without tab clicks), AN4 (open_file result packaging) and AN6
+(bench timing split) run in their own worktrees, with no live runs.
 
 **Astra native finished (21:38Z)**: report `~/Projects/sleight-wt/ledger/astra-1017-native-report.md`, items AN1 to AN7 in
 the ledger. Excel needs reliability plus about 16 s per attempt for a 20% lead. The office lane measured background sheet
