@@ -16,17 +16,20 @@ runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 46
 10.5 against 10.4), preview-read (Peekaboo 4.4 against 4.6 median) and excel-edit (claude-cu 54 against 74). LAWS ties the
 headline's wording to the browser race, which isn't done.
 
-**Fixes for the three losses, in build at the clear** (Fable loss studies 20:5xZ, items in `~/Projects/sleight-wt/ledger/LEDGER.md`,
-last section; each lane commits on its own branch, none had committed at 21:08Z, and work in progress sits uncommitted in its worktree
-under `.claude/worktrees/agent-<id>`):
+**Fixes for the three losses, all lanes finished by 21:35Z** (Fable loss studies 20:5xZ, items in `~/Projects/sleight-wt/ledger/LEDGER.md`,
+last section; each committed on its own branch; worktrees under `.claude/worktrees/agent-<id>`):
 - agent-aa17fa2300d3ec00c (compact-reads): done, cb88e02b on worktree-agent-aa17fa2300d3ec00c, unmerged pending a Sonnet-high review.
   It confirms a save from the app's last standard-window read when the pre-save read was a menu or missing, drops stale "a menu is open"
   notes, attaches the moved-click note in calls with several clicks (with Undo first in its wording), and matches combined
   `{ id, label }` locators. The lease change for URL-less menu headers was left out (it broke 43 lease tests). The safe route is
   letting splitMenuActions accept a read between actions, which needs a check of whether the engine's REPL keeps top-level variables
   across calls.
-- agent-a8f6b4dfe726ba8e4 (document-scope guard policy): a light check after Return instead of a full tree read before typeText
-  (`SLEIGHT_GUARD_LIGHT_RETURN`, on by default), measured at 6-8 s of reads per excel-edit run.
+- agent-a8f6b4dfe726ba8e4 (guard after Return): done, a69c1d55 on worktree-agent-a8f6b4dfe726ba8e4, unmerged pending a Sonnet-high
+  safety review. The engine has no cheap read. The relay instead observes natively (window identity, sheets, focused element) for 700 ms
+  after each press_key approval, and the guard skips the full read before typeText or paste when two observations at least 100 ms
+  after the key show the same window, no sheet and text-type focus (`plugins/sleight/lib/light-return.mjs`,
+  `SLEIGHT_GUARD_LIGHT_RETURN=0` baseline). Risk for the review: a 100 ms wait replaces the engine's ~400 ms settle, so a sheet that
+  appears after 100 ms would not be seen before typing. Estimate: excel-edit's entry batch from 7.4-9.2 s to about 4-6 s.
 - agent-a336b5cee71ace575 (relay, launch, skill): done, 044434df on worktree-agent-a336b5cee71ace575, unmerged pending a
   Sonnet-high review. Rules come before the tree (`SLEIGHT_RULES_FIRST=0` baseline). open_file skips `open -g` on a confirmed window,
   and its approval runs alongside the cold probe, so a prompt can be answered for nothing if the lookup then fails (known-problems).
