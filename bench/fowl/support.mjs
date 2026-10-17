@@ -1,12 +1,14 @@
 // Shared by the patched runner and admission. Unsupported tasks remain in the
 // runner's input so it can write their not-supported rows without agent setup.
 const BROWSER_ARMS = ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu', 'browser-use'];
-export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex'];
+export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex', 'fowlbrowser', 'claude-in-chrome'];
 export function taskSupport(task, surface, { world = false, remote = null, realBrowser } = {}) {
   if (realBrowser) {
     if (remote) return 'Real browser gate is local only';
-    if (!REAL_BROWSER_ARMS.includes(surface)) return 'Real browser gate uses sleight-turbo, sleight, lcu, cua, peekaboo or codex';
+    if (!REAL_BROWSER_ARMS.includes(surface)) return `Real browser gate uses ${REAL_BROWSER_ARMS.join(', ')}`;
     if (!['chrome', 'helium', 'firefox', 'safari'].includes(task.browser)) return 'Real browser gate supports browser tasks only';
+    if (surface === 'claude-in-chrome' && realBrowser !== 'chrome') return 'Claude in Chrome runs in Chrome only';
+    if (surface === 'fowlbrowser' && !['chrome', 'helium'].includes(realBrowser)) return 'FowlBrowser runs in Chrome or Helium only';
     if (realBrowser === 'safari') {
       if (surface === 'sleight-turbo') return 'Safari has no turbo surface; use sleight on the engine computer surface';
       if (task.viewport) return 'Safari computer arms have no qualified device viewport and restoration path';

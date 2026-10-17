@@ -4,8 +4,9 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser, checkBrowserOwner } from './real-browser.mjs';
-import { REAL_SURFACES, realAgentSetup } from './real-gate-setup.mjs';
+import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser, checkBrowserOwner, browserVersion, profileSourceProblems } from './real-browser.mjs';
+import { REAL_SURFACES, realAgentSetup, withClaudeManifest } from './real-gate-setup.mjs';
+import { benchmarkProfile } from '../world/arms/chrome.mjs';
 import { runCodex, codexConfigServers } from '../codex-arm.mjs';
 import { runOwned } from '../preapproved-process.mjs';
 import { assertLogin } from '../preflight.mjs';
@@ -23,7 +24,9 @@ export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, r
   const surface = args.surface || (['firefox', 'safari'].includes(args['real-browser']) ? 'sleight' : 'sleight-turbo');
   if (!REAL_SURFACES.includes(surface)) throw Error(`real-browser surfaces: ${REAL_SURFACES.join(', ')}`);
   round ??= realBrowser?.marker?.slice('Sleight Gate '.length) ?? randomUUID();
-  const browser = realBrowser ?? realBrowserPlan({ browser: args['real-browser'], round });
+  // Chrome's extension arms need the benchmark profile; every other arm can ask for it so all arms share one setup.
+  const profile = args['real-profile'] ?? (['fowlbrowser', 'claude-in-chrome'].includes(surface) && args['real-browser'] === 'chrome' ? 'benchmark' : 'fresh');
+  const browser = realBrowser ?? realBrowserPlan({ browser: args['real-browser'], round, profile, surface });
   const out = resolve(args.out || `/tmp/fb-rounds/real-${round}-${surface}`);
   const candidates = tasks.filter(task => !args.only || args.only.split(',').includes(task.name));
   if (!candidates.length) throw Error('No gate tasks selected');
@@ -40,7 +43,9 @@ export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, r
   const arms = selected.map(original => {
     const task = { ...original, browser: browser.browser };
     const dir = join(out, task.name);
-    const setup = realAgentSetup({ task, surface, dir, realBrowser: browser, repo, armHome, dryRun,
+    const chromeFiles = { ...(args['chrome-device-file'] ? { deviceFile: args['chrome-device-file'] } : {}),
+      ...(args['chrome-local-state'] ? { localState: args['chrome-local-state'] } : {}) };
+    const setup = realAgentSetup({ task, surface, dir, realBrowser: browser, repo, armHome, dryRun, mcpRoot, chromeFiles,
       model: args.model || 'haiku', effort: args.effort || 'high' });
     return { ...setup, args: surface === 'codex' ? setup.args : [...setup.args, setup.prompt],
       task, surface, dir };
@@ -68,7 +73,7 @@ const getJson = async url => {
   catch (error) { return { error: error.message }; }
 };
 
-export async function runGateAgent(plan, { signal, runClaude = runOwned, runNativeCodex = runCodex } = {}) {
+export async function runGateAgent(plan, { signal, runClaude = runOwned, runNativeCodex = runCodex, guardChrome = withClaudeManifest } = {}) {
   mkdirSync(plan.dir, { mode: 0o700 });
   let result;
   const collect = async operation => {
@@ -94,8 +99,9 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
     } else {
       writeFileSync(join(plan.dir, 'mcp.json'), JSON.stringify(plan.mcpConfig, null, 2), { mode: 0o600 });
       writeFileSync(join(plan.dir, 'settings.json'), JSON.stringify(plan.settingsOverrides, null, 2), { mode: 0o600 });
-      const run = await collect(() => runClaude(plan.command, plan.args, { cwd: plan.dir, env: plan.env, signal,
-        timeoutMs: (plan.task.budgetSeconds || 600) * 4000 }));
+      const agent = () => runClaude(plan.command, plan.args, { cwd: plan.dir, env: plan.env, signal,
+        timeoutMs: (plan.task.budgetSeconds || 600) * 4000 });
+      const run = await collect(() => plan.surface === 'claude-in-chrome' ? guardChrome(plan, agent) : agent());
       groupClean = run.groupClean;
       writeFileSync(events, run.stdout); writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
       const messages = run.stdout.split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
@@ -117,6 +123,8 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
 export async function admitRealGate(plan) {
   if (existsSync('/Library/Application Support/ClaudeCode/CLAUDE.md')) throw Error('Managed Claude policy cannot be excluded');
   if (existsSync(plan.out)) throw Error('Gate output already exists');
+  const problems = profileSourceProblems(plan.browser);
+  if (problems.length) throw Error(problems.join('; '));
   const setups = plan.arms;
   if (plan.surface === 'codex') {
     if (codexConfigServers(codexHome()).length !== 1 || !existsSync(join(codexHome(), 'auth.json'))) throw Error('Codex benchmark home needs its isolated engine server and login');
@@ -133,12 +141,21 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   tasks ??= JSON.parse(readFileSync(resolve(mcpRoot, args.tasks || 'tools/agents/codex-h2h.json'), 'utf8'));
   let plan = realGatePlan({ args, tasks, repo, mcpRoot });
   if (args['dry-run']) {
-    const printable = { ...plan, arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
+    // Read-only previews of what launch records: the app version and the benchmark profile's folder.
+    let profileFolder;
+    if (plan.browser.profileMode === 'benchmark-copy') {
+      try { profileFolder = benchmarkProfile(join(plan.browser.profileSource.userDataDir, 'Local State')); } catch (error) { profileFolder = { error: error.message }; }
+    }
+    const printable = { ...plan, browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
+      ...(profileFolder ? { profileFolder } : {}), preflight: profileSourceProblems(plan.browser) },
+      arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
       environment: { ...(env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {}),
         ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}) } })) };
     (runtime.print || console.log)(JSON.stringify(printable, null, 2)); return printable;
   }
   if (!plan.arms.length) throw Error('No runnable gate tasks: ' + plan.unsupported.map(row => row.reason).join('; '));
+  // The live copy always reads Chrome's own profile list, so a substitute list would pin a different folder.
+  if (args['chrome-local-state']) throw Error('--chrome-local-state is for dry runs only');
   await (runtime.admit || admitRealGate)(plan);
   const lockPath = runtime.lockPath || '/tmp/sleight-live.lock';
   if (existsSync('/tmp/sleight-hold')) throw Error('Benchmark hold is active');
@@ -239,7 +256,12 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   for (const row of rows) row.focusGrade = row.surface === 'sleight-turbo' ? gradeHostMonitor(monitor?.log || [], row.run, rows.map(row => row.run))
     : { ok: null, cell: 'not measured', events: [], problems: [] };
   writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
-  const lines = ['| task | arm | outcome | focus | ms | calls | errors |', '|---|---|---|---|---:|---:|---:|',
+  const used = browser ? (({ stop, reset, observe, ...value }) => value)(browser) : plan.browser;
+  const profileText = used.profileMode === 'benchmark-copy' ? `a copy of Chrome's "sleight benchmark" (${used.profileFolder ?? 'folder unknown'})`
+    : `fresh at ${used.profileRoot}`;
+  const lines = [`Browser: ${used.browser} ${used.version ?? '(version unknown)'}, profile ${profileText}` +
+    `${used.loadedExtensions?.length ? `, loaded ${used.loadedExtensions.join(', ')}` : ''}.`, '',
+    '| task | arm | outcome | focus | ms | calls | errors |', '|---|---|---|---|---:|---:|---:|',
     ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`)];
   writeFileSync(join(plan.out, 'report.md'), lines.join('\n') + '\n');
   if (!cleanupProven || rows.some(row => !row.outcome.ok || row.focusGrade.ok === false)) process.exitCode = 1;
