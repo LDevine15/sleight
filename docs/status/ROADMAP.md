@@ -43,6 +43,9 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    TK3, TS1 to TS5), merge and freeze, then one combined A/B (old vs new sleight, claim plus held-out tasks), then the all-arms
    claim run (5 runs where any arm fails, scored by `bench/claim-score.mjs`), then the release pass and the tag. The tag moves
    later so 1.3.0 includes the fixes and the claim measures the released build.
+   The all-arms claim run is done (2026-10-17, sleight fastest on 5 of 9). Before publishing it, sleight fixes the three tasks its
+   own results lost (preview-read, textedit-calculator, excel-edit) and reruns only its arm: about an hour of fixes and tests
+   beat stretching the claim to cover them (owner, 2026-10-17).
    Before browser numbers are published, one gate round runs turbo on a real, isolated Helium or Chrome profile instead of the
    headless Chromium, so the quoted number is the product path. The owner's chosen headline is "fastest plugin on macOS"
    (2026-10-17). It is publishable only if sleight leads the native claim run and turbo leads lcu, Cua, Peekaboo and Codex on browser
