@@ -11,7 +11,12 @@
     { "prefix": "2026-10-16T16-02", "why": "codex window loaded by Puddle tests and stopped on a TextEdit hang" },
     { "prefix": "2026-10-16T16-14", "why": "codex retry under four of Puddle's spinning processes" },
     { "prefix": "2026-10-16T17-43", "arm": "lcu", "why": "lcu arm before its PreToolUse hooks were loaded (c37d3fcf)" },
-    { "prefix": "2026-10-17T05-07", "arm": "cua", "why": "cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full" }
+    { "prefix": "2026-10-17T05-07", "arm": "cua", "why": "cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full" },
+    { "prefix": "2026-10-17T04-03", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
+    { "prefix": "2026-10-17T06-41", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
+    { "prefix": "2026-10-17T06-42", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
+    { "prefix": "2026-10-17T06-45", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
+    { "prefix": "2026-10-17T06-46", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" }
   ],
   "windows": [
     { "tasks": ["textedit-drag"], "before": "2026-10-16T20-12", "why": "a stale full-screen screencaptureui overlay covered every drag target" },
