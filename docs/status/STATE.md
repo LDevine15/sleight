@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 17:35 UTC, owner away since 17:16Z, on their phone)
+## Banner (2026-10-17 17:55 UTC, owner away since 17:16Z, on their phone)
 
 Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim (owner, 2026-10-17): every fix the
 live runs surface lands before sleight's final claim run, then the tag (ROADMAP 1b). Puddle is shut down, and sleight has the Mac.
@@ -22,10 +22,16 @@ Build agents run as Claude subagents (Opus high builds, Sonnet high reviews, Fab
 - Uncommitted, reviewed: GS1 (relay rewrites `<handle>.getState(` to `getAXState(`, strings masked) and SN1 (a same-window file
   write confirms a save despite a degraded read). Full check pending, after the top-ups finish.
 
-**Running:** competitor top-ups (`~/Projects/sleight-wt/sitting-1017c/topup-1017.sh`): lcu calculator-click 2/2 pass,
-textedit-calculator 1/2 (one cross-file mismatch, 123 s); claude-cu textedit-drag, textedit-calculator, word-edit x2. Results are written to
-the worktree's `bench/results`. Copy them to the main checkout's before scoring. Agents: CS1/CS5/CS2 claim-score build (worktree),
-RA1 re-acquire compaction build (worktree, `SLEIGHT_COMPACT_REACQUIRE`, on by default), Fable excel-edit plan study.
+**Landed after the banner's first write:** GS1+SN1 (20ba6d20), CU1 claude-cu harness fix (f644b96b), CS1/CS2/CS5
+claim-score rules (976ec3cb) plus per-run exclusions, XP1 probe cleanup for Excel's alert-window save prompt, the owner's 5-run
+rule clarification in LAWS (20% over the slower arm, one top-up round after sleight's final run). Top-ups are done: lcu
+calculator-click 5/5, textedit-calculator 4/5; claude-cu textedit-drag 4/5 (57 s expected, now ahead of sleight's 67 on the
+old build), textedit-calculator 5 counted, word-edit 5/5. Scorer today: "completed every task, fastest on 4 of 9", totals 373
+vs claude-cu 476. RA1 (re-acquire compaction, b0e47ba9) is merged locally as 5330defd, not pushed, while a Sonnet-high review runs.
+
+**Running:** RA1 A/B (`~/Projects/sleight-wt/sitting-1017c/ab-ra1.sh`, started 17:53Z): commit 5330defd on both sides, old side
+`SLEIGHT_COMPACT_REACQUIRE=0`, excel-edit and word-edit, 5 alternating rounds. Results in `~/Projects/sleight-wt/ab-{old,new}/bench/results`
+since 2026-10-17T17-53. Score with `node bench/ab-score.mjs`.
 
 **Studies (17:0xZ, reports in the session transcript; items in `~/Projects/sleight-wt/ledger/LEDGER.md`, last section):**
 claude-cu wins on excel-edit by retyping sorted rows in one Name Box batch; it loses big on textedit-save (104 s), calculator-menu,
