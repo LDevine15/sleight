@@ -140,6 +140,13 @@ for (const line of ['  Terminal', '  Also: Terminal']) {
     assert.equal(writes.length, 1);
   });
 }
+test('a blocked card records the card, not the session banner above it', async t => {
+  const screen = 'Welcome back Ada Example · ada@example.com\n' + card(['Fixture Editor', 'Other App'], 'allow');
+  const { result, events } = await session(fixture(t), { screens: [screen] });
+  assertBlock(result, events, 'computer-use approval is outside the task allowlist or unsupported');
+  assert.doesNotMatch(result.approvalBlock.cardText, /Ada|example\.com/);
+  assert.match(result.approvalBlock.cardText, /Other App/);
+});
 for (const grant of ['clipboardRead', 'clipboardWrite', 'systemKeyCombos', 'shellAccess']) {
   test(`${grant} requires an explicit task grant`, async t => {
     const screen = card(['Fixture Editor'], 'allow').replace('  ● Fixture Editor', '  ● Fixture Editor\n' +
@@ -289,6 +296,9 @@ test('prepared permission hook allows only bound computer-use calls within the t
     return JSON.parse(result.stdout).hookSpecificOutput.decision.behavior;
   };
   assert.equal(invoke('mcp__computer-use__request_access', { apps: ['Fixture Editor'] }), 'allow');
+  // The pinned tool schema requires `reason` (2026-10-17 review).
+  assert.equal(invoke('mcp__computer-use__request_access', { apps: ['Fixture Editor'], reason: 'Edit the fixture' }), 'allow');
+  assert.equal(invoke('mcp__computer-use__request_access', { apps: ['Fixture Editor'], reason: 5 }), 'deny');
   assert.equal(invoke('mcp__computer-use__screenshot', {}), 'allow');
   assert.equal(invoke('mcp__computer-use__open_application', { app: 'Fixture Editor' }), 'allow');
   for (const input of [{ apps: ['Other App'] }, { apps: ['Fixture Editor', 'Other App'] }, { apps: [] }, {}, { apps: 'Fixture Editor' }])

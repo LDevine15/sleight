@@ -31,7 +31,8 @@ function allowedCall(name, input, apps, allowedGrants, depth = 0, app) {
   if (depth > 8 || !tools.has(name) || !input || typeof input !== 'object' || Array.isArray(input) ||
     !allowedTargets(input, apps, allowedGrants)) return false;
   if (name === 'request_access' && (!Array.isArray(input.apps) || !input.apps.length ||
-    Object.keys(input).some(key => !['action', 'apps', 'clipboardRead', 'clipboardWrite', 'systemKeyCombos'].includes(key)))) return false;
+    input.reason !== undefined && typeof input.reason !== 'string' ||
+    Object.keys(input).some(key => !['action', 'apps', 'reason', 'clipboardRead', 'clipboardWrite', 'systemKeyCombos'].includes(key)))) return false;
   const target = input.app ?? input.app_name ?? input.bundle_id ?? app;
   if ((name === 'open_application' || name.startsWith('app_')) && !apps.includes(target)) return false;
   if (name === 'computer_batch' || name === 'app_batch') return Array.isArray(input.actions) && input.actions.length > 0 && input.actions.every(action =>

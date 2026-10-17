@@ -262,7 +262,10 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
   const approvalWaitMs = Math.min(1000, plan.timeoutMs / 2);
   const block = (why, text) => {
     gateBlocked = true; reason = why;
-    approvalBlock = { reason: why, cardText: text.replaceAll(homedir(), '~').replace(/\/(?:Users|home)\/[^/\s]+/g, '~') };
+    // Only the card (or the screen's last lines), never the session banner with the account's name and email above it.
+    const at = text.lastIndexOf('Computer Use wants to control these apps');
+    const shown = at >= 0 ? text.slice(at) : text.split('\n').slice(-20).join('\n');
+    approvalBlock = { reason: why, cardText: shown.replaceAll(homedir(), '~').replace(/\/(?:Users|home)\/[^/\s]+/g, '~') };
     onEvent?.({ type: 'approval_block', ...approvalBlock });
   };
   const pty = launch(plan, data => { screen = (screen + data).slice(-65536); }, { onSpawn });
