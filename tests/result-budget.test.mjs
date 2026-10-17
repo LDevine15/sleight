@@ -330,3 +330,29 @@ test('a repeated docs reply retains policy without repeating native guidance aft
   assert.doesNotMatch(out,/Control native apps/);
   assert.ok(out.includes('# Computer Use Confirmations Policy'));
 });
+
+
+test('trees yield room to held docs before the browser reference is deferred', () => {
+  const reference = browserDocs(36000);
+  const page = 'Browser tab: 1, Title: "Page", URL: "https://example.test".\n0 AXWebArea Page\n' +
+    Array.from({ length: 300 }, (_, i) => `\t${i + 1} text ${'x'.repeat(100)}`).join('\n');
+  const budget = createResultBudget();
+  const out = texts(budget.apply([{ type: 'text', text: reference }, { type: 'text', text: page }]));
+  assert.ok(out.length <= RESULT_LIMIT);
+  assert.ok(out.includes(reference), 'reference fits when tree rows are trimmed first');
+  assert.doesNotMatch(out, /API reference .* follows/);
+});
+
+for (const kind of ['Window: "Note", App: Example.\n0 standard window Note',
+  'Browser tab: 1, Title: "Page", URL: "https://example.test".\n0 AXWebArea Page']) {
+  test(`large tree rows cannot push policy over the result limit: ${kind.split('\n')[0]}`, () => {
+    const policy = '## Computer Use\n' + 'reference '.repeat(3900) + '\n# Computer Use Confirmations Policy\nNever pay without permission.';
+    const tree = kind + '\n' + Array.from({ length: 30 }, (_, i) => `\t${i + 1} text ${'x'.repeat(1000)}`).join('\n');
+    const out = texts(createResultBudget().apply([{ type: 'text', text: policy }, { type: 'text', text: tree }, { type: 'text', text: 'Keep caller output.' }]));
+    assert.ok(out.length <= RESULT_LIMIT, `${out.length}`);
+    assert.ok(out.includes(policy));
+    assert.ok(out.includes(kind));
+    assert.match(out, /Keep caller output/);
+    assert.match(out, /omitted/);
+  });
+}
