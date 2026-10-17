@@ -46,7 +46,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -75,8 +75,9 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     pruneRunImages: options => calls.push(['image retention', options]),
     beginPassHygiene: async () => {
       calls.push('window baseline');
-      if (hygieneError) throw new Error(hygieneError);
-      return { get hygieneError() { return hygieneTracking; }, betweenTasks: async () => { calls.push('hygiene boundary'); if (hygieneBoundaryError) throw new Error(hygieneBoundaryError); }, trackLaunch: async (apps, operation) => { calls.push(['tracked setup', apps]); return operation(); }, finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
+      const handle = { get hygieneError() { return hygieneTracking; }, betweenTasks: async () => { calls.push('hygiene boundary'); if (hygieneBoundaryError) throw new Error(hygieneBoundaryError); }, trackLaunch: async (apps, operation) => { calls.push(['tracked setup', apps]); return operation(); }, finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
+      if (hygieneError) throw Object.assign(new Error(hygieneError), hygieneReceiptsOnly && { receiptsOnly: handle });
+      return handle;
     },
     assertLogin: plan => { calls.push(['login preflight', plan]); const message = typeof loginError === 'function' ? loginError(plan) : loginError; if (message) throw new Error(message); },
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
@@ -170,6 +171,19 @@ test('window baseline failure is logged without skipping or losing timed runs', 
   assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /CGWindowList unavailable/);
   assert.ok(result.logs.some(line => /hygiene.*CGWindowList unavailable/i.test(line)));
   assert.equal(result.calls.at(-1), 'unlock');
+});
+test('a failed baseline still hands exact launch receipts to the gentle Quit path', async () => {
+  const result = await runner({ hygieneError: 'AX timeout', hygieneReceiptsOnly: true,
+    hygieneResult: { leftWindows: [{ pid: 42, bundle: 'org.fixture', reason: 'still running after Quit' }], errors: [] }, leases: [
+      { app: 'fixture', bundle: 'org.fixture', pid: 42, processStartedAtMs: 12000, running: false, launched: true },
+      { app: 'owner', bundle: 'org.owner', pid: 43, processStartedAtMs: 13000, running: true, launched: false },
+    ] });
+  assert.equal(result.error, undefined);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')?.[1];
+  // Every run shares the fake lease list; the warm owner app never appears.
+  assert.deepEqual([...new Set(options.launched.map(item => JSON.stringify(item)))], [JSON.stringify({ pid: 42, start: 12, bundle: 'org.fixture' })]);
+  assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /AX timeout/);
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 42, bundle: 'org.fixture', reason: 'still running after Quit' }]);
 });
 test('between-task snapshot failures preserve timed runs and fixture attribution reaches cleanup', async () => {
   const task = { id: 'fixture', app: 'Fixture', setup(ctx) { ctx.document = join(ctx.dir, 'Owned.txt'); }, prompt: () => 'task', check: () => true };

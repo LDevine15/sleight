@@ -528,8 +528,9 @@ if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name]
   console.error('Acquiring /tmp/sleight-live.lock.');
   unlock = await acquireLiveLock(undefined, { wait: !guardedPass, signal: controller.signal, interval: 2000 });
   lockIdentity = statSync('/tmp/sleight-live.lock');
+  // Without a baseline the receipts-only handle closes no window but still quits proven launches.
   try { windowHygiene = await beginPassHygiene({ cacheDir: ARM_HOME, signal: controller.signal }); }
-  catch (error) { recordHygieneError(error); }
+  catch (error) { recordHygieneError(error); windowHygiene = error.receiptsOnly; }
   sweepTemp({ dryRun: hygieneDryRun });
   if (!hygieneDryRun) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
   pruneRunImages({ roots: [join(ARM_HOME, 'runs-archive'), ...new Set([tmpdir(), realpathSync(tmpdir())])].map((base, i) => i === 0 ? base : join(base, 'sleight-real-evidence')),

@@ -84,9 +84,7 @@ export async function finishWindows(before, { snapshot, act, launched = [], daem
     try {
       const outcome = await act(item);
       if (outcome?.skipped === 'no-ax-window' && item.onScreen === false) phantoms.add(windowKey(item));
-      if (outcome?.dialog) {
-        stoppedApps.add(processKey(item)); dialogs.set(processKey(item), { ...identity(item), reason: 'application dialog' });
-      }
+      if (outcome?.dialog) { stoppedApps.add(processKey(item)); dialogs.set(processKey(item), identity(item)); }
     } catch (error) { result.errors.push(error.message); stoppedApps.add(processKey(item)); }
   }
   let after = current;
@@ -97,16 +95,47 @@ export async function finishWindows(before, { snapshot, act, launched = [], daem
       result.leftWindows.push({ ...identity(item), reason: after ? 'still running after Quit' : 'Quit unconfirmed: snapshot unavailable' });
     }
   }
+  labelDialogs(result.leftWindows, after, dialogs);
+  for (const item of result.leftWindows) log(`leftWindows ${JSON.stringify(item)}`);
+  return result;
+}
+
+// The label goes on the dialog's own window, never on another window of the same app. A dialog
+// the helper met while acting carries no window ID, so it is listed by process unless the final
+// snapshot names its window.
+function labelDialogs(leftWindows, after, dialogs = new Map()) {
+  const label = window => Object.assign(window, { reason: 'application dialog',
+    instruction: 'Resolve the application dialog manually before the next pass; hygiene left it unanswered.' });
   for (const window of after?.windows ?? []) if (window.dialog) {
-    if (!result.leftWindows.some(item => windowKey(item) === windowKey(window))) result.leftWindows.push({ ...window });
-    dialogs.set(processKey(window), { ...identity(window), reason: 'application dialog' });
+    label(leftWindows.find(item => windowKey(item) === windowKey(window)) ?? leftWindows[leftWindows.push({ ...window }) - 1]);
+    dialogs.delete(processKey(window));
   }
   for (const dialog of dialogs.values()) {
-    let window = result.leftWindows.find(item => processKey(item) === processKey(dialog));
-    if (!window) { window = { ...dialog }; result.leftWindows.push(window); }
-    window.reason = 'application dialog';
-    window.instruction = 'Resolve the application dialog manually before the next pass; hygiene left it unanswered.';
+    label(leftWindows.find(item => item.id === undefined && processKey(item) === processKey(dialog)) ?? leftWindows[leftWindows.push({ ...dialog }) - 1]);
   }
+}
+
+// Without a baseline no window can be told apart from the owner's, so nothing closes. Exact launch
+// receipts still get the one gentle Quit; a Save sheet stays unanswered and the app is listed.
+export async function quitLaunched({ snapshot, act, launched = [], dryRun = false, log = console.log } = {}) {
+  const result = { planned: [], leftWindows: [], errors: [] };
+  for (const item of launched.filter(valid)) {
+    if (!result.planned.some(quit => processKey(quit) === processKey(item))) result.planned.push({ ...identity(item), action: 'quit' });
+  }
+  for (const item of result.planned) {
+    log(`${dryRun ? 'would ' : ''}quit ${JSON.stringify(item)}`);
+    if (!dryRun) try { await act(item); } catch (error) { result.errors.push(error.message); }
+  }
+  if (dryRun || !result.planned.length) return result;
+  let after;
+  try { after = await snapshot(); } catch (error) { result.errors.push(error.message); }
+  for (const item of result.planned) {
+    if (after && !after.apps.some(app => processKey(app) === processKey(item))) continue;
+    const sheets = (after?.windows ?? []).filter(window => window.dialog && processKey(window) === processKey(item));
+    result.leftWindows.push(...sheets.length ? sheets.map(window => ({ ...window }))
+      : [{ ...identity(item), reason: after ? 'still running after Quit' : 'Quit unconfirmed: snapshot unavailable' }]);
+  }
+  labelDialogs(result.leftWindows, { windows: result.leftWindows.filter(window => window.dialog) });
   for (const item of result.leftWindows) log(`leftWindows ${JSON.stringify(item)}`);
   return result;
 }
@@ -136,6 +165,7 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     finally { if (!uncollected) rmSync(bank, { recursive: true, force: true }); }
   }
   const call = async request => JSON.parse(await checked(binary, [JSON.stringify(request)], { timeoutMs: 10000 }));
+  let baselineError;
   const snapshot = async () => {
     const value = await call({ action: 'snapshot' });
     if (!value || !Array.isArray(value.apps) || !Array.isArray(value.windows) || !value.apps.every(valid) ||
@@ -145,7 +175,11 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     }
     return value;
   };
-  const before = await snapshot();
+  // A failed baseline still returns a receipts-only handle on the error: boundary snapshots can
+  // prove later launches, and finish quits only those and the leases' receipts. An uncollected
+  // helper gets no handle, so no further helper runs.
+  let before;
+  try { before = await snapshot(); } catch (error) { if (error.uncollected) throw error; baselineError = error; }
   const launches = [], members = new Map(), trackingErrors = [], roots = new Map();
   let latest = before, pendingLaunch, trackingErrorCount = 0;
   const recordError = error => {
@@ -156,7 +190,7 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     const processes = value.processes ?? [], live = new Map(processes.map(proc => [proc.pid, proc]));
     for (const [pid, registeredAt] of roots) {
       const root = live.get(pid);
-      if (root && root.start > (before.at ?? 0) && root.start <= registeredAt && !members.has(pid)) members.set(pid, root.start);
+      if (root && root.start > (before?.at ?? 0) && root.start <= registeredAt && !members.has(pid)) members.set(pid, root.start);
     }
     roots.clear();
     for (let grew = true; grew;) {
@@ -176,7 +210,7 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     latest = value;
     return value;
   };
-  return {
+  const handle = {
     // Registration runs from onSpawn, inside task timing. Inventory waits for a boundary.
     recordArm(pid) { roots.set(pid, Date.now() / 1000); },
     async betweenTasks() {
@@ -192,15 +226,15 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     },
     async finish(options = {}) {
       if (pendingLaunch) await this.betweenTasks();
-      const result = await finishWindows(before, { ...options, armPids: [],
-        launched: [...launches, ...(options.launched ?? [])],
-        snapshot: async () => observe(await snapshot()), act: call,
-        touchedProcesses: members,
-      });
+      const launched = [...launches, ...(options.launched ?? [])], observed = async () => observe(await snapshot());
+      const result = before ? await finishWindows(before, { ...options, armPids: [], launched, snapshot: observed, act: call, touchedProcesses: members })
+        : await quitLaunched({ launched, snapshot: observed, act: call, dryRun: options.dryRun, log: options.log });
       result.errors.push(...trackingErrors);
       result.trackingErrors = [...trackingErrors];
       result.trackingErrorCount = trackingErrorCount;
       return result;
     },
   };
+  if (baselineError) throw Object.assign(baselineError, { receiptsOnly: handle });
+  return handle;
 }

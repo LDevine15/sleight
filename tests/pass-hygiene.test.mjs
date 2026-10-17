@@ -79,6 +79,12 @@ test('permission, user interruption and uncollected drivers block window actions
 test('native adapter refuses an uncollected compiler or helper before claiming a baseline', async t => {
   const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-compile-')));
   await assert.rejects(hygiene.beginPassHygiene({ cacheDir, run: async () => ({ stdout: '{}', groupClean: false, exit: { code: 0 } }) }), /group cleanup unconfirmed/);
+  const helperOnly = async (command, args) => {
+    if (command === '/usr/bin/xcrun') { writeFileSync(args.at(-1), 'fake'); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
+    return { stdout: '{}', groupClean: false, exit: { code: 0 } };
+  };
+  await assert.rejects(hygiene.beginPassHygiene({ cacheDir, run: helperOnly }),
+    error => /group cleanup unconfirmed/.test(error.message) && error.receiptsOnly === undefined, 'an uncollected baseline helper gets no receipts-only handle');
 });
 
 test('native adapter checks its baseline and routes every helper through owned process collection', async t => {
@@ -318,4 +324,43 @@ test('deferred arm sampling never adopts a PID incarnation born after registrati
   await pass.betweenTasks();
   const result = await pass.finish({ log() {} });
   assert.deepEqual(result.planned.map(item => item.action), ['keep']);
+});
+
+test('a sheet in its own window gets the dialog label, not the owner window beside it', async () => {
+  const owner = { ...win(11, 1), title: 'Untitled' }, sheet = { ...win(12, 1), title: '', dialog: true };
+  const result = await hygiene.finishWindows(baseline, { snapshot: async () => ({ apps: baseline.apps, windows: [...baseline.windows, owner, sheet] }),
+    act: () => assert.fail('nothing is closed or answered'), log() {} });
+  assert.deepEqual(result.leftWindows.map(item => [item.id, item.reason, Boolean(item.instruction)]),
+    [[11, undefined, false], [12, 'application dialog', true]]);
+});
+
+test('without a baseline, exact launch receipts still get one gentle Quit and no window closes', async t => {
+  const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-no-baseline-'))), actions = [];
+  let fail = true, state = baseline;
+  const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun') { writeFileSync(args.at(-1), 'fake'); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
+    const request = JSON.parse(args[0]);
+    if (request.action !== 'snapshot') {
+      actions.push(request);
+      if (request.pid === 3) state = { ...state, apps: state.apps.filter(item => item.pid !== 3), windows: state.windows.filter(item => item.pid !== 3) };
+      return { stdout: '{}', groupClean: true, exit: { code: 0 } };
+    }
+    return fail ? { stdout: '', stderr: 'AX timeout', groupClean: true, exit: { code: 1 } } : { stdout: JSON.stringify(state), groupClean: true, exit: { code: 0 } };
+  };
+  const error = await hygiene.beginPassHygiene({ cacheDir, run }).then(() => assert.fail('baseline failed'), error => error);
+  assert.match(error.message, /AX timeout/);
+  const pass = error.receiptsOnly;
+  fail = false;
+  await pass.betweenTasks();
+  // The setup launches app 3; app 5 is a lease receipt whose Quit raised a Save sheet.
+  await pass.trackLaunch([app(3).bundle], async () => { state = { apps: [...baseline.apps, app(3)], windows: [...baseline.windows, win(11, 1), win(30, 3)] }; });
+  await pass.betweenTasks();
+  state = { apps: [...state.apps, app(5)], windows: [...state.windows, { ...win(50, 5), dialog: true }] };
+  const result = await pass.finish({ fixtureNames, touchedApps: [app(1).bundle, app(3).bundle], launched: [app(5)], log() {} });
+  assert.deepEqual(actions.map(item => [item.action, item.pid]), [['quit', 3], ['quit', 5]]);
+  assert.deepEqual(result.leftWindows.map(item => [item.pid, item.id, item.reason]), [[5, 50, 'application dialog']]);
+  assert.match(result.leftWindows[0].instruction, /Resolve.*dialog/);
+  const unconfirmed = await error.receiptsOnly.finish({ launched: [app(5)], dryRun: true, log() {} });
+  assert.deepEqual(unconfirmed.planned.map(item => [item.action, item.pid]), [['quit', 3], ['quit', 5]]);
+  assert.equal(actions.length, 2, 'dry run sends nothing');
 });
