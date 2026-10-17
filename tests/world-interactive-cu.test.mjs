@@ -42,7 +42,8 @@ test('preparation enables only the built-in server in the arm profile and preser
   const armDir = mkdtempSync(join(tmpdir(), 'sleight-cu-profile-')); t.after(() => removeTemp(armDir));
   const p = interactivePlan({ armDir, sessionId: id, prompt: 'RESULT ok' });
   mkdirSync(p.env.CLAUDE_CONFIG_DIR);
-  writeFileSync(p.configFile, JSON.stringify({ loginFixture: 'preserve', projects: { '/other': { example: 1 } } }));
+  writeFileSync(p.configFile, JSON.stringify({ loginFixture: 'preserve', projects: { '/other': { example: 1 } },
+    cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } }));
   prepareInteractive(p);
   const config = JSON.parse(readFileSync(p.configFile, 'utf8'));
   assert.equal(config.loginFixture, 'preserve');
@@ -262,6 +263,8 @@ process.stdout.write('\\n❯ \\n');
 `, { mode: 0o700 });
   const prompt = 'exact task ' + 'é😀'.repeat(12000);
   const p = interactivePlan({ armDir, command, sessionId: id, prompt, timeoutMs: 10000 });
+  mkdirSync(p.env.CLAUDE_CONFIG_DIR);
+  writeFileSync(p.configFile, JSON.stringify({ cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } }));
   let terminal = '';
   const result = await runInteractive(p, { verify() {}, pollMs: 10, launch: (plan, callback) => launchPty(plan, data => { terminal += data; callback(data); }) });
   assert.equal(result.is_error, false, JSON.stringify(result) + '\n' + terminal);
