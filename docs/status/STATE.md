@@ -18,7 +18,8 @@ the owner's call. Score only with `node bench/claim-score.mjs --results ~/Projec
 
 **Build lanes in flight.** They run as headless `codex exec` (gpt-6.1-sol high) under launchd, so the clear doesn't stop them.
 Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with the prompt `queue/tt/lane-prompt-tt.md`. Logs go to `ledger/lane-runs/`.
-- TT2, pid 58221: the relay. open_file returns the window, a top-level `return` works, and the file's mtime confirms a save.
+- TT2 DONE at 00:37 UTC on `codex/tt2` `0c286dd9`, waiting for sleight-arch's review and merge (the next session's first job). It
+  covers the relay: open_file returns the window, a top-level `return` works, and the file's mtime confirms a save.
 - TT3, pid 58228: drag. Non-text drags hit-test their endpoints, and a timeout points to Copy and Paste.
 - TT4, pid 58235: compact reads. No full tree after a filtered return.
 - TS13, pid 67634: skill and result text. No confirming read after an action, and getApp on an app the task names.
