@@ -95,7 +95,8 @@ export async function probeClient(server, { relay: throughRelay, record, timeout
     record({ client: label, direction: 'received', msg });
     if (msg.method && msg.id !== undefined) {
       if (msg.method === 'elicitation/create') {
-        approve(msg.params).then(result => send({ id: msg.id, result }), fail);
+        // A synchronous approve (xl1-probe's) threw outside any try at 17:18Z and left Excel running.
+        Promise.resolve().then(() => approve(msg.params)).then(result => send({ id: msg.id, result }), fail);
       } else send({ id: msg.id, error: { code: -32601, message: 'Method not found' } });
     } else if (!msg.method && pending.has(msg.id)) {
       const reply = pending.get(msg.id);
