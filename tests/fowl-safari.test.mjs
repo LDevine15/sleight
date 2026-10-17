@@ -17,22 +17,23 @@ import { answer } from '../bench/fowl/origin-hook.mjs';
 const task = { name: 'fixture', browser: 'chrome', prompt: 'Visit {browser}.', result: 'the answer' };
 const profile = 'sleight benchmark';
 const window = (id, title = 'Start Page', url = 'about:blank') => ({ id, title,
-  toolbar: [{ role: 'AXMenuButton', description: profile }], tabs: [{ id: id + '-tab', title, url }] });
+  toolbar: [{ id: id + '-profile', role: 'AXMenuButton', description: profile }], tabs: [{ id: id + '-tab', title, url }] });
 function fixture(t) {
   const plan = realBrowserPlan({ browser: 'safari', round: 'test-' + randomUUID() });
   t.after(() => rmSync(dirname(plan.profileRoot), { recursive: true, force: true }));
-  const calls = []; let running = false, windows = [window('restored')], serial = 0;
+  const calls = []; let running = false, windows = [], serial = 0;
   const bridge = { request: async (op, input = {}) => {
     calls.push([op, input]);
     if (op === 'launch') { running = true; return { pid: 4100, executable: plan.executable, launchDate: 123 }; }
     if (op === 'snapshot') return { windows: structuredClone(windows) };
-    if (op === 'new-profile') { windows.push(window('fresh-' + ++serial)); return { menuEscapePosted: true }; }
+    if (op === 'new-profile') { windows.push(window('fresh-' + ++serial)); return { menuEscapePosted: true, menuCleared: true, menuEscapes: 1 }; }
     if (op === 'navigate') { const w = windows.find(w => w.id === input.window); w.title = plan.marker; w.tabs = [{ id: w.id + '-tab', title: plan.marker, url: input.url }]; return {}; }
     if (op === 'close-window') { windows = windows.filter(w => w.id !== input.window); return {}; }
     if (op === 'quit') { running = false; return { browserClosed: true }; }
     throw Error('unexpected operation ' + op);
   }, close: async () => calls.push(['bridge-closed']) };
   const options = { safariBridge: async () => bridge, timeoutMs: 50,
+    restoreWait: async ms => { assert.equal(ms, 2000); calls.push(['restore-wait', { ms }]); },
     listProcesses: async () => running ? [{ pid: 4100, ppid: 1, executable: plan.executable }] : [] };
   return { plan, options, bridge, calls, windows: value => { if (value) windows = value; return windows; } };
 }
@@ -85,18 +86,19 @@ test('Safari dry plans support all five arms with plain sleight, explicit limits
   assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: 'Allow Computer Use to use "Safari"?' }), 'accept');
 });
 
-test('Safari selects a new profile window by toolbar evidence, closes restored windows and resets freshly', async t => {
+test('Safari resets by closing only the preceding verified profile window', async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   assert.equal(browser.pid, 4100);
   assert.equal(browser.profileEvidence.attribute, 'AXDescription');
   assert.equal(browser.profileEvidence.value, profile);
   assert.equal(f.windows().length, 1);
-  assert.ok(f.calls.some(([op, data]) => op === 'close-window' && data.window === 'restored'));
+  assert.ok(!f.calls.some(([op]) => op === 'close-window'));
   const first = f.windows()[0].id;
   const start = await resetRealBrowser(browser);
   assert.equal(Object.values(start)[0].title, f.plan.marker);
   assert.notEqual(f.windows()[0].id, first);
   assert.equal(f.windows().length, 1);
+  assert.deepEqual(f.calls.filter(([op]) => op === 'close-window').map(([, data]) => data.window), [first]);
   const observed = await observeRealBrowser(browser);
   assert.equal(observed.observed, true);
   assert.equal(Object.values(observed.tabs)[0].url, f.plan.markerUrl);
@@ -105,12 +107,54 @@ test('Safari selects a new profile window by toolbar evidence, closes restored w
   assert.equal(f.calls.filter(([op]) => op === 'quit').length, 1);
 });
 
+test('Safari refuses owner restored windows before opening a profile or mutating windows', async t => {
+  for (const restored of [[{ id: 'owner', toolbar: [] }], [window('profile'), { id: 'owner', toolbar: [] }]]) {
+    const f = fixture(t); f.windows(restored);
+    await assert.rejects(launchRealBrowser(f.plan, f.options), /BENCH_SAFARI_RESTORED_WINDOWS: Safari restored windows from another profile; close your Safari windows or turn off window restore, then retry/);
+    assert.ok(!f.calls.some(([op]) => ['new-profile', 'navigate', 'close-window'].includes(op)));
+    assert.ok(f.calls.some(([op]) => op === 'quit'));
+  }
+});
+
+test('Safari waits for delayed restore and never closes even a restored benchmark window', async t => {
+  const f = fixture(t), request = f.bridge.request; let snapshots = 0;
+  f.bridge.request = async (op, input) => {
+    if (op === 'snapshot' && ++snapshots === 2) f.windows([{ id: 'late-owner', toolbar: [] }]);
+    return request(op, input);
+  };
+  await assert.rejects(launchRealBrowser(f.plan, f.options), /RESTORED_WINDOWS/);
+  assert.ok(!f.calls.some(([op]) => ['new-profile', 'navigate', 'close-window'].includes(op)));
+  const g = fixture(t); g.windows([window('restored-profile')]);
+  await assert.rejects(launchRealBrowser(g.plan, g.options), /EXTRA_WINDOWS/);
+  assert.ok(!g.calls.some(([op]) => ['navigate', 'close-window'].includes(op)));
+});
+
 test('profile evidence cannot come from page content, window title or a substring', async () => {
   const { safariProfileEvidence } = await import('../bench/fowl/safari-browser.mjs');
   assert.equal(safariProfileEvidence({ title: profile, toolbar: [], content: [{ description: profile }] }), null);
   assert.equal(safariProfileEvidence({ toolbar: [{ role: 'AXMenuButton', description: profile + ' other' }] }), null);
   assert.equal(safariProfileEvidence({ toolbar: [{ role: 'AXStaticText', value: profile }] }), null);
-  assert.deepEqual(safariProfileEvidence({ toolbar: [{ role: 'AXMenuButton', title: profile }] }), { attribute: 'AXTitle', value: profile });
+  assert.deepEqual(safariProfileEvidence({ toolbar: [{ id: 'profile', role: 'AXMenuButton', title: profile }] }),
+    { element: 'profile', role: 'AXMenuButton', attribute: 'AXTitle', value: profile });
+});
+
+test('profile evidence prefers the profile button and records the matching element', async () => {
+  const { safariProfileEvidence } = await import('../bench/fowl/safari-browser.mjs');
+  const toolbar = [{ id: 'other', role: 'AXButton', title: profile },
+    { id: 'profile', identifier: 'ProfileButton', role: 'AXMenuButton', description: profile }];
+  assert.deepEqual(safariProfileEvidence({ toolbar }), { element: 'profile', role: 'AXMenuButton', identifier: 'ProfileButton',
+    attribute: 'AXDescription', value: profile });
+});
+
+test('ambiguous toolbar matches and malformed native evidence cannot prove a profile', async () => {
+  const { safariProfileEvidence } = await import('../bench/fowl/safari-browser.mjs');
+  assert.equal(safariProfileEvidence({ toolbar: [{ id: 'one', role: 'AXMenuButton', title: profile },
+    { id: 'two', role: 'AXMenuButton', title: profile }] }), null);
+  for (const evidence of [{}, { value: profile, element: 'web', role: 'AXStaticText', attribute: 'AXTitle' }]) {
+    assert.equal(safariProfileEvidence({ profileEvidence: evidence }), null);
+  }
+  const evidence = { value: profile, element: 'button', role: 'AXMenuButton', attribute: 'AXDescription' };
+  assert.deepEqual(safariProfileEvidence({ profileEvidence: evidence }), evidence);
 });
 
 test('missing or ambiguous new profile evidence stops before navigating or closing restored windows', async t => {
@@ -223,6 +267,29 @@ test('native Safari helper compiles and rejects unowned requests before any app 
   const uncertain = spawnSync(executable, ['--self-test-unreceipted-launch'], { encoding: 'utf8', timeout: 1000 });
   assert.equal(uncertain.status, 0, uncertain.stderr);
   assert.deepEqual(JSON.parse(uncertain.stdout), { error: 'BENCH_SAFARI_LAUNCH_UNRECEIPTED' });
+  const safety = spawnSync(executable, ['--self-test-owner-safety'], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(safety.status, 0, safety.stderr);
+  assert.deepEqual(JSON.parse(safety.stdout), {
+    ownerSnapshot: { id: 'owner', profileEvidence: null }, ownerContentReads: 0, verifiedContentReads: 1,
+    probe: { AXTitle: '[redacted]', AXDescription: profile, AXURL: '[redacted]', AXValue: '[redacted]' },
+    wrongKey: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', missingKey: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
+    missingProfile: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', verifiedKey: true,
+    menuEscapes: 2, menuEscapePosted: true, stuckEscapes: 2, stuckMenu: 'BENCH_SAFARI_MENU_STUCK',
+    unsafeEscapes: 0, unsafeMenu: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
+    preferredElement: 'profile', ambiguousProfile: true, visibleMenuClear: false, selectedMenuClear: false,
+    clearMenuEscapes: 1,
+    unknownSelectedMenuClear: false, unknownRoleMenuClear: false, bridgedSelectedMenuClear: false,
+  });
+});
+
+test('an Escape post without verified menu dismissal cannot navigate or close windows', async t => {
+  for (const receipt of [{ menuEscapePosted: true }, { menuEscapePosted: true, menuCleared: false, menuEscapes: 2 },
+    { menuEscapePosted: true, menuCleared: true, menuEscapes: 3 }]) {
+    const f = fixture(t), request = f.bridge.request;
+    f.bridge.request = async (op, input) => { const result = await request(op, input); return op === 'new-profile' ? receipt : result; };
+    await assert.rejects(launchRealBrowser(f.plan, f.options), /MENU_ESCAPE_UNPROVED/);
+    assert.ok(!f.calls.some(([op]) => ['navigate', 'close-window'].includes(op)));
+  }
 });
 
 test('Safari CLI dry plans enumerate pinned tasks for all five arms without creating a browser or output', t => {

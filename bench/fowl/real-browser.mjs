@@ -85,7 +85,7 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge } = {}) {
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length) });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
@@ -93,7 +93,7 @@ export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProces
     if (plan.browser === 'safari') {
       ordinaryParents(plan.profileRoot);
       const { launchSafari } = await import('./safari-browser.mjs');
-      return await launchSafari(plan, { spawnBrowser, listProcesses, timeoutMs, quitMs, ownerCheck, safariBridge });
+      return await launchSafari(plan, { spawnBrowser, listProcesses, timeoutMs, quitMs, ownerCheck, safariBridge, restoreWait });
     }
     if (plan.browser === 'firefox') {
       ordinaryParents(plan.profileRoot);

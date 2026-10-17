@@ -8,13 +8,26 @@ import { checkBrowserOwner } from './real-browser.mjs';
 
 const execute = promisify(execFile), profile = 'sleight benchmark';
 export function safariProfileEvidence(window) {
+  if (window.profileEvidence) {
+    const evidence = window.profileEvidence;
+    if (evidence.value === profile && typeof evidence.element === 'string' && evidence.element &&
+        ['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(evidence.role) &&
+        ['AXTitle', 'AXDescription', 'AXValue'].includes(evidence.attribute)) return evidence;
+    return null;
+  }
+  const matches = [];
   for (const node of window.toolbar || []) {
-    if (!['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(node.role)) continue;
+    if (!node.id || !['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(node.role)) continue;
     for (const [key, attribute] of [['title', 'AXTitle'], ['description', 'AXDescription'], ['value', 'AXValue']]) {
-      if (node[key] === profile) return { attribute, value: profile };
+      if (node[key] !== profile) continue;
+      matches.push({ element: node.id, role: node.role,
+        ...(node.identifier ? { identifier: node.identifier } : {}), attribute, value: profile });
+      break;
     }
   }
-  return null;
+  const preferred = matches.filter(node => /profile/i.test(node.identifier || ''));
+  const candidates = preferred.length ? preferred : matches;
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 export async function prepareSafariBridge(root, { spawnBrowser = spawn, timeoutMs = 15000, compile = execute } = {}) {
@@ -77,10 +90,10 @@ function tabs(window) {
   return result;
 }
 
-// The named profile is owner-created and persistent. Only this launch's windows
-// and temporary helper bank belong to the round; no Safari data files are read.
+// The named profile is owner-created and persistent. Only a verified profile
+// window and temporary helper bank belong to the round; restored windows do not.
 export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutMs, quitMs, ownerCheck,
-  safariBridge = prepareSafariBridge }) {
+  safariBridge = prepareSafariBridge, restoreWait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const root = dirname(plan.profileRoot);
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
   mkdirSync(root, { mode: 0o700 });
@@ -100,11 +113,19 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
   };
   const reset = async () => {
     await census();
-    const before = await snapshot(), previous = new Set(before.map(w => w.id));
+    let before = await snapshot();
+    if (!windowId) {
+      await restoreWait(2000);
+      await census();
+      before = await snapshot();
+      if (before.some(window => !safariProfileEvidence(window))) throw Error('BENCH_SAFARI_RESTORED_WINDOWS: Safari restored windows from another profile; close your Safari windows or turn off window restore, then retry');
+      if (before.length) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
+    }
+    const previous = new Set(before.map(w => w.id)), previousWindow = windowId;
     if (windowId && (before.length !== 1 || before[0].id !== windowId)) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
     if (windowId) ownedWindow(before);
     const menu = await bridge.request('new-profile');
-    if (menu.menuEscapePosted !== true) throw Error('BENCH_SAFARI_MENU_ESCAPE_UNPROVED');
+    if (menu.menuEscapePosted !== true || menu.menuCleared !== true || ![1, 2].includes(menu.menuEscapes)) throw Error('BENCH_SAFARI_MENU_ESCAPE_UNPROVED');
     const deadline = Date.now() + timeoutMs;
     let fresh;
     for (;;) {
@@ -117,9 +138,8 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     windowId = fresh.id; browser.profileWindow = windowId;
     browser.profileEvidence = safariProfileEvidence(fresh);
     await census();
-    // Only initial restored windows, or the previous verified profile window,
-    // may close here. Later unexpected windows stop reset before any mutation.
-    for (const window of before) await bridge.request('close-window', { window: window.id });
+    // Only the preceding verified profile window may close, never restored windows.
+    if (previousWindow) await bridge.request('close-window', { window: previousWindow });
     await bridge.request('navigate', { window: windowId, url: plan.markerUrl });
     for (;;) {
       const list = await snapshot(), current = ownedWindow(list);
