@@ -8,17 +8,67 @@ import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowse
 import { REAL_SURFACES, realAgentSetup, withClaudeManifest } from './real-gate-setup.mjs';
 import { benchmarkProfile } from '../world/arms/chrome.mjs';
 import { executableProblem } from '../../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
-import { runCodex, codexConfigServers } from '../codex-arm.mjs';
+import { runCodex, codexConfigServers, approveOnly } from '../codex-arm.mjs';
+import { execFileSync } from 'node:child_process';
+import { cuaDaemonPlan, ensureCuaDaemon, nativeArmPlan } from '../world/native-arms.mjs';
 import { runOwned } from '../preapproved-process.mjs';
 import { assertLogin } from '../preflight.mjs';
 import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { gradeGateTask, browserEvidence } from './real-gate-grade.mjs';
-import { taskSupport } from './support.mjs';
+import { taskSupport, raceBundles } from './support.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
+const defaultArmHome = () => join(homedir(), 'Library/Caches/sleight-bench');
+
+// What a competitor arm needs from the Mac before its first task, as its native claim setup has it.
+// Codex: headless Codex cancels the engine's app prompts, so the engine's own "Always allow" list holds the round's apps
+// for the round and then goes back (bench/run.mjs does the same for the claim; first Firefox round, 2026-10-17: 12 of 12
+// "Computer Use was not approved to use Firefox"). Cua: its daemon must listen before the MCP proxy starts.
+export function roundArmPrep(plan, { armHome = defaultArmHome() } = {}) {
+  if (plan.surface === 'codex') return { approvals: raceBundles(plan.browser.browser) };
+  if (plan.surface === 'cua') return { cuaDaemon: cuaDaemonPlan(nativeArmPlan('cua', { armHome }).cwd).start };
+  if (plan.surface === 'peekaboo') return { host: 'Terminal.app (Peekaboo\'s grants)' };
+  return {};
+}
+export async function prepareRoundArms(plan, { armHome = defaultArmHome(), approve = approveOnly, daemon = ensureCuaDaemon,
+  logs = join(homedir(), 'Library/Logs/sleight') } = {}) {
+  const prep = roundArmPrep(plan, { armHome }), receipt = {}, undo = [];
+  if (prep.approvals) {
+    mkdirSync(logs, { recursive: true });
+    const backup = join(logs, `ComputerUseAppApprovals.before-${plan.out.split('/').pop()}.json`);
+    undo.push(approve(prep.approvals, backup));
+    Object.assign(receipt, { approvals: prep.approvals, approvalsBackup: backup });
+  }
+  if (prep.cuaDaemon) {
+    const started = await daemon(nativeArmPlan('cua', { armHome }).cwd);
+    undo.push(started.stop);
+    receipt.cuaDaemon = { started: started.started, socket: started.socket, ...(started.pids ? { pids: started.pids } : {}) };
+  }
+  return { receipt, release: async () => {
+    for (const step of undo.reverse()) {
+      try { await step(); }
+      catch (error) { console.error(`Round arm cleanup failed (${error.message})${receipt.approvalsBackup ? `; restore the app approvals from ${receipt.approvalsBackup}` : ''}`); }
+    }
+  } };
+}
+
+// Peekaboo's Accessibility and Screen Recording grants are on Terminal.app (owner's pick), so macOS applies them only
+// when the round's process tree starts in a Terminal window.
+const TERMINAL = '/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal';
+export function terminalAncestor(pid = process.pid, ps = id => execFileSync('/bin/ps', ['-o', 'ppid=,comm=', '-p', String(id)], { encoding: 'utf8' })) {
+  for (let hops = 0; pid > 1 && hops < 64; hops++) {
+    let line;
+    try { line = ps(pid).trim(); } catch { return false; }
+    const m = /^(\d+)\s+(.*)$/.exec(line);
+    if (!m) return false;
+    if (m[2] === TERMINAL) return true;
+    pid = Number(m[1]);
+  }
+  return false;
+}
 export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, round, realBrowser, dryRun = true }) {
   if (args.remote || args.gui || args.swap || args.serve || args['keep-tabs']) throw Error('real-browser gate owns its local window, browser order, sites and cleanup; omit remote/gui/swap/serve/keep-tabs');
   if (tasks.some(task => task.surface && task.surface !== args.surface)) throw Error('real-browser gate runs one surface per round');
@@ -95,8 +145,13 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
         signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
         onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') }));
       groupClean = run.groupClean;
+      // A failed engine call (an app approval refused, a script error) is the Codex counterpart of a Claude tool error.
+      const toolErrors = readFileSync(events, 'utf8').split('\n').filter(line => {
+        try { const e = JSON.parse(line); return e.type === 'item.completed' && e.item?.type === 'mcp_tool_call' && e.item.status === 'failed'; }
+        catch { return false; }
+      }).length;
       result = { exitCode: run.code, result: run.out, timedOut: run.timedOut, groupClean: run.groupClean,
-        forbidden: run.forbidden, toolCalls: run.toolCalls, engineMs: run.engineMs };
+        forbidden: run.forbidden, toolCalls: run.toolCalls, toolErrors, engineMs: run.engineMs };
       if (run.forbidden.length) result.result = { ...run.out, is_error: true };
       writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
     } else {
@@ -135,12 +190,14 @@ export function gatePreflight(plan, { executable = executableProblem } = {}) {
   return problems;
 }
 
-export async function admitRealGate(plan) {
+export async function admitRealGate(plan, { terminal = terminalAncestor } = {}) {
   if (existsSync('/Library/Application Support/ClaudeCode/CLAUDE.md')) throw Error('Managed Claude policy cannot be excluded');
   if (existsSync(plan.out)) throw Error('Gate output already exists');
   const problems = gatePreflight(plan);
   if (problems.length) throw Error(problems.join('; '));
   const setups = plan.arms;
+  if (plan.surface === 'peekaboo' && !terminal()) throw Error('Peekaboo\'s grants are on Terminal.app, so its rounds run from a Terminal window: ' +
+    'put the rounds.sh command in a .command file and run: open -a Terminal <file>.command');
   if (plan.surface === 'codex') {
     if (codexConfigServers(codexHome()).length !== 1 || !existsSync(join(codexHome(), 'auth.json'))) throw Error('Codex benchmark home needs its isolated engine server and login');
   } else {
@@ -161,12 +218,12 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (plan.browser.profileMode === 'benchmark-copy') {
       try { profileFolder = benchmarkProfile(join(plan.browser.profileSource.userDataDir, 'Local State')); } catch (error) { profileFolder = { error: error.message }; }
     }
-    const printable = { ...plan, browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
+    const printable = { ...plan, armPrep: roundArmPrep(plan, { armHome: runtime.armHome }), browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
       ...(profileFolder ? { profileFolder } : {}), preflight: (runtime.preflight || gatePreflight)(plan) },
       arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
       environment: { ...(env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {}),
         ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}),
-        ...Object.fromEntries(['SLEIGHT_TURBO', 'FOWL_GATE_WINDOW'].filter(key => env[key] !== undefined).map(key => [key, env[key]])) } })) };
+        ...Object.fromEntries(['SLEIGHT_TURBO', 'FOWL_GATE_WINDOW', 'BENCH_SUITE', 'BENCH_RACE_APPS'].filter(key => env[key] !== undefined).map(key => [key, env[key]])) } })) };
     (runtime.print || console.log)(JSON.stringify(printable, null, 2)); return printable;
   }
   if (!plan.arms.length) throw Error('No runnable gate tasks: ' + plan.unsupported.map(row => row.reason).join('; '));
@@ -178,12 +235,15 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   mkdirSync(lockPath);
   const controller = new AbortController(), abort = () => controller.abort();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, abort);
-  let browser, sites, monitor, cleanupProven = true;
+  let browser, sites, monitor, armPrep, cleanupProven = true;
   const rows = [];
   try {
     mkdirSync(plan.out, { recursive: true, mode: 0o700 });
     // Resolve pinned native receipts before the first browser launch.
     realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: plan.browser, dryRun: false });
+    // An offline test that injects admission never touches the Mac's approvals or daemons unless it injects prep too.
+    armPrep = await (runtime.prepareArms || (runtime.admit ? async () => ({ receipt: {}, release: async () => {} }) : prepareRoundArms))(plan);
+    writeFileSync(join(plan.out, 'arm-prep.json'), JSON.stringify(armPrep.receipt, null, 2));
     sites = await (runtime.startSites || startGateSites)(mcpRoot);
     browser = await (runtime.launchBrowser || launchRealBrowser)(plan.browser).catch(error => {
       if (error.message === 'BENCH_BROWSER_CLEANUP_UNPROVED') cleanupProven = false;
@@ -269,6 +329,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (existsSync(plan.out)) writeFileSync(join(plan.out, 'failure.json'), JSON.stringify({ error: error.message, completed: rows.length }));
     throw error;
   } finally {
+    await armPrep?.release();
     try { await monitor?.stop(); } catch { cleanupProven = false; }
     try { await sites?.close(); } catch { cleanupProven = false; }
     // A leaked agent may still drive this window. Retain both profile and lock.

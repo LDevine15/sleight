@@ -5,6 +5,7 @@ import { prepareNativeArm } from '../world/native-arms.mjs';
 import { worldAgentSetup } from '../world/arms/browser.mjs';
 import { genericSettings } from '../plugin-arm.mjs';
 import { mergeArmHooks } from '../arm-hooks.mjs';
+import { raceApps } from './support.mjs';
 
 export const NATIVE_SURFACES = ['lcu', 'cua', 'peekaboo'];
 export function windowPrompt(browser) {
@@ -17,7 +18,11 @@ export function nativeBrowserSetup({ surface, repo, dir, realBrowser, dryRun = f
   armHome = join(homedir(), 'Library/Caches/sleight-bench'), env = process.env }) {
   if (!NATIVE_SURFACES.includes(surface)) throw Error('Unknown native browser arm');
   const common = worldAgentSetup({ surface: 'fowlbrowser', dir, hostEnv: env });
-  common.env.BENCH_SUITE = 'world';
+  // The native claim's world suite approves only its desktop apps, so in the first Firefox round every LCU approval for
+  // Firefox was declined (2026-10-17, "Computer Use was not approved to use Firefox"). A round approves its own apps.
+  common.env.BENCH_SUITE = 'browser-race';
+  common.env.BENCH_RACE_APPS = JSON.stringify(raceApps(realBrowser.browser));
+  common.env.BENCH_HOOK_LOG = join(dir, 'approvals.jsonl');
   common.env.BENCH_ARM_SERVERS = JSON.stringify([surface]);
   let mcp, settings, identity;
   if (surface === 'lcu') {

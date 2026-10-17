@@ -2,6 +2,15 @@
 // runner's input so it can write their not-supported rows without agent setup.
 const BROWSER_ARMS = ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu', 'browser-use'];
 export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex', 'fowlbrowser', 'claude-in-chrome'];
+// The apps a competitor arm may be approved for in a real-window round: the round's own browser plus the hand-off tasks'
+// native apps, the same ones sleight's hook (origin-hook.mjs) accepts. All are on the benchmark's allowlist (bench/tasks.mjs).
+const RACE_BROWSERS = { chrome: ['Google Chrome', 'com.google.Chrome'], helium: ['Helium', 'net.imput.helium'],
+  firefox: ['Firefox', 'org.mozilla.firefox'], safari: ['Safari', 'com.apple.Safari'] };
+export function raceApps(browser) {
+  if (!RACE_BROWSERS[browser]) throw Error(`No race apps for ${browser}`);
+  return [...RACE_BROWSERS[browser], 'Preview', 'com.apple.Preview', 'TextEdit', 'com.apple.TextEdit'];
+}
+export const raceBundles = browser => raceApps(browser).filter(app => /^[a-z]+\.[\w.-]+$/i.test(app));
 export function taskSupport(task, surface, { world = false, remote = null, realBrowser } = {}) {
   if (realBrowser) {
     if (remote) return 'Real browser gate is local only';
