@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 03:30 UTC: 11 fixes merged and pushed at `2ea5ee12`; TV4, TV5, BR1, BR3 building; A/B next)
+## Banner (2026-10-17 04:00 UTC: every fix lane merged, pushed at `64585875`, 5,808 tests; asking the owner for the away window)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
@@ -26,11 +26,10 @@ Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with 
   `SLEIGHT_COMPACT_ACQUISITION=1`), TT1N2 (same-call menu continuation on window identity and HID idle; its admission costs a
   33 ms median helper call, p90 147, over 160 recorded calls), TV1 (a focus click before Cmd+S no longer hides an observed save),
   TV3 (numbers checked against the acting app's window). TK2 and TV2 closed STALE with evidence in their claims.
-- Building (`codex exec`, logs in `ledger/lane-runs/`, briefs in `queue/tt/`): TV4 (pid 5301, `disableDiffing: true` stops
-  defeating compaction; 105 of 108 Office calls passed it), TV5 (pid 82048, guard stops say whether input was sent, and resolve a
-  label that is both a menu-bar item and in the window), BR1 (pid 77797, real-window gate race: turbo on a real profile plus lcu,
-  Cua, Peekaboo and Codex arms), BR3 (pid 91698, Chromium browser table, unqualified). Queued: BR2 (Safari and Firefox in the race
-  harness, after BR1). Review each branch with a Sonnet-high reviewer, one full check per merge batch, push, fast-forward.
+- Also merged since: TV4 (`disableDiffing: true` no longer turns a whole call's trees full), TV5 (guard stops say whether input
+  was sent; a label in both the menu bar and the window goes to the window's element), BR3 (Chromium browser table, unqualified;
+  an unqualified browser connects only with SLEIGHT_TURBO_UNQUALIFIED=1 in the server's environment). Still building: BR1 (pid
+  77797, the real-window gate race harness). Queued: BR2 (Safari and Firefox in that harness, after BR1). Review each branch with a Sonnet-high reviewer, one full check per merge batch, push, fast-forward.
 - Combined A/B, ready once the lanes merge: `OLD=d8e52789 NEW=private/pane/auto-mode NEW_ENV=SLEIGHT_COMPACT_ACQUISITION=1
   ROUNDS=3 bench/ab-sleight.sh`, scored by `bench/ab-score.mjs`. 9 claim plus 11 held-out native tasks, about 1.7 to 2 hours, owner
   away. Live checks owed then too: textedit-drag on TT3's path, and engine background clicks leaving HID idle untouched (TT1N2).
