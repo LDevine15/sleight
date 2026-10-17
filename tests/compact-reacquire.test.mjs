@@ -231,6 +231,20 @@ test('numbersMoved compares depth, role and identity, not values, flags, Help or
   assert.equal(moved(tree(), tree({ title: 'Other' }), 20), false, 'another window has no earlier tree');
 });
 
+test('numbersMoved ignores value-bearing titles and tells repeated rows apart by their Value', () => {
+  const moved = (before, after, upTo) => {
+    const c = createReadCompactor({ compactReacquire: true });
+    acquire(c, before);
+    return c.numbersMoved(c.trees(), [text(acquire(c, after))], upTo);
+  };
+  const controls = (scroll, field, triangle) => tree({ extra: [`\t\t0 scroll bar ${scroll}`, `\t\t0 text field (settable) ${field}`, `\t\t0 disclosure triangle ${triangle}`] });
+  assert.equal(moved(controls('0', '5', '0'), controls('0.42', '2', '1'), 20), false, 'positions, field text and triangle state are values');
+  const files = names => tree({ extra: names.flatMap(name => ['\t\t0 row', `\t\t\t0 text field Value: ${name}`, '\t\t\t0 text 12 KB']) });
+  assert.equal(moved(files(['a.txt', 'b.txt', 'c.txt']), files(['a.txt', 'new.txt', 'b.txt', 'c.txt']), 12), true, 'a file inserted into repeated rows');
+  assert.equal(moved(files(['a.txt', 'b.txt', 'c.txt']), files(['b.txt', 'a.txt', 'c.txt']), 12), true, 'reordered rows');
+  assert.equal(moved(files(['a.txt', 'b.txt', 'c.txt']), files(['a.txt', 'b.txt', 'c.txt']), 12), false);
+});
+
 test('relay: a head that changed the window stops the rest when it has literal numbers (LS1)', async t => {
   // 60 items after row 16 take numbers 20 to 79; a popup inserted before item 38 takes 58 and moves item 38 to 59.
   const items = Array.from({ length: 60 }, (_, i) => `\t\t0 button Item ${i}`);

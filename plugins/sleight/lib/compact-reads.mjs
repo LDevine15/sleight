@@ -243,7 +243,18 @@ function stateFields(line) {
 }
 // A line's depth, role and identity without what changes between reads (Value, flags such as selected,
 // Help): its ID, else the role and title, plus the Description when there is no title.
+// Controls whose title is their value (a field's text, a scroll bar's position, a triangle's 0 or 1) key on role and ID;
+// an untitled row, cell or field without ID or Description keys on its Value too, since that is all that tells repeated
+// blocks such as Finder's file rows apart (LS1 review, 2026-10-17).
 function structuralKey(key) {
+  const valued = /^(\t*)(text field|text entry area|text area|search field|combo box|scroll bar|value indicator|slider|stepper|disclosure triangle|row|cell)\b/.exec(key);
+  if (valued) {
+    const [, depth, role] = valued, id = /(?:^|, )ID: ([^,]*)/.exec(key)?.[1];
+    const description = /\bDescription: (.*?)(?=, (?:ID|Help|Value|Details|Secondary Actions|URL|Placeholder):|$)/.exec(key)?.[1];
+    const value = id === undefined && description === undefined && /^(?:row|cell|text field)$/.test(role)
+      ? /\bValue: (.*?)(?=, (?:Help|Details|Secondary Actions|URL|Placeholder):|$)/.exec(key)?.[1] ?? '' : undefined;
+    if (!/^(?:row|cell)$/.test(role) || value !== undefined) return `${depth}${role}|${id ?? description ?? value ?? ''}`;
+  }
   const plain = key.replace(/ \((?:[a-z]+(?:, )?)+\)/, '');
   const at = plain.search(/,|\b(?:Value|Help|Description|Details|ID|Secondary Actions|URL|Selected text):/);
   const head = (at < 0 ? plain : plain.slice(0, at)).trimEnd(), id = /(?:^|, )ID: ([^,]*)/.exec(plain)?.[1];
