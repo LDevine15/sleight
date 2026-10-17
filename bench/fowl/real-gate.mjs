@@ -4,16 +4,17 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser, checkBrowserOwner, browserVersion, profileSourceProblems } from './real-browser.mjs';
+import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser, checkBrowserOwner, browserVersion, profileSourceProblems, watchNavigations } from './real-browser.mjs';
 import { REAL_SURFACES, realAgentSetup, withClaudeManifest } from './real-gate-setup.mjs';
 import { benchmarkProfile } from '../world/arms/chrome.mjs';
+import { executableProblem } from '../../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
 import { runCodex, codexConfigServers } from '../codex-arm.mjs';
 import { runOwned } from '../preapproved-process.mjs';
 import { assertLogin } from '../preflight.mjs';
 import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
-import { gradeGateTask } from './real-gate-grade.mjs';
+import { gradeGateTask, browserEvidence } from './real-gate-grade.mjs';
 import { taskSupport } from './support.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -43,7 +44,9 @@ export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, r
   const arms = selected.map(original => {
     const task = { ...original, browser: browser.browser };
     const dir = join(out, task.name);
-    const chromeFiles = { ...(args['chrome-device-file'] ? { deviceFile: args['chrome-device-file'] } : {}),
+    // After launch the pin is the device ID read from the round's own profile copy.
+    const deviceFile = browser.claudeDeviceFile ?? args['chrome-device-file'];
+    const chromeFiles = { ...(deviceFile ? { deviceFile } : {}),
       ...(args['chrome-local-state'] ? { localState: args['chrome-local-state'] } : {}) };
     const setup = realAgentSetup({ task, surface, dir, realBrowser: browser, repo, armHome, dryRun, mcpRoot, chromeFiles,
       model: args.model || 'haiku', effort: args.effort || 'high' });
@@ -110,7 +113,9 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
         toolCalls: messages.reduce((count, event) => count + (event.message?.content || []).filter(item => item.type === 'tool_use').length, 0),
         toolErrors: messages.reduce((count, event) => count + (event.message?.content || []).filter(item => item.type === 'tool_result' && item.is_error).length, 0) };
     }
-    const receipt = { ...result, name: plan.task.name, started, finished: Date.now(), agentConfig: plan.metadata };
+    // Graders require a successful browser call (and for lookups a visit), so an answer from memory fails.
+    const evidence = browserEvidence(readFileSync(events, 'utf8'));
+    const receipt = { ...result, evidence, name: plan.task.name, started, finished: Date.now(), agentConfig: plan.metadata };
     writeFileSync(join(plan.dir, 'run.json'), JSON.stringify(receipt, null, 2));
     if (!groupClean) throw Object.assign(Error('BENCH_AGENT_CLEANUP_UNPROVED'), { groupClean: false });
     return receipt;
@@ -120,10 +125,20 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
   }
 }
 
+// What would stop a live round before it starts, read without launching anything.
+export function gatePreflight(plan, { executable = executableProblem } = {}) {
+  const problems = profileSourceProblems(plan.browser);
+  // The product refuses a browser binary others can write (selected-connection.mjs). Chrome ships mode 775 on this
+  // Mac, so a turbo round there would answer from memory (live smoke 2026-10-17: every call "Turbo bench unavailable").
+  const reason = plan.surface === 'sleight-turbo' && executable(plan.browser.executable);
+  if (reason) problems.push(`Turbo refuses ${plan.browser.executable} (${reason}); the owner can run: chmod go-w "${plan.browser.executable}"`);
+  return problems;
+}
+
 export async function admitRealGate(plan) {
   if (existsSync('/Library/Application Support/ClaudeCode/CLAUDE.md')) throw Error('Managed Claude policy cannot be excluded');
   if (existsSync(plan.out)) throw Error('Gate output already exists');
-  const problems = profileSourceProblems(plan.browser);
+  const problems = gatePreflight(plan);
   if (problems.length) throw Error(problems.join('; '));
   const setups = plan.arms;
   if (plan.surface === 'codex') {
@@ -147,7 +162,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       try { profileFolder = benchmarkProfile(join(plan.browser.profileSource.userDataDir, 'Local State')); } catch (error) { profileFolder = { error: error.message }; }
     }
     const printable = { ...plan, browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
-      ...(profileFolder ? { profileFolder } : {}), preflight: profileSourceProblems(plan.browser) },
+      ...(profileFolder ? { profileFolder } : {}), preflight: (runtime.preflight || gatePreflight)(plan) },
       arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
       environment: { ...(env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {}),
         ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}),
@@ -180,6 +195,9 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
     writeFileSync(join(plan.out, 'unsupported.json'), JSON.stringify(plan.unsupported, null, 2));
     if (plan.surface === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
+    // Claude in Chrome reaches Anthropic's browser bridge about 6 s after launch (smoke 2026-10-17: launch 20:17:53,
+    // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
+    if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
     for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const census = async () => {
@@ -206,9 +224,19 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
       }
       if (controller.signal.aborted) throw Error('Gate interrupted');
+      // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.
+      let watch = null, navigation;
+      if (!['firefox', 'safari'].includes(browser.browser)) {
+        try { watch = await (runtime.watchBrowser || watchNavigations)(browser); }
+        catch (error) { navigation = { observed: false, reason: error.message }; }
+      }
       const run = await (runtime.runAgent || runGateAgent)(arm, { signal: controller.signal }).catch(error => {
         if (error.groupClean === false || error.collectionError) cleanupProven = false;
         throw error;
+      }).finally(async () => {
+        if (!watch) return;
+        navigation = { observed: true, urls: watch.urls() };
+        await watch.close().catch(() => {});
       });
       if (!run.groupClean) { cleanupProven = false; throw Error('BENCH_AGENT_CLEANUP_UNPROVED'); }
       const snapshot = await (runtime.observeBrowser || observeRealBrowser)(browser);
@@ -225,10 +253,14 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       run.tabs = new Set(Object.keys(after));
       const grade = await getJson(arm.task.grade);
       const site = await getJson(arm.task.name === 'form-checkout' ? 'http://127.0.0.1:5413/gate-log/p04' : arm.task.site?.log);
+      const evidence = run.evidence;
+      // A failed navigation log on Chrome or Helium proves no visit; only Firefox and Safari fall back to tool text.
+      const visits = navigation ? (navigation.observed ? navigation.urls : []) : null;
       const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner, after, startKeys,
-        observed: observation.observed, observationReason: observation.reason, ownerCheck: observation.ownerCheck });
+        observed: observation.observed, observationReason: observation.reason, ownerCheck: observation.ownerCheck, evidence, visits });
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
-        run: { ...run, tabs: [...run.tabs] }, start, observation, agentConfig: arm.metadata, grade, site, outcome };
+        successfulBrowserCalls: evidence?.successfulCalls ?? null, run: { ...run, tabs: [...run.tabs] }, start, observation, navigation: navigation ?? null,
+        agentConfig: arm.metadata, grade, site, outcome };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
