@@ -466,10 +466,9 @@ function swappedSiblings(before, after) {
         [a, b].some(node => was.filter(other => other.key === node.key).length !== 1)) continue;
     const left = describeSibling(a), right = describeSibling(b), order = now.map(describeSibling);
     if (left && right && left.role === right.role && left.label !== right.label && order.every(Boolean)) {
-      const kind = /^(?:tab group|tab bar|sheet tab strip|layout area|segmented control|page selector)$/.test(parent.role) ||
-        order.every(node => /^(?:tab|radio button|segment|page)$/.test(node.role)) ? 'tabs' : 'siblings';
-      swaps.push({ key, pair: [left.label, right.label], order: now.map(node => node.key),
-        summary: `${kind} now: ${order.map(node => node.label).join(', ')}` });
+      const tabs = tabStrip(parent.role, order.map(node => node.role));
+      swaps.push({ key, pair: [left.label, right.label], order: now.map(node => node.key), tabs,
+        summary: `${tabs ? 'tabs' : 'siblings'} now: ${order.map(node => node.label).join(', ')}` });
     }
   }
   return swaps.length === 1 ? swaps[0] : undefined;
@@ -478,9 +477,19 @@ function swappedSiblings(before, after) {
 // Undo first: in excel-edit-3 (2026-10-17) Cmd+Z restored a tab swap in one call, while runs 1 and 5
 // spent 20 to 25 s in a Move or Copy dialog.
 const RESTORE_ORDER = "if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.";
+// AN1 (2026-10-17): posted clicks on sheet tabs dragged them in 6 of 8 runs, while next/previous-sheet keys
+// switched in the background in 586 to 656 ms (6/6). Only a tab strip gets the advice; list rows have no such key.
+const restoreOrder = tabs => tabs
+  ? `${RESTORE_ORDER} To switch tabs, use the app's next/previous-tab key or go-to control, not a click.` : RESTORE_ORDER;
+
+// A tab strip by its parent's role, or by every sibling's role.
+function tabStrip(parent, roles) {
+  return /^(?:tab group|tab bar|sheet tab strip|layout area|segmented control|page selector)$/.test(parent ?? '') ||
+    roles.length > 0 && roles.every(role => /^(?:tab|radio button|segment|page)$/.test(role ?? ''));
+}
 
 function siblingSwapNote(swap) {
-  return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; ${RESTORE_ORDER}`;
+  return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; ${restoreOrder(swap.tabs)}`;
 }
 
 // Selection and AX numbering can change on a click; sibling membership cannot.
@@ -503,7 +512,9 @@ function clickLists(lines) {
     for (const role of new Set(parent.children.map(child => child.description?.role))) {
       const siblings = parent.children.filter(child => role && child.description?.role === role);
       if (siblings.length < 2 || new Set(siblings.map(child => child.key)).size !== siblings.length) continue;
-      const key = JSON.stringify([parent.description?.role, parent.depth, role, siblings.map(child => child.key).sort()]);
+      // The parent's role as siblingGroups takes it: describeSibling reads a bare "tab group" as role "tab".
+      const parentRole = /^[a-z]+(?: [a-z]+)*/.exec(parent.key)?.[0];
+      const key = JSON.stringify([parentRole, parent.depth, role, siblings.map(child => child.key).sort()]);
       const matches = found.get(key) ?? [];
       matches.push(siblings); found.set(key, matches);
     }
@@ -536,8 +547,9 @@ function clickedSiblings(action) {
       if (index < 0) continue;
       const target = matches[0][index];
       const label = /(?:^|, )Description: (.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(target.body)?.[1] ?? target.description.label;
+      const [parentRole, , role] = JSON.parse(key);
       clicks.push({ num, key, target: target.key, label, position: index + 1, order: matches[0].map(child => child.key),
-        window: swapDocumentKey(action.before.window) });
+        tabs: tabStrip(parentRole, [role]), window: swapDocumentKey(action.before.window) });
       break;
     }
   }
@@ -551,7 +563,7 @@ function clickMoveNote(click, observation) {
   const order = matches[0].map(child => child.key), position = order.indexOf(click.target) + 1;
   const others = keys => JSON.stringify(keys.filter(key => key !== click.target));
   if (position && position !== click.position && others(order) === others(click.order))
-    return `sleight: the click on ${click.label} moved it from position ${click.position} to ${position}; ${RESTORE_ORDER}`;
+    return `sleight: the click on ${click.label} moved it from position ${click.position} to ${position}; ${restoreOrder(click.tabs)}`;
 }
 
 // Reminders survive an edited title marker; input guards and document grants still use exact identity.

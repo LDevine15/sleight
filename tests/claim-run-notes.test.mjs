@@ -108,7 +108,7 @@ test('a click that moved its sibling is reported when the call has other clicks 
     c.process([text(tabs(['Inventory', 'Review'], 'Review'))]);
     const action = c.beginAction(code);
     const out = c.process([text(GUARD_MARK + tabs(['Review', 'Inventory'], 'Inventory') + GUARD_END)], { action }).map(item => item.text).join('\n');
-    assert.match(out, /sleight: the click on Inventory moved it from position 2 to 3; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./, code);
+    assert.match(out, /sleight: the click on Inventory moved it from position 2 to 3; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\./, code);
     assert.equal(out.match(/moved it from/g).length, 1);
   }
 });
@@ -137,7 +137,7 @@ test('the swap note points to Undo first', () => {
   c.process([text(tabs(['Inventory', 'Review'], 'Review'))]);
   const action = c.beginAction('await app.click(3)');
   const out = c.process([text(GUARD_MARK + tabs(['Review', 'Inventory'], 'Inventory') + GUARD_END)], { action }).map(item => item.text).join('\n');
-  assert.match(out, /clicking also swapped Inventory and Review; .*; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
+  assert.match(out, /clicking also swapped Inventory and Review; .*; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\./);
 });
 
 const MENU_NOTE = 'sleight: a menu is open (element 1). Escape doesn\'t always close a menu in a background app; `await app.performSecondaryAction(1, "Cancel")` does.';

@@ -18,8 +18,19 @@ function result(before, after, code = 'await app.click(78)', options = {}) {
 
 test('a click that swaps two recorded sibling lines names both and gives recovery advice', () => {
   const out = result(rows, swapped);
-  assert.match(out, /clicking also swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
+  assert.match(out, /clicking also swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\.$/m);
   assert.equal(out.match(/clicking also swapped/g)?.length, 1);
+});
+
+test('a tab swap adds the switch-by-key advice and a list swap does not', () => {
+  const advice = /a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\./;
+  assert.match(result(rows, swapped), advice);
+  const list = role => ['\t6 group Sheets', `\t\t7 ${role} Inventory`, `\t\t8 ${role} Review`];
+  const listSwapped = role => ['\t6 group Sheets', `\t\t7 ${role} Review`, `\t\t8 ${role} Inventory`];
+  const out = result(list('button'), listSwapped('button'), 'await app.click(7)');
+  assert.match(out, /swapped Inventory and Review; siblings now: Review, Inventory; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\.$/m);
+  assert.doesNotMatch(out, /next\/previous-tab/);
+  assert.match(result(list('radio button'), listSwapped('radio button'), 'await app.click(7)'), advice);
 });
 
 for (const code of ['await app.click(7)', 'await app.click({ label: "Inventory" })']) {
@@ -35,7 +46,7 @@ for (const code of ['await app.click(7)', 'await app.click({ label: "Inventory" 
 test('swap advice allows intentional reorders, including a multi-click call', () => {
   for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
     const out = result(rows, swapped, code);
-    assert.match(out, /swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
+    assert.match(out, /swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\.$/m);
     assert.doesNotMatch(out, /shouldn't reorder/);
     assert.equal(out.match(/swapped Review and View/g)?.length, 1);
   }

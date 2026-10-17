@@ -103,6 +103,46 @@ test('a two-way swap carries only the swap line', () => {
   assert.doesNotMatch(out, /moved it from/);
 });
 
+const KEY_ADVICE = "To switch tabs, use the app's next/previous-tab key or go-to control, not a click.";
+
+test('a moved tab gets Undo plus the switch-by-key advice; a moved list button gets Undo only', () => {
+  const strips = [
+    ['tab group Sheets', 'tab'], ['tab bar Sheets', 'button'], ['layout area Content Area', 'button'],
+    ['group Pages', 'radio button'], ['group Pages', 'tab'],
+  ];
+  for (const [parent, role] of strips) {
+    const strip = (order, selected) => tree(order, selected).replace('group Pages', parent).replaceAll(' button ', ` ${role} `);
+    const { c, read } = session(); c.process([text(strip(['Alpha', 'Beta', 'Gamma'], 'Beta'))]);
+    const out = read(strip(['Beta', 'Gamma', 'Alpha'], 'Alpha'), 'await app.click(2)');
+    assert.match(out, moved, parent);
+    assert.ok(out.includes(`a move dialog is the fallback. ${KEY_ADVICE}`), `${parent} / ${role}`);
+  }
+  for (const [parent, role] of [['group Pages', 'button'], ['list Results', 'row'], ['outline Files', 'cell']]) {
+    const list = (order, selected) => tree(order, selected).replace('group Pages', parent).replaceAll(' button ', ` ${role} `);
+    const { c, read } = session(); c.process([text(list(['Alpha', 'Beta', 'Gamma'], 'Beta'))]);
+    const out = read(list(['Beta', 'Gamma', 'Alpha'], 'Alpha'), 'await app.click(2)');
+    assert.match(out, moved, parent);
+    assert.doesNotMatch(out, /next\/previous-tab/, `${parent} / ${role}`);
+  }
+});
+
+test('an untitled tab group or layout area parent still marks a moved button as a tab', () => {
+  for (const parent of ['tab group', 'layout area']) {
+    const strip = (order, selected) => tree(order, selected).replace('group Pages', parent);
+    const { c, read } = session(); c.process([text(strip(['Alpha', 'Beta', 'Gamma'], 'Beta'))]);
+    const out = read(strip(['Beta', 'Gamma', 'Alpha'], 'Alpha'), 'await app.click(2)');
+    assert.match(out, moved, parent);
+    assert.ok(out.includes(`a move dialog is the fallback. ${KEY_ADVICE}`), parent);
+  }
+});
+
+test('a delayed tab move keeps the switch-by-key advice', () => {
+  const strip = (order, selected) => tree(order, selected).replace('group Pages', 'tab group Sheets').replaceAll(' button ', ' tab ');
+  const { c, read } = session(); c.process([text(strip())]);
+  read(strip(), 'await app.click(2)');
+  assert.ok(read(strip(['Beta', 'Gamma', 'Alpha'], 'Alpha')).includes(KEY_ADVICE));
+});
+
 test('a move that adds an Edited marker to the title is still reported', () => {
   for (const delayed of [false, true]) {
     const { read } = session();
