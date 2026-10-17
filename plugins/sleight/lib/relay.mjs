@@ -250,6 +250,8 @@ export function promptNotice(text, prompt) {
     .replace(', engine screenshot ', ', ')
     .replace('Computer use recovered for ', 'Recovered: ')
     .replace('Change review could not take a later copy: ', 'Change review unavailable: ')
+    .replace('Use the documented arguments; waitFor polls the window for an element or text.', 'Use API signatures.')
+    .replace(/(Native API names: [^\n]+)\. Use API signatures\./, (_, names) => names.replaceAll(', ', ',') + '. Use API signatures.')
     .replace("sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.", 'sleight: last window closed; nothing more to read.')
     .replace("sleight: noWindowsAvailable means the engine found no window of this app on the current desktop. If the app has a window, it's on another Space (the user may be in full screen or Split View), minimized or hidden. Clicks may still reach it, but drags and some reads won't. ", 'sleight: noWindowsAvailable. ')
     .replace("sleight: the engine's JavaScript session restarted before this call, so handles from earlier calls (such as `app`) are gone. An action that fails without `await` can end the session. ", 'sleight: JS restarted. ')
@@ -2788,6 +2790,17 @@ export function createRelay({
     observeServerMessage(msg);
   }
   function observeServerMessage(msg) {
+    if (msg.method === undefined) {
+      const stripConst = text => text.split('\n').filter(line =>
+        !/^Warning: [A-Za-z_$][\w$]* was declared with const; use let for reassignable variables\.\r?$/.test(line)).join('\n');
+      if (typeof msg.error?.message === 'string') msg.error.message = stripConst(msg.error.message);
+      if (Array.isArray(msg.result?.content)) msg.result.content = msg.result.content.flatMap(item => {
+        if (item.type !== 'text') return [item];
+        const text = stripConst(item.text);
+        if (text === item.text) return [item];
+        return text.trim() ? [{ ...item, text }] : [];
+      });
+    }
     replWarmup.reply(msg);
     if (msg.method === undefined) privateWarmRequests.delete(msg.id);
     if (msg.method === undefined && nativeWarmRequests.delete(msg.id)) {
@@ -3004,6 +3017,15 @@ export function createRelay({
       msg.result.content.push({ type: 'text', text: `Tell the user: Turbo is off (${turboUnavailable}). The engine browser path is available. Check turbo settings and run sleight-mcp --doctor before retrying turbo.` });
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
+    if (jsCode !== undefined && (msg.error || msg.result?.isError)) {
+      const text = msg.error?.message ?? (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+      const missing = /^(?:Error: )?TypeError: ([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*) is not a function\b/m.exec(text);
+      if (missing && !browserHandles.has(missing[1]) && (missing[1] === 'app' || nativeHandles.has(missing[1]))) {
+        const advice = promptNotice('Native API names: getAXState, getScreenshot, getAXStateAndScreenshot, click, drag, scroll, selectText, setValue, performSecondaryAction, paste, pressKey, typeText, waitFor. Use the documented arguments; waitFor polls the window for an element or text.', prompt);
+        if (msg.error) msg.error.message += '\n' + advice;
+        else msg.result.content.push({ type: 'text', text: advice });
+      }
+    }
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (jsCode !== undefined) replWarmup.attach(msg);

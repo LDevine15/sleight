@@ -26,7 +26,7 @@ function harness(t, options = {}) {
     tool: (id, name, args = {}) => send({ id, method: 'tools/call', params: { name, arguments: args } }),
     call: (id, code = 'nodeRepl.write(4)') => send({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }),
     reset: id => send({ id, method: 'tools/call', params: { name: 'js_reset', arguments: {} } }),
-    reply: (id, content, isError = false) => reply({ id, result: { content, isError } }),
+    reply: (id, content, isError = false, _meta) => reply({ id, result: { content, isError, ...(_meta ? { _meta } : {}) } }),
     error: (id, message) => reply({ id, error: { code: -32603, message } }),
     async warm() {
       send({ id: -1, method: 'initialize', params: { capabilities: {} } });
@@ -46,6 +46,54 @@ function harness(t, options = {}) {
 }
 const body = result => result.content.map(c => c.text ?? '').join('\n');
 const result = (h, id) => h.received.find(m => m.id === id).result;
+
+for (const isError of [false, true]) test(`const binding warnings disappear without changing the result verdict: ${isError}`, t => {
+  const h = harness(t), image = { type: 'image', data: 'AA==', mimeType: 'image/png' };
+  h.call(1, 'await app.getAXState()');
+  h.reply(1, [text('Warning: app was declared with const; use let for reassignable variables.'),
+    text('kept output\nWarning: state was declared with const; use let for reassignable variables.\nWarning: keep this warning.'), image], isError);
+  const out = result(h, 1);
+  assert.equal(out.isError, isError);
+  assert.doesNotMatch(body(out), /declared with const/);
+  assert.match(body(out), /kept output\nWarning: keep this warning\./);
+  assert.deepEqual(out.content.find(c => c.type === 'image'), image);
+  assert.ok(out.content.every(c => c.type !== 'text' || c.text.trim()));
+});
+
+test('RPC error messages also lose const warnings and retain the cause', t => {
+  const h = harness(t); h.call(1, 'await app.getAXState()');
+  h.error(1, 'Error: unavailable\nWarning: app was declared with const; use let for reassignable variables.');
+  const out = h.received.find(m => m.id === 1);
+  assert.match(out.error.message, /Error: unavailable/);
+  assert.doesNotMatch(out.error.message, /declared with const/);
+});
+
+for (const method of ['check', 'wait']) for (const rpc of [false, true]) {
+  test(`a nonexistent native ${method} lists native API names, RPC=${rpc}`, t => {
+    const h = harness(t); h.call(1, `await app.${method}()`);
+    const message = `TypeError: app.${method} is not a function`;
+    if (rpc) h.error(1, message); else h.reply(1, [text(message)], true);
+    const out = h.received.find(m => m.id === 1), messageOut = out.error?.message ?? body(out.result);
+    assert.ok(messageOut.includes(message));
+    assert.match(messageOut, /Native API names:.*getAXState.*click.*pressKey.*typeText.*waitFor/);
+    assert.equal(h.sent.filter(m => m.method === 'tools/call').length, 1, 'no recovery call or input is sent');
+  });
+}
+
+test('a native alias gets API advice but browser and arbitrary object failures do not', t => {
+  const h = harness(t);
+  h.call(1, 'let editor = await cua.getApp("Example")'); h.reply(1, [text(tree)]);
+  h.call(2, 'await editor.wait()'); h.reply(2, [text('TypeError: editor.wait is not a function')], true);
+  assert.match(body(result(h, 2)), /Native API names:/);
+  h.call(3, 'let app = await cua.getTab("1")'); h.reply(3, [text('tab')], false, { 'codex/toolSurface': { kind: 'browserUse' } });
+  h.call(4, 'await app.check()'); h.reply(4, [text('TypeError: app.check is not a function')], true);
+  assert.doesNotMatch(body(result(h, 4)), /Native API names:/);
+  h.call(5, 'await data.wait()'); h.reply(5, [text('TypeError: data.wait is not a function')], true);
+  assert.doesNotMatch(body(result(h, 5)), /Native API names:/);
+  h.call(6, 'nodeRepl.write("TypeError: editor.wait is not a function")');
+  h.reply(6, [text('TypeError: editor.wait is not a function')]);
+  assert.doesNotMatch(body(result(h, 6)), /Native API names:/);
+});
 
 test('open_file holds engine docs and drops empty text, keeping its handle, tree and skill', async t => {
   const h = harness(t), first = await h.open();

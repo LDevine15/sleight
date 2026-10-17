@@ -202,3 +202,40 @@ test('the content-label preference still refuses a different document', async ()
   assert.match(f.error?.message ?? '', /Document scope stopped/);
   assert.deepEqual(f.inputs, []);
 });
+
+for (const selector of ['"Apply"', '{ label: "Apply" }']) {
+  for (const state of ['disabled', 'disabled, settable']) test(`one enabled label wins over ${state}: ${selector}`, async () => {
+    const f = await execute(`\t1 button (${state}) Apply\n\t2 button Apply`, `await app.click(${selector});`);
+    assert.equal(f.error, undefined);
+    assert.deepEqual(f.inputs, [2]);
+  });
+}
+
+for (const rows of ['\t1 button Apply\n\t2 button Apply',
+  '\t1 button (disabled) Apply\n\t2 button (disabled) Apply',
+  '\t1 button Description: Apply, Help: (disabled)\n\t2 button Apply']) {
+  test('enabled-label preference keeps ambiguous candidates: ' + rows, async () => {
+    const f = await execute(rows, 'await app.click({ label: "Apply" });');
+    assert.match(f.error?.message ?? '', /2 elements with label/);
+    assert.deepEqual(f.inputs, []);
+  });
+}
+
+test('enabled-label preference precedes the menu-content preference', async () => {
+  const f = await execute('\t1 button (disabled) Apply\n2 menu bar\n\t3 menu item Apply', 'await app.click("Apply");');
+  assert.equal(f.error, undefined);
+  assert.deepEqual(f.inputs, [3]);
+});
+
+test('duplicate IDs do not acquire an enabled-label preference', async () => {
+  const f = await execute('\t1 button (disabled) Apply, ID: duplicate\n\t2 button Apply, ID: duplicate', 'await app.click({ id: "duplicate" });');
+  assert.match(f.error?.message ?? '', /2 elements with ID/);
+  assert.deepEqual(f.inputs, []);
+});
+
+test('the enabled-label preference still refuses a different document', async () => {
+  const rows = '\t1 button (disabled) Apply\n\t2 button Apply';
+  const f = await execute(rows, 'await app.click("Apply");', { prior: { text: tree(rows).replaceAll('Draft', 'Other'), windows: null } });
+  assert.match(f.error?.message ?? '', /Document scope stopped/);
+  assert.deepEqual(f.inputs, []);
+});
