@@ -839,8 +839,8 @@ function trimAcquisition(text, fullRead = '', hinted = new Set()) {
   return { text: compacted, hidden };
 }
 
-// relay.mjs finds this note by its exact text, so it has no lean wording.
-export const TEXTLESS_NOTE = /* notice */ 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
+// relay.mjs finds this note by its exact text in either wording.
+export const TEXTLESS_NOTE = /* lean notice */ 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
 
 // Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
 // With openedFiles (path -> size), an empty text area counts only for a file open_file found non-empty on
@@ -1475,7 +1475,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (screenshotReads && !failed && !stopped && !action && !hasScreenshot && !screenshotHints.has(screenshotKey) &&
           !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult, openedFiles)) {
         screenshotHints.add(screenshotKey); textlessNoted = true;
-        out.push({ type: 'text', text: TEXTLESS_NOTE });
+        out.push({ type: 'text', text: promptNotice(TEXTLESS_NOTE, prompt) });
       }
       // After a failure, a stop or a user change, the next acquisition of any window is whole again.
       // Only the notices themselves: the rules shown with the engine docs also say "the user changed

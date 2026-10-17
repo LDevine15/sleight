@@ -38,6 +38,15 @@ These counts describe the instruction inventory. Actual session input also conta
 UI state, repeated notices and variable data. `SLEIGHT_PROMPT=lean` has 0 live runs as of
 2026-10-11. Task success, turns, model time and actual session context use are unmeasured.
 
+Until 2026-10-17 the count missed the read compactor's notes, the document guard's stops and the
+stop notes. A lib module now marks such text: `/* notice */` before an expression, `/* lean notice */`
+where sleight passes it through `promptNotice` later, and `/* generated code */` before a template
+sleight sends to the engine, whose `Error`, `stop` and `nodeRepl.write` texts count. The guard gets
+its lean wording when the relay builds its code. A test fails on any `sleight:` literal in the
+relay, compactor, guard or stop notes that no inventory counts. Measured on 2026-10-17, with the
+marked notices as a sixth row: 35,164 default characters and 24,915 lean (70.85%, the test's bar
+is 71%), up from 27,087 and 19,137 before the marked rows.
+
 ## Safety and offline evidence
 
 The variant retains approval, blocked-app, flow, lease and focus rules verbatim. Named examples

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, SCROLL_LOOP_NOTE, createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
+import { promptNotice } from '../plugins/sleight/lib/prompt-notice.mjs';
 
 const LOOP = 'let found = "none"; for (let i = 0; i < 40 && found === "none"; i++) { const s = await ff.getAXState({ disableDiffing: true }); ' +
   'const hit = s.split("\\n").filter(l => /Norcrest/.test(l)); if (hit.length) { found = hit.join("\\n"); break; } await ff.scroll(49, "down", 3); } nodeRepl.write(found);';
@@ -117,6 +118,17 @@ test('the recorded travel result drops from 140,731 characters to one tree', { s
   assert.ok(output.includes(trees.at(-1).replace(/\n+$/, '')));
   assert.match(output, /Hartford Falls International MWV/);
   assert.ok(output.length < 4000, String(output.length));
+});
+
+test('SLEIGHT_PROMPT=lean gives the loop note its lean wording', () => {
+  const c = createReadCompactor({ scrollNote: true, prompt: 'lean' });
+  c.process([text(travel(0))]);
+  const scroll = first => join_(c.process([text(GUARD_MARK + travel(first) + GUARD_END)],
+    { code: 'await ff.scroll(49, "down", 3);', action: c.beginAction('await ff.scroll(49, "down", 3);') }));
+  scroll(9); scroll(18);
+  const third = scroll(27), lean = promptNotice(SCROLL_LOOP_NOTE, 'lean');
+  assert.ok(lean.length < SCROLL_LOOP_NOTE.length);
+  assert.ok(third.includes(lean) && !third.includes(SCROLL_LOOP_NOTE));
 });
 
 test('the third call in a row scrolling one list the same way gets the loop note, once', () => {

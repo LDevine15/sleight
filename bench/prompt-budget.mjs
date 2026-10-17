@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
 import ts from 'typescript';
 import { skillRules, localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
-import { batchingDescription, createRelay, promptNotice } from '../plugins/sleight/lib/relay.mjs';
+import { batchingDescription, createRelay, promptNotice, promptTool } from '../plugins/sleight/lib/relay.mjs';
 import { FLOW_TOOL } from '../plugins/sleight/lib/flow-rules.mjs';
 
 const firstRule = 'execute exactly one of the API calls shown below, optionally assigning its result to a variable. Do not add other API calls, waits, or snapshots to that invocation.';
@@ -21,7 +21,7 @@ function tools(prompt) {
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) + '\n');
     serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'turn_ended' }] } }) + '\n');
     // Document mode hides some local tools, so inventory both surfaces once.
-    return [...localToolDefinitions({ SLEIGHT_PROMPT: prompt }), ...result.result.tools.filter(t => !['select_window'].includes(t.name)), FLOW_TOOL];
+    return [...localToolDefinitions({ SLEIGHT_PROMPT: prompt }), ...result.result.tools.filter(t => !['select_window'].includes(t.name)), promptTool(FLOW_TOOL, prompt)];
   } finally {
     relay.dispose();
     for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
@@ -109,7 +109,7 @@ export function sharedNoticeInventory(prompt) {
     const ast = ts.createSourceFile(file, readFileSync(new URL(`../plugins/sleight/lib/${file}`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     const add = node => {
       const raw = render(node);
-      const text = ['read-failure.mjs', 'simulator-focus.mjs', 'browser-call.mjs'].includes(file) ? promptNotice(raw, prompt) : raw;
+      const text = ['read-failure.mjs', 'simulator-focus.mjs', 'browser-call.mjs', 'checked-stop.mjs', 'clipboard.mjs'].includes(file) ? promptNotice(raw, prompt) : raw;
       if (text.replaceAll('<value>', '').trim()) entries.push({ path: `${file}:${ast.getLineAndCharacterOfPosition(node.getStart()).line + 1}`, text });
     };
     function visit(node, selected = false) {

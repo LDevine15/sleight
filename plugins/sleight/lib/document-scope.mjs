@@ -223,12 +223,13 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
   const { reuseSetup, acknowledge, prompt, ...checks } = options;
+  const quoted = text => JSON.stringify(promptNotice(text, prompt));
   return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
   // The call finished, so any failed action was one it didn't await or caught itself.
-  if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed, and the call went on without it: ' + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
+  if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
   // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
   if (guard.getAppFailures?.length) {
     const caught = guard.getAppFailures.join('; ');
@@ -393,9 +394,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
       const fs = await import('node:fs/promises');
       let record;
       try { record = JSON.parse(await fs.readFile(state.lease.path, 'utf8')); }
-      catch { throw new Error('Input lease stopped this action: the lease file is unavailable. End the turn and read the window again.'); }
+      catch { throw new Error(${quoted(/* lean notice */ 'Input lease stopped this action: the lease file is unavailable. End the turn and read the window again.')}); }
       if (record.token !== state.lease.token || record.expires <= Date.now()) {
-        throw new Error('Input lease stopped this action: ownership lost or expired. End the turn and read the window again.');
+        throw new Error(${quoted(/* lean notice */ 'Input lease stopped this action: ownership lost or expired. End the turn and read the window again.')});
       }
     };
     const wrap = target => {
@@ -408,7 +409,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           let pending;
           const checkCurrent = () => {
             if (state.reads !== pending.reads || pending.reads.get(proxy) !== pending.reading) {
-              throw new Error('waitFor stopped: another action or read superseded this poll. Read the window again.');
+              throw new Error(${quoted(/* lean notice */ 'waitFor stopped: another action or read superseded this poll. Read the window again.')});
             }
           };
           return wait({
@@ -693,10 +694,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               const reason = /* notice */ state.adoptUrl && observed && state.expected && observed.app !== state.expected.app
                 // Which actions ran and which didn't, by name, and the call that switches without a stop:
                 // two app-switch stops cost textedit-calculator-2 two calls (2026-10-17).
-                ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran' +
+                ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ${quoted(/* lean notice */ ' in this call ran')} +
                   (state.ran.length ? ', in ' + state.expected.app + ': ' + state.ran.slice(0, 10).join(', ') + (state.ran.length > 10 ? ' and ' + (state.ran.length - 10) + ' more' : '') : '') +
-                  (state.unknown.length ? '; sent to ' + state.expected.app + ' with the result unknown: ' + state.unknown.slice(0, 10).join(', ') : '') +
-                  '. Not run: this ' + shown + ' and every action after it; nothing was sent to ' + observed.app + '. The lease moves to ' + observed.app +
+                  (state.unknown.length ? '; sent to ' + state.expected.app + ${quoted(/* lean notice */ ' with the result unknown: ')} + state.unknown.slice(0, 10).join(', ') : '') +
+                  '. Not run: this ' + shown + ${quoted(/* lean notice */ ' and every action after it; nothing was sent to ')} + observed.app + '. The lease moves to ' + observed.app +
                   ${quoted(/* lean notice */ ". Send the actions that didn't run in a new call that starts with let <handle> = await cua.getApp(")} + JSON.stringify(observed.app) +
                   ${quoted(/* lean notice */ ") and acts through that handle, without select_window. One call acts in one app: to switch apps, end the call and start the next with that app's getApp.")}
                 : state.reason;
@@ -754,7 +755,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             if (!sameElement(was, now)) {
               const moved = [...codeRead.values()].filter(line => line === was).length === 1 ? sameLine(was) : [];
               if (moved.length === 1) goTo(moved[0][0], was, 'the window renumbered after this call read it');
-              else throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ' changed since this call read the window (was ' + JSON.stringify(was ?? 'missing') + ', now ' + JSON.stringify(now ?? 'missing') + ')' + ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
+              else throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ${quoted(/* lean notice */ ' changed since this call read the window (was ')} + JSON.stringify(was ?? 'missing') + ', now ' + JSON.stringify(now ?? 'missing') + ')' + ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
             }
           }
           else if (!state.callElements.has(proxy)) {
@@ -770,7 +771,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               // nothing after this action would catch them.
               const moved = state.literals?.size === 1 && state.uniqueSeen.has(args[0]) ? sameLine(seen) : [];
               if (moved.length === 1) goTo(moved[0][0], seen, 'the window renumbered since you read it');
-              else throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ' changed since you read the window (was ' + JSON.stringify(seen) + ', now ' + JSON.stringify(now ?? 'missing') + ')' + ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
+              else throw stop('sleight stopped before ' + name + '(' + args[0] + '): element ' + args[0] + ${quoted(/* lean notice */ ' changed since you read the window (was ')} + JSON.stringify(seen) + ', now ' + JSON.stringify(now ?? 'missing') + ')' + ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
             }
           }
           else if (typeof args[0] === 'number' && !byId) {
@@ -782,13 +783,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             const moved = sameElement(was, now) || typeof was !== 'string' || !/\\b(?:ID|Description|Help): /.test(was) ? []
               : [...elements(text)].filter(([, line]) => sameElement(was, line));
             if (moved.length === 1) {
-              nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ': an earlier action in this call renumbered the window.\\n');
+              nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
               args = [moved[0][0], ...args.slice(1)];
               if (state.bind && literal !== undefined) {
                 if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
                 state.boundNumbers.get(proxy).set(literal, { number: moved[0][0], line: was });
               }
-            } else if (!sameElement(was, now)) throw stop('sleight stopped before ' + name + '(' + args[0] + '): an earlier action in this call changed what element ' + args[0] + ' is (was ' + JSON.stringify(was ?? 'missing') + ', now ' + JSON.stringify(now ?? 'missing') + ')' + ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
+            } else if (!sameElement(was, now)) throw stop('sleight stopped before ' + name + '(' + args[0] + ${quoted(/* lean notice */ '): an earlier action in this call changed what element ')} + args[0] + ' is (was ' + JSON.stringify(was ?? 'missing') + ', now ' + JSON.stringify(now ?? 'missing') + ')' + ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
           }
           const cancel = state.fileOnly && isCancel(name, args, text ?? '');
           if (state.cancelOnly && !cancel) throw new Error('Change review: Cancel target changed. Read the current window before retrying.');
@@ -926,7 +927,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
   return install + /* generated code */ `
 {
   if (typeof globalThis.__sleightDocumentGuardSetup !== 'function'${reuseSetup ? ' || !globalThis.__sleightDocumentGuard' : ''}) {
-    throw new Error('Sleight guard setup is missing. Send a standalone app acquisition before acting.');
+    throw new Error(${quoted(/* lean notice */ 'Sleight guard setup is missing. Send a standalone app acquisition before acting.')});
   }
   globalThis.__sleightDocumentGuardSetup(${JSON.stringify(update) ?? 'undefined'});
   ${/* A call that declares app itself (let app = await cua.getApp(…)) has it in its temporal dead zone

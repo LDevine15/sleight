@@ -288,6 +288,14 @@ export function batchingDescription(description, variant = true, prompt) {
 }
 // Both browser-guard sites refuse native access with this text.
 const NATIVE_DENIED = /* lean notice */ 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.';
+// SLEIGHT_PROMPT=lean descriptions of the tools sleight adds. Each tool keeps its default text.
+const LEAN_TOOL_DESCRIPTIONS = {
+  document_scope: 'Ask the user to approve the last observed document or window for this session, after a js call with only let app = await cua.getApp("App") (or { windowId: 123 }). Actions need an approved matching Window and URL; window changes stop them. A mistake guard, not isolation from arbitrary JavaScript.',
+  review_changes: 'Shows this session\'s saved-file changes. Before editing, read the window with a standalone cua.getApp call. op "list": each touched document\'s diff or size/date summary; op "review": the user picks Keep, Undo or Later per document. Only the user can decide. Undo restores the session backup, refusing if the file changed after the last agent action; unsaved buffers aren\'t restored. Backups end with the session.',
+  flow_exception: 'Ask the user to allow, once, the exact call a flow rule last stopped. No decision arguments. Retry the identical call after approval; never work around a refusal.',
+  turn_ended: 'Internal: sleight hooks call this. Never call it yourself.',
+};
+export const promptTool = (tool, prompt) => prompt === 'lean' && LEAN_TOOL_DESCRIPTIONS[tool?.name] ? { ...tool, description: LEAN_TOOL_DESCRIPTIONS[tool.name] } : tool;
 const TURN_END_DESCRIPTION = 'Internal to sleight: its hooks call this when a Claude turn ends. Never call it yourself.';
 
 const SHUTDOWN_GRACE_MS = 3000;
@@ -1179,7 +1187,7 @@ export function createRelay({
   }
   function clipboardNotices(msg, notices) {
     if (!notices?.length) return;
-    msg.result = { ...(msg.result ?? {}), content: [...(msg.result?.content ?? []), ...notices.map(text => ({ type: 'text', text }))] };
+    msg.result = { ...(msg.result ?? {}), content: [...(msg.result?.content ?? []), ...notices.map(text => ({ type: 'text', text: promptNotice(text, prompt) }))] };
   }
 
   async function reviewChanges(msg) {
@@ -1250,7 +1258,7 @@ export function createRelay({
     return `Call select_window with ${JSON.stringify(args)}.`;
   }
   function confirmRecovery() {
-    return `Begin js with \u0060${constApp ? '' : 'let app = '}await cua.getApp(${JSON.stringify(selectedWindow.appId)})\u0060 (name or bundle ID); actions may follow on its returned handle.`;
+    return promptNotice(`Begin js with \u0060${constApp ? '' : 'let app = '}await cua.getApp(${JSON.stringify(selectedWindow.appId)})\u0060 (name or bundle ID); actions may follow on its returned handle.`, prompt);
   }
   function selectedCancel(code) {
     return selectedWindow && selectedWindow.windowNumber !== undefined && leaseWindow?.appId === selectedWindow.appId &&
@@ -1418,14 +1426,14 @@ export function createRelay({
         const named = code.match(/cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/)?.[1] ??
           code.match(/\.id\s*===?\s*("[A-Za-z][\w-]*(?:\.[\w-]+)+"|'[A-Za-z][\w-]*(?:\.[\w-]+)+')/)?.[1];
         const target = recoveryTarget ?? (named && `cua.getApp(${named})`);
-        const recovery = target ? `Send exactly \u0060${constApp ? '' : 'let app = '}await ${target}\u0060 in js.`
+        const recovery = /* notice */ target ? `Send exactly \u0060${constApp ? '' : 'let app = '}await ${target}\u0060 in js.`
           : stateRead ? `Send \u0060${constApp ? '' : 'let app = '}await cua.getApp("<id>")\u0060 in js, with the app's id from getState.`
           : 'Send exactly \u0060await cua.getState()\u0060 in js.';
         // Template literals, statements and other calls make a lookup an action (form-settings-helium, 2026-10-17:
         // one listWindows expression with a template literal was refused with this same advice).
         const inventory = /\bcua\.(?:listApps|listWindows|getState)\(/.test(code)
           ? ' To look up apps or windows, send one expression with plain quotes, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
-        leaseStop(msg, `a bundle ID and full window header are required. ${recovery}${inventory} Use the handle returned by cua.getApp directly.`, true);
+        leaseStop(msg, promptNotice(`a bundle ID and full window header are required. ${recovery}${inventory} Use the handle returned by cua.getApp directly.`, prompt), true);
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }
@@ -1452,7 +1460,7 @@ export function createRelay({
   function documentStop(msg, reason) {
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text:
       `Document scope: ${reason}. ${observedDocument ? `Observed ${documentLabel(observedDocument)}. ` : ''}` +
-      'Stop actions. Read the intended window with one standalone cua.getApp call, then ask the user with document_scope.' }] } });
+      promptNotice('Stop actions. Read the intended window with one standalone cua.getApp call, then ask the user with document_scope.', prompt) }] } });
   }
 
   function askDocument(message, scoped, callIds) {
@@ -1573,7 +1581,7 @@ export function createRelay({
           const timer = setTimeout(() => { drained.delete(done); resolve(false); }, stopGraceMs);
           drained.add(done);
         });
-        if (!ready) return /* notice */ 'sleight: kept tabs because a call did not finish before the cleanup deadline.';
+        if (!ready) return /* notice */ promptNotice('sleight: kept tabs because a call did not finish before the cleanup deadline.', prompt);
       }
       if (stopCollected || disposed) return;
       return await new Promise(resolve => {
@@ -1682,7 +1690,7 @@ export function createRelay({
       state.diagnosing.finally(() => {
         if (disposed || closing) return;
         const advice = helperStates.get(state.key) === state ? diagnosisAdvice(state.key, state.diagnosis)
-          : `A read of ${state.key} succeeded while sleight checked the fault. Read that app again before continuing.`;
+          : promptNotice(`A read of ${state.key} succeeded while sleight checked the fault. Read that app again before continuing.`, prompt);
         if (msg.error) msg.error.message += `\n\n${advice}`;
         else msg.result = { ...msg.result, isError: true, content: [...(msg.result?.content ?? []), { type: 'text', text: advice }] };
         toClient(msg);
@@ -2029,13 +2037,13 @@ export function createRelay({
             const known = compactor.seenLines(window);
             const matches = Object.keys(endpoint).length === 1 && typeof endpoint.line === 'string'
               ? Object.entries(known ?? {}).filter(([, line]) => line === endpoint.line) : [];
-            if (matches.length !== 1) throw new Error(/* notice */ 'drag line identity needs one observed element in this app window; read it again');
+            if (matches.length !== 1) throw new Error(/* notice */ promptNotice('drag line identity needs one observed element in this app window; read it again', prompt));
             endpoints[name] = Number(matches[0][0]);
           }
           const numbers = names.map(name => endpoints[name]).filter(Number.isInteger);
           const lines = compactor.seenLines(window, numbers);
           if (numbers.length && (!window || numbers.some(n => !lines?.[n] || !compactor.uniqueSeen(window, numbers).includes(n)))) {
-            throw new Error(/* notice */ 'drag element numbers need unique identities from a read of this app window; read it again');
+            throw new Error(/* notice */ promptNotice('drag element numbers need unique identities from a read of this app window; read it again', prompt));
           }
           evidence[prefix ? 'toElementLines' : 'elementLines'] = lines;
           evidence[prefix ? 'toElementWindow' : 'elementWindow'] = window ? { title: window.title,
@@ -2093,8 +2101,8 @@ export function createRelay({
           try { shownPath = shown?.url ? fileURLToPath(shown.url) : undefined; } catch { shownPath = null; }
           const confirmed = shownPath === undefined || [openedFile.path, openedFile.real].includes(shownPath);
           const opened = confirmed ? result.content ?? []
-            : [{ type: 'text', text: `${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
-              'Find its window before acting.' }];
+            : [{ type: 'text', text: promptNotice(`${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
+              'Find its window before acting.', prompt) }];
           // Excel's and Word's trees hold no cells or body text. In 10 of 10 edit runs (2026-10-17) Claude then
           // read the window again and took a screenshot, two model turns, before its first edit. Only a window
           // whose URL is the opened file gets one: with no URL, the read may show another window.
@@ -2106,7 +2114,7 @@ export function createRelay({
             if (generation !== stopGeneration || closing || disposed) return;
             if (image) {
               pictured = true;
-              state = { ...state, content: [...(state.content ?? []).filter(c => c?.text !== TEXTLESS_NOTE), image] };
+              state = { ...state, content: [...(state.content ?? []).filter(c => c?.text !== promptNotice(TEXTLESS_NOTE, prompt)), image] };
             }
           }
           // After `const app`, `let app` is a redeclaration error, so the handle is named for use as is. Beside a
@@ -2263,7 +2271,7 @@ export function createRelay({
       splitInputs.add(msg.id);
       const content = reply.result?.content ?? [];
       const stop = error => toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...content,
-        { type: 'text', text: `Text save stopped after the write: ${error.message}. The save was not sent. Read the intended window before continuing.` }] } });
+        { type: 'text', text: promptNotice(`Text save stopped after the write: ${error.message}. The save was not sent. Read the intended window before continuing.`, prompt) }] } });
       if (!current()) { stop(new Error(/* notice */ 'window changed or call stopped')); return; }
       let key;
       try { key = inputLease.acquire(expected); }
@@ -2343,7 +2351,7 @@ export function createRelay({
         // The window changed: Claude acts on the tree above, so a compacted re-acquisition goes out whole.
         if (raw) reply = { ...reply, result: { ...reply.result, content: compactor.process(raw, { forceFull: true }) } };
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
-          { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
+          { type: 'text', text: promptNotice(`sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.`, prompt) }] } });
         return;
       }
       // A metadata read must not replace the lease's native identity with the newly observed one.
@@ -2559,7 +2567,7 @@ export function createRelay({
         .finally(() => { if (restarting === attempt) restarting = undefined; });
     }
     if (restarting && restarting.generation !== stopGeneration && !stopCollected && msg.method === 'tools/call') {
-      leaseStop(msg, 'engine initialization was stopped and collection is unconfirmed. Run /sleight stop again before retrying.'); return;
+      leaseStop(msg, promptNotice('engine initialization was stopped and collection is unconfirmed. Run /sleight stop again before retrying.', prompt)); return;
     }
     if ((stopCollected || restarting) && msg.method === 'tools/call' && restartEngine) {
       const generation = stopGeneration;
@@ -2575,7 +2583,7 @@ export function createRelay({
       return;
     }
     if (msg.method === 'tools/call' && (serverIn.writableEnded || serverIn.destroyed)) {
-      leaseStop(msg, 'the engine connection ended during stop. Reconnect sleight for a fresh engine and app read.'); return;
+      leaseStop(msg, promptNotice('the engine connection ended during stop. Reconnect sleight for a fresh engine and app read.', prompt)); return;
     }
     if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
         msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
@@ -2653,7 +2661,7 @@ export function createRelay({
       if (stale) {
         msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
         remapNotes.set(msg.id, 'sleight: numbers in this window changed since you saw them, so ' +
-          stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + '. Use the numbers in this result from now on.');
+          stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
         trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
       }
     }
@@ -2678,7 +2686,7 @@ export function createRelay({
     if (healthPlan?.acquisition && healthPlan.handle) nativeHandles.add(healthPlan.handle);
     if (!healthPlan?.read && healthPlan?.keys?.some(key =>
       [...helperProbes.values()].some(probe => probe.control?.key === key) || [...lateDiagnosticControls.values()].some(control => control.key === key && control.generation === diagnosisGeneration))) {
-      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'A diagnostic read of this app is still pending. Wait for it to finish, then send a standalone full app read before acting.' }] } });
+      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: promptNotice('A diagnostic read of this app is still pending. Wait for it to finish, then send a standalone full app read before acting.', prompt) }] } });
       return;
     }
     const blockedApp = (healthPlan?.read ? [healthPlan.key] : healthPlan?.keys ?? []).find(key => {
@@ -2858,7 +2866,7 @@ export function createRelay({
           const modes = guardMode?.split(',').map(mode => mode.trim()) ?? [], careful = modes.includes('careful');
           const target = documentMode ? observedDocument : inputLease ? leaseWindow : lastWindow;
           const reason = /* notice */ documentMode ? undefined : selectedWindow ? `Selected window changed. ${selectionRecovery()}` : inputLease
-            ? 'Input lease stopped this action: window or URL changed. Read the intended window again before acting.'
+            ? promptNotice('Input lease stopped this action: window or URL changed. Read the intended window again before acting.', prompt)
             : promptNotice('Change review stopped this action: window or URL changed. Read the intended window with one standalone cua.getApp call before editing.', prompt);
           if (browser) {
             msg.params.arguments.code = guardedCode(selectedBrowserCode(browserRecovery.code(originalCode), browserChoice, `${sessionId}:${turnId}`), target, reason,
@@ -2963,7 +2971,7 @@ export function createRelay({
         if (generation !== stopGeneration || closing || disposed) { reject(new Error(/* notice */ 'Clipboard guard: session closed before input.')); return; }
         clipboardReplies.set(msg.id, { reject, receive: reply => {
           response = reply;
-          if (reply.error || reply.result?.isError) reject(new Error(/* notice */ 'Clipboard guard: engine action failed; Copy/Cut ownership cannot be attributed.'));
+          if (reply.error || reply.result?.isError) reject(new Error(/* notice */ promptNotice('Clipboard guard: engine action failed; Copy/Cut ownership cannot be attributed.', prompt)));
           else resolve(reply);
         } });
         toServer(msg);
@@ -3170,7 +3178,7 @@ export function createRelay({
       menuCalls.delete(msg.id); menuAdmissions.delete(msg.id);
       callSeqs.delete(msg.id); callStarts.delete(msg.id); resultCalls.delete(msg.id); guardCalls.delete(msg.id);
       finishedCall(msg.id);
-      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'Input lease: this call was stopped; its input outcome is unconfirmed. Read the app again.' }] } });
+      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: promptNotice('Input lease: this call was stopped; its input outcome is unconfirmed. Read the app again.', prompt) }] } });
       stoppedClients.add(msg.id); return;
     }
     if (msg.method === undefined && continueMenu(msg)) return;
@@ -3318,7 +3326,7 @@ export function createRelay({
     if (msg.method === undefined && clipboardResets.delete(msg.id) && !msg.error && !msg.result?.isError) {
       clipboard.reset().then(() => observeServerMessage(msg), error => {
         msg.result = { ...(msg.result ?? {}), isError: true };
-        clipboardNotices(msg, ['Clipboard: reset cleanup failed: ' + error.message]);
+        clipboardNotices(msg, [/* notice */ 'Clipboard: reset cleanup failed: ' + error.message]);
         observeServerMessage(msg);
       });
       return;
@@ -3343,7 +3351,7 @@ export function createRelay({
         (msg.result._meta?.['codex/toolSurface']?.kind === 'browserUse' || msg.result._meta?.['codex/toolSurface']?.app?.appId === undefined &&
           /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCalls.get(msg.id) ?? ''))) {
       turboNoticeShown = true;
-      msg.result.content.push({ type: 'text', text: `Tell the user: Turbo is off (${turboUnavailable}). The engine browser path is available. Check turbo settings and run sleight-mcp --doctor before retrying turbo.` });
+      msg.result.content.push({ type: 'text', text: promptNotice(`Tell the user: Turbo is off (${turboUnavailable}). The engine browser path is available. Check turbo settings and run sleight-mcp --doctor before retrying turbo.`, prompt) });
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
     if (jsCode !== undefined && (msg.error || msg.result?.isError)) {
@@ -3428,7 +3436,7 @@ export function createRelay({
         /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
       const rules = (docs || browserResult) && rulesFor(browserResult);
       if (rules) {
-        const item = { type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') };
+        const item = { type: 'text', text: rules + (docs ? promptNotice('\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.', prompt) : '') };
         msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;
@@ -3534,7 +3542,7 @@ export function createRelay({
         }
         if (!helperStuck && !msg.error && (!observedDocument || (call.expected && call.expected !== documentKey(observedDocument)))) {
           msg.result = { ...(msg.result ?? {}), isError: true, content: [...(msg.result?.content ?? []), { type: 'text', text:
-            'Document scope stopped: Window or URL changed, or a full header is missing. That call may already have acted. Stop and read the intended window, then ask the user with document_scope.' }] };
+            promptNotice('Document scope stopped: Window or URL changed, or a full header is missing. That call may already have acted. Stop and read the intended window, then ask the user with document_scope.', prompt) }] };
           if (!call.read) observedDocument = undefined;
         }
       }
@@ -3648,7 +3656,7 @@ export function createRelay({
     if (identityWarning && msg.result) {
       identityWarning = false;
       msg.result.content = [...(msg.result.content ?? []), { type: 'text', text:
-        'sleight-warning: native window identity is inconclusive or lacks Accessibility permission. Continuing with the engine header and existing window guards; equal-title replacement detection is unavailable.' }];
+        promptNotice('sleight-warning: native window identity is inconclusive or lacks Accessibility permission. Continuing with the engine header and existing window guards; equal-title replacement detection is unavailable.', prompt) }];
     }
     if (windowNote && msg.result) msg.result.content = [...(msg.result.content ?? []), { type: 'text', text: windowNote }];
     if (msg.method === undefined && remapNotes.has(msg.id)) {
@@ -3761,6 +3769,7 @@ export function createRelay({
         // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
         // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
         // are short, so all but the internal turn_ended load up front, local tools included.
+        .map(t => promptTool(t, prompt))
         .map(t => (t.name !== TURN_END_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t));
     }
     if (panelNote) {
@@ -3972,7 +3981,7 @@ export function createRelay({
     }
     trace('stop-receipt', report);
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: report.resources !== 'clear' || report.leases !== 'released and checked',
-      content: [{ type: 'text', text: stopText(report) }, ...(report.directBrowser ? [{ type: 'text',
+      content: [{ type: 'text', text: promptNotice(stopText(report), prompt) }, ...(report.directBrowser ? [{ type: 'text',
         text: JSON.stringify({ directBrowser: report.directBrowser }) }] : []), ...(tabNote ? [{ type: 'text', text: tabNote }] : [])], _meta: { 'sleight/stop': report } } });
     onStopReported(report);
     stopUnconfirmed = report.engine === 'unconfirmed'; stopFinished = true;
