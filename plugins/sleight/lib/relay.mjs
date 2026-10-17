@@ -175,6 +175,42 @@ export function unawaitedAction(code) {
   }
 }
 
+// `require(` outside strings and comments. The engine's REPL has none: 3 of 20 textedit-save runs spent a
+// turn on `require('fs')` checking a save the result had confirmed (Fable study, 2026-10-17).
+const codeOnly = code => String(code).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ' ')
+  .replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
+export function usesRequire(code) {
+  return /(?<![\w$.])require\s*\(/.test(codeOnly(code));
+}
+// A call that uses require and nothing of the engine's (cua, sleight or a handle method) can only fail.
+export function requireOnly(code) {
+  return usesRequire(code) && !/\b(?:cua|sleight)\s*\.|\.\s*(?:getAXState|getScreenshot|getAXStateAndScreenshot|click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText|waitFor|getJsDialog|emitImage)\s*\(/.test(codeOnly(code));
+}
+function requireNote(refused, saved, prompt) {
+  return promptNotice((refused ? 'sleight stopped this call before it ran: ' : 'sleight: ') + '`js` has no `require` and no file system access.' +
+    (saved ? " The save result's `on disk:` field already gives the saved file's size and kind." : ''), prompt);
+}
+
+// The skill's rules for an open_file result under SLEIGHT_OPEN_RULES=short: without what open_file already
+// did (acquiring, choosing a window, opening a document), tap coordinates, the drag, hover and banner tools,
+// and the doctor line. Every safety passage stays word for word, and a heading left empty goes too.
+const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- Multiply tap coordinates|- Acquire a document that's already open|- To move selected text|- Engine events don't trigger hover|- `notifications` presses|Selected text: |If `js` fails to start|Startup failure: )/;
+export function openFileRules(rules) {
+  if (typeof rules !== 'string') return rules;
+  const blocks = [];
+  for (const line of rules.split('\n')) {
+    const starts = !blocks.length || !line.trim() || /^(?:- |#)/.test(line) || !blocks.at(-1).at(-1).trim() || /^#/.test(blocks.at(-1)[0]);
+    if (starts) blocks.push([line]); else blocks.at(-1).push(line);
+  }
+  const kept = blocks.filter(block => !OPEN_DROPS.test(block[0]));
+  const out = kept.filter((block, i) => {
+    if (!/^#/.test(block[0])) return true;
+    const next = kept.slice(i + 1).find(b => b[0].trim());
+    return next && !/^#/.test(next[0]);
+  });
+  return out.map(block => block.join('\n')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 const META_KEY = 'x-codex-turn-metadata';
 const HIDDEN_TOOLS = new Set(['js_add_node_module_dir']);
 const TURN_END_TOOL = 'turn_ended';
@@ -326,6 +362,9 @@ export function promptNotice(text, prompt) {
     .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ')
     .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ')
     .replace('sleight reconnected after a ChatGPT engine update.', 'sleight: engine reconnected.')
+    .replace('sleight stopped this call before it ran: `js` has', 'sleight skipped this call: `js` has')
+    .replace('`js` has no `require` and no file system access.', '`js` has no `require` or file access.')
+    .replace(" The save result's `on disk:` field already gives the saved file's size and kind.", " The save's `on disk:` gives size and kind.")
     .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.');
 }
 const SHUTDOWN_GRACE_MS = 3000;
@@ -583,6 +622,10 @@ export function createRelay({
   // answer-bearing tree. With 5 KB of rules after preview-read's 2.3 KB tree, Haiku thought on turn 2 in 5/5
   // sleight runs against 2/5 for Peekaboo (2026-10-17). SLEIGHT_RULES_FIRST=0 keeps them last, for the A/B.
   rulesFirst = process.env.SLEIGHT_RULES_FIRST !== '0',
+  // SLEIGHT_OPEN_RULES=short (A/B, off by default): an open_file result carries only the rules that matter after
+  // an open, and the whole skill comes with Claude's first js result. Haiku thought before answering in 18/18
+  // sleight preview-read runs, all given the whole skill in their first result, against 2/5 for Peekaboo (correlational, 2026-10-17).
+  openRules = process.env.SLEIGHT_OPEN_RULES === 'short' ? 'short' : 'full',
   // A read whose document area exposes no text values gets one note to screenshot it. Claude's first Excel
   // read returned no cell values and a screenshot followed in 5/5 excel-edit runs, about 3 s a run (2026-10-17).
   // The note costs about 30 tokens and no engine call; attaching a screenshot would cost an image and a
@@ -671,6 +714,8 @@ export function createRelay({
   const resultCalls = new Map(); // forwarded native actions, with the read available before input
   const splitInputs = new Set(); // input in an earlier part of this same client call
   const remapNotes = new Map(); // call id -> what remapStale changed, told to Claude with the result
+  const requireNotes = new Map(); // call id -> the no-require note for a call that also used the engine
+  let saveReceipted = false; // a result has carried a confirmed save's `on disk:` receipt
   // Apps this session drove (names and bundle IDs), and turn_ended calls whose reply should say
   // when one of them holds a keyboard filter tap: the mod shows that to the user.
   const drivenApps = new Set(), turnEnds = new Set(), tapWarned = new Set();
@@ -801,6 +846,8 @@ export function createRelay({
       if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
+      // Rules held for Claude's first js result go with the next engine docs instead.
+      if (deferredRules) { deferredRules = undefined; rulesShown = browserRulesShown = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
       helperStates.clear();
       screenshots.clear();
@@ -975,7 +1022,7 @@ export function createRelay({
   const callStarts = new Map(); // call id -> when it arrived, so a read's duration is known
   const callSeqs = new Map();
   let docsShown = false;
-  let deferredEngineDocs = [], clientJsDelivered = false;
+  let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
   // Once per session: Claude keeps them in context across engine restarts.
   let rulesShown = false;
   let browserRulesShown = false;
@@ -1794,10 +1841,15 @@ export function createRelay({
         deferredEngineDocs = [];
       }
     }
+    if (modelVisible && deferredRules && clientTool === 'js') {
+      if (msg.error) msg = { jsonrpc: msg.jsonrpc, id: msg.id, result: { isError: true, content: [{ type: 'text', text: msg.error.message }] } };
+      if (Array.isArray(msg.result?.content)) { msg.result.content = [deferredRules, ...msg.result.content]; deferredRules = undefined; }
+    }
     if (modelVisible && Array.isArray(msg.result?.content)) {
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
         { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
       browserStale.observe(msg.result.content);
+      saveReceipted ||= msg.result.content.some(c => c.type === 'text' && /\bsaved: observed [^\n]*; on disk: /.test(c.text ?? ''));
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
     journal?.reply(msg);
@@ -2756,6 +2808,15 @@ export function createRelay({
         promptNotice(`sleight stopped this call before it ran: \u0060${unawaited}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await and send it again.`, prompt) }] } });
       return;
     }
+    if (msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined &&
+        typeof originalCode === 'string' && usesRequire(originalCode)) {
+      if (requireOnly(originalCode)) {
+        jsCalls.delete(msg.id);
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: requireNote(true, saveReceipted, prompt) }] } });
+        return;
+      }
+      requireNotes.set(msg.id, requireNote(false, saveReceipted, prompt));
+    }
     if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
       if (running.size || localRunning.size || documentAsking || reviewing) { flowStop(msg, 'wait for the pending call or prompt'); return; }
       if (msg.id === undefined || (msg.params.name === 'js' && typeof originalCode !== 'string')) { flowStop(msg, 'a request id and JavaScript code are required'); return; }
@@ -3204,7 +3265,7 @@ export function createRelay({
       }
       documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); browserCalls.delete(msg.id);
       spaceChecks.delete(msg.id); preHealth.delete(msg.id); nativeChecked.delete(msg.id); focusedChecked.delete(msg.id); restartRetries.delete(msg.id);
-      flowCalls.delete(msg.id); helperReads.delete(msg.id); remapNotes.delete(msg.id); preapprovalNotes.delete(msg.id);
+      flowCalls.delete(msg.id); helperReads.delete(msg.id); remapNotes.delete(msg.id); requireNotes.delete(msg.id); preapprovalNotes.delete(msg.id);
       menuCalls.delete(msg.id); menuAdmissions.delete(msg.id);
       callSeqs.delete(msg.id); callStarts.delete(msg.id); resultCalls.delete(msg.id); guardCalls.delete(msg.id);
       finishedCall(msg.id);
@@ -3464,7 +3525,11 @@ export function createRelay({
       // result, including an acquisition refusal, and remain in context across engine restarts.
       const browserResult = pendingBrowser && (confirmedBrowser || !msg.result._meta?.['codex/toolSurface']?.app?.appId &&
         /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
-      const rules = (docs || browserResult) && rulesFor(browserResult);
+      let rules = (docs || browserResult) && rulesFor(browserResult);
+      if (rules && openRules === 'short' && !browserResult && String(msg.id).startsWith('sleight-open-file-')) {
+        deferredRules = { type: 'text', text: rules };
+        rules = openFileRules(rules);
+      }
       if (rules) {
         const item = { type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') };
         msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
@@ -3692,6 +3757,11 @@ export function createRelay({
     if (msg.method === undefined && remapNotes.has(msg.id)) {
       if (msg.result) msg.result.content = [...(msg.result.content ?? []), { type: 'text', text: remapNotes.get(msg.id) }];
       remapNotes.delete(msg.id);
+    }
+    if (msg.method === undefined && requireNotes.has(msg.id)) {
+      if (msg.result) msg.result.content = [...(msg.result.content ?? []), { type: 'text', text: requireNotes.get(msg.id) }];
+      else if (msg.error) msg.error.message += '\n' + requireNotes.get(msg.id);
+      requireNotes.delete(msg.id);
     }
     // The engine refuses Terminal, iTerm2 and OpenAI's own apps before any
     // approval, so a user consent can never enable the engine on them. Say so,

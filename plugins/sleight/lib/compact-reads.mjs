@@ -19,7 +19,7 @@ import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, documentKey, windowFromText, ha
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { statSync } from 'node:fs';
+import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
@@ -297,6 +297,26 @@ const edited = title => /(?: — | - )Edited$/.test(title);
 // A file:// document's modification time, null when it has none or can't be read.
 function fileTime(url) {
   try { return url?.startsWith('file://') ? statSync(fileURLToPath(url)).mtimeMs : null; } catch { return null; }
+}
+// A confirmed save's file as the relay reads it: size on disk and kind from its first bytes. After a
+// confirmed save, 3 of 20 textedit-save runs opened the Format menu to check for plain text (4-17 s each)
+// and 3 tried `require('fs')` (Fable study, 2026-10-17).
+export function fileReceipt(url) {
+  let fd;
+  try {
+    const path = fileURLToPath(url), info = statSync(path);
+    if (info.isDirectory()) return 'on disk: a package folder';
+    const head = Buffer.alloc(Math.min(info.size, 4096));
+    fd = openSync(path, 'r');
+    const bytes = head.subarray(0, readSync(fd, head, 0, head.length, 0));
+    const text = () => { try { new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true }); return !bytes.includes(0); } catch { return false; } };
+    const kind = !info.size ? 'empty' : bytes.subarray(0, 5).toString('latin1') === '{\\rtf' ? 'rich text (RTF)'
+      : bytes.subarray(0, 5).toString('latin1') === '%PDF-' ? 'PDF'
+      : bytes.subarray(0, 4).toString('latin1') === 'PK\x03\x04' ? 'zip archive'
+      : /^(?:\xff\xfe|\xfe\xff)/.test(bytes.subarray(0, 2).toString('latin1')) ? 'plain text (UTF-16)'
+      : text() ? 'plain text' : 'binary';
+    return `on disk: ${info.size} bytes, ${kind}`;
+  } catch { return; } finally { if (fd !== undefined) closeSync(fd); }
 }
 const withoutValue = line => line.replace(/(?:, )?Value: ?.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '')
   .replace(/, (?=(?:Secondary Actions|ID|Help|Description):)/g, ' ').replace(/ +/g, ' ').trimEnd();
@@ -649,7 +669,8 @@ function resultNote(action, after, failed, failure) {
   const selectedTabs = !reason && !incomplete && !degraded && after?.delta?.baseline === before.id
     ? after.delta.selectedTabs : [];
   const fields = [failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
-    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && 'saved: ' + saved].filter(Boolean);
+    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && 'saved: ' + saved,
+    saved?.startsWith('observed') && after.window.url?.startsWith('file://') && fileReceipt(after.window.url)].filter(Boolean);
   const finish = saveFinishLine(after, before, failed, action.overlap);
   if (!fields.length) return finish;
   const note = fields.join('; ');
