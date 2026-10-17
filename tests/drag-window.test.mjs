@@ -295,6 +295,7 @@ test('generic validation refuses cross-area and blank text drags for every bundl
       const r = h.run({ windowId: 11, ...(options.splitAreas ? { to: [119, 190] } : {}) });
       assert.equal(r.ok, false, `${appId}: ${JSON.stringify(options)}`);
       assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0);
+      if (options.splitAreas) assert.match(r.error, /toWindowId/);
     }
   }
 });
