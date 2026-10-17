@@ -346,3 +346,60 @@ test('TT1N: disposal during the fresh helper check prevents the remainder', asyn
   assert.deepEqual(h.clicks, [2]);
   assert.equal(h.sent.length, 1);
 });
+
+// DR1: Word's Replace All alert (word-edit, 2026-10-17). The lease moved from the document to the alert; the next
+// call's OK closed it and the rest stopped as 'window changed' in 7 of 8 runs.
+const page = 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n\t1 text area (settable) Value: draft\n\t2 button Replace All';
+const alert = 'Window: "", App: Fixture Editor.\n0 dialog Description: alert\n\t1 text All done. We made 1 replacement.\n\t2 button OK, ID: ok';
+const dialogIdentity = (expected, native) => ({ ...expected, ...native, matches: 1, epoch: 'helper', pid: 123, processStart: 1,
+  ...(expected.title === '' ? { windowNumber: 31, window: 2 } : { window: 1 }) });
+async function dialogFixture(t, { bare, ...options } = {}) {
+  const h = await fixture(t, bare ? { base: alert, after: page, identity: dialogIdentity } :
+    { base: page, after: alert, afterItem: page, identity: dialogIdentity, ...options });
+  if (!bare) assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  const start = h.sent.length;
+  return { ...h, sentSince: () => h.sent.length - start };
+}
+const dismiss = 'await app.click({ id: "ok" }); await app.pressKey("super+End");';
+
+test('DR1: OK on an alert the lease moved to continues on the document it covered', async t => {
+  const h = await dialogFixture(t);
+  const result = await h.call(dismiss);
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(h.keys, ['super+End']);
+  assert.equal(h.sentSince(), 2);
+  assert.doesNotMatch(JSON.stringify(result), /guard-stop|window or URL changed/);
+});
+
+test('DR1: a filtered trailing read still continues', async t => {
+  const h = await dialogFixture(t);
+  const result = await h.call(dismiss + ' const s = await app.getAXState(); s.split("\\n").filter(l => /draft/.test(l)).join("\\n")');
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(h.keys, ['super+End']);
+});
+
+for (const [name, options] of [
+  ['another document', { afterItem: page.replaceAll('report.txt', 'other.txt') }],
+  ['the same title at another URL', { afterItem: page.replace('file:///tmp/report.txt', 'file:///tmp/copy/report.txt') }],
+  ['another app', { afterItem: page.replace('App: Fixture Editor.', 'App: Other Editor.') }],
+  ['another window of the app', { afterItem: 'Window: "Styles", App: Fixture Editor.\n0 standard window Styles\n\t1 button Apply' }],
+  ['user input during the call', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { hidIdleSeconds: 0 } : {}) }) }],
+  ['a lost focus', { identity: (expected, native) => expected.title === '' ? dialogIdentity(expected, native) : { status: 'mismatch', error: 'Focused window differs' } }],
+  ['a dialog read without the window it covered', { bare: true }],
+]) test(`DR1: closing the dialog onto ${name} stops`, async t => {
+  const h = await dialogFixture(t, options);
+  const result = await h.call(dismiss);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.equal(h.sentSince(), 1);
+});
+
+test('DR1: a lease stop says which actions ran and which were not sent', async t => {
+  const h = await dialogFixture(t, { afterItem: page.replaceAll('report.txt', 'other.txt') });
+  const text = (await h.call(dismiss + ' await app.typeText("secret words");')).content.map(c => c.text ?? '').join('\n');
+  assert.match(text, /sleight: this call ran 1 action \(click "ok"\); not sent: pressKey "super\+End", typeText\./);
+  assert.doesNotMatch(text, /secret words/);
+  const unsplit = await dialogFixture(t, { afterItem: page.replaceAll('report.txt', 'other.txt') });
+  const plain = (await unsplit.call('await app.click({ id: "ok" }); if (true) await app.pressKey("super+End");')).content.map(c => c.text ?? '').join('\n');
+  assert.match(plain, /sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent\./);
+});

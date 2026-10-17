@@ -70,7 +70,8 @@ import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, menuIdentity, unchangedMenuWindow } from './menu-continuation.mjs';
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, returnedWindow, stopNote, menuIdentity,
+  unchangedMenuWindow } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -1461,10 +1462,10 @@ export function createRelay({
       // including startup retries, against the original call's forwarding time.
       if (continuation.checking) return;
       continuation.checking = true;
-      const { call, expected, original, head, current } = continuation;
+      const { call, expected, baseline, lease, original, head, current } = continuation;
       menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
-        if (!current() || leaseWindow !== call.target ||
-            !unchangedMenuWindow(expected, call.baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt))) {
+        if (!current() || leaseWindow !== lease ||
+            !unchangedMenuWindow(expected, baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt))) {
           menuForwards.delete(msg.id);
           menuCalls.delete(msg.id);
           if (head) splitHeads.set(msg.id, head); else splitHeads.delete(msg.id);
@@ -2059,7 +2060,7 @@ export function createRelay({
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const openShots = new Map();
-  const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Set(), menuForwards = new Map();
+  const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Map(), menuForwards = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
     if (!inputLease || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
@@ -2220,30 +2221,40 @@ export function createRelay({
     if (action && taken.receipt) action.failure = { message: taken.receipt.error ?? failureReason(taken.content),
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
-    const remainder = !msg.error && msg.result.isError && !documentMode && !changeReview && !menuContinued.has(msg.id) &&
-      !guardMode?.split(',').some(mode => mode.trim() === 'careful') &&
-      call.target && menuRemainder(call.plan, taken.receipt, call.target, taken.content);
-    if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
+    const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id));
+    if (note) msg.result.content = [...msg.result.content, { type: 'text', text: promptNotice(note, prompt) }];
+    const eligible = !msg.error && msg.result.isError && !documentMode && !changeReview && !menuContinued.has(msg.id) &&
+      !guardMode?.split(',').some(mode => mode.trim() === 'careful') && call.target;
+    const covered = eligible && call.target.parent;
+    const remainder = eligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
+      menuRemainder(call.plan, taken.receipt, call.target, taken.content));
+    if (!remainder || (!remainder.dialog && !call.baseline) || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
-    const expected = remainder.navigation ? { ...call.target, ...remainder.window,
-      windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
+    const expected = remainder.dialog ? { appId: covered.appId, title: covered.title, app: covered.app, url: covered.url }
+      : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
     menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
-      if (leaseWindow !== call.target || !unchangedMenuWindow(expected, call.baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt))) {
+      const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
+      if (leaseWindow !== call.target || !(remainder.dialog ? returnedWindow(covered, call.baseline, observed, since)
+        : unchangedMenuWindow(expected, call.baseline, observed, since))) {
         observeServerMessage(msg); return;
       }
+      // The rest goes to the covered window under its own lease, pinned to the native window just observed.
+      const baseline = remainder.dialog ? observed : call.baseline, lease = remainder.dialog ? covered : call.target;
+      const forward = remainder.dialog ? { ...expected, windowNumber: observed.windowNumber } : expected;
       const original = structuredClone(msg), head = splitHeads.get(msg.id);
       // Keep output from before the refused action, drop its exception, then let the normal
       // result path record the menu tree. The remainder goes through the ordinary admission gates.
       msg.result = { ...msg.result, isError: false, content: [...taken.head,
         { type: 'text', text: GUARD_MARK + remainder.tree + GUARD_END }] };
-      menuContinued.add(msg.id);
+      menuContinued.set(msg.id, taken.receipt.index);
+      trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind: remainder.dialog ? 'dialog' : remainder.navigation ? 'navigation' : 'menu' });
       splitCalls.set(msg.id, reply => {
         if (!current()) { toClient({ ...reply, result: { ...reply.result, isError: true } }); return; }
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
-        leaseWindow = call.target;
+        leaseWindow = lease;
         menuBaselines.set(msg.id, remainder.window);
-        menuForwards.set(msg.id, { call, expected, original, head, current });
+        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current });
         nativeChecked.add(msg.id); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
@@ -3345,6 +3356,11 @@ export function createRelay({
       if (leaseWindow && call.identityRequired) leaseWindow.identityRequired = true;
       if (leaseWindow && call.nativeIdentity) leaseWindow.nativeIdentity = call.nativeIdentity;
       if (leaseWindow && call.identityError) leaseWindow.identityError = call.identityError;
+      // A dialog or sheet remembers the window it covered, so a call whose own action closes it can go on there.
+      if (leaseWindow?.appId && previous?.appId === leaseWindow.appId && /^Window: .*\r?\n0 (?:sheet|dialog)\b/m.test(text)) {
+        if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }
+        else if (previous.title || previous.url) { const { parent: _, ...covered } = previous; leaseWindow.parent = covered; }
+      }
       if (leaseWindow?.appId && call.read && !msg.result?.isError) {
         const selector = call.selector ?? handleSelectors.get(call.handle);
         const acquiredNumber = selector?.match(/^\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}$/)?.[1];
