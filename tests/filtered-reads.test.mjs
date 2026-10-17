@@ -201,16 +201,24 @@ for (const expression of [
   'state.split("\\n").filter(line => line.includes("Row 7")).join("\\n")',
   'state.split("\\n").filter(line => line.includes("Row 7"))',
   'state.match(/Row 7\\d/g)',
-  'state.split("\\n").filter(() => false)',
-  'state.slice(0, 0)',
 ]) {
   test('a derived string or array keeps its value and just the window header: ' + expression, async t => {
     const h = await engine(t);
     const result = await h.call(filtered(expression));
     assert.equal(result.isError, false);
-    if (!expression.includes('false') && !expression.includes('0, 0')) assert.match(output(result), /Row 7/);
+    assert.match(output(result), /Row 7/);
     assert.match(output(result), /Window: "Fixture", App: Fixture Editor\./);
     assert.doesNotMatch(output(result), /standard window|no change since|lines changed since|Row 99|sleight:filtered/);
+  });
+}
+
+for (const expression of ['state.split("\\n").filter(() => false)', 'state.slice(0, 0)', '"  "']) {
+  test('an empty derived value keeps the window instead of leaving only a header: ' + expression, async t => {
+    const h = await engine(t);
+    const result = await h.call(filtered(expression));
+    assert.equal(result.isError, false);
+    assert.match(output(result), /standard window|no change since|lines changed since/);
+    assert.doesNotMatch(output(result), /sleight:filtered/);
   });
 }
 

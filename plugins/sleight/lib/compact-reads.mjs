@@ -43,6 +43,8 @@ export function filteredReadCode(code, mark = FILTERED_MARK) {
   const expression = write ? write[3].replace(/,(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*$/, '') : final.expression;
   // A computed property accepts one assignment expression, not a comma list or spread arguments.
   if (write ? !finalExpression(`({[\n${expression}\n]: 0})`) : !bareValue(expression)) return code;
+  // A bare read or read variable keeps its ordinary diff; so does autoprint's own wrapper (SLEIGHT_AUTOPRINT=1).
+  if (!write && (/^(?:await\s+)?[A-Za-z_$][\w$]*(?:\s*\.\s*getAXState\s*\([^)]*\))?$/.test(expression.trim()) || /__sleightValue/.test(expression))) return code;
   const masked = maskCode(code);
   const reads = [...masked.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*getAXState\s*\(/g)];
   if (reads.length !== 1) return code;
@@ -65,12 +67,13 @@ export function filteredReadCode(code, mark = FILTERED_MARK) {
   const __sleightLast = __sleightGuard?.reads.get(${read[1]});
   ${write ? `${write[1] ?? ''}${write[2]}(__sleightValue);` : `if (__sleightValue !== __sleightLast?.text) { ${printValueCode('__sleightValue')}; }`}
   const __sleightFiltered = __sleightLast?.emitted && __sleightLast.version === __sleightGuard.actionVersion &&
-    !__sleightGuard.failures?.length && (typeof __sleightValue === 'string' || Array.isArray(__sleightValue)) && __sleightValue !== __sleightLast.text;
+    !__sleightGuard.failures?.length && (typeof __sleightValue === 'string' ? !!__sleightValue.trim() : Array.isArray(__sleightValue) && __sleightValue.length > 0) && __sleightValue !== __sleightLast.text;
   try {
     const visible = typeof __sleightValue === 'string' ? __sleightValue : Array.isArray(__sleightValue)
       ? Object.entries(Object.getOwnPropertyDescriptors(__sleightValue))
         .filter(([key, d]) => /^(?:0|[1-9]\\d*)$/.test(key) && Number(key) < __sleightValue.length && typeof d.value === 'string').map(([, d]) => d.value) : [];
-    nodeRepl.write(${JSON.stringify(mark)} + JSON.stringify(__sleightFiltered ? { visible } : { full: true }) + '\\n');
+    // A printed bare value that can't filter needs no full mark: the ordinary diff still follows it.
+    if (__sleightFiltered || ${!!write}) nodeRepl.write(${JSON.stringify(mark)} + JSON.stringify(__sleightFiltered ? { visible } : { full: true }) + '\\n');
   } catch { /* Unserializable output keeps the ordinary result. */ }
 }` + code.slice(final.end);
 }
