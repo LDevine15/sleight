@@ -136,6 +136,22 @@ test('the task waits for the computer-use server to connect and fails clearly wh
   assert.equal(never.writes.some(w => w.startsWith('\x1b[200~')), false, 'no task text before the server connects');
 });
 
+// With tool search off, the turn-1 request froze before the computer-use client joined app state (CU2, 2026-10-17 14:15Z).
+test('the arm leaves tool search at Claude Code\'s default and the default readiness waits past the connect line', async () => {
+  const p = plan();
+  assert.equal('ENABLE_TOOL_SEARCH' in p.env, false);
+  const { defaultServerReady } = await import('../bench/world/arms/claude-cu/interactive.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'sleight-cu-ready-')), debugFile = join(dir, 'debug.log');
+  try {
+    const line = at => `${new Date(at).toISOString()} [DEBUG] MCP server "computer-use": Successfully connected (transport: stdio) in 700ms\n`;
+    assert.equal(defaultServerReady({ debugFile }), false);
+    writeFileSync(debugFile, line(Date.now()));
+    assert.equal(defaultServerReady({ debugFile }), false, 'too soon after the connect line');
+    writeFileSync(debugFile, line(Date.now() - 3000));
+    assert.equal(defaultServerReady({ debugFile }), true);
+  } finally { removeTemp(dir); }
+});
+
 test('the plan writes a debug file the readiness check reads', () => {
   const p = plan();
   assert.ok(p.debugFile); assert.deepEqual(p.args.slice(p.args.indexOf('--debug-file'), p.args.indexOf('--debug-file') + 2), ['--debug-file', p.debugFile]);

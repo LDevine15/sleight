@@ -29,7 +29,7 @@ export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), 
   const turnFile = join(armDir, `turn-${sessionId}.json`), debugFile = join(armDir, `debug-${sessionId}.log`), nonce = randomUUID();
   const env = Object.fromEntries(['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'TERM'].filter(k => typeof hostEnv[k] === 'string').map(k => [k, hostEnv[k]]));
   Object.assign(env, { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
-    ENABLE_TOOL_SEARCH: 'false', DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', TERM: 'xterm-256color',
+    DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', TERM: 'xterm-256color',
     CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1', ANTHROPIC_SMALL_FAST_MODEL: model });
   Object.assign(env, { BENCH_CU_TURN_RECEIPT: turnFile, BENCH_CU_SESSION: sessionId, BENCH_CU_NONCE: nonce,
     BENCH_CU_ALLOWED_APPS: JSON.stringify(allowedApps), BENCH_CU_ALLOWED_GRANTS: JSON.stringify(allowedGrants), BENCH_CU_CWD: cwd });
@@ -249,12 +249,20 @@ export function launchPty(plan, onOutput, { onSpawn } = {}) {
   return control;
 }
 
+// The connect line is logged before the client joins app state, and the turn-1 request takes its tools from that state, so the
+// task waits a moment past it. Tool search stays at Claude Code's default (CU2, 2026-10-17: with it off the request had no tools).
+export function defaultServerReady(p, settleMs = 2500) {
+  if (!p.debugFile || !existsSync(p.debugFile)) return false;
+  const line = /^(\S+) \[DEBUG\] MCP server "computer-use": Successfully connected/m.exec(readFileSync(p.debugFile, 'utf8'));
+  return !!line && Date.now() - Date.parse(line[1]) >= settleMs;
+}
+
 export async function runInteractive(plan, { dryRun = false, prepare = prepareInteractive, verify = verifyInteractiveCLI,
   launch = launchPty, transcript = new SessionTranscript(plan.sessionId), turnEnded = p => {
     if (!existsSync(p.turnFile)) return false;
     ordinary(p.turnFile); const receipt = JSON.parse(readFileSync(p.turnFile, 'utf8'));
     return receipt.sessionId === p.sessionId && receipt.nonce === p.nonce;
-  }, serverReady = p => existsSync(p.debugFile) && readFileSync(p.debugFile, 'utf8').includes('MCP server "computer-use": Successfully connected'),
+  }, serverReady = defaultServerReady,
   connectMs = 15000, pollMs = 100, signal, onSpawn, onEvent } = {}) {
   if (dryRun) return { dryRun: true, plan };
   if (signal?.aborted) return { type: 'result', is_error: true, result: '', reason: 'cancelled', duration_ms: 0, groupClean: true };
