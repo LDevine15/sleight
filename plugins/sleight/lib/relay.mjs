@@ -489,6 +489,8 @@ export function createRelay({
   launchSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
   launchReread = process.env.SLEIGHT_LAUNCH_REREAD === '1',
   warmRepl = false,
+  warmEngine = false,
+  openFast = false,
   onClientReply = () => {},
 }) {
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
@@ -780,7 +782,7 @@ export function createRelay({
   let browserWarmConfirmed = false;
   const privateWarmRequests = new Set();
   const replWarmup = new ReplWarmup({ enabled: warmRepl,
-    setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken }),
+    setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken, warmEngine }),
     abort: () => { browserWarmConfirmed = false; abortWarm(); },
     request: code => new Promise(resolve => {
       const id = `sleight-warm-${nextInternalId++}`;
@@ -1763,10 +1765,20 @@ export function createRelay({
     let result;
     const name = msg.params.name;
     const args = msg.params.arguments ?? {};
-    let resolved;
+    let resolved, prepared;
     if (name === 'select_window') clearSelection();
     try {
       current();
+      if (openFast && name === 'open_file' && localTools.prepareOpen) {
+        prepared = localTools.prepareOpen(args, async (parts, message, options) => {
+          const allowed = await approve(parts, message, msg.id, options);
+          current();
+          return allowed;
+        });
+        prepared.current = current;
+        // A target failure or Stop can abandon preparation before its approval settles.
+        prepared.approval.catch(() => {});
+      }
       // These tools reserve the whole app for their actions.
       const appTool = ['drag', 'hover', 'select_window', 'open_file'].includes(name);
       if (appTool) {
@@ -1796,7 +1808,7 @@ export function createRelay({
         callArgs = { ...args, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle };
       }
       result = await localTools.call(name, callArgs, async (parts, message, options) => {
-        const allowed = await approve(parts, message, msg.id, options);
+        const allowed = await (prepared?.approval ?? approve(parts, message, msg.id, options));
         current();
         if (allowed) {
           const key = leaseCalls.get(msg.id)?.key;
@@ -1805,7 +1817,7 @@ export function createRelay({
         return allowed;
       // The fourth argument stays runLocal for callLocalTool; the resolved
       // lease target rides fifth.
-      }, undefined, resolved);
+      }, undefined, resolved, prepared);
       current();
       if (msg.params.name === 'select_window' && !result.isError) {
         const value = JSON.parse(result.content.find(c => c.type === 'text')?.text ?? '{}');

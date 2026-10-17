@@ -1,8 +1,11 @@
 import { readCode } from './document-scope.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 
-export function replSetupCode({ browserChoice, scope, token = scope } = {}) {
-  const setup = readCode('void 0;', { acknowledge: true });
+export function replSetupCode({ browserChoice, scope, token = scope, warmEngine = false } = {}) {
+  const setup = readCode('void 0;', { acknowledge: true }) + (warmEngine ? `
+    // Native inventory starts the engine without acquiring a target. Never wait on it.
+    try { void Promise.resolve(cua.listApps({ emit: false })).catch(() => {}); } catch {}
+  ` : '');
   if (!browserChoice) return setup;
   const query = JSON.stringify({ extensionInstanceId: browserChoice.extensionInstanceId });
   return setup + '\n' + selectedBrowserCode(`{

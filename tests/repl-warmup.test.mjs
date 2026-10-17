@@ -100,6 +100,26 @@ test('setup code installs the guard without querying an app, browser or tab', as
   assert.equal(typeof context.__sleightDocumentGuardSetup, 'function');
 });
 
+test('engine warm-up lists apps silently without awaiting native completion or acquiring an app', async () => {
+  for (const failure of ['pending', 'reject', 'throw']) {
+    const calls = [];
+    const context = createContext({ cua: { listApps: options => {
+      calls.push(JSON.stringify(options));
+      if (failure === 'throw') throw Error('unavailable');
+      return failure === 'reject' ? Promise.reject(Error('unavailable')) : new Promise(() => {});
+    }, getApp: () => assert.fail('must not acquire an app') }, nodeRepl: { write() {} } });
+    await runInContext('(async () => {' + replSetupCode({ warmEngine: true }) + '})()', context);
+    assert.deepEqual(calls, ['{"emit":false}']);
+  }
+});
+
+test('relay engine warm-up requires its separate opt-in', async t => {
+  const h = relayFixture(t, { warmEngine: true });
+  assert.match(h.warm.params.arguments.code, /void Promise\.resolve\(cua\.listApps\(\{ emit: false \}\)\)/);
+  const off = relayFixture(t, { warmEngine: false });
+  assert.doesNotMatch(off.warm.params.arguments.code, /void Promise\.resolve\(cua\.listApps\(\{ emit: false \}\)\)/);
+});
+
 function relayFixture(t, options = {}) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const sent = [], received = [];
