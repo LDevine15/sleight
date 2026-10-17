@@ -84,18 +84,40 @@ function restorePointer(request) {
   if (Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier) !== request.front) return false;
   return Number($.CGWarpMouseCursorPosition($.CGPointMake(request.pointer.x, request.pointer.y))) === 0;
 }
-function answerOwnedSheet(sheet, pid, request) {
+function provenDontSave(node, request, what) {
   var labels = [], walk = function (node, depth) {
-    if (depth > 10 || labels.length > 300) throw new Error('Cleanup sheet budget exceeded');
+    if (depth > 10 || labels.length > 300) throw new Error('Cleanup ' + what + ' budget exceeded');
     var title = scalar(attribute(node, 'AXTitle', true)), value = scalar(attribute(node, 'AXValue', true));
     if (typeof title === 'string') labels.push(title);
     if (typeof value === 'string') labels.push(value);
     array(attribute(node, 'AXChildren', true)).forEach(function (child) { walk(child, depth + 1); });
   };
-  walk(sheet, 0);
+  walk(node, 0);
   var stem = request.path.split('/').pop().replace(/\.xlsx$/, '');
   if (!labels.some(function (label) { return label.indexOf(stem) >= 0; }) ||
-    !labels.some(function (label) { return /^(?:Don't Save|Don’t Save)$/.test(label); })) throw new Error('Owned Don\'t Save sheet unproved');
+    !labels.some(function (label) { return /^(?:Don't Save|Don’t Save)$/.test(label); })) throw new Error('Owned Don\'t Save ' + what + ' unproved');
+  return stem;
+}
+// Excel's save prompt can also be an alert window (AXDialog, no document) naming the fixture: "Want to save your changes to
+// '<fixture>.xlsx'?" (17:20Z run, where cleanup left Excel running). Answer it only when its text names this fixture.
+function answerOwnedDialog(dialog, pid, request) {
+  var stem = provenDontSave(dialog, request, 'dialog');
+  var se = Application('System Events'), processes = se.processes.whose({ unixId: pid })();
+  if (processes.length !== 1) throw new Error('System Events process identity ambiguous');
+  var candidates = [];
+  processes[0].windows().forEach(function (window) {
+    var subrole = null, texts = [];
+    try { subrole = window.subrole(); } catch (error) { subrole = null; }
+    if (subrole !== 'AXDialog') return;
+    try { texts = window.staticTexts().map(function (text) { return String(text.value()); }); } catch (error) { texts = []; }
+    if (!texts.some(function (text) { return text.indexOf(stem) >= 0; })) return;
+    window.buttons().forEach(function (button) { if (/^(?:Don't Save|Don’t Save)$/.test(button.name())) candidates.push(button); });
+  });
+  if (candidates.length !== 1) throw new Error('System Events Don\'t Save dialog target ambiguous');
+  candidates[0].click();
+}
+function answerOwnedSheet(sheet, pid, request) {
+  provenDontSave(sheet, request, 'sheet');
   // Only this owned process's fixture window, through the already-authorized System Events path.
   var se = Application('System Events'), processes = se.processes.whose({ unixId: pid })();
   if (processes.length !== 1) throw new Error('System Events process identity ambiguous');
@@ -114,9 +136,9 @@ function answerOwnedSheet(sheet, pid, request) {
 // Gentle cleanup whatever the trial left: terminate the owned process, answer only the fixture's own sheet,
 // and report the windows left (roles and sizes only) when exit is unconfirmed.
 function quit(target, pid, request) {
-  var app = $.AXUIElementCreateApplication(pid), terminateAccepted = false, answered = null, infos = [];
+  var app = $.AXUIElementCreateApplication(pid), terminateAccepted = false, answered = null, answeredDialog = false, infos = [];
   var report = function (error) {
-    return { ok: false, error: error, exited: false, terminateAccepted: terminateAccepted, answered: !!answered,
+    return { ok: false, error: error, exited: false, terminateAccepted: terminateAccepted, answered: !!answered || answeredDialog,
       left: { pid: pid, windows: describeWindows(infos, request.path) } };
   };
   var deadline = Date.now() + 30000;
@@ -124,7 +146,7 @@ function quit(target, pid, request) {
     while (Date.now() < deadline) {
       var current = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
       if (current.isNil() || current.isTerminated)
-        return { ok: true, exited: true, terminateAccepted: terminateAccepted, answered: !!answered, pointerRestored: restorePointer(request) };
+        return { ok: true, exited: true, terminateAccepted: terminateAccepted, answered: !!answered || answeredDialog, pointerRestored: restorePointer(request) };
       if (Number(current.launchDate.timeIntervalSince1970) * 1000 !== request.birth || ObjC.unwrap(current.bundleIdentifier) !== 'com.microsoft.Excel')
         throw new Error('Quit process identity changed');
       if (!terminateAccepted) terminateAccepted = !!target.terminate;
@@ -138,6 +160,10 @@ function quit(target, pid, request) {
           var front = Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier);
           // The owner's foreground app or Excel itself (a launch can activate it); never answer under another app.
           if (step === 'answer' && (front === request.front || front === pid)) { answerOwnedSheet(sheets[0], pid, request); answered = sheets[0]; }
+          var dialogs = infos.filter(function (info) { return info.subrole === 'AXDialog' && typeof info.document !== 'string'; });
+          if (step === 'none' && !answeredDialog && dialogs.length === 1 && (front === request.front || front === pid)) {
+            answerOwnedDialog(dialogs[0].element, pid, request); answeredDialog = true;
+          }
         }
       }
       delay(0.1);
