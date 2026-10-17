@@ -34,6 +34,7 @@
       "why": "claude-cu harness stopped before or during the approval card (its parser and hooks were fixed during the 2026-10-17 run); not a result of Claude's computer use"
     }
   ],
+  "filesNote": "Exclusions for sleight list exact result file names: a file prefix would also drop a new claim run started in the same minute or hour.",
   "files": [
     {
       "prefix": "2026-10-16T16-02",
@@ -54,67 +55,47 @@
       "why": "cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full"
     },
     {
-      "prefix": "2026-10-17T04-03",
+      "names": [
+        "2026-10-17T04-03-34-582Z.json",
+        "2026-10-17T06-41-24-941Z.json",
+        "2026-10-17T06-42-40-337Z.json",
+        "2026-10-17T06-45-29-936Z.json",
+        "2026-10-17T06-46-37-637Z.json"
+      ],
       "arm": "sleight",
       "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
     },
     {
-      "prefix": "2026-10-17T06-41",
-      "arm": "sleight",
-      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
-    },
-    {
-      "prefix": "2026-10-17T06-42",
-      "arm": "sleight",
-      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
-    },
-    {
-      "prefix": "2026-10-17T06-45",
-      "arm": "sleight",
-      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
-    },
-    {
-      "prefix": "2026-10-17T06-46",
-      "arm": "sleight",
-      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
-    },
-    {
-      "prefix": "2026-10-17T10-25",
+      "names": [
+        "2026-10-17T10-25-49-931Z.json",
+        "2026-10-17T10-44-56-257Z.json",
+        "2026-10-17T10-48-16-586Z.json",
+        "2026-10-17T10-48-48-934Z.json",
+        "2026-10-17T10-49-02-151Z.json",
+        "2026-10-17T10-51-44-255Z.json"
+      ],
       "arm": "sleight",
       "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
     },
     {
-      "prefix": "2026-10-17T10-44",
-      "arm": "sleight",
-      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
-    },
-    {
-      "prefix": "2026-10-17T10-48",
-      "arm": "sleight",
-      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
-    },
-    {
-      "prefix": "2026-10-17T10-49",
-      "arm": "sleight",
-      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
-    },
-    {
-      "prefix": "2026-10-17T10-51",
-      "arm": "sleight",
-      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
-    },
-    {
-      "prefix": "2026-10-17T14",
-      "arm": "sleight",
-      "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
-    },
-    {
-      "prefix": "2026-10-17T15",
-      "arm": "sleight",
-      "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
-    },
-    {
-      "prefix": "2026-10-17T16",
+      "names": [
+        "2026-10-17T14-39-23-091Z.json",
+        "2026-10-17T14-43-43-560Z.json",
+        "2026-10-17T14-45-28-564Z.json",
+        "2026-10-17T14-47-43-117Z.json",
+        "2026-10-17T14-50-10-510Z.json",
+        "2026-10-17T14-52-45-030Z.json",
+        "2026-10-17T14-54-54-758Z.json",
+        "2026-10-17T14-57-56-484Z.json",
+        "2026-10-17T14-59-43-095Z.json",
+        "2026-10-17T15-02-11-745Z.json",
+        "2026-10-17T15-05-17-680Z.json",
+        "2026-10-17T15-08-28-418Z.json",
+        "2026-10-17T15-11-03-068Z.json",
+        "2026-10-17T15-15-01-101Z.json",
+        "2026-10-17T15-16-59-851Z.json",
+        "2026-10-17T15-20-09-591Z.json"
+      ],
       "arm": "sleight",
       "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
     }
@@ -166,6 +147,17 @@
       "arm": "claude-cu",
       "before": "2026-10-17T16-01-55",
       "why": "the task gave the claude-cu arm no clipboard grant, so the hook denied its request_access (fixed in a4692c75)"
+    }
+  ],
+  "regradesNote": "A regrade replaces the reason claim-score shows for one failed run (file, arm, task, run) whose recorded reason was a harness mislabel. The run stays a failure and keeps its exclusion status; result files are never edited.",
+  "regrades": [
+    {
+      "file": "2026-10-17T15-51-43-164Z.json",
+      "arm": "claude-cu",
+      "task": "textedit-drag",
+      "run": 1,
+      "reason": "the word was not moved; the file was unchanged",
+      "why": "recorded as 'approval required' by the claude-cu harness's dialog text gate, which matched Claude's own closing prose above the input box (fixed in 96e9347d); no approval was pending"
     }
   ]
 }

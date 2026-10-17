@@ -2,6 +2,10 @@
 // Scores the native claim from bench/results/*.json with the exclusions written in bench/claim-exclusions.json, so anyone can
 // rerun the table. Per arm and task: runs, passes, median seconds of passing runs, mean seconds per attempt, and expected seconds
 // to a correct result (mean per attempt divided by pass rate). A task an arm never passed has no expected time.
+// A second section applies the claim rules in docs/status/LAWS.md: which arm pairs are within 20% of sleight, whether those have
+// 5 runs, median/range/p90 of passes, lowest-expected-time count, totals, and the wording the numbers allow.
+// claim-exclusions.json "regrades" entries ({ file, arm, task, run, reason, why }) replace the reason shown for one failed run whose
+// recorded reason was mislabelled; they never change exclusion, pass or fail, and result files stay untouched.
 //   node bench/claim-score.mjs [--since 2026-10-16T15-34] [--results <dir>] [--json]
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,15 +14,20 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const rules = JSON.parse(readFileSync(join(root, 'bench/claim-exclusions.json'), 'utf8'));
 const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
+const ME = 'sleight';
+// |a-b|/max calls more pairs "within 20%" than |a-b|/min, so it demands more 5-run top-ups: the strict reading of the LAWS rule.
+const STRICT = 'max';
 
 export function excluded(row, file, rules) {
   if (!rules.tasks.includes(row.task)) return 'not a claim task';
   if (row.skipped || row.seconds == null) return 'skipped';
   for (const r of rules.reasons) if (new RegExp(r.match, 'i').test(row.reason ?? '')) return r.why;
-  for (const f of rules.files) if (file.startsWith(f.prefix) && (!f.arm || f.arm === row.arm)) return f.why;
+  for (const f of rules.files) if ((f.names ? f.names.includes(file) : file.startsWith(f.prefix)) && (!f.arm || f.arm === row.arm)) return f.why;
   for (const w of rules.windows) if (w.tasks.includes(row.task) && (!w.arm || w.arm === row.arm) && file < w.before) return w.why;
   return undefined;
 }
+
+export const regradeFor = (row, file, rules) => (rules.regrades ?? []).find(g => g.file === file && g.arm === row.arm && g.task === row.task && g.run === row.run);
 
 export function score(rows) {
   const median = list => { const s = [...list].sort((a, b) => a - b); return s.length ? s[Math.floor((s.length - 1) / 2)] : null; };
@@ -32,18 +41,71 @@ export function score(rows) {
   return out;
 }
 
+export function claim(table, rules) {
+  const tasks = rules.tasks, others = rules.arms.filter(a => a !== ME && table[a]), stats = {}, totals = {}, pairs = [], reasons = [];
+  const off = (a, b, d) => Math.abs(a - b) / Math[d](a, b);
+  for (const arm of [ME, ...others]) {
+    for (const task of tasks) {
+      const t = table[arm]?.[task]; if (!t) continue;
+      const s = [...t.passes].sort((a, b) => a - b);
+      (stats[arm] ??= {})[task] = { runs: t.runs.length, passes: s.length, median: t.median, range: s.length ? [s[0], s.at(-1)] : null,
+        p90: t.runs.length >= 5 && s.length ? s[Math.ceil(0.9 * s.length) - 1] : null };
+    }
+    totals[arm] = tasks.every(t => table[arm]?.[t]?.expected != null) ? tasks.reduce((a, t) => a + table[arm][t].expected, 0) : null;
+  }
+  for (const task of tasks) for (const arm of others) {
+    const a = table[ME]?.[task], b = table[arm]?.[task], ea = a?.expected ?? null, eb = b?.expected ?? null, both = ea != null && eb != null;
+    const p = { task, arm, sleight: ea, other: eb, offMin: both ? off(ea, eb, 'min') : null, offMax: both ? off(ea, eb, 'max') : null,
+      runs: { [ME]: a?.runs.length ?? 0, [arm]: b?.runs.length ?? 0 } };
+    p.withinMin = both && p.offMin <= 0.2; p.withinMax = both && p.offMax <= 0.2;
+    p.short = (STRICT === 'max' ? p.withinMax : p.withinMin) ? [ME, arm].filter(n => p.runs[n] < 5).map(n => `${n} ${p.runs[n]}/5`) : null;
+    pairs.push(p);
+  }
+  const lowest = tasks.filter(task => {
+    const e = table[ME]?.[task]?.expected;
+    return e != null && others.every(arm => { const o = table[arm]?.[task]?.expected; return o == null || e < o; });
+  });
+  const majority = Math.floor(tasks.length / 2) + 1, completed = tasks.filter(t => table[ME]?.[t]?.passes.length).length;
+  if (lowest.length < majority) reasons.push(`${ME} has the lowest expected time on ${lowest.length} of ${tasks.length}; "fastest" needs ${majority}`);
+  if (totals[ME] == null) reasons.push(`${ME} has no total (a task with no pass or no runs)`);
+  else {
+    const beat = others.filter(a => totals[a] != null && totals[a] <= totals[ME]);
+    if (beat.length) reasons.push(`${ME}'s total ${totals[ME].toFixed(0)} s is not the lowest: ${beat.map(a => `${a} ${totals[a].toFixed(0)} s`).join(', ')}`);
+  }
+  const topUp = pairs.filter(p => p.short?.length);
+  if (topUp.length) reasons.push(`5 runs missing on ${topUp.length} pair(s) within 20%: ${topUp.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}`);
+  const absent = pairs.filter(p => !p.runs[p.arm]);
+  if (absent.length) reasons.push(`no runs to compare: ${absent.map(p => `${p.arm} on ${p.task}`).join(', ')}`);
+  const wording = !reasons.length ? 'fastest' : completed === tasks.length ? `completed every task, fastest on ${lowest.length} of ${tasks.length}`
+    : `completed ${completed} of ${tasks.length} tasks, fastest on ${lowest.length} of ${tasks.length} (LAWS has no wording for a missed task)`;
+  return { strict: STRICT, stats, pairs, lowest, totals, wording, reasons };
+}
+
+// A sleight exclusion by file prefix can also drop a later claim run in the same hour, and sleight's rows should be one pass.
+export function warnings(rows, rules, since) {
+  const out = [], mine = {};
+  for (const f of rules.files) if (f.prefix && (!f.arm || f.arm === ME) && f.prefix >= since) out.push(`file prefix ${f.prefix} can catch a new ${ME} run; list exact names`);
+  for (const r of rows) if (r.arm === ME) mine[r.file] = (mine[r.file] ?? 0) + 1;
+  if (Object.keys(mine).length > 1) out.push(`${ME}'s included rows come from ${Object.keys(mine).length} passes: ${Object.entries(mine).map(([f, n]) => `${f} (${n})`).join(', ')}`);
+  for (const g of rules.regrades ?? []) if (!rows.some(r => r.file === g.file && r.arm === g.arm && r.task === g.task && r.run === g.run && !r.passed))
+    out.push(`regrade ${g.file} ${g.arm} ${g.task} #${g.run} matches no included failed run`);
+  return out;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const since = arg('--since') ?? rules.since, dir = arg('--results') ?? join(root, 'bench/results'), rows = [], dropped = {};
   for (const file of readdirSync(dir).filter(f => f.endsWith('.json') && f >= since).sort()) {
     for (const row of JSON.parse(readFileSync(join(dir, file), 'utf8')).results ?? []) {
       const why = excluded(row, file, rules);
       if (why) { if (why !== 'not a claim task') dropped[why] = (dropped[why] ?? 0) + 1; continue; }
-      rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed: !!(row.passed || (row.cleanupContained && row.taskPassed)) });
+      const passed = !!(row.passed || (row.cleanupContained && row.taskPassed)), g = !passed && regradeFor(row, file, rules);
+      rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run,
+        ...(!passed && { reason: g ? g.reason : row.reason ?? 'no reason recorded', ...(g && { recorded: row.reason, regraded: g.why }) }) });
     }
   }
-  const table = score(rows);
-  if (process.argv.includes('--json')) { console.log(JSON.stringify({ since, dropped, table }, null, 1)); process.exit(0); }
-  const arms = rules.arms.filter(a => table[a]);
+  const table = score(rows), verdict = claim(table, rules), warned = warnings(rows, rules, since), failures = rows.filter(r => !r.passed);
+  if (process.argv.includes('--json')) { console.log(JSON.stringify({ since, dropped, table, claim: verdict, failures, warnings: warned }, null, 1)); process.exit(0); }
+  const arms = rules.arms.filter(a => table[a]), n = x => x == null ? '-' : x.toFixed(0), pct = x => x == null ? '-' : `${(x * 100).toFixed(1)}%`;
   console.log(`Claim score since ${since}. Cell: expected s to a correct result (passes/runs), median of passes in brackets.`);
   console.log('task'.padEnd(20) + arms.map(a => a.padStart(22)).join(''));
   for (const task of rules.tasks) console.log(task.padEnd(20) + arms.map(a => {
@@ -52,4 +114,24 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }).join(''));
   console.log('completed'.padEnd(20) + arms.map(a => `${rules.tasks.filter(t => table[a]?.[t]?.passes.length).length}/${rules.tasks.length}`.padStart(22)).join(''));
   console.log('Excluded rows:', JSON.stringify(dropped));
+
+  console.log(`\nClaim rules (docs/status/LAWS.md). Expected time = mean seconds per attempt / pass rate; none without a pass.`);
+  console.log(`Within 20% of ${ME}'s expected time, by |a-b|/min and |a-b|/max. The 5-run rule uses /${STRICT}, the denominator that marks more pairs within 20%.`);
+  console.log('task'.padEnd(20) + 'arm'.padEnd(11) + `${ME}`.padStart(8) + 'arm'.padStart(8) + '/min'.padStart(13) + '/max'.padStart(13) + '  5 runs');
+  for (const p of verdict.pairs) console.log(p.task.padEnd(20) + p.arm.padEnd(11) + n(p.sleight).padStart(8) + (p.runs[p.arm] ? n(p.other) : 'no runs').padStart(8)
+    + `${pct(p.offMin)} ${p.withinMin ? 'yes' : 'no'}`.padStart(13) + `${pct(p.offMax)} ${p.withinMax ? 'yes' : 'no'}`.padStart(13)
+    + `  ${!p.short ? 'not required' : p.short.length ? `missing: ${p.short.join(', ')}` : 'met'}`);
+  console.log('\nPasses per arm: median [min-max], p90 (nearest rank) only at 5+ runs.');
+  console.log('task'.padEnd(20) + arms.map(a => a.padStart(30)).join(''));
+  for (const task of rules.tasks) console.log(task.padEnd(20) + arms.map(a => {
+    const s = verdict.stats[a]?.[task];
+    return (!s ? 'no runs' : !s.passes ? 'no passes' : `${s.median} [${s.range[0]}-${s.range[1]}]${s.p90 != null ? ` p90 ${s.p90}` : ''}`).padStart(30);
+  }).join(''));
+  console.log('total expected s'.padEnd(20) + arms.map(a => (verdict.totals[a] == null ? 'none' : n(verdict.totals[a])).padStart(30)).join(''));
+  console.log(`\n${ME} has the lowest expected time on ${verdict.lowest.length} of ${rules.tasks.length}: ${verdict.lowest.join(', ') || 'none'}`);
+  console.log(`Wording: ${verdict.wording}`);
+  for (const r of verdict.reasons) console.log(`  not "fastest": ${r}`);
+  console.log(`\nFailed runs counted (${failures.length}):`);
+  for (const f of failures) console.log(`  ${f.arm} ${f.task} #${f.run} ${f.file}: ${f.reason}${f.regraded ? ` (regraded from "${f.recorded}": ${f.regraded})` : ''}`);
+  for (const w of warned) console.log(`Warning: ${w}`);
 }
