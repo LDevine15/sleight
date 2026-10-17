@@ -26,6 +26,9 @@ function chromeHome(t) {
   writeFileSync(join(chrome, 'Default/Preferences'), '{"owner":true}');
   writeFileSync(join(profile, 'Preferences'), '{"extensions":{"ui":{"developer_mode":true}}}');
   writeFileSync(join(profile, 'Local Extension Settings/x/000003.log'), 'token');
+  mkdirSync(join(profile, 'Local Extension Settings/fcoeoabgfenejglbffodgkkbkcdhcgfn'));
+  writeFileSync(join(profile, 'Local Extension Settings/fcoeoabgfenejglbffodgkkbkcdhcgfn/000003.log'),
+    Buffer.concat([Buffer.from('\x01\x00bridgeDeviceId\x2a"11111111-2222-4333-8444-555555555555"\x00'), Buffer.from('\x01\x0ebridgeDeviceId\x2a"44826f70-05b8-46d9-a64c-1bb491b78b9a"')]));
   writeFileSync(join(profile, 'Cache/Cache_Data/blob'), 'cache');
   writeFileSync(join(profile, 'Sessions/Session_1'), 'tabs');
   symlinkSync('/etc', join(profile, 'linked'));
@@ -89,13 +92,20 @@ test('the benchmark copy carries only that profile, without caches, the last ses
   assert.equal(statSync(join(plan.profileRoot, 'Local State')).mode & 0o777, 0o600);
 });
 
-test('Claude in Chrome gets the pinned arm\'s native host in the round folder', t => {
+test('Claude in Chrome gets the pinned arm\'s native host and its own device pin in the round folder', async t => {
   const { home } = chromeHome(t);
   const plan = realBrowserPlan({ browser: 'chrome', round: 'fixture', home, profile: 'benchmark', surface: 'claude-in-chrome' });
   assert.match(profileSourceProblems(plan).join(' '), /Claude in Chrome arm is not installed/);
   mkdirSync(plan.profileRoot, { recursive: true, mode: 0o700 });
   const { record } = prepareRealProfile(plan);
   assert.deepEqual(record.nativeHosts, ['com.anthropic.claude_code_browser_extension']);
+  assert.equal(record.claudeDeviceId, '44826f70-05b8-46d9-a64c-1bb491b78b9a', 'the newest record in the copy wins');
+  assert.equal(readFileSync(record.claudeDeviceFile, 'utf8'), '44826f70-05b8-46d9-a64c-1bb491b78b9a\n');
+  assert.equal(statSync(record.claudeDeviceFile).mode & 0o777, 0o600);
+  const { realGatePlan: replan } = await import('../bench/fowl/real-gate.mjs');
+  const deviceArms = replan({ args: { 'real-browser': 'chrome', surface: 'claude-in-chrome', 'chrome-local-state': join(home, 'Library/Application Support/Google/Chrome/Local State') },
+    tasks: [task], realBrowser: { ...plan, ...record, pid: 1 } });
+  assert.ok(deviceArms.arms[0].prompt.includes('44826f70-05b8-46d9-a64c-1bb491b78b9a'));
   const manifest = JSON.parse(readFileSync(join(plan.profileRoot, 'NativeMessagingHosts/com.anthropic.claude_code_browser_extension.json'), 'utf8'));
   assert.equal(manifest.path, join(plan.profileRoot, '../claude-native-host'));
   assert.deepEqual(manifest.allowed_origins, ['chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/']);
@@ -207,4 +217,83 @@ test('Claude in Chrome runs inside the manifest backup with a manifest already p
   await runGateAgent(arm, { guardChrome: async (value, run) => { guarded++; assert.equal(value, arm); return run(); },
     runClaude: async () => ({ exit: { code: 0 }, stdout: '{"type":"result","result":"RESULT: ok"}', stderr: '', groupClean: true }) });
   assert.equal(guarded, 1);
+});
+
+test('the benchmark copy keeps Chrome\'s keychain key so claude.ai cookies still decrypt', () => {
+  const copy = realBrowserPlan({ browser: 'chrome', round: 'fixture', profile: 'benchmark', surface: 'claude-in-chrome' });
+  assert.ok(!copy.args.includes('--use-mock-keychain'));
+  assert.ok(!copy.args.includes('--password-store=basic'));
+  assert.match(copy.profileSource.keychain, /login keychain/);
+  assert.ok(realBrowserPlan({ browser: 'chrome', round: 'fixture' }).args.includes('--use-mock-keychain'), 'fresh profiles keep the mock keychain');
+});
+
+test('evidence counts successful browser calls only, never device setup or failed calls', async () => {
+  const { browserEvidence, evidenceProblems } = await import('../bench/fowl/real-gate-grade.mjs');
+  const use = (id, name, input) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id, content, isError = false) => JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } });
+  const memory = [use('a', 'mcp__sleight-turbo__browser_open', { url: 'https://en.wikipedia.org/wiki/Mount_Kilimanjaro' }),
+    result('a', 'Turbo bench unavailable (effect unknown). Read before any retry.', true),
+    use('b', 'mcp__claude-in-chrome__select_browser', { deviceId: device }), result('b', 'Selected browser "Chrome".')].join('\n');
+  assert.deepEqual(browserEvidence(memory), { successfulCalls: 0, urls: [] });
+  const wiki = { name: 'wikipedia' };
+  assert.deepEqual(evidenceProblems({ task: wiki, evidence: browserEvidence(memory), visits: [] }),
+    ['no successful browser tool call', 'no visit of wikipedia.org recorded']);
+  const real = [use('c', 'mcp__claude-in-chrome__navigate', { url: 'https://en.wikipedia.org/wiki/Mount_Kilimanjaro' }), result('c', [{ type: 'text', text: 'Navigated' }])].join('\n');
+  const evidence = browserEvidence(real);
+  assert.equal(evidence.successfulCalls, 1);
+  assert.deepEqual(evidence.urls, ['https://en.wikipedia.org/wiki/Mount_Kilimanjaro']);
+  // Chrome and Helium need the browser's own navigation log; tool text counts only without one.
+  assert.deepEqual(evidenceProblems({ task: wiki, evidence, visits: [] }), ['no visit of wikipedia.org recorded']);
+  assert.deepEqual(evidenceProblems({ task: wiki, evidence, visits: ['https://en.wikipedia.org/wiki/Kilimanjaro'] }), []);
+  assert.deepEqual(evidenceProblems({ task: wiki, evidence, visits: null }), []);
+  assert.deepEqual(evidenceProblems({ task: { name: 'mdn' }, evidence, visits: ['https://developer.mozilla.org.evil.test/'] }), ['no visit of developer.mozilla.org recorded']);
+  assert.deepEqual(evidenceProblems({ task: { name: 'mdn' }, evidence, visits: ['https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/418'] }), []);
+  const codex = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'completed', arguments: { code: 'open https://en.wikipedia.org/' } } });
+  assert.equal(browserEvidence(codex).successfulCalls, 1);
+  assert.equal(browserEvidence(JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'failed', error: { message: 'x' } } })).successfulCalls, 0);
+});
+
+test('a lookup answered from memory fails even when its answer matches', async t => {
+  const { gradeGateTask } = await import('../bench/fowl/real-gate-grade.mjs');
+  const runner = { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) };
+  const run = { exitCode: 0, result: { result: 'RESULT: 5,895 metres' } };
+  const input = { task: { name: 'wikipedia' }, run, runner, after: {} };
+  assert.equal(gradeGateTask({ ...input, evidence: { successfulCalls: 0, urls: [] }, visits: [] }).ok, false);
+  assert.equal(gradeGateTask({ ...input, evidence: { successfulCalls: 3, urls: [] }, visits: ['https://en.wikipedia.org/wiki/Mount_Kilimanjaro'] }).ok, true);
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-ext-lookup-')));
+  const events = [];
+  const rows = await runRealGate({ args: { surface: 'codex', 'real-browser': 'chrome', out: join(dir, 'out') },
+    tasks: [{ name: 'wikipedia', browser: 'helium', prompt: 'look it up in {browser}', result: 'the height' }], runner,
+    runtime: { lockPath: join(dir, 'lock'), admit: async () => {}, startSites: async () => ({ close: async () => {} }),
+      launchBrowser: async plan => ({ ...plan, pid: 1234, stop: async () => ({ browserClosed: true, profileDeleted: true }) }),
+      checkOwner: async () => ({ ok: true }), resetBrowser: async () => ({}), observeBrowser: async () => ({}),
+      watchBrowser: async () => { events.push('watch'); return { urls: () => [], close: async () => { events.push('unwatch'); } }; },
+      runAgent: async arm => { mkdirSync(arm.dir); events.push('agent');
+        return { groupClean: true, exitCode: 0, result: { result: 'RESULT: 5,895 m' }, evidence: { successfulCalls: 0, urls: [] } }; } } });
+  process.exitCode = 0;
+  assert.deepEqual(events, ['watch', 'agent', 'unwatch']);
+  assert.equal(rows[0].outcome.ok, false);
+  assert.match(rows[0].outcome.cell, /no successful browser tool call; no visit of wikipedia.org recorded/);
+  assert.deepEqual(rows[0].navigation, { observed: true, urls: [] });
+});
+
+test('the navigation watcher records page URLs the browser reports while the agent runs', async () => {
+  const { watchNavigations } = await import('../bench/fowl/real-browser.mjs');
+  let listener; const sent = [];
+  const connection = { on: fn => { listener = fn; }, close: async () => { sent.push('close'); },
+    send: async method => { sent.push(method); return method === 'Target.getTargets' ? { targetInfos: [{ type: 'page', url: 'data:text/html,marker' }] } : {}; } };
+  const watch = await watchNavigations({}, { connect: async () => connection });
+  listener({ method: 'Target.targetInfoChanged', params: { targetInfo: { type: 'page', url: 'https://en.wikipedia.org/wiki/Kilimanjaro' } } });
+  listener({ method: 'Target.targetCreated', params: { targetInfo: { type: 'service_worker', url: 'https://worker.test/' } } });
+  assert.deepEqual(watch.urls(), ['https://en.wikipedia.org/wiki/Kilimanjaro']);
+  await watch.close();
+  assert.deepEqual(sent, ['Target.setDiscoverTargets', 'Target.getTargets', 'close']);
+});
+
+test('a turbo round on a browser binary the product refuses stops before launch', async () => {
+  const { gatePreflight } = await import('../bench/fowl/real-gate.mjs');
+  const plan = { surface: 'sleight-turbo', browser: realBrowserPlan({ browser: 'chrome', round: 'fixture' }) };
+  assert.match(gatePreflight(plan, { executable: () => 'writable by others (mode 775)' }).join(' '), /Turbo refuses .*Google Chrome \(writable by others \(mode 775\)\); the owner can run: chmod go-w/);
+  assert.deepEqual(gatePreflight(plan, { executable: () => undefined }), []);
+  assert.deepEqual(gatePreflight({ ...plan, surface: 'codex' }, { executable: () => 'writable by others (mode 775)' }), []);
 });

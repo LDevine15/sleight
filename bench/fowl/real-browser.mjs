@@ -1,6 +1,6 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { constants, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { constants, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { benchmarkProfile } from '../world/arms/chrome.mjs';
@@ -54,10 +54,13 @@ export function realBrowserPlan({ browser, round, home = homedir(), profile = 'f
     headless: false, connectionMode: 'product-remote-debugging' };
   if (profile === 'fresh' && !extension) return plan;
   const source = join(home, SUPPORT[browser]);
-  return { ...plan, ...(extension ? { surface: extension } : {}),
+  // The copy keeps Chrome's own keychain key: Claude in Chrome re-authorizes through claude.ai's cookies, which the
+  // mock keychain cannot decrypt (live smoke 2026-10-17: signed out, no connected browser).
+  const args = profile === 'benchmark' ? plan.args.filter(arg => !['--use-mock-keychain', '--password-store=basic'].includes(arg)) : plan.args;
+  return { ...plan, args, ...(extension ? { surface: extension } : {}),
     profileMode: profile === 'benchmark' ? 'benchmark-copy' : 'fresh',
     ...(profile === 'benchmark' ? { profileSource: { userDataDir: source, profileName: 'sleight benchmark',
-      copy: 'per round; caches and the last session left out', keychain: 'mock (cookies encrypted with the real keychain do not carry over)' } } : {}),
+      copy: 'per round; caches and the last session left out', keychain: 'Chrome Safe Storage in the login keychain (needs it unlocked)' } } : {}),
     // Chrome looks for native messaging hosts under the data folder it runs on, so the round's folder gets its own.
     nativeHosts: extension === 'fowlbrowser' ? [{ name: FOWL_HOST, copiedFrom: join(source, 'NativeMessagingHosts', FOWL_HOST + '.json') }]
       : extension === 'claude-in-chrome' ? [{ name: CLAUDE_HOST, host: join(dirname(profileRoot), 'claude-native-host'),
@@ -113,6 +116,16 @@ export function prepareRealProfile(plan, { copy = cpSync } = {}) {
     writeFileSync(join(plan.profileRoot, 'Local State'), JSON.stringify(state), { mode: 0o600, flag: 'wx' });
     spawnArgs.push('--profile-directory=' + folder);
     record.profileFolder = folder;
+    if (plan.surface === 'claude-in-chrome') {
+      // The extension's bridge device ID lives in its own storage, copied with the profile. The arm's device pin
+      // follows this copy, so a stale pin cannot point the arm at another browser or at nothing (live smoke 2026-10-17).
+      const id = claudeDeviceId(join(plan.profileRoot, folder));
+      if (id) {
+        record.claudeDeviceFile = join(dirname(plan.profileRoot), 'claude-in-chrome-device');
+        writeFileSync(record.claudeDeviceFile, id + '\n', { mode: 0o600, flag: 'wx' });
+        record.claudeDeviceId = id;
+      } else record.claudeDeviceId = null;
+    }
   }
   if (plan.nativeHosts?.length) {
     const hosts = join(plan.profileRoot, 'NativeMessagingHosts');
@@ -139,6 +152,19 @@ export function prepareRealProfile(plan, { copy = cpSync } = {}) {
   if (plan.loadExtensions?.length) record.loadedExtensions = plan.loadExtensions;
   spawnArgs.push(url);
   return { spawnArgs, record };
+}
+
+// Claude in Chrome keeps bridgeDeviceId in chrome.storage.local (LevelDB). The newest uncompressed record wins.
+export function claudeDeviceId(profile) {
+  const dir = join(profile, 'Local Extension Settings', 'fcoeoabgfenejglbffodgkkbkcdhcgfn');
+  let files;
+  try { files = readdirSync(dir).filter(name => /^\d+\.(?:log|ldb)$/.test(name)).sort((a, b) => parseInt(a) - parseInt(b)); } catch { return null; }
+  let found = null;
+  for (const name of files) {
+    const text = readFileSync(join(dir, name)).toString('latin1');
+    for (const match of text.matchAll(/bridgeDeviceId[\s\S]{0,24}?"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"/gi)) found = match[1].toLowerCase();
+  }
+  return found;
 }
 
 // The manifest Claude Code writes for its browser extension, same fields and order.
@@ -332,11 +358,12 @@ export async function realBrowserCommands(browser, { Socket = globalThis.WebSock
   if (!match || Number(match[1]) < 1 || Number(match[1]) > 65535) throw Error('BENCH_BROWSER_ENDPOINT_INVALID');
   const socket = new Socket(`ws://127.0.0.1:${match[1]}${match[2]}`);
   let serial = 0;
-  const pending = new Map();
+  const pending = new Map(), listeners = new Set();
   const fail = error => { for (const entry of pending.values()) entry.reject(error); pending.clear(); };
   socket.addEventListener('message', event => {
     try {
       const frame = JSON.parse(event.data), entry = pending.get(frame.id);
+      if (frame.method && frame.id === undefined) for (const listener of listeners) try { listener(frame); } catch {}
       if (!entry) return;
       pending.delete(frame.id);
       if (frame.error) entry.reject(Error(frame.error.message)); else entry.resolve(frame.result);
@@ -355,6 +382,7 @@ export async function realBrowserCommands(browser, { Socket = globalThis.WebSock
   } catch (error) { socket.close(); throw error; }
   finally { clearTimeout(timer); }
   return {
+    on(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     async send(method, params = {}) {
       if (socket.readyState !== 1) throw Error('BENCH_BROWSER_CONNECTION_CLOSED');
       const id = ++serial;
@@ -388,6 +416,18 @@ export async function observeRealBrowser(browser, { connect = realBrowserCommand
   const connection = await connect(browser);
   try { return inventory(browser, (await connection.send('Target.getTargets')).targetInfos); }
   finally { await connection.close(); }
+}
+
+// Every page URL the browser reports while an agent runs, whichever arm drives it. Graders use it as visit evidence.
+export async function watchNavigations(browser, { connect = realBrowserCommands } = {}) {
+  const connection = await connect(browser), urls = new Set();
+  const note = info => { if (info?.type === 'page' && typeof info.url === 'string' && /^https?:/i.test(info.url)) urls.add(info.url); };
+  connection.on(frame => { if (['Target.targetCreated', 'Target.targetInfoChanged'].includes(frame.method)) note(frame.params?.targetInfo); });
+  try {
+    await connection.send('Target.setDiscoverTargets', { discover: true });
+    for (const info of (await connection.send('Target.getTargets')).targetInfos) note(info);
+  } catch (error) { await connection.close().catch(() => {}); throw error; }
+  return { urls: () => [...urls], close: () => connection.close() };
 }
 
 export async function resetRealBrowser(browser, { connect = realBrowserCommands, timeoutMs = 5000 } = {}) {
