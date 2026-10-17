@@ -19,9 +19,12 @@ headline's wording to the browser race, which isn't done.
 **Fixes for the three losses, in build at the clear** (Fable loss studies 20:5xZ, items in `~/Projects/sleight-wt/ledger/LEDGER.md`,
 last section; each lane commits on its own branch, none had committed at 21:08Z, and work in progress sits uncommitted in its worktree
 under `.claude/worktrees/agent-<id>`):
-- agent-aa17fa2300d3ec00c (compact-reads, document-scope windowMatches): save confirmation when the pre-save read is a menu (the
-  27.5 s textedit-save run), the lease accepting a URL-less menu root with the same app and title, the moved-click note in calls with
-  several clicks (the excel-edit fail), the note pointing to Undo, combined `{ id, label }` locators, the stale "menu is open" note.
+- agent-aa17fa2300d3ec00c (compact-reads): done, cb88e02b on worktree-agent-aa17fa2300d3ec00c, unmerged pending a Sonnet-high review.
+  It confirms a save from the app's last standard-window read when the pre-save read was a menu or missing, drops stale "a menu is open"
+  notes, attaches the moved-click note in calls with several clicks (with Undo first in its wording), and matches combined
+  `{ id, label }` locators. The lease change for URL-less menu headers was left out (it broke 43 lease tests). The safe route is
+  letting splitMenuActions accept a read between actions, which needs a check of whether the engine's REPL keeps top-level variables
+  across calls.
 - agent-a8f6b4dfe726ba8e4 (document-scope guard policy): a light check after Return instead of a full tree read before typeText
   (`SLEIGHT_GUARD_LIGHT_RETURN`, on by default), measured at 6-8 s of reads per excel-edit run.
 - agent-a336b5cee71ace575 (relay, launch, skill): done, 044434df on worktree-agent-a336b5cee71ace575, unmerged pending a
