@@ -606,6 +606,21 @@ function trimSiblingRows(text, fullRead = '') {
   return { text: out.join('\n'), hidden };
 }
 
+// First-read hints are per document, plus the root element's ID when the tree names one:
+// two windows with one title and no URL are otherwise the same key.
+function hintKey(window, root = '') {
+  const key = documentKey(window), id = /\bID: ([^,]+)/.exec(root)?.[1];
+  return key && id ? `${key}#${id.trim()}` : key;
+}
+// One key per window section in the text (a multi-window acquisition holds several).
+function hintKeys(text) {
+  const starts = [...text.matchAll(/^Window: /gm)];
+  return starts.map((start, i) => {
+    const section = text.slice(start.index, starts[i + 1]?.index);
+    return hintKey(windowFromText(section), parse(section.split('\n')[1] ?? '').key);
+  }).filter(Boolean);
+}
+
 function trimAcquisition(text, fullRead = '', hinted = new Set()) {
   if (!hasFullTree(text) || !windowFromText(text) || /…\(\d+\)/.test(text)) return;
   const starts = [...text.matchAll(/^Window: /gm)];
@@ -641,7 +656,7 @@ function trimAcquisition(text, fullRead = '', hinted = new Set()) {
     else hidden.add(Number(match[2]));
   }
   if (!hidden.size) return;
-  const key = documentKey(windowFromText(text));
+  const key = hintKey(windowFromText(text), parse(lines[1]).key);
   out.push(`sleight: ${hidden.size} static or structural lines omitted.${hinted.has(key) ? '' : fullRead}`);
   const compacted = text.slice(0, at) + out.join('\n');
   if (compacted.length >= text.length) return;
@@ -757,9 +772,22 @@ function trimToolbars(text, code, action, fullRead = '') {
   return hidden.size ? { text: out.join('\n'), hidden } : undefined;
 }
 
+// Numbers in these tree lines that a toolbar fold may hide: the conservative superset of what trimToolbars decides per result.
+function foldableNumbers(lines) {
+  const out = new Set(), at = lines.findIndex(line => /^Window: /.test(line)), root = parse(lines[at + 1] ?? '').key;
+  if (at < 0 || !/^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(root) ||
+      textlessDocument({ root, lines: lines.slice(at) })) return out;
+  for (const group of toolbarGroups(lines)) {
+    const children = lines.slice(group.start + 1, group.end);
+    if (children.filter(line => control(parse(line).key.trim())).length > 20) for (const line of children) out.add(parse(line).num);
+  }
+  return out;
+}
+
 // Copies must match numbered lines in order, including values and indentation.
 // Keep differing snapshots, non-tree output and ambiguous windowless copies.
-function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = false) {
+// With folds on, a shorter copy that names controls the longer tree's fold hides stays: Claude asked for those lines.
+function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = false, folds = false) {
   const blocks = content.flatMap((item, index) => {
     if (item?.type !== 'text' || typeof item.text !== 'string') return [];
     return [...item.text.matchAll(/^(?:Window: [^\n]*\n)?(?:\t*\d+ [^\n]*(?:\n|$))+/gm)].map(match => {
@@ -779,6 +807,10 @@ function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = f
       if (other === block || !other.full || other.lines.length < block.lines.length ||
           (copiesOnly && other.lines.length === block.lines.length) ||
           (!allowCopies && other.lines.length !== block.lines.length)) return false;
+      if (folds && other.lines.length > block.lines.length) {
+        const folded = foldableNumbers(other.lines);
+        if (block.lines.some(line => folded.has(parse(line).num))) return false;
+      }
       let at = 0;
       for (const line of other.lines) if (line === block.lines[at] ||
           sliced && block.window && at === block.lines.length - 1 && line.startsWith(block.lines[at])) at++;
@@ -991,7 +1023,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const filter = !forceFull && !failed && !stopped && !action &&
         (typeof visible === 'string' || Array.isArray(visible) && visible.every(line => typeof line === 'string'));
       const sliced = /\.\s*slice\s*\(/.test(maskCode(code ?? ''));
-      if (compactToolbars && !filter && !failed && !stopped && !action) content = dedupeTrees(content, true, true, sliced);
+      if (compactToolbars && !filter && !failed && !stopped && !action) content = dedupeTrees(content, true, true, sliced, !forceFull && !explicitFull);
       const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
       observedInResult = undefined;
@@ -1098,20 +1130,20 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
       }
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
-      if (compactToolbars) out = dedupeTrees(out, false, !action && !failed && !stopped, sliced);
+      if (compactToolbars) out = dedupeTrees(out, false, !action && !failed && !stopped, sliced, !full && !failed && !stopped);
       if ((resultTrim || firstAcquisition || compactToolbars) && !full) for (let i = 0; i < out.length; i++) {
         const item = out[i];
         if (item?.type !== 'text' || typeof item.text !== 'string') continue;
-        const key = documentKey(windowFromText(item.text));
-        const fullRead = key && !omissionHints.has(key) ? ' A full read includes the omitted lines.' : '';
-        let trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text, fullRead)
+        const key = documentKey(windowFromText(item.text)), hints = hintKeys(item.text);
+        const fullRead = hints.some(hint => !omissionHints.has(hint)) ? ' A full read includes the omitted lines.' : '';
+        let trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text, fullRead, new Set(omissionHints))
           : resultTrim ? trimSiblingRows(item.text, fullRead) : undefined;
         if (compactToolbars && !failed && !stopped) {
           const toolbar = trimToolbars(trimmed?.text ?? item.text, code ?? action?.code, action, trimmed ? '' : fullRead);
           if (toolbar) trimmed = { text: toolbar.text, hidden: new Set([...(trimmed?.hidden ?? []), ...toolbar.hidden]) };
         }
         if (!trimmed) continue;
-        if (key) omissionHints.add(key);
+        for (const hint of hints) omissionHints.add(hint);
         const entry = seen.get(key);
         if (entry) {
           entry.valid = new Set([...(entry.valid ?? numbered(entry.lines).map(([num]) => num))].filter(num => !trimmed.hidden.has(num)));
@@ -1125,11 +1157,13 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         let window = windowFromText(text) ?? screenshotWindow;
         if (window && !window.url && !hasFullTree(text) && window.app === screenshotWindow?.app &&
             window.title === screenshotWindow.title) window = screenshotWindow;
-        if (window) screenshotWindows.add(documentKey({ title: window.title, app: window.app, url: window.url }));
+        // A tree names its window's ID; a header-only image does not, and then covers every window with that header.
+        const root = hasFullTree(text) ? parse(text.slice(text.search(/^Window: /m)).split('\n')[1] ?? '').key : '';
+        if (window) screenshotWindows.add(hintKey({ title: window.title, app: window.app, url: window.url }, root));
       }
-      const screenshotKey = documentKey(observedInResult?.window);
-      if (screenshotReads && !failed && !stopped && !action && !hasScreenshot &&
-          !screenshotHints.has(screenshotKey) && !screenshotWindows.has(screenshotKey) && textlessDocument(observedInResult)) {
+      const screenshotKey = hintKey(observedInResult?.window, observedInResult?.root);
+      if (screenshotReads && !failed && !stopped && !action && !hasScreenshot && !screenshotHints.has(screenshotKey) &&
+          !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult)) {
         screenshotHints.add(screenshotKey);
         out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
       }

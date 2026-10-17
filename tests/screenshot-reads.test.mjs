@@ -159,3 +159,15 @@ for (const mismatch of [false, true]) test('the relay associates a screenshot-on
   assert.equal(result?.isError, undefined);
   assert.equal(/Read the window with/.test(output(result.content)), mismatch);
 });
+
+test('windows with one title and no URL keep separate hint and screenshot state when the tree carries an ID', () => {
+  const win = id => tree(pane).replace('0 standard window Draft, URL: file:///tmp/draft', `0 standard window Draft, ID: ${id}`);
+  const c = createReadCompactor({ screenshotReads: true });
+  for (const [id, hinted] of [['win-a', true], ['win-a', false], ['win-b', true], ['win-b', false]]) {
+    assert.equal(read(c, win(id)).some(item => item.text === note), hinted, id + ' ' + hinted);
+  }
+  const d = createReadCompactor({ screenshotReads: true });
+  d.process([text(win('win-a')), { type: 'image', data: 'x', mimeType: 'image/png' }]);
+  assert.ok(!read(d, win('win-a')).some(item => item.text === note), 'its own screenshot suppresses the hint');
+  assert.ok(read(d, win('win-b')).some(item => item.text === note), 'another window with the same title still gets it');
+});
