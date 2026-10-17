@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 09:27 UTC, overnight sitting done; fixes for the lost claim tasks in lanes)
+## Banner (2026-10-17 11:04 UTC, sleight claim arm rerun on the fixed build; word-edit and preview-read studies)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -73,6 +73,17 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    Lanes PR1 (docs held back until the first js call), TC1 (stop message, select_window, menu Cancel, same-window menu) and SW1
    (save classification, swap note on RW1R) are running. Then review, merge, full check, and a sleight-only claim rerun (LAWS:
    a sleight fix round reruns only that arm).
+10. Fix round merged (PR1+PR1R docs held for open_file, TC1+TC1R stop wording and select_window and menu Cancel and
+   handle-bound reads, RW1+RW1R+SW1+SW1R save classification and sibling-swap note, then `5a6ba6c0` narrowing the swap note's
+   sort guard after Excel's ribbon "Sort & Filter" hid it), each reviewed by Sonnet-high agents, full check 6,191 exit 0.
+   sleight's arm reran in Puddle window w-rerun-1017 (10:25 to 10:59Z, released early). Pre-fix sleight rows are excluded in
+   bench/claim-exclusions.json (window exclusions can now name one arm). Score (`sitting-1017/claim-score-rerun.txt`): sleight
+   fastest on 6 of 9 (calculator-click 7, calculator-menu 12, textedit-drag 44, finder-move 34, textedit-calculator 31 against
+   lcu 33, excel-edit 89 at 4/5 against Codex 136), textedit-save tied with lcu at 11, preview-read lost (6 against Peekaboo 4),
+   word-edit lost (509 at 1/3 against lcu 120). A study found word-edit's failures were model variance on two existing Word and
+   engine behaviors (typing after a click landing in the body, and an AX-opened menu loop with no warning). WM1 (lane) adds both
+   warnings. A preview-read study of Peekaboo's `see` is running. A leftover Calculator from the claude-cu test blocked the first
+   Calculator setups, which were rerun.
 9. Claude computer-use hook test (owner away, 09:19 to 09:26 UTC): inconclusive. In the native claude-cu arm (Claude Code
    2.1.289) Haiku 5.5 didn't call a tool in three tries, even when told to call ToolSearch first; the CLI also warns that
    "claude-haiku-5-5" isn't in its model catalog. The PermissionRequest hook didn't run. The arm itself needs fixing before the
