@@ -236,12 +236,16 @@ function cleanupRead(operation, state, clock) {
   }
 }
 
-function validateOwnedFixture(window, request, app, api, focus) {
+function validateOwnedFixture(window, request, app, api, focus, sibling) {
   var epoch;
   do {
     epoch = api.readEpoch ? api.readEpoch() : 0;
     if (!api.exists(window) || !api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
-    if (focus && !api.equal(api.focused(app), window)) throw new Error('Owned document lost focus; cleanup refused');
+    if (focus) {
+      var focused = api.focused(app);
+      if (!api.equal(focused, window) && !(sibling && api.equal(focused, sibling) &&
+          api.text(sibling, 'AXTitle').indexOf(request.token) !== -1)) throw new Error('Owned document lost focus; cleanup refused');
+    }
     // Any waited read may have made an earlier check stale. Repeat all checks
     // before allowing the existing action to use the retained reference.
   } while (api.readEpoch && api.readEpoch() !== epoch);
@@ -327,8 +331,13 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
   var identity = function () { noDialog(); validateOwnedFixture(window, request, app, api, false); };
   step('close');
   if (request.mode === 'document') {
-    raiseOverSibling(window, request, app, api);
-    var validate = function () { noDialog(); validateOwnedFixture(window, request, app, api, true); };
+    var sibling = raiseOverSibling(window, request, app, api);
+    var validate = function () {
+      noDialog();
+      // A cold-launch button targets this window even when its sibling keeps focus. A menu still requires this window.
+      validateOwnedFixture(window, request, app, api, true,
+        api.closesDocumentByButton && api.closesDocumentByButton() ? sibling : null);
+    };
     validate();
     api.closeDocument(app, validate, request, window);
   } else api.closeButton(window, identity);
@@ -351,6 +360,7 @@ function raiseOverSibling(window, request, app, api) {
   if (!focused || api.equal(focused, window) || api.text(focused, 'AXTitle').indexOf(request.token) === -1) return;
   api.raise(window);
   for (var attempt = 0; attempt < 20 && !api.equal(api.focused(app), window); attempt++) api.wait();
+  return focused;
 }
 
 function closeDocumentSafely(app, request, validate, api) {
@@ -593,10 +603,11 @@ function nativeAX(state, clock) {
       if (validate) validate();
       press(button);
     },
+    closesDocumentByButton: function () { return !!(state && state.setupCase === 'cold-launch'); },
     closeDocument: function (app, validate, request, window) {
       var closeButton = this.closeButton;
       closeDocumentSafely(app, request, validate, {
-        button: window && state && state.setupCase === 'cold-launch' ? function (check) { closeButton(window, check); } : undefined,
+        button: window && this.closesDocumentByButton() ? function (check) { closeButton(window, check); } : undefined,
         menu: function (target, beforePress) { fileMenu(target, ['Close Selected PDF Document', 'Close'], beforePress, request.refuseDialogs); },
         activate: function (target) {
           if (clock && clock.check) clock.check();

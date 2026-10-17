@@ -1491,21 +1491,55 @@ test('the app dialog scan skips a dialog that disappears while it is read', () =
 });
 
 test('document cleanup raises its own window only over a sibling fixture window of the same run', () => {
-  for (const [label, siblingTitle, expect] of [['sibling', 'Source-nonce.txt', 'closed'], ['stranger', 'Notes.txt', 'refused']]) {
-    const owned = {}, sibling = {}, actions = [];
+  for (const [label, siblingTitle, setupCase, followsRaise, expect] of [
+    ['sibling follows', 'Source-nonce.txt', 'already-running', true, 'closed'],
+    ['stranger', 'Notes.txt', 'already-running', true, 'refused'],
+    ['cold stranger', 'Notes.txt', 'cold-launch', false, 'refused'],
+    ['cold sibling stays focused', 'Source-nonce.txt', 'cold-launch', false, 'closed'],
+    ['running sibling stays focused', 'Source-nonce.txt', 'already-running', false, 'refused'],
+  ]) {
+    const owned = {}, sibling = {}, button = {}, actions = [];
     let focused = sibling, exists = true;
     const fixture = cleanupNative((element, attribute) => {
       if (attribute === 'AXFocusedWindow') return { value: focused };
       if (element === sibling) return { value: attribute === 'AXTitle' ? siblingTitle : attribute === 'AXRole' ? 'AXWindow' : null };
+      if (attribute === 'AXCloseButton') { assert.equal(element, owned); return { value: button }; }
       return { value: attribute === 'AXRole' ? exists ? 'AXWindow' : '' : attribute === 'AXTitle' ? 'Target-nonce.txt' : null };
-    });
-    fixture.native.AXUIElementPerformAction = (element, action) => { actions.push(action); if (action === 'AXRaise' && element === owned) focused = owned; return 0; };
+    }, { setupCase });
+    fixture.native.AXUIElementPerformAction = (element, action) => {
+      actions.push(action);
+      if (action === 'AXRaise') { assert.equal(element, owned); if (followsRaise) focused = owned; }
+      else { assert.equal(action, 'AXPress'); assert.equal(element, button); exists = false; }
+      return 0;
+    };
     fixture.native.AXUIElementSetAttributeValue = () => 0;
-    const api = { ...fixture.api, wait() {}, closeDocument: (_app, validate) => { validate(); actions.push('close'); exists = false; } };
+    const api = { ...fixture.api, wait() {} };
+    if (setupCase !== 'cold-launch') api.closeDocument = (_app, validate) => { validate(); actions.push('close'); exists = false; };
     const close = () => fixture.sandbox.closeOwnedWindow(owned, { mode: 'document', token: 'nonce' }, {}, api);
-    if (expect === 'closed') { close(); assert.deepEqual(actions, ['AXRaise', 'close'], label); }
-    else { assert.throws(close, /lost focus/); assert.deepEqual(actions, [], label); }
+    if (expect === 'closed') { close(); assert.deepEqual(actions, ['AXRaise', setupCase === 'cold-launch' ? 'AXPress' : 'close'], label); }
+    else { assert.throws(close, /lost focus/, label); assert.deepEqual(actions, siblingTitle === 'Notes.txt' ? [] : ['AXRaise'], label); }
   }
+});
+
+for (const change of ['document', 'focus', 'sibling identity', 'dialog']) test(`cold-launch sibling cleanup refuses a changed ${change} during close-button lookup`, () => {
+  const owned = {}, sibling = {}, stranger = {}, button = {}, actions = [];
+  let changed = false;
+  const fixture = cleanupNative((element, attribute) => {
+    if (attribute === 'AXFocusedWindow') return { value: changed && change === 'focus' ? stranger : sibling };
+    if (attribute === 'AXCloseButton') { assert.equal(element, owned); changed = true; return { value: button }; }
+    if (attribute === 'AXTitle') return { value: changed && (change === 'document' && element === owned ||
+      change === 'sibling identity' && element === sibling) ? 'Unrelated.txt' : element === sibling ? 'Source-nonce.txt' : 'Target-nonce.txt' };
+    return { value: attribute === 'AXRole' ? 'AXWindow' : null };
+  }, { setupCase: 'cold-launch' });
+  fixture.native.AXUIElementPerformAction = (element, action) => {
+    assert.equal(element, owned); assert.equal(action, 'AXRaise'); actions.push(action); return 0;
+  };
+  fixture.native.AXUIElementSetAttributeValue = () => 0;
+  const api = { ...fixture.api, wait() {}, dialog: () => changed && change === 'dialog' ? [{}] : [] };
+  assert.throws(() => fixture.sandbox.closeOwnedWindow(owned,
+    { mode: 'document', token: 'nonce', refuseDialogs: true }, {}, api), /identity changed|lost focus|dialog present/);
+  assert.equal(changed, true, 'must reach close-button lookup before refusing');
+  assert.deepEqual(actions, ['AXRaise']);
 });
 
 test('document close in an app this run launched uses the window close button and never opens a menu', () => {
