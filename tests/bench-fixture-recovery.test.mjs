@@ -8,7 +8,7 @@ import { openFixture } from '../bench/real-fixture.mjs';
 import { runInNewContext } from 'node:vm';
 
 function source() {
-  const sandbox = { ObjC: { import() {}, unwrap: value => value } };
+  const sandbox = { ObjC: { import() {}, unwrap: value => value, deepUnwrap: value => value } };
   runInNewContext(readFileSync(new URL('../bench/real-fixture.js', import.meta.url), 'utf8'), sandbox);
   return sandbox;
 }
@@ -65,7 +65,7 @@ for (const kind of ['foreign path', 'absent path', 'foreign title', 'two sheets'
   });
 }
 
-test('observation ignores only the safe sheet attached to the identified fixture', () => {
+test('cleanup ignores only the safe sheet attached to the identified fixture', () => {
   const f = saveFixture({ preexisting: true });
   assert.equal(f.api.dialog(f.app, f.window, f.request).length, 0);
   f.app.AXFocusedWindow = f.sheet;
@@ -95,7 +95,8 @@ function processes() {
     wait() {},
   };
   for (const app of apps) Object.defineProperty(app, 'terminate', { get() { events.push(`quit:${app.processIdentifier}`); app.exited = true; return true; } });
-  const request = { bundle: 'test.editor', fixtureDir: '/run', startedAtMs: 100, runToken: 'nonce', launched: true, running: false, refuseDialogs: true };
+  api.cgWindowCount = pid => apps.find(app => app.processIdentifier === pid).windows.length;
+  const request = { bundle: 'test.editor', fixtureMode: 'document', pids: [42, 43], fixtureDir: '/run', startedAtMs: 100, runToken: 'nonce', launched: true, running: false, refuseDialogs: true };
   const clock = { now: () => 300, check() {}, emit() {}, wait() {} };
   return { sandbox, apps, api, request, clock, events,
     recover() { return sandbox.recoverFixtureApplications(request, api, clock); } };
@@ -264,8 +265,159 @@ test('the native recovery entrypoint uses app inventory and emits a receipt afte
   f.native.AXUIElementSetMessagingTimeout = () => {};
   f.native.AXUIElementPerformAction = button => { button.app.AXWindows = []; button.window.AXRole = ''; return 0; };
   f.native.NSFileHandle = { fileHandleWithStandardOutput: { writeData: value => events.push(JSON.parse(value)) } };
+  f.native.CGWindowListCopyWindowInfo = options => {
+    assert.equal(options, 0, 'include off-screen windows');
+    return apps.flatMap(app => app.exited ? [] : app.AXWindows.map(() => ({ kCGWindowOwnerPID: app.processIdentifier, kCGWindowLayer: 0 })));
+  };
+  f.native.kCGWindowListOptionAll = 0; f.native.kCGNullWindowID = 0;
   f.sandbox.$ = Object.assign(value => ({ toString: () => value, dataUsingEncoding: () => value }), f.native);
-  f.sandbox.run([JSON.stringify({ mode: 'recover', bundle, app: 'Editor', fixtureDir: '/run', runToken: 'nonce', startedAtMs: 100, running: false, launched: true })]);
+  f.sandbox.run([JSON.stringify({ mode: 'recover', fixtureMode: 'document', pids: [42, 43], bundle, app: 'Editor', fixtureDir: '/run', runToken: 'nonce', startedAtMs: 100, running: false, launched: true })]);
   assert.equal(apps.every(app => app.exited), true);
   assert.deepEqual(events.at(-1), { stage: 'recovered', pids: [42, 43] });
+});
+
+test('in-task observation reports the owned save sheet instead of hiding it', () => {
+  const f = saveFixture({ preexisting: true });
+  const state = { observation: {} };
+  const api = f.sandbox.nativeAX(state, { check() {}, cleanupRequested: () => false });
+  const found = api.dialog(f.app, f.window, { ...f.request, refuseDialogs: false, stopOnAppDialog: true });
+  assert.equal(found.length, 1);
+  assert.equal(found[0].category, 'application-result');
+  assert.equal(found[0].stop, false);
+});
+
+test('the retained helper emits the owned save-sheet app-dialog event during the task', () => {
+  const f = saveFixture(), events = [];
+  let command = 'opened';
+  Object.assign(f.app, { processIdentifier: 42, bundleIdentifier: 'com.microsoft.Word', isFinishedLaunching: true });
+  f.native.AXIsProcessTrusted = () => true;
+  f.native.NSRunningApplication = { runningApplicationsWithBundleIdentifier: () => ({ count: 1, objectAtIndex: () => f.app }) };
+  f.native.AXUIElementCreateApplication = () => f.app;
+  f.native.AXUIElementSetMessagingTimeout = () => {};
+  f.native.NSData = { dataWithContentsOfFile: () => ({ isNil: () => false }) };
+  f.native.NSString = { alloc: { initWithDataEncoding: () => JSON.stringify({ command }) } };
+  f.native.NSFileHandle = { fileHandleWithStandardOutput: { writeData: value => {
+    const event = JSON.parse(value); events.push(event);
+    if (event.stage === 'ready') f.window.AXSheets = [f.sheet];
+    if (event.stage === 'app-dialog') command = 'close';
+  } } };
+  let waits = 0;
+  f.native.NSThread.sleepForTimeInterval = () => { assert.ok(++waits < 10, 'observation must record the sheet'); };
+  f.sandbox.$ = Object.assign(value => ({ toString: () => value, dataUsingEncoding: () => value }), f.native);
+  f.sandbox.run([JSON.stringify({ ...f.request, app: 'Editor', bundle: 'com.microsoft.Word', control: 'fake',
+    refuseDialogs: false, stopOnAppDialog: true })]);
+  assert.equal(events.find(event => event.stage === 'app-dialog')?.appDialog.category, 'application-result');
+  assert.equal(events.find(event => event.stage === 'app-dialog')?.appDialog.stop, false);
+  assert.equal(events.at(-1).stage, 'closed');
+});
+
+test('the native CG inventory counts all layer-zero windows for only the requested pid', () => {
+  const f = saveFixture();
+  f.native.kCGWindowListOptionAll = 0; f.native.kCGNullWindowID = 0;
+  f.native.CGWindowListCopyWindowInfo = (options, relativeTo) => {
+    assert.equal(options, 0); assert.equal(relativeTo, 0);
+    return [{ kCGWindowOwnerPID: 42, kCGWindowLayer: 0, kCGWindowIsOnscreen: true },
+      { kCGWindowOwnerPID: 42, kCGWindowLayer: 0, kCGWindowIsOnscreen: false },
+      { kCGWindowOwnerPID: 42, kCGWindowLayer: 1 }, { kCGWindowOwnerPID: 43, kCGWindowLayer: 0 }];
+  };
+  assert.equal(f.api.cgWindowCount(42), 2);
+  f.native.CGWindowListCopyWindowInfo = () => null;
+  assert.throws(() => f.api.cgWindowCount(42), /unavailable/);
+});
+
+test('stopOnAppDialog cleanup also discards an existing owned curly save sheet', () => {
+  const f = saveFixture({ preexisting: true, label: 'Don’t Save' });
+  f.request.refuseDialogs = false; f.request.stopOnAppDialog = true;
+  f.sandbox.closeOwnedWindow(f.window, f.request, f.app, f.api);
+  assert.deepEqual(f.presses, [f.button], 'do not send Close again to an existing save sheet');
+});
+
+test('recovery forces dialog inspection even when the outer request has no dialog flags', () => {
+  const f = processes();
+  f.apps[1].windows = [];
+  delete f.request.refuseDialogs;
+  f.api.dialog = (app, _window, request) => app === f.apps[1] && request.refuseDialogs ? [{}] : [];
+  assert.throws(() => f.recover(), /dialog/);
+  assert.deepEqual(f.events, []);
+});
+
+test('recovery refuses an empty unrecorded process despite its recent launch', () => {
+  const f = processes();
+  f.apps[1].windows = []; f.request.pids = [42];
+  assert.throws(() => f.recover(), /ownership|recorded/i);
+  assert.deepEqual(f.events, []);
+});
+
+test('recovery permits an empty process only with its recorded lease pid', () => {
+  const f = processes(); f.apps[1].windows = [];
+  f.recover();
+  assert.deepEqual(f.events, ['close:42', 'quit:42', 'quit:43']);
+});
+
+for (const phase of ['inventory', 'quit']) test(`recovery refuses an AX-invisible CG window at ${phase}`, () => {
+  const f = processes();
+  f.api.cgWindowCount = pid => {
+    const app = f.apps.find(app => app.processIdentifier === pid);
+    return app.windows.length + (pid === 43 && (phase === 'inventory' || f.events.length === 2) ? 1 : 0);
+  };
+  assert.throws(() => f.recover(), /window.*inventory|extra.*window/i);
+  assert.equal(f.events.some(event => event.startsWith('quit')), false);
+});
+
+for (const fixtureMode of ['window', 'folder', 'inherit', undefined]) test(`native recovery refuses ${fixtureMode} fixtures`, () => {
+  const f = processes(); f.request.fixtureMode = fixtureMode;
+  assert.throws(() => f.recover(), /document|identity/);
+  assert.deepEqual(f.events, []);
+});
+
+test('each parent recovery sends its own lease start and all recorded handoff pids', async t => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now++);
+  const dir = mkdtempSync(join(tmpdir(), 'fc2r-parent-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ctx = { dir, nonce: 'nonce', fixtureStartedAtMs: 1 }, started = [], recovered = [];
+  const options = {
+    helper: async () => ({ command: 'fake', args: [] }), open: async () => {},
+    run: async (_command, args, options) => {
+      const request = JSON.parse(args.at(-1));
+      if (request.mode === 'recover') {
+        recovered.push(request);
+        return { groupClean: true, exit: { code: 0 }, stdout: '{"stage":"recovered"}\n' };
+      }
+      started.push(request.startedAtMs);
+      options.onStdout('{"stage":"armed","running":false,"pid":40,"pids":[39,40]}\n' +
+        '{"stage":"process-handoff","pid":42,"pids":[40,42],"processHandoff":{"fromPid":40,"toPid":42}}\n{"stage":"ready"}\n');
+      return new Promise(resolve => options.signal.addEventListener('abort', () => resolve({ groupClean: true, exit: { code: 1 } }), { once: true }));
+    },
+  };
+  const request = { app: 'Editor', bundle: 'test.editor', mode: 'document', target: join(dir, 'File-nonce.txt'), token: 'nonce' };
+  const first = await openFixture(ctx, request, options);
+  const second = await openFixture(ctx, request, options);
+  await first.recover(); await second.recover();
+  assert.notEqual(started[0], started[1]);
+  assert.deepEqual(recovered.map(request => request.startedAtMs), started);
+  for (const request of recovered) {
+    assert.equal(request.fixtureMode, 'document');
+    assert.deepEqual(request.pids.toSorted(), [39, 40, 42]);
+  }
+});
+
+for (const mode of ['window', 'folder', 'inherit']) test(`parent refuses recovery of ${mode} fixtures before collecting the helper`, async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'fc2r-scope-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let collected = false;
+  const lease = await openFixture({ dir }, { app: 'Viewer', bundle: 'test.viewer', mode }, {
+    helper: async () => ({ command: 'fake', args: [] }), open: async () => {},
+    run: async (_command, args, options) => {
+      if (JSON.parse(args.at(-1)).mode === 'recover') return { groupClean: true, exit: { code: 0 }, stdout: '{"stage":"recovered"}\n' };
+      options.onStdout('{"stage":"armed","running":false,"pid":42}\n{"stage":"ready"}\n');
+      return new Promise(resolve => options.signal.addEventListener('abort', () => {
+        collected = true; resolve({ groupClean: true, exit: { code: 0 } });
+      }, { once: true }));
+    },
+  });
+  try {
+    await assert.rejects(lease.recover(), /document/);
+    assert.equal(collected, false);
+  } finally { await lease.dispose(); }
 });

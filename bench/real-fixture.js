@@ -322,6 +322,7 @@ function closeOwnedWindow(window, request, app, api) {
 }
 
 function closeOwnedWindowSteps(window, request, app, api, step) {
+  if (request.mode === 'document' && request.stopOnAppDialog) request = Object.assign({}, request, { refuseDialogs: true });
   if (!window || !api.exists(window) || closedUnderUs(window, app, api)) return;
   step('identity');
   if (!api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
@@ -457,7 +458,7 @@ function fixtureDiscardSheet(window, request, api) {
 
 function recoverFixtureApplications(request, api, clock) {
   var root = api.path(request.fixtureDir);
-  if (request.running !== false || request.launched !== true || !(request.startedAtMs > 0) || !request.runToken || !root || root === '/') {
+  if (request.fixtureMode !== 'document' || request.running !== false || request.launched !== true || !(request.startedAtMs > 0) || !request.runToken || !root || root === '/') {
     throw new Error('Owned fixture recovery identity unconfirmed');
   }
   var original;
@@ -477,7 +478,9 @@ function recoverFixtureApplications(request, api, clock) {
         if (api.dialog(app, window, closeRequest).length) throw new Error('Application dialog present; fixture recovery refused');
         return { window: window, request: closeRequest };
       });
-      if (!windows.length && api.dialog(app, null, request).length) throw new Error('Application dialog present; fixture recovery refused');
+      if (!windows.length && (!request.pids || request.pids.indexOf(pid) === -1)) throw new Error('Empty fixture process ownership unconfirmed; recorded pid required');
+      if (!windows.length && api.dialog(app, null, Object.assign({}, request, { refuseDialogs: true })).length) throw new Error('Application dialog present; fixture recovery refused');
+      if (api.cgWindowCount(pid) > windows.length) throw new Error('Extra window in fixture process inventory; recovery refused');
       return { pid: pid, app: app, windows: windows };
     });
     return plans;
@@ -578,7 +581,7 @@ function nativeAX(state, clock) {
     }
     var found = [];
     var safeSheet;
-    try { safeSheet = owned && fixtureDiscardSheet(owned, request, { text: text, children: children, path: path }); }
+    try { safeSheet = state.cleanup && owned && fixtureDiscardSheet(owned, request, { text: text, children: children, path: path }); }
     catch (error) { if (error.code !== -25202) throw error; }
     for (var index = 0; index < candidates.length; index++) {
       var candidate = candidates[index];
@@ -674,6 +677,13 @@ function nativeAX(state, clock) {
       var result = [];
       for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
       return result;
+    },
+    cgWindowCount: function (pid) {
+      if (clock && clock.check) clock.check();
+      var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
+      if (!raw || raw.isNil && raw.isNil()) throw new Error('Fixture CG window inventory unavailable');
+      var windows = ObjC.deepUnwrap(ObjC.castRefToObject(raw));
+      return windows.filter(function (window) { return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0; }).length;
     },
     readEpoch: function () { return state && state.readEpoch || 0; },
     wait: function () { $.NSThread.sleepForTimeInterval(0.1); },

@@ -44,7 +44,6 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   ctx.signal?.throwIfAborted();
   ctx.cleanupSignal?.throwIfAborted();
   const startedAtMs = Date.now();
-  ctx.fixtureStartedAtMs ??= startedAtMs;
   ctx.windowLeases ??= [];
   const control = join(ctx.dir, `window-${ctx.windowLeases.length}-control.json`);
   const signal = ctx.signal;
@@ -70,6 +69,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   });
   const lease = {
     app: request.app,
+    pids: [],
     launched: false,
     async quit({ final = false } = {}) {
       if (lease.running !== false || !lease.launched || request.app === 'Finder' || diagnostics.appQuit) return;
@@ -112,6 +112,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       diagnostics.windowCleanupConfirmed = true;
     },
     async recover() {
+      if (request.mode !== 'document') throw new Error('Fixture recovery requires a document fixture');
       if (createdWindow || lease.running !== false || !lease.launched) throw new Error('Fixture recovery requires an app launched by this run');
       diagnostics.appQuit = false;
       diagnostics.helperCollectionConfirmed = await lease.dispose();
@@ -119,8 +120,9 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       await ctx.beforeFixtureCleanup?.();
       ctx.cleanupSignal?.throwIfAborted();
       const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', script, JSON.stringify({
-        ...request, mode: 'recover', running: lease.running, launched: lease.launched,
-        fixtureDir: ctx.dir, runToken: ctx.nonce || request.token, startedAtMs: ctx.fixtureStartedAtMs,
+        ...request, mode: 'recover', fixtureMode: request.mode, running: lease.running, launched: lease.launched,
+        fixtureDir: ctx.dir, runToken: ctx.nonce || request.token, startedAtMs,
+        pids: [...new Set([...lease.pids, lease.pid].filter(pid => Number.isInteger(pid) && pid > 0))],
       })], { signal: ctx.cleanupSignal, timeoutMs: 90000 });
       const receipt = result.stdout?.split('\n').some(line => { try { return JSON.parse(line).stage === 'recovered'; } catch { return false; } });
       if (!result.groupClean || result.exit?.code !== 0 || !receipt) throw new Error(`Owned ${request.app} fixture recovery unconfirmed${result.stderr?.trim() ? ': ' + result.stderr.trim() : ''}`);
@@ -158,7 +160,9 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         if (typeof event.running === 'boolean') { lease.running = event.running; diagnostics.running = event.running; }
         if (event.pid > 0) { lease.pid = event.pid; diagnostics.pid = event.pid; }
         if (event.bundle) { lease.bundle = event.bundle; diagnostics.observedBundle = event.bundle; }
-        if (event.pids) { lease.pids = event.pids; diagnostics.pids = event.pids; }
+        const recorded = [...(Array.isArray(event.pids) ? event.pids : []), event.pid,
+          event.processHandoff?.fromPid, event.processHandoff?.toPid].filter(pid => Number.isInteger(pid) && pid > 0);
+        if (recorded.length) { lease.pids = [...new Set([...lease.pids, ...recorded])]; diagnostics.pids = lease.pids; }
         if (event.processHandoff) diagnostics.processHandoff = event.processHandoff;
         if (event.appDialog) {
           (diagnostics.appDialogs ??= []).push(event.appDialog);
