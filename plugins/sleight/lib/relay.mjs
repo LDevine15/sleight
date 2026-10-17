@@ -59,7 +59,7 @@
 import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END } from './document-scope.mjs';
+import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, menuRoot } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -207,6 +207,27 @@ export function openMenuNote(text, prompt, repeated = false) {
   const number = selectedMenuItem(text);
   if (number) return repeated ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
     promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number (\`app.click(${number})\`); if it still stays, tell the user.`, prompt);
+}
+
+// A menu note from earlier in a call (its acquisition, or the part before a menu continuation) is stale when
+// the call's last tree shows no menu: the call's own click consumed it. excel-edit runs 1 and 5 repeated
+// it 4 to 5 times (2026-10-17).
+export function dropStaleMenuNotes(head, rest) {
+  const text = (rest ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
+  const at = text.lastIndexOf('Window: ');
+  if (at < 0) return head;
+  const tree = text.slice(at);
+  // A compacted view keeps only the root line, so a root with a Cancel action counts as a menu here.
+  if (!/^0 /m.test(tree) || /^0 [^\n]*\bSecondary Actions: [^\n]*\bCancel\b/m.test(tree) || menuRoot(tree) || openMenuNote(tree)) return head;
+  let changed = false;
+  const out = head.flatMap(item => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+    const kept = item.text.replace(/^sleight: a menu (?:is open|may (?:still )?be stuck open)\b[^\n]*(?:\n|$)/gm, '');
+    if (kept === item.text) return [item];
+    changed = true;
+    return kept.trim() ? [{ ...item, text: kept.replace(/\n+$/, '') }] : [];
+  });
+  return changed ? out : head;
 }
 
 // SLEIGHT_FIRST_CALL_BATCH=merge, under A/B. Since 668b462 a call continues into a window its own
@@ -1600,6 +1621,7 @@ export function createRelay({
       // The call re-acquired and then showed the same window whole: its acquisition tree is a duplicate. Word runs sent
       // both in every call (about 110k of 211k characters a run, 2026-10-17).
       if (msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content, splitCodes.get(msg.id), compactReacquire);
+      if (msg.result) head = dropStaleMenuNotes(head, msg.result.content);
       splitCodes.delete(msg.id);
       msg = msg.result ? { ...msg, result: { ...msg.result, content: [...head, ...(msg.result.content ?? [])] } }
         : { jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...head, { type: 'text', text: msg.error?.message ?? 'error' }] } };
