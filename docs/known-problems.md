@@ -324,6 +324,10 @@ native reference, and oversized first results defer the browser reference while 
 
 - Preservation cannot snapshot unreadable formats, file promises or more than 64 MiB, and macOS has
   no atomic compare-and-restore, so a failed Copy/Cut leaves new clipboard data alone.
+- sleight doesn't check whether a native Cut key took effect. An app that disables Cut for the
+  selection ignores the key, and the result only says so as a possibility. A click by label on a
+  disabled item stops and names the enabled items beside it, but only items at the same depth of
+  the tree.
 
 ## The engine and its helper
 
