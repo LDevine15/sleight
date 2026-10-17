@@ -42,7 +42,8 @@ test('preparation enables only the built-in server in the arm profile and preser
   const armDir = mkdtempSync(join(tmpdir(), 'sleight-cu-profile-')); t.after(() => removeTemp(armDir));
   const p = interactivePlan({ armDir, sessionId: id, prompt: 'RESULT ok' });
   mkdirSync(p.env.CLAUDE_CONFIG_DIR);
-  writeFileSync(p.configFile, JSON.stringify({ loginFixture: 'preserve', projects: { '/other': { example: 1 } } }));
+  writeFileSync(p.configFile, JSON.stringify({ loginFixture: 'preserve', projects: { '/other': { example: 1 } },
+    cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } }));
   prepareInteractive(p);
   const config = JSON.parse(readFileSync(p.configFile, 'utf8'));
   assert.equal(config.loginFixture, 'preserve');
@@ -156,6 +157,11 @@ for (const dialog of ['', 'Allow for this session', 'Trust this folder', 'Sign i
     const reasons = { 'Allow for this session': 'approval required', 'Trust this folder': 'workspace trust required', 'Sign in to Claude': 'direct-plan login required' };
     assert.equal(result.reason, reasons[dialog]);
     assert.equal(result.gateBlocked, dialog ? true : undefined);
+    if (dialog) {
+      assert.equal(result.approvalBlock?.reason, reasons[dialog]);
+      assert.ok(result.approvalBlock.cardText.includes(dialog));
+      assert.equal(result.timedOut, false);
+    }
     assert.equal(writes.length, dialog ? 1 : 2);
   });
 }
@@ -179,7 +185,9 @@ test('a RESULT line and queue prompt cannot end a turn before the Stop receipt',
 test('approval and timeout paths send no acceptance, prompt replay or exit command into a card', async () => {
   const blocked = fakeSession({ blocked: 'Allow for this session' });
   const result = await runInteractive(plan(), { prepare() {}, verify() {}, launch: blocked.launch, transcript: blocked.transcript, pollMs: 1 });
-  assert.equal(result.is_error, true); assert.match(result.reason, /approval/);
+  assert.equal(result.is_error, true); assert.equal(result.reason, 'approval required');
+  assert.equal(result.approvalBlock?.reason, 'approval required');
+  assert.equal(result.timedOut, false);
   assert.deepEqual(blocked.writes, []);
   const timeout = fakeSession({ timeout: true });
   const stopped = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, launch: timeout.launch, transcript: timeout.transcript, pollMs: 1 });
@@ -262,6 +270,8 @@ process.stdout.write('\\n❯ \\n');
 `, { mode: 0o700 });
   const prompt = 'exact task ' + 'é😀'.repeat(12000);
   const p = interactivePlan({ armDir, command, sessionId: id, prompt, timeoutMs: 10000 });
+  mkdirSync(p.env.CLAUDE_CONFIG_DIR);
+  writeFileSync(p.configFile, JSON.stringify({ cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } }));
   let terminal = '';
   const result = await runInteractive(p, { verify() {}, pollMs: 10, launch: (plan, callback) => launchPty(plan, data => { terminal += data; callback(data); }) });
   assert.equal(result.is_error, false, JSON.stringify(result) + '\n' + terminal);
@@ -293,6 +303,11 @@ for (const dialog of ['', 'Allow for this session', 'Trust this folder', 'Sign i
     assert.equal(result.is_error, !!dialog, result.reason);
     const reasons = { 'Allow for this session': 'approval required', 'Trust this folder': 'workspace trust required', 'Sign in to Claude': 'direct-plan login required' };
     assert.equal(result.reason, reasons[dialog]);
+    if (dialog) {
+      assert.equal(result.approvalBlock?.reason, reasons[dialog]);
+      assert.ok(result.approvalBlock.cardText.includes(dialog));
+      assert.equal(result.timedOut, false);
+    }
     assert.equal(writes.length, dialog ? 1 : 2);
   });
 }

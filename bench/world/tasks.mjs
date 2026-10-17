@@ -12,6 +12,12 @@ import { browserKinds, serveWorldPage, checkBrowserFixture } from './browser-fix
 export const WORLD_APPS = ['Calculator', 'com.apple.calculator', 'TextEdit', 'com.apple.TextEdit', 'Chess', 'com.apple.Chess',
   'Finder', 'com.apple.finder', 'Preview', 'com.apple.Preview', 'Microsoft Word', 'Word', 'com.microsoft.Word',
   'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium'];
+const fixtureApps = {
+  Calculator: ['Calculator', 'com.apple.calculator'], TextEdit: ['TextEdit', 'com.apple.TextEdit'], Chess: ['Chess', 'com.apple.Chess'],
+  Finder: ['Finder', 'com.apple.finder'], Preview: ['Preview', 'com.apple.Preview'],
+  'Microsoft Word': ['Microsoft Word', 'Word', 'com.microsoft.Word'], 'Microsoft Excel': ['Microsoft Excel', 'Excel', 'com.microsoft.Excel'],
+  Helium: ['Helium', 'net.imput.helium'],
+};
 const neutral = text => text.replace(/Using computer use in the background,\s*/g, '').replace(/Using computer use,?\s*/g, '');
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
 const calculatorMode = text => {
@@ -223,6 +229,7 @@ export function getWorldTasks({ defaults, real, open = openFixture }) {
   const added = ['finder-rename', 'finder-move', 'finder-create-folder'].map(id => finderTask(id, open)).concat(
     ['textedit-two-windows', 'textedit-window-drag', 'textedit-replace-save', 'textedit-replace-all', 'textedit-insert-line'].map(id => textTask(id, open)), previewTask(open));
   return [...original, ...retained, ...added, ...browserKinds.map(id => browserTask(id, open))].map(task => ({ ...task, fixtureLifecycle: true,
+    allowedApps: (task.id === 'textedit-calculator' ? ['TextEdit', 'Calculator'] : [task.app]).flatMap(app => fixtureApps[app] ?? []),
     timeoutMs: 300000, half: task.half ?? (task.id === 'textedit-calculator' ? 'cross-app' : 'native'),
     prompt: ctx => neutral(task.prompt(ctx)) }));
 }

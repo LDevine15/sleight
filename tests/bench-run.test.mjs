@@ -193,6 +193,23 @@ test('claude-cu approval refusal fails the native result and stops remaining run
   assert.match(result.saved.at(-1).results[0].reason, /approval/);
 });
 
+test('claude-cu receives only the current task fixture identities and grants and saves approval blocks', async () => {
+  const result = await runner({ arm: 'claude-cu', suite: 'world', drive: true, extraArgs: ['--owner-away'], ownerName: 'Owner Example',
+    tasks: [{ id: 'fixture', app: 'Fixture Editor', allowedApps: ['Fixture Editor', 'com.fixture.Editor'], allowedGrants: ['clipboardRead'] }],
+    driverOut: { is_error: true, gateBlocked: true, reason: 'unsupported computer-use approval card',
+      approvalBlock: { reason: 'unsupported computer-use approval card', cardText: 'Computer Use wants to control these apps\n  Terminal\nOwner Example /private/tmp/unit/private.txt' } } });
+  assert.equal(result.error, undefined);
+  const plan = result.calls.find(call => Array.isArray(call) && call[0] === 'interactive driver')[1];
+  assert.deepEqual(Array.from(plan.allowedApps ?? []), ['Fixture Editor', 'com.fixture.Editor']);
+  assert.deepEqual(Array.from(plan.allowedGrants ?? []), ['clipboardRead']);
+  const block = [...result.files].find(([path]) => path.endsWith('/approval-block.json'));
+  assert.ok(block, 'block evidence is saved in the run evidence directory');
+  assert.equal(block[1].reason, 'unsupported computer-use approval card');
+  assert.match(block[1].cardText, /Terminal/);
+  assert.doesNotMatch(block[1].cardText, /Owner Example|\/private\/tmp\/unit/);
+  assert.match(block[1].cardText, /<user> <temp>\/private.txt/);
+});
+
 test('claude-cu unconfirmed cleanup stops the pass even without a permission gate', async () => {
   const result = await runner({ arm: 'claude-cu', suite: 'world', extraArgs: ['--owner-away'], drive: true,
     driverOut: { is_error: true, reason: 'interactive task timeout', groupClean: false } });
