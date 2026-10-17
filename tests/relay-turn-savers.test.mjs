@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { mkdtempSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import * as relayModule from '../plugins/sleight/lib/relay.mjs';
+import { registerTemp } from '../scripts/temp-leftovers.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const text = value => ({ type: 'text', text: value });
@@ -91,8 +92,7 @@ test('failed open never acquires, and failed acquisition retains the successful 
 });
 
 async function saveFixture(t, scenario, action = 'await app.pressKey("super+s")') {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-tt2-save-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-tt2-save-')));
   const path = join(dir, 'note.txt'), url = pathToFileURL(path).href;
   if (scenario !== 'missing-before') { writeFileSync(path, 'fixture'); utimesSync(path, 100, 100); }
   const h = harness(t);
