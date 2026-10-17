@@ -82,10 +82,125 @@ const toPoints = (p, scale) => scale ? [p[0] / scale.x, p[1] / scale.y] : p;
 function resolveWindow(own, request) {
   const list = () => JSON.stringify(own.map(w => ({ windowId: w.id, title: w.title, bounds: w.bounds })));
   const candidates = request.windowId === undefined
-    ? own.filter(w => inside(w.bounds, at(w.bounds, toPoints(request.from, screenshotScale(request, w.bounds, w.title)))))
+    ? own.filter(w => !Array.isArray(request.from) || inside(w.bounds, at(w.bounds, toPoints(request.from, screenshotScale(request, w.bounds, w.title)))))
     : own.filter(w => w.id === request.windowId);
   if (candidates.length !== 1) throw new Error(`drag target is ${candidates.length > 1 ? 'ambiguous; supply windowId' : 'unavailable; read the window again'}. Windows: ${list()}`);
   return candidates[0];
+}
+
+const coordinate = p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
+const selectionEndpoint = p => p === 'the current text selection';
+const lineEndpoint = p => typeof p === 'string' && /^end of line [1-9]\d*$/.test(p) && Number.isSafeInteger(Number(p.slice(12)));
+const elementEndpoint = p => Number.isSafeInteger(p) && p >= 0;
+
+function elementForLine(win, line) {
+  if (typeof line !== 'string') throw new Error('element number has no observed identity; read this window again');
+  const roles = { AXButton: 'button', AXCheckBox: 'checkbox', AXRadioButton: 'radio button', AXImage: 'image',
+    AXRow: 'row', AXCell: 'cell', AXGroup: 'group', AXTextArea: 'text entry area', AXTextField: 'text field',
+    AXStaticText: 'text', AXLink: 'link', AXTable: 'table', AXOutline: 'outline', AXScrollArea: 'scroll area' };
+  const lineRole = Object.values(roles).sort((a, b) => b.length - a.length).find(role => line === role || line.startsWith(role + ' '));
+  const id = /(?:^|[, ]+)ID: ([^,\n]+)(?:,|$)/.exec(line)?.[1];
+  const description = /(?:^|[, ]+)Description: ([^,\n]+)(?:,|$)/.exec(line)?.[1];
+  const label = lineRole && line.slice(lineRole.length).trim().replace(/^(?:\([^()]*\)\s*)+/, '').split(',')[0];
+  const title = label && !/^[A-Za-z ]+:/.test(label) ? label : undefined;
+  if (!lineRole || !(id || description || title)) throw new Error('element has no supported AX name or ID; use coordinates from a fresh screenshot');
+  const matches = [];
+  let visited = 0;
+  const walk = (el, depth) => {
+    if (depth > 12 || ++visited > 300) throw new Error('AX element scan exceeded its depth or 300-element limit');
+    const role = el.role();
+    if (role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(attempt(() => el.subrole(), ''))) return;
+    const prefix = roles[role];
+    if (prefix && prefix === lineRole) {
+      if ((!id || attempt(() => el.attributes.byName('AXIdentifier').value(), null) === id) &&
+          (!description || attempt(() => el.attributes.byName('AXDescription').value(), null) === description) &&
+          (!title || attempt(() => el.name(), null) === title || attempt(() => el.attributes.byName('AXDescription').value(), null) === title)) matches.push(el);
+    }
+    for (const child of attempt(() => el.uiElements(), [])) walk(child, depth + 1);
+  };
+  walk(win, 0);
+  if (matches.length !== 1) throw new Error('element identity must match exactly one named AX element in this window; missing or ambiguous, read again');
+  return matches[0];
+}
+
+function requireAncestor(el, win, message = 'the focused text selection is outside the chosen window') {
+  for (let depth = 0; depth < 64; depth++) {
+    if ($.CFEqual(el.reference, win.reference)) return;
+    if (el.role() === 'AXWindow') break;
+    el = axElement(axAttribute(el.reference, 'AXParent'));
+  }
+  throw new Error(message);
+}
+
+// Numbers name identities from the relay's observed tree, never a fresh traversal index.
+// Text points use a nonempty glyph range; a zero-length line-end range can be at (0, 0).
+function semanticPoints(request, pid, win, main) {
+  const references = [], state = [], bounds = main.bounds;
+  let textArea;
+  const text = () => {
+    if (textArea) return textArea;
+    const app = $.AXUIElementCreateApplication(pid);
+    if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
+    const focused = axElement(axAttribute(app, 'AXFocusedUIElement'));
+    requireAncestor(focused, win);
+    if (!['AXTextArea', 'AXTextField'].includes(focused.role())) throw new Error('the current text selection is not in a text area or field');
+    const area = axTextArea(pid, null, focused.reference), value = area.value(), selection = area.selection();
+    const selected = focused.attributes.byName('AXSelectedText').value();
+    if (typeof value !== 'string' || typeof selected !== 'string' || !selected.trim() ||
+        !Number.isSafeInteger(selection.location) || !Number.isSafeInteger(selection.length) || selection.location < 0 || selection.length <= 0 ||
+        selection.location + selection.length > value.length ||
+        value.slice(selection.location, selection.location + selection.length) !== selected) throw new Error('text selection or range is unavailable or changed; read again');
+    references.push(focused.reference); state.push({ value, selected, selection });
+    return textArea = { area, value, selected, selection, bounds: clip(bounds, frame(focused)) };
+  };
+  const glyphPoint = (field, index, end) => {
+    const length = String.fromCodePoint(field.value.codePointAt(index)).length;
+    const r = field.area.rect(index, length);
+    if (!r || !Object.values(r).every(Number.isFinite) || r.Width <= 0 || r.Height <= 0 ||
+        r.X < field.bounds.X || r.Y < field.bounds.Y || r.X + r.Width > field.bounds.X + field.bounds.Width ||
+        r.Y + r.Height > field.bounds.Y + field.bounds.Height) throw new Error('text glyph geometry is unavailable or outside the window');
+    return { x: end ? r.X + r.Width - Math.min(1, r.Width / 4) : r.X + r.Width / 2, y: r.Y + r.Height / 2 };
+  };
+  const resolve = endpoint => {
+    if (coordinate(endpoint)) return toPoints(endpoint, screenshotScale(request, bounds, main.title));
+    let point;
+    if (elementEndpoint(endpoint)) {
+      const observed = request.elementWindow;
+      if (!observed || observed.title !== main.title || (observed.windowId !== undefined && observed.windowId !== main.id)) {
+        throw new Error('element number belongs to another or unobserved window; read this window again');
+      }
+      const el = elementForLine(win, request.elementLines?.[endpoint]), r = frame(el);
+      references.push(el.reference);
+      point = { x: r.X + r.Width / 2, y: r.Y + r.Height / 2 };
+      if (!inside(bounds, point)) throw new Error('resolved element endpoint is outside the chosen window');
+      const app = $.AXUIElementCreateApplication(pid), hit = Ref();
+      if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
+      const error = Number($.AXUIElementCopyElementAtPosition(app, point.x, point.y, hit));
+      if (error) throw axFailure('element endpoint hit test', error);
+      requireAncestor(axElement(ObjC.castRefToObject(hit[0])), el, 'resolved element endpoint is covered or its identity changed; read the window again');
+    } else if (selectionEndpoint(endpoint)) {
+      const field = text();
+      point = glyphPoint(field, field.selection.location + field.selected.search(/\S/u), false);
+    } else if (lineEndpoint(endpoint)) {
+      const field = text(), range = field.area.lineRange(Number(endpoint.slice(12)) - 1);
+      if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) || range.location < 0 || range.length <= 0 ||
+          range.location + range.length > field.value.length) throw new Error('line range is unavailable');
+      const line = field.value.slice(range.location, range.location + range.length).replace(/[\r\n]+$/, '');
+      if (!line.length) throw new Error('line has no final glyph; read the window and choose another target');
+      const last = [...line].at(-1);
+      point = glyphPoint(field, range.location + line.length - last.length, true);
+    } else throw new Error('invalid semantic drag endpoint');
+    if (!inside(bounds, point)) throw new Error('resolved drag point is outside the chosen window');
+    return [point.x - bounds.X, point.y - bounds.Y];
+  };
+  const from = resolve(request.from), to = resolve(request.to);
+  return { from, to, references, signature: JSON.stringify({ from, to, state, bounds: [bounds.X, bounds.Y, bounds.Width, bounds.Height] }) };
+}
+
+function checkSemantic(before, request, pid, win, main) {
+  const after = semanticPoints(request, pid, win, main);
+  if (after.signature !== before.signature || after.references.length !== before.references.length ||
+      after.references.some((el, i) => !$.CFEqual(el, before.references[i]))) throw new Error('drag element, text, selection or geometry changed before input; read the window again');
 }
 // Keep the guard's element interface, with bounded C API reads instead of an
 // Apple event for each attribute. Retain bridged elements for later readback.
@@ -329,7 +444,7 @@ function attributedTextHasAttributes(value, length, start = 0) {
 // The text area under a screen point, through the Accessibility C API, which
 // can map a point to a character and write text without the pointer or focus.
 // JXA can't pass struct pointers, so AXValues are built from an NSValue's bytes.
-function axTextArea(pid, point) {
+function axTextArea(pid, point, reference) {
   ObjC.import('ApplicationServices');
   ObjC.bindFunction('malloc', ['void*', ['unsigned long']]);
   ObjC.bindFunction('free', ['void', ['void*']]);
@@ -343,10 +458,10 @@ function axTextArea(pid, point) {
   const app = $.AXUIElementCreateApplication(pid);
   const hit = Ref();
   // An app element hit-tests only that app's windows, so a covering app doesn't matter.
-  if ($.AXUIElementCopyElementAtPosition(app, point.x, point.y, hit)) throw new Error('no accessibility element at the drop point');
+  if (!reference && $.AXUIElementCopyElementAtPosition(app, point.x, point.y, hit)) throw new Error('no accessibility element at the drop point');
   // A web text area answers the hit test with a group or static text inside it (Safari,
   // 2026-10-09), so walk up to the nearest text area or field.
-  let el = hit[0];
+  let el = reference || hit[0];
   const role = e => attempt(() => ObjC.unwrap(ObjC.castRefToObject(get(e, 'AXRole'))), '');
   for (let up = 0; up < 6 && !['AXTextArea', 'AXTextField'].includes(role(el)); up++) {
     const parent = attempt(() => get(el, 'AXParent'), null);
@@ -355,13 +470,14 @@ function axTextArea(pid, point) {
   }
   if (!['AXTextArea', 'AXTextField'].includes(role(el))) throw new Error('the drop point is not in a text area or field');
   const rangeOf = ref => { const m = /location:(\d+) length:(\d+)/.exec(described(ref)); if (!m) throw new Error('unreadable AX range'); return { location: +m[1], length: +m[2] }; };
-  const rect = index => {
-    const m = /x:([-\d.]+) y:([-\d.]+) w:([-\d.]+) h:([-\d.]+)/.exec(described(ask(el, 'AXBoundsForRange', range(index, 1))));
+  const rect = (index, length = 1) => {
+    const m = /x:([-\d.]+) y:([-\d.]+) w:([-\d.]+) h:([-\d.]+)/.exec(described(ask(el, 'AXBoundsForRange', range(index, length))));
     return m && { X: +m[1], Y: +m[2], Width: +m[3], Height: +m[4] };
   };
   return {
     value: () => ObjC.unwrap(ObjC.castRefToObject(get(el, 'AXValue'))),
     selection: () => rangeOf(get(el, 'AXSelectedTextRange')),
+    lineRange: line => rangeOf(ask(el, 'AXRangeForLine', $(line))),
     hasAttributes: (location, length, baseline) => attributedTextHasAttributes(
       ObjC.castRefToObject(ask(el, 'AXAttributedStringForRange', range(baseline, location + length - baseline))),
       location + length - baseline, location - baseline),
@@ -562,7 +678,8 @@ function run(argv) {
   try {
     const request = JSON.parse(argv[0]);
     const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
-    if (![from, to].every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)) ||
+    if (!(coordinate(from) || elementEndpoint(from) || selectionEndpoint(from)) ||
+        !(coordinate(to) || elementEndpoint(to) || lineEndpoint(to)) ||
         (request.windowId !== undefined && (!Number.isInteger(request.windowId) || request.windowId <= 0)) ||
         !Number.isInteger(steps) || steps < 1 || steps > 100 || !Number.isInteger(holdMs) || holdMs < 0 || holdMs > 5000 ||
         !Number.isInteger(settleMs) || settleMs < 0 || settleMs > 5000) throw new Error('invalid drag points, windowId or timing');
@@ -577,29 +694,36 @@ function run(argv) {
     }
     let main = resolveWindow(own, request);
     const scale = screenshotScale(request, main.bounds, main.title);
-    const pointFrom = toPoints(from, scale), pointTo = toPoints(to, scale);
+    const semantic = !coordinate(from) || !coordinate(to);
+    if ([from, to].some(elementEndpoint) && request.elementWindow?.windowId === undefined &&
+        own.filter(w => w.title === main.title).length !== 1) throw new Error('element window title is ambiguous; read the exact window again');
+    const win = semantic ? axWindow(pid, main) : null;
+    const resolved = semantic ? semanticPoints(request, pid, win, main) : null;
+    const pointFrom = resolved ? resolved.from : toPoints(from, scale), pointTo = resolved ? resolved.to : toPoints(to, scale);
+    const verifySemantic = () => { if (resolved) checkSemantic(resolved, request, pid, chosenWindow, main); };
     units = scale ? { screenshotScale: Math.round(scale.x * 1000) / 1000 }
       : { coordinates: request.screenshot ? 'window points: the latest screenshot is of another window size' : 'window points: no engine screenshot of this app yet' };
     // A drag no other app lets through is decided before any window scan: without selected text it
     // is refused below anyway, and the raise and scan took 10 to 13 s to get there (2026-10-09).
     const early = coveringApp(windows(true), main, { start: at(main.bounds, pointFrom), end: at(main.bounds, pointTo) });
     if (early && !focusedSelection(pid)) throw new Error(COVERED_NO_TEXT(early));
-    const win = axWindow(pid, main);
+    const chosenWindow = win || axWindow(pid, main);
     let build;
     try { build = backgroundBuilder(); }
     catch (e) { fallbackReason = `background unavailable: ${e.message || e}`; }
     if (build || globalThis.SLEIGHT_ACCESSIBILITY_MOVE !== false) {
       previous = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-      raiseWindow(win);
+      raiseWindow(chosenWindow);
       delay(settleMs / 1000);
-      checkWindow(main, pid, win);
-      scanned = { info: dragContent(pid, win, main.bounds, pointFrom, pointTo), bounds: main.bounds };
+      checkWindow(main, pid, chosenWindow);
+      verifySemantic();
+      scanned = { info: dragContent(pid, chosenWindow, main.bounds, pointFrom, pointTo), bounds: main.bounds };
       const points = validatePoints(scanned.info, main.bounds, pointFrom, pointTo, app);
       scanned.text = !!points.text;
       if (points.text) points.text.pid = pid;
       // Another document of this app must not receive the press: check fresh
       // own-app order at both ends, then other apps' coverage below.
-      const ordered = checkWindow(main, pid, win);
+      const ordered = checkWindow(main, pid, chosenWindow);
       exposedEndpoints(ordered, main, points, true);
       // The window server picks the drop target from what is on screen at the
       // drop point, so a window another app covers never receives a background
@@ -617,6 +741,7 @@ function run(argv) {
       // deadlock. The tests turn it off where they test the other paths.
       const byAccessibility = () => {
         if (globalThis.SLEIGHT_ACCESSIBILITY_MOVE === false) return null;
+        verifySemantic();
         let area;
         try { area = axTextArea(pid, points.end); }
         catch (e) { fallbackReason += `; accessibility move unavailable: ${e.message || e}`; return null; }
@@ -654,6 +779,7 @@ function run(argv) {
         };
         let postingError, releaseError;
         withinBudget();
+        verifySemantic();
         try {
           post(sequence[0]); delay(0.05);
           // Mark down before posting, so a posting exception still releases.
@@ -702,15 +828,16 @@ function run(argv) {
     // AXRaise alone can leave another stacked document as the app's main window.
     // Some apps expose AXMain as read-only, so coverage still decides whether
     // the raise succeeded. Never ignore a covering window of the same app.
-    raiseWindow(win);
+    raiseWindow(chosenWindow);
     // Right after the engine acts (say, selecting the text), a press that comes
     // at once doesn't take; 2 s later it does (2026-10-04). Wait for things to settle.
     delay(settleMs / 1000);
     main = windows(true).find(w => w.id === main.id && w.pid === pid && w.layer === 0);
-    if (!main || !sameBounds(frame(win), main.bounds)) throw new Error('the chosen window changed or disappeared; read it again');
+    if (!main || !sameBounds(frame(chosenWindow), main.bounds)) throw new Error('the chosen window changed or disappeared; read it again');
+    verifySemantic();
     // Reuse a text scan while the window hasn't moved; non-text endpoints are cheap to recheck.
     const info = scanned?.text && sameBounds(scanned.bounds, main.bounds) ? scanned.info
-      : dragContent(pid, win, main.bounds, pointFrom, pointTo);
+      : dragContent(pid, chosenWindow, main.bounds, pointFrom, pointTo);
     const { start, end, text } = validatePoints(info, main.bounds, pointFrom, pointTo, app);
     if (text) text.pid = pid;
     // Match the exact window at both endpoints, even for another window of
@@ -730,6 +857,7 @@ function run(argv) {
     delay(0.05);
     if (typedSince(focusedAt)) throw new Error(`the user typed while ${app} was in front, so their keys may have gone into it; nothing was pressed. Read the window again before continuing, and tell the user`);
     unchangedText();
+    verifySemantic();
     post($.kCGEventLeftMouseDown, start);
     pressed = true; didPress = true;
     delay(holdMs / 1000);

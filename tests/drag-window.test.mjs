@@ -117,6 +117,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
       const methods = { AXWindows: 'windows', AXChildren: 'uiElements', AXRole: 'role', AXSubrole: 'subrole', AXTitle: 'name', AXValue: 'value' };
       try {
         if (name === 'AXWindows') { nativeWindows ??= proc.windows(); out[0] = list(nativeWindows); }
+        else if (name === 'AXFocusedUIElement') { nativeWindows ??= proc.windows(); const win = nativeWindows[0]; out[0] = win.uiElements()[1]; parents.set(out[0], win); }
         else if (name === 'AXParent') { if (!parents.has(el)) return -25212; out[0] = parents.get(el); }
         else if (name === 'AXPosition') { const [x, y] = el.position(); out[0] = { x, y }; }
         else if (name === 'AXSize') { const [width, height] = el.size(); out[0] = { width, height }; }
@@ -146,6 +147,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     return {
       value: () => { if (ax.failValue) throw new Error('value unavailable'); return ax.changedBeforeMove ? 'owner edit\n' : text(); },
       selection: () => { if (ax.failSelection) throw new Error('selection unavailable'); return { location: text().indexOf(selected.get(11)), length: selected.get(11).length }; },
+      lineRange: line => line === 0 ? { location: 0, length: text().length } : null,
       hasAttributes: (location, length, baseline) => {
         if (ax.unreadableAttributes) throw new Error('attributed string unavailable');
         if (!ax.attributes) return !!ax.formatted;
@@ -178,6 +180,32 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
 const pastEnd = { windowId: 11, to: [150, 38.5] };
+
+test('semantic selection to line end takes the guarded pointer-free text move without a screenshot', () => {
+  const h = harness({ second: false, background: true, ax: {} });
+  const r = h.run({ windowId: 11, from: 'the current text selection', to: 'end of line 1', screenshot: [1200, 800] });
+  assert.equal(r.ok, true, r.error); assert.equal(r.path, 'accessibility');
+  assert.equal(h.values.get(11), 'beta gamma alpha\n');
+  assert.equal(h.events.length, 0); assert.equal(h.pidEvents.length, 0); assert.equal(h.activations.length, 0);
+});
+
+test('semantic requests keep ambiguous-window, toolbar and text-area guards', () => {
+  const ambiguous = harness({ background: true, ax: {} });
+  assert.match(ambiguous.run({ from: 'the current text selection', to: 'end of line 1' }).error, /ambiguous/);
+  const chrome = harness({ second: false, background: true, ax: {} });
+  const r = chrome.run({ windowId: 11, from: 'the current text selection', to: [20, 25] });
+  assert.equal(r.ok, false); assert.match(r.error, /outside.*content/);
+  assert.equal(chrome.events.length + chrome.pidEvents.length + chrome.axWrites.length, 0);
+});
+
+test('semantic text and selection changes during settle refuse before any input', () => {
+  for (const key of ['changeOnActivate', 'movedOnActivate']) {
+    const h = harness({ second: false, [key]: true, ax: { failWrite: 1 } });
+    const r = h.run({ windowId: 11, from: 'the current text selection', to: 'end of line 1' });
+    assert.equal(r.ok, false); assert.match(r.error, /changed|outside/);
+    assert.equal(h.events.filter(e => e.type === 1).length, 0);
+  }
+});
 test('timed-out toolbar role or geometry refuses before any press', () => {
   for (const name of ['AXRole', 'AXPosition']) {
     const h = harness({ background: true, nativeFailure: { name, code: -25204 } });

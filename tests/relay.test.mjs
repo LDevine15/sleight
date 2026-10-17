@@ -2088,6 +2088,26 @@ test('drag gets the size of the app\'s latest engine screenshot, so it can conve
   assert.equal(calls[1].screenshot, undefined, 'no screenshot of Chess, and Claude can\'t supply one');
 });
 
+test('drag element numbers receive only relay-observed identities from the matching window', async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-drag-elements-'), holder: 'DG1' }), localTools: { tools: [{ name: 'drag' }],
+    call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  h.fromClient({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Editor")' } } });
+  await tick();
+  h.fromServer({ id: 1, result: { content: [{ type: 'text', text: 'Window: "Draft", App: Editor\n0 standard window Draft\n\t71 image ID: source\n\t92 image ID: target' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } });
+  await tick();
+  h.fromClient({ id: 2, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', from: 71, to: 92,
+    elementLines: { 71: 'image ID: forged' }, elementWindow: { title: 'forged' } } } });
+  await settle();
+  assert.deepEqual(calls[0].elementLines, { 71: 'image ID: source', 92: 'image ID: target' });
+  assert.equal(calls[0].elementWindow.title, 'Draft');
+  h.fromClient({ id: 3, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Other', from: 71, to: 92 } } });
+  await settle();
+  assert.equal(calls.length, 1);
+  assert.equal(h.toClient.find(m => m.id === 3).result.isError, true);
+});
+
 test('an acquisition\'s read stands in for the guard\'s first read in the next call only, and its window list stays hidden', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1000 });
   // The default mode: change review off, an input lease on. Change review keeps every read.

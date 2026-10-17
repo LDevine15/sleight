@@ -174,3 +174,149 @@ test('selected text retains the original scan through an ancestor without geomet
   const info = h.context.dragContent(7, h.window(), h.bounds, [20, 40], [200, 40]);
   assert.equal(h.context.validatePoints(info, h.bounds, [20, 40], [200, 40], 'Editor').text.selected, 'alpha');
 });
+
+function semanticFixture() {
+  const h = harness(), win = h.window();
+  h.area.AXValue = 'alpha beta\ngamma delta\n';
+  h.area.AXSelectedText = 'alpha';
+  h.app.AXFocusedUIElement = h.area;
+  const text = {
+    reference: h.area, value: () => h.area.AXValue,
+    selection: () => ({ location: 0, length: h.area.AXSelectedText.length }),
+    lineRange: n => n === 0 ? { location: 0, length: 11 } : n === 1 ? { location: 11, length: 12 } : null,
+    rect: i => ({ X: 110 + (i < 11 ? i : i - 11) * 8, Y: i < 11 ? 140 : 160, Width: 8, Height: 14 }),
+  };
+  h.context.axTextArea = () => text;
+  const main = { id: 11, title: 'document', bounds: h.bounds };
+  const request = { from: 'the current text selection', to: 'end of line 2' };
+  return { ...h, text, request, resolve: (change = {}) => h.context.semanticPoints({ ...request, ...change }, 7, win, main) };
+}
+
+test('selection and one-based line end resolve from glyph geometry in window points', () => {
+  const h = semanticFixture(), points = h.resolve();
+  assert.deepEqual(Array.from(points.from), [14, 47]);
+  assert.deepEqual(Array.from(points.to), [97, 67]);
+  assert.equal(h.reads.includes('AXFocusedUIElement'), true);
+});
+
+test('semantic text endpoints refuse empty selections, blank lines, foreign focus and unreadable bounds', () => {
+  for (const change of [
+    h => { h.area.AXSelectedText = ''; },
+    h => { h.area.AXParent = { ...h.win }; },
+    h => { h.text.rect = () => null; },
+    h => { h.text.rect = () => ({ X: 99, Y: 140, Width: 8, Height: 14 }); },
+    h => { h.text.lineRange = () => ({ location: 10, length: 1 }); },
+    h => { h.text.selection = () => ({ location: 1, length: 5 }); },
+  ]) {
+    const h = semanticFixture(); change(h);
+    assert.throws(() => h.resolve(), /selection|window|geometry|line|range/i);
+  }
+  for (const to of ['end of line 0', 'end of line -1', 'end of line 1.5', 'end of line 999']) {
+    assert.throws(() => semanticFixture().resolve({ to }));
+  }
+});
+
+test('element numbers resolve observed unique AX identities, never tree traversal indices', () => {
+  const h = semanticFixture();
+  h.area.AXRole = 'AXImage'; h.area.AXIdentifier = 'source';
+  const target = { ...h.element('AXImage', 300, 180, 40, 40), AXIdentifier: 'target', AXParent: h.win };
+  h.win.AXChildren.push(target);
+  const hit = h.context.$.AXUIElementCopyElementAtPosition;
+  h.context.$.AXUIElementCopyElementAtPosition = (el, x, y, out) => {
+    if (x >= 300 && x < 340 && y >= 180 && y < 220) { out[0] = target; return 0; }
+    return hit(el, x, y, out);
+  };
+  const request = { from: 71, to: 92, elementWindow: { title: 'document', windowId: 11 },
+    elementLines: { 71: 'image ID: source', 92: 'image ID: target' } };
+  const points = h.resolve(request);
+  assert.deepEqual(Array.from(points.from), [300, 212.5]);
+  assert.deepEqual(Array.from(points.to), [220, 100]);
+  h.win.AXChildren.push({ ...target });
+  assert.throws(() => h.resolve(request), /ambiguous|exactly one/i);
+});
+
+test('element endpoints reject missing identities, other windows, chrome and unavailable geometry', () => {
+  for (const change of [
+    request => { delete request.elementLines[71]; },
+    request => { request.elementLines[71] = 'image'; },
+    request => { request.elementWindow.title = 'other'; },
+    request => { request.elementWindow.windowId = 22; },
+    (request, h) => { h.area.AXPosition = { error: -25204 }; },
+    (request, h) => { h.win.AXChildren = [h.toolbar]; h.toolbar.AXChildren = [h.area]; },
+  ]) {
+    const h = semanticFixture(); h.area.AXRole = 'AXImage'; h.area.AXIdentifier = 'source';
+    const request = { from: 71, to: [40, 60], elementWindow: { title: 'document', windowId: 11 }, elementLines: { 71: 'image ID: source' } };
+    change(request, h); assert.throws(() => h.resolve(request));
+  }
+});
+
+test('semantic revalidation refuses replacement elements, geometry and selection changes', () => {
+  for (const change of [
+    h => { h.area.AXValue = 'owner edit\n'; },
+    h => { h.area.AXSelectedText = 'alpha beta'; },
+    h => { h.text.rect = () => ({ X: 120, Y: 140, Width: 8, Height: 14 }); },
+    h => { h.app.AXFocusedUIElement = { ...h.area }; },
+  ]) {
+    const h = semanticFixture(), before = h.resolve(); change(h);
+    assert.throws(() => h.context.checkSemantic(before, h.request, 7, h.window(), { id: 11, title: 'document', bounds: h.bounds }));
+  }
+});
+
+test('text adapter asks AX for a visual line and a nonempty glyph range without hit testing or writes', () => {
+  const h = harness(), parameters = [], allocations = [];
+  const api = h.context.$;
+  Object.assign(api, {
+    malloc: () => { const buffer = {}; allocations.push(buffer); return buffer; },
+    free: buffer => { assert.equal(allocations.pop(), buffer); },
+    NSMakeRange: (location, length) => ({ location, length }),
+    NSValue: { ...api.NSValue, valueWithRange: range => ({ getValue: buffer => { buffer.range = range; } }) },
+    AXValueCreate: (type, buffer) => { assert.equal(type, 4); return buffer.range; },
+    AXUIElementCopyParameterizedAttributeValue: (el, name, arg, out) => {
+      assert.equal(el, h.area); parameters.push([name, arg]);
+      out[0] = { description: name === 'AXRangeForLine' ? 'location:11 length:12' : 'x:110 y:140 w:16 h:14' }; return 0;
+    },
+    AXUIElementSetAttributeValue: () => assert.fail('no text writes while resolving'),
+  });
+  h.context.ObjC.bindFunction = () => {};
+  const area = h.context.axTextArea(7, null, h.area);
+  assert.deepEqual(JSON.parse(JSON.stringify(area.lineRange(1))), { location: 11, length: 12 });
+  assert.deepEqual(JSON.parse(JSON.stringify(area.rect(11, 2))), { X: 110, Y: 140, Width: 16, Height: 14 });
+  assert.deepEqual(parameters[0], ['AXRangeForLine', 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(parameters[1])), ['AXBoundsForRange', { location: 11, length: 2 }]);
+  assert.equal(h.hits.length, 0); assert.equal(allocations.length, 0);
+});
+
+test('line-end geometry requests the whole last Unicode glyph and skips CRLF', () => {
+  const h = semanticFixture(), ranges = [];
+  h.area.AXValue = 'alpha\nlast 😀\r\n';
+  h.text.lineRange = () => ({ location: 6, length: h.area.AXValue.length - 6 });
+  h.text.rect = (index, length) => { ranges.push([index, length]); return { X: 110, Y: 160, Width: 16, Height: 14 }; };
+  h.resolve();
+  assert.deepEqual(ranges.at(-1), [11, 2]);
+});
+
+test('a numbered element covered by another control in the same window refuses before input', () => {
+  const h = semanticFixture(); h.area.AXRole = 'AXImage'; h.area.AXIdentifier = 'source';
+  const cover = { ...h.element('AXImage', 105, 130, 590, 365), AXParent: h.win };
+  h.context.$.AXUIElementCopyElementAtPosition = (_el, _x, _y, out) => { out[0] = cover; return 0; };
+  assert.throws(() => h.resolve({ from: 71, to: [40, 60], elementWindow: { title: 'document', windowId: 11 },
+    elementLines: { 71: 'image ID: source' } }), /covered|endpoint|identity/i);
+});
+
+test('selection ranges extending beyond the text refuse instead of using a truncated slice', () => {
+  const h = semanticFixture();
+  h.area.AXSelectedText = h.area.AXValue;
+  h.text.selection = () => ({ location: 0, length: h.area.AXValue.length + 1 });
+  assert.throws(() => h.resolve(), /selection|range/i);
+});
+
+test('numbered labels and mixed screenshot coordinates resolve without scaling AX geometry', () => {
+  for (const identity of ['title', 'description']) {
+    const h = semanticFixture(); h.area.AXRole = 'AXImage';
+    h.area[identity === 'title' ? 'AXTitle' : 'AXDescription'] = 'Source';
+    const points = h.resolve({ from: 71, to: [80, 120], screenshot: [1200, 800],
+      elementWindow: { title: 'document', windowId: 11 }, elementLines: { 71: identity === 'title' ? 'image Source' : 'image Description: Source' } });
+    assert.deepEqual(Array.from(points.from), [300, 212.5]);
+    assert.deepEqual(Array.from(points.to), [40, 60]);
+  }
+});

@@ -1836,7 +1836,16 @@ export function createRelay({
         // drag converts Claude's screenshot pixels to window points with this size (2026-10-08).
         const shot = [args.app, resolved?.app].map(a => typeof a === 'string' && screenshots.get(a.toLowerCase())).find(Boolean);
         // Per window too: a second, untitled Chess window left 3 of 13 drags unconverted (2026-10-09).
-        callArgs = { ...args, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle };
+        const numbers = [args.from, args.to].filter(Number.isInteger);
+        const observed = leaseWindow && [leaseWindow.app, leaseWindow.appId].includes(args.app) &&
+          (!resolved || resolved.appId === leaseWindow.appId) ? leaseWindow : undefined;
+        const lines = compactor.seenLines(observed, numbers);
+        if (numbers.length && (!observed || numbers.some(n => !lines?.[n] || !compactor.uniqueSeen(observed, numbers).includes(n)))) {
+          throw new Error('drag element numbers need unique identities from a read of this app window; read it again');
+        }
+        callArgs = { ...args, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
+          elementLines: lines, elementWindow: observed ? { title: observed.title,
+            windowId: observed.windowNumber ?? observed.nativeIdentity?.windowNumber } : undefined };
       }
       result = await localTools.call(name, callArgs, async (parts, message, options) => {
         const allowed = await (prepared?.approval ?? approve(parts, message, msg.id, options));
