@@ -1311,8 +1311,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? ''))) {
         ({ content, omitted: omittedReads } = omitEarlierReads(content, code));
       }
+      // Anchored to a line start: the first-call rules quote "a result says the user changed the app", and an
+      // unanchored match marked every first read as stopped, so AN4's open screenshot never fired (A/B 2, 2026-10-17).
       const stopped = content.some(item => item?.type === 'text' &&
-        /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
+        /sleight: an action in this call failed|engine's JavaScript session restarted|(?:(?:^|\n)(?:sleight: )?the user (?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
       if (compactAcquisition && acquisition && (failed || stopped)) forceFull = true;
       const firstAcquisition = compactAcquisition && acquisition && !forceFull && !explicitFull && !action &&
         windowFromText(content.filter(item => item?.type === 'text').map(item => item.text).join('\n'));
