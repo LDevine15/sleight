@@ -3,63 +3,66 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 19:45 UTC, owner away since 17:16Z, on their phone)
+## Banner (2026-10-17 21:10 UTC, flushed before the owner's clear)
 
-Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim; the owner is "focused on winning
-everything we can" (2026-10-17). Puddle is shut down, and sleight has the Mac. Build agents are Claude subagents (Opus high builds,
-Sonnet high reviews, Fable studies).
+Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
+no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. Build work runs as
+Claude subagents (Opus high builds, Sonnet high reviews, Fable studies). Nothing live is running at the clear, and no lock or hold is set.
 
-**Native claim: the scorer says "fastest"** (19:35Z, `~/Projects/sleight-wt/sitting-1017c/claim-score-final.{txt,json}`). sleight's
-final claim run (bb6f99f6, 19:07-19:32Z) passed 44 of 45, and the one failure is the Excel tab swap. After the one top-up round (claude-cu
-finder-move, Peekaboo preview-read) every pair within 20% has 5 runs. sleight has the lowest expected time on 6 of 9 and a total of
-282 s against claude-cu's 460 s. It loses textedit-save (LCU 11 against 14), preview-read (Peekaboo 4 against 5) and excel-edit
-(claude-cu 54 against 74). LAWS ties the headline's wording to the browser race, which comes next.
+**Native claim: the scorer says "fastest"** (`~/Projects/sleight-wt/sitting-1017c/claim-score-final.{txt,json}`). sleight's final
+claim run (bb6f99f6, 2026-10-17 19:07-19:32Z, results copied into the main checkout's `bench/results`) passed 44 of 45, and the one
+failure is the Excel tab swap. After the one top-up round (claude-cu finder-move, Peekaboo preview-read), every pair within 20% has 5
+runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 460 s. It loses textedit-save (LCU 11 against 14, medians
+10.5 against 10.4), preview-read (Peekaboo 4.4 against 4.6 median) and excel-edit (claude-cu 54 against 74). LAWS ties the
+headline's wording to the browser race, which isn't done.
 
-**Browser race (real windows), in progress.** The harness is `bench/fowl/rounds.sh --world --real-browser <browser> --surface <arm>`,
-with arms sleight-turbo (Chrome, Helium) or sleight (Safari, Firefox), lcu, cua, peekaboo and codex. Dry runs pass for all four
-browsers, and all arm logins read as logged in. The first live tries found two harness bugs, now with a build agent. Firefox spawned
-as our child shows "Profile Missing" (TCC attributes it to us); launched through LaunchServices (`open -n -a Firefox --args ...`) the
-same profile works. Safari's owner check counted a WebKit content process owned by textunderstandingd as Safari. The owner allowed
-quitting their Chrome and Helium for tonight's race only (not answering any prompt they raise). The race uses the main checkout, at
-d734b73b plus docs (the claim build plus LW1's first commit). Then the real-window FowlBrowser gate (turbo, FowlBrowser and Claude in
-Chrome, owner's request). A build agent is adding the FowlBrowser and Claude in Chrome arms to the real-window harness.
+**Fixes for the three losses, in build at the clear** (Fable loss studies 20:5xZ, items in `~/Projects/sleight-wt/ledger/LEDGER.md`,
+last section; each lane commits on its own branch, none had committed at 21:08Z, and work in progress sits uncommitted in its worktree
+under `.claude/worktrees/agent-<id>`):
+- agent-aa17fa2300d3ec00c (compact-reads, document-scope windowMatches): save confirmation when the pre-save read is a menu (the
+  27.5 s textedit-save run), the lease accepting a URL-less menu root with the same app and title, the moved-click note in calls with
+  several clicks (the excel-edit fail), the note pointing to Undo, combined `{ id, label }` locators, the stale "menu is open" note.
+- agent-a8f6b4dfe726ba8e4 (document-scope guard policy): a light check after Return instead of a full tree read before typeText
+  (`SLEIGHT_GUARD_LIGHT_RETURN`, on by default), measured at 6-8 s of reads per excel-edit run.
+- agent-a336b5cee71ace575 (relay, launch, skill): first-call rules before the tree (`SLEIGHT_RULES_FIRST`), open_file skipping
+  `open -g` on a confirmed window, a default textless-document screenshot hint, a skill line that a save writes the whole document, so there is no need to go back and re-check,
+  open_file in bench/timing.mjs.
+- agent-aa3c3758d99912080 (turbo): accept a drag-installed Chrome (mode 775, group admin) by code signature; turbo refuses this
+  Mac's Chrome with SELECTED_PATH_UNSAFE, and the owner's chmod failed under macOS App Management. Needs a safety review.
+- agent-a031a24d54f178c6e (race harness): why LCU (1/12) and Cua (0/12, zero tool calls) fail in the real-window Firefox round, and
+  Codex (1/12, `/tmp/fb-rounds/real-29077030-2b63-4bb2-ad77-0c63a48b4921-codex`).
+- agent-ad5cfb3df41d7b6dc (real-window gate arms, branch at 86f119cf, merged): resumed to fix the Claude in Chrome arm's prompt
+  stall. A direct `claude -p --chrome --allowedTools "mcp__claude-in-chrome__*"` run on the benchmark profile read Wikipedia with no
+  prompt and an empty approved-sites list, so the stall is the gate arm's configuration, not site approvals.
+Next session: check each branch for commits (`git log 369bc9a2..worktree-agent-<id>`), review (Sonnet high), merge, full check, then
+A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
+sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
 
-**In the claim build (bb6f99f6), all pushed:** WE1 warm-up fix with warm-up on by default; GS1 getState rewrite; SN1 save note;
-LS1 (a split call whose acquisition shows renumbering at or below its literal numbers stops before input); RA1 re-acquire
-compaction, opt-in after it lost its A/B (156.3 s, 9/10 against 149.4 s, 10/10); CU1 claude-cu harness fix; CS1/CS2/CS5 claim-score
-rules with per-run exclusions; the RT1 temp-sweep and hygiene fixes, and the XP1 probe fixes. Full check 6,721 tests, 0 fail.
+**Browser race (real windows), started.** Harness `bench/fowl/rounds.sh --world --real-browser <chrome|helium|firefox|safari>
+--surface <arm> --model haiku --effort high`; arms sleight-turbo (Chrome, Helium), sleight (Safari, Firefox: engine path, now with
+`SLEIGHT_TURBO=0`), lcu, cua, peekaboo (from Terminal.app), codex. Firefox, sleight: round 1 5/12 (harness bugs), round 2 12/12
+(`/tmp/fb-rounds/real-f6f636c8-b44e-407e-a37e-d55e1fbfa2c5-sleight`, form-checkout stopped before paying). LCU, Cua and Codex rounds are
+harness failures, being triaged. Safari, Chrome and Helium haven't run. macOS denies this session's shell reading Chrome's and
+Firefox's data folders (EPERM, App Data protection), so Chrome-family rounds and the Claude in Chrome dry run must run from
+Terminal.app (`open -a Terminal x.command`, output to a file). Firefox now launches through LaunchServices (`open -n -a`); a direct
+spawn showed "Profile Missing".
 
-**After the claim build:** LW1 (d734b73b, pushed): when a call's own click closes a same-document dialog, the rest of the call runs on the document, and
-stop notices list actions run and not sent. Two Sonnet-high safety reviews passed, but live it didn't trigger once in two word-edit runs
-(115.8 and 99.4 s against 94.4 and 94.2). Its build agent is diagnosing from the traces. Full check with LW1: 6,742 tests, 0 fail.
+**Real-window FowlBrowser gate (owner's request), arms built.** Smoke on 2026-10-17: FowlBrowser ok on the Chrome profile copy and on
+Helium; turbo ok on Helium; turbo on Chrome refused (the 775 check above); Claude in Chrome connects (device 44826f70 in the copy) but
+timed out waiting on prompts (see agent-ad5cfb3df41d7b6dc). The wikipedia and mdn graders now fail memory answers.
 
-**Decisions today (owner):** the 5-run rule is kept and clarified (20% over the slower arm, one top-up round after sleight's final
-run). sleight may press a sibling button or tab through Accessibility (LAWS). That exception is unused for now. Excel's sheet tabs
-don't list any AX actions (AXPress -25206), and setting AXSelected, AXSelectedChildren or AXFocused switches nothing, so TP1 was dropped.
+**Pushed today after the claim build** (`pane/auto-mode` on `private` at 369bc9a2, fast-forwarded into the main checkout):
+- The payment rule needs the amount (owner, LAWS): the engine path paid $268 on an unpriced test checkout in Firefox round 1.
+- LW1 first commit d734b73b (dialog-close lease continuation). It didn't trigger live in two word-edit runs. Follow-ups f3c15d05 and
+  fd834163 (safety-review fixes, refusal traces) are on worktree-agent-ac2392d909bf6200b, unmerged: merge after a re-review, then A/B
+  word-edit. Its build agent warned that the staleness bound may block the Word Replace All flow it targets.
+- TP1 (AX press) dropped. Excel's sheet tabs don't list any AX actions (AXPress -25206), and setting AXSelected, AXSelectedChildren or
+  AXFocused switches nothing. Branch worktree-agent-a65d1243221b4ee23 holds it, unmerged and abandoned. The owner's LAWS exception stays.
+- Real-window harness fixes and arms (399a17aa, 4b91dc50, 0f8cd212, 86f119cf, a1344e8b) and drag allowed in away gate rounds (owner).
 
-**Measured today.** The Sonnet 5.5 diagnostic ran word-edit in 43 to 63 s, excel-edit in 59 to 90 s, with the same turn counts as Haiku. The turns
-come from sleight and the apps. Excel tab swap: a posted click on a sheet tab drags it toward the real pointer's x (probe arms A, B
-and C 3/3 each). A turn's seconds follow Haiku's thinking time (r 0.95), not the context size.
-
-**Studies (17:0xZ, reports in the session transcript; items in `~/Projects/sleight-wt/ledger/LEDGER.md`, last section):**
-claude-cu wins on excel-edit by retyping sorted rows in one Name Box batch; it loses big on textedit-save (104 s), calculator-menu,
-word-edit. Its preamble costs ~7.5 s and it works foreground. sleight's losses to LCU and Peekaboo come from extra turns: app.getState
-errors (8 of 27 runs), menu-open lease stops (5), "not confirmed (degraded read)" verification loops, cross-app handle rules. Every
-sleight call re-acquires its app, and each re-acquire returns the full unchanged tree again (excel-edit-1: 20+ extra ~6K-char trees).
-The claim audit: claim-score doesn't compute the 20%/majority/total rules (CS1), a `2026-10-17T16` sleight prefix exclusion would eat a
-final run in a 16:xxZ hour (CS5), claude-cu textedit-drag #1's label is a harness artifact though the run did fail (CS2), and sleight's
-final run should take 5 runs on all 9 tasks.
-
-**Next, in order (owner away now):**
-1. Commit GS1/SN1 after a full check. Merge CS1/CS5/CS2 and RA1 after review. A/B RA1 live on excel-edit and word-edit (5 runs).
-2. sleight's final claim run: 9 tasks x 5 runs on the merged build, then `node bench/claim-score.mjs` with the CS1 rules.
-3. Remaining competitor top-ups the CS1 scorer lists. Then XP1 and the Excel probe, the cross-window drag probe (16:48Z V1 trial moved
-   nothing; results `/private/tmp/sleight-xd1-results-1017.json`), the browser race, release pass, turbo check, tag.
-
-**Fable studies today** (reports in this session's transcript): categorical flag rule (built as FL1); cross-window drag and Excel
-tabs (built as XD1, XL1; in 10/10 runs a tab click right after a rename dragged the clicked tab to the end, refuting the stale
-mouseDown theory); why claude-cu beat sleight (tool time equal; sleight loses on model thinking in finder-move, on lease and
-menu stops in textedit-calculator, and on the Excel tab swap).
+**Owner today:** quitting their Chrome and Helium was allowed for tonight's race only. Both are closed now, reopen them yourself, and
+tabs restore. The owner overrode their own rule so sleight-arch could grant Claude in Chrome site access in the benchmark profile;
+nothing was granted, since it turned out not to be needed. The owner declined moving the real pointer for Excel tab clicks.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
