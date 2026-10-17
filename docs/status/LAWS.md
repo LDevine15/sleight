@@ -78,8 +78,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 ## Protecting the owner and their Mac
 
 - Never delete or move the owner's files. Leftovers are named to the owner, who decides.
-- Never drive the owner's main Chrome profile. Tasks in the owner's real accounts (mail, chat) only read, and only with the owner
-  watching.
+- Never drive the owner's main Chrome profile, or any browser window the owner uses: benchmark browser tasks run only in an isolated
+  browser (on 2026-10-16 fixture tabs opened in the owner's Helium window beside their mail). Tasks in the owner's real accounts
+  (mail, chat) only read, and only with the owner watching.
 - Anything that shows windows, takes focus or moves the pointer runs only after the owner says they're away, or headless.
 - Lanes and benchmark arms run with a throwaway Claude config, so they never put a keychain prompt on the owner's screen, and
   sleight-arch never answers macOS permission prompts for the owner.

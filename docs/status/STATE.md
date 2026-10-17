@@ -3,137 +3,65 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 01:05 UTC, heads-down on fixes, then one A/B, the all-arms claim run and the tag)
+## Banner (2026-10-17 00:40 UTC, flushed before the owner's clear: heads-down on fixes, then one A/B, the claim run and the tag)
 
-Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking as competitors improve (owner,
-2026-10-16: "I don't want to work on sleight forever"). ROADMAP.md is the plan. Read it whole.
+Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
+want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
 
-**Where it stands.** `pane/auto-mode` (private) is the release line, with the full check passing at every merge today.
-- Gate passed 2026-10-16 07:38 to 08:08 UTC on v3-gate `66ada2bd`: turbo median 547 s (p90 590) and 0 errors in all 5 rounds,
-  against FowlBrowser's 720 s (p90 868), 76%. The Opus head-to-head gave 675 s against 885 s, 76%
-  (docs/benchmarks/2026-10-16-gate.md and -opus.md).
-- Merged into `pane/auto-mode` today: the release build (v3-gate plus V8 and V8R, plugin 8,640 KB), the 1.3.0 release notes (owner
-  approved), turbo on by default (owner's call, `turbo-setup.mjs`, `sleight-mcp turbo on|off|status`, a doctor section, a write
-  guard for wrapped shell spellings, and a package walk that ignores `.in_use` and `.claude-plugin/types`), the release pass on the
-  owner's login, and native fixture fixes. The last full check passed at `a65350ba`. The flush commit adds one more fixture fix.
+**Plan now (owner, 2026-10-17, ROADMAP 1b).** Go heads-down: build every token, turn and reliability fix found on 2026-10-16, merge
+and freeze the harness, then (1) one combined A/B, today's sleight vs all-fixes sleight on the claim tasks plus held-out native
+tasks (about 1 hour, owner away), (2) the all-arms claim run in one window (sleight, lcu, codex, cua, peekaboo; 5 runs wherever
+any arm fails; about 4 hours, owner away; peekaboo needs a Terminal launch), (3) claude-cu and the turbo live check with the owner
+present (about 55 min), (4) the slimmed release pass (browser gate plus Opus on the release commit, about 1 hour), (5) the tag on
+the owner's call. Score only with `node bench/claim-score.mjs --results ~/Projects/sleight/bench/results` (exclusions with reasons in
+`bench/claim-exclusions.json`; add a rule there, never filter by hand). Claim rules are in LAWS.
 
-**Release path, in order.**
-1. Live turbo qualification with the owner present (about 10 min). `turbo.json` exists (0600, Helium, written 12:49 UTC; Chrome's
-   executable here is mode 775 and refused), and the doctor reads turbo on with remote debugging on. The owner turns on remote debugging
-   in Helium (`chrome://inspect/#remote-debugging`, unverified in Helium) and clicks its consent prompt on the first browser task.
-   Then `sleight-mcp turbo off` must still be off in a new session. Never the owner's main Chrome profile.
-2. The release pass, slimmed (owner, 2026-10-16): only the browser gate and the Opus round on the release commit, about an hour
-   with the owner away. Native and claim are covered by the claim baseline. It runs after the turbo live check.
-3. The 1.3.0 tag on the owner's call, then the public push (`SLEIGHT_RELEASE_PUSH=1`) and `gh release create`.
+**Build lanes in flight.** They run as headless `codex exec` (gpt-6.1-sol high) under launchd, so the clear doesn't stop them.
+Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with the prompt `queue/tt/lane-prompt-tt.md`. Logs go to `ledger/lane-runs/`.
+- TT2, pid 58221: the relay. open_file returns the window, a top-level `return` works, and the file's mtime confirms a save.
+- TT3, pid 58228: drag. Non-text drags hit-test their endpoints, and a timeout points to Copy and Paste.
+- TT4, pid 58235: compact reads. No full tree after a filtered return.
+- TS13, pid 67634: skill and result text. No confirming read after an action, and getApp on an app the task names.
+  Each reports in `ledger/claims/<ID>/` (DONE, BLOCKED or STALE, plus REPORT.md). Review each branch, run one full check per
+  merge, push, fast-forward.
+- Next in line (same files as a running lane): TK1 compact first acquisition after TT4, TK2 engine docs once and shorter after
+  TT2, TK3 skill placement after TS13 (it blocked on the skill lock, correctly). Relaunch with the same prompt template (claim
+  folders TK3 hold a BLOCKED from the lock clash: remove BLOCKED and OWNER before relaunching it).
+- TT1N (the input lease accepting a menu its own call opened) is sleight-arch's own design job: the guard sees only title, app and
+  URL, with no window number or in-call focus history (`claims/TT1N/REPORT.md`, branch `codex/tt1n` `b440ac07` holds 10 tests,
+  2 red by design). The fix needs sleight's native window identity between the two actions. The lease protects the owner.
+- Not ours: PID 41395, a read-only `codex exec` started 2026-10-16 01:46 local. Leave it.
+- This session's lane watcher stops at the clear. Next session: check `ls ledger/claims/{TT2,TT3,TT4,TS13}`.
 
-**Claim suite (owner, 2026-10-16, in LAWS).** 12 tasks (`bench/claim-tasks.txt`), 3 runs per arm, 5 where within 20%, and an
-arm reruns only when it changes. A contained cleanup failure now continues the pass (`cleanupContained`, `bench/real-run.mjs`).
-Launcher: `RUNS=3 ledger/claims/CS3/claim-arm.sh ARM` (logs in `ledger/claims/CS4/runs/`, touches `/tmp/sleight-bench-done`).
-Baseline order: sleight, codex, lcu, cua, peekaboo (each in its own Puddle window), then claude-cu with the owner present.
-- sleight, 15:34 UTC (`ledger/claims/CS4/runs/sleight-20261016T1534Z.log`), 20 of 36 runs before a stop. Passes: calculator
-  4/4, textedit-save 2/2, textedit-drag 2/2, finder-move 2/2, preview-read 1/2, tab-switching 1/1, textedit-calculator 1/2.
-  word-edit failed setup twice (the codex run's Word was still up), and excel-edit stopped at Excel's recovery prompt twice.
-  local-wikipedia fenced its right JSON (the prompt says "only JSON", so it stays a miss). textedit-calculator #2 pasted
-  "1,725". form-controls couldn't confirm a checkbox (diagnosis running). preview-read #2 did its task, then Preview stopped
-  answering Apple events and ignored quit, which ended the pass.
-- Word (behind an off-screen Insert Table panel from the codex run) and Preview were both the benchmark's own launches. Preview
-  got a TERM signal, and Word was force-quit on the owner's OK (both exited on TERM). Still to do: sleight's runs 2 and 3 of the rest.
-- codex, 16:02 UTC: 4 runs, then TextEdit ignored quit. Its sample showed a File menu stuck open after the cleanup's
-  Accessibility press, which is also what hung Preview and Word. `1e8be968` closes launched apps' documents by the window's
-  close button and never opens a menu. codex calculator-click #1 and calculator-menu #1 overlap Puddle tests (16:01:21 to
-  16:03:10 and 16:04:09 UTC), so they are marked exposed.
-- codex reruns: the 16:14 UTC retry ran under 4 of Puddle's spinning processes and stopped on Word's recovered fixture from the
-  force-quit, so none of it counts. The 16:21 UTC rerun (one Puddle core busy throughout) passed calculator-click 11.8 s,
-  calculator-menu 133.1 s, textedit-save 34.7 s and textedit-calculator 83.2 s. It failed textedit-drag, word-edit and
-  excel-edit (300 s, Excel's recovery prompt), then Excel ignored quit and got a TERM signal.
-- codex r5 (16:48 UTC, `ledger/claims/CS4/runs/codex-*1648Z.log`): 16 runs, 8 pass. Passes are calculator-click 20.8, calculator-menu
-  19.7 and 14.0, textedit-save 32.4 and 39.2, finder-move 84.6, preview-read 9.8, local-wikipedia 10.6 and form-controls 59.5.
-  textedit-drag and textedit-calculator failed both runs, and tab-switching and one calculator-click failed. finder-move #2's
-  Codex drag left Finder in a mouse-down tracking loop. A HID mouse-up released it, and owner-away runs now post one before
-  cleanup (`17f61e86`). A stuck launched app other than Office now gets force-quit (`e38794c7`).
-- cua (18:53 UTC): 28 of 30 runs. textedit-drag failed 3 of 3, and textedit-calculator and local-wikipedia failed once each.
-  The cleanup skip continued the pass twice. Top-up (20:00 UTC): sleight passed calculator-click 7.6, calculator-menu 10.5,
-  textedit-save 10.9 and preview-read 5.1, and failed textedit-drag (a full-screen screencaptureui overlay covered it),
-  finder-move and textedit-calculator ("1,633"). codex passed calculator-click 10.6, calculator-menu 14.1, textedit-save 22.4,
-  textedit-calculator 57.4 and preview-read 11.1 and 11.0.
-- Browser tasks are out of the claim runs: fixture tabs opened in the owner's own Helium window (known-problems, "Benchmark
-  environment"). The remaining arms run the 7 native tasks. textedit-drag and finder-move get rerun for sleight, codex and cua
-  now that the overlay is gone. The lcu arm loads the hooks lcu's setup writes to its project settings (`c37d3fcf`).
-- Native-task medians over passing runs (passes/runs), through 21:38 UTC. Excluded: exposed windows, setup failures, and
-  textedit-drag before the overlay was quit.
-  calculator-click sleight 7.6 (3/3), lcu 8.5 (3/4), codex 11.8 (4/5), cua 30.1 (3/4), peekaboo 33.1 (3/3).
-  calculator-menu sleight 14.9 (3/3), lcu 12.7 (3/4), codex 14.1 (4/5), cua 30.9, peekaboo 27.7.
-  textedit-save sleight 14.6 (3/3), lcu 10.9 (3/4), codex 32.4 (5/5), cua 31.4, peekaboo 0/3.
-  textedit-drag sleight 29.2 (2/2), lcu 0/3, codex 0/2, cua 0/2, peekaboo 0/3.
-  finder-move sleight 33.1 (4/6), lcu 23.4 (1/4), codex 84.6 (1/5), cua 76 (7/7), peekaboo 0/3.
-  preview-read sleight 5.1 (2/3), lcu 5.9, codex 11.0, cua 7.6, peekaboo 4.7 (all 3/3).
-  textedit-calculator sleight 65.1 (1/3), lcu 0/3, codex 57.4 (2/5), cua 81.1 (2/3), peekaboo 0/3.
-  Office, 21:40 UTC: sleight word-edit 3/3 (median 94.9 s) and excel-edit 2/3, codex 0/3 and 0/2, lcu excel-edit 0/2. Stuck
-  Office apps (dialogs the failing arms left) blocked cua's and Peekaboo's setups. A rerun window started at 22:23 UTC.
-  Next: 2 more runs on the close pairs (calculator-click, calculator-menu, preview-read, for sleight, lcu, codex and peekaboo),
-  then claude-cu with the owner present, then the scoring as time to complete the set.
-- Score after the last window (`ledger/claims/CS4/score-20261016T2310Z.txt`): expected seconds to a correct result, which is the
-  mean attempt time divided by the pass rate, over 9 native tasks. sleight completed 9/9 tasks (29/35 runs passed, 638 s summed).
-  lcu completed 6/9 (22/37), codex 6/9 (23/42), cua 7/9 (22/27) and peekaboo 3/9 (15/30). sleight is the only arm that passed
-  textedit-drag, and it was fastest or tied on 4 tasks. lcu was quicker on save, peekaboo on preview-read, and cua on Finder,
-  Calculator-to-TextEdit and Excel (one run). Recommended to the owner: claim "completed every task", not "fastest". claude-cu
-  runs with the owner present before any wording is final.
-- sleight rerun after skill fix 14327dd4 (00:05 UTC, load 4.5 at start): 24/27 runs, 9/9 tasks. textedit-calculator went
-  1/3 to 3/3. By expected time sleight leads textedit-drag, textedit-calculator and word-edit and ties calculator-click, and
-  trails lcu (calculator-menu, textedit-save), Peekaboo (preview-read) and cua (finder-move, excel-edit). Scorer: `bench/claim-score.mjs`.
-- Office (word-edit, excel-edit) now runs last for every arm, after the owner answers Excel's recovery prompt. The other 10
-  claim tasks run first (`claim-arm.sh ARM "<list>"`).
-- Turbo was unavailable in all 3 browser tasks (known-problems, "Turbo in unattended runs"). sleight's browser tasks are rerun
-  after the owner-present turbo qualification. The gate measured turbo through a bench-only server
-  (`bench/turbo/v3-server.mjs`) that begins the turn itself. Its numbers cover turbo's tools and worker, not the mod's
-  activation (`register.tsx` `beginTurboTurn`, on `prompt.submit` from the composer, which `claude -p` doesn't send). Codex's claim arm started 16:02 UTC (window caps 17:02 UTC).
+**Where the claim stands** (scored, 2026-10-16 runs; expected seconds to a correct result, passes/runs). sleight completed 9/9
+native tasks; lcu 6/9, codex 6/9, cua 7/9, peekaboo 3/9. After skill fix `14327dd4` (rerun 2026-10-17 00:05 UTC, load 4.5 at start)
+sleight leads textedit-drag 32 (3/3; nobody else ever passed it), textedit-calculator 45 (3/3, was 1/3) and word-edit 88 (3/3;
+lcu 122), and ties calculator-click 8 with lcu. It trails on 5 tasks: calculator-menu 19 vs lcu 12, textedit-save 21 vs lcu 11,
+preview-read 12 vs Peekaboo 5, finder-move 136 vs cua 97, excel-edit 184 vs cua 133 (one cua run). Trace studies found sleight's
+best runs tie lcu and Peekaboo turn for turn, and the losses are turns wasted by sleight's own tools (lease stops on same-call menu
+clicks, open_file on open documents, Finder drags inside sleight's guards) plus a 25,000-character first result against
+Peekaboo's 4,600. Recommended wording to the owner: "completed every task" rather than "fastest", until the claim run.
+Fable's review (2026-10-17) found the skill fix was tuned on the claim's own failures, so check it on held-out tasks and say so in
+the publication. Codex runs gpt-6-luna, not Haiku. Publish pass counts and median-of-passes beside expected time.
 
-**Native claim pass, first round (superseded by the claim suite, kept for its findings).** Plan: `ledger/claims/CS3/plan-runs1.json` (162 rows, 6 arms).
-Run one arm per Puddle window: `ledger/claims/CS3/native-arm.sh ARM "$(cat ledger/claims/CS3/tasks-no-chess.txt)"` with
-`NATIVE_REPO=$HOME/Projects/sleight`. It logs to `ledger/claims/CS3/runs/` and touches `/tmp/sleight-bench-done` on exit. Order:
-sleight, codex, lcu, cua, peekaboo. claude-cu runs only with the owner present (per-session app approval).
-- Before cua: start its driver with `/usr/bin/open -n -g --env CUA_DRIVER_RS_TELEMETRY_ENABLED=0 --env CUA_TELEMETRY_ENABLED=0 --env
-  CUA_DRIVER_RS_UPDATE_CHECK=false --env DO_NOT_TRACK=1 "$HOME/Library/Caches/sleight-bench/mcp-cua-arm/CuaDriver.app" --args serve
-  --socket "$HOME/Library/Caches/sleight-bench/mcp-cua-arm/driver.sock"`, and check that the socket exists.
-- Peekaboo's grants belong to Terminal.app, so launch its arm from a Terminal window (`osascript -e 'tell application "Terminal"
-  to do script "…"'`, owner away only).
-- sleight arm, retry 3 (14:34 UTC, `ledger/claims/CS3/runs/sleight-20261016T1433Z.log`): 12 of 15 pass, word-edit and
-  textedit-drag included. Each earlier stop was a fixed bug: `drag` couldn't read window geometry in JXA (`287c8679`), and two
-  cleanup reads hit vanished elements (`fd47412f`, `7d2e5c06`). Failures:
-  - finder-files, where Claude's two `drag` attempts hit the sidebar, then Cmd+X (disabled for files in Finder) and Cmd+V pasted
-    a text clipping into Archive. A Haiku probe on a 1840×872 image gave the dot's exact pixel (2/2), so drag's pixel-to-point
-    halving is right, and the miss was the model's points. It passed in retry 2.
-  - textedit-window-drag, where `drag` can't drop text into another window (known-problems). Claude then stopped to ask. Its cleanup
-    stop (the other fixture window was focused) is fixed: cleanup raises its own window over a sibling fixture of the same run.
-  - excel-edit, where Excel showed "Open recovered workbooks?" and Claude stopped correctly. The recovery files are in Excel's sandbox
-    container, which privacy protection hides from sleight's shell. An owner item.
-  The pending commit also says in `drag`'s refusals that it stays inside one window. Next sleight retry resumes from the task
-  after textedit-window-drag. chess-drag is parked: the dialog scan's inspection of an untitled Chess window exceeds its bound
-  (docs/known-problems.md).
-- Puddle holds each arm's window and stops the chain after it. sleight-arch runs the arm command itself on "HOLD live" and asks "puddle arch" for the next window.
-  sleight's windows have priority today (owner, 2026-10-16).
+**Release path.** Turbo live check with the owner (about 10 min; the release pass refuses the gate without it), then the slimmed
+release pass, then the tag. The CHANGELOG 1.3.0 drag entry carries its live measurement. Turbo in `claude -p` never activates,
+because the mod's `prompt.submit` hook doesn't fire there, and the gate measured turbo through a bench-only server
+(`bench/turbo/v3-server.mjs`). The browser comparison stays in the gate's harness with a Codex arm to add (owner, 2026-10-16).
 
-**After the tag (built, merge after 1.3.0).**
-- `arch/epv3-2` `2817c762`: EPV3-2, the Electron app pipe outside turn workers (inert; 93 focused tests; host acceptance owed,
-  `ledger/claims/EPV3-2/REPORT.md`). EPV3-3 is next in `ledger/electron-v3-plan.md`.
-- `arch/epv3-1` `f9e1e919`: EPV3-1, merged into epv3-2's base. Its consent run is owed with the owner (the cards open from the
-  "sleight" menu bar item: `cd ~/Projects/sleight-wt/epv3-1 && node bench/electron-consent-run.mjs --receipt
-  ~/Projects/sleight-wt/ledger/claims/EPV3-1/consent-receipt.json`).
-- `arch/q1-int` `c0aa885c`: the Q1 error-message fixes.
-- IN1 to IN4 (native speed) wait for the native pass to show where sleight loses.
+**After the tag.** `arch/epv3-2` `2817c762` (EPV3-2, inert; EPV3-3 next in `ledger/electron-v3-plan.md`), `arch/epv3-1` `f9e1e919`
+(consent run owed with the owner), `arch/q1-int` `c0aa885c` (Q1 error messages), the ghost hand (ROADMAP 2.7; LoC's architect has the
+design request queued), the speed items in ROADMAP 2.4.
 
-**Video.** No work until the native claim backs "fastest on macOS" (owner). The storyboard is `docs/design/video-storyboard.md`
-(`340ba5e2`). LoC's draft paint round is parked unsent on LoC trunk `d8c3ef73` (`artifacts/ARCH-IMAGEGEN-R18/`). Message "loc arch"
-when the claim is measured.
+**Video.** No film work until the claim is measured (owner). Storyboard `docs/design/video-storyboard.md`; LoC's draft paint round
+waits on LoC trunk. Message "loc arch" when the claim run is scored.
 
-**Owner items.** Quit Word from the Dock. Excel's recovered workbooks, which may be yours, so only you open or discard them in Excel. Also turbo live qualification, the claude-cu runs and EPV3-1's consent run (all owner-present), the 1.3.0 tag.
+**Owner items.** Turbo live check, claude-cu runs and EPV3-1's consent run (owner present), the claim wording, the tag.
 
-- codex arm (14:49 UTC, `ledger/claims/CS3/runs/codex-20261016T1449Z.log`): 6 of 9 pass. textedit-drag failed (file unchanged),
-  and word-edit timed out at 300 s. Word then ignored quit, which stopped the pass. ChatGPT's approval list was restored byte for byte.
-  Word (pid 18320, the benchmark's launch) still ignores quit with no windows open, and it wasn't killed, because a kill would leave
-  recovery files like Excel's. The owner can quit it from the Dock.
-
-**Running now.** Codex lanes (gpt-6.1-sol high, headless, `ledger/queue/tt` and `queue/speed`): TT2, TT3, TT4, TT1N, TK3, TS13. TK1 waits for TT4 (compact-reads), TK2 for TT2 (relay). sleight-arch reviews and merges each, then freezes the harness.
+**Machine notes from 2026-10-16.** Office was cleared by hand three times: arms leave Word or Excel behind dialogs (Find and Replace)
+and a force-quit leaves a "Recovered" fixture. Before an Office window, check that Word and Excel aren't running, and close any
+`Report-*` or `Inventory-*` recovered document with Word scripting (`close ... saving no`), never AX presses. Puddle gives 10-minute
+gaps between windows and wants 15 minutes' notice before a long one. Its spin guard renices spinning waiters (nice 20).
 
 How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
