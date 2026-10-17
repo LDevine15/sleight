@@ -1,7 +1,10 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 export function realBrowserPlan({ browser, round, home = homedir() }) {
   if (!['chrome', 'helium', 'firefox', 'safari'].includes(browser)) throw Error('real browser must be chrome, helium, firefox or safari');
@@ -16,8 +19,12 @@ export function realBrowserPlan({ browser, round, home = homedir() }) {
     profileName: 'sleight benchmark', profileOwned: false, headless: false, connectionMode: 'engine-computer',
     launchMode: 'NSWorkspace-background', resetMode: 'fresh-profile-window', inventoryMode: 'AX-tab-bar',
     quitMode: 'NSRunningApplication-owned-pid-and-launch-date', unavailableGraders: ['completed downloads', 'device viewport'] };
-  if (browser === 'firefox') return { browser, executable, profileRoot, marker, command: executable,
-    args: ['-profile', profileRoot, '-no-remote', '-new-instance', url],
+  // Firefox spawned as our child shows "Profile Missing" and never writes the profile;
+  // through LaunchServices (open -n) the same profile works. -g keeps focus where it is.
+  if (browser === 'firefox') return { browser, executable, profileRoot, marker, command: '/usr/bin/open',
+    launchArgs: ['-n', '-g', '-a', '/Applications/Firefox.app', '--env', 'MOZ_CRASHREPORTER_DISABLE=1', '--args',
+      '-profile', profileRoot, '-no-remote', '-new-instance', url],
+    args: ['-profile', profileRoot, '-no-remote', '-new-instance', url], launchMode: 'LaunchServices-open-new-instance',
     headless: false, connectionMode: 'engine-computer', version: '157', versionVerified: false,
     resetMode: 'quit-and-fresh-profile-relaunch', inventoryMode: 'sessionstore-after-graceful-quit',
     quitMode: 'normal-quit-by-owned-pid', unavailableGraders: ['completed downloads'] };
@@ -47,13 +54,53 @@ export function matchesBrowserProcess(plan, row) {
     : basename(name).toLowerCase().startsWith(basename(plan.executable).toLowerCase());
 }
 
-export async function checkBrowserOwner(plan, { listProcesses = browserProcesses, ownedPid } = {}) {
+// WebKit's XPC services serve every app's web views, so for Safari they count only
+// when macOS names a Safari process responsible for them.
+const webkitService = /^com\.apple\.webkit\.(?:webcontent|networking|gpu)\b/i;
+const responsibleScript = 'function run(argv) { ObjC.bindFunction("responsibility_get_pid_responsible_for_pid", ["int", ["int"]]);' +
+  ' return argv.map(pid => pid + " " + $.responsibility_get_pid_responsible_for_pid(Number(pid))).join("\\n"); }';
+
+// pid -> responsible pid through libquarantine's responsibility_get_pid_responsible_for_pid.
+// A pid the call cannot answer (-1) is left out and stays unknown.
+export async function responsiblePids(pids) {
+  if (!pids.length) return new Map();
+  const { stdout } = await execFileAsync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', responsibleScript, ...pids.map(String)],
+    { encoding: 'utf8', timeout: 5000 });
+  const result = new Map();
+  for (const line of stdout.trim().split('\n')) {
+    const match = /^(\d+) (-?\d+)$/.exec(line);
+    if (match && Number(match[2]) > 0) result.set(Number(match[1]), Number(match[2]));
+  }
+  return result;
+}
+
+function safariApp(plan, row) {
+  const name = row.executable.replace(/^\((.*)\)$/, '$1');
+  return name.toLowerCase().includes('/safari.app/') || (!isAbsolute(name) && /^safari\b/i.test(name)) ||
+    (isAbsolute(name) && matchesBrowserProcess({ ...plan, browser: undefined }, row));
+}
+
+export async function checkBrowserOwner(plan, { listProcesses = browserProcesses, ownedPid, responsibleFor = responsiblePids } = {}) {
   const ownerCheck = { executable: plan.executable, checkedAt: new Date().toISOString(), ok: false, otherPids: [] };
   try {
     const processes = await listProcesses();
     if (!Array.isArray(processes) || processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 ||
         typeof row.executable !== 'string' || !row.executable)) throw Error('BENCH_PROCESS_LIST_INVALID');
-    const matches = row => matchesBrowserProcess(plan, row);
+    const byPid = new Map(processes.map(row => [row.pid, row]));
+    const services = new Set(plan.browser === 'safari' ? processes.filter(row =>
+      webkitService.test(basename(row.executable.replace(/^\((.*)\)$/, '$1')))) : []);
+    let responsible = new Map();
+    if (services.size) {
+      try { responsible = await responsibleFor([...services].map(row => row.pid)); }
+      catch (error) { ownerCheck.responsibleError = error.message; }
+    }
+    // An unknown or vanished responsible process keeps the name rule (fail closed).
+    const known = row => services.has(row) && byPid.has(responsible.get(row.pid));
+    const matches = row => known(row)
+      ? responsible.get(row.pid) !== row.pid && safariApp(plan, byPid.get(responsible.get(row.pid)))
+      : matchesBrowserProcess(plan, row);
+    if (services.size) ownerCheck.sharedWebKit = [...services].filter(row => known(row) && !matches(row))
+      .map(row => ({ pid: row.pid, responsible: responsible.get(row.pid) }));
     const parents = new Map(processes.map(row => [row.pid, row.ppid]));
     if (ownedPid !== undefined && (!Number.isSafeInteger(ownedPid) || ownedPid <= 0 || parents.size !== processes.length ||
         !processes.some(row => row.pid === ownedPid && matches(row)) ||
@@ -66,7 +113,9 @@ export async function checkBrowserOwner(plan, { listProcesses = browserProcesses
       }
       return false;
     };
-    ownerCheck.otherPids = processes.filter(row => matches(row) && !owned(row.pid)).map(row => row.pid);
+    // launchd parents WebKit services; the owned Safari is responsible for its own.
+    const ownedRow = row => owned(row.pid) || (known(row) && owned(responsible.get(row.pid)));
+    ownerCheck.otherPids = processes.filter(row => matches(row) && !ownedRow(row)).map(row => row.pid);
     if (ownerCheck.otherPids.length) throw Error(`Quit ${plan.browser} before starting this round; another process uses the browser executable (PID ${ownerCheck.otherPids.join(', ')}).`);
     ownerCheck.ok = true;
     return ownerCheck;
@@ -85,7 +134,7 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait } = {}) {
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, openBrowser, listArguments, signalProcess, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length) });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
@@ -98,7 +147,7 @@ export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProces
     if (plan.browser === 'firefox') {
       ordinaryParents(plan.profileRoot);
       const { launchFirefox } = await import('./firefox-browser.mjs');
-      return await launchFirefox(plan, { spawnBrowser, listProcesses, timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata });
+      return await launchFirefox(plan, { openBrowser, listArguments, signalProcess, listProcesses, timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata });
     }
     return { ...await startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }), ownerCheck };
   }

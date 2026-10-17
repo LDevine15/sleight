@@ -53,7 +53,7 @@ test('Safari plan uses the owner-created named profile and background native lau
 test('Safari census includes bundle helpers, short names and Safari WebContent with strict ancestry', async () => {
   const plan = realBrowserPlan({ browser: 'safari', round: 'census' });
   for (const executable of ['(sAfArI)', 'Safari Web Content', '/Applications/Safari.app/Contents/XPCServices/helper', 'com.apple.WebKit.WebContent (com.apple.Safari)']) {
-    await assert.rejects(checkBrowserOwner(plan, { listProcesses: async () => [{ pid: 7, ppid: 1, executable }] }), /PID 7/);
+    await assert.rejects(checkBrowserOwner(plan, { responsibleFor: async () => new Map(), listProcesses: async () => [{ pid: 7, ppid: 1, executable }] }), /PID 7/);
   }
   const rows = [{ pid: 40, ppid: 1, executable: plan.executable }, { pid: 41, ppid: 40, executable: 'intermediate' },
     { pid: 42, ppid: 41, executable: 'Safari Web Content' }];
@@ -248,9 +248,48 @@ test('later resets refuse unexpected windows without closing or navigating them'
 
 test('ambiguous shared WebContent is refused rather than silently attributed to the round', async () => {
   const plan = realBrowserPlan({ browser: 'safari', round: 'shared-webcontent' });
-  for (const executable of ['com.apple.WebKit.WebContent', '/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent']) {
-    await assert.rejects(checkBrowserOwner(plan, { listProcesses: async () => [{ pid: 88, ppid: 1, executable }] }), /PID 88/);
+  // No responsible pid known (lookup empty, failed, or naming a vanished process): the name rule refuses.
+  for (const responsibleFor of [async () => new Map(), async () => { throw Error('osascript failed'); }, async () => new Map([[88, 5555]])]) {
+    for (const executable of ['com.apple.WebKit.WebContent', '/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent']) {
+      await assert.rejects(checkBrowserOwner(plan, { responsibleFor, listProcesses: async () => [{ pid: 88, ppid: 1, executable }] }), /PID 88/);
+    }
   }
+});
+
+const webkit = name => `/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/${name}.xpc/Contents/MacOS/${name}`;
+
+test('WebKit services count for Safari only when a Safari process is responsible for them', async () => {
+  const plan = realBrowserPlan({ browser: 'safari', round: 'responsible-webkit' });
+  const asked = [];
+  const daemon = { pid: 51443, ppid: 1, executable: '/usr/libexec/textunderstandingd' };
+  const shared = ['com.apple.WebKit.WebContent.EnhancedSecurity', 'com.apple.WebKit.Networking', 'com.apple.WebKit.GPU']
+    .map((name, i) => ({ pid: 69405 + i, ppid: 1, executable: webkit(name) }));
+  const responsibleFor = async pids => { asked.push(pids); return new Map(pids.map(pid => [pid, pid === 300 ? 200 : 51443])); };
+  const check = await checkBrowserOwner(plan, { responsibleFor, listProcesses: async () => [daemon, ...shared] });
+  assert.equal(check.ok, true);
+  assert.deepEqual(check.sharedWebKit.map(row => row.responsible), [51443, 51443, 51443]);
+  assert.deepEqual(asked, [shared.map(row => row.pid)]);
+  // A WebContent whose responsible process is Safari (bundle path or the cryptex copy) still refuses.
+  for (const executable of [plan.executable, '/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app/Contents/MacOS/Safari']) {
+    await assert.rejects(checkBrowserOwner(plan, { responsibleFor, listProcesses: async () => [
+      daemon, ...shared, { pid: 200, ppid: 1, executable }, { pid: 300, ppid: 1, executable: webkit('com.apple.WebKit.WebContent') }] }),
+    error => { assert.deepEqual(error.ownerCheck.otherPids, [200, 300]); return true; });
+  }
+  // The owned Safari owns the services it is responsible for, though launchd parents them.
+  const owned = await checkBrowserOwner(plan, { ownedPid: 200, responsibleFor, listProcesses: async () => [
+    daemon, ...shared, { pid: 200, ppid: 1, executable: plan.executable }, { pid: 300, ppid: 1, executable: webkit('com.apple.WebKit.WebContent') }] });
+  assert.equal(owned.ok, true);
+  // Other browsers never ask.
+  asked.length = 0;
+  await checkBrowserOwner(realBrowserPlan({ browser: 'firefox', round: 'no-webkit-lookup' }), { responsibleFor, listProcesses: async () => shared });
+  assert.deepEqual(asked, []);
+});
+
+test('the live responsibility lookup answers for this process and leaves pid 1 unknown', async () => {
+  const { responsiblePids } = await import('../bench/fowl/real-browser.mjs');
+  const result = await responsiblePids([process.pid, 1]);
+  assert.ok(Number.isSafeInteger(result.get(process.pid)) && result.get(process.pid) > 0);
+  assert.equal(result.has(1), false);
 });
 
 test('native Safari helper compiles and rejects unowned requests before any app lookup or input', t => {

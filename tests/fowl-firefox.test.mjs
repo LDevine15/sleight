@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -27,36 +27,53 @@ function encoded(value) {
 function fixture(t) {
   const plan = realBrowserPlan({ browser: 'firefox', round: 'test-' + randomUUID() });
   t.after(() => rmSync(dirname(plan.profileRoot), { recursive: true, force: true }));
-  const children = [], requests = [], signals = [];
+  // Fake LaunchServices launches: each "process" is a ps row with our profile argv.
+  // emit('close') stands for the pid leaving the process table; launchd reaps it.
+  const children = [], requests = [], signals = [], strays = [], launches = [];
   let current;
-  const spawnBrowser = (command, args, options) => {
-    assert.equal(command, '/Applications/Firefox.app/Contents/MacOS/firefox');
-    assert.deepEqual(args.slice(0, 4), ['-profile', plan.profileRoot, '-no-remote', '-new-instance']);
+  const process_ = (pid, startedMs, args = [plan.executable, ...plan.args].join(' ')) => {
+    const child = new EventEmitter(); Object.assign(child, { pid, startedMs, args });
+    child.once('close', () => { child.closed = true; });
+    child.kill = () => setImmediate(() => child.emit('close'));
+    return child;
+  };
+  const openBrowser = async (command, args) => {
+    assert.equal(command, '/usr/bin/open');
+    assert.deepEqual(args.slice(0, 8), ['-n', '-g', '-a', '/Applications/Firefox.app', '--env', 'MOZ_CRASHREPORTER_DISABLE=1', '--args', '-profile']);
+    assert.deepEqual(args.slice(7), plan.args);
     assert.ok(!existsSync(join(plan.profileRoot, 'old-task')));
     assert.match(readFileSync(join(plan.profileRoot, 'user.js'), 'utf8'), /browser.sessionstore.resume_from_crash", false/);
-    current = new EventEmitter(); current.pid = 4000 + children.length; current.options = options; children.push(current);
-    const child = current;
-    child.once('close', () => { child.closed = true; });
-    child.kill = signal => { signals.push(signal); setImmediate(() => child.emit('close', null, signal)); };
+    launches.push(args);
+    current = process_(4000 + children.length, Date.now()); children.push(current);
     mkdirSync(join(plan.profileRoot, 'sessionstore-backups'), { recursive: true });
-    writeFileSync(join(plan.profileRoot, 'sessionstore-backups/recovery.jsonlz4'), encoded(session([[args.at(-1), plan.marker]])));
+    writeFileSync(join(plan.profileRoot, 'sessionstore-backups/recovery.jsonlz4'), encoded(session([[plan.args.at(-1), plan.marker]])));
     return current;
   };
-  const options = { spawnBrowser, listProcesses: async () => children.filter(child => !child.closed).map(child => ({ pid: child.pid, ppid: process.pid, pgid: 70, executable: plan.executable })), stopMs: 5, quitMs: 5, timeoutMs: 100,
+  const live = () => [...children, ...strays].filter(child => !child.closed);
+  const options = { openBrowser, stopMs: 5, quitMs: 5, timeoutMs: 100,
+    listProcesses: async () => live().filter(child => child.args.startsWith(plan.executable)).map(child => ({ pid: child.pid, ppid: 1, pgid: child.pid, executable: plan.executable })),
+    listArguments: async () => live().map(({ pid, startedMs, args }) => ({ pid, startedMs, args })),
+    signalProcess: (pid, signal) => {
+      const child = live().find(child => child.pid === pid);
+      assert.ok(child, 'signals only a live verified pid'); signals.push(signal); child.kill(signal);
+    },
     quitBrowser: async browser => {
       requests.push(browser.pid);
       for (const name of ['sessionstore.jsonlz4']) {
         const file = join(plan.profileRoot, name);
         if (existsSync(file)) writeFileSync(file, readFileSync(file));
       }
-      setImmediate(() => current.emit('close', 0, null));
+      setImmediate(() => current.emit('close'));
     } };
-  return { plan, options, children, requests, signals, current: () => current };
+  return { plan, options, children, requests, signals, strays, launches, process: process_, current: () => current };
 }
 
 test('Firefox plans a fresh visible profile without CDP and names the installed executable', () => {
   const plan = realBrowserPlan({ browser: 'firefox', round: 'fixture-firefox' });
-  assert.equal(plan.command, '/Applications/Firefox.app/Contents/MacOS/firefox');
+  assert.equal(plan.executable, '/Applications/Firefox.app/Contents/MacOS/firefox');
+  assert.equal(plan.command, '/usr/bin/open');
+  assert.deepEqual(plan.launchArgs, ['-n', '-g', '-a', '/Applications/Firefox.app', '--env', 'MOZ_CRASHREPORTER_DISABLE=1', '--args', ...plan.args]);
+  assert.equal(plan.launchMode, 'LaunchServices-open-new-instance');
   assert.deepEqual(plan.args.slice(0, 4), ['-profile', plan.profileRoot, '-no-remote', '-new-instance']);
   assert.equal(plan.connectionMode, 'engine-computer');
   assert.equal(plan.version, '157');
@@ -148,8 +165,8 @@ test('Firefox observation refuses sessionstore paths escaping the owned profile'
 
 test('a Firefox startup timeout collects its child and removes its private bank', async t => {
   const f = fixture(t);
-  await assert.rejects(launchRealBrowser(f.plan, { ...f.options, timeoutMs: 1, spawnBrowser: (...args) => {
-    const child = f.options.spawnBrowser(...args);
+  await assert.rejects(launchRealBrowser(f.plan, { ...f.options, timeoutMs: 1, openBrowser: async (...args) => {
+    const child = await f.options.openBrowser(...args);
     rmSync(join(f.plan.profileRoot, 'sessionstore-backups'), { recursive: true });
     return child;
   } }), /START_FAILED/);
@@ -324,7 +341,8 @@ test('Firefox disables crash reporting and records top-level profile changes bef
   const browser = await launchRealBrowser(f.plan, { ...f.options, profileMetadata: () => ({
     support: [{ name: 'profiles.ini', mtimeMs: ++snapshot }], cache: []
   }) });
-  assert.equal(f.children[0].options.env.MOZ_CRASHREPORTER_DISABLE, '1');
+  assert.deepEqual(f.launches[0].slice(4, 6), ['--env', 'MOZ_CRASHREPORTER_DISABLE=1']);
+  assert.match(readFileSync(join(f.plan.profileRoot, 'user.js'), 'utf8'), /block_toplevel_data_uri_navigations", false/);
   await browser.observe();
   assert.deepEqual(browser.profileAudit.before, { support: [{ name: 'profiles.ini', mtimeMs: 1 }], cache: [] });
   assert.deepEqual(browser.profileAudit.after, { support: [{ name: 'profiles.ini', mtimeMs: 2 }], cache: [] });
@@ -381,32 +399,80 @@ test('a fresh recovery file after graceful quit is still unobserved', async t =>
   await browser.stop();
 });
 
-test('Firefox quit invocation passes runner ancestry and preserves a real fake-helper refusal', async t => {
+test('Firefox quit invocation passes the exact pid, profile and start second, and preserves a real fake-helper refusal', async t => {
   const { requestFirefoxQuit } = await import('../bench/fowl/firefox-browser.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'br2c-quit-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const helper = join(dir, 'refuse'), args = join(dir, 'args');
-  writeFileSync(helper, '#!/bin/sh\nprintf "%s\\n" "$@" > "' + args + '"\nprintf "parent mismatch" >&2\nexit 23\n', { mode: 0o700 });
-  await assert.rejects(requestFirefoxQuit(helper, { pid: 4000, executable: '/fixture/browser' }), error => {
-    assert.equal(error.code, 23); assert.equal(error.stderr, 'parent mismatch'); return true;
+  writeFileSync(helper, '#!/bin/sh\nprintf "%s\\n" "$@" > "' + args + '"\nprintf "profile mismatch" >&2\nexit 23\n', { mode: 0o700 });
+  await assert.rejects(requestFirefoxQuit(helper, { pid: 4000, executable: '/fixture/browser', profileRoot: '/fixture/profile dir', startedMs: 1792266481999 }), error => {
+    assert.equal(error.code, 23); assert.equal(error.stderr, 'profile mismatch'); return true;
   });
-  assert.deepEqual(readFileSync(args, 'utf8').trim().split('\n'), ['4000', '/fixture/browser', String(process.pid)]);
+  assert.deepEqual(readFileSync(args, 'utf8').trim().split('\n'), ['4000', '/fixture/browser', '/fixture/profile dir', '1792266481']);
 });
 
-test('Firefox startup restart collects the new direct child in the runner group before failing', async t => {
-  const f = fixture(t); let replacement = true;
-  const listProcesses = async () => f.children.length ? [
-    { pid: process.pid, ppid: 1, pgid: 70, executable: '/fixture/runner' },
-    ...await f.options.listProcesses(),
-    ...(replacement ? [{ pid: 5000, ppid: process.pid, pgid: 70, executable: '(firefox)' }] : []),
-    { pid: 5999, ppid: 1, pgid: 70, executable: 'firefox' }
-  ] : [];
-  await assert.rejects(launchRealBrowser(f.plan, { ...f.options, listProcesses, spawnBrowser: (...args) => {
-    const child = f.options.spawnBrowser(...args); setImmediate(() => child.emit('close', 0, null));
+test('Firefox startup restart quits the replacement on its profile and leaves other Firefox rows alone', async t => {
+  const f = fixture(t);
+  await assert.rejects(launchRealBrowser(f.plan, { ...f.options, openBrowser: async (...args) => {
+    const child = await f.options.openBrowser(...args);
+    // After 4000 is adopted it exits and a replacement takes the profile.
+    setTimeout(() => {
+      f.strays.push(f.process(5000, Date.now()), f.process(5999, Date.now(), f.plan.executable + ' -profile /elsewhere'));
+      child.emit('close');
+    }, 20);
     rmSync(join(f.plan.profileRoot, 'sessionstore-backups'), { recursive: true }); return child;
-  }, quitBrowser: async browser => { f.requests.push(browser.pid); if (browser.pid === 5000) replacement = false; }
+  }, listProcesses: async () => f.children.length ? [] : await f.options.listProcesses(),
+  quitBrowser: async browser => { f.requests.push(browser.pid); f.strays.find(row => row.pid === browser.pid)?.emit('close'); }
   }), /START_FAILED/);
   assert.deepEqual(f.requests, [5000]);
+  assert.equal(f.strays[1].closed, undefined);
+  assert.deepEqual(f.signals, []);
   assert.equal(existsSync(dirname(f.plan.profileRoot)), false);
+});
+
+test('Firefox adopts only one profile process started after the request and quits ambiguous ones', async t => {
+  const f = fixture(t);
+  await assert.rejects(launchRealBrowser(f.plan, { ...f.options, openBrowser: async (...args) => {
+    const child = await f.options.openBrowser(...args);
+    f.strays.push(f.process(4900, Date.now() - 5000), f.process(5000, Date.now()));
+    return child;
+  }, listProcesses: async () => [], quitBrowser: async browser => {
+    f.requests.push(browser.pid); [...f.children, ...f.strays].find(row => row.pid === browser.pid)?.emit('close');
+  } }), /START_FAILED/);
+  // 4900 predates the launch request, so it is never adopted or quit.
+  assert.deepEqual(f.requests.sort(), [4000, 5000]);
+  assert.equal(f.strays[0].closed, undefined);
+  assert.equal(existsSync(dirname(f.plan.profileRoot)), false);
+});
+
+test('a failed LaunchServices open fails the start with its cause and adopts nothing', async t => {
+  const f = fixture(t);
+  await assert.rejects(launchRealBrowser(f.plan, { ...f.options, openBrowser: async () => { throw Error('LSOpen -10810'); } }), error => {
+    assert.equal(error.message, 'BENCH_BROWSER_START_FAILED'); assert.match(error.cause.message, /-10810/); return true;
+  });
+  assert.deepEqual(f.requests, []);
+  assert.equal(existsSync(dirname(f.plan.profileRoot)), false);
+});
+
+test('Firefox treats a reused pid as closed and never signals it', async t => {
+  const f = fixture(t), browser = await launchRealBrowser(f.plan, { ...f.options, quitBrowser: async () => {} });
+  f.current().startedMs += 60000;
+  const observed = await browser.observe();
+  assert.equal(observed.observed, false);
+  assert.deepEqual(f.signals, []);
+  assert.equal(browser.pid, undefined);
+  await browser.stop();
+});
+
+test('ps argument rows parse start times and match only the exact profile pair', async () => {
+  const { processArguments, ownsProfile } = await import('../bench/fowl/firefox-browser.mjs');
+  const rows = await processArguments(), self = rows.find(row => row.pid === process.pid);
+  assert.ok(self && Math.abs(self.startedMs - (Date.now() - process.uptime() * 1000)) < 5000);
+  const plan = realBrowserPlan({ browser: 'firefox', round: 'fixture-owns' });
+  const row = args => ({ args: args.join(' ') });
+  assert.equal(ownsProfile(plan, row([plan.executable, ...plan.args])), true);
+  assert.equal(ownsProfile(plan, row([plan.executable, '-profile', plan.profileRoot + '-other'])), false);
+  assert.equal(ownsProfile(plan, row(['/usr/bin/open', '-n', '--args', '-profile', plan.profileRoot, 'x'])), false);
+  assert.equal(ownsProfile(plan, row([plan.executable, '-P', 'default'])), false);
 });
 
 test('Firefox marker is excluded from retained tabs, including when sessionstore positions change', async t => {
@@ -456,14 +522,11 @@ test('an owner refusal at observation invalidates the row even for answer-only t
 
 test('an uncollected startup replacement during reset retains the profile through stop', async t => {
   const f = fixture(t);
-  const browser = await launchRealBrowser(f.plan, { ...f.options, listProcesses: async () => [
-    { pid: process.pid, ppid: 1, pgid: 70, executable: '/fixture/runner' }, ...await f.options.listProcesses(),
-    ...(f.children.length > 1 ? [{ pid: 5000, ppid: process.pid, pgid: 70, executable: 'firefox' }] : [])
-  ], spawnBrowser: (...args) => {
-    const child = f.options.spawnBrowser(...args);
+  const browser = await launchRealBrowser(f.plan, { ...f.options, openBrowser: async (...args) => {
+    const child = await f.options.openBrowser(...args);
     if (f.children.length > 1) {
       rmSync(join(f.plan.profileRoot, 'sessionstore-backups'), { recursive: true });
-      setImmediate(() => child.emit('close', 0, null));
+      setTimeout(() => { f.strays.push(f.process(5000, Date.now())); child.emit('close'); }, 20);
     }
     return child;
   }, quitBrowser: async browser => {
@@ -485,7 +548,7 @@ test('forced collection samples top-level metadata after the child has actually 
   await browser.stop();
 });
 
-test('the compiled Firefox quit helper refuses a live PID whose parent is not the runner before AppKit', t => {
+test('the compiled Firefox quit helper checks start time and the exact -profile pair before AppKit', async t => {
   const compiler = spawnSync('/usr/bin/xcrun', ['--find', 'swiftc'], { encoding: 'utf8', timeout: 5000 });
   if (compiler.status !== 0 || !existsSync(compiler.stdout.trim())) return t.skip('swiftc is unavailable; JS refusal path is covered');
   const dir = mkdtempSync(join(tmpdir(), 'br2c-swift-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -493,9 +556,22 @@ test('the compiled Firefox quit helper refuses a live PID whose parent is not th
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(),
     join(repo, 'bench/fowl/firefox-quit.swift'), '-o', helper], { encoding: 'utf8', timeout: 60000 });
   assert.equal(built.status, 0, built.stderr);
-  const refused = spawnSync(helper, [String(process.pid), process.execPath, '2147483647'], { encoding: 'utf8', timeout: 5000 });
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /BENCH_FIREFOX_QUIT_PARENT_MISMATCH/);
+  // A plain child, not an app: the checks before AppKit decide each refusal.
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)', '--', '-profile', '/fixture/profile dir'], { stdio: 'ignore' });
+  t.after(() => child.kill());
+  const { processArguments } = await import('../bench/fowl/firefox-browser.mjs');
+  let row;
+  for (let i = 0; i < 50 && !row?.args.includes('-profile'); i++) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    row = (await processArguments()).find(candidate => candidate.pid === child.pid);
+  }
+  const started = String(row.startedMs / 1000);
+  for (const [profile, second, code] of [['/fixture/profile', started, /PROFILE_MISMATCH/], ['/fixture/profile dir', String(row.startedMs / 1000 - 1), /START_MISMATCH/],
+    ['/fixture/profile dir', started, /QUIT_REFUSED/]]) {
+    const refused = spawnSync(helper, [String(child.pid), process.execPath, profile, second], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, code);
+  }
 });
 
 test('Firefox inventory preserves the first history URL to identify a navigated start tab', async t => {
