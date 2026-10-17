@@ -118,8 +118,8 @@ test('first-off checks another handle even after focused-window confirmation', a
   const old = await run(code, { screens: [leased], expected: win('a.txt', 'TextEdit', 'file:///tmp/a.txt'), mode: 'old', extra: { notesRaw: notes } });
   const oldInputs = notesInputs; notesInputs = [];
   const now = await run(code, { screens: [leased], expected: win('a.txt', 'TextEdit', 'file:///tmp/a.txt'), mode: 'new', extra: { notesRaw: notes }, overrides: { focused: true } });
-  assert.match(old.error, /changed window/); assert.deepEqual(oldInputs, []);
-  assert.match(now.error, /changed window/); assert.deepEqual(notesInputs, []);
+  assert.match(old.error, /app changed\. 0 earlier actions in this call ran/); assert.deepEqual(oldInputs, []);
+  assert.match(now.error, /app changed\. 0 earlier actions in this call ran/); assert.deepEqual(notesInputs, []);
 });
 
 // 4. quiet-edits: shortcuts in the edit list that navigate or open a window outside text fields.

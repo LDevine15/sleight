@@ -987,7 +987,7 @@ test('window selection holds the app lease and needs a matching standalone acqui
   assert.equal(selections, 1);
   b.send(rpc(9, 'js', { code: 'await app.typeText("x")' })); assert.equal(b.forwarded.length, 0);
   h.send(rpc(2, 'js', { code: 'await app.typeText("x")' })); assert.equal(h.forwarded.length, 0);
-  assert.match(h.received.at(-1).result.content[0].text, /selected window is not confirmed.*Send exactly `let app = await cua\.getApp\("com\.apple\.TextEdit"\)` in js\./);
+  assert.match(h.received.at(-1).result.content[0].text, /selected window is not confirmed.*Begin js with.*name or bundle ID.*actions may follow on its returned handle/);
   h.send(rpc(3, 'js', { code: 'app = await cua.getApp("TextEdit")' })); h.reply(result(3, 'Window: "b.txt", App: TextEdit'));
   assert.match(h.received.at(-1).result.content.at(-1).text, /selected window not observed/);
   h.send(rpc(4, 'js', { code: 'await app.typeText("x")' })); assert.equal(h.forwarded.length, 1);

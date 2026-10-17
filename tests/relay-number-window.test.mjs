@@ -60,7 +60,7 @@ async function runNumberCheck(update, current) {
 
 test('unchanged second-window number passes the number check while the window lease still stops it', async t => {
   const { update } = fixture(t).act('await second.click(2)');
-  await assert.rejects(runNumberCheck(update, b), /Input lease stopped this action: window or URL changed/);
+  await assert.rejects(runNumberCheck(update, b), /Input lease stopped this action: app changed\. 0 earlier actions in this call ran/);
 });
 
 test('a changed second-window element stops against its own seen line', async t => {

@@ -603,7 +603,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             // Without document scope or change review, the stop carries the window it saw, so the
             // relay can lease that window for Claude's retry (Chess retitles itself on each move).
             attempt.windowStop = true;
-            throw (state.adoptUrl ? stop : message => new Error(message))(state.reason + ' Observed ' + JSON.stringify(observed));
+            const reason = state.adoptUrl && observed && state.expected && observed.app !== state.expected.app
+              ? 'Input lease stopped this action: app changed. ' + attempt.index + ' earlier actions in this call ran; nothing was sent to the new app. The lease is now on the observed window. Resend only the remaining actions without select_window.'
+              : state.reason;
+            throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
           }
           await checkLease();
           state.activeApp = proxy;
