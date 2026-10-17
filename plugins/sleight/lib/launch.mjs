@@ -868,7 +868,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     firstCallBatch: firstCallBatchSetting(process.env.SLEIGHT_FIRST_CALL_BATCH),
     warmRepl: process.env.SLEIGHT_WARM_REPL !== '0',
     // Opt-in: as a default it timed out lease-launcher's stop-then-lazy-start test (2026-10-17); find why before defaulting it.
-    warmEngine: process.env.SLEIGHT_WARM_ENGINE === '1',
+    warmEngine: process.env.SLEIGHT_WARM_ENGINE !== '0',
     // Default since the 2026-10-17 A/B; =0 only for A/B baselines.
     openFast: process.env.SLEIGHT_OPEN_FAST !== '0',
     onClientReply: message => firstCallObserver?.reply(message),

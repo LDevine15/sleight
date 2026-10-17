@@ -88,9 +88,10 @@ TODO: full release pass result.
 - When the tree shows a menu-bar item as selected with no menu in front, the result warns that a menu may be stuck open and how to close
   it. In a 2026-10-17 word-edit run, Word ignored keys for 20 calls in that state with no warning.
 - When text typed after a click shows up in a different existing field than the one clicked, the result says where it went.
-- `open_file` overlaps its setup steps by default. `SLEIGHT_WARM_ENGINE=1` (opt-in) pays the engine's first-call start (about
-  0.73 s measured) before Claude's first call. With both on in the 2026-10-17 A/B, calculator-click went from 8.7 to 6.7 s,
-  preview-read from 5.5 to 3.9 s and textedit-save from 10.4 to 8.1 s (medians, 3 runs each).
+- `open_file` overlaps its setup steps, and sleight pays the engine's first-call start (about 0.73 s measured) before
+  Claude's first call, both by default (`SLEIGHT_OPEN_FAST=0` and `SLEIGHT_WARM_ENGINE=0` turn them off). With both on in the
+  2026-10-17 A/B, calculator-click went from 8.7 to 6.7 s, preview-read from 5.5 to 3.9 s and textedit-save from 10.4 to
+  8.1 s (medians, 3 runs each).
 - The engine's `js` tool description reaches Claude whole. Claude Code cut it at 2,048 of its 3,511 characters, dropping the
   app example and output rules. sleight now sends a 1,536-character version with the safety guidance first.
 - `SLEIGHT_OPEN_SHOT=1` (opt-in until an A/B) adds the window's screenshot to `open_file`'s first read. In replays Haiku stopped

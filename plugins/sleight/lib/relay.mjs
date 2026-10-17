@@ -762,6 +762,7 @@ export function createRelay({
       invalidateDiagnostics(); forgetGuard(); browserStale.reset(); browserRecovery.reset();
       browserWarmConfirmed = false;
       privateWarmRequests.clear();
+      dropHeldWarmPrompts();
       engineRequests.clear();
       await clipboard?.close();
       await restartCollectedEngine(false, true, preparedServer);
@@ -806,6 +807,16 @@ export function createRelay({
   let browserWarmConfirmed = false;
   const privateWarmRequests = new Set();
   const nativeWarmRequests = new Set();
+  const heldWarmPrompts = new Map(); // engine prompt -> decline timer, held while native inventory is pending
+  const flushHeldWarmPrompts = () => {
+    if (privateWarmRequests.size) return;
+    for (const [held, timer] of [...heldWarmPrompts]) {
+      clearTimeout(timer); heldWarmPrompts.delete(held);
+      if (pendingClients.size) observeServerMessage(held);
+      else if (!stopCollected && !closing && !disposed) toServer({ jsonrpc: '2.0', id: held.id, result: { action: 'decline' } });
+    }
+  };
+  const dropHeldWarmPrompts = () => { for (const timer of heldWarmPrompts.values()) clearTimeout(timer); heldWarmPrompts.clear(); };
   const replWarmup = new ReplWarmup({ enabled: warmRepl,
     setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken }),
     abort: () => { browserWarmConfirmed = false; abortWarm(); },
@@ -826,7 +837,9 @@ export function createRelay({
         resolve(reply);
         // The engine can drain native work before replying to a cell, even without await.
         // Keep inventory out of the guard cell and out of the held client's wait.
-        queueMicrotask(() => { if (warmEngine && browserWarmConfirmed && !closing && !disposed) {
+        // A client call already in flight pays the native start itself. An engine that runs cells
+        // in order would also hold its approval prompt behind this private cell, where it is declined.
+        queueMicrotask(() => { if (warmEngine && browserWarmConfirmed && !closing && !disposed && !pendingClients.size) {
           const nativeId = `sleight-native-warm-${nextInternalId++}`;
           privateWarmRequests.add(nativeId);
           nativeWarmRequests.add(nativeId);
@@ -2847,12 +2860,26 @@ export function createRelay({
     if (msg.method === undefined) privateWarmRequests.delete(msg.id);
     if (msg.method === undefined && nativeWarmRequests.delete(msg.id)) {
       replWarmup.retainDocs(msg);
+      flushHeldWarmPrompts();
       return;
     }
     if (stopCollected || (msg.method === undefined && stoppedClients.has(msg.id))) return;
     // Engine permission tokens have no parent RPC ID. Fail closed until even a late
     // private reply settles, rather than showing or accepting a warm-up prompt.
     if (msg.method === 'elicitation/create' && privateWarmRequests.size) {
+      // Native inventory names no app, so an app prompt while only it is pending and a client call is in
+      // flight belongs to that call. Hold it until the inventory settles, then decide.
+      const app = msg.params?._meta?.tool_params?.app;
+      if (typeof app === 'string' && app && pendingClients.size && [...privateWarmRequests].every(id => nativeWarmRequests.has(id))) {
+        const timer = setTimeout(() => {
+          if (!heldWarmPrompts.delete(msg)) return;
+          if (!stopCollected && !closing && !disposed) toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
+        }, 2000);
+        timer.unref?.();
+        heldWarmPrompts.set(msg, timer);
+        trace('warm-prompt-held', { id: msg.id });
+        return;
+      }
       toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
       return;
     }
@@ -3602,6 +3629,7 @@ export function createRelay({
           // The collected engine cannot send a late private permission prompt.
           privateWarmRequests.clear();
           cancelInternalRequests('Engine collected.');
+          dropHeldWarmPrompts();
         }
         return engine;
       },

@@ -111,20 +111,25 @@ test('native warm-up has its own silent cell so a slow inventory cannot hold the
       pending.push(work.catch(() => {}));
       return work;
     } }, nodeRepl: { write() {} } });
-    h.send(js(2));
     await runInContext('(async () => {' + h.warm.params.arguments.code + '})()', context);
     // The engine drains native work started by a cell before replying, even if JS did not await it.
     assert.equal(pending.length, 0, 'guard cell must finish before native inventory starts');
     h.respond({ id: h.warm.id, result: { content: [] } }); await tick();
-    const native = h.sent.find(msg => msg.params?.name === 'js' && msg.id !== h.warm.id && msg.id !== 2);
+    const native = h.sent.find(msg => msg.params?.name === 'js' && msg.id !== h.warm.id);
     assert.ok(native, 'native inventory runs in a separate private cell');
     await runInContext('(async () => {' + native.params.arguments.code + '})()', context);
     assert.deepEqual(calls, ['{"emit":false}']);
-    assert.ok(h.sent.some(msg => msg.id === 2), 'client is released without a native reply');
-    assert.ok(h.sent.findIndex(msg => msg.id === 2) < h.sent.indexOf(native), 'already waiting JS goes first');
+    h.send(js(2)); await tick();
+    assert.ok(h.sent.some(msg => msg.id === 2), 'a client call is not held for a native reply');
     h.respond({ id: native.id, result: { isError: true, content: [{ type: 'text', text: 'inventory failure' }] } });
     assert.equal(h.received.some(msg => msg.id === native.id), false);
   }
+  // A call already waiting pays the native start itself, and its prompt never queues behind a private cell.
+  const waiting = relayFixture(t, { warmEngine: true });
+  waiting.send(js(2));
+  waiting.respond({ id: waiting.warm.id, result: { content: [] } }); await tick();
+  assert.ok(waiting.sent.some(msg => msg.id === 2));
+  assert.equal(waiting.sent.some(msg => String(msg.id).startsWith('sleight-native-warm-')), false);
   const off = relayFixture(t, { warmEngine: false });
   off.respond({ id: off.warm.id, result: { content: [] } }); await tick();
   assert.equal(off.sent.filter(msg => msg.params?.name === 'js').length, 1);
@@ -148,6 +153,47 @@ test('private native warm-up declines prompts, preserves docs and never blocks u
   const shutdown = unused.relay.shutdown().then(() => { stopped = true; }); await tick();
   assert.equal(stopped, true, 'unanswered inventory is outside the lease drain');
   await shutdown;
+});
+
+test('a client prompt during native warm-up waits for the inventory, then reaches the user', async t => {
+  const approval = id => ({ id, method: 'elicitation/create', params: { message: 'Allow TextEdit?',
+    _meta: { connector_id: 'computer-use', persist: ['session'], tool_params: { app: 'TextEdit' }, riskLevel: 'low' } } });
+  const asked = [], h = relayFixture(t, { warmEngine: true, ask: async () => { asked.push('prompt'); return 'accept'; } });
+  h.respond({ id: h.warm.id, result: { content: [] } }); await tick();
+  const native = h.sent.find(msg => String(msg.id).startsWith('sleight-native-warm-'));
+  assert.ok(native);
+  h.send(js(2)); await tick();
+  h.respond(approval('client-permission')); await tick();
+  assert.deepEqual(asked, [], 'held while the inventory is pending');
+  assert.equal(h.sent.some(msg => msg.id === 'client-permission'), false);
+  h.respond({ id: native.id, result: { content: [] } }); await tick(); await tick();
+  assert.deepEqual(asked, ['prompt']);
+  assert.equal(h.sent.find(msg => msg.id === 'client-permission').result.action, 'accept');
+
+  // Without a client call in flight, a prompt during native warm-up is still declined at once.
+  const idle = relayFixture(t, { warmEngine: true, ask: async () => { asked.push('idle'); return 'accept'; } });
+  idle.respond({ id: idle.warm.id, result: { content: [] } }); await tick();
+  idle.respond(approval('idle-permission')); await tick();
+  assert.equal(idle.sent.find(msg => msg.id === 'idle-permission').result.action, 'decline');
+
+  // A prompt that names no app could be the inventory's own, so it is declined even with a call in flight.
+  const appless = relayFixture(t, { warmEngine: true, ask: async () => { asked.push('appless'); return 'accept'; } });
+  appless.respond({ id: appless.warm.id, result: { content: [] } }); await tick();
+  appless.send(js(2)); await tick();
+  appless.respond({ id: 'appless-permission', method: 'elicitation/create', params: { message: 'Permission?', _meta: { connector_id: 'computer-use' } } });
+  await tick();
+  assert.equal(appless.sent.find(msg => msg.id === 'appless-permission').result.action, 'decline');
+
+  // A held prompt the inventory never releases is declined after its deadline.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stuck = relayFixture(t, { warmEngine: true, ask: async () => { asked.push('stuck'); return 'accept'; } });
+  stuck.respond({ id: stuck.warm.id, result: { content: [] } }); await tick();
+  stuck.send(js(2)); await tick();
+  stuck.respond(approval('stuck-permission')); await tick();
+  assert.equal(stuck.sent.some(msg => msg.id === 'stuck-permission'), false);
+  t.mock.timers.tick(2000); await tick();
+  assert.equal(stuck.sent.find(msg => msg.id === 'stuck-permission').result.action, 'decline');
+  assert.equal(['stuck', 'idle', 'appless'].some(name => asked.includes(name)), false);
 });
 
 function relayFixture(t, options = {}) {
