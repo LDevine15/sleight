@@ -709,7 +709,11 @@ pass: for (let run = 1; run <= runs; run++) {
       catch (error) { console.error(privatePass ? 'Pass cleanup failed: PRIVATE_MAIL_CLEANUP_UNCONFIRMED' : `Pass cleanup failed: ${error.message}`); process.exitCode = 1; }
     }
     save(true);
-  } finally { await unlock?.(); unlock = undefined; }
+  } finally {
+    try { await unlock?.(); }
+    catch (error) { console.error(`Live lock: ${error.message}`); process.exitCode = 1; }
+    unlock = undefined;
+  }
 }
 if (controller.signal.aborted && !process.exitCode) process.exitCode = 130;
 

@@ -16,7 +16,12 @@ export async function acquireLiveLock(path = '/tmp/sleight-live.lock', { wait = 
   }
   const owned = await stat(path);
   return async () => {
-    const current = await stat(path);
+    // On 2026-10-17 something else removed the lock during a claim run, and the release crashed on a bare ENOENT.
+    const current = await stat(path).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      throw Object.assign(new Error(`${path} was removed by another process during this run, so other live runs weren't kept out.`),
+        { code: 'LIVE_LOCK_REMOVED' });
+    });
     if (!current.isDirectory() || current.dev !== owned.dev || current.ino !== owned.ino) {
       throw new Error('Live lock ownership changed; refusing to remove it.');
     }

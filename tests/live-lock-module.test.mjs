@@ -32,6 +32,15 @@ test('a live run cannot remove another holder or an existing lock file', async t
   await unlink(path);
 });
 
+test('releasing a lock another process removed says so instead of a bare ENOENT', async t => {
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-')));
+  t.after(() => rm(bank, { recursive: true, force: true }));
+  const path = join(bank, 'lock');
+  const release = await acquireLiveLock(path);
+  await rmdir(path);
+  await assert.rejects(release(), { message: /removed by another process during this run/, code: 'LIVE_LOCK_REMOVED' });
+});
+
 test('a waiting live run takes the lock only after the holder releases it', async t => {
   const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-live-lock-test-')));
   t.after(() => rm(bank, { recursive: true, force: true }));
