@@ -49,7 +49,9 @@ import { privateMailResult, publicPrivateMailRows, publishPrivateMailResults } f
 import { assertPrivateClaudePolicy } from './private-policy.mjs';
 import { CONFIG_DIR, LEDGER_FILE, DEFAULT_CAP_USD, addSpend, benchAuth, runCost } from './api-auth.mjs';
 import { assertLogin, assertEngineSockets, quote } from './preflight.mjs';
-import { archiveOldRuns } from './run-archive.mjs';
+import { archiveOldRuns, pruneRunImages } from './run-archive.mjs';
+import { sweepTemp } from '../scripts/temp-sweep.mjs';
+import { beginPassHygiene } from './pass-hygiene.mjs';
 import { prepareGenericArm, acceptGenericCatalog, genericSettings } from './plugin-arm.mjs';
 import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
@@ -73,6 +75,7 @@ function gitRoot(dir) {
   catch { return undefined; }
 }
 const isDryRun = process.argv.includes('--dry-run');
+const hygieneDryRun = process.argv.includes('--hygiene-dry-run');
 if (process.argv.includes('--world')) throw new Error('use --suite world for world isolation');
 const isSetupOnly = process.argv.includes('--setup-only');
 const ownerAway = process.argv.includes('--owner-away');
@@ -441,7 +444,6 @@ const scrub = text => {
 };
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-if (!isDryRun && armNames.some(name => !ARMS[name].unsupported)) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
 const results = [];
 const liveConditions = [];
 async function calculatorReady(stage) {
@@ -449,6 +451,7 @@ async function calculatorReady(stage) {
   catch (error) { controller.abort(error); throw error; }
 }
 const realContexts = [], passCleanupErrors = [];
+let windowHygiene, hygieneResult;
 const resultsDir = join(ROOT, 'bench', 'results');
 if (!isDryRun) mkdirSync(resultsDir, { recursive: true });
 const file = join(resultsDir, `${stamp}${isDryRun ? '-dry' : isSetupOnly ? '-setup' : ''}.json`);
@@ -460,7 +463,8 @@ const save = (final = false) => {
   }
   if (privatePass) {
     if (!fullName) throw new Error('PRIVATE_MAIL_OWNER_AUDIT_UNAVAILABLE');
-    const json = JSON.stringify({ results: publicPrivateMailRows(results) }, null, 2);
+    const json = JSON.stringify({ results: publicPrivateMailRows(results),
+      ...(hygieneResult && { leftWindows: hygieneResult.leftWindows.map(({ pid, id }) => ({ pid, ...(id && { id }) })) }) }, null, 2);
     publishPrivateMailResults(file, json, { ownerName: fullName,
       terms: realContexts.flatMap(ctx => ctx.privateTask.privateTerms(ctx)) });
     return;
@@ -469,7 +473,8 @@ const save = (final = false) => {
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
     arms: armNames, ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
-    ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }) }, null, 2);
+    ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }),
+    ...(hygieneResult && { hygiene: hygieneResult, leftWindows: hygieneResult.leftWindows }) }, null, 2);
   writeFileSync(file, scrub(json) + '\n');
 };
 // The runner owns the pass lock. Real tasks reuse it, so they cannot wait on
@@ -504,6 +509,11 @@ if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name]
   console.error('Acquiring /tmp/sleight-live.lock.');
   unlock = await acquireLiveLock(undefined, { wait: !guardedPass, signal: controller.signal, interval: 2000 });
   lockIdentity = statSync('/tmp/sleight-live.lock');
+  windowHygiene = await beginPassHygiene({ cacheDir: ARM_HOME, signal: controller.signal });
+  sweepTemp({ dryRun: hygieneDryRun });
+  if (!hygieneDryRun) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
+  pruneRunImages({ roots: [join(ARM_HOME, 'runs-archive'), ...new Set([tmpdir(), realpathSync(tmpdir())])].map((base, i) => i === 0 ? base : join(base, 'sleight-real-evidence')),
+    docsDir: join(ROOT, 'docs', 'benchmarks'), exclusionsFile: join(ROOT, 'bench', 'claim-exclusions.json'), dryRun: hygieneDryRun });
   // Codex can't answer app prompts headless, so the engine's "Always allow" list holds exactly the
   // benchmark apps for the pass, then goes back to what it was (exit handler below).
   if (armNames.some(n => ARMS[n].codex) && !process.argv.includes('--codex-no-write')) {
@@ -691,23 +701,23 @@ pass: for (let run = 1; run <= runs; run++) {
 
 } finally {
   try {
-    if (!isDryRun) for (const ctx of realContexts) for (const lease of ctx.windowLeases ?? []) {
-      if (lease.running !== false || !lease.launched) continue;
-      try { await lease.quit({ final: true }); }
-      catch (error) {
-        const message = privatePass ? 'PRIVATE_MAIL_CLEANUP_UNCONFIRMED' : scrub(error.message);
-        if (!privatePass) passCleanupErrors.push({ app: lease.app, error: message });
-        if (ctx.result) {
-          ctx.result.passed = false;
-          if (!privatePass) ctx.result.cleanupError = [...new Set([ctx.result.cleanupError, message].filter(Boolean))].join('; ');
-        }
-        console.error(`Pass cleanup failed: ${message}`); process.exitCode = 1;
+    if (windowHygiene) {
+      try {
+        hygieneResult = await windowHygiene.finish({ dryRun: hygieneDryRun,
+          blocked: ownerPresent || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
+          launched: realContexts.flatMap(ctx => (ctx.windowLeases ?? []).filter(lease => lease.launched && lease.running === false)
+            .map(lease => ({ pid: lease.pid, start: lease.processStartedAtMs / 1000, bundle: lease.bundle }))),
+          beforeAction: async () => {
+            controller.signal.throwIfAborted(); assertNoHold();
+            if (await observePermission()) throw new Error('macOS permission prompt: hygiene stopped');
+          } });
+      } catch (error) {
+        passCleanupErrors.push({ phase: 'window hygiene', error: scrub(error.message) }); process.exitCode = 1;
       }
     }
     if (!isDryRun && unlock) for (const cleanup of [closeBenchTextEdit, quitChess, quitSimApp]) {
-      // TextEdit tasks launch TextEdit themselves (launchBenchTextEdit), so the pass quits it again.
-      try { await cleanup(suite === 'real' || cleanup === quitSimApp || armNames.some(name => ARMS[name].generic) ? { ownedOnly: true }
-        : cleanup === closeBenchTextEdit ? { quit: true } : undefined); }
+      // Unscoped legacy tails could close windows that predate this pass.
+      try { if (!hygieneDryRun) await cleanup({ ownedOnly: true }); }
       catch (error) { console.error(privatePass ? 'Pass cleanup failed: PRIVATE_MAIL_CLEANUP_UNCONFIRMED' : `Pass cleanup failed: ${error.message}`); process.exitCode = 1; }
     }
     save(true);

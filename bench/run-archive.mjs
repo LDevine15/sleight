@@ -1,6 +1,59 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { isHeld } from '../scripts/temp-leftovers.mjs';
+import { canonicalHolders, readHeldPaths } from '../scripts/temp-sweep.mjs';
+
+const IMAGE_AGE_MS = 7 * 24 * 3600 * 1000;
+const STAMP = /^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z$/;
+const stampTime = name => Date.parse(name.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, 'T$1:$2:$3.$4Z'));
+
+// Protect even partial timestamp references in reports and claim exclusions. No symlink traversal.
+export function pruneRunImages({ roots, docsDir, exclusionsFile, now = Date.now(), held,
+  inventory = readHeldPaths, dryRun = false, log = console.log } = {}) {
+  const result = { planned: [], removed: [], freedBytes: 0 };
+  try {
+    held = canonicalHolders(held ?? inventory());
+    let references = readFileSync(exclusionsFile, 'utf8');
+    JSON.parse(references);
+    for (const file of readdirSync(docsDir, { withFileTypes: true })) {
+      if (file.isFile() && file.name.endsWith('.md')) references += '\n' + readFileSync(join(docsDir, file.name), 'utf8');
+    }
+    const cited = references.match(/\d{4}-\d\d-\d\dT\d\d(?:-\d\d(?:-\d\d(?:-\d{3}Z)?)?)?/g) ?? [];
+    const walk = (path, runTime) => {
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        const file = join(path, entry.name);
+        if (entry.isDirectory()) {
+          // Chess archives can contain timestamped runs inside their unique bank.
+          if (STAMP.test(entry.name)) visit(file, entry.name);
+          else walk(file, runTime);
+        } else if (entry.isFile() && runTime != null && now - runTime > IMAGE_AGE_MS && /\.(png|jpe?g)$/i.test(entry.name)) {
+          result.planned.push(file); log(`${dryRun ? 'would delete' : 'delete'} ${file}`);
+          if (dryRun) continue;
+          const info = lstatSync(file);
+          if (!info.isFile() || isHeld(file, held)) continue;
+          unlinkSync(file); result.removed.push(file); result.freedBytes += info.size;
+        }
+      }
+    };
+    const visit = (path, name) => {
+      if (cited.some(prefix => name.startsWith(prefix)) || isHeld(path, held)) return;
+      const time = stampTime(name);
+      if (Number.isFinite(time) && now - time > IMAGE_AGE_MS) walk(path, time);
+    };
+    for (const root of roots) {
+      if (!existsSync(root) || !lstatSync(root).isDirectory()) continue;
+      for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const path = join(root, entry.name);
+        if (STAMP.test(entry.name)) visit(path, entry.name);
+        else if (/^chess-drag-/.test(entry.name)) walk(path, null);
+      }
+    }
+  } catch (error) { result.warning = `retention reference/inventory scan failed: ${error.message}`; log(result.warning); }
+  log(`image retention removed ${result.removed.length} files (${result.freedBytes} bytes)`);
+  return result;
+}
 
 // TextEdit's Save sheet lists the folder it opens in, and every run saves inside the benchmark's
 // temp folder: with 135 old runs there, one read of the sheet was 57,000 characters, over Claude

@@ -7,7 +7,7 @@
     "test:mod": "scripts/claude-isolated.sh plugin test plugins/sleight",
     "validate": "scripts/claude-isolated.sh plugin validate . && scripts/claude-isolated.sh plugin validate plugins/sleight",
     "typecheck": "scripts/typecheck.sh",
-    "check": "scripts/wait-hold.sh && npm test && npm run validate && npm run test:mod",
+    "check": "scripts/wait-hold.sh && node scripts/temp-sweep.mjs && npm test && npm run validate && npm run test:mod",
     "doctor": "plugins/sleight/bin/sleight-mcp --doctor",
     "bench": "node bench/run.mjs",
     "build:hover-fixture": "node bench/hover-build.mjs",

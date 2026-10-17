@@ -46,7 +46,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -71,6 +71,13 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
     privateDriverEnvironment, assertPrivateClaudePolicy: () => calls.push('policy audit'),
     DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: options => { calls.push(['auth mode', options.mode]); return auth; }, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
     CONFIG_DIR: '/isolated/claude',
+    sweepTemp: options => calls.push(['temp sweep', options]),
+    pruneRunImages: options => calls.push(['image retention', options]),
+    beginPassHygiene: async () => {
+      calls.push('window baseline');
+      if (hygieneError) throw new Error(hygieneError);
+      return { finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
+    },
     assertLogin: plan => { calls.push(['login preflight', plan]); const message = typeof loginError === 'function' ? loginError(plan) : loginError; if (message) throw new Error(message); },
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
     prepareGenericArm: () => {
@@ -147,6 +154,44 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
   const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
   return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, commands, exitCode: sandbox.process.exitCode };
 }
+
+test('pass snapshots under the lock before discovery; temp and image cleanup run before tasks', async () => {
+  const result = await runner({ drive: true });
+  assert.equal(result.error, undefined);
+  assert.ok(result.calls.indexOf('window baseline') > result.calls.indexOf('lock'));
+  assert.ok(result.calls.indexOf('window baseline') < result.calls.findIndex(call => Array.isArray(call) && call[0] === 'login preflight'));
+  for (const name of ['temp sweep', 'image retention']) assert.ok(result.calls.findIndex(call => Array.isArray(call) && call[0] === name) < result.calls.indexOf('real run'));
+});
+test('window baseline failure stops before discovery and still releases the live lock', async () => {
+  const result = await runner({ hygieneError: 'CGWindowList unavailable' });
+  assert.equal(result.calls.includes('real run'), false);
+  assert.equal(result.commands.length, 0);
+  assert.equal(result.calls.at(-1), 'unlock');
+  assert.match(result.error?.message ?? '', /CGWindowList unavailable/);
+});
+test('left windows are published and hygiene dry run reaches every deletion and window planner', async () => {
+  const result = await runner({ extraArgs: ['--hygiene-dry-run'], hygieneResult: { leftWindows: [{ pid: 42, id: 7 }], errors: [] } });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 42, id: 7 }]);
+  for (const name of ['temp sweep', 'image retention', 'window hygiene']) assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === name)?.[1].dryRun, true);
+});
+test('a pass interrupted by a driver or dialog keeps new windows; planning dry run does no hygiene inventory', async () => {
+  for (const outcome of [{ groupClean: false }, { appDialog: { category: 'save' } }]) {
+    const result = await runner({ outcome });
+    assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')?.[1].blocked, true);
+  }
+  const dry = await runner({ dryRun: true });
+  assert.equal(dry.calls.includes('window baseline'), false);
+  assert.ok(!dry.calls.some(call => Array.isArray(call) && ['temp sweep', 'image retention'].includes(call[0])));
+});
+test('owner-present cleanup is report-only and private results carry only leftover IDs', async () => {
+  const result = await runner({ privateMail: true, extraArgs: ['--owner-present'],
+    hygieneResult: { leftWindows: [{ pid: 42, id: 7, bundle: 'fixture', reason: 'invented private label' }], errors: [] } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')?.[1].blocked, true);
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 42, id: 7 }]);
+  assert.equal(JSON.stringify(result.saved).includes('invented private label'), false);
+});
 
 test('missing isolated login stops before tool discovery or the first task', async () => {
   const result = await runner({ loginError: 'Not logged in. Fix: isolated auth login', drive: true });
@@ -765,7 +810,7 @@ test('real safety errors stop after one run but still execute the common cleanup
   }
 });
 
-test('permission and driver stops quit a launched Device Hub lease once before unlocking', async () => {
+test('permission and driver stops never retry the legacy force-quit path', async () => {
   for (const outcome of [{ permissionPrompt: true }, { groupClean: false }]) {
     let quits = 0;
     const lease = { app: 'DeviceHub', running: false, launched: true, quit: async options => {
@@ -773,7 +818,7 @@ test('permission and driver stops quit a launched Device Hub lease once before u
     } };
     const result = await runner({ outcome, leases: [lease] });
     assert.equal(result.error, undefined);
-    assert.equal(quits, 1);
+    assert.equal(quits, 0);
     assert.equal(result.calls.at(-1), 'unlock');
   }
 });
@@ -794,21 +839,22 @@ test('the default simulator uses streaming permission detection and publishes sc
   assert.equal(result.tailScopes[2]?.ownedOnly, true);
 });
 
-test('a default simulator cleanup failure stops the pass and retries only its retained launched PID', async () => {
+test('a default simulator cleanup failure stops the pass without retrying force quit', async () => {
   let quits = 0;
   const result = await runner({ suite: 'default', fixtureLifecycle: true, outcome: { cleanupError: 'close failed' },
     leases: [{ app: 'DeviceHub', running: false, launched: true, quit: async () => { quits++; } }] });
   assert.equal(result.error, undefined);
   assert.equal(result.calls.filter(call => call === 'real run').length, 1);
-  assert.equal(quits, 1);
+  assert.equal(quits, 0);
   assert.equal(result.saved.at(-1).results[0].passed, false);
 });
 
-test('pass cleanup preserves pre-existing apps and publishes a failed owned-app quit', async () => {
+test('pass cleanup preserves pre-existing apps and publishes refused gentle cleanup as leftWindows', async () => {
   const existing = { app: 'Safari', running: true, launched: true, quit: () => assert.fail('preserve pre-existing app') };
   const launched = { app: 'Preview', running: false, launched: true, quit: async () => { throw new Error('quit unconfirmed'); } };
-  const result = await runner({ outcome: { permissionPrompt: true }, leases: [existing, launched] });
-  assert.match(result.saved.at(-1).results[0].cleanupError, /quit unconfirmed/);
+  const result = await runner({ outcome: { permissionPrompt: true }, leases: [existing, launched],
+    hygieneResult: { leftWindows: [{ pid: 7, id: 42 }], errors: ['quit unconfirmed'] } });
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 7, id: 42 }]);
   assert.equal(result.saved.at(-1).results[0].passed, false);
 });
 
@@ -845,10 +891,9 @@ test('Codex default approvals contain only the five core benchmark bundle IDs', 
   assert.equal(result.error, undefined);
   assert.deepEqual(result.calls.find(c => Array.isArray(c) && c[0] === 'approve'),
     ['approve', 'com.apple.calculator', 'com.apple.TextEdit', 'com.apple.Chess', 'com.apple.iphonesimulator', 'com.apple.dt.Devices']);
-  assert.deepEqual(result.tailScopes.map(scope => scope?.ownedOnly), [undefined, undefined, true]);
-  // TextEdit tasks launch TextEdit themselves since 2026-10-11, so a default pass quits it at the end
-  // (closeBenchTextEdit still quits only when every open document is the pass's own).
-  assert.equal(result.tailScopes[0]?.quit, true);
+  assert.deepEqual(result.tailScopes.map(scope => scope?.ownedOnly), [true, true, true]);
+  // The snapshot planner replaces unscoped cleanup; legacy tails require owned references.
+  assert.equal(result.tailScopes[0]?.quit, undefined);
 });
 
 test('a Codex real run drives through Codex with the real apps approved and the pass signal', async () => {
