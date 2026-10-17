@@ -303,6 +303,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     };
     state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');
     state.raws ||= new WeakMap();
+    // Windows whose bound capture lost an element, by app and URL or title, to the clean actions left before
+    // they bind again: each reads before a numbered or named action until STALE_PASSES of those pass (see the
+    // refusal below). The refused read is bounded by REFUSAL_READ_MS.
+    if (!(state.staleCaptures instanceof Map)) state.staleCaptures = new Map();
+    const STALE_PASSES = 3, REFUSAL_READ_MS = 5000;
+    const captureKey = header => header ? JSON.stringify([header.app, header.url ?? header.title]) : undefined;
     // Full reads taken in this call since the handle's last action. A new call
     // always reads again, because the user may have changed the window between.
     state.reads = new WeakMap();
@@ -609,15 +615,19 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           // Keep the engine's capture until an opener or the caller's own read replaces it. Unknown
           // selectors still read; unique selectors use the numbers of the last capture we took.
           const firstTree = state.callElements.get(proxy);
-          const bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
+          const bindable = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
             (byId ? findTarget(firstTree).length === 1 : literal !== undefined && firstTree.has(literal));
+          // A flagged window reads instead, and binds again after STALE_PASSES such actions pass.
+          const staleKey = captureKey(state.callHeaders.get(proxy));
+          const unbound = bindable && state.staleCaptures.has(staleKey);
+          const bind = bindable && !unbound;
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
             typeof before.key === 'string' && !before.key.includes('+') && !/^(?:return|enter|escape|esc|tab|space)$/i.test(before.key)) ||
             state.quietEdits && (before.editKey || before.editable && ['typeText', 'paste'].includes(name)));
           let observed;
-          if (text === undefined && bind) text = state.binding.text;
+          if (text === undefined && bind) { text = state.binding.text; attempt.bound = true; }
           const header = state.callHeaders.get(proxy);
           const light = text === undefined && !checkFocus && !skipFirst && state.light && !state.light.off && !state.careful && state.guarded &&
             ['typeText', 'paste'].includes(name) && before?.name === 'pressKey' && typeof before.key === 'string' &&
@@ -832,7 +842,35 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           input();
           // Input went out before the engine answered, so a rejected action may have acted.
           let result;
-          try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
+          try { result = await value.apply(raw, args); } catch (error) {
+            state.unknown.push(shown);
+            // "75 is an invalid element ID" (-10005): the engine's capture no longer holds that element. A date
+            // picker re-rendered its days after the first date's click, so the bound capture's next date was gone
+            // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). The stop stays
+            // and nothing is resent. It carries a fresh tree for the relay's note, when one comes within
+            // REFUSAL_READ_MS, and the window reads before each numbered or named action for a while, so the rest
+            // can go in one call.
+            if (/\\bis an invalid element ID\\b/.test(String(error?.message ?? error))) {
+              attempt.refused = true;
+              if (attempt.bound) state.staleCaptures.set(captureKey(observed), STALE_PASSES);
+              state.binding = undefined;
+              let timer;
+              try {
+                const fresh = await Promise.race([timedRead(raw, 'after-refusal'),
+                  new Promise(resolve => { timer = globalThis.setTimeout?.(resolve, REFUSAL_READ_MS); })]);
+                if (typeof fresh === 'string' && parse(fresh)) {
+                  nodeRepl.write(${JSON.stringify(GUARD_MARK)} + fresh + ${JSON.stringify(GUARD_END)});
+                  state.reads.set(proxy, { text: fresh, emitted: true, version: state.actionVersion });
+                  attempt.fresh = true;
+                }
+              } catch {} finally { globalThis.clearTimeout?.(timer); }
+            }
+            throw error;
+          }
+          if (unbound) {
+            const left = state.staleCaptures.get(staleKey) - 1;
+            if (left > 0) state.staleCaptures.set(staleKey, left); else state.staleCaptures.delete(staleKey);
+          }
           previous.done = Date.now();
           if (editable) previous.completed = true;
           state.completedActions++;
@@ -854,6 +892,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
               prev: state.lastAction, root: /^\\d+ .*$/m.exec(attempt.text ?? '')?.[0] ?? null,
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
+              ...(attempt.refused ? { refused: true, bound: !!attempt.bound, fresh: !!attempt.fresh } : {}),
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));
           });

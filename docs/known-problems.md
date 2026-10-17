@@ -22,6 +22,9 @@ our own runs. Dates and engine versions are given where they matter.
   continuation also needs HID idle since the document was last seen as a standard window, so any mouse or key input
   after that stops the rest. It also stops when the app has a second window with the same title and URL, when the
   dialog's own native identity couldn't be read before the call, and when a palette closed by a button can't be shown gone.
+- The tab continuation (a call's own Cmd+T going on into the new tab) hasn't run live; only fixtures and a replay of the
+  2026-10-17 Firefox round's saved trees cover it. It needs HID idle over the whole call, which some engine key presses
+  reset (above), so it may rarely fire and the call stops at the tab as before. A click on a new-tab button always stops.
 - A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
   call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
   URL) on its own: only the continuation checks the native window behind it.
@@ -44,6 +47,12 @@ our own runs. Dates and engine versions are given where they matter.
   We haven't seen it happen. The first live Word trace should show whether it does.
 - A standard window counts as covered only if its app's process was known when it was read. The relay probes the
   helper once per app; if that fails, the next dialog close over a window read before any other process note stops.
+- A batch of numbered or named actions reuses the call's first read until an opener, so an action that rebuilds the
+  elements it holds (a date picker after its first date) makes the engine refuse the next number. We've seen this once
+  (Firefox travel, 2026-10-17). That call still stops, and that window, by app and URL or title, then reads before
+  each numbered or named action until three of them pass, about 50 to 400 ms an action (the read timings measured
+  2026-10-09). The read after the refusal gives up after 5 s, and the note then doesn't list targets. We can't read the
+  engine's source, so we don't know for sure that a refused number doesn't send input. The stop doesn't resend it.
 
 ## The pointer, drags and hover
 

@@ -17,13 +17,13 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 // TT1N's string-read VM fixture, now joined to the real relay. Native truth stays outside
 // the engine realm: only the relay's injected read-only identity helper can observe it.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, onAction, ...options } = {}) {
+  retryFirst, beforeRetry, onAction, onRead, ...options } = {}) {
   let text = base, writes = [];
-  const clicks = [], keys = [], values = [], sent = [], received = [];
+  const clicks = [], keys = [], values = [], typed = [], sent = [], received = [];
   let identityChecks = 0;
   const native = { windowNumber: 22, hidIdleSeconds: 1000, status: 'ok' };
   // onAction(name, argument, text) returns the window an action leaves, for a scripted sequence.
-  const raw = { getAXState: async () => text, click: async number => {
+  const raw = { getAXState: async () => { onRead?.(); return text; }, click: async number => {
     clicks.push(number); text = onAction ? onAction('click', number, text) : clicks.length === 1 ? after : afterItem;
     if (actionOutput) writes.push('clicked:' + number);
     if (nativeChange === 'window') native.windowNumber = 23;
@@ -34,7 +34,8 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
     if (nativeChange === 'window') native.windowNumber = 23;
     if (nativeChange === 'focus') native.hidIdleSeconds = 0;
     if (nativeChange === 'unfocused') native.status = 'mismatch';
-  }, setValue: async (number, value) => { values.push([number, value]); if (onAction) text = onAction('setValue', number, text); } };
+  }, setValue: async (number, value) => { values.push([number, value]); if (onAction) text = onAction('setValue', number, text); },
+  typeText: async value => { typed.push(value); if (onAction) text = onAction('typeText', value, text); } };
   const context = createContext({ cua: { getApp: async () => raw, listApps: async () => [
     { id: 'org.test.editor', windows: [{ title: 'report.txt' }] }
   ] }, nodeRepl: { write: value => writes.push(String(value)) } });
@@ -81,7 +82,7 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
   await call('await cua.getApp("Fixture Editor");');
   // The setup read's process probe doesn't count.
   sent.length = received.length = 0; cursor = 0; text = initial ?? base; identityChecks = 0;
-  return { clicks, keys, values, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
+  return { clicks, keys, values, typed, native, sent, received, relay, call, send: msg => clientIn.write(JSON.stringify(msg) + '\n'), identityChecks: () => identityChecks, setText: value => { text = value; } };
 }
 
 const navigation = 'Window: "Parent", App: Fixture Editor.\n0 standard window Parent, URL: file:///tmp/Parent\n\t2 row Child, ID: child\n\t3 button Other';
@@ -111,6 +112,7 @@ for (const [name, options] of [
   ['careful mode', { guardMode: 'careful' }],
   ['a document opened into the window', { after: child + '\n\t4 text area (settable) Value: draft' }],
   ['a page opened into the window', { after: child + '\n\t4 web area Child page' }],
+  ['a page whose role is capitalized', { after: child + '\n\t4 HTML Content Child page' }],
 ]) test(`TW2: navigation stops on ${name}`, async t => {
   const h = await fixture(t, { base: navigation, after: child, ...options });
   const result = await h.call('await app.pressKey("Return"); await app.click("Other");');
@@ -628,4 +630,208 @@ test('DR1: a lease stop says which actions ran and which were not sent', async t
   const unsplit = await dialogFixture(t, { afterItem: page.replaceAll('report.txt', 'other.txt') });
   const plain = (await unsplit.call('await app.click({ id: "ok" }); if (true) await app.pressKey("super+End");')).content.map(c => c.text ?? '').join('\n');
   assert.match(plain, /sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent\./);
+});
+
+// AB3: a date picker re-rendered its days after the first date's click, so the engine refused the next date's number
+// from the call's bound capture (Firefox travel, 2026-10-17). A diff read, a full read and a lone click followed (9.4 s).
+const picker = rendered => 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n' +
+  '\t1 text field Dates' + (rendered ? ', Value: Dec 14\n\t2 text Check-in set' : '') + '\n' +
+  ['button Monday, December 14, ID: d14', 'button Saturday, December 19, ID: d19', 'button Add adult, ID: add-adult', 'button Add child, ID: add-child']
+    .map((line, i) => `\t${i + (rendered ? 3 : 2)} ${line}`).join('\n');
+async function pickerFixture(t, { failRead = false } = {}) {
+  // The engine's capture: a read takes a new one, and any click replaces the elements it holds.
+  let stale = false;
+  return fixture(t, { base: picker(false), onRead: () => { if (failRead && stale) throw new Error('read failed'); stale = false; },
+    onAction: (name, number) => {
+      if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
+      stale = true;
+      return picker(true);
+    } });
+}
+
+test('AB3: a refused element says what ran, what was not sent, and where the rest are now', async t => {
+  const h = await pickerFixture(t);
+  const result = await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" }); ' +
+    'await app.click({ label: "Add adult" }); await app.click(5);');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [2, 3], 'the refused click is not resent and nothing after it runs');
+  const text = result.content.map(c => c.text ?? '').join('\n');
+  assert.match(text, /sleight: this call ran 1 action \(click\); the engine refused the next click \(element 3\): its number came from this call's first read, and the element changed \(perhaps replaced by an earlier action\)\. Not sent after it: click, click 5\./);
+  // click(5) was Add child in the tree Claude saw; it is 6 now.
+  assert.match(text, /In this result's window, the refused action and the rest are now click 4, click 5, click 6\. /);
+  assert.match(text, /sleight now reads this window before each numbered or named action, so the rest can go in one call\./);
+  assert.match(text, /Dates, Value: Dec 14/, 'the fresh tree is in the result');
+  assert.doesNotMatch(text.slice(text.indexOf('sleight: this call ran')), /December 19|Add adult/, 'the note names no label text');
+});
+
+test('AB3 review: when the read after a refusal fails, the note claims no current window', async t => {
+  const h = await pickerFixture(t, { failRead: true });
+  const result = await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" }); await app.click(5);');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [2, 3]);
+  const text = result.content.map(c => c.text ?? '').join('\n');
+  assert.match(text, /Not sent after it: click 5\. sleight couldn't read the window after it, so read it before acting\./);
+  assert.doesNotMatch(text, /is current|are now/);
+});
+
+test('AB3: after a refusal, the rest goes in one call', async t => {
+  const h = await pickerFixture(t);
+  await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" });');
+  const result = await h.call('await app.click({ label: "Saturday, December 19" }); await app.click({ label: "Add adult" }); ' +
+    'await app.click({ label: "Add adult" }); await app.click({ label: "Add child" });');
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, [2, 3, 4, 5, 5, 6]);
+});
+
+// AB1: the Firefox race round's new-tab stops (2026-10-17). A leased browser-like window without a URL; Cmd+T adds a
+// selected tab and retitles the window, with focus in the address field outside the page.
+const marker = 'Window: "Marker", App: Fixture Editor.\n0 standard window Marker, Secondary Actions: Raise\n\t1 tab group\n' +
+  '\t\t2 tab (selected) Value: Marker, Marker\nClose tab\n\t\t3 button Open a new tab\n\t4 combo box (settable) Address\n' +
+  '\t5 HTML Content Description: Marker\n\t\t6 link Home\n\nThe focused UI element is 1 tab group';
+const newTab = 'Window: "New Tab", App: Fixture Editor.\n0 standard window New Tab, Secondary Actions: Raise\n\t1 tab group\n' +
+  '\t\t2 tab (selectable) Value: Marker, Marker\nClose tab\n\t\t3 tab (selected) Value: New Tab, New Tab\nClose tab\n\t\t4 button Open a new tab\n' +
+  '\t5 combo box (settable) Address\n\t6 HTML Content Description: New Tab\n\t\t7 link Shortcuts\n\nThe focused UI element is 5 combo box (settable) Address';
+const shop = newTab.replaceAll('New Tab', 'Shop').replace(/The focused UI element is .*/, 'The focused UI element is 7 link Shortcuts');
+const fieldFocus = { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false };
+const tabCall = 'await app.pressKey("super+t");\nawait app.typeText("http://127.0.0.1:5420/shop");\nawait app.pressKey("Return");\nawait app.getAXState();';
+const tabScript = (opened = newTab) => (name, argument, text) => name === 'pressKey' && argument === 'super+t' ? opened
+  : name === 'pressKey' && argument === 'Return' ? shop : text;
+async function tabFixture(t, { opened, focus = fieldFocus, ...options } = {}) {
+  const refusals = [], continued = [];
+  const h = await fixture(t, { base: marker, onAction: tabScript(opened), trace: (direction, msg) => {
+    if (direction === 'tab-continuation-refused') refusals.push(msg.reason);
+    if (direction === 'menu-continuation') continued.push(msg.kind);
+  }, ...options });
+  h.native.focus = focus;
+  return { ...h, refusals, continued };
+}
+const stoppedAtTab = (h, result) => {
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result), /window or URL changed|app changed/);
+  assert.deepEqual(h.keys, ['super+t']);
+  assert.deepEqual(h.typed, []);
+  assert.equal(h.sent.length, 1);
+};
+
+test('AB1: the call\'s own Cmd+T into a new tab of the same window types the URL there in the same call', async t => {
+  const h = await tabFixture(t);
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop']);
+  assert.equal(h.sent.length, 2);
+  assert.equal(h.identityChecks(), 3, 'admission baseline, post-stop, and immediately before forwarding');
+  assert.deepEqual(h.continued, ['tab']);
+  assert.deepEqual(h.refusals, []);
+  assert.doesNotMatch(JSON.stringify(result), /guard-stop|window or URL changed/);
+});
+
+test('AB1: Ctrl+T without a trailing read continues too', async t => {
+  const h = await tabFixture(t, { onAction: (name, argument, text) => name === 'pressKey' && argument === 'ctrl+t' ? newTab : tabScript()(name, argument, text) });
+  const result = await h.call('await app.pressKey("ctrl+t"); await app.typeText("example.org"); await app.pressKey("Return");');
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.typed, ['example.org']);
+});
+
+for (const [name, options, reason] of [
+  ['the baseline flag', { tabContinuation: false }, 'off'],
+  ['careful mode', { guardMode: 'careful' }, 'careful'],
+  ['user HID input since the call began', { nativeChange: 'focus' }, 'hid-input'],
+  ['another window in front', { nativeChange: 'window' }, 'identity: Input lease: the selected window number changed. Read the intended window again before acting.'],
+  ['the window no longer focused', { nativeChange: 'unfocused' }, 'identity: Input lease: the native window changed. Read the intended window again before acting.'],
+  ['a new process', { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
+    pid: count === 1 ? 123 : 456, processStart: 1 }) }, 'identity: Input lease: the native window or its process changed. Read the intended window again before acting.'],
+  ['a sheet only the helper sees', { focus: { ...fieldFocus, sheets: 1 } }, 'native-sheet'],
+  ['a password field in focus', { focus: { ...fieldFocus, role: 'AXTextField', subrole: 'AXSecureTextField' } }, 'secure-field'],
+  ['focus outside the window', { focus: { ...fieldFocus, inWindow: false } }, 'focus-outside-window'],
+  ['focus on the page', { opened: newTab.replace(/The focused UI element is .*/, 'The focused UI element is 7 link Shortcuts') }, 'focus-not-app-field'],
+  ['a field inside the page', { opened: newTab.replace('\t\t7 link Shortcuts', '\t\t7 text field Search').replace(/The focused UI element is .*/,
+    'The focused UI element is 7 text field Search') }, 'focus-in-document'],
+  ['a tab switch (no new tab)', { opened: newTab.replace('\t\t2 tab (selectable) Value: Marker, Marker\nClose tab\n', '') }, 'no-new-tab'],
+  ['two new tabs', { opened: newTab.replace('\t\t4 button', '\t\t8 tab (selectable) Value: Other, Other\n\t\t4 button') }, 'no-new-tab'],
+  ['another app in front', { opened: newTab.replace('App: Fixture Editor.', 'App: Other Editor.') }, 'other-app'],
+]) test(`AB1: a new-tab stop stays a stop on ${name}`, async t => {
+  const h = await tabFixture(t, options);
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.deepEqual(h.continued, []);
+  if (reason) assert.deepEqual(h.refusals, [reason]);
+});
+
+for (const [name, code, reason] of [
+  ['a click on the new-tab button', 'await app.click(3); await app.typeText("example.org"); await app.pressKey("Return");', 'not-a-tab-shortcut'],
+  ['Cmd+Shift+T', 'await app.pressKey("super+shift+t"); await app.typeText("example.org"); await app.pressKey("Return");', 'not-a-tab-shortcut'],
+  ['an unsplit call', 'await app.pressKey("super+t"); if (true) await app.typeText("example.org");', 'not-admitted'],
+]) test(`AB1: ${name} stops before typing`, async t => {
+  const h = await tabFixture(t, { onAction: (action, argument, text) => action === 'typeText' ? text : action === 'pressKey' && argument === 'Return' ? shop : newTab });
+  const result = await h.call(code);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.typed, []);
+  assert.equal(h.sent.length, 1);
+  assert.deepEqual(h.refusals, [reason]);
+});
+
+test('AB1: input during the remainder\'s final check stops it with the original stop', async t => {
+  const h = await tabFixture(t, { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
+    pid: 123, processStart: 1, ...(count === 3 ? { hidIdleSeconds: 0 } : {}) }) });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.equal(h.identityChecks(), 3);
+  assert.deepEqual(h.refusals, ['final-check']);
+});
+
+test('AB1: a tab the remainder opens again stops before its next action', async t => {
+  const h = await tabFixture(t, { onAction: (name, argument, text) => name === 'pressKey' && argument === 'super+t' ? (text === marker ? newTab : marker) : text });
+  const result = await h.call('await app.pressKey("super+t"); await app.pressKey("super+t"); await app.typeText("example.org");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, ['super+t', 'super+t']);
+  assert.deepEqual(h.typed, []);
+});
+
+test('AB1: a sheet the helper sees only at the final check stops the remainder', async t => {
+  const h = await tabFixture(t, { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
+    pid: 123, processStart: 1, ...(count === 3 ? { focus: { ...fieldFocus, sheets: 1 } } : {}) }) });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.equal(h.identityChecks(), 3);
+  assert.deepEqual(h.refusals, ['final-check']);
+});
+
+const tabIdentity = change => async (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
+  pid: 123, processStart: 1, ...change(count) });
+test('AB1 review: a baseline without a window number never continues', async t => {
+  const h = await tabFixture(t, { identity: tabIdentity(count => count === 1 ? { windowNumber: null } : {}) });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.deepEqual(h.refusals, ['no-window-number']);
+});
+
+test('AB1 review: a helper that matches other than one window never continues', async t => {
+  for (const matches of [0, 2]) {
+    const h = await tabFixture(t, { identity: tabIdentity(count => count === 2 ? { matches } : {}) });
+    stoppedAtTab(h, await h.call(tabCall));
+    assert.deepEqual(h.refusals, [`identity: Input lease: window identity is ambiguous (${matches} matching windows). Read the intended window again before acting.`]);
+  }
+});
+
+test('AB1 review: a lease that moved while the helper looked never continues', async t => {
+  let h;
+  h = await tabFixture(t, { identity: async (expected, native, count) => {
+    if (count === 2) {
+      h.send({ jsonrpc: '2.0', id: 99, method: 'tools/call', params: { name: 'js_reset', arguments: {} } });
+      for (let i = 0; i < 5; i++) await tick();
+    }
+    return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+  } });
+  const result = await h.call(tabCall);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, ['super+t']);
+  assert.deepEqual(h.typed, []);
+  assert.equal(h.sent.filter(msg => msg.params?.name === 'js').length, 1, 'the js_reset only, no remainder');
+  assert.deepEqual(h.refusals, ['lease-moved']);
+});
+
+// The remainder's numbers come from the tree Claude read before the call; the guard checks them against the new tab's.
+test('AB1 review: a numbered click in the remainder after a tab continuation stops as stale', async t => {
+  const h = await tabFixture(t);
+  const result = await h.call('await app.pressKey("super+t"); await app.click(5);');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, []);
+  assert.match(JSON.stringify(result), /element 5 changed since you read the window/);
 });

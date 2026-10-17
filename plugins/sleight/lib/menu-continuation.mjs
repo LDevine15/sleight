@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tokens } from './flow-rules.mjs';
 import { statementSpans } from './text-save.mjs';
-import { hasIdentifier, hasLabel, windowFromText } from './document-scope.mjs';
+import { GUARD_END, GUARD_MARK, elementLines, hasIdentifier, hasLabel, sameElement, windowFromText } from './document-scope.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 
 export const guardStopMark = () => `[sleight:guard-stop:${randomUUID()}]`;
@@ -92,6 +92,9 @@ function trailingRead(ts, handle, names) {
   if (ts[0]?.v === 'nodeRepl' && ts[1]?.v === '.' && ts[2]?.v === 'write' && ts[3]?.v === '(' && ts.at(-1)?.v === ')' &&
       !ts.slice(0, 4).some(t => t.string)) return writeArgument(ts.slice(4, -1), handle, names) ? '' : undefined;
   if (writeArgument(ts, handle, names)) return '';
+  // `await app.getAXState()` as the call's value: 3 of the 8 Firefox new-tab calls ended this way (2026-10-17).
+  if (ts[0]?.v === 'await' && !ts[0].string && ts[1]?.v === handle && !ts[1].string && punct(ts[2], '.') && ts[3]?.v === 'getAXState' &&
+      !ts[3].string && punct(ts[4], '(') && punct(ts.at(-1), ')') && literalArgs(ts.slice(5, -1))) return '';
   const i = declared(ts);
   return isName(ts[i]) && ts[i].v !== handle && !forbidden.has(ts[i].v) && ts[i + 1]?.v === '=' && ts[i + 2]?.v === 'await' && ts[i + 3]?.v === handle &&
     ts[i + 4]?.v === '.' && READS.has(ts[i + 5]?.v) && !ts[i + 5].string && ts[i + 6]?.v === '(' && ts.at(-1)?.v === ')' &&
@@ -189,7 +192,9 @@ export function menuRemainder(plan, receipt, expected, content) {
     if (window.title === expected.title || /^\s*\d+ (?:sheet|dialog)\b/m.test(tree)) return;
     // Only windows without editable document content: nothing proves this call's key caused the retitle, and a
     // retitle into a document (Return opening a file, a tab switch) would put the rest of the call's input there.
-    if (/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/m.test(tree)) return;
+    // Any case: Firefox names its page "HTML Content" (342 of 342 reads in the 2026-10-17 race round), which the
+    // lowercase test let through as a navigation.
+    if (/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/im.test(tree)) return;
     return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree, navigation: true };
   }
   if (!['label', 'id'].includes(prev.kind)) return;
@@ -203,6 +208,71 @@ export function menuRemainder(plan, receipt, expected, content) {
     (!/^[a-z]+(?: [a-z]+)* /.test(prev.line) || /^(?:menu item|menu bar item|menu button|pop up button) /.test(prev.line));
   if (!named) return;
   return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree };
+}
+
+// A tab this call's own shortcut opened in the window it leased. In the Firefox race round (2026-10-17) Cmd+T
+// retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing. Only Cmd+T or Ctrl+T, and only when the tree shows exactly one tab more
+// than the window Claude last saw, that tab selected, no sheet or dialog, and focus on an editable field outside
+// any page or document, where the rest's typing lands. `before` is the earlier tree's lines by element number.
+const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+t$/i;
+const tabsOf = lines => lines.flatMap(line => {
+  const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(line);
+  return tab ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) }] : [];
+});
+const DOCUMENT_ROLE = /^(?:web area|HTML content|text area|text entry area)(?: |,|$)/i;
+const APP_FIELD = /^(?:text field|combo box|search field|search text field)(?: |,|$)/i;
+export function tabRefusal(plan, receipt, expected, content, before) {
+  if (!receipt) return 'no-receipt';
+  if (receipt.windowStop !== true) return 'not-a-window-stop';
+  if (!plan) return 'unsplit-call';
+  const n = stoppedAfter(plan, receipt);
+  if (n === undefined) return 'receipt-mismatch';
+  if (receipt.prev.kind !== 'key' || !TAB_KEY.test(receipt.prev.value)) return 'not-a-tab-shortcut';
+  const stopped = stopTree(receipt, content);
+  if (!stopped) return 'tree-mismatch';
+  if (stopped.window.app !== expected?.app) return 'other-app';
+  if (!/^standard window(?: |,|$)/.test(stopped.line)) return 'root-not-standard';
+  if (stopped.window.title === expected.title && stopped.window.url === expected.url) return 'same-header';
+  if (/^\s*\d+ (?:sheet|dialog|system dialog)\b/m.test(stopped.tree)) return 'sheet';
+  if (!before || typeof before !== 'object') return 'no-earlier-tree';
+  const entries = [...stopped.tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  const was = tabsOf(Object.values(before).filter(line => typeof line === 'string')), now = tabsOf(entries.map(entry => entry.line));
+  const selected = now.filter(tab => tab.selected);
+  if (now.length !== was.length + 1 || selected.length !== 1) return 'no-new-tab';
+  const left = new Map();
+  for (const tab of now) left.set(tab.label, (left.get(tab.label) ?? 0) + 1);
+  for (const tab of was) {
+    if (!left.get(tab.label)) return 'no-new-tab';
+    left.set(tab.label, left.get(tab.label) - 1);
+  }
+  if ([...left].some(([label, count]) => count !== (label === selected[0].label ? 1 : 0))) return 'no-new-tab';
+  // The engine names focus after the tree; it must be an app field, and none of its ancestors a page or document.
+  const focused = Number(/^The focused UI element is (\d+) /m.exec(stopped.tree)?.[1]);
+  const at = entries.findIndex(entry => entry.number === focused);
+  if (at < 0 || !APP_FIELD.test(entries[at].line)) return 'focus-not-app-field';
+  for (let i = at - 1, depth = entries[at].depth; i >= 0 && depth > 0; i--) {
+    if (entries[i].depth >= depth) continue;
+    depth = entries[i].depth;
+    if (DOCUMENT_ROLE.test(entries[i].line)) return 'focus-in-document';
+  }
+}
+export function tabRemainder(plan, receipt, expected, content, before) {
+  if (tabRefusal(plan, receipt, expected, content, before)) return;
+  const stopped = stopTree(receipt, content);
+  return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree,
+    navigation: true, tab: true };
+}
+// The native side of the same check, from the helper's focus observation of the window: no sheet, and focus on a
+// text field or combo box in it that isn't a password field and has no web area (or HTML content) above it. A helper
+// that doesn't report the page check refuses.
+export function tabFocusRefusal(observed) {
+  const focus = observed?.focus;
+  if (!focus || typeof focus !== 'object') return 'no-native-focus';
+  if (focus.sheets !== 0) return 'native-sheet';
+  if (focus.inWindow !== true) return 'focus-outside-window';
+  if (focus.subrole === 'AXSecureTextField') return 'secure-field';
+  if (!['AXTextField', 'AXComboBox'].includes(focus.role)) return 'focus-not-text-field';
+  if (focus.inPage !== false) return 'focus-in-page';
 }
 
 // The lease held a dialog or sheet, the call's own action closed it, and the window in front is the one the lease
@@ -274,22 +344,71 @@ const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|b
 
 // What a lease stop sent and didn't, so Claude needn't take a screenshot to find out. Method names, IDs, element
 // numbers and non-typing keys only: typed or set text, single characters and label text stay out.
-export function stopNote(receipt, plan, earlier = 0) {
+export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen } = {}) {
+  if (receipt?.refused === true) return refusalNote(receipt, plan, earlier, content, seen, uniqueSeen);
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
-  const count = n => `${n} action${n === 1 ? '' : 's'}`;
+  // The stop leased the window it shows, so the rest needs no re-read: in the Firefox race round (2026-10-17) Claude
+  // spent a call only reading again after 10 of 12 new-tab stops.
+  const recipe = ran => ran ? ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.' : '';
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
-    const name = action => {
-      const method = tokens(plan.code.slice(action.start, action.end))[3]?.v, { kind, value } = action.selector ?? {};
-      const shown = kind === 'number' || kind === 'id' && value.length <= 40 || kind === 'key' && NAMED_KEY.test(value);
-      return shown ? `${method} ${kind === 'id' ? `id ${JSON.stringify(value)}` : kind === 'key' ? JSON.stringify(value) : value}` : method;
-    };
+    const name = actionName(plan);
     const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
     const ran = plan.actions.slice(0, n);
-    return /* lean notice */ `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.`;
+    return /* lean notice */ `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.${recipe(n)}`;
   }
   const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
-  return /* lean notice */ `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.`;
+  return /* lean notice */ `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.${recipe(ran)}`;
+}
+const count = n => `${n} action${n === 1 ? '' : 's'}`;
+const actionName = plan => action => {
+  const method = tokens(plan.code.slice(action.start, action.end))[3]?.v, { kind, value } = action.selector ?? {};
+  const shown = kind === 'number' || kind === 'id' && value.length <= 40 || kind === 'key' && NAMED_KEY.test(value);
+  return shown ? `${method} ${kind === 'id' ? `id ${JSON.stringify(value)}` : kind === 'key' ? JSON.stringify(value) : value}` : method;
+};
+
+// The engine refused an element number its capture no longer held: a date picker re-rendered its days after the
+// first date's click (Firefox travel, 2026-10-17), and Claude spent a diff read, a full read and a lone click (9.4 s)
+// finding out what ran. With the guard's fresh tree (receipt.fresh), this says what ran, what didn't, and where each
+// remaining target is now. Numbers only: label text stays out, as above. A number Claude wrote maps through the line it
+// saw only as the guard's own remap allows: that line was unique in Claude's tree and carries an ID, Description or Help.
+function refusalNote(receipt, plan, earlier, content, seen, uniqueSeen) {
+  const n = receipt.index, element = /(\d+) is an invalid element ID/.exec(receipt.error ?? '')?.[1];
+  const refused = `the engine refused the next ${typeof receipt.name === 'string' ? receipt.name : 'action'}` +
+    (element ? ` (element ${element})` : '') + (receipt.bound
+    ? ': its number came from this call\'s first read, and the element changed (perhaps replaced by an earlier action)' : ': that element is gone');
+  const after = receipt.bound ? ' sleight now reads this window before each numbered or named action, so the rest can go in one call.' : '';
+  // The tree the guard emitted after the refusal: the call's last marked read, since the refusal ended the call.
+  const text = (content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
+  const mark = text.lastIndexOf(GUARD_MARK), end = mark >= 0 ? text.indexOf(GUARD_END, mark) : -1;
+  const fresh = receipt.fresh === true && end >= 0 ? text.slice(mark + GUARD_MARK.length, end) : undefined;
+  const current = fresh ? ' This result\'s window is current.' : ' sleight couldn\'t read the window after it, so read it before acting.';
+  const aligned = plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length && receipt.completed === n;
+  if (!aligned) {
+    const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
+    return `sleight: this call ran ${count(ran)}; ${refused}. Nothing after it was sent.${current}${after}`;
+  }
+  const name = actionName(plan);
+  const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
+  const lines = fresh ? [...elementLines(fresh)] : [];
+  const only = found => found.length === 1 ? found[0][0] : '?';
+  const now = action => {
+    const { kind, value } = action.selector ?? {}, method = name(action).split(' ')[0];
+    if (kind === 'label') return `${method} ${only(lines.filter(([, line]) => hasLabel(line, value)))}`;
+    if (kind === 'id') return `${method} ${only(lines.filter(([, line]) => hasIdentifier(line, value)))}`;
+    if (kind === 'number') {
+      const was = seen?.[value];
+      const mapped = typeof was === 'string' && uniqueSeen?.includes(value) && /\b(?:ID|Description|Help): /.test(was);
+      return `${method} ${mapped ? only(lines.filter(([, line]) => sameElement(was, line))) : '?'}`;
+    }
+    return name(action);
+  };
+  const rest = plan.actions.slice(n), shown = rest.slice(0, 8).map(now);
+  const targets = fresh && rest.some(action => ['label', 'id', 'number'].includes(action.selector?.kind))
+    ? ` In this result's window, the refused action and the rest are now ${shown.join(', ')}${rest.length > 8 ? ` and ${rest.length - 8} more` : ''}` +
+      (shown.some(action => action.endsWith(' ?')) ? ' (? where the target is ambiguous or missing).' : '.') : current;
+  return `sleight: this call ran ${count(n)}${n ? ` (${list(plan.actions.slice(0, n))})` : ''}; ` +
+    `${refused}. Not sent after it: ${rest.length > 1 ? list(rest.slice(1)) : 'nothing'}.${targets}${after}`;
 }
 
 export async function menuIdentity(identity, expected, timeoutMs = 600, refused) {
@@ -302,9 +421,13 @@ export async function menuIdentity(identity, expected, timeoutMs = 600, refused)
   finally { clearTimeout(timer); }
 }
 
-export function unchangedMenuWindow(expected, baseline, observed, forwardedAt, now = performance.now()) {
-  if (!baseline || !observed || !Number.isSafeInteger(baseline.windowNumber) || baseline.windowNumber <= 0 ||
-      observed.windowNumber !== baseline.windowNumber || !idle(observed, forwardedAt, now)) return false;
-  try { verifyWindowIdentity({ ...expected, nativeIdentity: baseline }, observed); return true; }
-  catch { return false; }
+// Why a menu, navigation or tab continuation's window isn't the one the call started in, or undefined when it is.
+export function menuWindowRefusal(expected, baseline, observed, forwardedAt, now = performance.now()) {
+  if (!baseline || !Number.isSafeInteger(baseline.windowNumber) || baseline.windowNumber <= 0) return 'no-window-number';
+  if (!observed) return 'identity-unavailable';
+  if (observed.windowNumber !== baseline.windowNumber) return 'window-number-changed';
+  if (!idle(observed, forwardedAt, now)) return 'hid-input';
+  try { verifyWindowIdentity({ ...expected, nativeIdentity: baseline }, observed); } catch { return 'identity-mismatch'; }
 }
+export const unchangedMenuWindow = (expected, baseline, observed, forwardedAt, now = performance.now()) =>
+  !menuWindowRefusal(expected, baseline, observed, forwardedAt, now);

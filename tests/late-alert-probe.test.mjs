@@ -51,7 +51,7 @@ test('a live run needs --owner-away; a dry run does not', () => {
 });
 
 test('the dry run walks every scenario and finds each simulated change within one sample of its delay', async () => {
-  const delays = { 'super+f': 120, 'super+s': 300, Return: 60, Escape: 200 };
+  const delays = { 'super+f': 120, 'super+alt+shift+s': 300, 'super+option+shift+s': 300, Return: 60, Escape: 200 };
   const report = await runProbe({ trials: 2, groups: ['textedit', 'finder', 'excel'], dryRun: true }, fakeIO({ delays }));
   assert.deepEqual(report.trialErrors, []);
   assert.equal(report.cleanupConfirmed, true);
@@ -62,4 +62,17 @@ test('the dry run walks every scenario and finds each simulated change within on
     assert.ok(result.notBeforeMs <= delay && result.firstSeenMs >= delay && result.firstSeenMs - delay <= 20,
       `${result.scenario}: ${result.notBeforeMs}..${result.firstSeenMs} vs ${delay}`);
   }
+});
+
+test('a rejected Save As key name is retried with "option" and kept out of the measurements', async () => {
+  const report = await runProbe({ trials: 1, groups: ['textedit'], dryRun: true }, fakeIO({ rejectKeys: ['super+alt+shift+s'] }));
+  assert.deepEqual(report.trialErrors, []);
+  assert.deepEqual(report.keyAttempts.map(a => a.key), ['super+alt+shift+s']);
+  assert.deepEqual(report.results.filter(r => r.scenario === 'textedit-save-sheet').map(r => [r.key, r.seen]), [['super+option+shift+s', true]]);
+});
+
+test('each Excel trial records what A1 held after typing, after Return and after the trial', async () => {
+  const report = await runProbe({ trials: 2, groups: ['excel'], dryRun: true }, fakeIO());
+  assert.deepEqual(report.readouts.map(r => `${r.trial}:${r.phase}`), ['1:after-typing', '1:after-return', '1:after-trial', '2:after-typing', '2:after-return', '2:after-trial']);
+  assert.equal(report.readouts[1].dialogs, 1);
 });
