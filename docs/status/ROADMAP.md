@@ -46,6 +46,9 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    The all-arms claim run is done (2026-10-17, sleight fastest on 5 of 9). Before publishing it, sleight fixes the three tasks its
    own results lost (preview-read, textedit-calculator, excel-edit) and reruns only its arm: about an hour of fixes and tests
    beat stretching the claim to cover them (owner, 2026-10-17).
+   The opt-in flags A/B (2026-10-17) made small native tasks faster and Office slower. Flags that hurt a class of window are
+   switched off by a categorical rule measured from the window at run time, never by app name (owner, 2026-10-17). A Fable study
+   picks the signal from the A/B traces, then a live check confirms it before any flag becomes a default.
    Safari's race uses a dedicated Safari profile, "sleight benchmark", which the owner made on 2026-10-17, with Safari quit
    before each round as for Chrome (owner, 2026-10-17). The world sleight arm is logged in (owner, same day).
    Before browser numbers are published, one gate round runs turbo on a real, isolated Helium or Chrome profile instead of the
