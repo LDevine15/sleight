@@ -441,6 +441,67 @@ function siblingSwapNote(swap) {
   return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; if that wasn't intended, fix the order with the app's move command.`;
 }
 
+// Selection and AX numbering can change on a click; sibling membership cannot.
+function clickLists(lines) {
+  const nodes = [], stack = [];
+  for (const line of lines) {
+    const match = ELEMENT.exec(line);
+    if (!match) { stack.length = 0; continue; }
+    const depth = match[1].length;
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const node = { num: Number(match[2]), body: match[3], depth, children: [] };
+    node.description = describeSibling(node);
+    node.key = match[3].replace(/\s*\((?:selected|selectable|focused)(?:, (?:selected|selectable|focused))*\)/g, '')
+      .replace(/^([a-z][a-z ]*?) Selected, /, '$1 ');
+    stack.at(-1)?.children.push(node);
+    nodes.push(node); stack.push(node);
+  }
+  const found = new Map();
+  for (const parent of nodes) {
+    for (const role of new Set(parent.children.map(child => child.description?.role))) {
+      const siblings = parent.children.filter(child => role && child.description?.role === role);
+      if (siblings.length < 2 || new Set(siblings.map(child => child.key)).size !== siblings.length) continue;
+      const key = JSON.stringify([parent.description?.role, parent.depth, role, siblings.map(child => child.key).sort()]);
+      const matches = found.get(key) ?? [];
+      matches.push(siblings); found.set(key, matches);
+    }
+  }
+  return found;
+}
+
+function clickedSibling(action) {
+  if (!action?.before || action.before.incomplete || action.before.degraded) return;
+  const calls = [...maskCode(action.code).matchAll(/\.\s*click\s*\(/g)];
+  if (calls.length !== 1) return;
+  const args = action.code.slice(calls[0].index + calls[0][0].length).split(')')[0];
+  const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
+  const named = /^\s*(?:\{\s*(label|id|line)\s*:\s*)?(['"])([^'"\\]*)\2\s*\}?\s*(?:,|$)/.exec(args);
+  const targets = action.before.lines.filter(line => {
+    const parsed = parse(line), body = parsed.key.trim();
+    return parsed.num !== undefined && (number ? parsed.num === Number(number) : named &&
+      (named[1] === 'id' ? hasIdentifier(body, named[3]) : named[1] === 'line' ? body === named[3] : hasLabel(body, named[3])));
+  });
+  if (targets.length !== 1) return;
+  const num = parse(targets[0]).num;
+  for (const [key, matches] of clickLists(action.before.lines)) {
+    if (matches.length !== 1) continue;
+    const index = matches[0].findIndex(child => child.num === num);
+    if (index >= 0) {
+      const target = matches[0][index];
+      const label = /(?:^|, )Description: (.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(target.body)?.[1] ?? target.description.label;
+      return { key, target: target.key, label, position: index + 1, window: documentKey(action.before.window) };
+    }
+  }
+}
+
+function clickMoveNote(click, observation) {
+  const matches = clickLists(observation.lines).get(click.key);
+  if (matches?.length !== 1) return;
+  const position = matches[0].findIndex(child => child.key === click.target) + 1;
+  if (position && position !== click.position)
+    return `sleight: this click moved ${click.label} from position ${click.position} to ${position}; restore the order before saving`;
+}
+
 // Reminders survive an edited title marker; input guards and document grants still use exact identity.
 const swapDocumentKey = window => window && documentKey({ ...window,
   title: window.title.replace(/(?: — | - | )Edited$/, '') });
@@ -776,7 +837,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
-  const seen = new Map(), pendingSwaps = new Map();
+  const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
   let latest, observedInResult, observationId = 0;
   function observe(tree, window, lines) {
     const root = parse(lines[1] ?? '').key;
@@ -1039,6 +1100,21 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (note) out.push({ type: 'text', text: note });
       // Keep the reminder only while complete observations still show that order in this document.
       const observation = observedInResult;
+      const safeClickRead = !failed && !stopped && !forceFull && !action?.overlap && observation &&
+        !observation.invalid && !observation.incomplete && !observation.degraded && !observation.delta?.degraded;
+      if (!safeClickRead && (action || observation || failed || stopped)) pendingClicks.clear();
+      if (safeClickRead) {
+        const key = documentKey(observation.window), pending = pendingClicks.get(key);
+        // A save may expose a delayed move; other new input ends attribution to the earlier click.
+        const click = action ? clickedSibling(action) ?? (action.save ? pending : undefined) : pending;
+        if (action) pendingClicks.clear();
+        else pendingClicks.delete(key);
+        if (click?.window === key) {
+          const moved = clickMoveNote(click, observation);
+          if (moved) out.push({ type: 'text', text: moved });
+          else if (action && click !== pending) pendingClicks.set(key, click);
+        }
+      }
       if (failed || stopped || action?.overlap || action && (!observation || observation.invalid)) pendingSwaps.clear();
       if (observation && !observation.invalid) {
         const key = swapDocumentKey(observation.window), pending = pendingSwaps.get(key);
