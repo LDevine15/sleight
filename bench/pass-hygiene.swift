@@ -41,6 +41,15 @@ func snapshot() throws -> [String: Any] {
     }
     let apps = NSWorkspace.shared.runningApplications.compactMap(identity)
     var rows: [[String: Any]] = []
+    var axWindows: [Int: [AXUIElement]] = [:]
+    if AXIsProcessTrusted() {
+        for app in apps {
+            guard let pid = app["pid"] as? Int else { continue }
+            let element = AXUIElementCreateApplication(Int32(pid))
+            AXUIElementSetMessagingTimeout(element, 1)
+            axWindows[pid] = attr(element, "AXWindows") as? [AXUIElement] ?? []
+        }
+    }
     for window in windows {
         guard window[kCGWindowLayer as String] as? Int == 0,
               let pid = window[kCGWindowOwnerPID as String] as? Int,
@@ -48,6 +57,11 @@ func snapshot() throws -> [String: Any] {
               var row = apps.first(where: { $0["pid"] as? Int == pid }) else { continue }
         row["id"] = id
         row["onScreen"] = window[kCGWindowIsOnscreen as String] as? Bool ?? false
+        if let exact = axWindows[pid]?.first(where: { attr($0, "AXWindowNumber") as? Int == id }) {
+            row["title"] = attr(exact, "AXTitle") as? String
+            row["document"] = attr(exact, "AXDocument") as? String
+            row["dialog"] = hasDialog([exact])
+        }
         rows.append(row)
     }
     return ["apps": apps, "windows": rows, "processes": try processes(), "at": Date().timeIntervalSince1970]
@@ -94,6 +108,15 @@ func perform(_ request: [String: Any]) throws -> [String: Any] {
     if hasDialog(windows) { return ["dialog": true] }
     guard let window = windows.first(where: { attr($0, "AXWindowNumber") as? Int == id }) else {
         return ["skipped": "no-ax-window"]
+    }
+    if let fixtures = request["fixtures"] as? [String: Any] {
+        let names = fixtures["fixtureNames"] as? [String] ?? [], paths = fixtures["fixturePaths"] as? [String] ?? []
+        let title = attr(window, "AXTitle") as? String ?? ""
+        let rawDocument = attr(window, "AXDocument") as? String ?? ""
+        let document = rawDocument.hasPrefix("file:") ? URL(string: rawDocument)?.path ?? "" : rawDocument
+        guard names.contains(title) || paths.contains(where: { document == $0 || document.hasPrefix($0 + "/") }) else {
+            throw failure("Fixture title or document changed; kept")
+        }
     }
     guard let rawButton = attr(window, "AXCloseButton"), CFGetTypeID(rawButton) == AXUIElementGetTypeID() else {
         throw failure("Exact AX close button unavailable; kept")

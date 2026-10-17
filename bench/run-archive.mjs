@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { isHeld } from '../scripts/temp-leftovers.mjs';
+import { isHeld, keepTemp } from '../scripts/temp-leftovers.mjs';
 import { canonicalHolders, readHeldPaths } from '../scripts/temp-sweep.mjs';
 
 const IMAGE_AGE_MS = 7 * 24 * 3600 * 1000;
@@ -12,6 +12,7 @@ const stampTime = name => Date.parse(name.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})
 export function pruneRunImages({ roots, docsDir, exclusionsFile, now = Date.now(), held,
   inventory = readHeldPaths, dryRun = false, log = console.log } = {}) {
   const result = { planned: [], removed: [], freedBytes: 0 };
+  if (keepTemp()) { log('image retention kept: SLEIGHT_KEEP_TEMP=1'); return result; }
   try {
     held = canonicalHolders(held ?? inventory());
     let references = readFileSync(exclusionsFile, 'utf8');

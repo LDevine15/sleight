@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BENCH_APPS, REAL_APPS, closeBenchTextEdit, quitChess, quitSimApp, getTasks } from './tasks.mjs';
 import { selectSuiteTasks, assertShopSmokeRuns } from './shop.mjs';
@@ -453,11 +453,27 @@ async function calculatorReady(stage) {
 }
 const realContexts = [], passCleanupErrors = [], armPids = [], touchedApps = new Set();
 let windowHygiene, hygieneResult;
+const hygieneErrors = [];
+let hygieneErrorCount = 0;
+const recordHygieneError = error => {
+  hygieneErrorCount++;
+  if (hygieneErrors.length < 20) hygieneErrors.push(scrub(error.message));
+  console.error(privatePass ? 'Pass hygiene: inventory unavailable; tasks continue.' : `Pass hygiene: ${scrub(error.message)}; tasks continue.`);
+};
+const hygieneBoundary = async () => {
+  try { await windowHygiene?.betweenTasks?.(); } catch (error) { recordHygieneError(error); }
+};
+const fixtureContexts = [];
 const resultsDir = join(ROOT, 'bench', 'results');
 if (!isDryRun) mkdirSync(resultsDir, { recursive: true });
 const file = join(resultsDir, `${stamp}${isDryRun ? '-dry' : isSetupOnly ? '-setup' : ''}.json`);
 // Written after every run, so a run cut short keeps what it finished.
 const save = (final = false) => {
+  const tracking = windowHygiene?.hygieneError;
+  const finishErrors = hygieneResult?.errors.slice(0, hygieneResult.errors.length - (hygieneResult.trackingErrors?.length ?? 0)) ?? [];
+  const count = hygieneErrorCount + (tracking?.count ?? 0) + finishErrors.length;
+  const hygieneError = count ? { errors: [...hygieneErrors, ...finishErrors, ...(tracking?.errors ?? [])].slice(0, 20), count } : undefined;
+  if (final && hygieneError) console.error(privatePass ? 'Pass hygiene: inventory unavailable; tasks continued.' : `Pass hygiene: ${scrub(hygieneError.errors.join('; '))} (${count} errors)`);
   if (isDryRun) {
     if (final) console.log(JSON.stringify({ dryRun: true, world, arms: armNames, results }, null, 2));
     return;
@@ -465,6 +481,7 @@ const save = (final = false) => {
   if (privatePass) {
     if (!fullName) throw new Error('PRIVATE_MAIL_OWNER_AUDIT_UNAVAILABLE');
     const json = JSON.stringify({ results: publicPrivateMailRows(results),
+      ...(hygieneError && { hygieneError: { count: hygieneError.count, code: 'HYGIENE_INVENTORY_UNAVAILABLE' } }),
       ...(hygieneResult && { leftWindows: hygieneResult.leftWindows.map(({ pid, id }) => ({ pid, ...(id && { id }) })) }) }, null, 2);
     publishPrivateMailResults(file, json, { ownerName: fullName,
       terms: realContexts.flatMap(ctx => ctx.privateTask.privateTerms(ctx)) });
@@ -474,6 +491,7 @@ const save = (final = false) => {
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
     arms: armNames, ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
+    ...(hygieneError && { hygieneError }),
     ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }),
     ...(hygieneResult && { hygiene: hygieneResult, leftWindows: hygieneResult.leftWindows }) }, null, 2);
   writeFileSync(file, scrub(json) + '\n');
@@ -510,7 +528,8 @@ if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name]
   console.error('Acquiring /tmp/sleight-live.lock.');
   unlock = await acquireLiveLock(undefined, { wait: !guardedPass, signal: controller.signal, interval: 2000 });
   lockIdentity = statSync('/tmp/sleight-live.lock');
-  windowHygiene = await beginPassHygiene({ cacheDir: ARM_HOME, signal: controller.signal });
+  try { windowHygiene = await beginPassHygiene({ cacheDir: ARM_HOME, signal: controller.signal }); }
+  catch (error) { recordHygieneError(error); }
   sweepTemp({ dryRun: hygieneDryRun });
   if (!hygieneDryRun) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
   pruneRunImages({ roots: [join(ARM_HOME, 'runs-archive'), ...new Set([tmpdir(), realpathSync(tmpdir())])].map((base, i) => i === 0 ? base : join(base, 'sleight-real-evidence')),
@@ -557,10 +576,12 @@ pass: for (let run = 1; run <= runs; run++) {
         save();
         continue;
       }
+      await hygieneBoundary();
       const nonce = randomBytes(4).toString('hex');
       const dir = join(suite === 'real' ? realpathSync(tmpdir()) : tmpdir(), 'sleight-bench', stamp, `${armName}-${task.id}-${run}`);
       mkdirSync(dir, { recursive: true });
       const ctx = { dir, nonce, ownerAway, ownerPresent, ...(guardedPass && { stopOnAppDialog: true }) };
+      fixtureContexts.push(ctx);
       for (const app of [task.app, ...task.allowedApps ?? []].filter(Boolean)) touchedApps.add(app);
       if (suite === 'real' || task.fixtureLifecycle || guardedPass) {
         if (task.privateMail) assertPrivateClaudePolicy();
@@ -639,13 +660,17 @@ pass: for (let run = 1; run <= runs; run++) {
       }
       // A setup this Mac can't do (no iOS runtime for the simulator task) skips
       // the run rather than ending the pass; skipped runs stay out of the table.
-      try { await windowHygiene.trackLaunch([task.app].filter(Boolean), () => task.setup?.(ctx)); } catch (err) {
+      try {
+        if (windowHygiene) await windowHygiene.trackLaunch([task.app].filter(Boolean), () => task.setup?.(ctx));
+        else await task.setup?.(ctx);
+      } catch (err) {
         results.push({ arm: armName, task: task.id, run, skipped: true, reason: `setup: ${err.message}` });
         finishRun(results.at(-1));
         save();
         console.error(`SKIP ${armName} ${task.id} #${run} (setup: ${err.message})`);
         continue;
       }
+      await hygieneBoundary();
       const prompt = task.prompt(ctx);
 
       if (isDryRun) {
@@ -706,7 +731,10 @@ pass: for (let run = 1; run <= runs; run++) {
     if (windowHygiene) {
       try {
         hygieneResult = await windowHygiene.finish({ dryRun: hygieneDryRun,
+          ...(privatePass && { log: () => {} }),
           touchedApps: [...touchedApps, ...realContexts.flatMap(ctx => (ctx.windowLeases ?? []).flatMap(lease => [lease.app, lease.bundle]).filter(Boolean))],
+          fixturePaths: fixtureContexts.flatMap(ctx => [ctx.dir, ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean)),
+          fixtureNames: fixtureContexts.flatMap(ctx => [ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean).map(path => basename(path))),
           armPids, daemonPaths: armNames.filter(isNativeArm).flatMap(name => Object.values(nativeArmPlan(name, { armHome: ARM_HOME, dir: ARMS[name].cwd }).mcp.mcpServers).map(server => server.command)),
           blocked: ownerPresent || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
           launched: realContexts.flatMap(ctx => (ctx.windowLeases ?? []).filter(lease => lease.launched && lease.running === false)
@@ -716,7 +744,8 @@ pass: for (let run = 1; run <= runs; run++) {
             if (await observePermission()) throw new Error('macOS permission prompt: hygiene stopped');
           } });
       } catch (error) {
-        passCleanupErrors.push({ phase: 'window hygiene', error: scrub(error.message) }); process.exitCode = 1;
+        recordHygieneError(error);
+        passCleanupErrors.push({ phase: 'window hygiene', error: scrub(error.message) });
       }
     }
     if (!isDryRun && unlock) for (const cleanup of [closeBenchTextEdit, quitChess, quitSimApp]) {

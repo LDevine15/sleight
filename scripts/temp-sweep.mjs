@@ -6,7 +6,7 @@ import { defaultRoots, isHeld, listLeftovers, keepTemp, MAX_AGE_MS } from './tem
 
 const RETAIN = new Set(['sleight-live.lock', 'sleight-real-evidence']);
 const inClaim = path => /(?:^|\/)ledger\/claims(?:\/|$)/.test(path);
-const retained = item => RETAIN.has(item.name) || /^sleight-.*-evidence/.test(item.name) || inClaim(item.path);
+const retained = item => RETAIN.has(item.name) || /^sleight-(?:.*-)?evidence/.test(item.name) || inClaim(item.path);
 
 export function canonicalHolders(held) {
   return new Set([...held].map(path => { try { return realpathSync(path); } catch { return path; } }));

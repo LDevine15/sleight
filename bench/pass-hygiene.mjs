@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOwned } from './preapproved-process.mjs';
 
@@ -9,8 +9,17 @@ const windowKey = item => `${processKey(item)}:${item.id}`;
 const identity = ({ pid, start, bundle }) => ({ pid, start, bundle });
 const valid = item => Number.isSafeInteger(item.pid) && item.pid > 0 && Number.isFinite(item.start) && item.start > 0 && typeof item.bundle === 'string' && item.bundle.length > 0;
 
+function matchesFixture(window, { fixturePaths = [], fixtureNames = [] }) {
+  let document = window.document;
+  if (typeof document === 'string' && document.startsWith('file:')) {
+    try { document = fileURLToPath(document); } catch { document = undefined; }
+  }
+  return fixtureNames.includes(window.title) || fixturePaths.some(path => typeof document === 'string' &&
+    (document === path || document.startsWith(path + sep)));
+}
+
 // Include off-screen baseline windows too: changing Spaces never transfers ownership.
-export function planWindows(before, after, launched = [], touchedApps = [], armPids = [], touchedProcesses = new Map()) {
+export function planWindows(before, after, launched = [], touchedApps = [], armPids = [], touchedProcesses = new Map(), fixtures = {}) {
   const oldWindows = new Set(before.windows.map(windowKey)), oldApps = new Set(before.apps.map(processKey));
   const owned = new Set(launched.filter(valid).map(processKey)), quits = new Set();
   const members = new Set(armPids), processes = after.processes ?? [];
@@ -18,16 +27,20 @@ export function planWindows(before, after, launched = [], touchedApps = [], armP
     grew = false;
     for (const proc of processes) if (members.has(proc.ppid) && !members.has(proc.pid)) { members.add(proc.pid); grew = true; }
   }
-  const touched = window => owned.has(processKey(window)) || members.has(window.pid) ||
-    processes.some(proc => proc.pid === window.pid && touchedProcesses.get(proc.pid) === proc.start && Math.round(proc.start * 1000) === Math.round(window.start * 1000)) ||
-    touchedApps.includes(window.bundle) || touchedApps.includes(window.name);
+  const attributed = window => owned.has(processKey(window)) || members.has(window.pid) ||
+    processes.some(proc => proc.pid === window.pid && touchedProcesses.get(proc.pid) === proc.start && Math.round(proc.start * 1000) === Math.round(window.start * 1000));
+  const touched = window => attributed(window) || touchedApps.includes(window.bundle) || touchedApps.includes(window.name);
   const plan = [];
   for (const window of after.windows) {
     if (!valid(window) || !Number.isSafeInteger(window.id) || oldWindows.has(windowKey(window))) continue;
     const key = processKey(window);
     if (owned.has(key) && !oldApps.has(key) && !before.windows.some(old => processKey(old) === key)) {
       if (!quits.has(key)) { plan.push({ ...identity(window), action: 'quit' }); quits.add(key); }
-    } else plan.push({ ...window, action: touched(window) ? 'close' : 'keep' });
+    } else {
+      const fixture = matchesFixture(window, fixtures);
+      plan.push({ ...window, action: touched(window) && (fixture || (!oldApps.has(key) && attributed(window))) ? 'close' : 'keep',
+        ...(fixture && { fixtures }) });
+    }
   }
   for (const app of after.apps.filter(valid)) {
     const key = processKey(app);
@@ -39,7 +52,7 @@ export function planWindows(before, after, launched = [], touchedApps = [], armP
 }
 
 export async function finishWindows(before, { snapshot, act, launched = [], daemons = [], dryRun = false,
-  touchedApps = [], armPids = [], touchedProcesses = new Map(), daemonPaths = [], blocked = false, beforeAction = async () => {}, log = console.log } = {}) {
+  touchedApps = [], armPids = [], touchedProcesses = new Map(), fixturePaths = [], fixtureNames = [], daemonPaths = [], blocked = false, beforeAction = async () => {}, log = console.log } = {}) {
   const result = { planned: [], leftWindows: [], errors: [] };
   for (const daemon of daemons) {
     log(`${dryRun ? 'would stop' : 'stop'} owned daemon ${daemon.name ?? ''}`);
@@ -50,7 +63,7 @@ export async function finishWindows(before, { snapshot, act, launched = [], daem
   catch (error) { blocked = true; result.errors.push(error.message); }
   // A discovery timeout must not prevent exact launch receipts from getting their gentle Quit.
   const known = current ?? { apps: launched, windows: [] };
-  result.planned = planWindows(before, known, launched, touchedApps, armPids, touchedProcesses);
+  result.planned = planWindows(before, known, launched, touchedApps, armPids, touchedProcesses, { fixturePaths, fixtureNames });
   const oldProcesses = new Set((before.processes ?? []).map(proc => `${proc.pid}:${proc.start}`));
   for (const proc of current?.processes ?? []) {
     if (daemonPaths.includes(proc.path) && proc.start > before.at && !oldProcesses.has(`${proc.pid}:${proc.start}`)) {
@@ -84,7 +97,16 @@ export async function finishWindows(before, { snapshot, act, launched = [], daem
       result.leftWindows.push({ ...identity(item), reason: after ? 'still running after Quit' : 'Quit unconfirmed: snapshot unavailable' });
     }
   }
-  result.leftWindows.push(...dialogs.values());
+  for (const window of after?.windows ?? []) if (window.dialog) {
+    if (!result.leftWindows.some(item => windowKey(item) === windowKey(window))) result.leftWindows.push({ ...window });
+    dialogs.set(processKey(window), { ...identity(window), reason: 'application dialog' });
+  }
+  for (const dialog of dialogs.values()) {
+    let window = result.leftWindows.find(item => processKey(item) === processKey(dialog));
+    if (!window) { window = { ...dialog }; result.leftWindows.push(window); }
+    window.reason = 'application dialog';
+    window.instruction = 'Resolve the application dialog manually before the next pass; hygiene left it unanswered.';
+  }
   for (const item of result.leftWindows) log(`leftWindows ${JSON.stringify(item)}`);
   return result;
 }
@@ -124,10 +146,19 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     return value;
   };
   const before = await snapshot();
-  const launches = [], members = new Map(), trackingErrors = [];
-  let timer, pendingSamples = 0, sampling = Promise.resolve();
+  const launches = [], members = new Map(), trackingErrors = [], roots = new Map();
+  let latest = before, pendingLaunch, trackingErrorCount = 0;
+  const recordError = error => {
+    trackingErrorCount++;
+    if (trackingErrors.length < 20) trackingErrors.push(error.message);
+  };
   const observe = value => {
     const processes = value.processes ?? [], live = new Map(processes.map(proc => [proc.pid, proc]));
+    for (const [pid, registeredAt] of roots) {
+      const root = live.get(pid);
+      if (root && root.start > (before.at ?? 0) && root.start <= registeredAt && !members.has(pid)) members.set(pid, root.start);
+    }
+    roots.clear();
     for (let grew = true; grew;) {
       grew = false;
       for (const proc of processes) {
@@ -137,44 +168,38 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
         }
       }
     }
-    return processes.filter(proc => members.get(proc.pid) === proc.start).map(proc => proc.pid);
-  };
-  const sample = pid => {
-    pendingSamples++;
-    sampling = sampling.then(async () => {
-      const value = await snapshot();
-      const root = value.processes?.find(proc => proc.pid === pid);
-      if (root) members.set(root.pid, root.start);
-      observe(value);
-    }).catch(error => { trackingErrors.push(error.message); }).finally(() => { pendingSamples--; });
-    return sampling;
+    if (pendingLaunch) {
+      launches.push(...value.apps.filter(app => !pendingLaunch.existing.has(processKey(app)) &&
+        (pendingLaunch.apps.includes(app.bundle) || pendingLaunch.apps.includes(app.name))));
+      pendingLaunch = undefined;
+    }
+    latest = value;
+    return value;
   };
   return {
-    recordArm(pid) {
-      if (!timer) { timer = setInterval(() => { if (!pendingSamples) sample(); }, 1000); timer.unref(); }
-      return sample(pid);
+    // Registration runs from onSpawn, inside task timing. Inventory waits for a boundary.
+    recordArm(pid) { roots.set(pid, Date.now() / 1000); },
+    async betweenTasks() {
+      try { observe(await snapshot()); }
+      catch (error) { recordError(error); latest = undefined; pendingLaunch = undefined; roots.clear(); }
     },
     async trackLaunch(apps, operation) {
-      const initial = await snapshot(), existing = new Set(initial.apps.map(processKey));
-      try { return await operation(); }
-      finally {
-        const after = await snapshot();
-        launches.push(...after.apps.filter(app => !existing.has(processKey(app)) && (apps.includes(app.bundle) || apps.includes(app.name))));
-      }
+      pendingLaunch = latest && { apps, existing: new Set(latest.apps.map(processKey)) };
+      return operation();
+    },
+    get hygieneError() {
+      return trackingErrorCount ? { errors: [...trackingErrors], count: trackingErrorCount } : undefined;
     },
     async finish(options = {}) {
-      clearInterval(timer); timer = undefined;
-      await sampling;
+      if (pendingLaunch) await this.betweenTasks();
       const result = await finishWindows(before, { ...options, armPids: [],
         launched: [...launches, ...(options.launched ?? [])],
-        snapshot: async () => {
-          const value = await snapshot();
-          observe(value);
-          return value;
-        }, act: call,
+        snapshot: async () => observe(await snapshot()), act: call,
         touchedProcesses: members,
       });
       result.errors.push(...trackingErrors);
+      result.trackingErrors = [...trackingErrors];
+      result.trackingErrorCount = trackingErrorCount;
       return result;
     },
   };

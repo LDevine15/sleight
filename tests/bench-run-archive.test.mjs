@@ -90,3 +90,16 @@ test('nested non-Markdown publication references also retain run images', t => {
     now: Date.parse('2026-10-17T12:00:00Z'), held: new Set(), log() {} });
   assert.deepEqual(result.removed, []);
 });
+
+
+test('keep-temp prevents image pruning and even inventory or reference reads', t => {
+  const root = registerTemp(t, mkdtempSync(join(tmpdir(), 'bench-retention-'))), stamp = '2026-09-08T10-00-00-000Z';
+  const dir = join(root, stamp); mkdirSync(dir); const image = join(dir, 'screen.png'); writeFileSync(image, 'image');
+  const previous = process.env.SLEIGHT_KEEP_TEMP;
+  try {
+    process.env.SLEIGHT_KEEP_TEMP = '1';
+    const result = archiveTools.pruneRunImages({ roots: [root], inventory: () => assert.fail('keep-temp must not inventory'), log() {} });
+    assert.deepEqual(result, { planned: [], removed: [], freedBytes: 0 });
+    assert.equal(existsSync(image), true);
+  } finally { if (previous === undefined) delete process.env.SLEIGHT_KEEP_TEMP; else process.env.SLEIGHT_KEEP_TEMP = previous; }
+});

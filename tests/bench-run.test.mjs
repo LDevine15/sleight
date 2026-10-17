@@ -46,7 +46,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -64,7 +64,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   const sandbox = {
     process: { argv: ['node', 'run', '--suite', suite, '--arm', arm, '--runs', '3', ...(setupOnly ? ['--setup-only'] : []), ...(dryRun ? ['--dry-run'] : []), ...(calculatorGate ? ['--calculator-gate'] : []), ...(cleanArms ? ['--clean-arms'] : []), ...extraArgs], env: base, on() {}, once() {} },
     console: { log: text => logs.push(text), error: text => logs.push(text) }, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, clearInterval,
-    dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => '/private/tmp/unit',
+    basename: path => path.split('/').at(-1), dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => '/private/tmp/unit',
     existsSync: path => path === '/tmp/sleight-hold' ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync() {}, statSync: () => ({ dev: 1, ino: 1 }),
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
@@ -76,7 +76,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     beginPassHygiene: async () => {
       calls.push('window baseline');
       if (hygieneError) throw new Error(hygieneError);
-      return { trackLaunch: async (apps, operation) => { calls.push(['tracked setup', apps]); return operation(); }, finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
+      return { get hygieneError() { return hygieneTracking; }, betweenTasks: async () => { calls.push('hygiene boundary'); if (hygieneBoundaryError) throw new Error(hygieneBoundaryError); }, trackLaunch: async (apps, operation) => { calls.push(['tracked setup', apps]); return operation(); }, finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
     },
     assertLogin: plan => { calls.push(['login preflight', plan]); const message = typeof loginError === 'function' ? loginError(plan) : loginError; if (message) throw new Error(message); },
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
@@ -162,12 +162,24 @@ test('pass snapshots under the lock before discovery; temp and image cleanup run
   assert.ok(result.calls.indexOf('window baseline') < result.calls.findIndex(call => Array.isArray(call) && call[0] === 'login preflight'));
   for (const name of ['temp sweep', 'image retention']) assert.ok(result.calls.findIndex(call => Array.isArray(call) && call[0] === name) < result.calls.indexOf('real run'));
 });
-test('window baseline failure stops before discovery and still releases the live lock', async () => {
-  const result = await runner({ hygieneError: 'CGWindowList unavailable' });
-  assert.equal(result.calls.includes('real run'), false);
-  assert.equal(result.commands.length, 0);
+test('window baseline failure is logged without skipping or losing timed runs', async () => {
+  const result = await runner({ suite: 'default', drive: true, hygieneError: 'CGWindowList unavailable' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.saved.at(-1).results.length, 3);
+  assert.ok(result.saved.at(-1).results.every(row => !row.skipped && typeof row.seconds === 'number'));
+  assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /CGWindowList unavailable/);
+  assert.ok(result.logs.some(line => /hygiene.*CGWindowList unavailable/i.test(line)));
   assert.equal(result.calls.at(-1), 'unlock');
-  assert.match(result.error?.message ?? '', /CGWindowList unavailable/);
+});
+test('between-task snapshot failures preserve timed runs and fixture attribution reaches cleanup', async () => {
+  const task = { id: 'fixture', app: 'Fixture', setup(ctx) { ctx.document = join(ctx.dir, 'Owned.txt'); }, prompt: () => 'task', check: () => true };
+  const result = await runner({ suite: 'default', tasks: [task], hygieneBoundaryError: 'snapshot timed out' });
+  assert.equal(result.error, undefined);
+  assert.ok(result.saved.at(-1).results.every(row => !row.skipped && typeof row.seconds === 'number'));
+  assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /snapshot timed out/);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.ok(options.fixturePaths.some(path => path.endsWith('/Owned.txt')));
+  assert.ok(options.fixtureNames.includes('Owned.txt'));
 });
 test('left windows are published and hygiene dry run reaches every deletion and window planner', async () => {
   const result = await runner({ extraArgs: ['--hygiene-dry-run'], hygieneResult: { leftWindows: [{ pid: 42, id: 7 }], errors: [] } });
@@ -1208,4 +1220,22 @@ test('blocked pass sends exact cold-launch receipts to native gentle cleanup and
   assert.equal(options.blocked, true);
   assert.deepEqual(JSON.parse(JSON.stringify(options.launched)), [{ pid: 42, start: 12, bundle: 'org.fixture' }]);
   assert.ok(options.touchedApps.includes('org.fixture'));
+});
+
+
+test('published hygiene errors count every failure once and log final snapshot failures', async () => {
+  const errors = Array(20).fill('tracking unavailable');
+  const result = await runner({ hygieneTracking: { errors, count: 25 },
+    hygieneResult: { leftWindows: [], errors: ['final snapshot unavailable', ...errors], trackingErrors: errors, trackingErrorCount: 25 } });
+  assert.equal(result.saved.at(-1).hygieneError.count, 26);
+  assert.equal(result.saved.at(-1).hygieneError.errors.length, 20);
+  assert.ok(result.logs.some(line => /hygiene.*final snapshot unavailable/i.test(line)));
+});
+
+test('private hygiene logs and saved results omit window titles and document paths', async () => {
+  const result = await runner({ privateMail: true, hygieneResult: { leftWindows: [], errors: [] } });
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.equal(typeof options.log, 'function');
+  options.log('leftWindows title=private-secret document=/private-secret');
+  assert.equal(JSON.stringify(result.logs).includes('private-secret'), false);
 });

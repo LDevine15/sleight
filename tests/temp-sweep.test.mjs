@@ -62,3 +62,11 @@ test('aliased temp roots are visited only once', t => {
   const result = sweepTemp({ roots: [root, alias], held: new Set(), dryRun: true, log() {} });
   assert.equal(result.planned.length, 1); assert.ok(existsSync(dir));
 });
+
+
+test('sleight-evidence names retain lane artifacts without an intermediate name', t => {
+  const { root, old } = fixture(t), dirs = [old('sleight-evidence'), old('sleight-evidence-review')];
+  const result = sweepTemp({ roots: [root], held: new Set(), log() {} });
+  assert.deepEqual(result.removed, []);
+  for (const dir of dirs) assert.equal(existsSync(dir), true);
+});
