@@ -100,6 +100,7 @@ import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
 import { compactJsDescription } from './tool-description.mjs';
+import { createLightReturn, lightReturnCode } from './light-return.mjs';
 
 // App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
 // in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
@@ -530,6 +531,9 @@ export function createRelay({
   // 'careful' reads the window before every action, including keys, text and coordinates later in
   // a call, which skip it by default (owner, 2026-10-09). Document scope is always careful.
   guardMode,
+  // Native observations in place of the settled read before typing after Return (light-return.mjs).
+  // The launcher turns it on only with SLEIGHT_GUARD_LIGHT_RETURN=1; it needs windowIdentity and a lease.
+  guardLightReturn = false,
   // Rewrites the engine's first-call rule in the js tool description. The launcher turns it on unless
   // SLEIGHT_FIRST_CALL_BATCH=0: in 24 runs a side it cut turns 208 to 168 (2026-10-09). 'merge' picks
   // the wording under A/B.
@@ -682,6 +686,8 @@ export function createRelay({
   let clientCanElicit; // undefined until initialize (legacy in-process callers)
   const localNames = new Set(localTools?.tools.map(t => t.name) ?? []);
   const elicitations = new Map(); // our elicitation id -> resolve
+  const lightReturn = guardLightReturn && windowIdentity && inputLease?.directory
+    ? createLightReturn({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
   const nativeChecked = new Set();
@@ -1319,6 +1325,7 @@ export function createRelay({
   }
   function finishedCall(id) {
     callDetails.delete(id);
+    lightReturn?.end(id);
     const call = leaseCalls.get(id);
     if (call) {
       if (call.key && !leaseFault && !disposed) {
@@ -2729,6 +2736,8 @@ export function createRelay({
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
             const typedTarget = compactor.beginAction(originalCode)?.typedTarget;
             if (filteredCode !== swipeCode || typedTarget) filterMarks.set(msg.id, filterMark);
+            const light = lightReturn && inputLease && !careful && !documentMode && !changeReview && !menuBaseline &&
+              target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
@@ -2737,6 +2746,7 @@ export function createRelay({
                 quietEdits: !careful && !documentMode && !changeReview,
                 bind: !careful && !documentMode && !changeReview,
                 adoptUrl: !documentMode && !changeReview && !menuBaseline, skipAppWrap: browserHandles.has('app'), prior,
+                ...(light ? { lightReturn: light } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines: compactor.seenLines(seenWindow, numbers), literals: numbers,
@@ -3483,6 +3493,8 @@ export function createRelay({
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
     if (isAppApproval(msg)) {
+      // Observation only: the answer below is unchanged. The light check needs the key's time.
+      if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);
       const diagnostic = [...helperProbes.entries()].filter(([id, probe]) => probe.control && running.has(id));
       const app = msg.params?._meta?.tool_params?.app;
       const key = typeof app === 'string' ? helperSelector(JSON.stringify(app)) : undefined;
@@ -3784,6 +3796,7 @@ export function createRelay({
     turnEndCalls.clear(); failedTurnEnds.clear(); turnEndAttempts.clear();
     for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
     elicitations.clear();
+    lightReturn?.dispose();
     promptFailures.clear();
     flowRules?.dispose();
     flowCalls.clear(); flowPending = undefined; flowPermit = undefined;

@@ -24,6 +24,11 @@ our own runs. Dates and engine versions are given where they matter.
 - A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
   call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
   URL) on its own: only the continuation checks the native window behind it.
+- The light check before typing after Return (`SLEIGHT_GUARD_LIGHT_RETURN=1`, off by default) hasn't run live. It waits 250 ms
+  after the key where the engine's settled read waited about 400 ms, and we don't know how late alerts and sheets appear after
+  Return, so one that takes longer can miss it. It stays off until we measure that. Its native
+  observer starts on the engine's `press_key` approval, so an engine that stops asking per action leaves only full reads.
+  We haven't measured how much the observer's AX polling (every 25 ms for 700 ms after a key) slows the app.
 
 ## The pointer, drags and hover
 

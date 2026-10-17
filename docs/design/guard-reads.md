@@ -39,6 +39,36 @@ typing. Actions by ID or label still read first: the engine's `click` and `setVa
 element number or a point. The guard finds the element's current number in a fresh read. A
 skipped read there could click the wrong element after a renumber.
 
+## Light check after Return (2026-10-17)
+
+In the 2026-10-17 claim run, Excel's entry batch (Name Box, then typeText and Return pairs) spent
+6.1 to 8.4 s of its 7.4 to 9.2 s on 26 to 31 reads before actions, about 470 ms each, mostly the
+read before each typeText after Return or Tab. The engine still has no cheaper read. On the Mac,
+`listApps` doesn't list windows, and every read after input pays the settle wait. Its sandbox reads
+files, though.
+
+So for a call that presses Return, Enter, Tab, Escape or Space and then types or pastes, the relay
+watches the leased window natively (`light-return.mjs`). The engine asks approval before each key
+press. From that moment, for 700 ms, the relay's helper reads the app's focused window every 25 ms:
+title, URL, certified window number, sheets on it, and the focused element's role, subrole and
+window. It writes the last eight observations to a file beside the lease. The guard's typeText or
+paste then goes ahead without a read when two observations began 250 ms or more after the key
+returned and 50 ms or more apart, and both show the expected window in front with no sheet and
+focus on a text field, text area, combo box, cell, table, grid or layout area inside it (a password
+field doesn't count). The newer one must have ended within 150 ms of the check, which has to
+come under 700 ms after the key. So a wait between the key and the typing reads the whole tree,
+as does another call on an app handle there. Any other observation, or none within 600 ms, reads
+the whole tree as before, so a Return that opens a sheet or a dialog still meets the full read and
+its stop. Clicks, shortcuts and careful mode keep
+their reads. A call stops trying after a wait with no observation or after two refusals. With
+`SLEIGHT_TRACE` set, each check shows as a `guard-read` trace with phase `light` or `light-refused`.
+It is off by default until we measure live how late alerts and sheets appear after Return, and
+`SLEIGHT_GUARD_LIGHT_RETURN=1` turns it on.
+
+Estimated, not measured live: a pass costs about 300 to 350 ms against 470 (331 ms in the unit
+test with the default timing), so the 11 to 13 such reads in an entry batch would save about 1.3 to
+2.2 s. Before the 250 ms wait it was estimated at 3 to 4 s.
+
 ## Measurements
 
 `node bench/guard-reads.mjs <before|after> all`, no model calls, five repetitions per arm on engine
