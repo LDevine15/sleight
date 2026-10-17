@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
@@ -136,13 +137,13 @@ for (const mismatch of [false, true]) test('the relay associates a screenshot-on
   const original = process.env.SLEIGHT_SKILL;
   process.env.SLEIGHT_SKILL = 'screenshot';
   t.after(() => { if (original === undefined) delete process.env.SLEIGHT_SKILL; else process.env.SLEIGHT_SKILL = original; });
-  const directory = mkdtempSync('/tmp/sleight-fl1-');
+  const directory = trackTemp(mkdtempSync('/tmp/sleight-fl1-'));
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams, replies = [];
   clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
     inputLease: new InputLease({ directory, holder: 'fl1-fixture' }) });
-  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); removeTemp(directory); });
   const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
   const call = async (id, code, content, appId = 'example.fixture') => {
     clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
