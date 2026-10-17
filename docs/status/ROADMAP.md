@@ -49,7 +49,11 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    tasks in a real window (about 150 to 250 lines of gate harness and an estimated 2 to 8 hour away window). An unqualified headline
    needs Safari and Firefox raced too, where sleight runs on the engine path. That race comes before the launch post, not
    before the tag. Turbo for Firefox, Safari and other Chromium browsers is being studied (2026-10-17). Each must be as
-   smooth as Chrome's consent, with no forced restart, relaunch or extension install (owner). A half that loses is published with scoped wording instead (browser claims only
+   smooth as Chrome's consent, with no forced restart, relaunch or extension install (owner). Studies, 2026-10-17. Firefox
+   (157) can't meet that today. Its CDP support ended in 141, and WebDriver BiDi needs a launch flag and has no consent page.
+   Safari's one fit is a hybrid behind Develop > Allow JavaScript from Apple Events (page script for reads and fills, the engine
+   for real input), about 600 to 1,000 lines by estimate, an option for after 1.3.0. Other Chromium browsers likely inherit the
+   consent page: BR3 builds the browser table unqualified, and each is qualified by a live check with the owner after 1.3.0. A half that loses is published with scoped wording instead (browser claims only
    for turbo, stated per browser).
 
 ## 2. After 1.3.0, in the owner's order
