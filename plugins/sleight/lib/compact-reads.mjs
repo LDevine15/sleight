@@ -137,6 +137,23 @@ export function lineDiff(before, after) {
 const folderPath = value => value.startsWith('/') || value.startsWith('~/');
 const baseName = value => value && !/[\/]/.test(value) && !['.', '..'].includes(value);
 
+// A click's locator: a bare string, or an object with id, label or line, where { id, label } together
+// means the element with both (excel-edit-5, 2026-10-17). Numbers are parsed where they are used.
+function clickLocator(args) {
+  const bare = /^\s*(['"])([^'"\\]*)\1\s*(?:,|$)/.exec(args);
+  if (bare) return { bare: bare[2] };
+  const object = /^\s*\{([^{}]*)\}?/.exec(args)?.[1];
+  if (object === undefined) return;
+  const fields = {};
+  for (const field of object.matchAll(/(?:^|,)\s*(label|id|line)\s*:\s*(['"])([^'"\\]*)\2\s*(?=,|$)/g)) fields[field[1]] = field[3];
+  return Object.keys(fields).length ? fields : undefined;
+}
+
+// Bare strings match a label or an ID, as the guard does; object fields must all match.
+const locatorMatches = (locator, body) => locator.bare !== undefined ? hasLabel(body, locator.bare) || hasIdentifier(body, locator.bare)
+  : (locator.id === undefined || hasIdentifier(body, locator.id)) && (locator.label === undefined || hasLabel(body, locator.label)) &&
+    (locator.line === undefined || body === locator.line);
+
 // Recognize literal native calls without treating strings or comments as actions. This is
 // advisory, like the window headers themselves; computed methods and aliases are not receipts.
 function actionKind(code, before) {
@@ -179,10 +196,9 @@ function actionKind(code, before) {
       const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
       const line = number && before?.lines.find(line => parse(line).num === Number(number));
       const target = line && parse(line).key.trim();
-      const named = /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"]([^'"\\]*)['"]/.exec(args)?.[1];
-      const namedTargets = named && before?.lines.map(line => parse(line).key.trim())
-        .filter(line => hasLabel(line, named) || hasIdentifier(line, named));
-      reorders ||= [named, ...[target, ...(namedTargets ?? [])].filter(Boolean).flatMap(body =>
+      const locator = clickLocator(args);
+      const namedTargets = locator && before?.lines.map(line => parse(line).key.trim()).filter(line => locatorMatches(locator, line));
+      reorders ||= [locator?.bare, locator?.label, locator?.id, locator?.line, ...[target, ...(namedTargets ?? [])].filter(Boolean).flatMap(body =>
         [describeSibling({ body })?.label, /(?:^|, )ID: ([^,]+)/.exec(body)?.[1]])]
         .some(label => label && /move|up|down|sort|order|rank/i.test(label));
       // ID and first-call clicks have no numbered line. A following edit on the same handle
@@ -193,8 +209,8 @@ function actionKind(code, before) {
         (!/^(?:[^(:]*button|menu item|row|link)\b/.test(target) && /^[^(,:]+\([^)]*\bsettable\b[^)]*\).*\bValue:/.test(target))
         : !before || followsEdit;
       if (editable) editableClicks.add(call);
-      isSave = (!!target && hasLabel(target, 'Save')) ||
-        /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"](?:Save|button Save)['"]\s*\}?\s*$/.test(args);
+      const locatorValue = locator && (locator.bare ?? locator.label ?? locator.id ?? locator.line);
+      isSave = (!!target && hasLabel(target, 'Save')) || ['Save', 'button Save'].includes(locatorValue);
       navigates ||= !isSave && !editable;
     }
     if (call[1] === 'typeText' && folderHandle && receiver(call) === folderHandle) {
@@ -504,11 +520,12 @@ function clickedSiblings(action) {
   for (const call of maskCode(action.code).matchAll(/\.\s*click\s*\(/g)) {
     const args = action.code.slice(call.index + call[0].length).split(')')[0];
     const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
-    const named = /^\s*(?:\{\s*(label|id|line)\s*:\s*)?(['"])([^'"\\]*)\2\s*\}?\s*(?:,|$)/.exec(args);
+    const locator = !number && clickLocator(args);
+    // A bare string resolves by label alone here, as it did before { id, label }.
+    const resolve = locator?.bare !== undefined ? { label: locator.bare } : locator;
     const targets = action.before.lines.filter(line => {
       const parsed = parse(line), body = parsed.key.trim();
-      return parsed.num !== undefined && (number ? parsed.num === Number(number) : named &&
-        (named[1] === 'id' ? hasIdentifier(body, named[3]) : named[1] === 'line' ? body === named[3] : hasLabel(body, named[3])));
+      return parsed.num !== undefined && (number ? parsed.num === Number(number) : !!resolve && locatorMatches(resolve, body));
     });
     if (targets.length !== 1) continue;
     const num = parse(targets[0]).num;

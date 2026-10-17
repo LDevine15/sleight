@@ -210,19 +210,29 @@ export function openMenuNote(text, prompt, repeated = false) {
 }
 
 // A menu note from earlier in a call (its acquisition, or the part before a menu continuation) is stale when
-// the call's last tree shows no menu: the call's own click consumed it. excel-edit runs 1 and 5 repeated
-// it 4 to 5 times (2026-10-17).
+// the call's last tree shows the same window whole with no menu: the call's own click consumed it. excel-edit
+// runs 1 and 5 repeated it 4 to 5 times (2026-10-17). A compacted view or a diff can't show the menu gone, and
+// another window's tree says nothing about the window the note came from.
+const MENU_NOTE_LINE = /^sleight: a menu (?:is open|may (?:still )?be stuck open)\b[^\n]*(?:\n|$)/gm;
+const headerLine = text => /^Window: [^\n]*/.exec(text)?.[0];
 export function dropStaleMenuNotes(head, rest) {
   const text = (rest ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
   const at = text.lastIndexOf('Window: ');
   if (at < 0) return head;
-  const tree = text.slice(at);
+  const tree = text.slice(at), header = headerLine(tree);
   // A compacted view keeps only the root line, so a root with a Cancel action counts as a menu here.
-  if (!/^0 /m.test(tree) || /^0 [^\n]*\bSecondary Actions: [^\n]*\bCancel\b/m.test(tree) || menuRoot(tree) || openMenuNote(tree)) return head;
-  let changed = false;
+  if (!/^0 /m.test(tree) || /…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree) ||
+      /^0 [^\n]*\bSecondary Actions: [^\n]*\bCancel\b/m.test(tree) || menuRoot(tree) || openMenuNote(tree)) return head;
+  let changed = false, before = '';
   const out = head.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
-    const kept = item.text.replace(/^sleight: a menu (?:is open|may (?:still )?be stuck open)\b[^\n]*(?:\n|$)/gm, '');
+    // Each note belongs to the last Window header before it, in this item or an earlier one.
+    const kept = item.text.replace(MENU_NOTE_LINE, (note, offset) => {
+      const preceding = before + item.text.slice(0, offset);
+      const from = preceding.lastIndexOf('Window: ');
+      return from >= 0 && headerLine(preceding.slice(from)) === header ? '' : note;
+    });
+    before += item.text + '\n';
     if (kept === item.text) return [item];
     changed = true;
     return kept.trim() ? [{ ...item, text: kept.replace(/\n+$/, '') }] : [];

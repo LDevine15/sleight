@@ -488,7 +488,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const findTarget = lines => {
             let found = [...lines].filter(([, line]) => match(line, target));
             if (bare !== undefined && !found.length) found = [...lines].filter(([, line]) => hasIdentifier(line, target));
-            if (!found.length && kind !== 'line') found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
+            // A bare line carries no ID, so it can't satisfy { id, label }.
+            if (!found.length && kind !== 'line' && !kind.endsWith(' and label')) found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
               !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target);
             return found;
           };
