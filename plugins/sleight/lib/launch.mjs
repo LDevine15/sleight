@@ -579,7 +579,7 @@ async function performDrag(args, runLocal) {
     }
   }
   if (!result.ok && dragTimedOut) {
-    result = { ...result, error: `${result.error}; for files or list items, use Copy or Cut and Paste, or the app's Move command` };
+    result = { ...result, error: `${result.error}; for files, use Copy and then the app's Move command; for list items, Cut and Paste` };
   }
   const { ok, ...rest } = result;
   return text(rest, !ok);

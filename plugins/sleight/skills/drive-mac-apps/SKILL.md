@@ -32,14 +32,14 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 ## Text, menus and files
 
 - `await app.paste("text")` avoids autocorrect and capitalization. Replace documents with select-all
-  and paste in one call, then read back and compare.
+  and paste in one call.
 - Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
   call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
   `menu_bar` is only for status icons.
 - Acquire a document that's already open. Don't reopen it.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
 - Transfer numbers as digits.
-- Move files or list items with Cut/Copy and Paste or Move, not a drag.
+- Move files with Copy, then the menu's Move item (Cut is often disabled for files), not a drag.
 - In a Save panel, send Go to Folder, the folder, Return, the name and the final Return in one call,
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
