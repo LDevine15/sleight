@@ -501,6 +501,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             let found = findTarget(elements(text));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
             if (found.length > 1 && (kind === 'label' || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
+              const enabled = found.filter(([, line]) => !/^[a-z][a-z ]* \\([^()]*\\bdisabled\\b[^()]*\\)/.test(line));
+              if (enabled.length === 1) found = enabled;
               const content = found.filter(([number]) => ancestry.get(number)?.content);
               if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
             }
