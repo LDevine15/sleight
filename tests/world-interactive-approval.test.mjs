@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { interactivePlan, interactiveAgentSetup, prepareInteractive, terminalGate, runInteractive } from '../bench/world/arms/claude-cu/interactive.mjs';
 import { permissionDecision } from '../bench/world/arms/claude-cu/permission.mjs';
+import { VirtualTerminal } from '../bench/world/arms/claude-cu/terminal.mjs';
 import { getTasks } from '../bench/tasks.mjs';
 
 const enabled = { cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } };
@@ -85,7 +86,8 @@ async function session(p, { screens = [card()], cancel = false, afterDown = card
           output(screens[0]);
           if (screens.length > 1) timer = setTimeout(() => output(screens[1]), 15);
         } else if (value === '\x1b[B') { if (afterDown !== null) output(afterDown); }
-        else if (value === '\r') { answer = 'RESULT ok'; output('\n❯ Try "write a test"\n'); }
+        // Accepting erases the card, as Claude Code's redraw does; the harness no longer clears its own copy of the screen.
+        else if (value === '\r') { answer = 'RESULT ok'; output('\x1b[2J\x1b[H❯ Try "write a test"\n'); }
         else if (value === '\x04' && ++exitKeys === 2) finish({ code: 0, clean: true });
       }, async stop() { clearTimeout(timer); finish({ code: 130, clean: true }); } };
     } });
@@ -158,6 +160,58 @@ test('the card exactly as the 15:23Z live run rendered it is answered for an all
   const refused = await session(other, { screens: [seen('deny')] });
   assertBlock(refused.result, refused.events, 'computer-use approval is outside the task allowlist or unsupported');
 });
+// A whole card drawn as 2.1.289 draws it (words split by cursor-forward moves, options at absolute columns, the cursor parked
+// on the selected ❯), then the exact redraw it sent after Down: the rawTail in sitting-1017c/approval-block-cu4.json (2026-10-17).
+const words = text => text.replaceAll(' ', '\x1b[1C');
+const frame = (app = 'Calculator') => ['', ' ' + words('Computer Use wants to control these apps'), '',
+  '\x1b[4G│\x1b[6G' + words('I need to use Calculator to compute 80 × 55 by clicking its buttons.'), '',
+  '\x1b[4G\x1b[1m◉\x1b[22m\x1b[6G' + words(app), '', '\x1b[4G' + words('7 other apps will be hidden while Claude works.'), '',
+  '\x1b[4G\x1b[38;5;153m❯\x1b[6G' + words('Deny, and tell Claude what to do differently') + '\x1b[1C\x1b[1m(esc)\x1b[22m\x1b[39m',
+  '\x1b[6G' + words('Allow for this session (1 app)'), '', '\x1b[4G' + words('Enter to confirm · Esc to cancel'), '', ''].join('\r\n') +
+  '\x1b[5A\x1b[3C';
+const downTail = '\x1b[3D\x1b[5B\r\x1b[3C\x1b[5A \x1b[6GDeny, and tell Claude what to do differently \x1b[1m(esc)\r\x1b[3C\x1b[1B\x1b[22m' +
+  '\x1b[38;5;153m❯\x1b[6GAllow for this session (1 app)\x1b[39m\r\n\n\n\n\x1b[3C\x1b[4A';
+test('the live redraw after Down overwrites the card in place, and the whole updated card is confirmed', async t => {
+  const p = fixture(t); p.allowedApps = ['Calculator'];
+  const { result, writes } = await session(p, { screens: [frame()], afterDown: downTail });
+  assert.equal(result.is_error, false, result.reason);
+  assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
+  const term = new VirtualTerminal();
+  term.write(frame()); term.write(downTail);
+  const lines = term.render().split('\n');
+  assert.ok(lines.includes('   ❯ Allow for this session (1 app)'), lines.join('\n'));
+  assert.ok(lines.includes('     Deny, and tell Claude what to do differently (esc)'));
+  assert.ok(lines.includes(' Computer Use wants to control these apps'));
+});
+test('the virtual terminal moves, erases, saves and wraps as a terminal does and draws nothing for other sequences', () => {
+  const draw = (chunks, options) => { const term = new VirtualTerminal(options); for (const chunk of [chunks].flat()) term.write(chunk); return term.render(); };
+  assert.equal(draw('abc\x1b[2;3Hx\x1b[1;2fy'), 'ayc\n  x\n');
+  assert.equal(draw('abcdef\x1b[4G\x1b[K\nabcdef\x1b[3G\x1b[1K\nabcdef\x1b[2K!'), 'abc\n   def\n      !');
+  assert.equal(draw('1\n2\n3\x1b[2;2H\x1b[J'), '1\n2');
+  assert.equal(draw('1\n2\n3\x1b[2;1H\x1b[1J'), '\n\n3\n');
+  assert.equal(draw('1\n2\x1b[2J'), '');
+  assert.equal(draw('ab\x1b7\x1b[3;9Hc\x1b8d\x1b[s\x1b[2Ee\x1b[uf'), 'abdf\n\ne       c\n');
+  assert.equal(draw('abcd\b\bX\r\x1b[2CY'), 'abYd\n');
+  assert.equal(draw('abcdefg', { columns: 4 }), 'abcd\nefg');
+  assert.equal(draw('a\nb\nc\nd', { rows: 3 }), 'b\nc\nd');
+  assert.equal(draw('\x1b[?25l\x1b]0;title\x07\x1b[38;5;153mA\x1b(B\x1b[?2004h\x1b[39mB\x1b]8;;x\x1b\\C'), 'ABC');
+  assert.equal(draw(['A\x1b[', '3', 'CB\x1b', '[1D!']), 'A   !');
+  assert.equal(draw('中文x\x1b[1Gy'), 'y 文x\n');
+  assert.equal(draw('typing'), 'typing', 'a line the cursor is still on has no newline yet');
+  assert.equal(draw('typed\x1b[1G'), 'typed\n');
+});
+// From the Allow row (cursor parked at column 3): up five rows to the app row, rewrite it, back down.
+for (const [name, afterDown] of [['app row rewritten in place', downTail + '\x1b[5A\x1b[6GTerminal\x1b[K\x1b[5B'],
+  ['second card naming Terminal', downTail + '\x1b[10A\r\x1b[J' + frame('Terminal').replace(/\x1b\[5A\x1b\[3C$/, '') +
+    '\x1b[5A\r\x1b[3C \x1b[1B\r\x1b[3C❯\x1b[1A']]) {
+  test(`a redraw after Down is validated again and refused: ${name}`, async t => {
+    const p = fixture(t); p.allowedApps = ['Calculator'];
+    const { result, writes, events } = await session(p, { screens: [frame()], afterDown });
+    assertBlock(result, events, 'computer-use approval is outside the task allowlist or unsupported');
+    assert.match(result.approvalBlock.cardText, /Terminal/);
+    assert.deepEqual(writes.slice(1), ['\x1b[B']);
+  });
+}
 test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
   const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });
   assertBlock(foreign.result, foreign.events, 'computer-use approval is outside the task allowlist or unsupported');
