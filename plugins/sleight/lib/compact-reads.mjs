@@ -360,16 +360,17 @@ function describeSibling(node) {
 
 // Two changed positions must exchange the same lines; inserts and rotations cannot count as swaps.
 function swappedSiblings(before, after) {
-  const sortish = line => {
-    const body = ELEMENT.exec(line)?.[3] ?? '';
-    return /^column header\b/.test(body) || /\b(?:Sort|Ascending|Descending)\b/i.test(body);
-  };
-  if (before.some(sortish) || after.some(sortish)) return;
+  // A table's column header anywhere means a click may have sorted it. Sort words count only inside the
+  // swapped group: Excel's ribbon "Sort & Filter" hid both tab swaps in the 2026-10-17 rerun.
+  const header = line => /^column header\b/.test(ELEMENT.exec(line)?.[3] ?? '');
+  if (before.some(header) || after.some(header)) return;
+  const sortWords = body => /\b(?:Sort|Ascending|Descending)\b/i.test(body ?? '');
   const old = siblingGroups(before), swaps = [];
   for (const [key, matches] of siblingGroups(after)) {
     const previous = old.get(key);
     if (matches.length !== 1 || previous?.length !== 1) continue;
     const was = previous[0].children, parent = matches[0], now = parent.children;
+    if ([previous[0], parent, ...was, ...now].some(node => sortWords(node.body))) continue;
     // A value or real selection change can itself reorder a list. Only the engine's
     // "Selected, " label prefix is ignored when comparing these sibling states.
     if (was.some(node => {

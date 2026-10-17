@@ -47,15 +47,26 @@ test('clicking a column header to sort does not report a sibling swap', () => {
   assert.doesNotMatch(result(before, after, 'await app.click(2)'), /also swapped/);
 });
 
-test('sort cues anywhere in either tree suppress click and multi-click swap notes', () => {
-  for (const cue of ['\t90 column header Name', '\t90 button Sort by Name',
-    '\t90 button Order, Secondary Actions: Sort', '\t90 button Ascending', '\t90 button Descending']) {
-    for (const [before, after] of [[[...rows, cue], swapped], [rows, [...swapped, cue]]]) {
-      for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
-        assert.doesNotMatch(result(before, after, code), /also swapped/, `${cue}: ${code}`);
-      }
+test('a column header anywhere, or sort words inside the swapped group, suppress swap notes', () => {
+  const inGroup = cue => [rows[0], cue, ...rows.slice(1)];
+  const inSwapped = cue => [swapped[0], cue, ...swapped.slice(1)];
+  for (const [before, after, label] of [
+    [[...rows, '\t90 column header Name'], swapped, 'column header before'],
+    [rows, [...swapped, '\t90 column header Name'], 'column header after'],
+    ...['\t\t90 tab Sort by Name', '\t\t90 tab Order, Secondary Actions: Sort', '\t\t90 tab Ascending', '\t\t90 tab Descending']
+      .map(cue => [inGroup(cue), inSwapped(cue), cue])]) {
+    for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
+      assert.doesNotMatch(result(before, after, code), /also swapped/, `${label}: ${code}`);
     }
   }
+});
+
+// The 10:25 rerun (2026-10-17): Excel's ribbon carries "menu button Sort & Filter" outside the sheet tabs, and the
+// whole-tree sort guard hid the swap note in both excel-edit failures.
+test('a sort command elsewhere in the window does not hide a tab swap', () => {
+  const before = ['\t5 menu button Sort & Filter', '\t6 group Sheets', '\t\t7 button Inventory', '\t\t8 button Selected, Review 2a37d191'];
+  const after = ['\t5 menu button Sort & Filter', '\t6 group Sheets', '\t\t7 button Review 2a37d191', '\t\t8 button Selected, Inventory'];
+  assert.match(result(before, after, 'await app.click(7)'), /swapped Inventory and Review 2a37d191;/);
 });
 
 test('unchanged siblings and an inserted, renumbered list never report a swap', () => {
@@ -168,7 +179,8 @@ test('a mixed click and plain typing reports the entire new sibling order', () =
 });
 
 test('sort cues still suppress mixed typing swap notes', () => {
-  assert.doesNotMatch(result([...rows, '\t90 button Sort'], [...swapped, '\t90 button Sort'], mixedClick), /also swapped/);
+  assert.doesNotMatch(result([...rows, '\t90 column header Name'], [...swapped, '\t90 column header Name'], mixedClick), /also swapped/);
+  assert.doesNotMatch(result([rows[0], '\t\t90 tab Sort', ...rows.slice(1)], [swapped[0], '\t\t90 tab Sort', ...swapped.slice(1)], mixedClick), /also swapped/);
 });
 
 test('groups with the same role and child multiset are ambiguous across parent descriptions', () => {
