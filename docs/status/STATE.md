@@ -32,8 +32,11 @@ under `.claude/worktrees/agent-<id>`):
   library-validation and runtime flags, with pid and start time checked before and after). Security-sensitive: needs a Sonnet-high
   review (the lane's reviewer checklist is in its report in this session's transcript: pid binding, flags parsing, test-only
   overrides, Team IDs, an older Google-signed framework swap) before merge, then a live turbo-on-Chrome check.
-- agent-a031a24d54f178c6e (race harness): why LCU (1/12) and Cua (0/12, zero tool calls) fail in the real-window Firefox round, and
-  Codex (1/12, `/tmp/fb-rounds/real-29077030-2b63-4bb2-ad77-0c63a48b4921-codex`).
+- agent-a031a24d54f178c6e (race harness): done and merged (d1e4a215). All harness causes. LCU and Cua's approvals used the world
+  allowlist without Firefox, so each race arm now gets the round's browser plus Preview and TextEdit (benchmark apps only). Cua's
+  driver daemon wasn't running. The round now starts it through LaunchServices and stops only one it started. Codex depends on the
+  engine's Always allow list. The round now sets it to the round's apps and restores it, as run.mjs does for the claim. Peekaboo rounds
+  must start from Terminal.app, which admission now enforces. Not run live yet. Commands are in `bench/fowl/rounds.sh`'s header.
 - agent-ad5cfb3df41d7b6dc (real-window gate arms): done and merged (d2cb8a5b). The Claude in Chrome stall was Claude Code's
   `auto` permission mode on the gate arms; the gate now passes `--permission-mode default` to every arm. Smoke from Terminal.app
   21:09Z passed Claude in Chrome on wikipedia and mdn, and FowlBrowser and turbo (Helium) on wikipedia.
