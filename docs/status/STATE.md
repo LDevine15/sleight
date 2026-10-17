@@ -24,9 +24,12 @@ under `.claude/worktrees/agent-<id>`):
   several clicks (the excel-edit fail), the note pointing to Undo, combined `{ id, label }` locators, the stale "menu is open" note.
 - agent-a8f6b4dfe726ba8e4 (document-scope guard policy): a light check after Return instead of a full tree read before typeText
   (`SLEIGHT_GUARD_LIGHT_RETURN`, on by default), measured at 6-8 s of reads per excel-edit run.
-- agent-a336b5cee71ace575 (relay, launch, skill): first-call rules before the tree (`SLEIGHT_RULES_FIRST`), open_file skipping
-  `open -g` on a confirmed window, a default textless-document screenshot hint, a skill line that a save writes the whole document, so there is no need to go back and re-check,
-  open_file in bench/timing.mjs.
+- agent-a336b5cee71ace575 (relay, launch, skill): done, 044434df on worktree-agent-a336b5cee71ace575, unmerged pending a
+  Sonnet-high review. Rules come before the tree (`SLEIGHT_RULES_FIRST=0` baseline). open_file skips `open -g` on a confirmed window,
+  and its approval runs alongside the cold probe, so a prompt can be answered for nothing if the lookup then fails (known-problems).
+  The textless-document note is on by default (`SLEIGHT_TEXTLESS_HINT=0` baseline). The skill gained "A confirmed save covers other
+  sheets and pages. Don't recheck them." and dropped a line the js description already has (927 of 930 words). bench/timing.mjs counts
+  open_file (preview-read-1 took 658 ms, of which 210 ms in the engine).
 - agent-aa3c3758d99912080 (turbo): done, bf60a6a2 on worktree-agent-aa3c3758d99912080, unmerged. A group-writable Chrome is
   accepted only after the running process proves its code signature (Team IDs Chrome EQHXZ8M8AV and Helium S4Q33XPHB4, plus the kill,
   library-validation and runtime flags, with pid and start time checked before and after). Security-sensitive: needs a Sonnet-high
