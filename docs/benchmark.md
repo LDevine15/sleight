@@ -364,9 +364,16 @@ frontmost changes and any sign-in, update or permission window without answering
 
 ## Time per run
 
-Each run's result now splits its time. Claude Code reports the time spent in the model API, and
-sleight's trace times each tool call in the engine, in sleight's own local tools (`drag`, `hover`)
-and in the relay. The rest is Claude Code itself, mostly startup. The first timing pass, on
+Each run's result splits its elapsed time into parts that add up. Tool time (`toolWallMs`) is wall
+time with at least one sleight call open, with overlapping calls counted once. The rest of Claude
+Code's own duration is `outsideToolsMs` (model streaming, startup, MCP connect). Time the harness
+spends outside Claude Code, spawning it and running the check, is `harnessMs`. sleight's trace
+also splits tool calls into engine, local tools (`drag`, `hover`) and relay time. API time
+(`modelMs`) comes from Claude Code and overlaps all three parts, so it is reported beside them and
+never subtracted. Results saved before 2026-10-17 subtracted it in `otherMs`, which went negative
+in 40 of 45 runs of that day's claim pass, and the shares below come from that older method.
+`node bench/timing.mjs <results.json> [evidence-dir]` redoes the split for a saved file, from the
+run traces when the evidence folder is given. The first timing pass, on
 2026-10-07 with Sonnet 5.5 at medium effort, 3 runs per task
 ([`2026-10-07-timing.json`](benchmarks/2026-10-07-timing.json)), put 65.4% of the time in the
 model, 23.6% in the engine, 4.8% in local tools, 6.2% in Claude Code and 0.1% in the relay (14 to
