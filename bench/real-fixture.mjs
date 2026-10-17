@@ -19,6 +19,26 @@ export const webBrowsers = [
   { id: 'arc', app: 'Arc', bundle: 'company.thebrowser.Browser', extension: true, legacyKinds: [], fixtureHelper: 'accessibility', fixtureLaunch: 'file-menu' },
 ];
 
+// A long-lived JXA host read an owned Excel process as gone while an independent inspector found the same pid alive
+// (Office investigation, 2026-10-17). An exit the JXA helpers report counts only when the kernel agrees: no such pid,
+// another user's process, a zombie, or one that started after the launched app did (a reused pid).
+export async function processExitConfirmed(pid, startedAtMs, { kill = (id, signal) => process.kill(id, signal), ps = processState } = {}) {
+  if (!(Number.isInteger(pid) && pid > 0)) return false;
+  try { kill(pid, 0); } catch (error) { if (error.code === 'ESRCH' || error.code === 'EPERM') return true; throw error; }
+  const state = await ps(pid);
+  if (!state || state.zombie) return true;
+  return startedAtMs > 0 && state.startedAtMs > startedAtMs + 5000;
+}
+
+async function processState(pid) {
+  let stdout;
+  try { ({ stdout } = await execute('/bin/ps', ['-o', 'stat=', '-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C' }, timeout: 5000 })); }
+  catch (error) { if (error.code === 1 && !String(error.stdout ?? '').trim()) return null; throw error; }
+  const match = /^\s*(\S+)\s+(.+?)\s*$/.exec(stdout);
+  if (!match) throw new Error(`Process ${pid} state unreadable`);
+  return { zombie: match[1].startsWith('Z'), startedAtMs: new Date(match[2]).getTime() };
+}
+
 async function fixtureHelper(request, signal) {
   return webBrowsers.find(browser => browser.bundle === request.bundle)?.fixtureHelper === 'created-window'
     ? { command: await heliumHelper(signal), args: [] }
@@ -32,7 +52,7 @@ async function fixtureHelper(request, signal) {
 // and then can't quit cleanly. The other bench launchers pass the same flags (bench/tasks.mjs).
 const DOCUMENT_LAUNCH = ['--args', '-ApplePersistenceIgnoreState', 'YES', '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO',
   '-NSDocumentSaveNewDocumentsToCloud', 'NO'];
-export async function openFixture(ctx, request, { run = runOwned, open = execute, launch, helper = fixtureHelper } = {}) {
+export async function openFixture(ctx, request, { run = runOwned, open = execute, launch, helper = fixtureHelper, exited = processExitConfirmed } = {}) {
   const fixtureLaunch = webBrowsers.find(browser => browser.bundle === request.bundle)?.fixtureLaunch;
   const createdWindow = ['retained-url', 'new-instance'].includes(fixtureLaunch);
   const blankWindow = fixtureLaunch === 'retained-url' || (request.fixtureKind === 'web-page' && fixtureLaunch !== 'new-instance');
@@ -60,6 +80,19 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   const stage = name => {
     if (!stages.has(name)) stages.set(name, Promise.withResolvers());
     return stages.get(name);
+  };
+  // A disagreement keeps the live lock: executeRealTask and the runner read ctx.exitDisagreements before releasing it.
+  const confirmExit = async (processes, step) => {
+    for (const { pid, processStartedAtMs } of processes) {
+      let gone = false, failure;
+      try { gone = await exited(pid, processStartedAtMs); } catch (error) { failure = error.message; }
+      if (gone) continue;
+      diagnostics.cleanup = 'unconfirmed';
+      diagnostics.exitDisagreement = { step, pid, ...(failure && { failure }) };
+      (ctx.exitDisagreements ??= []).push({ app: request.app, bundle: request.bundle, step, pid });
+      throw new Error(`Owned ${request.app} exit disagreement after ${step}: the JXA helper read pid ${pid} as gone, ` +
+        `${failure ? `and the independent check failed (${failure})` : 'but the process is still running'}; live lock kept`);
+    }
   };
   let buffer = '', response, completed;
   const untouched = result => result.groupClean === true && result.stdout?.split('\n').some(line => {
@@ -95,6 +128,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         try { const event = JSON.parse(line); if (event.stage === 'quit' && event.quitWait) diagnostics.quitWait = event.quitWait; } catch {}
       }
       if (!result.groupClean || result.exit?.code !== 0) throw new Error(`Launched ${request.app} quit unconfirmed${result.stderr?.trim() ? ': ' + result.stderr.trim() : ''}`);
+      await confirmExit([{ pid: Number(lease.pid), processStartedAtMs: lease.processStartedAtMs }], 'quit');
       diagnostics.appQuit = true;
     },
     async close() {
@@ -106,12 +140,14 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         controller.abort(); resolve({ error: 'Fixture cleanup timed out', groupClean: false });
       }, 30000); })]).finally(() => clearTimeout(timer));
       if (untouched(result)) { diagnostics.windowCleanupConfirmed = true; return; }
-      if (!result.groupClean || result.error || result.exit.code !== 0 ||
-        !result.stdout.split('\n').some(line => { try { return JSON.parse(line).stage === 'closed'; } catch { return false; } })) {
+      const closed = result.stdout?.split('\n').map(line => { try { return JSON.parse(line); } catch { return undefined; } }).find(event => event?.stage === 'closed');
+      if (!result.groupClean || result.error || result.exit.code !== 0 || !closed) {
         diagnostics.closeFailure = result.stderr?.trim() || result.error;
         diagnostics.cleanup = 'unconfirmed';
         throw new Error(`Owned ${request.app} fixture window cleanup unconfirmed${diagnostics.closeFailure ? ': ' + diagnostics.closeFailure : ''}`);
       }
+      // The helper skips the close when it reads the app as gone. That read came from a long-lived host, so the kernel must agree.
+      if (closed.appAbsent === true) await confirmExit([{ pid: Number(lease.pid), processStartedAtMs: lease.processStartedAtMs }], 'window cleanup');
       diagnostics.windowCleanupConfirmed = true;
     },
     async recover() {
@@ -127,8 +163,12 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         fixtureDir: ctx.dir, runToken: ctx.nonce || request.token, startedAtMs,
         pids: [...new Set([...lease.pids, lease.pid].filter(pid => Number.isInteger(pid) && pid > 0))],
       })], { signal: ctx.cleanupSignal, timeoutMs: 90000 });
-      const receipt = result.stdout?.split('\n').some(line => { try { return JSON.parse(line).stage === 'recovered'; } catch { return false; } });
+      const receipt = result.stdout?.split('\n').map(line => { try { return JSON.parse(line); } catch { return undefined; } }).find(event => event?.stage === 'recovered');
       if (!result.groupClean || result.exit?.code !== 0 || !receipt) throw new Error(`Owned ${request.app} fixture recovery unconfirmed${result.stderr?.trim() ? ': ' + result.stderr.trim() : ''}`);
+      const starts = new Map((Array.isArray(receipt.processes) ? receipt.processes : []).map(item => [item.pid, item.processStartedAtMs]));
+      if (lease.pid > 0 && lease.processStartedAtMs > 0) starts.set(lease.pid, lease.processStartedAtMs);
+      const quitPids = [...new Set([lease.pid, ...(Array.isArray(receipt.pids) ? receipt.pids : [])].filter(pid => Number.isInteger(pid) && pid > 0))];
+      await confirmExit(quitPids.map(pid => ({ pid, processStartedAtMs: starts.get(pid) })), 'recovery');
       diagnostics.cleanup = 'closed retained fixture';
       diagnostics.windowCleanupConfirmed = true;
       diagnostics.appQuit = true;

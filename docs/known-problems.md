@@ -96,6 +96,11 @@ our own runs. Dates and engine versions are given where they matter.
 - `drag` can't drop text into another window. `from` and `to` are offsets from one window and must sit in the same text area,
   so the benchmark's textedit-window-drag can't pass through it (0/1 on 2026-10-16, its first run). Whether the engine's
   `app.drag` can move selected text between windows is unmeasured.
+- In both Firefox settings runs of 2026-10-17, `drag` by element number failed on the web list's rows (3 of 3 tries), so Claude
+  used coordinates. Claude then sent 3 drags in the shown image's 2000-pixel frame, while the engine and `drag` read the
+  2560-pixel original. Those runs got the frame note late or never. It now comes with the first screenshot of each window
+  size, and a `drag` result gives the frame it read (unit-tested). Whether Claude stops sending the shown frame is unmeasured. All 7
+  background drags there reported `deliveryVerified: false`, the 6 that moved a row included, since `drag` verifies only text.
 
 - The benchmark's drag audit (`bench/world/method-check.mjs`) credits a drag that follows a nested labeled block whose inner
   `break` targets the outer label (`outer: { inner: { break outer; } await app.drag() }`), though that drag never runs. A peer
@@ -324,6 +329,10 @@ native reference, and oversized first results defer the browser reference while 
 
 - Preservation cannot snapshot unreadable formats, file promises or more than 64 MiB, and macOS has
   no atomic compare-and-restore, so a failed Copy/Cut leaves new clipboard data alone.
+- sleight doesn't check whether a native Cut key took effect. An app that disables Cut for the
+  selection ignores the key, and the result only says so as a possibility. A click by label on a
+  disabled item stops and names the enabled items beside it, but only items at the same depth of
+  the tree.
 
 ## The engine and its helper
 

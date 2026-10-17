@@ -67,6 +67,35 @@ test('the relay gives full advice once until selection disappears, then starts a
   assert.match(read(header + '\n' + menu), /Try one Escape/);
 });
 
+// word-edit-1 (2026-10-17): the short note repeated through 15 calls of Escape and clicks while keys were swallowed.
+test('the third stuck note for the same window and item says to check typing and switch route', t => {
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams;
+  const replies = [];
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: false, changeReview: false });
+  t.after(() => { relay.dispose(); streams.forEach(stream => stream.destroy()); });
+  clientOut.on('data', data => replies.push(...data.toString().trim().split('\n').map(JSON.parse)));
+  let id = 0;
+  const read = rows => {
+    clientIn.write(JSON.stringify({ id: ++id, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.pressKey("Escape");' } } }) + '\n');
+    serverOut.write(JSON.stringify({ id, result: { content: [item(header + '\n' + rows)] } }) + '\n');
+    return replies.find(reply => reply.id === id).result.content.map(part => part.text ?? '').join('\n');
+  };
+  const escalated = /keys may be swallowed[^\n]*\. Check that typing landed \(a value or count in the tree changed\), and switch route \(a toolbar or ribbon control, or a keyboard shortcut\) instead of repeating Escape or clicks\./;
+  assert.match(read(menu), /Try one Escape/);
+  assert.doesNotMatch(read(menu), escalated);
+  for (let i = 0; i < 3; i++) assert.match(read(menu), escalated);
+  // Another selected title starts its count again, then escalates.
+  const other = menu.replace('Table', 'Insert');
+  assert.doesNotMatch(read(other), escalated);
+  assert.match(read(other), escalated);
+  // The item clears: the next episode starts with the full note.
+  read(menu.replace('(selected) ', ''));
+  assert.match(read(menu), /Try one Escape/);
+  assert.doesNotMatch(read(menu), escalated);
+  assert.match(read(menu), escalated);
+});
+
 test('menu warnings require selection under the menu bar and keep Cancel recovery', () => {
   for (const text of [header, header + '\n' + menu.replace('(selected) ', ''),
     header + '\n\t132 (selected) Table', header + '\n124 menu bar\n\t125 File\n126 group\n\t132 (selected) Table',

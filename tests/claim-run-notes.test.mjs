@@ -174,6 +174,24 @@ test('a stuck-menu note goes when the same window\'s last full tree shows no sel
   assert.equal(dropStaleMenuNotes(head, [text(document('b.txt', 'file:///tmp/b.txt'))]), head, 'another window');
 });
 
+// word-edit-1, transcript line 70 (2026-10-17): clicking a submenu header closed the menu, and the call's last
+// tree added a selected menu-bar item under a document root.
+test('an "is open" note goes when the last tree adds a selected menu-bar item and shows no menu', () => {
+  const stuckNote = 'sleight: a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number (`app.click(132)`); if it still stays, tell the user.';
+  const head = [text(formatMenu('a.txt')), text(''), text(MENU_NOTE)];
+  const diff = ['insert submenu opened', 'Window: "a.txt", App: TextEdit.', '0 standard window a.txt, Secondary Actions: Raise, URL: file:///tmp/a.txt',
+    'sleight: lines changed since the last full tree you saw for this window (- removed, + added; numbers on + lines are current):',
+    '- \tTable', '+ \t132 (selected) Table'].join('\n');
+  assert.deepEqual(dropStaleMenuNotes(head, [text(diff), text(stuckNote)]), [head[0], head[1]], 'the diff');
+  const whole = document('a.txt', 'file:///tmp/a.txt').replace('\t4 Format', '\t132 (selected) Table');
+  assert.deepEqual(dropStaleMenuNotes(head, [text(whole)]), [head[0], head[1]], 'the whole tree');
+  // The stuck note itself stays, and a diff that adds a menu or another window keeps the "is open" note.
+  const both = [text(whole), text(stuckNote)];
+  assert.equal(dropStaleMenuNotes(both, [text(diff)]), both);
+  assert.equal(dropStaleMenuNotes(head, [text(diff.replace('+ \t132 (selected) Table', '+ \t5 menu Secondary Actions: Cancel'))]), head);
+  assert.equal(dropStaleMenuNotes(head, [text(diff.replaceAll('a.txt', 'b.txt'))]), head);
+});
+
 test('relay: a split call whose click consumed the menu ends without the acquisition\'s menu note', async t => {
   const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-menunote-')));
   const streams = Array.from({ length: 4 }, () => new PassThrough());
@@ -188,7 +206,8 @@ test('relay: a split call whose click consumed the menu ends without the acquisi
     _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.TextEdit' } } } } }) + '\n');
   const prefix = () => sent.filter(m => String(m.id).startsWith('sleight-acquire-')).at(-1)?.id;
   const doc = document('a.txt', 'file:///tmp/a.txt');
-  for (const [id, last, kept] of [[2, doc, false], [3, formatMenu('a.txt'), true]]) {
+  const stuck = doc.replace('\t4 Format', '\t132 (selected) Table');
+  for (const [id, last, kept] of [[2, doc, false], [3, formatMenu('a.txt'), true], [4, stuck, false]]) {
     call(1, 'let app = await cua.getApp("TextEdit")'); await tick();
     reply(1, doc); await tick();
     call(id, 'let app = await cua.getApp("TextEdit"); await app.click({ label: "Format" });'); await tick();
@@ -197,6 +216,7 @@ test('relay: a split call whose click consumed the menu ends without the acquisi
     reply(id, GUARD_MARK + last + GUARD_END); await tick();
     const out = replies.find(m => m.id === id).result.content.map(item => item.text ?? '').join('\n');
     assert.equal(/a menu is open/.test(out), kept, out);
+    assert.equal(/a menu may (?:still )?be stuck open/.test(out), last === stuck, out);
     replies.length = 0; sent.length = 0;
   }
 });

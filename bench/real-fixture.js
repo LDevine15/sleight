@@ -236,6 +236,15 @@ function cleanupRead(operation, state, clock) {
   }
 }
 
+// This helper lives through the whole task, and a long-lived JXA host read an owned Excel process as gone while the same
+// pid was alive (Office investigation, 2026-10-17). An empty bundle listing is looked up again by pid before the close is
+// skipped, and a skipped close says so, so the parent confirms the exit with the kernel before counting it clean.
+function cleanupTarget(listed, pid, bundle, byPid) {
+  if (listed) return listed;
+  var again = pid > 0 ? byPid(pid) : null;
+  return again && runningBundle(again) === bundle ? again : null;
+}
+
 function validateOwnedFixture(window, request, app, api, focus, sibling) {
   var epoch;
   do {
@@ -321,9 +330,18 @@ function closeOwnedWindow(window, request, app, api) {
   }
 }
 
+// Word put an untitled document's Don't Save sheet only behind AXFocusedUIElement, absent from AXWindows and AXSheets
+// (Office investigation, 2026-10-17). A window that reads as gone counts as closed only when no such sheet is left.
+var HIDDEN_SHEET = 'Owned fixture save sheet left outside AXSheets; cleanup unconfirmed';
+function closedWithoutSheet(app, window, api) { return !(api.hiddenSheet && api.hiddenSheet(app, window)); }
+
 function closeOwnedWindowSteps(window, request, app, api, step) {
   if (request.mode === 'document' && request.stopOnAppDialog) request = Object.assign({}, request, { refuseDialogs: true });
-  if (!window || !api.exists(window) || closedUnderUs(window, app, api)) return;
+  if (!window) return;
+  if (!api.exists(window) || closedUnderUs(window, app, api)) {
+    if (closedWithoutSheet(app, window, api)) return;
+    throw new Error(HIDDEN_SHEET);
+  }
   step('identity');
   if (!api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
   var noDialog = function () {
@@ -355,17 +373,21 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     validate();
     api.closeDocument(app, validate, request, window);
   } else api.closeButton(window, identity);
+  var sheetLeft = false;
   for (var attempt = 0; attempt < 30; attempt++) {
     step('wait-' + attempt);
     api.wait();
-    if (!api.exists(window) || closedUnderUs(window, app, api)) return;
-    if (request.mode === 'document' && !api.matches(window, request, true)) return;
+    if (!api.exists(window) || closedUnderUs(window, app, api) || (request.mode === 'document' && !api.matches(window, request, true))) {
+      if (closedWithoutSheet(app, window, api)) return;
+      sheetLeft = true;
+      continue;
+    }
     noDialog();
     if (!request.refuseDialogs || (api.discardable && api.discardable(window, request))) {
       api.discard(window, request.refuseDialogs ? discardIdentity : identity, request);
     }
   }
-  throw new Error('Owned fixture window is still open');
+  throw new Error(sheetLeft ? HIDDEN_SHEET : 'Owned fixture window is still open');
 }
 
 // File > Close acts on the focused document, and a task with two fixture windows can leave the other one focused
@@ -481,12 +503,13 @@ function recoverFixtureApplications(request, api, clock) {
       if (!windows.length && (!request.pids || request.pids.indexOf(pid) === -1)) throw new Error('Empty fixture process ownership unconfirmed; recorded pid required');
       if (!windows.length && api.dialog(app, null, Object.assign({}, request, { refuseDialogs: true })).length) throw new Error('Application dialog present; fixture recovery refused');
       if (api.cgWindowCount(pid) > windows.length) throw new Error('Extra window in fixture process inventory; recovery refused');
-      return { pid: pid, app: app, windows: windows };
+      return { pid: pid, processStartedAtMs: Number(date.timeIntervalSince1970) * 1000, app: app, windows: windows };
     });
     return plans;
   }
   var plans = inventory();
   original = plans.map(function (plan) { return plan.pid; });
+  var processes = plans.map(function (plan) { return { pid: plan.pid, processStartedAtMs: plan.processStartedAtMs }; });
   plans.forEach(function (plan) {
     plan.windows.forEach(function (item) {
       inventory();
@@ -511,7 +534,7 @@ function recoverFixtureApplications(request, api, clock) {
     });
   });
   if (inventory().length) throw new Error('Owned fixture processes still running');
-  return original;
+  return { pids: original, processes: processes };
 }
 
 function nativeAX(state, clock) {
@@ -744,6 +767,29 @@ function nativeAX(state, clock) {
         },
       });
     },
+    // A sheet among the window's children, or one the app's focused element sits in whose ancestry reaches this window or no
+    // window at all. A sheet on another window is that window's. Single raw reads: an app that already quit has no sheet.
+    hiddenSheet: function (app, window) {
+      function raw(element, attribute) {
+        if (clock && clock.check) clock.check();
+        var value = Ref();
+        return Number($.AXUIElementCopyAttributeValue(element, $(attribute), value)) === 0 ? ObjC.castRefToObject(value[0]) : null;
+      }
+      function role(element) { var value = raw(element, 'AXRole'); return value ? String(ObjC.unwrap(value)) : ''; }
+      var kids = window && raw(window, 'AXChildren');
+      if (kids) for (var index = 0; index < Number(kids.count); index++) if (role(kids.objectAtIndex(index)) === 'AXSheet') return kids.objectAtIndex(index);
+      var node = raw(app, 'AXFocusedUIElement'), sheet = null;
+      for (var depth = 0; node && depth < 12 && !sheet; depth++) {
+        if (role(node) === 'AXSheet') sheet = node;
+        else node = raw(node, 'AXParent');
+      }
+      if (!sheet) return null;
+      for (var up = raw(sheet, 'AXParent'), level = 0; up && level < 12; up = raw(up, 'AXParent'), level++) {
+        if (window && $.CFEqual(up, window)) return sheet;
+        if (role(up) === 'AXWindow') return null;
+      }
+      return sheet;
+    },
     discardable: function (window, request) { return fixtureDiscardSheet(window, request, { text: text, children: children, path: path }); },
     discard: function (window, validate, request) {
       var sheets = children(window, 'AXSheets');
@@ -782,7 +828,7 @@ function run(argv) {
     if (allowed.indexOf(request.bundle) === -1 || request.bundle === 'com.apple.finder' || !$.AXIsProcessTrusted()) throw new Error('Invalid fixture recovery request');
     var recoveryClock = { check: free, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit };
     var recovered = recoverFixtureApplications(request, nativeAX({ cleanup: true, bundle: request.bundle }, recoveryClock), recoveryClock);
-    emit({ stage: 'recovered', pids: recovered });
+    emit({ stage: 'recovered', pids: recovered.pids, processes: recovered.processes });
     return true;
   }
   if (request.mode === 'quit') {
@@ -986,11 +1032,14 @@ function run(argv) {
   }
   beginCleanup(state);
   checkAppDialog();
-  target = application();
+  target = cleanupTarget(application(), pid, request.bundle, function (value) {
+    var found = $.NSRunningApplication.runningApplicationWithProcessIdentifier(value);
+    return found.isNil() || found.isTerminated ? null : found;
+  });
   if (target && runningPid(target) !== pid && runningPid(target) !== -1) throw new Error('Fixture process changed before cleanup');
   if (target && state.launchedByRun && processStart(target) !== processStartedAtMs) throw new Error('Fixture process changed before cleanup');
   if (target && !inherited) closeOwnedWindow(owned, request, app, api);
-  emit({ stage: 'closed' });
+  emit(target || inherited ? { stage: 'closed' } : { stage: 'closed', appAbsent: true, pid: pid });
   } catch (error) {
     if (state.setup) {
       state.setup = false;

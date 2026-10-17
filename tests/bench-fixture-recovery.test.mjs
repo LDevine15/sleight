@@ -273,7 +273,8 @@ test('the native recovery entrypoint uses app inventory and emits a receipt afte
   f.sandbox.$ = Object.assign(value => ({ toString: () => value, dataUsingEncoding: () => value }), f.native);
   f.sandbox.run([JSON.stringify({ mode: 'recover', fixtureMode: 'document', pids: [42, 43], bundle, app: 'Editor', fixtureDir: '/run', runToken: 'nonce', startedAtMs: 100, running: false, launched: true })]);
   assert.equal(apps.every(app => app.exited), true);
-  assert.deepEqual(events.at(-1), { stage: 'recovered', pids: [42, 43] });
+  assert.deepEqual(events.at(-1), { stage: 'recovered', pids: [42, 43],
+    processes: [{ pid: 42, processStartedAtMs: 200 }, { pid: 43, processStartedAtMs: 200 }] });
 });
 
 test('in-task observation reports the owned save sheet instead of hiding it', () => {
