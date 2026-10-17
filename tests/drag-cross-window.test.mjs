@@ -13,7 +13,7 @@ function fixture(options = {}) {
   const a = area(11, 'alpha beta\n', 'alpha'), b = area(12, 'gamma delta\n', '');
   a.range = { location: 0, length: 5 }; b.range = { location: 0, length: 0 };
   const wins = [a, b].map((el, i) => {
-    const win = { AXRole: 'AXWindow', AXWindowNumber: i + 11, AXTitle: `${i + 11}.txt`, AXChildren: [el],
+    const win = { AXRole: 'AXWindow', AXWindowNumber: i + 11, AXTitle: options.sameTitle ? 'Same.txt' : `${i + 11}.txt`, AXChildren: [el],
       AXPosition: { x: frames[i].X, y: 100 }, AXSize: { width: frames[i].Width, height: 400 } };
     el.AXParent = win; return win;
   });
@@ -21,7 +21,7 @@ function fixture(options = {}) {
   const target = { processIdentifier: 7, activateWithOptions: () => { activations.push(7); options.onActivate?.({ a, b, frames }); } };
   const previous = { processIdentifier: 99, isNil: () => false, activateWithOptions() {} };
   const app = { AXWindows: wins, AXFocusedUIElement: b };
-  let order = [12, 11], delayed = 0;
+  let order = [12, 11], delayed = 0, attempts = 0;
   const applyDrop = () => {
     if (options.unchanged) return;
     a.AXValue = ' beta\n'; a.AXSelectedText = '';
@@ -31,6 +31,7 @@ function fixture(options = {}) {
     AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0, CFEqual: (x, y) => x === y,
     AXUIElementCopyAttributeValue: (el, key, out) => {
       if (options.readbackTimeout && events.some(e => e.type === 2) && el === b && key === 'AXValue') return -25204;
+      if (options.axReadbackTimeout && writes.length && el === b && key === 'AXValue') return -25204;
       if (!(key in el)) return -25205;
       out[0] = Array.isArray(el[key]) ? list(el[key]) : el[key]; return 0;
     },
@@ -64,7 +65,7 @@ function fixture(options = {}) {
   context.findApp = () => target;
   context.windows = () => [
     ...(options.cover ? [{ id: 50, pid: 99, title: 'cover', owner: 'Other', layer: 0, bounds: frames[1] }] : []),
-    ...order.filter(id => !(options.foreign && id === 12)).map(id => ({ id, pid: 7, title: `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[id - 11] } })),
+    ...order.filter(id => !(options.foreign && id === 12)).map(id => ({ id, pid: 7, title: options.sameTitle ? 'Same.txt' : `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[id - 11] } })),
   ];
   context.backgroundBuilder = () => {
     if (options.lateCover) options.cover = true;
@@ -83,9 +84,9 @@ function fixture(options = {}) {
       indexAt: p => Math.min(Math.floor((p.x - x) / 8), el.AXValue.length - 1), lineEnd: () => el.AXValue.length,
       replace: (at, length, text) => {
         if (options.rangeSideEffects) { el.range = { location: at, length }; el.AXSelectedText = el.AXValue.slice(at, at + length); }
-        if (options.failWrite === writes.length + 1) throw new Error('write unavailable');
+        if (options.failWrite === ++attempts) throw new Error('write unavailable');
         writes.push([el.id, at, length, text]);
-        if (!options.ignoreWrites) el.AXValue = el.AXValue.slice(0, at) + text + el.AXValue.slice(at + length);
+        if (!options.ignoreWrites && !options.ignoreWriteNumbers?.includes(writes.length)) el.AXValue = el.AXValue.slice(0, at) + text + el.AXValue.slice(at + length);
         options.afterWrite?.({ a, b, writes });
       },
       select: (location, length) => { el.range = { location, length }; el.AXSelectedText = el.AXValue.slice(location, location + length); }, settle: () => settles.push(7),
@@ -102,6 +103,8 @@ test('cross-window AX move finds A selection while B has focus and inserts at B 
   assert.equal(h.a.AXValue, 'beta\n'); assert.equal(h.b.AXValue, 'gamma delta alpha\n');
   assert.deepEqual(h.writes, [[12, 11, 0, ' alpha'], [11, 0, 6, '']]);
   assert.equal(h.settles.length, 1); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+  // Like the single-window AX move, the moved text ends selected in its new place.
+  assert.deepEqual(h.b.range, { location: 12, length: 5 }); assert.equal(h.b.AXSelectedText, 'alpha');
 });
 
 test('destination coordinates use B screenshot scale even when A and B differ in size', () => {
@@ -177,10 +180,58 @@ test('foreground refuses busy input and owner edits in either window', () => {
   }
 });
 
-test('partial AX insert reports both windows without deleting or posting again', () => {
+test('a failed source cut rolls back the verified destination insert before reporting', () => {
   const h = fixture({ failWrite: 2 }), r = h.run();
   assert.equal(r.ok, false); assert.match(r.error, /11.*12/); assert.equal(h.a.AXValue, 'alpha beta\n');
-  assert.equal(h.b.AXValue, 'gamma delta alpha\n'); assert.equal(h.events.length, 0); assert.equal(h.settles.length, 1);
+  assert.equal(h.b.AXValue, 'gamma delta\n'); assert.equal(r.rolledBack, true); assert.match(r.error, /removed/);
+  assert.deepEqual(h.writes.at(-1), [12, 11, 6, '']); assert.equal(h.events.length, 0); assert.equal(h.settles.length, 1);
+});
+
+test('a read-only source that ignores the cut gets the destination insert rolled back, no posting', () => {
+  const h = fixture({ ignoreWriteNumbers: [2] }), r = h.run();
+  assert.equal(r.ok, false); assert.equal(r.rolledBack, true); assert.equal(r.deliveryVerified, false);
+  assert.equal(h.a.AXValue, 'alpha beta\n'); assert.equal(h.b.AXValue, 'gamma delta\n');
+  assert.deepEqual(h.writes, [[12, 11, 0, ' alpha'], [11, 0, 6, ''], [12, 11, 6, '']]);
+  assert.deepEqual(h.b.range, { location: 0, length: 0 }); assert.match(r.error, /read-only/);
+  assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0); assert.equal(h.settles.length, 1);
+});
+
+test('windows sharing one document: A changing with the B insert rolls back B and skips the cut', () => {
+  const h = fixture({ afterWrite: ({ a, writes }) => { a.AXValue = writes.length === 1 ? 'alpha beta\n alpha' : 'alpha beta\n'; } }), r = h.run();
+  assert.equal(r.ok, false); assert.equal(r.rolledBack, true); assert.match(r.error, /share one document/);
+  assert.deepEqual(h.writes, [[12, 11, 0, ' alpha'], [12, 11, 6, '']]);
+  assert.equal(h.a.AXValue, 'alpha beta\n'); assert.equal(h.b.AXValue, 'gamma delta\n'); assert.equal(h.events.length, 0);
+});
+
+test('an unverifiable rollback says exactly what B now contains', () => {
+  const h = fixture({ ignoreWriteNumbers: [2, 3] }), r = h.run();
+  assert.equal(r.ok, false); assert.equal(r.rolledBack, false); assert.equal(r.deliveryVerified, false);
+  assert.ok(r.error.includes('window 12 (12.txt) now contains "gamma delta alpha\\n"'), r.error);
+  assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+});
+
+test('an AX readback timeout after writing reports cannot verify, never nothing was pressed or a fallback', () => {
+  const h = fixture({ axReadbackTimeout: true }), r = h.run();
+  assert.equal(r.ok, false); assert.equal(r.deliveryVerified, false); assert.match(r.error, /cannot verify/);
+  assert.doesNotMatch(r.error, /nothing was pressed/); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+});
+
+test('a posted-drop readback timeout reports cannot verify', () => {
+  const h = fixture({ ax: false, readbackTimeout: true }), r = h.run();
+  assert.equal(r.ok, false); assert.match(r.error, /cannot verify the drop/); assert.match(r.error, /12/);
+});
+
+test('B coordinates never use the latest screenshot of another window', () => {
+  const h = fixture(), r = h.run({ to: [190, 74], screenshot: [1000, 800], screenshots: { '11.txt': [600, 400] } });
+  assert.equal(r.ok, false); assert.match(r.error, /end of line N/); assert.match(r.error, /element number/);
+  assert.equal(h.writes.length + h.events.length, 0);
+});
+
+test('equal titles need a B screenshot keyed by window id', () => {
+  const titled = fixture({ sameTitle: true }), refused = titled.run({ to: [190, 74], screenshots: { 'Same.txt': [1000, 800] } });
+  assert.equal(refused.ok, false); assert.match(refused.error, /end of line N/); assert.equal(titled.writes.length, 0);
+  const h = fixture({ sameTitle: true }), r = h.run({ to: [190, 74], screenshots: { 'Same.txt': [600, 400] }, screenshotsByWindow: { 12: [1000, 800] } });
+  assert.equal(r.ok, true, r.error); assert.equal(h.b.AXValue, 'gamma delta alpha\n');
 });
 
 test('ignored destination AX insert leaves source intact and permits the posted path', () => {
@@ -219,8 +270,8 @@ test('a preexisting copy in B cannot conceal lost text from A', () => {
 
 test('an owner edit between destination insertion and source deletion stops the move', () => {
   const h = fixture({ afterWrite: h => { h.a.AXValue = 'owner alpha beta\n'; } }), r = h.run();
-  assert.equal(r.ok, false); assert.equal(h.writes.length, 1); assert.equal(h.a.AXValue, 'owner alpha beta\n');
-  assert.equal(h.events.length, 0);
+  assert.equal(r.ok, false); assert.equal(h.writes.filter(([id]) => id === 11).length, 0); assert.equal(h.a.AXValue, 'owner alpha beta\n');
+  assert.equal(h.b.AXValue, 'gamma delta\n'); assert.equal(h.events.length, 0);
 });
 
 test('covering another app at B permits AX but forbids background posting', () => {
@@ -238,7 +289,8 @@ test('a repeated selected string does not hide a changed source selection range'
   const h = fixture({ afterWrite: h => { h.a.range = { location: 6, length: 5 }; } });
   h.a.AXValue = 'alpha alpha beta\n';
   const r = h.run();
-  assert.equal(r.ok, false); assert.equal(h.writes.length, 1); assert.equal(h.a.AXValue, 'alpha alpha beta\n');
+  assert.equal(r.ok, false); assert.equal(h.writes.filter(([id]) => id === 11).length, 0); assert.equal(h.a.AXValue, 'alpha alpha beta\n');
+  assert.equal(h.b.AXValue, 'gamma delta\n');
 });
 
 test('ignored native AX insertion restores its own range change before posted fallback', () => {

@@ -1878,7 +1878,7 @@ export function createRelay({
             windowId: window.windowNumber ?? window.nativeIdentity?.windowNumber } : undefined;
         }
         callArgs = { ...args, ...endpoints, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
-          toElementLines: undefined, toElementWindow: undefined, ...evidence };
+          screenshotsByWindow: shot?.byWindow, toElementLines: undefined, toElementWindow: undefined, ...evidence };
       }
       result = await localTools.call(name, callArgs, async (parts, message, options) => {
         const allowed = await (prepared?.approval ?? approve(parts, message, msg.id, options));
@@ -2830,6 +2830,7 @@ export function createRelay({
     observeServerMessage(msg);
   }
   function observeServerMessage(msg) {
+    let certifiedRead; // { number, title } of this result's read, when its native window number is certified
     if (msg.method === undefined) {
       const stripConst = text => text.split('\n').filter(line =>
         !/^Warning: [A-Za-z_$][\w$]* was declared with const; use let for reassignable variables\.\r?$/.test(line)).join('\n');
@@ -3287,6 +3288,7 @@ export function createRelay({
           dragWindows.delete(key);
           if (!call.identityError && !leaseWindow.identityError && (!leaseWindow.identityRequired || leaseWindow.nativeIdentity)) {
             dragWindows.set(key, { ...leaseWindow, windowNumber: number });
+            certifiedRead = { number, title: leaseWindow.title, app: leaseWindow.app };
           }
         }
       }
@@ -3447,9 +3449,13 @@ export function createRelay({
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
       const shot = jsCode !== undefined && screenshotOf(msg.result.content);
       if (shot) {
-        const entry = screenshots.get(shot[0].toLowerCase()) ?? { byTitle: {} };
+        const entry = screenshots.get(shot[0].toLowerCase()) ?? { byTitle: {}, byWindow: {} };
         entry.latest = shot[1];
         if (shot[2] !== undefined) entry.byTitle[shot[2]] = [shot[1].width, shot[1].height];
+        // Equal titles share a byTitle key; a cross-window drag converts B's points only with B's own (XD1R).
+        if (shot[2] !== undefined && certifiedRead?.title === shot[2] && certifiedRead.app?.toLowerCase() === shot[0].toLowerCase()) {
+          entry.byWindow[certifiedRead.number] = [shot[1].width, shot[1].height];
+        }
         screenshots.set(shot[0].toLowerCase(), entry);
       }
       if (simFocusNote && !automatic && !confirmedBrowser && !msg.result.isError && typeof jsCode === 'string') {

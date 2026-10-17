@@ -2632,6 +2632,23 @@ for (const replay of [false, true]) test(`cross-window drag forwards each window
   }
 });
 
+test('cross-window drag gets screenshot sizes keyed by window id, so equal titles stay apart', async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-xd1r-shots-'), holder: 'XD1R' }),
+    localTools: { tools: [{ name: 'drag' }], target: async () => ({ app: 'Editor', appId: 'org.fixture.Editor', title: null }),
+      call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  for (const [id, handle, windowId, size] of [[1, 'a', 11, [600, 400]], [2, 'b', 12, [1000, 800]]]) {
+    h.fromClient({ id, method: 'tools/call', params: { name: 'js', arguments: { code: `let ${handle} = await cua.getApp({windowId:${windowId}})` } } }); await tick();
+    h.fromServer({ id, result: { content: [{ type: 'text', text: 'Window: "Same", App: Editor\n0 standard window Same\n\t71 text entry area' },
+      { type: 'image', data: jpegOf(...size), mimeType: 'image/jpeg' }], _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } }); await settle();
+  }
+  h.fromClient({ id: 3, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', windowId: 11, toWindowId: 12,
+    from: 'the current text selection', to: [190, 74], screenshotsByWindow: { 12: [1, 1] } } } }); await settle();
+  assert.equal(calls.length, 1, JSON.stringify(h.toClient.at(-1)));
+  assert.deepEqual(calls[0].screenshotsByWindow, { 11: [600, 400], 12: [1000, 800] });
+  assert.deepEqual(calls[0].screenshots, { Same: [1000, 800] });
+});
+
 test('cross-window drag rejects source numbers from a read whose native identity check failed', async () => {
   const calls = [];
   const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-xd1-identity-'), holder: 'XD1' }),

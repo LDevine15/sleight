@@ -364,8 +364,8 @@ const DRAG_TOOL = {
     '`to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. ' +
     'Both also accept coordinate pairs, in the same frame as the app\'s engine ' +
     'screenshot, from that window\'s top-left corner. Pass `windowId` when several windows fit; an ambiguous target refuses. ' +
-    'Both points must be in window content. Within one window: A text drag requires a non-blank selection and both points in the same text area or field. ' +
-    'For another window of the same app, pass `windowId` and a different `toWindowId`; `to` uses the destination window\'s read and screenshot frame. ' +
+    'Both points must be in window content. A text drag requires a non-blank selection and both points in the same text area or field. ' +
+    'To drop text in another window of the same app, pass `windowId` and a different `toWindowId`; `to` uses the destination window\'s read and screenshot frame. ' +
     'The selection comes from the source window; a line end comes from the destination\'s single text area. Tile overlapping windows and read again. ' +
     'A lost-text error tells you to press Cmd+Z in the target app and named window. ' +
     'Selected text moves through Accessibility first, with no pointer or focus change. If that makes no change, ' +
@@ -416,7 +416,7 @@ function leanToolDescription(tool) {
     ['`from` accepts an element number from the last window read or "the current text selection"; `to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. Both also accept coordinate pairs, in the same frame as the app\'s engine screenshot, from that window\'s top-left corner.',
       '`from`/`to`: unique named element numbers from read, or window-relative engine screenshot coordinates. `from`: "the current text selection"; `to`: "end of line N" (1-based visual line in focused text area).'],
     ['The result names the path. ', ''],
-    ['For another window of the same app, pass `windowId` and a different `toWindowId`; `to` uses the destination window\'s read and screenshot frame. The selection comes from the source window; a line end comes from the destination\'s single text area. Tile overlapping windows and read again.',
+    ['To drop text in another window of the same app, pass `windowId` and a different `toWindowId`; `to` uses the destination window\'s read and screenshot frame. The selection comes from the source window; a line end comes from the destination\'s single text area. Tile overlapping windows and read again.',
       'Cross-window: `windowId` is source, `toWindowId` a different same-app destination. `to` uses its read/frame and single text area for line ends. Tile overlaps; read again.'],
     ['Reports takeoverMs. ', ''],
     ['`path` is absolute or starts with ~/.', 'Absolute or ~/ path.'],

@@ -1,15 +1,23 @@
-// Owner-run only: node bench/xd1-probe.mjs /private/tmp/xd1-results.json
-// Requires the owner's /tmp/sleight-live.lock. No engine, model or shared helper process.
+// sleight-arch runs it: node bench/xd1-probe.mjs /private/tmp/xd1-results.json
+// Waits while /tmp/sleight-hold exists, then takes /tmp/sleight-live.lock. Fixture documents open and close
+// through the live benchmark's own helpers (real-fixture.mjs), with no Apple events and no other window read.
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { acquireLiveLock } from './live-lock.mjs';
+import { openFixture, closeFixtures } from './real-fixture.mjs';
+
+const HOLD = '/tmp/sleight-hold', LOCK = '/tmp/sleight-live.lock';
+const unconfirmed = message => Object.assign(new Error(message), { cleanupUnconfirmed: true });
 
 export async function runProbeTrials(driver, save = () => {}) {
   const rows = [];
   for (const variant of ['V1', 'V2', 'V3', 'V4']) {
-    if (variant === 'V4' && ['V2', 'V3'].some(v => rows.filter(r => r.variant === v && r.pass).length === 3)) break;
+    // The foreground control runs only when no background variant passed 3/3.
+    if (variant === 'V4' && ['V1', 'V2', 'V3'].some(v => rows.filter(r => r.variant === v && r.pass).length === 3)) break;
     for (let trial = 1; trial <= 3; trial++) {
       if (driver.cancelled?.()) throw new Error('probe interrupted after owned-child collection and cleanup');
       const row = { variant, trial, pass: false }; rows.push(row); save(rows);
@@ -21,14 +29,17 @@ export async function runProbeTrials(driver, save = () => {}) {
         catch (error) { row.error = error.message; row.uncertainInput = !!(error.killed || error.signal); }
         finally { row.after = await driver.snapshot(pair); }
         if (!row.error) row.pass = await driver.judge(pair, row.before, row.after, row.reply);
-      } catch (error) { row.error ??= error.message; row.uncertainInput ||= !!(error.killed || error.signal); }
-      finally {
+      } catch (error) {
+        row.error ??= error.message; row.uncertainInput ||= !!(error.killed || error.signal);
+        if (!pair) row.setupCleaned = error.cleanupConfirmed === true;
+      } finally {
         // setup owns its partial failures; a returned pair is ours to close and verify.
-        try { row.cleanup = pair && !row.uncertainInput ? await driver.close(pair) : false; }
+        try { row.cleanup = pair ? !row.uncertainInput && await driver.close(pair) : row.setupCleaned === true; }
         catch (error) { row.cleanup = false; row.cleanupError = error.message; }
         save(rows);
       }
-      if (!row.cleanup) throw new Error('probe cleanup unconfirmed; retain the fixture and live lock, stop all later trials');
+      if (!row.cleanup) throw unconfirmed('probe cleanup unconfirmed; retain the fixture and live lock, stop all later trials');
+      if (!pair) throw new Error(`probe setup failed and its fixture was closed; stopping: ${row.error}`);
       if (driver.cancelled?.()) throw new Error('probe interrupted after owned-child collection and cleanup');
     }
   }
@@ -56,9 +67,11 @@ function probePair(request) {
 }
 function probeSnapshot(state) {
   const [a, b] = state.pair, focused = attempt(() => axElement(axAttribute($.AXUIElementCreateApplication(state.pid), 'AXFocusedWindow')), null);
+  // Only the two fixture windows are named; any other window is "other", never its title or document.
+  const role = w => w.id === a.main.id ? 'source' : w.id === b.main.id ? 'destination' : w.pid === state.pid ? 'same app' : 'other';
   return { source: a.el.value(), destination: b.el.value(), selection: a.el.attributes.byName('AXSelectedText').value(),
-    keyWindow: focused ? attempt(() => focused.name(), null) : null,
-    order: windows(true).map(w => ({ windowId: w.id, pid: w.pid, layer: w.layer })),
+    keyWindow: !focused ? null : $.CFEqual(focused.reference, a.win.reference) ? 'source' : $.CFEqual(focused.reference, b.win.reference) ? 'destination' : 'other',
+    order: windows(true).filter(w => w.layer === 0).map(role).filter((name, i, all) => name !== all[i - 1]),
     frontmost: ObjC.unwrap($.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier),
     pointer: $.CGEventGetLocation($.CGEventCreate(null)),
     sourceWindow: a.main, destinationWindow: b.main };
@@ -66,16 +79,6 @@ function probeSnapshot(state) {
 function run(argv) {
   const request = JSON.parse(argv[0]);
   try {
-    if (request.op === 'close') {
-      const target = findApp('com.apple.TextEdit');
-      if (!target || target.processIdentifier !== request.pid) return JSON.stringify({ ok: true });
-      if (!Array.isArray(request.windowIds) || request.windowIds.length !== 2) throw new Error('owned window IDs unavailable for closure verification');
-      for (const doc of Application('TextEdit').documents()) {
-        if (request.paths.includes(String(doc.path()))) doc.close({ saving: 'no' });
-      }
-      delay(0.3);
-      return JSON.stringify({ ok: !windows(false).some(w => w.pid === request.pid && request.windowIds.includes(w.id)) });
-    }
     const checkCancelled = () => {
       if (request.cancelFile && $.NSFileManager.defaultManager.fileExistsAtPath(request.cancelFile)) throw new Error('probe interrupted');
     };
@@ -153,11 +156,54 @@ function run(argv) {
   } catch (error) { return JSON.stringify({ ok: false, error: String(error.message || error) }); }
 }`;
 
-async function main(output) {
+// Each trial opens its own two nonce documents through openFixture, the call live passes use, and closes them
+// with closeFixtures, which closes only those windows and quits TextEdit only when this trial launched it.
+export function fixtureDriver({ dir, nonce, native, cancelled, open = openFixture, close = closeFixtures, settleMs = 800 }) {
+  return {
+    cancelled,
+    async setup(variant, trial) {
+      const ctx = { dir: join(dir, `${variant}-${trial}`), nonce, windowLeases: [] };
+      mkdirSync(ctx.dir, { mode: 0o700 });
+      const paths = [join(ctx.dir, `Source-${nonce}-${variant}-${trial}.txt`), join(ctx.dir, `Target-${nonce}-${variant}-${trial}.txt`)];
+      writeFileSync(paths[0], 'alpha beta\n'); writeFileSync(paths[1], 'gamma delta\n');
+      const pair = { paths, ctx };
+      try {
+        for (const path of paths) {
+          if (cancelled?.()) throw new Error('probe interrupted during setup');
+          await open(ctx, { app: 'TextEdit', bundle: 'com.apple.TextEdit', target: path, token: basename(path), mode: 'document', stopOnLiveHold: true });
+        }
+        const placed = await native({ paths, op: 'place' });
+        if (!placed.ok) throw new Error(`setup failed: ${placed.error}`);
+        Object.assign(pair, { pid: placed.pid, windowIds: placed.windowIds });
+        await new Promise(r => setTimeout(r, settleMs));
+        return pair;
+      } catch (error) {
+        // Setup owns its partial fixture: close what opened, or stop with the evidence kept.
+        try { await close(ctx); } catch (cleanup) { throw unconfirmed(`${error.message}; fixture cleanup unconfirmed: ${cleanup.message}`); }
+        throw Object.assign(error, { cleanupConfirmed: true });
+      }
+    },
+    snapshot: pair => native({ paths: pair.paths, op: 'snapshot' }),
+    move: (pair, variant) => native({ paths: pair.paths, op: 'move', variant }),
+    judge: (_pair, _before, after, reply) => !reply.error && reply.ok !== false &&
+      /^\s*beta\s*\n$/.test(after.source ?? '') && after.destination === 'gamma delta alpha\n',
+    async close(pair) { await close(pair.ctx); return true; },
+  };
+}
+
+export async function main(output, {
+  exists = existsSync, sleep = ms => new Promise(r => setTimeout(r, ms)), takeLock = acquireLiveLock,
+  open = openFixture, close = closeFixtures, native: nativeOverride, log = message => console.error(message),
+  makeDir = () => mkdtempSync('/private/tmp/sleight-xd1-probe-'), settleMs,
+} = {}) {
   if (!output || !resolve(output).startsWith('/private/tmp/')) throw new Error('pass a results path below /private/tmp');
-  if (!existsSync('/tmp/sleight-live.lock')) throw new Error('sleight-arch must hold /tmp/sleight-live.lock first');
-  const execute = promisify(execFile), children = new Set(), dir = mkdtempSync('/private/tmp/sleight-xd1-probe-');
-  const cancelFile = join(dir, 'cancel'); let stopping = false;
+  if (exists(HOLD)) log(`waiting while ${HOLD} exists`);
+  while (exists(HOLD)) await sleep(30000);
+  const release = await takeLock(LOCK, { wait: true, interval: 15000 });
+  let dir;
+  try { dir = makeDir(); } catch (error) { await release(); throw error; }
+  const execute = promisify(execFile), children = new Set();
+  const cancelFile = join(dir, 'cancel'); let stopping = false, keepLock = false;
   const interrupt = () => { stopping = true; writeFileSync(cancelFile, 'interrupted\n'); };
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, interrupt);
   const exec = async (command, args, options = {}) => {
@@ -168,44 +214,30 @@ async function main(output) {
   };
   const script = join(dir, 'probe.js');
   writeFileSync(script, readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8').replace('function run(argv)', 'function productRun(argv)') + nativeProbe);
-  const native = async request => {
+  const native = nativeOverride ?? (async request => {
     const { stdout } = await exec('/usr/bin/osascript', ['-l', 'JavaScript', script, JSON.stringify({ ...request, cancelFile })], { timeout: 25000, maxBuffer: 1024 * 1024 });
     return JSON.parse(stdout);
-  };
-  const save = rows => writeFileSync(output, JSON.stringify({ started, fixture: dir, rows }, null, 2) + '\n');
+  });
   const started = new Date().toISOString();
-  const driver = {
-    cancelled: () => stopping,
-    async setup(variant, trial) {
-      const paths = [join(dir, `${variant}-${trial}-source.txt`), join(dir, `${variant}-${trial}-destination.txt`)];
-      writeFileSync(paths[0], 'alpha beta\n'); writeFileSync(paths[1], 'gamma delta\n');
-      for (const path of paths) { if (stopping) throw new Error('probe interrupted during setup; retain partial fixture'); await exec('/usr/bin/open', ['-g', '-a', 'TextEdit', path], { timeout: 10000 }); }
-      await new Promise(r => setTimeout(r, 1500));
-      const pair = { paths };
-      const placed = await native({ ...pair, op: 'place' });
-      if (!placed.ok) throw new Error(`setup failed; preserve ${dir}: ${placed.error}`);
-      Object.assign(pair, { pid: placed.pid, windowIds: placed.windowIds });
-      await new Promise(r => setTimeout(r, 800));
-      return pair;
-    },
-    snapshot: pair => native({ ...pair, op: 'snapshot' }),
-    move: (pair, variant) => native({ ...pair, op: 'move', variant }),
-    judge: (_pair, _before, after, reply) => !reply.error && reply.ok !== false &&
-      /^\s*beta\s*\n$/.test(after.source ?? '') && after.destination === 'gamma delta alpha\n',
-    async close(pair) {
-      // Exact unique paths only; a close request is not proof. Never quit the app.
-      return (await native({ ...pair, op: 'close' })).ok === true;
-    },
-  };
-  // Any setup/cleanup uncertainty leaves the private fixture for the owner and never releases their lock.
+  const save = rows => writeFileSync(output, JSON.stringify({ started, fixture: dir, rows }, null, 2) + '\n');
+  // A hold that appears mid-run stops before the next trial, like an interrupt.
+  const driver = fixtureDriver({ dir, nonce: randomBytes(6).toString('hex'), native, open, close, settleMs,
+    cancelled: () => stopping || exists(HOLD) });
+  // Any setup/cleanup uncertainty leaves the private fixture and keeps the live lock.
   try {
     const rows = await runProbeTrials(driver, save);
     rmSync(dir, { recursive: true });
     process.exitCode = ['V1', 'V2', 'V3', 'V4'].some(v => rows.filter(r => r.variant === v && r.pass).length === 3) ? 0 : 1;
+    return rows;
+  } catch (error) {
+    keepLock = error.cleanupUnconfirmed === true;
+    throw error;
   } finally {
     await Promise.allSettled([...children]);
     for (const signal of ['SIGINT', 'SIGTERM']) process.removeListener(signal, interrupt);
     if (stopping) process.exitCode = 130;
+    if (keepLock) log(`fixture cleanup unconfirmed; ${LOCK} stays held and ${dir} stays for inspection`);
+    else await release();
   }
 }
 

@@ -356,13 +356,13 @@ function validatePoints(info, bounds, from, to, app) {
   const start = at(bounds, from), end = at(bounds, to);
   for (const [name, point] of [['from', start], ['to', end]]) {
     if (!inside(bounds, point) || info.toolbars.some(b => inside(b, point)) || !info.areas.some(a => inside(a.bounds, point))) {
-      throw new Error(`${name} is outside the window content area (title bar, toolbar or frame); nothing was pressed. drag stays inside one window's content`);
+      throw new Error(`${name} is outside the window content area (title bar, toolbar or frame); nothing was pressed. For a point in another window of this app, pass that window's id as toWindowId`);
     }
   }
   let text = null;
   const fields = info.areas.filter(a => ['AXTextArea', 'AXTextField'].includes(a.role) && inside(a.bounds, start));
   if (fields.length) {
-    if (fields.length !== 1 || !inside(fields[0].bounds, end)) throw new Error(`${app} from and to must be inside the same visible text area or field; nothing was pressed. drag can't drop text in another window`);
+    if (fields.length !== 1 || !inside(fields[0].bounds, end)) throw new Error(`${app} from and to must be inside the same visible text area or field; nothing was pressed. To drop the text in another window of this app, pass that window's id as toWindowId`);
     const el = fields[0].el;
     const value = el.value(), selected = el.attributes.byName('AXSelectedText').value();
     if (typeof value !== 'string' || typeof selected !== 'string' || !selected.trim()) throw new Error(`Select non-whitespace ${app} text in this window before dragging; nothing was pressed`);
@@ -711,7 +711,7 @@ function finishCrossWindowDrop(source, destination, a, b) {
 }
 
 // Insert and verify B before deleting A. Any partial write stops all later paths.
-function accessibilityCrossWindowMove(sourceArea, destinationArea, source, destination, end, a, b) {
+function accessibilityCrossWindowMove(sourceArea, destinationArea, source, destination, end, a, b, progress = {}) {
   const before = sourceArea.value(), other = destinationArea.value(), sel = sourceArea.selection();
   const destinationSelection = destinationArea.selection();
   const sameRange = (left, right) => left.location === right.location && left.length === right.length;
@@ -732,16 +732,42 @@ function accessibilityCrossWindowMove(sourceArea, destinationArea, source, desti
   }
   const insert = (isWord && touches(other[dest - 1]) ? ' ' : '') + word + (isWord && touches(other[dest]) ? ' ' : '');
   const expected = other.slice(0, dest) + insert + other.slice(dest);
-  let attempted = false;
+  const names = `${source.app} window ${a.id} (${a.title}) and window ${b.id} (${b.title})`;
+  // B holds a verified insertion that A can't match: remove exactly that range, and report only once B reads as before.
+  const rollback = reason => {
+    let now = attempt(() => destinationArea.value(), null);
+    if (now === expected) {
+      try { destinationArea.replace(dest, insert.length, ''); } catch (_) {}
+      now = attempt(() => destinationArea.value(), null);
+    }
+    if (now === other) {
+      attempt(() => destinationArea.select(destinationSelection.location, destinationSelection.length));
+      return { textChanged: false, rolledBack: true, deliveryVerified: false,
+        error: `Nothing moved between ${names}: ${reason}. The text inserted in window ${b.id} was removed, and it reads as before. Read both windows before trying again.` };
+    }
+    const shown = typeof now === 'string' ? JSON.stringify(now.length > 600 ? now.slice(0, 600) : now) + (now.length > 600 ? ` (first 600 of ${now.length} characters)` : '') : 'text that could not be read';
+    return { textChanged: true, rolledBack: false, deliveryVerified: false, lostText: false,
+      error: `Partial Accessibility text move between ${names}: ${reason}, and removing the inserted ${JSON.stringify(insert)} at index ${dest} could not be verified: window ${b.id} (${b.title}) now contains ${shown}. Read both windows before continuing; undo the insertion there if the source still has its text.` };
+  };
+  let attempted = false, inserted = false;
   try {
-    attempted = true;
+    attempted = true; progress.wrote = true;
     destinationArea.replace(dest, 0, insert);
     if (destinationArea.value() === other && sourceArea.value() === before) throw new Error('the app ignored the Accessibility text writes');
-    if (destinationArea.value() === expected && sourceArea.value() === before &&
-        source.el.attributes.byName('AXSelectedText').value() === source.selected && sameRange(sourceArea.selection(), sel)) sourceArea.replace(cutFrom, cutTo - cutFrom, '');
+    inserted = destinationArea.value() === expected;
+    if (inserted) {
+      if (sourceArea.value() !== before) return rollback('the source text changed when the destination was written (the two windows may share one document) or was edited');
+      if (source.el.attributes.byName('AXSelectedText').value() !== source.selected || !sameRange(sourceArea.selection(), sel)) return rollback('the source selection changed during the move');
+      try { sourceArea.replace(cutFrom, cutTo - cutFrom, ''); } catch (error) {
+        if (attempt(() => sourceArea.value(), null) === before) return rollback(`the source window refused the cut (${error.message || error}); it may be read-only`);
+        throw error;
+      }
+      if (sourceArea.value() === before) return rollback('the source window ignored the cut; it may be read-only');
+    }
   } catch (error) {
+    if (error?.axCode === -25204) throw error;
     // A failing setter may already have changed text. Only proven unchanged permits retry.
-    if (attempt(() => sourceArea.value(), null) === before && attempt(() => destinationArea.value(), null) === other) {
+    if (!inserted && attempt(() => sourceArea.value(), null) === before && attempt(() => destinationArea.value(), null) === other) {
       const current = destinationArea.selection();
       if (!sameRange(sourceArea.selection(), sel) || (!sameRange(current, destinationSelection) && !sameRange(current, { location: dest, length: 0 }))) {
         throw new Error('selection changed before the move; read both windows again');
@@ -754,16 +780,19 @@ function accessibilityCrossWindowMove(sourceArea, destinationArea, source, desti
   } finally { if (attempted) attempt(() => sourceArea.settle()); }
   const outcome = finishCrossWindowDrop(source, destination, a, b);
   if (sourceArea.value() !== before.slice(0, cutFrom) + before.slice(cutTo) || destinationArea.value() !== expected) {
-    outcome.error = `Partial Accessibility text move between ${source.app} window ${a.id} (${a.title}) and window ${b.id} (${b.title}). Read both windows before continuing; undo the destination insertion there if the source still has its text.`;
+    outcome.error = `Partial Accessibility text move between ${names}. Read both windows before continuing; undo the destination insertion there if the source still has its text.`;
     outcome.deliveryVerified = false;
+    return outcome;
   }
+  // As the single-window move does, leave the moved text selected in its new place.
+  attempt(() => destinationArea.select(dest + (insert.startsWith(word) ? 0 : 1), word.length));
   return outcome;
 }
 
 function runCrossWindow(request) {
   const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
-  let previous, saved, post, release, pressed = false, didPress = false, path = 'none', fallbackReason = null;
-  const started = Date.now();
+  let previous, saved, post, release, pressed = false, didPress = false, path = 'none', fallbackReason = null, a, b;
+  const started = Date.now(), progress = { wrote: false };
   try {
     if (!Number.isInteger(request.toWindowId) || request.toWindowId <= 0 || request.windowId === undefined || request.toWindowId === request.windowId) {
       throw new Error('toWindowId must name a different window of the same app and requires windowId');
@@ -771,9 +800,22 @@ function runCrossWindow(request) {
     const target = findApp(app);
     if (!target) throw new Error(`${app} isn't running`);
     const pid = target.processIdentifier, own = windows(true).filter(w => w.pid === pid && w.layer === 0);
-    const a = resolveWindow(own, request), b = resolveWindow(own, { ...request, windowId: request.toWindowId });
+    a = resolveWindow(own, request); b = resolveWindow(own, { ...request, windowId: request.toWindowId });
     const aw = axWindow(pid, a), bw = axWindow(pid, b);
-    const aRequest = request, bRequest = { ...request, elementLines: request.toElementLines, elementWindow: request.toElementWindow };
+    // Coordinates use a screenshot of that same window, never the app's latest one: by window id,
+    // or by title when no other window of the app has it.
+    const keyedShot = main => {
+      const byId = request.screenshotsByWindow && Object.hasOwn(request.screenshotsByWindow, String(main.id)) ? request.screenshotsByWindow[String(main.id)] : undefined;
+      if (byId) return byId;
+      const unique = own.filter(w => w.title === main.title).length === 1;
+      return unique && request.screenshots && Object.hasOwn(request.screenshots, main.title) ? request.screenshots[main.title] : undefined;
+    };
+    const shotA = keyedShot(a), shotB = keyedShot(b);
+    if (coordinate(request.to) && !shotB) {
+      throw new Error(`to coordinates for window ${b.id} (${b.title}) need a screenshot of that window, and this session has none keyed to it; nothing was pressed. Use an element number from a read of window ${b.id}, or "end of line N" in its text, or take a screenshot of that window first`);
+    }
+    const aRequest = { ...request, screenshot: shotA, screenshots: {} };
+    const bRequest = { ...request, screenshot: shotB, screenshots: {}, elementLines: request.toElementLines, elementWindow: request.toElementWindow };
     for (const [endpoint, main, r] of [['from', a, aRequest], ['to', b, bRequest]]) {
       if (elementEndpoint(request[endpoint]) && r.elementWindow?.windowId === undefined && own.filter(w => w.title === main.title).length !== 1) {
         throw new Error('element window title is ambiguous; read the exact window again');
@@ -821,9 +863,12 @@ function runCrossWindow(request) {
       try {
         withinBudget(); validate();
         const outcome = accessibilityCrossWindowMove(axTextArea(pid, points.start, source.el.reference),
-          axTextArea(pid, points.end, destination.el.reference), source, destination, end, a, b);
+          axTextArea(pid, points.end, destination.el.reference), source, destination, end, a, b, progress);
         return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path: 'accessibility', ...outcome });
-      } catch (error) { unchanged(); fallbackReason = `accessibility move unavailable: ${error.message || error}`; }
+      } catch (error) {
+        if (error?.axCode === -25204 && progress.wrote) { path = 'accessibility'; throw error; }
+        unchanged(); fallbackReason = `accessibility move unavailable: ${error.message || error}`;
+      }
     }
     let sequence;
     if (!cover) try {
@@ -870,6 +915,9 @@ function runCrossWindow(request) {
     if (typedSince(focusedAt)) outcome.error = [outcome.error, 'the user typed during the drag; read both windows again and tell the user'].filter(Boolean).join('; ');
     return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path, fallbackReason, ...outcome });
   } catch (error) {
+    // A timed-out read after input or a text write proves nothing either way, as in the single-window path.
+    if ((didPress || progress.wrote) && error?.axCode === -25204) return JSON.stringify({ ok: false, path, fallbackReason, deliveryVerified: false,
+      error: `cannot verify the drop between window ${a?.id} (${a?.title}) and window ${b?.id} (${b?.title}); read both windows before continuing` });
     return JSON.stringify({ ok: false, path, fallbackReason, deliveryVerified: false,
       error: String(error.message || error) + (didPress || String(error.message).includes('nothing was pressed') ? '' : '; nothing was pressed') });
   } finally {
