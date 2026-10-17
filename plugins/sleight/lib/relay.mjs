@@ -488,6 +488,9 @@ export function createRelay({
   resultTrim = false,
   leanCalls = process.env.SLEIGHT_LEAN_CALLS === '1',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
+  // On unless SLEIGHT_COMPACT_REACQUIRE=0 (the A/B baseline): a re-acquisition of a window Claude saw
+  // whole gets "no change" or the changed lines, as a read does.
+  compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE !== '0',
   firstCallRules,
   confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,
@@ -539,7 +542,7 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
-  let compactor = createReadCompactor({ leanCalls, compactAcquisition, readHints });
+  let compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, readHints });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -692,7 +695,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
@@ -1528,7 +1531,7 @@ export function createRelay({
     const after = text(reply.result.content);
     const later = windowFromText(after);
     if (!hasFullTree(after) || later?.app !== window.app || later.title !== window.title || size(after) <= count) return;
-    msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content), ...reply.result.content];
+    msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content, undefined, compactReacquire), ...reply.result.content];
   }
   const toClient = (msg, afterWrite) => {
     if (msg.method === undefined && stoppedClients.has(msg.id)) return;
@@ -1575,7 +1578,8 @@ export function createRelay({
       let head = splitHeads.get(msg.id); splitHeads.delete(msg.id);
       // The call re-acquired and then showed the same window whole: its acquisition tree is a duplicate. Word runs sent
       // both in every call (about 110k of 211k characters a run, 2026-10-17).
-      if (msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content);
+      if (msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content, splitCodes.get(msg.id), compactReacquire);
+      splitCodes.delete(msg.id);
       msg = msg.result ? { ...msg, result: { ...msg.result, content: [...head, ...(msg.result.content ?? [])] } }
         : { jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...head, { type: 'text', text: msg.error?.message ?? 'error' }] } };
     }
@@ -2031,7 +2035,7 @@ export function createRelay({
   // window before it lets an action through, so the relay sends the acquisition alone, takes
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
-  const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
+  const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const openShots = new Map();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Set(), menuForwards = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
@@ -2143,6 +2147,7 @@ export function createRelay({
     const generation = stopGeneration;
     callGenerations.set(prefixId, generation);
     splitCalls.set(prefixId, reply => {
+      const raw = rawHeads.get(prefixId); rawHeads.delete(prefixId);
       if (generation !== stopGeneration || closing || disposed) {
         leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return;
       }
@@ -2150,6 +2155,8 @@ export function createRelay({
       const acquiredNumber = acquire.match(/cua\.getApp\(\s*\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}\s*\)/)?.[1];
       if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
           (!selectedWindow || !acquiredNumber || Number(acquiredNumber) === expected.windowNumber))) {
+        // The window changed: Claude acts on the tree above, so a compacted re-acquisition goes out whole.
+        if (raw) reply = { ...reply, result: { ...reply.result, content: compactor.process(raw, { forceFull: true }) } };
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
           { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
         return;
@@ -2160,7 +2167,7 @@ export function createRelay({
         leaseWindow = lastConfirmedWindow = expected;
         if (handleBundles.has(saveHandle)) handleBundles.set(saveHandle, expected);
       }
-      splitHeads.set(msg.id, reply.result?.content ?? []);
+      splitHeads.set(msg.id, reply.result?.content ?? []); splitCodes.set(msg.id, rest);
       const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };
       if (!splitSave(next)) handleClient(next);
     });
@@ -3511,7 +3518,9 @@ export function createRelay({
       const screenshotTarget = screenshotHandles.size === 1 && handleBundles.get([...screenshotHandles][0]);
       const screenshotAppId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
       const screenshotWindow = screenshotTarget && (!screenshotAppId || screenshotAppId === screenshotTarget.appId) ? screenshotTarget : undefined;
-      if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(dropRepeatedText(msg.result.content), prompt),
+      const input = automatic ? undefined : dropRepeatedImages(dropRepeatedText(msg.result.content), prompt);
+      if (input && compactReacquire && healthPlan?.acquisition && splitCalls.has(msg.id) && String(msg.id).startsWith('sleight-acquire-')) rawHeads.set(msg.id, input);
+      if (!automatic) msg.result.content = compactor.process(input,
         { code: jsCode, screenshotWindow, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
@@ -3638,7 +3647,7 @@ export function createRelay({
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
         menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); splitInputs.clear();
-        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); openShots.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
+        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');
           stoppedClients.add(id);

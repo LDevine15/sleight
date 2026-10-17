@@ -95,7 +95,8 @@ test('errors, change notices and explicit full acquisitions keep full trees', ()
 });
 
 test('plain reads, later acquisitions, ambiguous and incomplete reads stay whole', () => {
-  const c = createReadCompactor({ compactAcquisition: true });
+  // SLEIGHT_COMPACT_REACQUIRE=0 here: compact-reacquire.test.mjs covers the default.
+  const c = createReadCompactor({ compactAcquisition: true, compactReacquire: false });
   assert.equal(compact(c, tree(), { acquisition: false }), tree());
   assert.equal(compact(c), tree(), 'an already seen window is not a first acquisition');
   for (const value of [tree() + '\n' + tree('Other'), 'Window: "Report", App: Fixture Reader.',

@@ -124,6 +124,10 @@ TODO: full release pass result.
 - A window's close button is never clicked by element number. Close a window by label or Cmd+W.
 - A call that re-acquires an app and then shows the same window whole drops the duplicate first
   tree. Word runs sent both in every call.
+- Re-acquiring a window Claude already saw whole returns "no change" or the changed lines instead of
+  the tree again, and a call keeps one view of each window. Replayed offline, the 26 results of a
+  2026-10-17 Excel run went from 190,812 to 140,488 characters, and its acquisition trees from
+  100,717 to 50,393. `SLEIGHT_COMPACT_REACQUIRE=0` turns it off. Not yet measured live.
 - `SLEIGHT_COMPACT_ACQUISITION=1` sends an app's first tree with only the elements that take actions
   and short text, and refuses a click on a number it left out.
   TODO: these entries' A/B result.

@@ -275,6 +275,11 @@ call returned a newer full one. It tied the default (24.8 s against 23.8 s a run
 also drops runs of 20 or more sibling rows from a result over 25,000 characters, keeping selected
 rows, folders and rows matching the window title or file name (unit-tested, not yet measured live).
 
+When Claude acquires a window it already saw whole, the acquisition's tree comes back compacted as
+a read's does: the window line and "no change", or the changed lines. The whole tree comes back
+after a failure, a stop, a user change or an engine restart, for a new window, and with `disableDiffing`.
+`SLEIGHT_COMPACT_REACQUIRE=0` turns this off for an A/B.
+
 ## Launch re-read
 
 `SLEIGHT_LAUNCH_REREAD=1` (for an A/B, not yet run): when an acquisition launched the app and its
