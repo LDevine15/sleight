@@ -16,7 +16,7 @@ import { browserChoices, browserDefinitions, qualifiedBrowserNames } from './bro
 const fail = (code, detail) => Object.assign(Error(code), detail === undefined ? {} : { detail });
 const unqualifiedMessage = browser => `${browser.name} isn't qualified yet. Live check needed: turn on remote debugging at ${browser.inspectURL}, ` +
   'verify DevToolsActivePort in its profile and prove owned-tab read, input and cleanup, plus a stop when the user changes app, document or focus. ' +
-  `For qualification checks only, run SLEIGHT_TURBO_UNQUALIFIED=1 sleight-mcp turbo on --browser ${browser.id}.`;
+  'The qualification steps are in docs/known-problems.md, and the operator runs them.';
 
 // Mirrors what the connection requires of the browser executable (selected-connection.mjs securePath), so a browser
 // turbo would refuse at connect time is never written into the file.
@@ -117,7 +117,8 @@ function store(configPath, pluginRoot, browser, uid) {
   validateEnabledConfig(data);
   acceptedInstalledPackage(data, { pluginRoot });
   writeConfigFile(configPath, data, uid);
-  try { readInstalledConfig(configPath); } catch (error) { try { unlinkSync(configPath); } catch {} throw error; }
+  // A format round trip through the real reader, not its connect-time qualification gate.
+  try { readInstalledConfig(configPath, { SLEIGHT_TURBO_UNQUALIFIED: '1' }); } catch (error) { try { unlinkSync(configPath); } catch {} throw error; }
   return data;
 }
 

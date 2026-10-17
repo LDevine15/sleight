@@ -77,7 +77,8 @@ for (const [id, name, bundleId, profile, scheme, qualified] of browsers) {
     assert.equal(existsSync(w.configPath), false);
     const allowed = run({ SLEIGHT_TURBO_UNQUALIFIED: '1' });
     assert.equal(allowed.code, 0); assert.ok(allowed.text.includes(url));
-    const config = readInstalledConfig(w.configPath);
+    assert.equal(readInstalledConfig(w.configPath, {}), null, 'off without the override');
+    const config = readInstalledConfig(w.configPath, { SLEIGHT_TURBO_UNQUALIFIED: '1' });
     assert.equal(config.executable, join(w.apps, `${name}.app/Contents/MacOS/${name}`));
     assert.equal(config.profileRoot, join(w.home, 'Library/Application Support', profile));
     const diagnosis = turboDiagnosis({ ...w.base, helperCache: join(w.root, 'cache') });
@@ -132,6 +133,23 @@ test('qualification override never adds an automatic candidate or rewrites an un
   const result = ensureTurboConfig(base);
   assert.equal(result.action, 'skipped'); assert.equal(result.reason, 'BROWSER_UNQUALIFIED');
   assert.equal(readFileSync(w.configPath, 'utf8'), before);
+});
+
+test('a config written for a qualification check loads as off without the override, and no message names the override', t => {
+  const beforeEnv = process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  t.after(() => { if (beforeEnv === undefined) delete process.env.SLEIGHT_TURBO_UNQUALIFIED; else process.env.SLEIGHT_TURBO_UNQUALIFIED = beforeEnv; });
+  const w = world(t); w.install('Brave Browser', 'Brave Browser');
+  const copy = pluginCopy(t, w.root), base = { ...w.base, pluginRoot: copy };
+  const said = [];
+  delete process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  turboCommand(['on', '--browser', 'brave'], { ...base, out: text => said.push(text) });
+  assert.doesNotMatch(said.join('\n'), /SLEIGHT_TURBO_UNQUALIFIED/);
+  process.env.SLEIGHT_TURBO_UNQUALIFIED = '1';
+  assert.equal(turboCommand(['on', '--browser', 'brave'], { ...base, out() {} }), 0);
+  assert.ok(readInstalledConfig(w.configPath));
+  delete process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  assert.equal(readInstalledConfig(w.configPath), null);
+  assert.ok(readInstalledConfig(w.configPath, { SLEIGHT_TURBO_UNQUALIFIED: '1' }));
 });
 
 test('a written file is accepted by the real reader and package check', t => {

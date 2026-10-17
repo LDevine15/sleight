@@ -5,6 +5,7 @@ import { isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { immutableJSON } from './ipc.mjs';
 import { createPackageInventory } from './session-host.mjs';
+import { browserApplicationName, browserDefinitions } from './browsers.mjs';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url)).replace(/\/$/, '');
 const inventoryRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
@@ -41,10 +42,15 @@ export function validateEnabledConfig(data) {
     return data;
   } catch { throw Error('INSTALLED_CONFIG_UNSAFE'); }
 }
-export function readInstalledConfig(path = installedConfigPath()) {
+export function readInstalledConfig(path = installedConfigPath(), env = process.env) {
   const data = readInstalledConfigFile(path);
   if (!data || !data.enabled) return null;
-  return validateEnabledConfig(data);
+  const config = validateEnabledConfig(data);
+  // A config written for a qualification check never outlives it: an unqualified browser connects only while the
+  // operator's own environment sets the override, so turbo stays off for it in every other session.
+  const name = browserApplicationName(config.executable), browser = browserDefinitions().find(b => b.name === name);
+  if (browser && !browser.qualified && env.SLEIGHT_TURBO_UNQUALIFIED !== '1') return null;
+  return config;
 }
 // pluginRoot is the installed loader's own folder. Only turbo-setup and tests pass another one, to check a copy.
 export function acceptedInstalledPackage(config, { pluginRoot = inventoryRoot } = {}) {
