@@ -21,16 +21,19 @@ test('open_file opens an existing file with the app left in the background', asy
   const result = await openDocument({ app: 'TextEdit', path: file }, { exec, resolve });
   assert.equal(result.isError, undefined);
   assert.deepEqual(calls, [['/usr/bin/open', '-g', '-b', 'com.apple.TextEdit', file]]);
-  assert.match(message(result), /Next, send `let app = await cua\.getApp\("com\.apple\.TextEdit"\)`/);
+  assert.equal(result._meta['sleight/openedApp'], 'com.apple.TextEdit');
   await openDocument({ app: 'com.apple.TextEdit', path: '~/note.txt' }, { exec, resolve, home: dir });
   assert.deepEqual(calls[1], ['/usr/bin/open', '-g', '-b', 'com.apple.TextEdit', file]);
 });
 
-test('open_file names the getApp call to send next', async () => {
+test('open_file describes its returned window and gives the relay the resolved app', async () => {
   const { exec } = recorder();
   const result = await openDocument({ app: 'TextEdit', path: file }, { exec, resolve });
-  assert.match(message(result), /Next, send `let app = await cua\.getApp\("com\.apple\.TextEdit"\)`/);
-  assert.doesNotMatch(message(result), /getAXState/);
+  assert.equal(result._meta['sleight/openedApp'], 'com.apple.TextEdit');
+  assert.doesNotMatch(message(result), /Next, send|getAXState/);
+  const tool = localToolDefinitions({}).find(tool => tool.name === 'open_file');
+  assert.match(tool.description, /result includes the window/);
+  assert.match(tool.description, /app handle/);
 });
 
 test('open_file refuses terminals by resolved ID, launchers, runnable files and bad paths before running open', async () => {

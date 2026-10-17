@@ -57,6 +57,7 @@
 // `trace`, when given, receives every message as it passes, for debugging.
 
 import { randomUUID } from 'node:crypto';
+import { Script } from 'node:vm';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
 import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
@@ -96,6 +97,33 @@ import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
+
+// Compile without executing. A complete prefix excludes function bodies and blocks; an invalid
+// token in place of return distinguishes executable code from comments, strings and regexes.
+export function finalReturnCode(code) {
+  if (typeof code !== 'string' || code.length > 32768 || !/\breturn\b/.test(code)) return code;
+  const valid = body => {
+    try { new Script(`async function __sleightReturn() {\n${body}\n}`); return true; }
+    catch { return false; }
+  };
+  if (!valid(code)) return code;
+  const trivia = '(?:\\s|//[^\\n]*(?:\\n|$)|/\\*[\\s\\S]*?\\*/)*';
+  const returns = [...code.matchAll(/\breturn\b/g)];
+  if (returns.length > 128) return code;
+  for (const match of returns) {
+    const prefix = code.slice(0, match.index), tail = code.slice(match.index + 6);
+    if (!valid(prefix) || valid(prefix + '@' + tail)) continue;
+    const leading = new RegExp('^' + trivia).exec(tail)[0];
+    if (/[\r\n\u2028\u2029]/.test(leading)) continue; // return's ASI must stay intact.
+    const value = tail.slice(leading.length);
+    const end = new RegExp(';' + trivia + '$').exec(value)?.index ?? value.length;
+    const expression = value.slice(0, end);
+    if (!expression.trim() || !valid(`return (\n${expression}\n);`)) continue;
+    const wrapped = /^(?:\{|(?:async\s+)?function\b|class\b)/.test(expression) ? `(${expression})` : expression;
+    return prefix + wrapped + value.slice(end);
+  }
+  return code;
+}
 
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
@@ -1699,6 +1727,27 @@ export function createRelay({
     if (!running.has(msg.id)) return; // Stop already settled this request after collection.
     if (plan) flowRules.observe(result, plan);
     finishedCall(msg.id);
+    const openedApp = result._meta?.['sleight/openedApp'];
+    if (name === 'open_file' && openedApp) {
+      const { 'sleight/openedApp': _, ...meta } = result._meta;
+      result = { ...result, _meta: meta };
+      if (!result.isError && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(openedApp)) {
+        const id = `sleight-open-file-${nextInternalId++}`, handle = `__sleightOpenedApp${nextInternalId++}`;
+        callGenerations.set(id, generation);
+        splitCalls.set(id, reply => {
+          if (generation !== stopGeneration || closing || disposed) return;
+          const state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
+          const combined = { ...state, content: [...(result.content ?? []), ...(state.content ?? []),
+            ...(!state.isError ? [{ type: 'text', text: `Window handle: \`${handle}\`.` }] : [])] };
+          const response = { jsonrpc: '2.0', id: msg.id, result: combined };
+          reportPreapprovals(response); toClient(response);
+        });
+        callSeqs.set(id, callSeqs.get(msg.id));
+        handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+          arguments: { code: `var ${handle} = await cua.getApp(${JSON.stringify(openedApp)})` } } });
+        return;
+      }
+    }
     const reply = { jsonrpc: '2.0', id: msg.id, result };
     reportPreapprovals(reply);
     toClient(reply);
@@ -1762,6 +1811,9 @@ export function createRelay({
     if (jsArgs && jsArgs.code === undefined && typeof jsArgs.command === 'string') {
       const { command, ...rest } = jsArgs;
       msg.params.arguments = { ...rest, code: command };
+    }
+    if (jsArgs && typeof msg.params.arguments?.code === 'string') {
+      msg.params.arguments.code = finalReturnCode(msg.params.arguments.code);
     }
     // `let app = await cua.getApp("X"); app` echoes the handle it just bound, which the
     // acquisition adds nothing to. Haiku 5.5 sent it 3 times on 2026-10-08, and the lease
@@ -1854,9 +1906,11 @@ export function createRelay({
     return true;
   }
   function splitAcquisition(msg) {
-    if (!inputLease || documentMode || selectedWindow || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
+    if (documentMode || selectedWindow || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
         msg.id === undefined || typeof msg.params.arguments?.code !== 'string') return false;
     const code = msg.params.arguments.code;
+    const action = compactor.beginAction(code), saveRead = action?.save && !action.before && !action.mixedSave;
+    if (!inputLease && !saveRead) return false;
     const m = code.match(/^\s*((?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/);
     let acquire = m?.[1], rest = m && code.slice(m[0].length).trim();
     // An action with no confirmed window yet, such as the call after a failed one, used to be
@@ -1865,7 +1919,17 @@ export function createRelay({
     // Only for a bundle ID the engine confirmed: an unconfirmed name keeps the refusal.
     // The call goes on only when the acquisition shows the window the lease last had: after an
     // error the front window may have changed, and keys or text would land in it unseen.
-    let expected;
+    let expected, saveBaseline = false;
+    // Without an earlier tree there is no AXDocument URL to stat. Read it inside this tool call,
+    // then beginAction samples its mtime before forwarding Save. No file contents are read.
+    if (!rest && saveRead && (!inputLease || leaseWindow?.appId)) {
+      const handle = /^\s*await\s+([A-Za-z_$][\w$]*)\.(?:pressKey|click)\(/.exec(code)?.[1];
+      if (handle && nativeHandles.has(handle)) {
+        acquire = `await ${handle}.getAXState({ disableDiffing: true })`; rest = code;
+        expected = inputLease ? leaseWindow : undefined;
+        saveBaseline = true;
+      }
+    }
     if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code)) {
       acquire = `${constApp ? '' : 'let app = '}await ${recoveryTarget}`; rest = code; expected = lastConfirmedWindow;
     }
@@ -1885,6 +1949,9 @@ export function createRelay({
           { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
         return;
       }
+      // A metadata read must not replace the lease's native identity with the newly observed one.
+      // The action still checks the window and focus against the target from before this read.
+      if (saveBaseline && expected) leaseWindow = lastConfirmedWindow = expected;
       splitHeads.set(msg.id, reply.result?.content ?? []);
       const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };
       if (!splitSave(next)) handleClient(next);

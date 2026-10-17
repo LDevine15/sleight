@@ -452,8 +452,8 @@ function leanToolDescription(tool) {
 export const OPEN_FILE_TOOL = {
   name: 'open_file',
   description: 'Open an existing file in an app without bringing the app forward, instead of its File > Open panel, ' +
-    'which can take the user\'s focus. `path` is absolute or starts with ~/. Then read the app with ' +
-    'getAXState({ disableDiffing: true }) before acting. The user approves each app once per session.',
+    'which can take the user\'s focus. `path` is absolute or starts with ~/. The result includes the window ' +
+    'and its app handle for the next action. The user approves each app once per session.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -498,9 +498,7 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   }
   try { await exec('/usr/bin/open', ['-g', '-b', bundleId, path]); }
   catch (err) { return text(`macOS couldn't open ${raw} in ${app}: ${String(err.message || err).split('\n')[0]}`, true); }
-  // "Read the app with getAXState" sent Claude to cua.getAXState(), which doesn't exist, in 2 of 7
-  // textedit-edit runs. Naming the call: 6/6 at 6 turns and 18.5 s against 20.0 s (A/B, 2026-10-11).
-  return text(`Opened ${raw} in ${app} in the background. Next, send \`let app = await cua.getApp(${JSON.stringify(bundleId)})\`: it returns the app's windows, this file's among them.`);
+  return { ...text(`Opened ${raw} in ${app} in the background.`), _meta: { 'sleight/openedApp': bundleId } };
 }
 
 export const HOVER_TOOL = {
