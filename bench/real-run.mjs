@@ -141,7 +141,13 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     if (cleanupConfirmed && !result.cleanupUnconfirmed) {
       rmSync(ctx.dir, { recursive: true, force: true });
     } else result.fixtureDir = ctx.dir;
-    await release?.();
+    // A JXA helper read an owned app as gone while the kernel still ran it (real-fixture.mjs): that app is still ours, so the
+    // live lock stays until someone checks it.
+    if (ctx.exitDisagreements?.length) {
+      result.passed = false;
+      result.exitDisagreements = ctx.exitDisagreements;
+      if (release) result.liveLockKept = ctx.lockPath ?? '/tmp/sleight-live.lock';
+    } else await release?.();
   }
   return result;
 }
