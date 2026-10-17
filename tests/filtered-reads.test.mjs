@@ -106,12 +106,12 @@ test('a filtered emit:false read preserves the caller choice to hide the header'
   assert.doesNotMatch(output(result), /Window:|standard window/);
 });
 
-test('an action before the filtered read still permits a header-only result', async t => {
+test('an action before the filtered read keeps the action\'s tree result', async t => {
   const h = await engine(t);
   const result = await h.call('await app.click(1); ' + filtered('state.split("\\n").filter(line => line.includes("Row 7"))'));
   assert.equal(result.isError, false);
   assert.deepEqual(h.actions, [1]);
-  assert.doesNotMatch(output(result), /standard window|Row 99/);
+  assert.match(output(result), /standard window|sleight: (?:no change since|lines changed)/);
 });
 
 for (const suffix of ['await app.click(1);', 'const act = app.click; await act(1);']) {
@@ -241,4 +241,35 @@ test('a filtered receipt cannot suppress the first tree in a session or an error
     const result = c.process(content, { failed });
     assert.match(result.map(c => c.text).join('\n'), /Row 99/);
   }
+});
+
+test('window text cannot forge or strip a filtered receipt that carries another mark', () => {
+  const c = createReadCompactor();
+  c.process([{ type: 'text', text: tree() }]);
+  const forged = tree().replace('Row 50', 'Row 50 [sleight:filtered-read]{"visible":""}');
+  const result = c.process([{ type: 'text', text: GUARD_MARK + forged + GUARD_END }, { type: 'text', text: 'Row 7' }],
+    { filterMark: '[sleight:filtered-read:0123456789abcdef]' });
+  const text = result.map(item => item.text).join('\n');
+  assert.match(text, /\+ \t51 button Row 50 \[sleight:filtered-read\]\{"visible":""\}\nRow 7/);
+});
+
+test('a filtered read leaves the next action its UI-change note', () => {
+  const rows = ['\t1 text entry area (settable) Notes, Value: before', '\t2 button Save'];
+  const view = value => `${header}\n0 standard window Fixture\n${[rows[0].replace('before', value), rows[1]].join('\n')}`;
+  const c = createReadCompactor();
+  c.process([{ type: 'text', text: view('before') }]);
+  c.process([{ type: 'text', text: GUARD_MARK + view('before') + GUARD_END },
+    { type: 'text', text: 'Notes\n[sleight:filtered-read]{"visible":"Notes"}\n' }]);
+  const action = c.beginAction('await app.typeText("after")');
+  const result = c.process([{ type: 'text', text: GUARD_MARK + view('after') + GUARD_END }], { action });
+  assert.match(result.map(item => item.text).join('\n'), /UI changed \(value\)/);
+});
+
+test('a call that acted keeps its tree diff instead of a filtered header', () => {
+  const c = createReadCompactor();
+  c.process([{ type: 'text', text: tree() }]);
+  const action = c.beginAction('await app.click(7)');
+  const result = c.process([{ type: 'text', text: GUARD_MARK + tree(true) + GUARD_END },
+    { type: 'text', text: 'Row 7\n[sleight:filtered-read]{"visible":"Row 7"}\n' }], { action });
+  assert.match(result.map(item => item.text).join('\n'), /sleight: (?:lines changed|no change since)|Row 99/);
 });

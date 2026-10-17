@@ -73,7 +73,7 @@ import { verifyWindowIdentity } from './window-identity.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
-import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode } from './compact-reads.mjs';
+import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark } from './compact-reads.mjs';
 import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget } from './result-budget.mjs';
@@ -1839,7 +1839,7 @@ export function createRelay({
   // window before it lets an action through, so the relay sends the acquisition alone, takes
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
-  const splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
+  const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
     if (!inputLease || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
@@ -2362,7 +2362,9 @@ export function createRelay({
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
             const prior = !documentMode && !changeReview && !careful && (!treeFreeFirstAction(originalCode) || focusedChecked.has(msg.id)) && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
               target?.app === priorRead.app ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
-            msg.params.arguments.code = guardedCode(filteredReadCode(swipeCode), target, reason,
+            const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
+            if (filteredCode !== swipeCode) filterMarks.set(msg.id, filterMark);
+            msg.params.arguments.code = guardedCode(filteredCode, target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, timing: guardTiming, careful: careful || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
@@ -3147,13 +3149,15 @@ export function createRelay({
       // it to "no change" sent Claude to a screenshot instead (2026-10-08). Recovery's visible read
       // is full too. The read wrapper decides whether to emit each observation.
       if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(dropRepeatedText(msg.result.content), prompt),
-        { code: jsCode, forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
+        { code: jsCode, filterMark: filterMarks.get(msg.id) ?? null, forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failed: !closedLast && (resultFailed || !!msg.result?.isError) });
+      filterMarks.delete(msg.id);
     }
     if (msg.method === undefined && resultCalls.has(msg.id)) {
       if (msg.error) msg.error.message += '\n' + compactor.process([], { action: resultCalls.get(msg.id), failed: true })[0].text;
       resultCalls.delete(msg.id);
     }
+    if (msg.method === undefined) filterMarks.delete(msg.id);
     if (chromeSettle && !chromeSettled.has(msg.id)) {
       const handle = chromeSettleHandle(jsCode);
       const first = lastImageData(msg.result.content);
@@ -3267,7 +3271,7 @@ export function createRelay({
         // Collection makes late results impossible. Resolve pending caller requests explicitly.
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
-        splitCalls.clear(); splitHeads.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
+        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');
           stoppedClients.add(id);

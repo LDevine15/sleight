@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { finalExpression } from './no-output.mjs';
 
@@ -33,7 +34,9 @@ const maskCode = code => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\
 
 // Recognize the common read/filter/write shape without changing bindings or evaluating twice.
 // The runtime receipt, not source order, decides whether input happened after that read.
-export function filteredReadCode(code) {
+export const filteredReadMark = () => `[sleight:filtered-read:${randomBytes(8).toString('hex')}]`;
+
+export function filteredReadCode(code, mark = FILTERED_MARK) {
   const final = finalExpression(code);
   const write = final && /^(await\s+)?nodeRepl\.write\s*\(([\s\S]*)\)$/.exec(final.expression);
   if (!write) return code;
@@ -64,7 +67,7 @@ export function filteredReadCode(code) {
     const visible = typeof __sleightValue === 'string' ? __sleightValue : Array.isArray(__sleightValue)
       ? Object.entries(Object.getOwnPropertyDescriptors(__sleightValue))
         .filter(([key, d]) => /^(?:0|[1-9]\\d*)$/.test(key) && Number(key) < __sleightValue.length && typeof d.value === 'string').map(([, d]) => d.value) : [];
-    nodeRepl.write(${JSON.stringify(FILTERED_MARK)} + JSON.stringify(__sleightFiltered ? { visible } : { full: true }) + '\\n');
+    nodeRepl.write(${JSON.stringify(mark)} + JSON.stringify(__sleightFiltered ? { visible } : { full: true }) + '\\n');
   } catch { /* Unserializable output keeps the ordinary result. */ }
 }` + code.slice(final.end);
 }
@@ -500,8 +503,11 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     const window = windowFromText(tree), lines = tree.replace(/\n+$/, '').split('\n');
     const entry = window && seen.get(documentKey(window));
     if (!entry || !ELEMENT.test(lines[1] ?? '')) return;
-    const observation = observe(tree, window, lines);
+    // The visible baseline stays entry.lines, so the next action's UI-change note compares against
+    // the observation that baseline came from, not this filtered one.
+    const previous = latest, observation = observe(tree, window, lines);
     if (observation.degraded || observation.incomplete) return;
+    latest = previous;
     const current = new Map(numbered(lines));
     const believed = new Map(entry.believed ?? numbered(entry.lines));
     for (const text of [visible].flat()) for (const line of text.split('\n')) {
@@ -519,12 +525,14 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, action, failed = false, code } = {}) {
+    process(content, { forceFull = false, action, failed = false, code, filterMark = FILTERED_MARK } = {}) {
       if (!Array.isArray(content)) return content;
       let filtered;
-      content = content.flatMap(item => {
+      // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
+      const markPattern = filterMark && new RegExp(filterMark.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^\\r\\n]*)(?:\\r?\\n|$)', 'g');
+      if (markPattern) content = content.flatMap(item => {
         if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
-        const text = item.text.replace(/\[sleight:filtered-read\]([^\r\n]*)(?:\r?\n|$)/g, (_, json) => {
+        const text = item.text.replace(markPattern, (_, json) => {
           try { filtered = JSON.parse(json); } catch { filtered = { full: true }; }
           return '';
         });
@@ -535,7 +543,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
       if (filtered && (failed || stopped || action?.overlap)) forceFull = true;
       const visible = filtered?.visible;
-      const filter = !forceFull && !failed && !stopped && !action?.overlap &&
+      // Only a call that took no input: an action's result needs its tree diff and UI-change note.
+      const filter = !forceFull && !failed && !stopped && !action &&
         (typeof visible === 'string' || Array.isArray(visible) && visible.every(line => typeof line === 'string'));
       const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
