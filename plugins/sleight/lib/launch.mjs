@@ -27,6 +27,7 @@ import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
 import { InputLease } from './input-lease.mjs';
+import { lightReturnEnabled } from './light-return.mjs';
 import { collectOwnedEngine } from './checked-stop.mjs';
 import { addPreapproved, listPreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
 import { createGrantAudit } from './preapproved-audit.mjs';
@@ -868,6 +869,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     spaceProbe: app => appHealth.probe(app),
     frontRestore: process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : request => appHealth.frontRestore(request),
     guardMode: process.env.SLEIGHT_GUARD,
+    guardLightReturn: lightReturnEnabled(),
     simFocusNote: process.env.SLEIGHT_SIM_FOCUS_NOTE !== '0', // Screenshot scale advice for any app.
     resultTrim: process.env.SLEIGHT_RESULT_TRIM === '1',
     firstCallBatch: firstCallBatchSetting(process.env.SLEIGHT_FIRST_CALL_BATCH),

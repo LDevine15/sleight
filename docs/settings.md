@@ -260,6 +260,9 @@ element lookup, after actions that can open a panel, and at the end of an acting
 Set `SLEIGHT_GUARD=careful` to read before every action. Document scope (`SLEIGHT_APPROVAL_SCOPE=document`) and change review keep
 their reads.
 
+Typing right after Return, Enter, Tab, Escape or Space takes a native check of the leased window in place of the full read
+(see [guard reads](design/guard-reads.md#light-check-after-return-2026-10-17)). Set `SLEIGHT_GUARD_LIGHT_RETURN=0` for the old read.
+
 ## First-call batching
 
 The engine's tool description tells Claude to send only the app's acquisition in its first call.

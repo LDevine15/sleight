@@ -214,6 +214,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
     state.quietEdits = !!update?.quietEdits && !state.careful;
     state.bind = !!update?.bind && !state.careful && !state.fileOnly && !state.cancelOnly;
+    // The relay's native observations after a key press (light-return.mjs), for the light check below.
+    state.light = update?.lightReturn?.path && !state.careful && !state.fileOnly && !state.cancelOnly ? { ...update.lightReturn } : undefined;
     state.binding = undefined;
     state.boundNumbers = new WeakMap();
     // The previous call's read, when the relay judged it reusable for this call's first action.
@@ -281,6 +283,39 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const wait = ${elementWait.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
+    // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
+    // read (about 470 ms in Excel, 2026-10-17) when two native observations that began at least waitMs
+    // after the key show the expected title and URL in the app's focused window (and its certified
+    // number, which the relay asks for), no sheet on it, and focus on a text or cell element inside it.
+    // Any other observation, or none before deadlineMs, reads the whole tree as before. A call stops
+    // trying after a wait that got no observation at all, or after two refusals.
+    const lightRole = /^AX(?:TextField|TextArea|ComboBox|SearchField|Cell|Table|Grid|LayoutArea)$/;
+    const lightCheck = async before => {
+      const light = state.light, start = clock(), entered = Date.now();
+      const since = before.done + (light.waitMs ?? 100), deadline = before.done + (light.deadlineMs ?? 400);
+      const good = o => o?.status === 'ok' && o.matches === 1 && o.window > 0 && o.title === state.expected?.title &&
+        (o.url ?? null) === (state.expected?.url ?? null) && o.focus?.sheets === 0 && o.focus.inWindow === true &&
+        lightRole.test(o.focus.role ?? '');
+      let passed = false, seen = false;
+      try {
+        const fs = await import('node:fs/promises');
+        for (;;) {
+          let observations = [];
+          try { observations = JSON.parse(await fs.readFile(light.path, 'utf8')).observations ?? []; } catch {}
+          const fresh = observations.filter(o => typeof o?.start === 'number' && o.start >= since);
+          if (fresh.length) seen = true;
+          if (fresh.some(o => !good(o))) break;
+          if (fresh.length >= 2) { passed = true; break; }
+          if (Date.now() >= deadline) break;
+          await new Promise(resolve => setTimeout(resolve, light.pollMs ?? 10));
+        }
+      } catch {}
+      if (!seen && entered < deadline) light.off = true;
+      if (!passed && (light.refusals = (light.refusals ?? 0) + 1) >= 2) light.off = true;
+      if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: passed ? 'light' : 'light-refused',
+        ms: clock() - start, chars: 0, failed: false }) + '\\n');
+      return passed;
+    };
     const input = () => {
       if (!state.inputSent && state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ input: true }) + '\\n');
       state.inputSent = true;
@@ -497,9 +532,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             state.quietEdits && (before.editKey || before.editable && ['typeText', 'paste'].includes(name)));
           let observed;
           if (text === undefined && bind) text = state.binding.text;
+          const header = state.callHeaders.get(proxy);
+          const light = text === undefined && !checkFocus && !skipFirst && state.light && !state.light.off && !state.careful && state.guarded &&
+            ['typeText', 'paste'].includes(name) && before?.name === 'pressKey' && typeof before.key === 'string' &&
+            /^(?:return|enter|escape|esc|tab|space)$/i.test(before.key) && typeof before.done === 'number' &&
+            header && state.expected && state.expected.app === state.light.app && ['title', 'app', 'url'].every(key => header[key] === state.expected[key]);
           if (text === undefined && !checkFocus && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
             observed = skipFirst ? state.expected : state.callHeaders.get(proxy);
             if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false }) + '\\n');
+          } else if (light && await lightCheck(before)) {
+            observed = header;
           } else {
             text ??= await timedRead(raw, 'before-action');
             if (cached?.text === undefined) modalOpened = clickOpenedModal(proxy, text);
@@ -686,6 +728,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
           const result = await value.apply(raw, args);
+          previous.done = Date.now();
           if (editable) previous.completed = true;
           state.completedActions++;
           state.lastAction = name === 'click' && byId && kind !== 'line'

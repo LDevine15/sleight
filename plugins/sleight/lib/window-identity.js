@@ -84,8 +84,29 @@ function run(argv) {
       if (windowReferences.length >= 1024) throw new Error('Window identity capacity reached');
       index = windowReferences.push(window) - 1;
     }
+    // The guard's light check after Return (SLEIGHT_GUARD_LIGHT_RETURN): sheets on this window, and the
+    // focused element's role and whether it sits in this window, by AXWindow or else its parents.
+    let focus;
+    if (request.focus) {
+      const children = attr(window, 'AXChildren', true);
+      let sheets = 0;
+      for (let i = 0; i < Math.min(Number(children?.count ?? 0), 256); i++) {
+        if (scalar(attr(children.objectAtIndex(i), 'AXRole', true)) === 'AXSheet') sheets++;
+      }
+      const element = attr(app, 'AXFocusedUIElement', true);
+      let inWindow = false;
+      if (element) {
+        const owner = attr(element, 'AXWindow', true);
+        if (owner) inWindow = !!$.CFEqual(owner, window);
+        else for (let node = element, depth = 0; node && depth < 40 && !inWindow; depth++) {
+          inWindow = !!$.CFEqual(node, window);
+          node = attr(node, 'AXParent', true);
+        }
+      }
+      focus = { sheets, role: element ? scalar(attr(element, 'AXRole', true)) : null, inWindow };
+    }
     return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title,
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,
-      processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds() });
+      processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds(), ...(focus ? { focus } : {}) });
   } catch (error) { return JSON.stringify({ status: 'unknown', error: String(error.message || error) }); }
 }

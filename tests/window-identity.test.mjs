@@ -23,11 +23,12 @@ test('same-title replacement, app restart or helper replacement cannot reuse a l
   assert.deepEqual(verifyWindowIdentity(leased, observed), observed);
 });
 const source = readFileSync(new URL('../plugins/sleight/lib/window-identity.js', import.meta.url), 'utf8');
-function inspect(request, numbers, focused = 1, cg = false, events = []) {
+function inspect(request, numbers, focused = 1, cg = false, events = [], setup = () => {}) {
   const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const windows = numbers.map((AXWindowNumber, i) => ({ AXTitle: 'Untitled', AXDocument: null, AXWindowNumber,
     AXPosition: { x: i * 400, y: 20 }, AXSize: { width: 300, height: 200 } }));
   const app = { AXWindows: list(windows), AXFocusedWindow: windows[focused] };
+  setup(app, windows, list);
   const $ = value => value;
   Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => true,
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
@@ -71,4 +72,18 @@ test('HID idle is sampled after the native reads so input during AX inspection c
   assert.equal(inspect(target, [11, 22], 1, false, events).status, 'ok');
   assert.equal(events.at(-1), 'hid');
   assert.equal(events.filter(event => event === 'hid').length, 1);
+});
+
+test('the light check after Return gets sheets and the focused element only when it asks', () => {
+  const field = (window, owner = true) => owner ? { AXRole: 'AXTextField', AXWindow: window } : { AXRole: 'AXLayoutArea', AXParent: { AXRole: 'AXGroup', AXParent: window } };
+  const focusOf = (request, setup) => inspect(request, [11], 0, false, [], setup).focus;
+  assert.equal(focusOf(target, (app, windows) => { app.AXFocusedUIElement = field(windows[0]); }), undefined);
+  const request = { ...target, focus: true };
+  assert.deepEqual(focusOf(request, (app, windows, list) => { app.AXFocusedUIElement = field(windows[0]); windows[0].AXChildren = list([{ AXRole: 'AXGroup' }]); }),
+    { sheets: 0, role: 'AXTextField', inWindow: true });
+  assert.deepEqual(focusOf(request, (app, windows, list) => { app.AXFocusedUIElement = field(windows[0], false); windows[0].AXChildren = list([{ AXRole: 'AXSheet' }]); }),
+    { sheets: 1, role: 'AXLayoutArea', inWindow: true });
+  assert.deepEqual(focusOf(request, app => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXWindow: { AXRole: 'AXWindow' } }; }),
+    { sheets: 0, role: 'AXTextField', inWindow: false });
+  assert.deepEqual(focusOf(request, () => {}), { sheets: 0, role: null, inWindow: false });
 });
