@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, returnedWindow, stopNote, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
   unchangedMenuWindow } from '../plugins/sleight/lib/menu-continuation.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -183,6 +183,23 @@ test('DR1: callbacks that do more than test one regex, and renames of non-names,
   for (const code of ['const a = cua; await a.click("OK"); await a.pressKey("x");', 'const a = app.click; await a.click("OK"); await a.pressKey("x");',
     'await app.click(l => /x/.test(l)); await app.pressKey("x");', 'let a = await cua.getApp(l => /x/.test(l)); await a.click("OK"); await a.pressKey("x");',
     'const a = b; await b.click("OK"); await b.pressKey("x");']) assert.equal(splitMenuActions(code), undefined, code);
+});
+
+test('LW2: refusal reasons name the first failing condition', () => {
+  const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End");');
+  const covered = { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report', appId: 'org.test' };
+  const content = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 standard window report, URL: file:///tmp/report' }];
+  const receipt = { index: 1, prev: { kind: 'id', value: 'ok' }, root: '0 standard window report, URL: file:///tmp/report', windowStop: true };
+  for (const [args, reason] of [[[plan, undefined, covered, content], 'no-receipt'], [[plan, { ...receipt, windowStop: false }, covered, content], 'not-a-window-stop'],
+    [[plan, receipt, undefined, content], 'no-covered-window'], [[undefined, receipt, covered, content], 'unsplit-call'],
+    [[plan, { ...receipt, prev: { kind: 'id', value: 'no' } }, covered, content], 'receipt-mismatch'], [[plan, { ...receipt, root: '0 x' }, covered, content], 'tree-mismatch'],
+    [[plan, receipt, { ...covered, url: null }, content], 'other-url'], [[plan, receipt, covered, content], undefined]]) assert.equal(dialogRefusal(...args), reason);
+  const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'e', window: 1, windowNumber: 22, pid: 1, processStart: 1, hidIdleSeconds: 1000 };
+  const since = performance.now() - 10;
+  for (const [args, reason] of [[[covered, undefined, undefined, since], 'identity-unavailable'], [[covered, undefined, { ...observed, windowNumber: 0 }, since], 'no-window-number'],
+    [[covered, undefined, { ...observed, hidIdleSeconds: 0 }, since], 'hid-input'], [[covered, { ...observed, pid: 2 }, observed, since], 'process-changed'],
+    [[covered, undefined, { ...observed, headerMatches: undefined }, since], 'header-matches-missing'], [[covered, undefined, { ...observed, title: 'x' }, since], 'identity-mismatch'],
+    [[covered, undefined, observed, since], undefined]]) assert.equal(returnRefusal(...args), reason);
 });
 
 // LW1 review: a rename counts only for open_file's handles or a name the relay binds to the leased app.

@@ -89,7 +89,9 @@ test('a plain toolbar pane stays bound; careful mode rechecks its retitled windo
   const old = await run(code, { screens: [general, general, junk], expected: win('General', 'Mail'), mode: 'old' });
   const now = await run(code, { screens: [general, general, junk], expected: win('General', 'Mail'), mode: 'new' });
   const careful = await run(code, { screens: [general, general, junk], expected: win('General', 'Mail'), mode: 'new', overrides: { careful: true } });
-  assert.match(old.error, /changed what element 3 is/);
+  // LW2: the window change is reported ahead of the element check; either way nothing after the pane switch is sent.
+  assert.match(old.error, /changed window/);
+  assert.equal(old.inputs.length, 2);
   assert.deepEqual(now.inputs, [['click', 3], ['click', 2], ['click', 3]]);
   assert.equal(now.error, undefined);
   assert.equal(now.reads, 2, 'one capture and one final read');

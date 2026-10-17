@@ -70,7 +70,7 @@ import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, returnedWindow, stopNote, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, stopNote, menuIdentity,
   unchangedMenuWindow } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
@@ -1221,9 +1221,12 @@ export function createRelay({
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
     clearSelection(); browserHandles.clear(); leaseWindow = undefined; dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    standardWindows.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
   const handleBundles = new Map();
+  // Windows seen with a standard-window root, by documentKey: only these can be covered by a dialog the lease moves to.
+  const standardWindows = new Set();
   function numberWindow(code, fallback) {
     const handles = numberedHandles(code);
     const window = handles.length === 1 && handleBundles.get(handles[0]);
@@ -2223,20 +2226,29 @@ export function createRelay({
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
     const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id));
     if (note) msg.result.content = [...msg.result.content, { type: 'text', text: promptNotice(note, prompt) }];
-    const eligible = !msg.error && msg.result.isError && !documentMode && !changeReview && !menuContinued.has(msg.id) &&
-      !guardMode?.split(',').some(mode => mode.trim() === 'careful') && call.target;
-    const covered = eligible && call.target.parent;
-    const remainder = eligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
+    const stopped = !msg.error && msg.result.isError;
+    const ineligible = !stopped ? 'no-stop' : documentMode ? 'document-scope' : changeReview ? 'change-review' : menuContinued.has(msg.id) ? 'continued'
+      : guardMode?.split(',').some(mode => mode.trim() === 'careful') ? 'careful' : !call.target ? 'not-admitted' : undefined;
+    const covered = !ineligible && call.target.parent;
+    // Every lease stop says why no dialog continuation ran: the 2026-10-17 word-edit A/B showed only that none did.
+    const refuse = reason => trace('dialog-continuation-refused', { id: msg.id, reason });
+    if (stopped && (taken.receipt?.windowStop || call.target?.parent)) {
+      const reason = ineligible ?? dialogRefusal(call.plan, taken.receipt, covered, taken.content);
+      if (reason) refuse(reason);
+    }
+    const remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
       menuRemainder(call.plan, taken.receipt, call.target, taken.content));
     if (!remainder || (!remainder.dialog && !call.baseline) || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
     const expected = remainder.dialog ? { appId: covered.appId, title: covered.title, app: covered.app, url: covered.url }
       : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
-    menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
+    menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`) : undefined).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
       const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
-      if (leaseWindow !== call.target || !(remainder.dialog ? returnedWindow(covered, call.baseline, observed, Math.min(since, covered.at))
-        : unchangedMenuWindow(expected, call.baseline, observed, since))) {
+      const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at))
+        : !unchangedMenuWindow(expected, call.baseline, observed, since) && 'menu-window-changed';
+      if (refusal || !observed) {
+        if (remainder.dialog && refusal) refuse(refusal);
         observeServerMessage(msg); return;
       }
       // The rest goes to the covered window under its own lease, pinned to the native window just observed.
@@ -3359,13 +3371,16 @@ export function createRelay({
       if (leaseWindow && call.nativeIdentity) leaseWindow.nativeIdentity = call.nativeIdentity;
       if (leaseWindow && call.identityError) leaseWindow.identityError = call.identityError;
       // A dialog or sheet remembers the standard window it covered, so a call whose own action closes it can go on
-      // there. Word shows a document with a sheet as a dialog root, under the same title and URL it had as a standard
-      // window. Two untitled dialogs compare equal, so the parent carries the time it was set, and continuing needs
-      // HID idle since then.
-      if (leaseWindow && (/^Window: .*\r?\n0 standard window\b/m.test(text) || sameWindow(previous, window) && previous.standard)) leaseWindow.standard = true;
-      if (leaseWindow?.appId && previous?.appId === leaseWindow.appId && /^Window: .*\r?\n0 (?:sheet|dialog)\b/m.test(text)) {
+      // there. Word shows a document with a sheet as a dialog root, under the title and URL it had as a standard window,
+      // so standard windows are kept by title, app and URL apart from the lease object: in 19-02-45 a degraded read
+      // dropped the lease, the relay re-acquired the document as a dialog root, and the alert found nothing to cover.
+      // Two untitled dialogs compare equal, so the parent carries the time it was set, and continuing needs HID idle
+      // since then.
+      if (window && /^Window: .*\r?\n0 standard window\b/m.test(text)) standardWindows.add(documentKey(window));
+      // A gallery or panel with a plain window root (Word's Styles, which Escape closed in 19-02-45) covers it the same way.
+      if (leaseWindow?.appId && previous?.appId === leaseWindow.appId && /^Window: .*\r?\n0 (?:sheet|dialog|window|floating window|system dialog)\b/m.test(text)) {
         if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }
-        else if (previous.standard && (previous.title || previous.url)) {
+        else if ((previous.title || previous.url) && standardWindows.has(documentKey({ title: previous.title, app: previous.app, url: previous.url }))) {
           const { parent: _, ...covered } = previous; leaseWindow.parent = { ...covered, at: performance.now() };
         }
       }

@@ -209,11 +209,21 @@ export function menuRemainder(plan, receipt, expected, content) {
 // held before it appeared: same app, title and URL. Word's Replace All alert stopped 7 of 8 word-edit runs on its
 // OK this way (2026-10-17). Anything else (another document, app or new window) is not the covered window.
 export function dialogRemainder(plan, receipt, covered, content) {
-  const n = stoppedAfter(plan, receipt);
-  if (n === undefined || receipt.windowStop !== true || !covered) return;
+  if (dialogRefusal(plan, receipt, covered, content)) return;
   const stopped = stopTree(receipt, content);
-  if (!stopped || ['title', 'app', 'url'].some(key => stopped.window[key] !== covered[key])) return;
-  return { code: plan.code.slice(plan.actions[n].start).trim(), window: stopped.window, tree: stopped.tree, dialog: true };
+  return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree, dialog: true };
+}
+// Why a stop is no dialog remainder, for the relay's trace: live runs showed only that none fired (word-edit, 2026-10-17).
+export function dialogRefusal(plan, receipt, covered, content) {
+  if (!receipt) return 'no-receipt';
+  if (receipt.windowStop !== true) return 'not-a-window-stop';
+  if (!covered) return 'no-covered-window';
+  if (!plan) return 'unsplit-call';
+  if (stoppedAfter(plan, receipt) === undefined) return 'receipt-mismatch';
+  const stopped = stopTree(receipt, content);
+  if (!stopped) return 'tree-mismatch';
+  const key = ['app', 'title', 'url'].find(key => stopped.window[key] !== covered[key]);
+  return key ? `other-${key}` : undefined;
 }
 
 const idle = (observed, since) => Number.isFinite(observed.hidIdleSeconds) && Number.isFinite(since) &&
@@ -222,16 +232,19 @@ const idle = (observed, since) => Number.isFinite(observed.hidIdleSeconds) && Nu
 // The covered window is the app's focused one again: its certified native window, or else the only window with its
 // title and URL before focus narrows them (a second same-title window would take the rest otherwise), the process
 // the dialog's baseline had, and no user input since the dialog was leased and the call was sampled.
-export function returnedWindow(covered, baseline, observed, since) {
-  if (!covered || !observed || !Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0 || !idle(observed, since)) return false;
-  if (baseline && ['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return false;
+export const returnedWindow = (covered, baseline, observed, since) => !returnRefusal(covered, baseline, observed, since);
+export function returnRefusal(covered, baseline, observed, since) {
+  if (!covered) return 'no-covered-window';
+  if (!observed) return 'identity-unavailable';
+  if (!Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0) return 'no-window-number';
+  if (!idle(observed, since)) return 'hid-input';
+  if (baseline && ['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return 'process-changed';
   const certified = covered.nativeIdentity;
-  if (!certified && observed.headerMatches !== 1) return false;
+  if (!certified && observed.headerMatches !== 1) return `header-matches-${observed.headerMatches ?? 'missing'}`;
   try {
     verifyWindowIdentity({ appId: covered.appId, title: covered.title, url: covered.url,
       ...(certified ? { windowNumber: certified.windowNumber, nativeIdentity: certified } : {}) }, observed);
-    return true;
-  } catch { return false; }
+  } catch { return 'identity-mismatch'; }
 }
 
 // A key that types nothing: a named key, or a shortcut with a modifier other than Shift.
@@ -257,13 +270,13 @@ export function stopNote(receipt, plan, earlier = 0) {
   return `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.`;
 }
 
-export async function menuIdentity(identity, expected, timeoutMs = 600) {
+export async function menuIdentity(identity, expected, timeoutMs = 600, refused) {
   let timer;
   try {
     const observed = await Promise.race([Promise.resolve().then(() => identity(expected)),
       new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })]);
     return verifyWindowIdentity(expected, observed);
-  } catch { return undefined; }
+  } catch (error) { refused?.(String(error?.message ?? error)); return undefined; }
   finally { clearTimeout(timer); }
 }
 
