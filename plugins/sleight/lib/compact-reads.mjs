@@ -313,6 +313,11 @@ function selectedTabChanges(before, after) {
 // Compare direct children of the same unique parent, without element numbers or selection state.
 // Two changed positions must exchange the same lines; inserts and rotations cannot count as swaps.
 function swappedSiblings(before, after) {
+  const sortish = line => {
+    const body = ELEMENT.exec(line)?.[3] ?? '';
+    return /^column header\b/.test(body) || /\b(?:Sort|Ascending|Descending)\b/i.test(body);
+  };
+  if (before.some(sortish) || after.some(sortish)) return;
   const groups = lines => {
     const found = new Map(), stack = [];
     for (const line of lines) {
@@ -320,6 +325,7 @@ function swappedSiblings(before, after) {
       if (!match) { stack.length = 0; continue; }
       const depth = match[1].length;
       const key = match[3].replace(/\s*\((?:selected|selectable|focused)(?:, (?:selected|selectable|focused))*\)/g, '')
+        .replace(/^([a-z][a-z ]*?) Selected, /, '$1 ')
         .replace(/,? Value:.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '');
       while (stack.length && stack.at(-1).depth >= depth) stack.pop();
       const parent = stack.at(-1), path = [...(parent?.path ?? []), key];
@@ -346,7 +352,7 @@ function swappedSiblings(before, after) {
       const match = /^([a-z][a-z ]*?)(?= \(| Description:| [^a-z ])\s+(.*)$/.exec(node.body) ??
         /^([a-z]+) (.+)$/.exec(node.body);
       if (!match) return;
-      const body = match[2].replace(/^\([^)]*\)\s*/, '');
+      const body = match[2].replace(/^\([^)]*\)\s*/, '').replace(/^Selected, /, '');
       const label = /^(?:Description: )?(.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(body)?.[1];
       return label && { role: match[1], label };
     };
@@ -357,7 +363,7 @@ function swappedSiblings(before, after) {
 }
 
 function siblingSwapNote(labels) {
-  return `sleight: this click also swapped ${labels[0]} and ${labels[1]}; a click shouldn't reorder, so check the order and fix it with the app's undo or move command.`;
+  return `sleight: clicking also swapped ${labels[0]} and ${labels[1]}; if that wasn't intended, fix the order with the app's undo or move command.`;
 }
 
 // Capture the error before relay notices and trees can bury it. The engine puts its exception

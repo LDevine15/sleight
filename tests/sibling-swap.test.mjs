@@ -18,13 +18,49 @@ function result(before, after, code = 'await app.click(78)', options = {}) {
 
 test('a click that swaps two recorded sibling lines names both and gives recovery advice', () => {
   const out = result(rows, swapped);
-  assert.match(out, /this click also swapped Review and View; a click shouldn't reorder, so check the order and fix it with the app's undo or move command\./);
-  assert.equal(out.match(/this click also swapped/g)?.length, 1);
+  assert.match(out, /clicking also swapped Review and View; if that wasn't intended, fix the order with the app's undo or move command\./);
+  assert.equal(out.match(/clicking also swapped/g)?.length, 1);
+});
+
+for (const code of ['await app.click(7)', 'await app.click({ label: "Inventory" })']) {
+  test(`selected label prefixes do not hide swapped tabs: ${code}`, () => {
+    const before = ['\t6 group Sheets', '\t\t7 button Inventory', '\t\t8 button Selected, Review 2a37d191'];
+    const after = ['\t6 group Sheets', '\t\t7 button Review 2a37d191', '\t\t8 button Selected, Inventory'];
+    const out = result(before, after, code);
+    assert.match(out, /swapped Inventory and Review 2a37d191;/);
+    assert.doesNotMatch(out, /swapped Selected,|and Selected,/);
+  });
+}
+
+test('swap advice allows intentional reorders, including a multi-click call', () => {
+  for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
+    const out = result(rows, swapped, code);
+    assert.match(out, /swapped Review and View; if that wasn't intended, fix the order with the app's undo or move command\./);
+    assert.doesNotMatch(out, /shouldn't reorder/);
+    assert.equal(out.match(/swapped Review and View/g)?.length, 1);
+  }
+});
+
+test('clicking a column header to sort does not report a sibling swap', () => {
+  const before = ['\t1 table', '\t\t2 column header Name', '\t\t3 row Alpha', '\t\t4 row Beta'];
+  const after = [before[0], before[1], '\t\t3 row Beta', '\t\t4 row Alpha'];
+  assert.doesNotMatch(result(before, after, 'await app.click(2)'), /also swapped/);
+});
+
+test('sort cues anywhere in either tree suppress click and multi-click swap notes', () => {
+  for (const cue of ['\t90 column header Name', '\t90 button Sort by Name',
+    '\t90 button Order, Secondary Actions: Sort', '\t90 button Ascending', '\t90 button Descending']) {
+    for (const [before, after] of [[[...rows, cue], swapped], [rows, [...swapped, cue]]]) {
+      for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
+        assert.doesNotMatch(result(before, after, code), /also swapped/, `${cue}: ${code}`);
+      }
+    }
+  }
 });
 
 test('unchanged siblings and an inserted, renumbered list never report a swap', () => {
-  assert.doesNotMatch(result(rows, rows), /this click also swapped/);
-  assert.doesNotMatch(result(rows, [rows[0], '\t\t77 tab New', '\t\t78 tab Review', '\t\t79 tab View']), /this click also swapped/);
+  assert.doesNotMatch(result(rows, rows), /clicking also swapped/);
+  assert.doesNotMatch(result(rows, [rows[0], '\t\t77 tab New', '\t\t78 tab Review', '\t\t79 tab View']), /clicking also swapped/);
 });
 
 test('a legitimate sort command and mixed input never blame a click for reordering', () => {
@@ -32,20 +68,20 @@ test('a legitimate sort command and mixed input never blame a click for reorderi
     'await app.click(78); await app.pressKey("super+shift+s")',
     'await app.drag([1, 2], [3, 4]); await app.click(78)',
     'await app.click(78); await app.typeText("sort")']) {
-    assert.doesNotMatch(result(rows, swapped, code), /this click also swapped/);
+    assert.doesNotMatch(result(rows, swapped, code), /clicking also swapped/);
   }
 });
 
 test('selection flags and element renumbering do not hide a sibling swap', () => {
   const before = ['\t1 tab bar', '\t\t2 radio button (selected) Description: First, ID: a', '\t\t3 radio button (selectable) Description: Second, ID: b'];
   const after = ['\t5 tab bar', '\t\t6 radio button (selected) Description: Second, ID: b', '\t\t7 radio button (selectable) Description: First, ID: a'];
-  assert.match(result(before, after), /this click also swapped First and Second;/);
+  assert.match(result(before, after), /clicking also swapped First and Second;/);
 });
 
 test('lowercase labels and nonadjacent sibling swaps are reported', () => {
   const before = ['\t1 list', '\t\t2 row (selectable) alpha', '\t\t3 row (selectable) middle', '\t\t4 row (selectable) beta'];
   const after = ['\t1 list', '\t\t2 row (selectable) beta', before[2], '\t\t4 row (selectable) alpha'];
-  assert.match(result(before, after), /this click also swapped alpha and beta;/);
+  assert.match(result(before, after), /clicking also swapped alpha and beta;/);
 });
 
 test('different parents, roles, indentation, renames and three-way rotations are not sibling swaps', () => {
@@ -55,15 +91,15 @@ test('different parents, roles, indentation, renames and three-way rotations are
     [['\t1 tab One', '\t\t2 tab Two'], ['\t1 tab Two', '\t\t2 tab One']],
     [rows, [rows[0], '\t\t77 tab View', '\t\t78 tab Renamed']],
     [[...rows, '\t\t79 tab Extra'], [rows[0], '\t\t77 tab View', '\t\t78 tab Extra', '\t\t79 tab Review']],
-  ]) assert.doesNotMatch(result(before, after), /this click also swapped/);
+  ]) assert.doesNotMatch(result(before, after), /clicking also swapped/);
 });
 
 test('failed, overlapping, incomplete and different-window observations never attribute a swap', () => {
   for (const options of [{ failed: true }, { overlap: true }, { forceFull: true }]) {
-    assert.doesNotMatch(result(rows, swapped, undefined, options), /this click also swapped/);
+    assert.doesNotMatch(result(rows, swapped, undefined, options), /clicking also swapped/);
   }
-  assert.doesNotMatch(result(rows, [...swapped, '…(20)']), /this click also swapped/);
+  assert.doesNotMatch(result(rows, [...swapped, '…(20)']), /clicking also swapped/);
   const c = createReadCompactor(); c.process([text(tree(rows))]);
   const out = c.process([text(GUARD_MARK + tree(swapped).replace('"Draft"', '"Other"') + GUARD_END)], { action: c.beginAction('await app.click(78)') });
-  assert.doesNotMatch(out.map(i => i.text).join('\n'), /this click also swapped/);
+  assert.doesNotMatch(out.map(i => i.text).join('\n'), /clicking also swapped/);
 });
