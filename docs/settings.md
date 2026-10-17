@@ -266,6 +266,9 @@ Set `SLEIGHT_GUARD_LIGHT_RETURN=1` to replace the full read before typing right 
 a native check of the leased window (see [guard reads](design/guard-reads.md#light-check-after-return-2026-10-17)). It is off by
 default and hasn't run live: we haven't measured how late alerts and sheets appear after Return.
 
+`SLEIGHT_TAB_CONTINUATION=0` (A/B baseline) stops a call at a tab its own Cmd+T opened as before, instead of typing the
+rest there ([input leases](design/input-lease.md#windows-a-call-opens-itself)).
+
 ## First-call batching
 
 The engine's tool description tells Claude to send only the app's acquisition in its first call.

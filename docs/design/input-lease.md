@@ -126,3 +126,15 @@ call, 2026-10-09). The action must be a shortcut, Return or click. Accepted wind
 Before, the lease stopped such calls in 10 of 12 TextEdit runs with
 first-call batching. A window the user opens in that app at that moment passes too. Document scope and
 change review still stop on any change.
+
+A tab the call's own Cmd+T or Ctrl+T opens in the leased window also lets the
+call go on, with the new tab's header. In the Firefox race round (2026-10-17) Cmd+T stopped the URL's typing
+in 8 of 12 tasks. In the tree, the window has exactly one tab more than when Claude last read it
+and that tab is selected. Focus is on a text field or combo box outside any page, with no sheet.
+Then the helper checks twice, after the stop and just before the rest goes to the engine. The window
+and process must be the ones from the call's start, and the window must still be focused. It must
+have no sheet and a non-password field in focus with no web area above it, and no HID input since
+the call began. A click on a new-tab button still stops, since its
+focus stayed off the address field (4 of 4). `SLEIGHT_TAB_CONTINUATION=0` stops at the tab as before.
+Replaying the round's 12 stops through the tree checks continues the 8 Cmd+T calls and refuses the 4
+clicks. It hasn't run live.

@@ -33,7 +33,7 @@ function inspect(request, numbers, focused = 1, cg = false, events = [], setup =
   Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => true,
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
     AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
-    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); value[0] = element[name] ?? null; return 0; },
+    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); if (element.missing?.includes(name)) return -25212; value[0] = element[name] ?? null; return 0; },
     CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
     NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
     NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
@@ -63,6 +63,17 @@ test('native identity maps AX geometry to CG numbers and detects a known number 
   assert.notEqual(inspect({ ...target, nativeIdentity: { windowNumber: 99 } }, [null, null]).status, 'mismatch');
 });
 
+test('a window without a title (Finder\'s desktop) is skipped instead of failing the identity', () => {
+  const finder = { appId: 'com.apple.finder', title: 'rename-abc123', url: 'file:///private/tmp/x/rename-abc123/' };
+  const result = inspect(finder, [11, 22], 1, false, [], (app, windows) => {
+    windows[0].missing = ['AXTitle', 'AXDocument'];
+    Object.assign(windows[1], { AXTitle: finder.title, AXDocument: finder.url });
+  });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.matches, 1);
+  assert.equal(inspect({ ...target, title: null }, [11], 0, false, [], (app, windows) => { windows[0].missing = ['AXTitle']; }).matches, 0);
+});
+
 test('native identity includes the HID system idle duration without requesting trust', () => {
   assert.equal(inspect(target, [11, 22]).hidIdleSeconds, 12.5);
 });
@@ -80,12 +91,19 @@ test('the light check after Return gets sheets and the focused element only when
   assert.equal(focusOf(target, (app, windows) => { app.AXFocusedUIElement = field(windows[0]); }), undefined);
   const request = { ...target, focus: true };
   assert.deepEqual(focusOf(request, (app, windows, list) => { app.AXFocusedUIElement = field(windows[0]); windows[0].AXChildren = list([{ AXRole: 'AXGroup' }]); }),
-    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: true });
+    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: true, inPage: false });
   assert.deepEqual(focusOf(request, (app, windows, list) => { app.AXFocusedUIElement = field(windows[0], false); windows[0].AXChildren = list([{ AXRole: 'AXSheet' }]); }),
-    { sheets: 1, role: 'AXLayoutArea', subrole: null, inWindow: true });
+    { sheets: 1, role: 'AXLayoutArea', subrole: null, inWindow: true, inPage: false });
   assert.deepEqual(focusOf(request, app => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXWindow: { AXRole: 'AXWindow' } }; }),
-    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: false });
-  assert.deepEqual(focusOf(request, () => {}), { sheets: 0, role: null, subrole: null, inWindow: false });
+    { sheets: 0, role: 'AXTextField', subrole: null, inWindow: false, inPage: false });
+  assert.deepEqual(focusOf(request, () => {}), { sheets: 0, role: null, subrole: null, inWindow: false, inPage: false });
   assert.deepEqual(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXSubrole: 'AXSecureTextField', AXWindow: windows[0] }; }),
-    { sheets: 0, role: 'AXTextField', subrole: 'AXSecureTextField', inWindow: true });
+    { sheets: 0, role: 'AXTextField', subrole: 'AXSecureTextField', inWindow: true, inPage: false });
+  // AB1 review: a page's own field, under a web area or Gecko's HTML content, is in a page; an address field above it isn't.
+  for (const page of [{ AXRole: 'AXWebArea' }, { AXRole: 'AXGroup', AXRoleDescription: 'HTML Content' }]) {
+    assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXTextField', AXWindow: windows[0],
+      AXParent: { AXRole: 'AXGroup', AXParent: { ...page, AXParent: windows[0] } } }; }).inPage, true, JSON.stringify(page));
+  }
+  assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXComboBox', AXWindow: windows[0],
+    AXParent: { AXRole: 'AXToolbar', AXParent: windows[0] } }; windows[0].AXParent = { AXRole: 'AXWebArea' }; }).inPage, false);
 });

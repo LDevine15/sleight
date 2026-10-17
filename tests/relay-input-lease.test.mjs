@@ -1244,7 +1244,26 @@ test('a refused inventory statement is told the one-expression form that passes'
   // With no app this session ever confirmed, there's nothing to acquire for it.
   const fresh = setup(t).harness('fresh', { fresh: true });
   fresh.send(rpc(2, 'js', { code: 'let apps = await cua.listApps(); apps.length' }));
-  assert.match(fresh.received.at(-1).result.content[0].text, /one expression, such as `\(await cua\.listApps\(\)\)\.map/);
+  assert.match(fresh.received.at(-1).result.content[0].text, /one expression with plain quotes, such as `\(await cua\.listApps\(\)\)\.map/);
+});
+
+// AB1: the Firefox race round (2026-10-17) sent Claude back to getState after it had read getState, and getState acquires
+// nothing. An app id the code compares against names the app, and after getState the advice is getApp.
+test('a refused lookup that compares an app id is told to acquire that app', t => {
+  const fresh = setup(t).harness('named-id', { fresh: true });
+  fresh.send(rpc(1, 'js', { code: 'const apps = await cua.listApps();\nconst ff = apps.find(a => a.id === "org.example.browser");\nnodeRepl.write(JSON.stringify(ff));' }));
+  assert.match(fresh.received.at(-1).result.content[0].text, /Send exactly `let app = await cua\.getApp\("org\.example\.browser"\)` in js\./);
+});
+
+test('after a getState read, a refused lookup is told to acquire the app by its id, not to read getState again', t => {
+  const fresh = setup(t).harness('after-state', { fresh: true });
+  fresh.send(rpc(1, 'js', { code: 'await cua.getState();' }));
+  assert.equal(fresh.forwarded.at(-1)?.id, 1);
+  fresh.reply(result(1, '{"apps":[]}'));
+  fresh.send(rpc(2, 'js', { code: 'const apps = await cua.listApps(); nodeRepl.write(JSON.stringify(apps.filter(a => /fox/i.test(a.id))));' }));
+  const text = fresh.received.at(-1).result.content[0].text;
+  assert.match(text, /Send `let app = await cua\.getApp\("<id>"\)` in js, with the app's id from getState\./);
+  assert.doesNotMatch(text, /cua\.getState\(\)` in js/);
 });
 
 test('first-call docs without a js_reset mean the engine session restarted: handles are forgotten', t => {
