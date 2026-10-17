@@ -1272,10 +1272,17 @@ test('a guard stop keeps the lease from the header it read; any other error drop
     a.reply({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text }],
       _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.TextEdit' } } } } });
     a.send(rpc(2, 'js', { code: 'await app.click({ id: "Save" })' }));
-    // Without the lease the click waits for an acquisition read first.
-    assert.equal(String(a.forwarded.at(-1).id), kept ? '2' : String(a.forwarded.at(-1).id).startsWith('sleight-acquire') ? a.forwarded.at(-1).id : 'missing acquisition', JSON.stringify(a.received.at(-1)));
+    // Save needs an AXDocument baseline after the failed call. A retained lease uses its handle;
+    // without that lease, recovery must acquire the app again before any input.
+    const read = a.forwarded.at(-1);
+    assert.match(String(read.id), /^sleight-acquire/);
+    assert.match(read.params.arguments.code, kept ? /await app\.getAXState\(/ : /await cua\.getApp\(/);
     assert.equal(a.forwarded.length, 3);
-    if (kept) a.reply(result(2));
+    if (kept) {
+      a.reply(result(read.id));
+      assert.equal(a.forwarded.at(-1).id, 2);
+      a.reply(result(2));
+    }
   }
 });
 
@@ -1286,6 +1293,38 @@ test('inventory search strings that mention getApp do not erase the target', t =
   a.send(rpc(2, 'js', { code: 'await app.typeText("x")' }));
   assert.equal(a.forwarded.length, 2);
   a.reply(result(2));
+});
+
+test('a Save baseline after a guard stop cannot adopt a window the user switched to', t => {
+  const a = setup(t).harness('save baseline', { changeReview: false });
+  a.send(rpc(0, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); a.reply(result(0));
+  a.send(rpc(1, 'js', { code: 'await app.click(2)' }));
+  a.reply({ ...result(1, `sleight stopped before click(2): element changed.\n${header}`),
+    result: { ...result(1).result, isError: true, content: [{ type: 'text', text: `sleight stopped before click(2): element changed.\n${header}` }] } });
+  a.send(rpc(2, 'js', { code: 'await app.pressKey("super+s")' }));
+  const read = a.forwarded.at(-1);
+  assert.match(read.params.arguments.code, /await app\.getAXState\(/);
+  a.reply(result(read.id, header.replace('"a.txt"', '"other.txt"').replace(/URL: .*/, 'URL: file:///tmp/other.txt')));
+  assert.equal(a.forwarded.some(m => m.id === 2), false, 'Save must not reach the changed document');
+  assert.match(a.received.at(-1).result.content.at(-1).text, /window changed/);
+});
+
+test('a Save baseline retains the native identity check for an equal-title replacement', async t => {
+  let identity = 1;
+  const a = setup(t).harness('save identity', { fresh: true, changeReview: false, windowIdentity: async window => ({
+    ...window, status: 'ok', matches: 1, epoch: 'helper', window: identity, pid: 123, processStart: 1,
+  }) });
+  a.send(rpc(0, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); a.reply(result(0, duplicateTree));
+  await new Promise(resolve => setImmediate(resolve));
+  a.send(rpc(1, 'js', { code: 'await app.click(2)' })); await new Promise(resolve => setImmediate(resolve));
+  const stopped = result(1, 'sleight stopped before click(2): element changed.\n' + duplicateTree);
+  stopped.result.isError = true; a.reply(stopped);
+  identity = 2;
+  a.send(rpc(2, 'js', { code: 'await app.pressKey("super+s")' }));
+  const read = a.forwarded.at(-1); a.reply(result(read.id, duplicateTree));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(a.forwarded.some(m => m.id === 2), false, 'Save must not reach the replacement window');
+  assert.match(a.received.at(-1).result.content.at(-1).text, /native window.*changed/);
 });
 
 test('a failed snapshot prevents the leased action from reaching the engine', t => {
