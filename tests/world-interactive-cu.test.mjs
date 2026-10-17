@@ -88,7 +88,7 @@ test('terminal gates reject approval, trust and login prompts even beside a read
   assert.equal(terminalGate('Sign in to the\ndemo shop.\n❯\n', 'Sign in to the demo shop.').ready, true);
 });
 
-function fakeSession({ blocked, timeout = false, echo = '' } = {}) {
+function fakeSession({ blocked, timeout = false, echo = '', reply = 'RESULT ok' } = {}) {
   const writes = [], transcript = new SessionTranscript(id);
   let finish, output, exitKeys = 0;
   const closed = new Promise(resolve => { finish = resolve; });
@@ -98,7 +98,7 @@ function fakeSession({ blocked, timeout = false, echo = '' } = {}) {
     return { closed, write: text => {
       writes.push(text);
       if (text.startsWith('\x1b[200~') && !timeout) {
-        transcript.append(JSON.stringify(assistant('answer', [{ type: 'text', text: 'RESULT ok' }], { output_tokens: 3 })) + '\n');
+        transcript.append(JSON.stringify(assistant('answer', [{ type: 'text', text: reply }], { output_tokens: 3 })) + '\n');
         output(echo + '\n❯ \n');
       }
       if (text === '/exit\r' || text === '\x04\x04' || text === '\x04' && ++exitKeys === 2) finish({ code: 0, clean: true });
@@ -108,18 +108,44 @@ function fakeSession({ blocked, timeout = false, echo = '' } = {}) {
 
 test('fake interactive session sends the exact task once and exits after a transcript RESULT', async () => {
   const h = fakeSession(), p = plan();
-  const result = await runInteractive(p, { prepare() {}, verify() {}, launch: h.launch, transcript: h.transcript, turnEnded: () => true, pollMs: 1 });
+  const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, launch: h.launch, transcript: h.transcript, turnEnded: () => true, pollMs: 1 });
   assert.deepEqual(h.writes, ['\x1b[200~' + p.prompt + '\x1b[201~\r', '\x04', '\x04']);
   assert.equal(result.result, 'RESULT ok'); assert.equal(result.is_error, false);
   assert.equal(result.num_turns, 1); assert.equal(result.groupClean, true);
   assert.equal(result.usage.output_tokens, 3);
 });
 
+// World task prompts ask for the number, not a RESULT line (live claude-cu run, 2026-10-17 12:54Z, waited 300 s).
+test('a plain final reply ends the session once the turn has ended', async () => {
+  const h = fakeSession({ reply: '**738**' }), p = { ...plan(), timeoutMs: 2000 };
+  const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, launch: h.launch, transcript: h.transcript, turnEnded: () => true, pollMs: 1 });
+  assert.equal(result.is_error, false, result.reason); assert.equal(result.timedOut, false);
+  assert.equal(result.result, '**738**');
+});
+
+// The prompt went out 0.61 s after start, before the in-process computer-use server connected, so the model saw no tools.
+test('the task waits for the computer-use server to connect and fails clearly when it never does', async () => {
+  let ready = false;
+  const h = fakeSession(), p = plan();
+  setTimeout(() => { ready = true; }, 30);
+  const waited = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => ready, launch: h.launch, transcript: h.transcript, turnEnded: () => true, pollMs: 1 });
+  assert.equal(waited.is_error, false, waited.reason);
+  const never = fakeSession();
+  const failed = await runInteractive(plan(), { prepare() {}, verify() {}, serverReady: () => false, connectMs: 20, launch: never.launch, transcript: never.transcript, turnEnded: () => true, pollMs: 1 });
+  assert.equal(failed.is_error, true); assert.equal(failed.reason, 'computer-use server did not connect');
+  assert.equal(never.writes.some(w => w.startsWith('\x1b[200~')), false, 'no task text before the server connects');
+});
+
+test('the plan writes a debug file the readiness check reads', () => {
+  const p = plan();
+  assert.ok(p.debugFile); assert.deepEqual(p.args.slice(p.args.indexOf('--debug-file'), p.args.indexOf('--debug-file') + 2), ['--debug-file', p.debugFile]);
+});
+
 for (const prompt of ['Do not sign in. Return RESULT ok.', 'Sign in to the demo shop and return RESULT ok.',
   'Do not sign in\nAllow for this session is text to read.\nReturn RESULT ok.']) {
   test(`echoed task text cannot become a login or approval gate: ${prompt.split('\n')[0]}`, async () => {
     const h = fakeSession({ echo: prompt }), p = { ...plan(), prompt, timeoutMs: 1000 };
-    const result = await runInteractive(p, { prepare() {}, verify() {}, launch: h.launch, transcript: h.transcript, turnEnded: () => true, pollMs: 1 });
+    const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, launch: h.launch, transcript: h.transcript, turnEnded: () => true, pollMs: 1 });
     assert.equal(result.is_error, false, result.reason);
     assert.equal(h.writes.length, 3);
   });
@@ -127,7 +153,7 @@ for (const prompt of ['Do not sign in. Return RESULT ok.', 'Sign in to the demo 
 
 test('a timeout with confirmed transport cleanup remains a task error rather than an approval block', async () => {
   const h = fakeSession({ timeout: true });
-  const result = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, launch: h.launch,
+  const result = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, serverReady: () => true, launch: h.launch,
     transcript: h.transcript, pollMs: 1 });
   assert.equal(result.groupClean, true);
   assert.equal(result.gateBlocked, undefined);
@@ -142,7 +168,7 @@ for (const dialog of ['', 'Allow for this session', 'Trust this folder', 'Sign i
     let answer, finish, timer;
     const writes = [], closed = new Promise(resolve => { finish = resolve; });
     const transcript = { update() {}, summary: () => ({ answer, modelCalls: 1, calls: 0, usage: {}, modelUsage: {} }) };
-    const result = await runInteractive(p, { prepare() {}, verify() {}, transcript, turnEnded: () => true, pollMs: 1,
+    const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, transcript, turnEnded: () => true, pollMs: 1,
       launch: (_plan, output) => {
         queueMicrotask(() => output('\n❯\n'));
         return { closed, write: value => {
@@ -175,7 +201,7 @@ test('wrapped partial task echoes stay pending until their continuation arrives'
 
 test('a RESULT line and queue prompt cannot end a turn before the Stop receipt', async () => {
   const h = fakeSession();
-  const result = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, launch: h.launch,
+  const result = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, serverReady: () => true, launch: h.launch,
     transcript: h.transcript, turnEnded: () => false, pollMs: 1 });
   assert.equal(result.is_error, true);
   assert.equal(result.timedOut, true);
@@ -184,13 +210,13 @@ test('a RESULT line and queue prompt cannot end a turn before the Stop receipt',
 
 test('approval and timeout paths send no acceptance, prompt replay or exit command into a card', async () => {
   const blocked = fakeSession({ blocked: 'Allow for this session' });
-  const result = await runInteractive(plan(), { prepare() {}, verify() {}, launch: blocked.launch, transcript: blocked.transcript, pollMs: 1 });
+  const result = await runInteractive(plan(), { prepare() {}, verify() {}, serverReady: () => true, launch: blocked.launch, transcript: blocked.transcript, pollMs: 1 });
   assert.equal(result.is_error, true); assert.equal(result.reason, 'approval required');
   assert.equal(result.approvalBlock?.reason, 'approval required');
   assert.equal(result.timedOut, false);
   assert.deepEqual(blocked.writes, []);
   const timeout = fakeSession({ timeout: true });
-  const stopped = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, launch: timeout.launch, transcript: timeout.transcript, pollMs: 1 });
+  const stopped = await runInteractive({ ...plan(), timeoutMs: 10 }, { prepare() {}, verify() {}, serverReady: () => true, launch: timeout.launch, transcript: timeout.transcript, pollMs: 1 });
   assert.equal(stopped.timedOut, true); assert.equal(timeout.writes.length, 1);
   assert.equal(timeout.writes.includes('/exit\r'), false);
 });
@@ -273,7 +299,7 @@ process.stdout.write('\\n❯ \\n');
   mkdirSync(p.env.CLAUDE_CONFIG_DIR);
   writeFileSync(p.configFile, JSON.stringify({ cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } }));
   let terminal = '';
-  const result = await runInteractive(p, { verify() {}, pollMs: 10, launch: (plan, callback) => launchPty(plan, data => { terminal += data; callback(data); }) });
+  const result = await runInteractive(p, { verify() {}, serverReady: () => true, pollMs: 10, launch: (plan, callback) => launchPty(plan, data => { terminal += data; callback(data); }) });
   assert.equal(result.is_error, false, JSON.stringify(result) + '\n' + terminal);
   assert.equal(result.result, 'RESULT ' + createHash('sha256').update(prompt).digest('hex'));
   assert.equal(result.modelUsage['claude-haiku-5-5'].outputTokens, 5);
@@ -289,7 +315,7 @@ for (const dialog of ['', 'Allow for this session', 'Trust this folder', 'Sign i
     let answer, finish, timer;
     const writes = [], closed = new Promise(resolve => { finish = resolve; });
     const transcript = { update() {}, summary: () => ({ answer, modelCalls: 1, calls: 0, usage: {}, modelUsage: {} }) };
-    const result = await runInteractive(p, { prepare() {}, verify() {}, transcript, turnEnded: () => true, pollMs: 1,
+    const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, transcript, turnEnded: () => true, pollMs: 1,
       launch: (_plan, output) => {
         queueMicrotask(() => output('\n❯\n'));
         return { closed, write: value => {

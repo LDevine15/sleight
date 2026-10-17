@@ -26,17 +26,18 @@ export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), 
   const cwd = workDir ? resolve(workDir) : join(armDir, 'work'), config = join(armDir, 'claude');
   outsideGit(cwd);
   const settingsFile = join(armDir, 'interactive-settings.json'), mcpFile = join(armDir, 'empty-mcp.json');
-  const turnFile = join(armDir, `turn-${sessionId}.json`), nonce = randomUUID();
+  const turnFile = join(armDir, `turn-${sessionId}.json`), debugFile = join(armDir, `debug-${sessionId}.log`), nonce = randomUUID();
   const env = Object.fromEntries(['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'TERM'].filter(k => typeof hostEnv[k] === 'string').map(k => [k, hostEnv[k]]));
   Object.assign(env, { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
     ENABLE_TOOL_SEARCH: 'false', DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', TERM: 'xterm-256color',
     CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1', ANTHROPIC_SMALL_FAST_MODEL: model });
   Object.assign(env, { BENCH_CU_TURN_RECEIPT: turnFile, BENCH_CU_SESSION: sessionId, BENCH_CU_NONCE: nonce,
     BENCH_CU_ALLOWED_APPS: JSON.stringify(allowedApps), BENCH_CU_ALLOWED_GRANTS: JSON.stringify(allowedGrants), BENCH_CU_CWD: cwd });
-  return { armDir, cwd, prompt, model, effort, sessionId, timeoutMs, allowedApps, allowedGrants, env, settingsFile, mcpFile, turnFile, nonce,
+  return { armDir, cwd, prompt, model, effort, sessionId, timeoutMs, allowedApps, allowedGrants, env, settingsFile, mcpFile, turnFile, debugFile, nonce,
     configFile: join(config, '.claude.json'), command: command ?? join(armDir, 'node_modules/.bin/claude'),
     args: ['--session-id', sessionId, '--model', model, '--effort', effort, '--no-chrome', '--setting-sources', '',
-      '--settings', settingsFile, '--strict-mcp-config', '--mcp-config', mcpFile, '--tools', 'ToolSearch,WaitForMcpServers', '--disable-slash-commands'],
+      '--settings', settingsFile, '--strict-mcp-config', '--mcp-config', mcpFile, '--tools', 'ToolSearch,WaitForMcpServers', '--disable-slash-commands',
+      '--debug-file', debugFile],
     auth: 'isolated direct-plan login', version: CLAUDE_VERSION };
 }
 
@@ -116,6 +117,7 @@ export class SessionTranscript {
           if (!/^(?:mcp__computer[-_]use__|ToolSearch$|WaitForMcpServers$)/.test(block.name ?? '')) this.foreignTool = true;
         }
         if (block.type === 'text') {
+          this.lastText = block.text;
           const matches = [...block.text.matchAll(/^RESULT[^\r\n]*$/gm)];
           if (matches.length) this.answer = matches.at(-1)[0];
         }
@@ -150,7 +152,7 @@ export class SessionTranscript {
         for (const [key, source] of Object.entries({ inputTokens: 'input_tokens', outputTokens: 'output_tokens', cacheReadInputTokens: 'cache_read_input_tokens', cacheCreationInputTokens: 'cache_creation_input_tokens' })) u[key] += m.usage[source] ?? 0;
       }
     }
-    return { answer: this.answer, calls: this.tools.size, modelCalls: this.messages.size, usage, modelUsage, foreignTool: !!this.foreignTool };
+    return { answer: this.answer, lastText: this.lastText, calls: this.tools.size, modelCalls: this.messages.size, usage, modelUsage, foreignTool: !!this.foreignTool };
   }
 }
 
@@ -252,7 +254,8 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
     if (!existsSync(p.turnFile)) return false;
     ordinary(p.turnFile); const receipt = JSON.parse(readFileSync(p.turnFile, 'utf8'));
     return receipt.sessionId === p.sessionId && receipt.nonce === p.nonce;
-  }, pollMs = 100, signal, onSpawn, onEvent } = {}) {
+  }, serverReady = p => existsSync(p.debugFile) && readFileSync(p.debugFile, 'utf8').includes('MCP server "computer-use": Successfully connected'),
+  connectMs = 15000, pollMs = 100, signal, onSpawn, onEvent } = {}) {
   if (dryRun) return { dryRun: true, plan };
   if (signal?.aborted) return { type: 'result', is_error: true, result: '', reason: 'cancelled', duration_ms: 0, groupClean: true };
   const start = Date.now(); prepare(plan); verify(plan);
@@ -295,8 +298,10 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
         pendingAt = undefined; keyRender = undefined;
       }
       if (gate.blocked) { block(gate.blocked, text); break; }
-      if (!sent && gate.ready) { sent = true; screen = ''; pty.write('\x1b[200~' + plan.prompt + '\x1b[201~\r'); }
-      else if (sent && state.answer && gate.ready && turnEnded(plan) && !exiting) {
+      if (!sent && gate.ready && !serverReady(plan)) {
+        if (Date.now() - start > connectMs) { reason = 'computer-use server did not connect'; break; }
+      } else if (!sent && gate.ready) { sent = true; screen = ''; pty.write('\x1b[200~' + plan.prompt + '\x1b[201~\r'); }
+      else if (sent && (state.answer ?? state.lastText) !== undefined && gate.ready && turnEnded(plan) && !exiting) {
         exiting = true; screen = ''; pty.write('\x04'); await wait(50);
         if (!closed) pty.write('\x04');
       }
@@ -306,7 +311,7 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
   finally { if (!closed) { await pty.stop(); closed = await Promise.race([pty.closed, wait(100).then(() => undefined)]); } }
   const state = transcript.summary(), clean = !reason && closed?.clean === true && closed.code === 0;
   const priced = Object.keys(state.modelUsage).length && Object.keys(state.modelUsage).every(m => PRICES[m]);
-  return { type: 'result', subtype: clean ? 'success' : 'error', is_error: !clean, result: state.answer ?? '',
+  return { type: 'result', subtype: clean ? 'success' : 'error', is_error: !clean, result: state.answer ?? state.lastText ?? '',
     duration_ms: Date.now() - start, num_turns: state.modelCalls, calls: state.calls, usage: state.usage, modelUsage: state.modelUsage,
     ...(priced && { total_cost_usd: runCost({ modelUsage: state.modelUsage }) }), groupClean: closed?.clean === true, timedOut,
     ...(gateBlocked && { gateBlocked, approvalBlock }),

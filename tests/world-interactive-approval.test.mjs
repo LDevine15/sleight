@@ -65,7 +65,7 @@ async function session(p, { screens = [card()], cancel = false, afterDown = card
   const writes = [], events = []; let finish, output, answer, exitKeys = 0, timer;
   const closed = new Promise(resolve => { finish = resolve; });
   const controller = new AbortController();
-  const result = await runInteractive(p, { prepare() {}, verify() {}, pollMs: 1, signal: controller.signal, onEvent: event => events.push(event),
+  const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, pollMs: 1, signal: controller.signal, onEvent: event => events.push(event),
     transcript: { update() {}, summary: () => ({ answer, calls: 1, modelCalls: 1, usage: {}, modelUsage: {} }) }, turnEnded: () => true,
     launch: (_p, callback) => {
       output = callback; queueMicrotask(() => output('\n❯ \n'));
