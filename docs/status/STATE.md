@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 06:19 UTC, overnight sitting: A/B done, claim run running since 04:03)
+## Banner (2026-10-17 06:56 UTC, overnight sitting: A/B and native claim run done)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -29,21 +29,34 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    drag that was refused before now delivered in the background. excel-edit's failures are an Excel tab reorder after a rename
    (also seen before both builds; known-problems), finder-rename and finder-create-folder were model variance. FC1 (`024c4c5a`,
    merged) makes the two-window cleanup close by the window's own button after a cold launch. It needs a live check.
-4. Running since 04:03: the all-arms claim run, `sitting-1017/claim.sh` (sleight, lcu, codex, cua; Word and Excel quit between
-   arms, with an Escape posted to a stuck app), then peekaboo from a Terminal window with `ARMS=peekaboo`. `since` is
-   `2026-10-17T04-03` in bench/claim-exclusions.json. Then 5 runs where sleight and an arm are within 20%. Score with
-   `bench/claim-score.mjs` and word the claim by the LAWS rule. sleight's arm finished at 04:20: 9/9 tasks completed, 25/27 runs,
-   expected seconds calculator-click 8, calculator-menu 11, textedit-save 10, textedit-drag 38, finder-move 41, preview-read 6,
-   textedit-calculator 47, word-edit 82, excel-edit 171 (1/3: the Excel tab swap, twice). lcu finished at 04:41 with 8/9 tasks
-   (textedit-drag 0/3). At 04:42 the script's Apple-event quit of Excel raised a macOS prompt ("claude wants access to control
-   Microsoft Excel"). It was left unanswered and closed by itself once Excel quit (asked through `NSRunningApplication`, with
-   its own Don't Save sheet answered). Office now quits through NSRunningApplication, then Escape and Cmd+Q posted to its pid,
-   then its own Don't Save sheet or dialog (Excel shows a dialog window, Word a sheet with a curly apostrophe).
-   codex finished at 05:07 (8/9). The harness stopped competitor passes five times after a result was recorded (Word or Excel left
-   modified, two TextEdit processes from cua). cua lost three passes, and lcu and peekaboo one each. Each stopped pass was
-   finished with single-task reruns (`cua-rest.sh`, `fill.sh`, `peekaboo-rest.command` from Terminal). cua's first stopped pass
-   is excluded in bench/claim-exclusions.json. FC2 (bench cleanup that discards only the run's own fixture) and its review fixes
-   FC2R are in lanes for after the claim run.
+4. Done 04:03 to 06:54: the native claim run on the release build (`since 2026-10-17T04-03`, score in
+   `sitting-1017/claim-score.txt`). Expected seconds to a correct result (passes/runs), 5 runs where sleight and an arm were
+   within 20%:
+
+   | task | sleight | lcu | codex | cua | peekaboo |
+   |---|---|---|---|---|---|
+   | calculator-click | **8** (3/3) | 11 (3/3) | 13 (3/3) | 40 (3/3) | 24 (3/3) |
+   | calculator-menu | **11** (3/3) | 15 (3/3) | 68 (1/3) | 40 (3/3) | 43 (3/3) |
+   | textedit-save | 12 (5/5) | **11** (5/5) | 21 (3/3) | 541 (1/3) | never (0/3) |
+   | textedit-drag | **38** (3/3) | never | never | never | never |
+   | finder-move | **38** (5/5) | 154 (1/3) | 40 (5/5) | 66 (3/3) | 76 (1/3) |
+   | preview-read | 6 (5/5) | 6 (5/5) | 8 (3/3) | 7 (5/5) | **4** (3/3) |
+   | textedit-calculator | 47 (3/3) | **33** (3/3) | 58 (3/3) | 77 (3/3) | never |
+   | word-edit | **82** (3/3) | 120 (3/3) | 137 (2/3) | 733 (1/3) | never |
+   | excel-edit | 153 (2/5) | 150 (3/5) | **136** (4/5) | 331 (2/3) | never |
+
+   sleight completed 9/9 tasks (lcu, codex and cua 8/9, peekaboo 4/9), has the lowest expected time on 5 of 9 and the only
+   finite total (395 s), which meets the LAWS rule for "fastest" on this suite. Disclosures owed with it: the suite is sleight's
+   own, skill fix `14327dd4` was tuned on claim-task failures, competitors ran their defaults, and Claude's own computer use
+   (claude-cu, needs the owner present) hasn't run, so the claim isn't complete. excel-edit losses are the Excel tab swap
+   (sleight 3 of 5 runs, lcu too). The harness stopped competitor passes five times after results were recorded (Word or Excel
+   left modified, two TextEdit processes from cua), and single-task reruns finished each (`cua-rest.sh`, `fill.sh`,
+   `peekaboo-rest.command` from Terminal). cua's first stopped pass is excluded in bench/claim-exclusions.json. At 04:42 an
+   Apple-event quit of Excel raised a macOS prompt ("claude wants access to control Microsoft Excel"). It was left unanswered and
+   closed by itself once Excel quit. Office now quits through NSRunningApplication, then Escape and Cmd+Q posted to its pid, then
+   its own Don't Save sheet or dialog.
+5. FC1's live check failed (07:00, textedit-two-windows): the second fixture's lease is "already-running" in the TextEdit the
+   first lease launched, so it took the File-menu path and refused on lost focus. FC1R is in a lane, and the live check reruns after it.
 
 **The build is frozen** at `1933db78`: `ef833641` (every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each
 reviewed by a Sonnet-high agent) plus the Chess drag fix, FC1's bench fixture change and docs. The full check exited 0 on 5,879
