@@ -46,8 +46,9 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    Before browser numbers are published, one gate round runs turbo on a real, isolated Helium or Chrome profile instead of the
    headless Chromium, so the quoted number is the product path. The owner's chosen headline is "fastest plugin on macOS"
    (2026-10-17). It is publishable only if sleight leads the native claim run and turbo leads lcu, Cua, Peekaboo and Codex on browser
-   tasks in a real window (about 150 to 250 lines of gate harness and an estimated 2 to 8 hour away window). That race comes
-   before the launch post, not before the tag. A half that loses is published with scoped wording instead (browser claims only
+   tasks in a real window (about 150 to 250 lines of gate harness and an estimated 2 to 8 hour away window). An unqualified headline
+   needs Safari and Firefox raced too, where sleight runs on the engine path. That race comes before the launch post, not
+   before the tag. A half that loses is published with scoped wording instead (browser claims only
    for turbo, stated per browser).
 
 ## 2. After 1.3.0, in the owner's order
