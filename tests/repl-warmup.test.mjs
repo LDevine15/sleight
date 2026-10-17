@@ -128,7 +128,9 @@ test('relay hides warm-up, reuses confirmed setup and defers native docs for a b
   assert.ok(result.content.some(c => c.text.includes('# Computer Use Confirmations Policy\nAlways ask.')));
   assert.ok(result.content.some(c => c.text.includes('sleight.nativeDocumentation()')));
   assert.ok(result.content.every(c => !c.text?.includes('Native app reference.')));
-  assert.ok(result.content.some(c => c.text === 'SLEIGHT RULES'));
+  const rules = result.content.find(c => c.text?.startsWith('SLEIGHT RULES\n\n'));
+  assert.ok(rules);
+  assert.match(rules.text, /Action results include changed lines/);
   assert.ok(result.content.some(c => c.text === 'actual'));
   h.send({ ...js(3), params: { name: 'js', arguments: { code: 'await cua.listApps();' } } });
   h.respond({ id: 3, result: { content: [{ type: 'text', text: 'apps' }] } });

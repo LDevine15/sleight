@@ -1928,10 +1928,14 @@ test('sleight\'s rules follow the engine\'s first-call docs once per session, so
   reply(1, docs + 'Window: "Calculator", App: Calculator'); await tick();
   const first = h.toClient.find(m => m.id === 1).result.content;
   assert.match(first.at(-1).text, /RULES/);
+  assert.match(first.at(-1).text, /Action results include changed lines/);
+  assert.match(first.at(-1).text, /Don't reread to confirm them/);
+  assert.match(first.at(-1).text, /Read again for missing information or required guard checks/);
   assert.equal(first.filter(c => /RULES/.test(c.text ?? '')).length, 1);
   call(2, 'await app.getAXState()'); await tick();
   reply(2, 'Window: "Calculator", App: Calculator'); await tick();
   assert.doesNotMatch(JSON.stringify(h.toClient.find(m => m.id === 2)), /RULES/);
+  assert.doesNotMatch(JSON.stringify(h.toClient.find(m => m.id === 2)), /Action results include/);
   h.fromClient({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'js_reset', arguments: {} } }); await tick();
   reply(4, 'reset'); await tick();
   call(5, 'let app = await cua.getApp("Calculator")'); await tick();
