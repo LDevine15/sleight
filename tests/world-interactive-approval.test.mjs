@@ -71,12 +71,12 @@ test('browser adapter selects only its task browser from the benchmark allowlist
     prompt: 'RESULT ok', task: { browser: 'helium' } });
   assert.equal(setup.env.BENCH_CU_ALLOWED_APPS, '["Helium"]');
 });
-async function session(p, { screens = [card()], cancel = false, afterDown = card(['Fixture Editor'], 'allow') } = {}) {
+async function session(p, { screens = [card()], cancel = false, afterDown = card(['Fixture Editor'], 'allow'), accessReason } = {}) {
   const writes = [], events = []; let finish, output, answer, exitKeys = 0, timer, downs = 0;
   const closed = new Promise(resolve => { finish = resolve; });
   const controller = new AbortController();
   const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, pollMs: 1, signal: controller.signal, onEvent: event => events.push(event),
-    transcript: { update() {}, summary: () => ({ answer, calls: 1, modelCalls: 1, usage: {}, modelUsage: {} }) }, turnEnded: () => true,
+    transcript: { update() {}, summary: () => ({ answer, accessReason, calls: 1, modelCalls: 1, usage: {}, modelUsage: {} }) }, turnEnded: () => true,
     launch: (_p, callback) => {
       output = callback; queueMicrotask(() => output('\n❯ \n'));
       return { closed, write(value) {
@@ -215,6 +215,18 @@ test('a frame that changes only the spinner after Down never sends Down twice', 
   const { result, writes } = await session(fixture(t), { screens: [card()], afterDown: [spinner, card(['Fixture Editor'], 'allow')] });
   assert.equal(result.is_error, false, result.reason);
   assert.equal(writes.filter(value => value === '\x1b[B\r').length, 1);
+});
+// Live 15:58Z: the reason line came through without its box; it matched the reason sent with request_access, which now suffices.
+test('an unboxed reason line matching the request_access reason is accepted, any other unboxed line refused', async t => {
+  const reason = 'To clear the Calculator input and compute 34 × 30 by clicking its buttons.';
+  const cardWith = (line, selected = 'deny') => card(['Calculator'], selected).replace('  ● Calculator', `   ${line}\n  ● Calculator`);
+  const p = fixture(t); p.allowedApps = ['Calculator'];
+  const ok = await session(p, { screens: [cardWith(reason)], afterDown: cardWith(reason, 'allow'), accessReason: reason });
+  assert.equal(ok.result.is_error, false, ok.result.reason);
+  const bad = await session(p, { screens: [cardWith('Terminal')], accessReason: reason });
+  assertBlock(bad.result, bad.events, 'unsupported computer-use approval card');
+  const inside = await session(p, { screens: [cardWith('Terminal')], accessReason: 'Use Calculator, not Terminal.' });
+  assertBlock(inside.result, inside.events, 'unsupported computer-use approval card');
 });
 test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
   const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });

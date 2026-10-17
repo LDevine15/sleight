@@ -113,6 +113,7 @@ export class SessionTranscript {
       this.messages.set(m.id, prior);
       for (const block of m.content) {
         if (block.type === 'tool_use') {
+          if (/request_access$/.test(block.name ?? '') && typeof block.input?.reason === 'string') this.accessReason = block.input.reason;
           if (!this.tools.has(block.id)) this.onEvent?.({ type: 'assistant', t, message: { id: m.id, content: [block], usage: m.usage } });
           this.tools.add(block.id);
           if (!/^(?:mcp__computer[-_]use__|ToolSearch$|WaitForMcpServers$)/.test(block.name ?? '')) this.foreignTool = true;
@@ -153,7 +154,7 @@ export class SessionTranscript {
         for (const [key, source] of Object.entries({ inputTokens: 'input_tokens', outputTokens: 'output_tokens', cacheReadInputTokens: 'cache_read_input_tokens', cacheCreationInputTokens: 'cache_creation_input_tokens' })) u[key] += m.usage[source] ?? 0;
       }
     }
-    return { answer: this.answer, lastText: this.lastText, calls: this.tools.size, modelCalls: this.messages.size, usage, modelUsage, foreignTool: !!this.foreignTool };
+    return { answer: this.answer, lastText: this.lastText, accessReason: this.accessReason, calls: this.tools.size, modelCalls: this.messages.size, usage, modelUsage, foreignTool: !!this.foreignTool };
   }
 }
 
@@ -180,7 +181,7 @@ function terminalText(screen, prompt) {
 // Lines are compared with whitespace removed: the live 2.1.289 card draws some lines with no spaces between words
 // ("Allowforthissession(1app)", 2026-10-17 15:23Z) and ends on a run of spaces rather than a newline.
 const squeeze = text => text.replace(/\s+/g, '');
-function sessionCard(text, allowedApps, allowedGrants = []) {
+function sessionCard(text, allowedApps, allowedGrants = [], reason) {
   const title = 'Computer Use wants to control these apps', index = text.lastIndexOf(title);
   if (index < 0) return;
   if (!/^[\s│]*$/.test(text.slice(text.lastIndexOf('\n', index) + 1, index)) ||
@@ -195,9 +196,14 @@ function sessionCard(text, allowedApps, allowedGrants = []) {
   const allowed = new Map(allowedApps.map(app => [squeeze(app), app]));
   const names = [], selected = [];
   let appSection = false, flags = false;
+  const above = [];
   for (const [i, line] of lines.slice(0, deny < 0 ? allow : deny).entries()) {
     const app = /^([●◉○✔✓])(.+?)(?:\((alreadygranted|notinstalled)\))?$/.exec(line);
+    // The reason Claude sent with request_access, drawn above the apps (boxed or not, wrapped across lines): it grants nothing.
+    // Unboxed lines there must join, in order, into exactly that reason; anything else refuses.
     if (!appSection && rows[i].boxed) continue;
+    if (!appSection && !app) { above.push(line); continue; }
+    if (!appSection && above.length && (!reason || above.join('') !== squeeze(reason))) return { blocked: 'unsupported computer-use approval card' };
     if (app && !flags) { appSection = true; names.push(app[2]); if (app[1] === '●' || app[1] === '◉') selected.push(app[2]); }
     else if (appSection && line === 'Alsorequested:' && !flags) flags = true;
     else if (flags && /^·(?:clipboardRead|clipboardWrite|systemKeyCombos)$/.test(line)) {
@@ -208,6 +214,7 @@ function sessionCard(text, allowedApps, allowedGrants = []) {
       if (!allowedGrants.includes(grant)) return { blocked: 'computer-use approval grant is outside the task allowlist' };
     } else return { blocked: 'unsupported computer-use approval card' };
   }
+  if (!appSection && above.length) return { blocked: 'unsupported computer-use approval card' };
   const count = Number(/\((\d+)apps?\)$/.exec(lines[allow])[1]);
   if (deny < 0 || allow !== deny + 1 || !names.length || !count || count !== selected.length ||
     new Set(names).size !== names.length || names.some(app => !allowed.has(app)) ||
@@ -316,7 +323,7 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
       if (sent && !exiting && !/Grant Accessibility|Screen Recording|Do you trust|Trust this folder|Sign in to Claude/i.test(text)) {
         const render = text.slice(Math.max(0, text.lastIndexOf('Computer Use wants to control these apps'))).trim();
         if (keyRender !== undefined && (!render || render === keyRender)) { await wait(pollMs); continue; }
-        const card = sessionCard(text, plan.allowedApps, plan.allowedGrants);
+        const card = sessionCard(text, plan.allowedApps, plan.allowedGrants, state.accessReason);
         if (card?.blocked) { block(card.blocked, text); break; }
         // A frame that changed elsewhere (the ⏺ line) can arrive before the redraw a key causes: never send one key twice in a row.
         if (card?.answer && card.answer === lastKey) { await wait(pollMs); continue; }
