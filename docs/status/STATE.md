@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 04:44 UTC, overnight sitting: A/B done, claim run running since 04:03)
+## Banner (2026-10-17 06:19 UTC, overnight sitting: A/B done, claim run running since 04:03)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -37,8 +37,13 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    textedit-calculator 47, word-edit 82, excel-edit 171 (1/3: the Excel tab swap, twice). lcu finished at 04:41 with 8/9 tasks
    (textedit-drag 0/3). At 04:42 the script's Apple-event quit of Excel raised a macOS prompt ("claude wants access to control
    Microsoft Excel"). It was left unanswered and closed by itself once Excel quit (asked through `NSRunningApplication`, with
-   its own Don't Save sheet answered). The script now quits Office only that way. codex and cua restarted at 04:43, then peekaboo through
-   `open -a Terminal sitting-1017/peekaboo.command`.
+   its own Don't Save sheet answered). Office now quits through NSRunningApplication, then Escape and Cmd+Q posted to its pid,
+   then its own Don't Save sheet or dialog (Excel shows a dialog window, Word a sheet with a curly apostrophe).
+   codex finished at 05:07 (8/9). The harness stopped competitor passes five times after a result was recorded (Word or Excel left
+   modified, two TextEdit processes from cua). cua lost three passes, and lcu and peekaboo one each. Each stopped pass was
+   finished with single-task reruns (`cua-rest.sh`, `fill.sh`, `peekaboo-rest.command` from Terminal). cua's first stopped pass
+   is excluded in bench/claim-exclusions.json. FC2 (bench cleanup that discards only the run's own fixture) and its review fixes
+   FC2R are in lanes for after the claim run.
 
 **The build is frozen** at `1933db78`: `ef833641` (every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each
 reviewed by a Sonnet-high agent) plus the Chess drag fix, FC1's bench fixture change and docs. The full check exited 0 on 5,879
