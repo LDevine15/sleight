@@ -162,7 +162,7 @@ export function fixtureDriver({ dir, nonce, native, cancelled, open = openFixtur
   return {
     cancelled,
     async setup(variant, trial) {
-      const ctx = { dir: join(dir, `${variant}-${trial}`), nonce, windowLeases: [] };
+      const ctx = { dir: join(dir, `${variant}-${trial}`), nonce, windowLeases: [], stopOnAppDialog: true };
       mkdirSync(ctx.dir, { mode: 0o700 });
       const paths = [join(ctx.dir, `Source-${nonce}-${variant}-${trial}.txt`), join(ctx.dir, `Target-${nonce}-${variant}-${trial}.txt`)];
       writeFileSync(paths[0], 'alpha beta\n'); writeFileSync(paths[1], 'gamma delta\n');
@@ -170,7 +170,7 @@ export function fixtureDriver({ dir, nonce, native, cancelled, open = openFixtur
       try {
         for (const path of paths) {
           if (cancelled?.()) throw new Error('probe interrupted during setup');
-          await open(ctx, { app: 'TextEdit', bundle: 'com.apple.TextEdit', target: path, token: basename(path), mode: 'document', stopOnLiveHold: true });
+          await open(ctx, { app: 'TextEdit', bundle: 'com.apple.TextEdit', target: path, token: basename(path), mode: 'document', stopOnLiveHold: true, stopOnAppDialog: true });
         }
         const placed = await native({ paths, op: 'place' });
         if (!placed.ok) throw new Error(`setup failed: ${placed.error}`);
