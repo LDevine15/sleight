@@ -16,8 +16,10 @@ function fixture({ role = 'text field', focused = true, readDelay = 0, afterClic
     getAXState: async options => {
       reads.push({ ...options });
       if (clicked) { now += readDelay; afterClickRead(); }
-      const state = clicked && focused ? ' (focused)' : '';
-      return `Window: "Draft", App: Fixture Editor.\n0 standard window Draft\n\t1 ${role}${state} Description: Query, ID: query\n\t2 combo box (settable)${clicked && !focused ? ' (focused)' : ''} Description: Other, ID: other`;
+      const field = `${role} Description: Query, ID: query`;
+      const other = 'combo box (settable) Description: Other, ID: other';
+      return `Window: "Draft", App: Fixture Editor.\n0 standard window Draft\n\t1 ${field}\n\t2 ${other}` +
+        (clicked ? `\n\nThe focused UI element is ${focused ? '1 ' + field : '2 ' + other}` : '');
     },
     click: async n => { now += 80; events.push(['click', now, n]); if (failClick) throw Error('click failed'); clicked = true; },
     typeText: async text => { events.push(['typeText', now, text]); return 'typed'; },
@@ -45,13 +47,13 @@ for (const role of ['text field', 'text area', 'text entry area', 'search field'
 
 for (const method of ['typeText', 'paste']) test(`${method} stops when another field kept focus and reports the stop`, async () => {
   const f = fixture({ role: 'combo box (settable)', focused: false });
-  await assert.rejects(f.run(`await app.click(1); await app.${method}("violet"); await app.pressKey("Return");`, { quietEdits: true }), /field.*didn't take focus.*app\.setValue\(1, /);
+  await assert.rejects(f.run(`await app.click(1); await app.${method}("violet"); await app.pressKey("Return");`, { quietEdits: true }), /another element has focus.*app\.setValue\(1, /);
   assert.deepEqual(f.events.map(event => event[0]), ['click']);
   assert.deepEqual(Array.from(f.context.__sleightDocumentGuard.typed), []);
   const taken = takeGuardStop([{ type: 'text', text: f.output.join('\n') }], f.mark);
   assert.equal(taken.receipt.index, 1);
   assert.equal(taken.input, true, 'the earlier click ran');
-  assert.match(taken.receipt.error, /didn't take focus/);
+  assert.match(taken.receipt.error, /another element has focus/);
 });
 
 for (const selector of ['{ id: "query" }', '{ label: "Query" }', '"Query"']) {
@@ -75,10 +77,10 @@ test('a caller read after the click supplies the focus check', async () => {
   assert.equal(f.reads.length, 3);
 });
 
-for (const states of ['(settable, focused)', '(focused, settable)']) test(`combined field states ${states} confirm focus`, async () => {
-  const f = fixture({ role: 'combo box (settable)' });
-  const read = f.raw.getAXState;
-  f.raw.getAXState = async options => (await read(options)).replace('(settable) (focused)', states);
+// Focus wording copied from the 2026-10-16T05-43-44-389Z save transcript, line 8.
+test('the real engine trailing focus line confirms the clicked field', async () => {
+  const f = fixture();
+  f.raw.getAXState = async () => 'Window: "Draft", App: Fixture Editor.\n0 standard window Draft\n\t1 text entry area (settable) First Text View\n\nThe focused UI element is 1 text entry area (settable) First Text View';
   await f.run('await app.click(1); await app.typeText("query");', { quietEdits: true });
   assert.equal(f.events.at(-1)[0], 'typeText');
 });
@@ -139,17 +141,37 @@ for (const loss of ['takeover', 'expiry']) test(`lease ${loss} during the focus 
   assert.deepEqual(Array.from(f.context.__sleightDocumentGuard.typed), [], 'no typed receipt before sending input');
 });
 
-for (const row of ['1 combo box (settable), Description: focused, ID: query',
-  '1 combo box (settable) Description: Query (focused), ID: query',
-  '2 combo box (settable) (focused) Description: Query, ID: query',
-  '1 button (focused) Description: Query, ID: query',
-  '1 combo box (settable) (focused) Description: Different, ID: different']) test(`ambiguous or unfocused target stops: ${row}`, async () => {
-  const f = fixture({ role: 'combo box (settable)' });
+const postClickCases = [
+  ['focused descendant', '\t1 text field Description: Query, ID: query\n\t\t3 group\n\t\t\t4 text entry area (settable) First Text View\n\t2 combo box Description: Other', '4 text entry area (settable) First Text View', true],
+  ['different sibling after a descendant', '\t1 text field Description: Query, ID: query\n\t\t3 text entry area Inner\n\t2 combo box Description: Other', '2 combo box Description: Other', false],
+  ['no focus line', '\t1 text field Description: Query, ID: query', null, true],
+  ['degraded tree', '\t1 text field Query', null, true],
+  ['degraded tree with unresolved focus', '\t1 text field Query', '4 text entry area First Text View', true],
+  ['renumbered clicked field', '\t1 combo box Description: Other\n\t7 text field Description: Query, ID: query', '7 text field Description: Query, ID: query', true],
+  ['renumbered clicked field with different focus', '\t1 combo box Description: Other\n\t7 text field Description: Query, ID: query', '1 combo box Description: Other', false],
+  ['renumbered focused descendant', '\t7 text field Description: Query, ID: query\n\t\t8 text entry area Inner', '8 text entry area Inner', true],
+  ['focus line with stale number', '\t7 text field Description: Query, ID: query', '1 text field Description: Query, ID: query', true],
+];
+for (const method of ['typeText', 'paste']) for (const [label, rows, focus, allowed] of postClickCases) test(`${method}: ${label}`, async () => {
+  const f = fixture();
   const read = f.raw.getAXState;
   let reads = 0;
-  f.raw.getAXState = async options => ++reads === 1 ? read(options) : `Window: "Draft", App: Fixture Editor.\n0 standard window Draft\n\t${row}`;
-  await assert.rejects(f.run('await app.click(1); await app.typeText("query");', { quietEdits: true }), /didn't take focus/);
-  assert.deepEqual(f.events.map(event => event[0]), ['click']);
+  f.raw.getAXState = async options => ++reads === 1 ? read(options) :
+    `Window: "Draft", App: Fixture Editor.\n0 standard window Draft\n${rows}` + (focus ? `\n\nThe focused UI element is ${focus}` : '');
+  const run = f.run(`await app.click(1); await app.${method}("query");`, { quietEdits: true });
+  if (allowed) {
+    await run;
+    assert.equal(f.events.at(-1)[0], method);
+    assert.equal(f.reads.length, 1, 'only the initial fixture read; two overridden reads follow');
+  } else {
+    await assert.rejects(run, error => {
+      assert.match(error.message, /another element has focus/);
+      assert.doesNotMatch(error.message, /Window:|standard window|combo box Description/);
+      return true;
+    });
+    assert.deepEqual(f.events.map(event => event[0]), ['click']);
+  }
+  assert.deepEqual(f.waits, []);
 });
 
 test('an unreadable focus check sends no text', async () => {

@@ -27,9 +27,9 @@ export async function relayTrial(combined, { mode = 'default', fault, advance = 
   const received = [], approvals = [], sent = [];
   const tree = () => `Window: ${JSON.stringify(title)}, App: ${appName}.\n0 ${title === '' ? 'sheet' : 'standard window'} Fixture${mode === 'changeReview' ? `, URL: ${url}` : ''}\n` +
     (active && ['missing-id', 'hidden-target'].includes(fault) ? '\t2 button Other' :
-      (shifted ? '\t1 button Focus\n' : '') + `\t${shifted ? 2 : 1} text field (${focused ? 'settable, focused' : 'settable'}) Value: ${value}, ID: entry` +
+      (shifted ? '\t1 button Focus\n' : '') + `\t${shifted ? 2 : 1} text field (settable) Value: ${value}, ID: entry` +
       (active && fault === 'ambiguous-id' ? '\n\t2 text field (settable), ID: entry' : '') +
-      (fault === 'computed-index' ? Array.from({ length: 60 }, (_, i) => `\n\t${i + (shifted ? 3 : 2)} button Choice ${i}`).join('') : ''));
+      (fault === 'computed-index' ? Array.from({ length: 60 }, (_, i) => `\n\t${i + (shifted ? 3 : 2)} button Choice ${i}`).join('') : '')) + (focused ? `\n\nThe focused UI element is ${shifted ? 2 : 1} text field (settable) Value: ${value}, ID: entry` : '');
   let output = [];
   const methods = {
     async getAXState(options) {

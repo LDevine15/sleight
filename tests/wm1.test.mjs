@@ -181,7 +181,7 @@ test('typed receipts coexist with a filtered-read receipt and are removed from t
 
 test('the document guard emits this call\'s runtime typed value, then resets it on reuse', async () => {
   const output = [];
-  const raw = { getAXState: async () => tree([search.replace('(settable)', '(settable, focused)'), beforeBody]), click: async () => {}, typeText: async () => {} };
+  const raw = { getAXState: async () => tree([search, beforeBody]) + '\n\nThe focused UI element is 12 ' + search.trim().replace(/^12 /, ''), click: async () => {}, typeText: async () => {} };
   const context = createContext({ app: raw, query: 'amber', setTimeout, cua: { getApp: async () => raw }, nodeRepl: { write: text => output.push(text) } });
   const window = { title: 'Draft', app: 'Editor', url: null };
   await runInContext(`(async () => { ${guardedCode('await app.click(12); await app.typeText(query);', window, undefined, undefined, { resultMark: mark })} })()`, context);
@@ -199,7 +199,7 @@ test('the relay carries the runtime receipt into the compactor without driving a
   let content = [], changed = false, id = 0;
   const write = text => content.push(item(text));
   // Even a focused field's AX claim cannot prove where the engine sent text; keep the post-check.
-  const current = () => tree([search.replace('(settable)', '(settable, focused)'), changed ? body : beforeBody]);
+  const current = () => tree([search, changed ? body : beforeBody]) + '\n\nThe focused UI element is 12 ' + search.trim().replace(/^12 /, '');
   const raw = { getAXState: async () => current(), click: async () => {}, typeText: async () => { changed = true; }, pressKey: async () => {} };
   const context = createContext({ query: 'amber', setTimeout, cua: { getApp: async () => { write(current()); return raw; }, listApps: async () => [] }, nodeRepl: { write } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 'wm1-fixture', changeReview: false,

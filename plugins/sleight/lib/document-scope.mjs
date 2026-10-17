@@ -100,6 +100,29 @@ export function sameElement(was, now) {
   return false;
 }
 
+// Only a resolved focus outside the clicked field's subtree proves a mismatch.
+// Missing rows or focus leave the existing misplaced-text observation to report it.
+function differentFocusTarget(text, before) {
+  const focus = /^The focused UI element is (\d+) (.+)\r?$/m.exec(text ?? '');
+  if (!focus) return;
+  const rows = (text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*)\r?$/.exec(line)).filter(Boolean)
+    .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
+  const resolve = (number, line) => {
+    const numbered = rows.find(row => row.number === number && sameElement(line, row.line));
+    if (numbered) return numbered;
+    const matches = rows.filter(row => sameElement(line, row.line));
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const clicked = resolve(before.number, before.line), focused = resolve(Number(focus[1]), focus[2]);
+  if (!clicked || !focused) return;
+  const start = rows.indexOf(clicked);
+  for (let i = start; i < rows.length; i++) {
+    if (i > start && rows[i].depth <= clicked.depth) break;
+    if (rows[i] === focused) return;
+  }
+  return clicked.number;
+}
+
 export const documentKey = window => window && JSON.stringify(window);
 export const documentLabel = window => `${JSON.stringify(window.title)} in ${window.app}${window.url ? ` (${window.url})` : ''}`;
 
@@ -255,6 +278,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     const hasIdentifier = ${hasIdentifier.toString()};
     const hasLabel = ${hasLabel.toString()};
     const sameElement = ${sameElement.toString()};
+    const differentFocusTarget = ${differentFocusTarget.toString()};
     const wait = ${elementWait.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     const input = () => {
@@ -615,18 +639,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               : state.reason;
             throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
           }
-          // A background click can leave focus in another field. The engine has no row-only read;
-          // reuse the fresh guard tree and require focus on the same target before sending text.
+          // The engine names focus after the tree. Reuse the guard's fresh read; a field's inner
+          // node can hold focus too. Only positive evidence of focus elsewhere stops the text.
           if (checkFocus) {
-            const row = elements(text ?? '').get(before.number);
-            const states = /^[a-z]+(?: [a-z]+)*((?: \\([^)]*\\))*)/.exec(row ?? '')?.[1] ?? '';
-            const withoutFocus = line => line?.replace(/^([a-z]+(?: [a-z]+)*)((?: \\([^)]*\\))*)/, (_, role, states) =>
-              role + states.replace(/ \\(([^)]*)\\)/g, (_, flags) => {
-                const kept = flags.split(', ').filter(flag => flag !== 'focused');
-                return kept.length ? ' (' + kept.join(', ') + ')' : '';
-              }));
-            if (!/\\((?:[^)]*, )?focused(?:, [^)]*)?\\)/.test(states) || !sameElement(withoutFocus(before.line), withoutFocus(row))) {
-              throw stop("sleight stopped before " + name + ": the field didn't take focus. Set its value with app.setValue(" + before.number + ", <text>) instead.");
+            const number = differentFocusTarget(text, before);
+            if (number !== undefined) {
+              throw new Error("sleight stopped before " + name + ": another element has focus. Use app.setValue(" + number + ", <text>) instead.");
             }
           }
           await checkLease();

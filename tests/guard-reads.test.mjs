@@ -493,7 +493,7 @@ test('bind compares literal numbers against explicit reads the call actually too
 });
 
 test('the default combines capture binding and quiet edits and resets on the next call', async () => {
-  const f = fixture({ ordinary: true, strict: true, current: () => tree(expected, '\t1 text field (focused) Editor\n\t2 button Next') });
+  const f = fixture({ ordinary: true, strict: true, current: () => tree(expected, '\t1 text field Editor\n\t2 button Next\n\nThe focused UI element is 1 text field Editor') });
   await f.run('await app.pressKey("super+a"); await app.typeText("x"); await app.click(1); await app.typeText("y"); await app.click(2);');
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'pressKey', 'typeText', 'click', 'read', 'typeText', 'click', 'read']);
   f.calls.length = 0;
@@ -537,7 +537,7 @@ for (const role of ['text field', 'text area', 'text entry area', 'search field'
     test('quiet-edits recognizes ' + role + ' clicked by ' + target, async () => {
       for (const next of ['typeText("x")', 'paste("x")']) for (const [options, reads] of
         [[{}, 3], [{ quietEdits: true }, 3], [{ quietEdits: true, careful: true }, 3]]) {
-        const f = fixture({ strict: true, current: () => tree(expected, '\t1 ' + role + ' (focused) Description: Editor, ID: editor') });
+        const f = fixture({ strict: true, current: () => tree(expected, '\t1 ' + role + ' Description: Editor, ID: editor\n\nThe focused UI element is 1 ' + role + ' Description: Editor, ID: editor') });
         await f.run(`await app.click(${target}); await app.${next};`, options);
         assert.equal(f.calls.filter(c => c[0] === 'read').length, reads, JSON.stringify(options));
         assert.deepEqual(f.calls.find(c => c[0] === 'click'), ['click', 1]);
