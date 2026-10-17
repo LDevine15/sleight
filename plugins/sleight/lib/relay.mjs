@@ -70,7 +70,7 @@ import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, stopNote, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, menuIdentity,
   unchangedMenuWindow } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
@@ -1221,12 +1221,21 @@ export function createRelay({
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
     clearSelection(); browserHandles.clear(); leaseWindow = undefined; dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
-    standardWindows.clear();
+    standardWindows.clear(); appProcesses.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
   const handleBundles = new Map();
-  // Windows seen with a standard-window root, by documentKey: only these can be covered by a dialog the lease moves to.
-  const standardWindows = new Set();
+  // Windows seen with a standard-window root, by documentKey, with when and for which bundle: only these can be covered
+  // by a dialog the lease moves to. A new process for the bundle forgets them.
+  const standardWindows = new Map(), appProcesses = new Map();
+  const noteProcess = observed => {
+    if (typeof observed?.appId !== 'string' || !Number.isSafeInteger(observed.pid)) return;
+    const instance = `${observed.pid}:${observed.processStart}`, known = appProcesses.get(observed.appId);
+    appProcesses.set(observed.appId, instance);
+    if (known === undefined || known === instance) return;
+    for (const [key, seen] of standardWindows) if (seen.appId === observed.appId) standardWindows.delete(key);
+    if (leaseWindow?.appId === observed.appId) delete leaseWindow.parent;
+  };
   function numberWindow(code, fallback) {
     const handles = numberedHandles(code);
     const window = handles.length === 1 && handleBundles.get(handles[0]);
@@ -2234,18 +2243,25 @@ export function createRelay({
     const refuse = reason => trace('dialog-continuation-refused', { id: msg.id, reason });
     if (stopped && (taken.receipt?.windowStop || call.target?.parent)) {
       const reason = ineligible ?? dialogRefusal(call.plan, taken.receipt, covered, taken.content);
-      if (reason) refuse(reason);
+      if (reason && reason !== 'palette-needs-close-check') refuse(reason);
     }
     const remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
       menuRemainder(call.plan, taken.receipt, call.target, taken.content));
-    if (!remainder || (!remainder.dialog && !call.baseline) || splitCalls.has(msg.id)) return false;
+    if (remainder?.dialog && !call.baseline) refuse('no-baseline');
+    if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
     const expected = remainder.dialog ? { appId: covered.appId, title: covered.title, app: covered.app, url: covered.url }
       : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
-    menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`) : undefined).then(observed => {
+    // A palette the lease held must be gone, not just behind the document, unless Escape closed it.
+    const gone = remainder.closeCheck ? windowGone(windowIdentity, { appId: covered.appId, title: call.target.title, url: call.target.url }, menuContinuationTimeoutMs)
+      : Promise.resolve(true);
+    gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`) : undefined)
+      : (refuse('palette-still-open'), undefined)).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
+      if (remainder.dialog) noteProcess(observed);
       const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
-      const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at))
+      // HID idle from when the covered window was last seen standard, through the dialog, to now.
+      const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at, covered.seenAt))
         : !unchangedMenuWindow(expected, call.baseline, observed, since) && 'menu-window-changed';
       if (refusal || !observed) {
         if (remainder.dialog && refusal) refuse(refusal);
@@ -2412,7 +2428,7 @@ export function createRelay({
             if (!disposed && !stopCollected) leaseStop(msg, error.message);
             return;
           }
-          admission.baseline = baseline;
+          admission.baseline = baseline; noteProcess(baseline);
           running.delete(msg.id); handleClient(msg);
         });
         return;
@@ -2434,6 +2450,7 @@ export function createRelay({
       const started = performance.now();
       Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
         const identity = nativeIdentity(expected, observed);
+        noteProcess(identity);
         if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error('Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
         else focusedChecked.add(msg.id);
@@ -3091,6 +3108,7 @@ export function createRelay({
         Promise.resolve().then(() => windowIdentity(expected)).then(observed => {
           if (generation !== stopGeneration) return;
           identityCall.nativeIdentity = nativeIdentity(expected, observed);
+          noteProcess(identityCall.nativeIdentity);
           identityCall.identityRequired = !!identityCall.nativeIdentity;
         }).catch(error => { identityCall.identityError = error.message; }).finally(() => {
           if (generation === stopGeneration || callGenerations.has(msg.id)) observeServerMessage(msg);
@@ -3376,12 +3394,17 @@ export function createRelay({
       // dropped the lease, the relay re-acquired the document as a dialog root, and the alert found nothing to cover.
       // Two untitled dialogs compare equal, so the parent carries the time it was set, and continuing needs HID idle
       // since then.
-      if (window && /^Window: .*\r?\n0 standard window\b/m.test(text)) standardWindows.add(documentKey(window));
+      if (window && known && /^Window: .*\r?\n0 standard window\b/m.test(text)) standardWindows.set(documentKey(window), { at: performance.now(), appId: known });
       // A gallery or panel with a plain window root (Word's Styles, which Escape closed in 19-02-45) covers it the same way.
-      if (leaseWindow?.appId && previous?.appId === leaseWindow.appId && /^Window: .*\r?\n0 (?:sheet|dialog|window|floating window|system dialog)\b/m.test(text)) {
+      // The bundle ID comes from the handle, so the header's app must match too: another app's dialog (SecurityAgent)
+      // over the document is not the document's.
+      const over = /^Window: .*\r?\n0 (sheet|dialog|window|floating window|system dialog)\b/m.exec(text)?.[1];
+      if (over && leaseWindow?.appId && previous?.appId === leaseWindow.appId && window.app === previous.app) {
+        const key = documentKey({ title: previous.title, app: previous.app, url: previous.url });
         if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }
-        else if ((previous.title || previous.url) && standardWindows.has(documentKey({ title: previous.title, app: previous.app, url: previous.url }))) {
-          const { parent: _, ...covered } = previous; leaseWindow.parent = { ...covered, at: performance.now() };
+        else if ((previous.title || previous.url) && standardWindows.has(key)) {
+          const { parent: _, ...covered } = previous;
+          leaseWindow.parent = { ...covered, at: performance.now(), seenAt: standardWindows.get(key).at, over };
         }
       }
       if (leaseWindow?.appId && call.read && !msg.result?.isError) {

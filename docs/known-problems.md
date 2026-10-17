@@ -19,8 +19,9 @@ our own runs. Dates and engine versions are given where they matter.
   or navigates by key (Cmd+Down in Finder) may stop as before. We don't know why a key after a key doesn't count.
 - Only plain action statements split this way. Of the 7 word-edit calls (2026-10-17) that clicked OK on Word's Replace All
   alert and then stopped, 5 now split; the 2 with `.catch()` on an action still stop. None has run live yet. A dialog-close
-  continuation also needs HID idle since the dialog was leased, so any mouse or key input after it appeared stops the
-  rest, and it stops when the app has a second window with the same title and URL.
+  continuation also needs HID idle since the document was last seen as a standard window, so any mouse or key input
+  after that stops the rest. It also stops when the app has a second window with the same title and URL, when the
+  dialog's own native identity couldn't be read before the call, and when a palette closed by a button can't be shown gone.
 
 ## The pointer, drags and hover
 

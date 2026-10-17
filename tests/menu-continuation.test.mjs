@@ -196,10 +196,31 @@ test('LW2: refusal reasons name the first failing condition', () => {
     [[plan, receipt, { ...covered, url: null }, content], 'other-url'], [[plan, receipt, covered, content], undefined]]) assert.equal(dialogRefusal(...args), reason);
   const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'e', window: 1, windowNumber: 22, pid: 1, processStart: 1, hidIdleSeconds: 1000 };
   const since = performance.now() - 10;
-  for (const [args, reason] of [[[covered, undefined, undefined, since], 'identity-unavailable'], [[covered, undefined, { ...observed, windowNumber: 0 }, since], 'no-window-number'],
-    [[covered, undefined, { ...observed, hidIdleSeconds: 0 }, since], 'hid-input'], [[covered, { ...observed, pid: 2 }, observed, since], 'process-changed'],
-    [[covered, undefined, { ...observed, headerMatches: undefined }, since], 'header-matches-missing'], [[covered, undefined, { ...observed, title: 'x' }, since], 'identity-mismatch'],
-    [[covered, undefined, observed, since], undefined]]) assert.equal(returnRefusal(...args), reason);
+  const b = { ...observed, title: '', window: 2, windowNumber: 31 };
+  for (const [args, reason] of [[[covered, b, undefined, since], 'identity-unavailable'], [[covered, undefined, observed, since], 'no-baseline'],
+    [[covered, b, { ...observed, windowNumber: 0 }, since], 'no-window-number'],
+    [[covered, b, { ...observed, hidIdleSeconds: 0 }, since], 'hid-input'], [[covered, { ...b, pid: 2 }, observed, since], 'process-changed'],
+    [[covered, b, { ...observed, headerMatches: undefined }, since], 'header-matches-missing'], [[covered, b, { ...observed, title: 'x' }, since], 'identity-mismatch'],
+    [[covered, b, observed, since], undefined]]) assert.equal(returnRefusal(...args), reason);
+});
+
+// LW3 review: the window returned to must be a standard window, and a palette needs Escape or a check that it closed.
+test('LW3: a dialog root under the document\'s title, or a palette without Escape, is no plain dialog remainder', () => {
+  const covered = { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report', appId: 'org.test' };
+  const sheet = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 dialog report, URL: file:///tmp/report' }];
+  const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End");');
+  const receipt = { index: 1, prev: { kind: 'id', value: 'ok' }, root: '0 dialog report, URL: file:///tmp/report', windowStop: true };
+  assert.equal(dialogRefusal(plan, receipt, covered, sheet), 'returned-root-not-standard');
+  assert.equal(dialogRemainder(plan, receipt, covered, sheet), undefined);
+  const page = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 standard window report, URL: file:///tmp/report' }];
+  const standard = { ...receipt, root: '0 standard window report, URL: file:///tmp/report' };
+  for (const over of ['window', 'floating window']) {
+    assert.equal(dialogRefusal(plan, standard, { ...covered, over }, page), 'palette-needs-close-check');
+    assert.equal(dialogRemainder(plan, standard, { ...covered, over }, page).closeCheck, true);
+  }
+  const escape = splitMenuActions('await app.pressKey("Escape"); await app.pressKey("super+h");');
+  assert.equal(dialogRefusal(escape, { ...standard, prev: { kind: 'key', value: 'Escape' } }, { ...covered, over: 'window' }, page), undefined);
+  for (const over of ['dialog', 'sheet', 'system dialog']) assert.equal(dialogRemainder(plan, standard, { ...covered, over }, page).closeCheck, false);
 });
 
 // LW1 review: a rename counts only for open_file's handles or a name the relay binds to the leased app.
@@ -232,7 +253,7 @@ test('DR1: the returned window needs one focused match, the same process, its ce
   const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
   const baseline = { ...observed, title: '', window: 2, windowNumber: 31 }, since = performance.now() - 100;
   assert.equal(returnedWindow(covered, baseline, observed, since), true);
-  assert.equal(returnedWindow(covered, undefined, observed, since), true);
+  assert.equal(returnedWindow(covered, undefined, observed, since), false, 'LW3 review: the dialog\'s baseline is required');
   for (const changed of [{ hidIdleSeconds: 0.01 }, { hidIdleSeconds: null }, { matches: 2 }, { status: 'mismatch' }, { pid: 9 },
     { processStart: 2 }, { epoch: 'other' }, { title: 'other' }, { url: 'file:///x' }, { appId: 'other' }, { windowNumber: null }]) {
     assert.equal(returnedWindow(covered, baseline, { ...observed, ...changed }, since), false, JSON.stringify(changed));

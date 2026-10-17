@@ -209,9 +209,11 @@ export function menuRemainder(plan, receipt, expected, content) {
 // held before it appeared: same app, title and URL. Word's Replace All alert stopped 7 of 8 word-edit runs on its
 // OK this way (2026-10-17). Anything else (another document, app or new window) is not the covered window.
 export function dialogRemainder(plan, receipt, covered, content) {
-  if (dialogRefusal(plan, receipt, covered, content)) return;
+  const refusal = dialogRefusal(plan, receipt, covered, content);
+  if (refusal && refusal !== 'palette-needs-close-check') return;
   const stopped = stopTree(receipt, content);
-  return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree, dialog: true };
+  return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree, dialog: true,
+    closeCheck: !!refusal };
 }
 // Why a stop is no dialog remainder, for the relay's trace: live runs showed only that none fired (word-edit, 2026-10-17).
 export function dialogRefusal(plan, receipt, covered, content) {
@@ -223,7 +225,20 @@ export function dialogRefusal(plan, receipt, covered, content) {
   const stopped = stopTree(receipt, content);
   if (!stopped) return 'tree-mismatch';
   const key = ['app', 'title', 'url'].find(key => stopped.window[key] !== covered[key]);
-  return key ? `other-${key}` : undefined;
+  if (key) return `other-${key}`;
+  // A dialog over the document closing onto another dialog under its title (Word's sheet root) is not the document.
+  if (!/^standard window(?: |,|$)/.test(stopped.line)) return 'returned-root-not-standard';
+  // A palette that stays open hands focus back without closing; only Escape or a native check that it is gone counts.
+  if (['window', 'floating window'].includes(covered.over) && !(receipt.prev?.kind === 'key' && /^(?:escape|esc)$/i.test(receipt.prev.value))) return 'palette-needs-close-check';
+}
+// The palette the lease held is gone: no window of the app has its title and URL any more.
+export async function windowGone(identity, window, timeoutMs = 600) {
+  let timer;
+  try {
+    const observed = await Promise.race([Promise.resolve().then(() => identity(window)), new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })]);
+    return observed?.status === 'ok' && observed.headerMatches === 0;
+  } catch { return false; }
+  finally { clearTimeout(timer); }
 }
 
 const idle = (observed, since) => Number.isFinite(observed.hidIdleSeconds) && Number.isFinite(since) &&
@@ -236,9 +251,11 @@ export const returnedWindow = (covered, baseline, observed, since) => !returnRef
 export function returnRefusal(covered, baseline, observed, since) {
   if (!covered) return 'no-covered-window';
   if (!observed) return 'identity-unavailable';
+  // The dialog's own identity from before the call ties the returned window to the same process.
+  if (!baseline) return 'no-baseline';
   if (!Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0) return 'no-window-number';
   if (!idle(observed, since)) return 'hid-input';
-  if (baseline && ['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return 'process-changed';
+  if (['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return 'process-changed';
   const certified = covered.nativeIdentity;
   if (!certified && observed.headerMatches !== 1) return `header-matches-${observed.headerMatches ?? 'missing'}`;
   try {

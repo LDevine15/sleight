@@ -357,7 +357,7 @@ const dialogIdentity = (expected, native) => ({ ...expected, ...native, matches:
 async function dialogFixture(t, { bare, ...options } = {}) {
   const h = await fixture(t, bare ? { base: alert, after: page, identity: dialogIdentity, ...options } :
     { base: page, after: alert, afterItem: options.base ?? page, identity: dialogIdentity, ...options });
-  if (!bare) assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  if (!bare) assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /\\n0 dialog /);
   const start = h.sent.length;
   return { ...h, sentSince: () => h.sent.length - start };
 }
@@ -492,6 +492,75 @@ for (const [name, options, reason] of [
   const h = await dialogFixture(t, { ...options, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
   assert.equal((await h.call(dismiss)).isError, true);
   assert.ok(events.some(event => event.startsWith(reason)), JSON.stringify(events));
+});
+
+// LW3 review 1: the bundle ID comes from the handle's metadata, so another app's dialog looked like the document's own.
+test('LW3: another app\'s dialog over the document never continues onto it', async t => {
+  const security = 'Window: "", App: SecurityAgent.\n0 dialog Description: authenticate\n\t1 text Word wants to make changes.\n\t2 button OK, ID: ok';
+  const events = [];
+  const h = await dialogFixture(t, { after: security, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  const result = await h.call(dismiss);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.ok(events.includes('no-covered-window'), JSON.stringify(events));
+});
+
+test('LW3: no baseline for the dialog, no continuation', async t => {
+  const events = [];
+  const h = await dialogFixture(t, { identity: (expected, native) => expected.title === '' ? { status: 'ok', matches: 2 } : dialogIdentity(expected, native),
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.ok(events.includes('no-baseline'), JSON.stringify(events));
+});
+
+// LW3 review 2: a palette that stays open hands focus back without closing.
+const palette = 'Window: "Formatting Palette", App: Fixture Editor.\n0 floating window Formatting Palette\n\t1 button Bold, ID: bold\n\t2 button Close, ID: close';
+for (const [name, open, code, continues] of [
+  ['a palette button that leaves it open stops', true, 'await app.click({ id: "bold" }); await app.pressKey("super+End");', false],
+  ['a palette button that closes it continues', false, 'await app.click({ id: "close" }); await app.pressKey("super+End");', true],
+  ['Escape on an open palette continues', true, 'await app.pressKey("Escape"); await app.pressKey("super+End");', true],
+]) test(`LW3: ${name}`, async t => {
+  let clicked = false;
+  const h = await fixture(t, { base: page, onAction: (action, argument, text) => text === page && argument === 2 ? palette : text === palette ? (clicked = true, page) : text,
+    identity: (expected, native) => expected.title !== 'Formatting Palette' || !clicked ? dialogIdentity(expected, native)
+      : open ? { status: 'mismatch', error: 'Focused window differs' } : { status: 'ok', matches: 0, headerMatches: 0 } });
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /Formatting Palette/);
+  const result = await h.call(code);
+  assert.equal(result.isError === true, !continues, JSON.stringify(result).slice(0, 400));
+  assert.deepEqual(h.keys.filter(key => key === 'super+End'), continues ? ['super+End'] : []);
+});
+
+// LW3 review 3: a dialog closing onto another dialog under the document's title and URL is not the document.
+test('LW3: the alert closing onto a dialog root under the document\'s title stops', async t => {
+  const events = [];
+  const h = await dialogFixture(t, { afterItem: sheetRoot, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.ok(events.includes('returned-root-not-standard'), JSON.stringify(events));
+});
+
+// LW3 review 4: HID idle runs from when the covered window was last seen standard, and a new process forgets it.
+test('LW3: input since the document was last seen standard stops', async t => {
+  const h = await fixture(t, { base: page, after: alert, afterItem: page, identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: 0.2 }) });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+});
+
+test('LW3: a relaunched app forgets the standard windows it showed before', async t => {
+  let pid = 123;
+  const events = [];
+  const h = await fixture(t, { base: page, identity: (expected, native) => ({ ...dialogIdentity(expected, native), pid }),
+    onAction: (action, argument, text) => text === page && argument === 2 ? alert : text === alert ? page : text,
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.notEqual((await h.call('await app.click(1); await app.pressKey("a");')).isError, true);
+  pid = 456;
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, ['a']);
+  assert.ok(events.includes('no-covered-window'), JSON.stringify(events));
 });
 
 // LW1 review: two untitled dialogs compare equal, so a later one could inherit an earlier one's parent. Continuing
