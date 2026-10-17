@@ -182,7 +182,7 @@ test('typed receipts coexist with a filtered-read receipt and are removed from t
 test('the document guard emits this call\'s runtime typed value, then resets it on reuse', async () => {
   const output = [];
   const raw = { getAXState: async () => tree([search, beforeBody]), click: async () => {}, typeText: async () => {} };
-  const context = createContext({ app: raw, query: 'amber', cua: { getApp: async () => raw }, nodeRepl: { write: text => output.push(text) } });
+  const context = createContext({ app: raw, query: 'amber', setTimeout, cua: { getApp: async () => raw }, nodeRepl: { write: text => output.push(text) } });
   const window = { title: 'Draft', app: 'Editor', url: null };
   await runInContext(`(async () => { ${guardedCode('await app.click(12); await app.typeText(query);', window, undefined, undefined, { resultMark: mark })} })()`, context);
   assert.ok(output.includes(mark + JSON.stringify({ typed: ['amber'] }) + '\n'));
@@ -200,7 +200,7 @@ test('the relay carries the runtime receipt into the compactor without driving a
   const write = text => content.push(item(text));
   const current = () => tree([search, changed ? body : beforeBody]);
   const raw = { getAXState: async () => current(), click: async () => {}, typeText: async () => { changed = true; }, pressKey: async () => {} };
-  const context = createContext({ query: 'amber', cua: { getApp: async () => { write(current()); return raw; }, listApps: async () => [] }, nodeRepl: { write } });
+  const context = createContext({ query: 'amber', setTimeout, cua: { getApp: async () => { write(current()); return raw; }, listApps: async () => [] }, nodeRepl: { write } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 'wm1-fixture', changeReview: false,
     inputLease: new InputLease({ directory, holder: 'fixture' }) });
   t.after(() => { relay.dispose(); streams.forEach(s => s.destroy()); removeTemp(directory); });
