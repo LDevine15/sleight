@@ -90,3 +90,67 @@ test('navigation receipts bind the exact preceding key or click to a retitled st
     assert.equal(menuRemainder(plan, receipt, { ...expected, title: 'Child' }, content), undefined);
   }
 });
+
+// LA1: the calls that stopped on their own menu click in textedit-calculator (2026-10-17), paths scrubbed.
+const transcriptShapes = [
+  ['let te2 = await cua.getApp("TextEdit");\nawait te2.click({ label: "File" });\nawait te2.click({ label: "Save" });\nconst t3 = await te2.getAXState();\nnodeRepl.write(t3.split("\\n").slice(0, 4).join("\\n"));',
+    'te2', ['File', 'Save']],
+  ['let te3 = await cua.getApp("TextEdit"); await te3.click({label:"Edit"}); await te3.click({label:"Select All"}); let t3 = await te3.getAXState(); nodeRepl.write(t3.split("\\n").slice(0,8).join("\\n"));',
+    'te3', ['Edit', 'Select All']],
+  // The same calls after the relay sends their acquisition on its own.
+  ['await te2.click({ label: "File" });\nawait te2.click({ label: "Save" });\nconst t3 = await te2.getAXState();\nnodeRepl.write(t3.split("\\n").slice(0, 4).join("\\n"));',
+    'te2', ['File', 'Save']],
+  ['app = await cua.getApp("TextEdit"); await app.click({ label: "Edit" }); await app.click({ label: "Select All" });', 'app', ['Edit', 'Select All']],
+  ['const doc = await cua.getApp({ windowId: 12 }); await doc.click("File"); await doc.click("Save"); doc', 'doc', ['File', 'Save']],
+];
+test('LA1: a leading acquisition and trailing reads of the same handle still split the menu actions', () => {
+  for (const [code, handle, labels] of transcriptShapes) {
+    const plan = splitMenuActions(code);
+    assert.ok(plan, code);
+    assert.deepEqual(plan.actions.map(a => [a.handle, a.selector.value]), labels.map(label => [handle, label]), code);
+    const receipt = { index: 1, prev: { kind: 'label', value: labels[0] }, root: `0 menu ${labels[0]}` };
+    const content = [{ type: 'text', text: `Window: "report", App: Fixture Editor.\n0 menu ${labels[0]}\n\t1 ${labels[1]}` }];
+    const rest = menuRemainder(plan, receipt, { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report' }, content).code;
+    assert.ok(rest.startsWith(`await ${handle}.click(`) && rest.includes(labels[1]), rest);
+    assert.doesNotMatch(rest, /cua\.getApp/);
+  }
+});
+
+test('LA1: other leading or trailing statements still leave the call unsplit', () => {
+  for (const code of [
+    'let te = await cua.getApp("TextEdit"); await other.click("File"); await other.click("Save");',
+    'await app.click("File"); app = await cua.getApp("TextEdit"); await app.click("Save");',
+    'let te = await cua.getApp(name); await te.click("File"); await te.click("Save");',
+    'let te = await cua.getApp("TextEdit", next()); await te.click("File"); await te.click("Save");',
+    'let te = await cua.getApp("TextEdit"); let te2 = await cua.getApp("Other"); await te.click("File"); await te.click("Save");',
+    'await app.click("File"); await app.click("Save"); nodeRepl.write(await app.click("Other"));',
+    'await app.click("File"); await app.click("Save"); nodeRepl.write(app.pressKey("Return"));',
+    'await app.click("File"); await app.click("Save"); const s = await other.getAXState();',
+    'await app.click("File"); await app.click("Save"); const s = await app.getAXState(); await app.click("Other");',
+    'await app.click("File"); await app.click("Save"); nodeRepl.write(cua.getApp("Other"));',
+    'await app.click("File"); await app.click("Save"); const s = await app.getAXState(next());',
+  ]) assert.equal(splitMenuActions(code), undefined, code);
+});
+
+// LA1R: the trailing write takes only reads of this call's handle and their string methods.
+test('LA1R: a trailing write that could reach an action leaves the call unsplit', () => {
+  const head = 'let te = await cua.getApp("TextEdit"); await te.click("File"); await te.click("Save"); const t = await te.getAXState(); ';
+  for (const write of [
+    'nodeRepl.write(app["pressKey"]("Return"))', 'nodeRepl.write(app[k](1))', 'nodeRepl.write(app?.["typeText"]("z"))',
+    'nodeRepl.write(app.getAXState().then(()=>app["click"](3)))', 'nodeRepl.write(other.getAXState())',
+    'nodeRepl.write(te["pressKey"]("Return"))', 'nodeRepl.write(te?.getAXState())', 'nodeRepl.write(t.constructor.constructor("x")())',
+    'nodeRepl.write(t.split`x`)', 'nodeRepl.write(t.replace("a", "b"))', 'nodeRepl.write(te.typeText)', 'nodeRepl.write(pressKey)',
+    'nodeRepl.write(t.split("\\n"), te.click(3))', 'nodeRepl.write(te)', 'nodeRepl.write(x)', 'typeText',
+  ]) {
+    assert.equal(splitMenuActions(head + write), undefined, write);
+    assert.equal(splitMenuActions('await app.click("File"); await app.click("Save"); ' + write), undefined, write);
+  }
+});
+
+test('LA1R: trailing writes of the handle\'s reads still split', () => {
+  for (const write of ['nodeRepl.write(t.split("\\n").slice(0, -4).join("\\n"))', 'nodeRepl.write(te.getAXState({ disableDiffing: true }))',
+    'nodeRepl.write(t.trim().length)', 'nodeRepl.write("done")', 'nodeRepl.write(t)', 't']) {
+    const plan = splitMenuActions('let te = await cua.getApp("TextEdit"); await te.click("File"); await te.click("Save"); const t = await te.getAXState(); ' + write);
+    assert.deepEqual(plan?.actions.map(a => a.selector.value), ['File', 'Save'], write);
+  }
+});

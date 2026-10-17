@@ -6,25 +6,109 @@ import { verifyWindowIdentity } from './window-identity.mjs';
 
 export const guardStopMark = () => `[sleight:guard-stop:${randomUUID()}]`;
 
+const ACTIONS = ['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'paste', 'pressKey', 'typeText'];
+const isName = t => !!t && !t.string && /^[A-Za-z_$][\w$]*$/.test(t.v);
+const declared = ts => ['let', 'const', 'var'].includes(ts[0]?.v) && !ts[0].string ? 1 : 0;
+// Literal option objects only: { disableDiffing: true }, { windowId: 12 }.
+const literalArgs = args => !args.some((t, i) => !t.string && !/^(?:\d+|true|false|null|[\[\]{},:\-])$/.test(t.v) &&
+  !(args[i + 1]?.v === ':' && /^[A-Za-z_$][\w$]*$/.test(t.v)));
+
+// `let te = await cua.getApp("App")` (or { windowId: 12 }, or `app = …`) names the handle it binds.
+function acquisition(ts) {
+  const i = declared(ts);
+  if (!isName(ts[i]) || ts[i + 1]?.v !== '=' || ts[i + 2]?.v !== 'await' || ts[i + 3]?.v !== 'cua' || ts[i + 4]?.v !== '.' ||
+      ts[i + 5]?.v !== 'getApp' || ts[i + 6]?.v !== '(' || ts.at(-1)?.v !== ')' || ts.slice(i + 2, i + 7).some(t => t.string)) return;
+  const args = ts.slice(i + 7, -1);
+  const selector = args.length === 1 && args[0].string || args.length === 5 && args[0].v === '{' && !args[0].string &&
+    args[1].v === 'windowId' && args[2].v === ':' && !args[2].string && !args[3].string && /^\d+$/.test(args[3].v) && args[4].v === '}' && !args[4].string;
+  return selector ? ts[i].v : undefined;
+}
+
+// After the last action: a read of the same handle, printing it, or echoing a name. None sends input,
+// and none comes before an action, so the guard's input index still names the action spans.
+const forbidden = new Set(['await', 'cua', 'nodeRepl', 'import', 'require', 'eval', 'Function', 'globalThis', 'process', 'constructor',
+  '__proto__', 'prototype', 'then', 'catch', 'finally', 'call', 'apply', 'bind', '<template>', '<regexp>', ...ACTIONS]);
+const STRING_READS = new Set(['split', 'slice', 'join', 'trim']);
+const isNumber = t => !!t && !t.string && /^\d+$/.test(t.v);
+const punct = (t, v) => !!t && !t.string && t.v === v;
+// The argument of nodeRepl.write, as an allowlist: a string or number, the handle's getAXState with
+// literal options, or a name an earlier trailing read bound, then dots to names and calls of
+// split/slice/join/trim with string or number arguments. No brackets, ?., other handles or actions.
+function writeArgument(ts, handle, names) {
+  let i = 0;
+  const literal = () => {
+    if (punct(ts[i], '-') && isNumber(ts[i + 1])) { i += 2; return true; }
+    if (ts[i]?.string || isNumber(ts[i])) { i++; return true; }
+    return false;
+  };
+  if (punct(ts[i], '-') || ts[i]?.string || isNumber(ts[i])) { if (!literal()) return false; }
+  else if (isName(ts[i]) && ts[i].v === handle) {
+    if (!punct(ts[i + 1], '.') || ts[i + 2]?.v !== 'getAXState' || ts[i + 2].string || !punct(ts[i + 3], '(')) return false;
+    const close = ts.findIndex((t, index) => index > i + 3 && punct(t, ')'));
+    if (close < 0 || !literalArgs(ts.slice(i + 4, close)) || ts.slice(i + 4, close).some(t => punct(t, '('))) return false;
+    i = close + 1;
+  } else if (isName(ts[i]) && names.has(ts[i].v) && !forbidden.has(ts[i].v)) i++;
+  else return false;
+  while (punct(ts[i], '.')) {
+    const member = ts[i + 1];
+    if (!isName(member) || forbidden.has(member.v) || member.v === 'getAXState') return false;
+    i += 2;
+    if (!punct(ts[i], '(')) continue;
+    if (!STRING_READS.has(member.v)) return false;
+    i++;
+    if (!punct(ts[i], ')')) {
+      for (;;) {
+        if (!literal()) return false;
+        if (!punct(ts[i], ',')) break;
+        i++;
+      }
+    }
+    if (!punct(ts[i], ')')) return false;
+    i++;
+  }
+  return i === ts.length;
+}
+// Returns the name a trailing read binds ('' for one that binds none), or undefined when it isn't one.
+function trailingRead(ts, handle, names) {
+  if (ts.length === 1) return isName(ts[0]) && !forbidden.has(ts[0].v) ? '' : undefined;
+  if (ts[0]?.v === 'nodeRepl' && ts[1]?.v === '.' && ts[2]?.v === 'write' && ts[3]?.v === '(' && ts.at(-1)?.v === ')' &&
+      !ts.slice(0, 4).some(t => t.string)) return writeArgument(ts.slice(4, -1), handle, names) ? '' : undefined;
+  const i = declared(ts);
+  return isName(ts[i]) && ts[i].v !== handle && !forbidden.has(ts[i].v) && ts[i + 1]?.v === '=' && ts[i + 2]?.v === 'await' && ts[i + 3]?.v === handle &&
+    ts[i + 4]?.v === '.' && ts[i + 5]?.v === 'getAXState' && ts[i + 6]?.v === '(' && ts.at(-1)?.v === ')' &&
+    !ts.slice(i + 1, i + 7).some(t => t.string) && literalArgs(ts.slice(i + 7, -1)) ? ts[i].v : undefined;
+}
+
 // Only standalone inputs on one handle, with data arguments. No assignments, calls in
 // arguments, reads or control flow: the guard's input index must name exactly this span.
+// The call may start by acquiring that handle and end by reading it (textedit-calculator,
+// 2026-10-17: both shapes stopped on their own menu click, about 8 to 10 s a run).
 export function splitMenuActions(code) {
   if (typeof code !== 'string' || code.length > 65536) return;
   const split = statementSpans(code);
   if (!split) return;
   const actions = [];
+  let acquired, statements = 0, tail = false;
+  const names = new Set();
   for (const [start, end] of split.spans) {
     const ts = tokens(code.slice(start, end));
     if (ts.at(-1)?.v === ';') ts.pop();
     if (!ts.length) continue;
-    if (ts[0]?.v !== 'await' || ts[0].string || !/^[A-Za-z_$][\w$]*$/.test(ts[1]?.v ?? '') || ts[1].string ||
-        ts[2]?.v !== '.' || !['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction',
-          'paste', 'pressKey', 'typeText'].includes(ts[3]?.v) || ts[3].string || ts[4]?.v !== '(' || ts.at(-1)?.v !== ')') return;
+    statements++;
+    if (statements === 1 && (acquired = acquisition(ts))) continue;
+    const action = ts[0]?.v === 'await' && !ts[0].string && isName(ts[1]) && ts[2]?.v === '.' && ACTIONS.includes(ts[3]?.v) &&
+      !ts[3].string && ts[4]?.v === '(' && ts.at(-1)?.v === ')';
+    if (!action) {
+      const bound = actions.length ? trailingRead(ts, actions[0].handle, names) : undefined;
+      if (bound === undefined) return;
+      if (bound) names.add(bound);
+      tail = true; continue;
+    }
+    if (tail) return;
     const args = ts.slice(5, -1);
-    if (args.some((t, i) => !t.string && !/^(?:\d+|true|false|null|[\[\]{},:\-])$/.test(t.v) &&
-        !(args[i + 1]?.v === ':' && /^[A-Za-z_$][\w$]*$/.test(t.v)))) return;
+    if (!literalArgs(args)) return;
     const handle = ts[1].v;
-    if (actions.length && handle !== actions[0].handle) return;
+    if (actions.length ? handle !== actions[0].handle : acquired && handle !== acquired) return;
     let selector;
     if (ts[3].v === 'click') {
       if (args.length === 1 && args[0].string) selector = { kind: 'label', value: args[0].v };
@@ -41,7 +125,7 @@ export function splitMenuActions(code) {
 }
 
 export function takeGuardStop(content, mark) {
-  let receipt, count = 0, input = false;
+  let receipt, count = 0, input = false, adopted;
   const head = [];
   const cleaned = content.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') { if (!count) head.push(item); return [item]; }
@@ -50,12 +134,14 @@ export function takeGuardStop(content, mark) {
       let record;
       try { record = JSON.parse(line.slice(mark.length)); } catch { /* An invalid receipt proves nothing. */ }
       if (record?.input === true) { input = true; return false; }
+      // The guard moved to a window in another app this call acquired; the last one counts.
+      if (record?.adopted) { adopted = record.adopted; return false; }
       count++; receipt = record;
       return false;
     }).join('\n');
     return text ? [{ ...item, text }] : [];
   });
-  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input };
+  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input, adopted };
 }
 
 export function menuRemainder(plan, receipt, expected, content) {
