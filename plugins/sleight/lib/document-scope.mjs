@@ -166,6 +166,7 @@ export function guardedCode(code, window, reason = 'Document scope stopped this 
     const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
   }
+  if (guard.resultMark && guard.typed.length) nodeRepl.write(guard.resultMark + JSON.stringify({ typed: guard.typed }) + '\\n');
 }`;
 }
 
@@ -203,6 +204,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.inputSent = false;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
+    state.resultMark = update?.resultMark;
     // What Claude was last shown for the numbers this call acts on (number -> line).
     state.seenLines = update?.seenLines;
     // Numbers written as literals in this call's code. Any other number was computed, usually from a

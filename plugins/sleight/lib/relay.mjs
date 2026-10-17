@@ -169,7 +169,19 @@ const FIRST_CALL_BATCH = 'start with one of the API calls shown below, assigning
 // 3 of 3 tries in the head-to-head (TextEdit and Finder, 2026-10-09), and its Cancel action closed it.
 export function openMenuNote(text, prompt) {
   const menu = typeof text === 'string' && /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel\b/m.exec(text);
-  return menu ? promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt) : undefined;
+  if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
+  if (typeof text !== 'string' || /^\d+ menu(?: |$)(?!bar\b)/m.test(text)) return;
+  let bar;
+  for (const line of text.split('\n')) {
+    const item = /^(\t*)(\d+) (.*)$/.exec(line);
+    if (!item) { bar = undefined; continue; }
+    if (bar !== undefined && item[1].length <= bar) bar = undefined;
+    if (/^menu bar(?: |$)/.test(item[3]) && !/^menu bar item\b/.test(item[3])) bar = item[1].length;
+    else if (bar !== undefined && item[1].length === bar + 1 && /\([^)]*\bselected\b[^)]*\)/.test(item[3])) {
+      const title = item[3].replace(/^menu bar item\s+/, '').replace(/\([^)]*\)\s*/g, '').split(', ')[0];
+      return promptNotice(`sleight: a menu may still be open in a tracking loop (${title}, element ${item[2]}); keys and clicks into the document won't land. Escape or a click on that menu-bar title (${title}) closes it.`, prompt);
+    }
+  }
 }
 
 // SLEIGHT_FIRST_CALL_BATCH=merge, under A/B. Since 668b462 a call continues into a window its own
@@ -214,6 +226,9 @@ export function promptNotice(text, prompt) {
     .replace('For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.', 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.')
     .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
     .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
+    .replace('a menu may still be open in a tracking loop', 'possible menu tracking loop')
+    .replace("keys and clicks into the document won't land.", "document input won't land.")
+    .replace(/Escape or a click on that menu-bar title \([^)]*\) closes it\./, 'Escape or click the menu-bar title.')
     .replace('` does.', '`.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')
@@ -2542,10 +2557,11 @@ export function createRelay({
             menuCalls.set(msg.id, { ...menuAdmissions.get(msg.id), mark: stopMark,
               request: { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: originalCode } } } });
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
-            if (filteredCode !== swipeCode) filterMarks.set(msg.id, filterMark);
+            const typedTarget = compactor.beginAction(originalCode)?.typedTarget;
+            if (filteredCode !== swipeCode || typedTarget) filterMarks.set(msg.id, filterMark);
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, guardStopMark: stopMark, timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+              { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
                 focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
