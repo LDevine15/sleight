@@ -604,7 +604,11 @@ test('screenshot pixels convert to window points with the relay\'s screenshot si
   // Window 11 is 600×400 points; a 1200×800 screenshot is 2×. [300, 77] is [150, 38.5] in points.
   const h = harness({ background: true, coveredEnd: true, coveredPid: 9, ax: {} });
   const r = h.run({ windowId: 11, from: [53.2, 77], to: [300, 77], screenshot: [1200, 800] });
-  assert.equal(r.ok, true, r.error); assert.equal(r.screenshotScale, 2); assert.equal(h.values.get(11), 'beta gamma alpha\n');
+  assert.equal(r.ok, true, r.error); assert.equal(h.values.get(11), 'beta gamma alpha\n');
+  // The result names the frame Claude sent, with the engine size Claude Code calls the original,
+  // and no pixels-per-point factor that competes with Claude Code's display multiplier.
+  assert.equal(r.coordinates, 'engine screenshot pixels, 1200 × 800');
+  assert.equal('screenshotScale' in r, false);
 });
 test('a screenshot of another window shape is ignored and the result says the points were window points', () => {
   const h = harness({ second: false });
@@ -616,7 +620,7 @@ test('the screenshot of the dragged window wins over the app\'s latest one', () 
   // The latest screenshot was of another window (1000×1000); window 11's own was 1200×800, so 2×.
   const h = harness({ background: true, coveredEnd: true, coveredPid: 9, ax: {} });
   const r = h.run({ windowId: 11, from: [53.2, 77], to: [300, 77], screenshot: [1000, 1000], screenshots: { '11.txt': [1200, 800] } });
-  assert.equal(r.ok, true, r.error); assert.equal(r.screenshotScale, 2);
+  assert.equal(r.ok, true, r.error); assert.equal(r.coordinates, 'engine screenshot pixels, 1200 × 800');
 });
 test('an Accessibility move settles the app after writing, even when its second write fails', () => {
   for (const failWrite of [undefined, 2]) {

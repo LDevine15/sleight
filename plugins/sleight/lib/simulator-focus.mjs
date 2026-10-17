@@ -25,7 +25,7 @@ export function simulatorScreenshotNote(content, target, sizeOf) {
     }
   }
   return `sleight: ${JSON.stringify(target.title)} in ${app}, engine screenshot ${size.width} × ${size.height} pixels. ` +
-    `The engine reads coordinates in these screenshot pixels. Claude Code shows this image smaller, at ` +
+    `The engine and the drag tool read coordinates in these screenshot pixels. Claude Code shows this image smaller, at ` +
     `${Math.round(size.width / factor)} × ${Math.round(size.height / factor)}, so multiply each x and y by ` +
     `${Number(factor.toFixed(4))} before sending coordinates. ` +
     'A missed tap does not establish a scale change.';

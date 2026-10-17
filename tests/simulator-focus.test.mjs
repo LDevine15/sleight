@@ -1,7 +1,7 @@
 import { test } from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { simulatorScreenshotNote } from '../plugins/sleight/lib/simulator-focus.mjs';
-import { createRelay, imageSize, screenshotOf } from '../plugins/sleight/lib/relay.mjs';
+import { createRelay, imageSize, promptNotice, screenshotOf } from '../plugins/sleight/lib/relay.mjs';
 import { PassThrough } from 'node:stream';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
@@ -100,4 +100,36 @@ for (const enabled of [undefined, false, true]) test(`Simulator note is ${enable
   call(8, 'await sim.click([1254,282])');
   await new Promise(resolve => setImmediate(resolve));
   assert.match(forwarded.find(message => message.id === 8).params.arguments.code, /await sim\.click\(\[1254,282\]\)/);
+});
+
+test('a batched screenshot names the frame once per window and size, and a reassigned handle gets none', async t => {
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams;
+  const bank = mkdtempSync('/private/tmp/sleight-frame-note-');
+  const replies = [];
+  clientOut.on('data', data => data.toString().trim().split('\n').forEach(line => replies.push(JSON.parse(line))));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: new InputLease({ directory: bank, holder: 'frame note test' }) });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); removeTemp(bank); });
+  const header = { type: 'text', text: 'Window: "Settings", App: Firefox.\n0 standard window Settings' };
+  const exchange = async (id, code, content) => {
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+    serverOut.write(JSON.stringify({ jsonrpc: '2.0', id, result: { content, _meta: { 'codex/toolSurface': { app: { appId: 'org.mozilla.firefox' } } } } }) + '\n');
+    await new Promise(resolve => setImmediate(resolve));
+    return replies.find(message => message.id === id).result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+  };
+  await exchange(1, 'var ff = await cua.getApp("org.mozilla.firefox")', [header]);
+  // The first screenshot of both Firefox settings runs (2026-10-17) was a batch like this, with no note.
+  const shown = await exchange(2, 'const shot = await ff.getScreenshot();\nawait nodeRepl.emitImage(shot);', [header, png(2560, 1708), png(2560, 1708)]);
+  assert.match(shown, /engine screenshot 2560 × 1708 pixels\. The engine and the drag tool read coordinates in these screenshot pixels\./);
+  assert.match(shown, /2000 × 1334, so multiply each x and y by 1\.28/);
+  assert.equal(shown.match(/multiply each x and y/g).length, 1);
+  assert.doesNotMatch(await exchange(3, 'await ff.getScreenshot()', [png(2560, 1708)]), /multiply each x and y/, 'stated once per window and size');
+  assert.match(await exchange(4, 'const s2 = await ff.getScreenshot();\nnodeRepl.write("ok");', [header, png(2600, 1708)]), /2600 × 1708.*by 1\.3\b/);
+  assert.doesNotMatch(await exchange(5, 'ff = await cua.getApp("org.mozilla.firefox"); await ff.getScreenshot()', [header, png(2700, 1708)]), /multiply each x and y/);
+});
+
+test('the lean note keeps the shown size and the factor', () => {
+  const note = promptNotice(simulatorScreenshotNote([png(2560, 1708)], { app: 'Firefox', title: 'Settings' }, imageSize), 'lean');
+  assert.match(note, /2560 × 1708 pixels\. Shown at 2000 × 1334, so multiply each x and y by 1\.28/);
+  assert.doesNotMatch(note, /drag tool read/);
 });
