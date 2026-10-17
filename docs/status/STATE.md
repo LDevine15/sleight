@@ -3,74 +3,70 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 15:45 UTC)
+## Banner (2026-10-17 16:55 UTC, flushed before the owner's clear)
 
 Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim (owner, 2026-10-17): every fix the
 live runs surface lands before sleight's final claim run, then the tag (ROADMAP 1b). The owner shut Puddle down at ~14:37Z and gave
-sleight the Mac. Build lanes today are Claude subagents, Opus high for builds, Sonnet high for reviews (owner, 2026-10-17); Codex
-lanes already running finish where they are.
+sleight the Mac (Puddle's leftover hold-setter, pid 92090, was stopped and noted in its window log). Build work today ran as Claude
+subagents, Opus high for builds and Sonnet high for reviews (owner, 2026-10-17). Nothing is running at the clear: no lanes,
+agents, monitors or live runs.
 
-**Merged and pushed** (`d4755720`, full check 6,603 tests, 0 fail). WD1 fixes the window-drag grader. DG1 with DG1R adds drag by element or
-selection. IT2 with IT2R (before typing after a field click, read the engine's focused-element line; a different focused element
-stops the call with a setValue hint; replayed on 15 real cases, 11 allowed, 4 stopped, all true mismatches). FL1 with FL1R (repeated
-notices don't mention an API, folds only where the document exposes text, and the screenshot hint shows once per window). HY1B to HY1E (pass hygiene: closes
-only windows that appeared in touched apps, quits what it launched, never answers a prompt, snapshots only between tasks, temp
-sweep, 7-day screenshot retention). claude-cu fixes through `2e1c` and `5d4144f1` (tool search on, card parser).
+**Pushed:** `pane/auto-mode` on `private` is this branch's newest commit (see `git log -1`). Full check before the flush:
+see the commit message. Everything below is in it.
 
-**Building.** CUVT (Opus): a virtual terminal for the claude-cu arm; live runs at 15:23 and 15:25Z reached the approval card and
-pressed Down, then lost the card because Claude Code redraws by cursor moves (raw tail in `sitting-1017c/approval-block-cu4.json`).
-XD1R (Opus) fixes what XD1's review found in the cross-window drag. Its probe had sent Apple events to TextEdit. XL1B (Codex): the Excel tab-reorder
-post-check and its probe. Then: XD1 and XL1 probes live, claude-cu live, sleight's final claim run, competitor top-ups, the claude-cu
-claim run, the browser race, the release pass and the tag.
+**Merged today** (each with Sonnet-high review rounds): WD1 (window-drag grader), DG1+DG1R (drag by element number or text
+selection; replays of selection or line-end drags need `--allow-positions`), IT2+IT2R (before typing after a field click, read the
+engine's focused-element line; a different focused element stops with a setValue hint), FL1+FL1R (repeated notices don't mention an API,
+folds only where the document exposes text; screenshot hint once per window), HY1B-HY1E (pass hygiene, which closes only windows that
+appeared in apps the pass touched and quits what it launched, never answering a prompt; snapshots only between tasks, temp sweep, 7-day
+screenshot retention), XD1+XD1R (`drag` with `toWindowId`: AX two-area move that confirms B before cutting A and rolls B back,
+then posted drag, then foreground), XL1B+XL1R (a note when a click moves the clicked sibling), the menu-continuation splitter half
+of LA1 (`20155db3`), and OPEN_FAST on by default (=0 for A/B baselines). WARM_ENGINE stays opt-in: as a default it timed out
+tests/lease-launcher.test.mjs's stop-then-lazy-start test (20 s), possibly a real hang after `/sleight stop`, so find why first. LA1's in-call lease adoption failed two
+safety reviews (it could type into a window it didn't verify) and was dropped; branches `arch/la1`, `arch/la1r` stay on `private`
+for reference only.
 
-**Live results today** (`~/Projects/sleight-wt/sitting-1017b/`, `sitting-1017c/`): the flag A/B and the per-flag Office runs (n=3,
-pre-FL1 build). RB1's fold made word-edit ~40% slower (99, 133, 118 s against 48, 91, 82); SK1 alone ran excel-edit at 50 to 53 s
-(no flags: fail, 79, 61). SH1 and CP1 are within noise. No flag becomes a default yet; SK1 on Excel is rechecked in the final claim
-run. textedit-window-drag, graded for the first time, failed 0/2: sleight had no cross-window drag (XD1). IT1's 250 ms wait didn't
-fix field focus (replaced by IT2).
+**claude-cu arm works** (first full claim pass 15:51-16:21Z, 9/9). Its harness fixes, in order: tool search left on and the task
+sent 2.5 s after the computer-use connect line; a virtual terminal (`bench/world/arms/claude-cu/terminal.mjs`); card matching
+whitespace-insensitive; Down and Enter in one write (Claude Code resets the select to Deny on re-render); the hook's real tool
+names; a false dialog stop on Claude's own prose fixed; the PreToolUse hook records the request_access reason and apps
+(`access-<session>.json`) so an unboxed reason line is admitted only when it matches and the card's apps must be the requested
+ones; textedit-calculator grants the clipboard, Finder tasks grant fileAccess. The claude-cu arm hides other apps while it works
+(Claude Code's default). The owner OK'd quitting a Continuity Camera onboarding overlay (`ContinuityCaptureOnboardingUI`) that sat
+over Calculator.
 
-**The native claim** (9 tasks in bench/claim-tasks.txt; `node bench/claim-score.mjs`, exclusions in bench/claim-exclusions.json).
-Competitor rows are from 2026-10-17 04:03 to 06:54Z. sleight on the newest build is fastest on 6 of 9, expected seconds against
-the best other arm: calculator-click 10 (lcu 11), calculator-menu 12 (lcu 15), textedit-drag 67 at 2/3 (nobody else passes),
-finder-move 31 (Codex 40), word-edit 85 at 3/3 (lcu 120; it was 509 at 1/3 on the build before), excel-edit 110 (Codex 136).
-It loses textedit-save 14 (lcu 11, with one run at 21.9 s and the others at 8.8 and 10.7), preview-read 7 (Peekaboo 4, lcu 6) and
-textedit-calculator 40 (lcu 33, with runs of 39.7, 25.2 and 53.6). Against the build before, calculator-click (7), textedit-save (11),
-textedit-drag (44, 3/3) and textedit-calculator (31) got slower, within these tasks' run-to-run spread at 3 runs.
-sleight is the only arm with a time on all 9 (lcu, Codex, Cua 8/9, Peekaboo 4/9), so its total is lowest. "Fastest" also needs 5
-runs where sleight and an arm are within 20% (calculator-click, preview-read against lcu, textedit-calculator, and borderline
-calculator-menu, textedit-save, excel-edit), so today's wording is "completed every task, fastest on 6 of 9". The post discloses that
-the suite is sleight's own and which claim-task traces its fixes came from. Competitors ran defaults, and Codex runs gpt-6-luna.
-Claude's own computer use hasn't run (item CU1), so the claim isn't complete. No post has gone out, and the film waits (owner).
+**Claim score** (`node bench/claim-score.mjs --results ~/Projects/sleight/bench/results`, saved in
+`~/Projects/sleight-wt/sitting-1017c/claim-score-cu.txt`, exclusions committed with reasons). Expected s (passes/runs):
+sleight on the 11:53 build is fastest on 5 of 9: calculator-click 10, calculator-menu 12, textedit-drag 67 (claude-cu 71),
+finder-move 31 (claude-cu 39), word-edit 85 (claude-cu 102). It loses textedit-save 14 (lcu 11), preview-read 7 (Peekaboo 4),
+textedit-calculator 40 (lcu 33) and excel-edit 110 (claude-cu 54). Lowest total: sleight 376 against claude-cu 476; every other arm
+fails a task. Claude CU per task: 15, 30, 104, 71 (2/3), 39, 16, 45, 102, 54. The 5/9 is thin, and the final run's result sets the wording.
 
-**Opt-in flags** (not defaults): `SLEIGHT_WARM_ENGINE=1`, `SLEIGHT_OPEN_FAST=1`, `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot`,
-`SLEIGHT_COMPACT_TOOLBARS=1`, `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner). WARM_ENGINE and OPEN_FAST saved
-~1 s per task with no downside seen (Fable); they become defaults with the final claim build unless the claim run says otherwise.
+**Next, in order (all live work needs the owner away):**
+1. sleight's final claim run on this build, 9 tasks with 5 runs where any arm is within 20%. After it come the competitor top-ups to 5 runs
+   (lcu on calculator-click, textedit-save, preview-read and textedit-calculator, and Codex on excel-edit). Run with `claim.sh`'s pattern
+   (`~/Projects/sleight-wt/sitting-1017c/claim-cu.sh` is the copy with the exit-code fix, with repo set to the main checkout).
+2. The Excel probe (`CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/xl1-probe.mjs --live --owner-away`): its
+   16:27Z run stopped on "Foreign or ambiguous app window"; `b1c4292b` adds a window diagnostic and path-tolerant cleanup, not yet
+   run. Its result picks how to prevent the tab swap (arm D, an AX press, is the likely categorical fix). Excel is the biggest gap.
+3. The cross-window drag probe (`node bench/xd1-probe.mjs /private/tmp/<results>.json`): its 16:48Z V1 trial moved nothing and its
+   cleanup went unconfirmed; results in `/private/tmp/sleight-xd1-results-1017.json`, fixtures kept in
+   `/private/tmp/sleight-xd1-probe-2C5gFp`. The stale live lock it kept was removed at 16:52:16Z (no process held it).
+4. On finder-move, Fable found sleight thinks 2.3-4.1K tokens per run against claude-cu's 0.4K. A/B the lean skill, 5 runs.
+5. The real-window browser race (Chrome, Helium, Firefox, Safari; about 2 h, harness never run live), the release pass, the
+   owner's turbo check, the tag.
 
-**Studies of 2026-10-17** (reports in that session's transcript; scratch folders kept):
-- Fable, preview-read (`/private/tmp/claude-501/fable-why/`): with only a text tree, Haiku spends ~160 turn-2 thinking tokens
-  checking it; a matching screenshot took that to 0 in 5/6 replays, output 478 to 312 tokens. SH1 follows from it.
-- Fable, token audit (`/private/tmp/claude-501/fable-audit/`): on 8 of 9 tasks Haiku with sleight already uses fewer turns and
-  less thinking than any Claude competitor. Largest costs per suite pass: document text the tree doesn't expose, with no screenshot
-  path (~33 s, word-edit), big ribbon results (~31 s, correlational), recovery turns (~14 s), drag coordinates (~10 s), the 5.9 KB
-  confirmations policy (~8 s). Items SK1, RB1, RF1, DG1, CP1.
-- Fable, engine input (`/private/tmp/claude-501/fable-input/`): the engine posts events to the app's pid and doesn't set focus.
-  Word typing goes to the body because Office's field takes focus after the click returns (high confidence). Excel's tab swap is a
-  stale mouseDown after the rename (medium). Item IT1, plus a live probe (a balancing leftMouseUp before the tab click, 3 runs).
-- Fable, claude-cu arm (`/private/tmp/claude-501/fable-cu/`, live.mjs written, not run): the arm's DISABLE_TELEMETRY/DO_NOT_TRACK
-  turn off the flag that creates the computer-use server, and the prompt gate regex misses a placeholder. The owner approved the
-  harness pressing the app card for allowlisted apps (LAWS, 2026-10-17). Item CU1.
-- HID idle (overnight): engine clicks left it untouched in 10 of 10, and keys can reset it. Navigation by key can still stop.
+**Fable studies today** (reports in this session's transcript): categorical flag rule (built as FL1); cross-window drag and Excel
+tabs (built as XD1, XL1; in 10/10 runs a tab click right after a rename dragged the clicked tab to the end, refuting the stale
+mouseDown theory); why claude-cu beat sleight (tool time equal; sleight loses on model thinking in finder-move, on lease and
+menu stops in textedit-calculator, and on the Excel tab swap).
 
-- Fable, categorical flag rule (A/B traces): any repeated notice naming `disableDiffing` pushed Haiku into disableDiffing reads plus
-  sleeps; the ribbon fold fired only on Word/Excel and hid where they act, and the hint repeated on Excel results. Built as FL1.
-- Fable, cross-window drag and Excel tabs: XD1's design (toWindowId, three paths, per-window guards, a 4-variant probe). In 10/10
-  runs a tab click right after a rename dragged the clicked tab to the end, which refutes the stale-mouseDown theory. Built as XL1.
+**Opt-in flags still opt-in:** `SLEIGHT_WARM_ENGINE=1`, `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
+build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
+`SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
 
-**Queued, not started:** none. Items live in `~/Projects/sleight-wt/ledger/queue/tt/`. Run `ls ledger/claims` before reusing an ID.
-
-**Owner items.** Decide on publishing once claude-cu and the browser race have run. The turbo live check before the tag. Leftover
-windows from today's testing were cleared (Mail and Terminal quit on the owner's OK); the Microsoft Error Reporting window is theirs
-to read or dismiss.
+**Owner items.** Decide on publishing once the browser race has run. The turbo live check before the tag. The Microsoft Error
+Reporting window from an earlier Office crash is theirs to read or dismiss.
 
 **Gotchas from 2026-10-17.** Never send Apple events to Office from this session (Excel had no Automation grant and a macOS prompt
 appeared). Quit fixture apps with NSRunningApplication and answer their own Don't Save sheet or dialog by System Events. An
