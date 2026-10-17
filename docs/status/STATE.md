@@ -38,6 +38,12 @@ Next session: check each branch for commits (`git log 369bc9a2..worktree-agent-<
 A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
 sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
 
+**Queued for the next session (owner asked, 2026-10-17), after the loss-fix A/Bs.** Astra-style live measurement probes (headless
+Codex investigator, `~/Projects/sleight-wt/ledger/astra-*.md` for the brief format) on what the Fable studies couldn't determine:
+why Haiku thinks on turn 2 in preview-read (vary result order and content), the 625 ms boot and exit split against Peekaboo's 511 ms,
+the cost of a cheap guard check against a 470 ms full Excel read, generic engine-only ways around the Excel tab swap, and a
+clean-room teardown of Peekaboo's `see`.
+
 **Browser race (real windows), started.** Harness `bench/fowl/rounds.sh --world --real-browser <chrome|helium|firefox|safari>
 --surface <arm> --model haiku --effort high`; arms sleight-turbo (Chrome, Helium), sleight (Safari, Firefox: engine path, now with
 `SLEIGHT_TURBO=0`), lcu, cua, peekaboo (from Terminal.app), codex. Firefox, sleight: round 1 5/12 (harness bugs), round 2 12/12
