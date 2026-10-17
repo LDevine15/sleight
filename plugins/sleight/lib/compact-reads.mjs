@@ -137,6 +137,23 @@ export function lineDiff(before, after) {
 const folderPath = value => value.startsWith('/') || value.startsWith('~/');
 const baseName = value => value && !/[\/]/.test(value) && !['.', '..'].includes(value);
 
+// A click's locator: a bare string, or an object with id, label or line, where { id, label } together
+// means the element with both (excel-edit-5, 2026-10-17). Numbers are parsed where they are used.
+function clickLocator(args) {
+  const bare = /^\s*(['"])([^'"\\]*)\1\s*(?:,|$)/.exec(args);
+  if (bare) return { bare: bare[2] };
+  const object = /^\s*\{([^{}]*)\}?/.exec(args)?.[1];
+  if (object === undefined) return;
+  const fields = {};
+  for (const field of object.matchAll(/(?:^|,)\s*(label|id|line)\s*:\s*(['"])([^'"\\]*)\2\s*(?=,|$)/g)) fields[field[1]] = field[3];
+  return Object.keys(fields).length ? fields : undefined;
+}
+
+// Bare strings match a label or an ID, as the guard does; object fields must all match.
+const locatorMatches = (locator, body) => locator.bare !== undefined ? hasLabel(body, locator.bare) || hasIdentifier(body, locator.bare)
+  : (locator.id === undefined || hasIdentifier(body, locator.id)) && (locator.label === undefined || hasLabel(body, locator.label)) &&
+    (locator.line === undefined || body === locator.line);
+
 // Recognize literal native calls without treating strings or comments as actions. This is
 // advisory, like the window headers themselves; computed methods and aliases are not receipts.
 function actionKind(code, before) {
@@ -179,10 +196,9 @@ function actionKind(code, before) {
       const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
       const line = number && before?.lines.find(line => parse(line).num === Number(number));
       const target = line && parse(line).key.trim();
-      const named = /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"]([^'"\\]*)['"]/.exec(args)?.[1];
-      const namedTargets = named && before?.lines.map(line => parse(line).key.trim())
-        .filter(line => hasLabel(line, named) || hasIdentifier(line, named));
-      reorders ||= [named, ...[target, ...(namedTargets ?? [])].filter(Boolean).flatMap(body =>
+      const locator = clickLocator(args);
+      const namedTargets = locator && before?.lines.map(line => parse(line).key.trim()).filter(line => locatorMatches(locator, line));
+      reorders ||= [locator?.bare, locator?.label, locator?.id, locator?.line, ...[target, ...(namedTargets ?? [])].filter(Boolean).flatMap(body =>
         [describeSibling({ body })?.label, /(?:^|, )ID: ([^,]+)/.exec(body)?.[1]])]
         .some(label => label && /move|up|down|sort|order|rank/i.test(label));
       // ID and first-call clicks have no numbered line. A following edit on the same handle
@@ -193,8 +209,8 @@ function actionKind(code, before) {
         (!/^(?:[^(:]*button|menu item|row|link)\b/.test(target) && /^[^(,:]+\([^)]*\bsettable\b[^)]*\).*\bValue:/.test(target))
         : !before || followsEdit;
       if (editable) editableClicks.add(call);
-      isSave = (!!target && hasLabel(target, 'Save')) ||
-        /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"](?:Save|button Save)['"]\s*\}?\s*$/.test(args);
+      const locatorValue = locator && (locator.bare ?? locator.label ?? locator.id ?? locator.line);
+      isSave = (!!target && hasLabel(target, 'Save')) || ['Save', 'button Save'].includes(locatorValue);
       navigates ||= !isSave && !editable;
     }
     if (call[1] === 'typeText' && folderHandle && receiver(call) === folderHandle) {
@@ -417,7 +433,9 @@ function describeSibling(node) {
     /^([a-z]+) (.+)$/.exec(node.body);
   if (!match) return;
   const body = match[2].replace(/^\([^)]*\)\s*/, '').replace(/^Selected, /, '');
-  const label = /^(?:Description: )?(.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(body)?.[1];
+  // Excel's sheet tabs carry empty fields after the title ("Inventory, , Used range: A1 to D4, Description:
+  // Inventory"), which put the whole line into excel-edit-1's swap note (2026-10-17).
+  const label = /^(?:Description: )?(.*?)(?=, ,|, (?:Value|Secondary Actions|ID|Help|Details|Description):|$)/.exec(body)?.[1];
   return label && { role: match[1], label };
 }
 
@@ -457,8 +475,12 @@ function swappedSiblings(before, after) {
   return swaps.length === 1 ? swaps[0] : undefined;
 }
 
+// Undo first: in excel-edit-3 (2026-10-17) Cmd+Z restored a tab swap in one call, while runs 1 and 5
+// spent 20 to 25 s in a Move or Copy dialog.
+const RESTORE_ORDER = "if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.";
+
 function siblingSwapNote(swap) {
-  return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; if that wasn't intended, fix the order with the app's move command.`;
+  return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; ${RESTORE_ORDER}`;
 }
 
 // Selection and AX numbering can change on a click; sibling membership cannot.
@@ -489,30 +511,37 @@ function clickLists(lines) {
   return found;
 }
 
-function clickedSibling(action) {
-  if (!action?.before || action.before.incomplete || action.before.degraded) return;
-  const calls = [...maskCode(action.code).matchAll(/\.\s*click\s*\(/g)];
-  if (calls.length !== 1) return;
-  const args = action.code.slice(calls[0].index + calls[0][0].length).split(')')[0];
-  const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
-  const named = /^\s*(?:\{\s*(label|id|line)\s*:\s*)?(['"])([^'"\\]*)\2\s*\}?\s*(?:,|$)/.exec(args);
-  const targets = action.before.lines.filter(line => {
-    const parsed = parse(line), body = parsed.key.trim();
-    return parsed.num !== undefined && (number ? parsed.num === Number(number) : named &&
-      (named[1] === 'id' ? hasIdentifier(body, named[3]) : named[1] === 'line' ? body === named[3] : hasLabel(body, named[3])));
-  });
-  if (targets.length !== 1) return;
-  const num = parse(targets[0]).num;
-  for (const [key, matches] of clickLists(action.before.lines)) {
-    if (matches.length !== 1) continue;
-    const index = matches[0].findIndex(child => child.num === num);
-    if (index >= 0) {
+// Every click in the call whose target sits in a sibling list. A call with other clicks counts too: in
+// excel-edit-2 (2026-10-17) click(7) plus a Name Box click swapped the sheet tabs with no note, and
+// Claude saved the wrong order.
+function clickedSiblings(action) {
+  if (!action?.before || action.before.incomplete || action.before.degraded) return [];
+  const lists = clickLists(action.before.lines), clicks = [];
+  for (const call of maskCode(action.code).matchAll(/\.\s*click\s*\(/g)) {
+    const args = action.code.slice(call.index + call[0].length).split(')')[0];
+    const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
+    const locator = !number && clickLocator(args);
+    // A bare string resolves by label alone here, as it did before { id, label }.
+    const resolve = locator?.bare !== undefined ? { label: locator.bare } : locator;
+    const targets = action.before.lines.filter(line => {
+      const parsed = parse(line), body = parsed.key.trim();
+      return parsed.num !== undefined && (number ? parsed.num === Number(number) : !!resolve && locatorMatches(resolve, body));
+    });
+    if (targets.length !== 1) continue;
+    const num = parse(targets[0]).num;
+    if (clicks.some(click => click.num === num)) continue;
+    for (const [key, matches] of lists) {
+      if (matches.length !== 1) continue;
+      const index = matches[0].findIndex(child => child.num === num);
+      if (index < 0) continue;
       const target = matches[0][index];
       const label = /(?:^|, )Description: (.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(target.body)?.[1] ?? target.description.label;
-      return { key, target: target.key, label, position: index + 1, order: matches[0].map(child => child.key),
-        window: swapDocumentKey(action.before.window) };
+      clicks.push({ num, key, target: target.key, label, position: index + 1, order: matches[0].map(child => child.key),
+        window: swapDocumentKey(action.before.window) });
+      break;
     }
   }
+  return clicks;
 }
 
 // Only the clicked item may have moved: another sibling jumping across it is not the click's doing.
@@ -522,7 +551,7 @@ function clickMoveNote(click, observation) {
   const order = matches[0].map(child => child.key), position = order.indexOf(click.target) + 1;
   const others = keys => JSON.stringify(keys.filter(key => key !== click.target));
   if (position && position !== click.position && others(order) === others(click.order))
-    return `sleight: this click moved ${click.label} from position ${click.position} to ${position}; if that wasn't intended, restore the order before saving`;
+    return `sleight: the click on ${click.label} moved it from position ${click.position} to ${position}; ${RESTORE_ORDER}`;
 }
 
 // Reminders survive an edited title marker; input guards and document grants still use exact identity.
@@ -567,15 +596,22 @@ function resultNote(action, after, failed, failure) {
   }
   let saved;
   if (action.save) {
-    const fileWritten = sameDocument && before.window.app === after.window.app && before.window.title === after.window.title &&
-      action.fileTime !== undefined && (fileTime(after.window.url) ?? -Infinity) > (action.fileTime ?? -Infinity);
+    // Without a standard-window read just before, the app's last read of the same document (app, title
+    // without its Edited marker, file URL) and that file's time at the start of this call stand in.
+    const unedited = title => title.replace(/(?: — | - )Edited$/, '');
+    const base = !sameDocument && after && /^standard window\b/.test(after.root) && after.window.url?.startsWith('file://') &&
+      (!before || before.window.app === after.window.app) &&
+      action.saveBases?.find(base => base.window.app === after.window.app && base.window.url === after.window.url &&
+        unedited(base.window.title) === unedited(after.window.title));
+    const fileWritten = sameDocument ? before.window.app === after.window.app && before.window.title === after.window.title &&
+      action.fileTime !== undefined && (fileTime(after.window.url) ?? -Infinity) > (action.fileTime ?? -Infinity)
+      : !!base && typeof base.fileTime === 'number' && (fileTime(after.window.url) ?? -Infinity) > base.fileTime;
     // A degraded or incomplete trailing read can't show the save state, but the same window's file changing on disk
     // during the call still can. "not confirmed (degraded read)" after a save that worked sent Claude through six
     // checking turns, about 17 s of a 38.5 s textedit-calculator run (Fable study, 2026-10-17).
     const readIssue = degradedRead ? 'degraded read' : incomplete ? 'incomplete read' : degraded ? 'degraded read' : undefined;
     const unavailable = failed ? 'call failed' : action.overlap ? 'overlapping calls' : action.mixedSave && !(fileWritten && action.fileSaveSafe) ? 'mixed save targets' : !after ? invalidRead ?? 'no read after input'
-      : !before ? 'no earlier read' : before.window.app !== after.window.app ? 'another app'
-        : fileWritten ? undefined : readIssue;
+      : fileWritten ? undefined : !before ? 'no earlier read' : before.window.app !== after.window.app ? 'another app' : readIssue;
     const document = after && /^standard window\b/.test(after.root) && !/\b(?:save|open)-panel\b/.test(after.root);
     const editedTitleCleared = sameDocument && edited(before.window.title) && !edited(after.window.title) &&
       before.window.title.replace(/(?: — | - )Edited$/, '') === after.window.title && before.window.url === after.window.url;
@@ -593,7 +629,7 @@ function resultNote(action, after, failed, failure) {
     else saved = unavailable ? `not confirmed (${unavailable})`
       : readIssue ? `observed ${JSON.stringify(after.window.url)} (its file on disk changed during this call)`
       : !document ? 'not confirmed (no document save state change seen)'
-      : !sameDocument && !named ? `not confirmed (${after.window.url ? 'different document' : 'document identity unavailable'})`
+      : !sameDocument && !named && !fileWritten ? `not confirmed (${after.window.url ? 'different document' : 'document identity unavailable'})`
       : modifiedCleared || editedTitleCleared ? `observed ${JSON.stringify(after.window.url)} (modified state cleared; cause unknown)`
       : named ? `observed ${JSON.stringify(after.window.url)} (named file URL)`
       : fileWritten ? `observed ${JSON.stringify(after.window.url)} (its file on disk changed during this call)` : 'not confirmed (no document save state change seen)';
@@ -967,6 +1003,9 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   let latest, observedInResult, observationId = 0;
+  // app -> its last standard-window read of a file document, the save baseline when the read just
+  // before a save is a menu or nothing at all.
+  const documents = new Map();
   function observe(tree, window, lines) {
     const root = parse(lines[1] ?? '').key;
     const degraded = (ELEMENT.test(lines[1] ?? '') && !/^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(root)) ||
@@ -976,6 +1015,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       incomplete: !ELEMENT.test(lines[1] ?? '') || /…\(\d+\)|sleight: (?:lines changed|no change since)/.test(tree) };
     observedInResult = observation;
     if (!degraded) latest = observation;
+    if (/^standard window\b/.test(root) && window.url?.startsWith('file://')) documents.set(window.app, observation);
     return observation;
   }
 
@@ -1257,13 +1297,15 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       let moved;
       if (safeClickRead) {
         const key = swapDocumentKey(observation.window), pending = pendingClicks.get(key);
-        // A save may expose a delayed move; other new input ends attribution to the earlier click.
-        const click = action ? clickedSibling(action) ?? (action.save ? pending : undefined) : pending;
+        // A save may expose a delayed move; other new input ends attribution to the earlier clicks.
+        const own = action ? clickedSiblings(action) : [];
+        const clicks = action ? (own.length ? own : action.save ? pending : undefined) : pending;
         if (action) pendingClicks.clear();
         else pendingClicks.delete(key);
-        if (click?.window === key) {
-          moved = clickMoveNote(click, observation);
-          if (!moved && action && click !== pending) pendingClicks.set(key, click);
+        const here = clicks?.filter(click => click.window === key) ?? [];
+        if (here.length) {
+          moved = here.map(click => clickMoveNote(click, observation)).find(Boolean);
+          if (!moved && action && clicks !== pending) pendingClicks.set(key, here);
         }
       }
       if (failed || stopped || action?.overlap || action && (!observation || observation.invalid)) pendingSwaps.clear();
@@ -1344,6 +1386,12 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     beginAction(code) {
       const kind = actionKind(code, latest);
       if (kind?.save && latest?.window.url?.startsWith('file://')) kind.fileTime = fileTime(latest.window.url);
+      // An open menu read leaves no standard-window baseline: textedit-save-4 (2026-10-17) said "saved: not
+      // confirmed (no earlier read)" though the file was written, and Haiku spent four turns checking.
+      // Each app's last document read, with its file's time now, can still show the file written.
+      if (kind?.save && !/^standard window\b/.test(latest?.root ?? '')) {
+        kind.saveBases = [...documents.values()].map(observation => ({ window: observation.window, fileTime: fileTime(observation.window.url) }));
+      }
       return kind && { ...kind, code, before: latest };
     },
     // What Claude takes these element numbers to be in this window, from what it was last shown:
@@ -1429,6 +1477,6 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     },
     // Result attribution resets independently of the element history used by the guard.
     // An engine restart or js_reset also makes each window's next acquisition whole.
-    reset() { latest = observedInResult = undefined; for (const entry of seen.values()) entry.stale = true; },
+    reset() { latest = observedInResult = undefined; documents.clear(); for (const entry of seen.values()) entry.stale = true; },
   };
 }

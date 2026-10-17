@@ -18,7 +18,7 @@ function result(before, after, code = 'await app.click(78)', options = {}) {
 
 test('a click that swaps two recorded sibling lines names both and gives recovery advice', () => {
   const out = result(rows, swapped);
-  assert.match(out, /clicking also swapped Review and View; tabs now: View, Review; if that wasn't intended, fix the order with the app's move command\./);
+  assert.match(out, /clicking also swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
   assert.equal(out.match(/clicking also swapped/g)?.length, 1);
 });
 
@@ -35,7 +35,7 @@ for (const code of ['await app.click(7)', 'await app.click({ label: "Inventory" 
 test('swap advice allows intentional reorders, including a multi-click call', () => {
   for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
     const out = result(rows, swapped, code);
-    assert.match(out, /swapped Review and View; tabs now: View, Review; if that wasn't intended, fix the order with the app's move command\./);
+    assert.match(out, /swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
     assert.doesNotMatch(out, /shouldn't reorder/);
     assert.equal(out.match(/swapped Review and View/g)?.length, 1);
   }
@@ -166,7 +166,7 @@ for (const code of ['await app.click(7)', mixedClick]) {
   test(`active-sheet parent descriptions do not hide a swap: ${code}`, () => {
     const out = result(sheetRows('Review 16f3255b'), sheetRows('Inventory', true), code);
     assert.match(out, /swapped Inventory and Review 16f3255b; tabs now: Review 16f3255b, Inventory;/);
-    assert.match(out, /fix the order with the app's move command\./);
+    assert.match(out, /Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
     assert.doesNotMatch(out, /undo/);
   });
 }

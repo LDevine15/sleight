@@ -6,7 +6,7 @@ const tree = (order = ['Alpha', 'Beta', 'Gamma'], selected = 'Beta', title = 'Dr
   `Window: "${title}", App: Editor.\n0 standard window ${title}\n\t1 group Pages\n` +
   order.map((name, i) => `\t\t${i + 2} button ${name === selected ? 'Selected, ' : ''}${name}`).join('\n');
 const text = value => ({ type: 'text', text: value });
-const moved = /this click moved Alpha from position 1 to 3; if that wasn't intended, restore the order before saving/;
+const moved = /the click on Alpha moved it from position 1 to 3; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./;
 function session() {
   const c = createReadCompactor();
   c.process([text(tree())]);
@@ -24,16 +24,16 @@ for (const code of ['await app.click(2)', 'await app.click({ label: "Alpha" })',
     const { read } = session();
     const out = read(tree(['Beta', 'Gamma', 'Alpha'], 'Alpha'), code);
     assert.match(out, moved);
-    assert.equal(out.match(/this click moved/g)?.length, 1);
+    assert.equal(out.match(/moved it from/g)?.length, 1);
   });
 }
 
 test('a move first visible on the next read of that window is reported once', () => {
   const { read } = session();
-  assert.doesNotMatch(read(tree(), 'await app.click(2)'), /this click moved/);
-  assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'], 'Alpha', 'Other')), /this click moved/);
+  assert.doesNotMatch(read(tree(), 'await app.click(2)'), /moved it from/);
+  assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'], 'Alpha', 'Other')), /moved it from/);
   assert.match(read(tree(['Beta', 'Gamma', 'Alpha'], 'Alpha')), moved);
-  assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'], 'Alpha')), /this click moved/);
+  assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'], 'Alpha')), /moved it from/);
 });
 
 test('the delayed move can be observed by a plain full read or a save call', () => {
@@ -55,20 +55,20 @@ test('selection alone, insertions, ambiguous labels and a click outside the list
     [tree(), tree(['Beta', 'Gamma', 'Alpha']), 'await app.click([20, 30])'],
   ]) {
     const { c, read } = session(); c.process([text(before)]);
-    assert.doesNotMatch(read(after, code), /this click moved/);
+    assert.doesNotMatch(read(after, code), /moved it from/);
   }
 });
 
 test('failed, stopped, overlapping, incomplete and different-window clicks never arm a move notice', () => {
   for (const options of [{ failed: true }, { overlap: true }, { forceFull: true }]) {
     const { read } = session();
-    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha']), 'await app.click(2)', options), /this click moved/);
-    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'])), /this click moved/);
+    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha']), 'await app.click(2)', options), /moved it from/);
+    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'])), /moved it from/);
   }
   for (const value of [tree() + '\n…(20)', 'Input lease stopped\n' + tree(), tree(undefined, 'Alpha', 'Other')]) {
     const { read } = session();
-    assert.doesNotMatch(read(value, 'await app.click(2)'), /this click moved/);
-    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'])), /this click moved/);
+    assert.doesNotMatch(read(value, 'await app.click(2)'), /moved it from/);
+    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'])), /moved it from/);
   }
 });
 
@@ -77,7 +77,7 @@ test('a subsequent input or an unchanged next read expires delayed attribution',
     const { read } = session();
     read(tree(), 'await app.click(2)');
     read(tree(), code);
-    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'])), /this click moved/);
+    assert.doesNotMatch(read(tree(['Beta', 'Gamma', 'Alpha'])), /moved it from/);
   }
 });
 
@@ -92,15 +92,15 @@ test('full attribute-rich sibling lines report the label rather than help or ran
 test('another sibling moving across the clicked one does not blame the click', () => {
   const { read } = session();
   const out = read(tree(['Gamma', 'Alpha', 'Beta']), 'await app.click(2)');
-  assert.doesNotMatch(out, /this click moved/);
-  assert.doesNotMatch(read(tree(['Gamma', 'Alpha', 'Beta'])), /this click moved/);
+  assert.doesNotMatch(out, /moved it from/);
+  assert.doesNotMatch(read(tree(['Gamma', 'Alpha', 'Beta'])), /moved it from/);
 });
 
 test('a two-way swap carries only the swap line', () => {
   const { read } = session();
   const out = read(tree(['Beta', 'Alpha', 'Gamma'], 'Alpha'), 'await app.click(2)');
   assert.match(out, /clicking also swapped Alpha and Beta/);
-  assert.doesNotMatch(out, /this click moved/);
+  assert.doesNotMatch(out, /moved it from/);
 });
 
 test('a move that adds an Edited marker to the title is still reported', () => {

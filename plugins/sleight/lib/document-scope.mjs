@@ -126,6 +126,16 @@ function differentFocusTarget(text, before) {
 export const documentKey = window => window && JSON.stringify(window);
 export const documentLabel = window => `${JSON.stringify(window.title)} in ${window.app}${window.url ? ` (${window.url})` : ''}`;
 
+// A menu open in front of a window: its header has the window's title and app but no URL, and the root is
+// the menu ("0 menu …") or its named parent with an unnamed menu below ("0 Format, Secondary Actions:
+// Cancel, Pick" then "\t1 menu").
+export function menuRoot(text) {
+  const lines = String(text ?? '').split('\n'), at = lines.findIndex(line => /^0 /.test(line));
+  if (at < 0) return false;
+  return /^0 menu(?: (?!bar\b)|,|$)/.test(lines[at]) ||
+    (/(?:^0 |, )Secondary Actions: (?:[^,]*, )*Cancel(?:,|$)/.test(lines[at]) && /^\t1 menu(?: |,|$)/.test(lines[at + 1] ?? ''));
+}
+
 // Title always; URL only when the expected window named one.
 export function windowMatches(expected, observed) {
   if (!expected || !observed || expected.title !== observed.title) return false;
@@ -470,13 +480,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           const spec = args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : undefined;
           const bare = name === 'click' && typeof args[0] === 'string' && !/^\\d+$/.test(args[0]) ? args[0] : undefined;
           const byId = typeof spec?.id === 'string' || typeof spec?.label === 'string' || typeof spec?.line === 'string' || bare !== undefined;
+          // { id, label } together: the elements with both (excel-edit-5, 2026-10-17: ten menu items shared the ID).
           const [kind, target, match] = bare !== undefined ? ['label or ID', bare, hasLabel]
+            : typeof spec?.id === 'string' && typeof spec?.label === 'string' ? ['ID ' + JSON.stringify(spec.id) + ' and label', spec.label, (line, value) => hasIdentifier(line, spec.id) && hasLabel(line, value)]
             : typeof spec?.id === 'string' ? ['ID', spec.id, hasIdentifier]
             : typeof spec?.label === 'string' ? ['label', spec.label, hasLabel] : ['line', spec?.line, (line, value) => line === value];
           const findTarget = lines => {
             let found = [...lines].filter(([, line]) => match(line, target));
             if (bare !== undefined && !found.length) found = [...lines].filter(([, line]) => hasIdentifier(line, target));
-            if (!found.length && kind !== 'line') found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
+            // A bare line carries no ID, so it can't satisfy { id, label }.
+            if (!found.length && kind !== 'line' && !kind.endsWith(' and label')) found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
               !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target);
             return found;
           };

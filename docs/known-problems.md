@@ -21,6 +21,9 @@ our own runs. Dates and engine versions are given where they matter.
   alert and then stopped, 5 now split; the 2 with `.catch()` on an action still stop. None has run live yet. A dialog-close
   continuation also needs HID idle since the dialog was leased, so any mouse or key input after it appeared stops the
   rest, and it stops when the app has a second window with the same title and URL.
+- A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
+  call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
+  URL) on its own: only the continuation checks the native window behind it.
 
 ## The pointer, drags and hover
 
