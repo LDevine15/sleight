@@ -380,7 +380,48 @@ function trimSiblingRows(text) {
   return { text: out.join('\n'), hidden };
 }
 
-export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false } = {}) {
+function trimAcquisition(text) {
+  if (!hasFullTree(text) || !windowFromText(text) || /…\(\d+\)/.test(text)) return;
+  const starts = [...text.matchAll(/^Window: /gm)];
+  if (starts.length > 1) {
+    let out = text.slice(0, starts[0].index);
+    const hidden = new Set();
+    for (let i = 0; i < starts.length; i++) {
+      const section = text.slice(starts[i].index, starts[i + 1]?.index), body = section.replace(/\n+$/, '');
+      const trimmed = trimAcquisition(body);
+      out += trimmed ? trimmed.text + section.slice(body.length) : section;
+      for (const num of trimmed?.hidden ?? []) hidden.add(num);
+    }
+    return hidden.size ? { text: out, hidden } : undefined;
+  }
+  const at = text.search(/^Window: /m), lines = text.slice(at).split('\n');
+  if (!/^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(parse(lines[1]).key)) return;
+  // Unknown continuations may be document text or separate output. Keep them whole.
+  if (lines.slice(2).some(line => line.trim() && !ELEMENT.test(line))) return;
+  const out = lines.slice(0, 2), hidden = new Set(), stack = [];
+  for (const line of lines.slice(2)) {
+    const match = ELEMENT.exec(line);
+    if (!match) { out.push(line); continue; }
+    const depth = match[1].length, key = match[3];
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const menu = /^menu\b/.test(key) || stack.at(-1)?.menu;
+    stack.push({ depth, menu });
+    const actionable = menu || /^(?:[a-z ]*button|text field|text entry area|search field|combo box|check box|checkbox|link|slider|stepper|switch|tab|disclosure triangle|scroll bar)\b/.test(key) ||
+      /\bSecondary Actions:|\([^)]*\b(?:settable|selectable|checkable)\b/.test(key);
+    const value = /\bValue: ?(.*?)(?=, (?:Secondary Actions|ID|Help|Description):|$)/.exec(key)?.[1] ??
+      key.replace(/^(?:static )?text\s*/, '');
+    const shortText = /^(?:static )?text\b/.test(key) && value.length < 80;
+    if (actionable || shortText) out.push(line);
+    else hidden.add(Number(match[2]));
+  }
+  if (!hidden.size) return;
+  out.push('sleight: getAXState({ disableDiffing: true }) gives the full tree.');
+  const compacted = text.slice(0, at) + out.join('\n');
+  return compacted.length < text.length ? { text: compacted, hidden } : undefined;
+}
+
+export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
+  compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map();
@@ -525,7 +566,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, action, failed = false, code, filterMark = FILTERED_MARK } = {}) {
+    process(content, { forceFull = false, acquisition = false, action, failed = false, code, filterMark = FILTERED_MARK } = {}) {
       if (!Array.isArray(content)) return content;
       let filtered;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -541,6 +582,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (filtered?.full) forceFull = true;
       const stopped = content.some(item => item?.type === 'text' &&
         /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
+      if (compactAcquisition && (failed || stopped)) forceFull = true;
+      const firstAcquisition = compactAcquisition && acquisition && !forceFull && !action &&
+        windowFromText(content.filter(item => item?.type === 'text').map(item => item.text).join('\n'));
+      const priorWindows = firstAcquisition && new Set(seen.keys());
       if (filtered && (failed || stopped || action?.overlap)) forceFull = true;
       const visible = filtered?.visible;
       // Only a call that took no input: an action's result needs its tree diff and UI-change note.
@@ -589,12 +634,14 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const note = action && resultNote(action, observedInResult, failed);
       if (note) out.push({ type: 'text', text: note });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
-      if (resultTrim && !forceFull) for (let i = 0; i < out.length; i++) {
+      if ((resultTrim || firstAcquisition) && !forceFull) for (let i = 0; i < out.length; i++) {
         const item = out[i];
         if (item?.type !== 'text' || typeof item.text !== 'string') continue;
-        const trimmed = trimSiblingRows(item.text);
+        const key = documentKey(windowFromText(item.text));
+        const trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text)
+          : resultTrim ? trimSiblingRows(item.text) : undefined;
         if (!trimmed) continue;
-        const entry = seen.get(documentKey(windowFromText(item.text)));
+        const entry = seen.get(key);
         if (entry) {
           entry.valid = new Set([...(entry.valid ?? numbered(entry.lines).map(([num]) => num))].filter(num => !trimmed.hidden.has(num)));
           entry.believed = new Map([...(entry.believed ?? numbered(entry.lines))].filter(([num]) => !trimmed.hidden.has(num)));

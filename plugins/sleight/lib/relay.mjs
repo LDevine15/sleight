@@ -459,6 +459,7 @@ export function createRelay({
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
   leanCalls = process.env.SLEIGHT_LEAN_CALLS === '1',
+  compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   firstCallRules,
   confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,
@@ -506,7 +507,7 @@ export function createRelay({
       });
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
-  let compactor = createReadCompactor({ leanCalls });
+  let compactor = createReadCompactor({ leanCalls, compactAcquisition });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -658,7 +659,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       for (const state of helperStates.values()) clearTimeout(state.timer);
       helperStates.clear();
@@ -3149,7 +3150,8 @@ export function createRelay({
       // it to "no change" sent Claude to a screenshot instead (2026-10-08). Recovery's visible read
       // is full too. The read wrapper decides whether to emit each observation.
       if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(dropRepeatedText(msg.result.content), prompt),
-        { code: jsCode, filterMark: filterMarks.get(msg.id) ?? null, forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
+        { code: jsCode, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
+          forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failed: !closedLast && (resultFailed || !!msg.result?.isError) });
       filterMarks.delete(msg.id);
     }
