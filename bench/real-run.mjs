@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { acquireLiveLock } from './live-lock.mjs';
 import { retryFixtureCleanup } from './real-fixture.mjs';
+import { withElapsed } from './timing.mjs';
 
 // The real suite and default tasks with retained fixtures use this lifecycle.
 // A cleanup failure preserves its fixture and stops the pass, unless cleanupContained
@@ -81,7 +82,9 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       if (verdict?.outcome && !signal?.aborted) result.outcome = verdict.outcome;
       result.reason = dialogReason() || (result.permissionPrompt ? 'macOS permission prompt: stopped' : result.permissionRefusal ? 'computer-use permission refused: stopped' : signal?.aborted ? 'run interrupted' :
         verdict !== true ? verdict?.reason ?? verdict : response.code !== 0 ? response.reason ?? `driver exited ${response.code}` : undefined);
-      result.seconds = Math.round((Date.now() - started) / 100) / 10;
+      const elapsedMs = Date.now() - started;
+      result.seconds = Math.round(elapsedMs / 100) / 10;
+      withElapsed(result.timing, elapsedMs);
     }
   } catch (error) {
     result.passed = false;

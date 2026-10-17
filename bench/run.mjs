@@ -695,19 +695,20 @@ pass: for (let run = 1; run <= runs; run++) {
       if (codexRun?.forbidden.length) verdict = `used ${[...new Set(codexRun.forbidden)].join(' and ')}`;
       if (groupClean) try { await task.cleanup?.(ctx); } catch {} // leaving an app open doesn't change the verdict
       else { controller.abort(new Error('Driver cleanup unconfirmed')); process.exitCode = 1; }
+      const elapsedMs = Date.now() - started;
       results.push({
         arm: armName,
         task: task.id,
         run,
         passed: verdict === true,
         reason: verdict === true ? undefined : scrub(verdict),
-        seconds: Math.round((Date.now() - started) / 100) / 10,
+        seconds: Math.round(elapsedMs / 100) / 10,
         turns: out?.num_turns,
         costUsd: runCost(out), reportedCostUsd: out?.total_cost_usd,
         // Input, cached and output tokens: what a smaller result would save.
         usage: out?.usage && { input: out.usage.input_tokens, cacheRead: out.usage.cache_read_input_tokens,
           cacheWrite: out.usage.cache_creation_input_tokens, output: out.usage.output_tokens },
-        timing: runTiming(out, armName === 'sleight' ? traceTiming(dir) : undefined),
+        timing: runTiming(out, armName === 'sleight' ? traceTiming(dir) : undefined, elapsedMs),
         footprint: cpuUsed,
         // Samples every 5 s of the app's windows: on the current Space, only off it, or none.
         appWindows,
@@ -770,13 +771,14 @@ if (!isDryRun && privatePass) {
   for (const row of results) console.log(`| ${row.arm} | ${row.task} | ${row.run} | ${row.passed} | ${row.seconds} | ${row.turns ?? '–'} | ${row.expectedHash ?? '–'} | ${row.actualHash ?? '–'} |`);
 }
 if (!isDryRun && !privatePass) {
-  console.log('\n| Arm | Task | Passed | Median s | Model s | Engine s | Local tools s | Relay ms | Median turns | CPU sleight s | CPU engine s | CPU client s | CPU other s | API-price cost |');
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  // Tools, outside tools and harness add up to the run's time; API time overlaps them.
+  console.log('\n| Arm | Task | Passed | Median s | Tools s | Outside tools s | Harness s | API s (overlaps) | Engine s | Local tools s | Relay ms | Median turns | CPU sleight s | CPU engine s | CPU client s | CPU other s | API-price cost |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   const median = xs => { const s = xs.filter(x => x != null).sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : '–'; };
   for (const task of selected) {
     for (const armName of armNames) {
       if (ARMS[armName].unsupported) {
-        console.log(`| ${armName} | ${task.id} | not supported | ${Array(11).fill('–').join(' | ')} |`);
+        console.log(`| ${armName} | ${task.id} | not supported | ${Array(14).fill('–').join(' | ')} |`);
         continue;
       }
       const rs = results.filter(r => r.task === task.id && r.arm === armName && !r.skipped);
@@ -785,7 +787,7 @@ if (!isDryRun && !privatePass) {
       // Each arm's own CPU (footprint split): sleight's processes, the engine, the client, other
       // group processes. The driven app and the shared totals stay in the results file.
       const own = key => median(rs.map(r => r.footprint?.split?.[key]));
-      console.log(`| ${armName} | ${task.id} | ${rs.filter(r => r.passed).length}/${rs.length} | ${median(rs.map(r => r.seconds))} | ${ms('modelMs', 1000)} | ${ms('engineMs', 1000)} | ${ms('localMs', 1000)} | ${ms('relayMs', 1)} | ${median(rs.map(r => r.turns))} | ${own('sleight')} | ${own('engine')} | ${own('client')} | ${own('other')} | $${cost.toFixed(2)} |`);
+      console.log(`| ${armName} | ${task.id} | ${rs.filter(r => r.passed).length}/${rs.length} | ${median(rs.map(r => r.seconds))} | ${ms('toolWallMs', 1000)} | ${ms('outsideToolsMs', 1000)} | ${ms('harnessMs', 1000)} | ${ms('modelMs', 1000)} | ${ms('engineMs', 1000)} | ${ms('localMs', 1000)} | ${ms('relayMs', 1)} | ${median(rs.map(r => r.turns))} | ${own('sleight')} | ${own('engine')} | ${own('client')} | ${own('other')} | $${cost.toFixed(2)} |`);
     }
   }
 }
