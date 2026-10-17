@@ -461,7 +461,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     return observation;
   }
 
-  function compact(tree, prefix, action) {
+  function compact(tree, prefix, action, refreshNumbers = false) {
     const window = windowFromText(tree);
     const lines = tree.replace(/\n+$/, '').split('\n');
     if (!window) {
@@ -490,6 +490,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     if (!pairs) return tree;
     // What Claude takes each number to be: the full tree it saw, plus the lines shown since.
     const believed = new Map(before.believed ?? numbered(before.lines));
+    const known = refreshNumbers && new Set(believed.values());
     const valid = new Set(), changes = [];
     let renumbered = 0, fewerAttributes = 0, removedAttributes = 0, addedAttributes = 0, changedPanel = false;
     const removedState = [], addedState = [], removedNodes = new Map(), addedNodes = new Map();
@@ -512,6 +513,9 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (degraded.has(j)) fewerAttributes++;
       if (num !== old[i].num) renumbered++;
       else if (!before.valid || before.valid.has(num)) valid.add(num);
+      if (refreshNumbers && known.has(now[j].key) && (num !== old[i].num || before.valid && !before.valid.has(num))) {
+        changes.push('+ ' + lines[j]); valid.add(num); believed.set(num, now[j].key);
+      }
     }
     let clearedFields = 0, element = false;
     for (const [number, was] of removedNodes) {
@@ -539,7 +543,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       ? `sleight: lines changed since the last full tree you saw for this window (- removed, + added; numbers on + lines are current):\n${changes.join('\n')}`
       : 'sleight: no change since the last full tree you saw for this window' + (renumbered ? ', apart from numbering.' : '.');
     const note = renumbered
-      ? `\nsleight: ${renumbered} other elements have new numbers. Use numbers from + lines above or from a full read. Read the window again with getAXState({ disableDiffing: true }) before acting on any other element; sleight refuses actions on numbers that changed.`
+      ? `\nsleight: ${renumbered} other elements have new numbers. Use numbers from + lines above or from a full read. Read the window again with getAXState() for changed lines with current numbers before acting on any other element; sleight refuses actions on numbers that changed.`
       : '';
     const degradedNote = fewerAttributes ? `\nsleight: ${fewerAttributes} button lines returned fewer attributes. Their unique IDs still match; missing descriptions and help are unavailable in this read.` : '';
     const text = `${header}\n${body}${note}${degradedNote}`;
@@ -551,15 +555,22 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
 
   // Remembers the last full tree in a stretch of output Claude sees: from the
   // last line that starts with a Window header to the end.
-  function remember(text) {
+  function remember(text, action) {
     const starts = [...text.matchAll(/^Window: /gm)];
     if (!starts.length) return;
     const tree = text.slice(starts.at(-1).index).replace(/\n+$/, '');
     const window = windowFromText(tree);
     if (window) {
       const lines = tree.split('\n');
-      seen.set(documentKey(window), { lines, observation: observe(tree, window, lines) });
-      if (starts.length > 1 && !windowFromText(text)) { latest = undefined; observedInResult = { invalid: 'ambiguous window read' }; }
+      const ambiguous = starts.length > 1 && !windowFromText(text);
+      if (!ambiguous && action && observedInResult && !observedInResult.invalid &&
+          observedInResult.lines.join('\n') === tree) return;
+      if (action) {
+        compact(tree, '', action);
+        const entry = seen.get(documentKey(window));
+        entry.valid = undefined; entry.believed = undefined;
+      } else seen.set(documentKey(window), { lines, observation: observe(tree, window, lines) });
+      if (ambiguous) { latest = undefined; observedInResult = { invalid: 'ambiguous window read' }; }
     }
   }
 
@@ -589,7 +600,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, acquisition = false, action, failed = false, failure, code, filterMark = FILTERED_MARK } = {}) {
+    process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, filterMark = FILTERED_MARK } = {}) {
       if (!Array.isArray(content)) return content;
       let filtered;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -602,11 +613,11 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         });
         return text === item.text ? [item] : text ? [{ ...item, text }] : [];
       });
-      if (filtered?.full) forceFull = true;
+      if (filtered?.full) explicitFull = true;
       const stopped = content.some(item => item?.type === 'text' &&
         /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
       if (compactAcquisition && acquisition && (failed || stopped)) forceFull = true;
-      const firstAcquisition = compactAcquisition && acquisition && !forceFull && !action &&
+      const firstAcquisition = compactAcquisition && acquisition && !forceFull && !explicitFull && !action &&
         windowFromText(content.filter(item => item?.type === 'text').map(item => item.text).join('\n'));
       const priorWindows = firstAcquisition && new Set(seen.keys());
       if (filtered && (failed || stopped || action?.overlap)) forceFull = true;
@@ -617,10 +628,22 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
       observedInResult = undefined;
+      const full = forceFull || explicitFull && !filter;
+      const refreshNumbers = typeof code === 'string' && /\.\s*getAXState\s*\(/.test(maskCode(code));
+      const shownTrees = new Set();
+      if (action && full) for (const item of content) {
+        if (item?.type !== 'text') continue;
+        const plain = item.text.replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '');
+        if (hasFullTree(plain)) shownTrees.add(plain.slice(plain.lastIndexOf('Window: ')).replace(/\n+$/, ''));
+      }
       const out = content.flatMap(item => {
         if (item?.type === 'text' && /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? '')) failed = true;
         if (item?.type !== 'text' || typeof item.text !== 'string' || (!item.text.includes(GUARD_MARK) && !item.text.includes(GUARD_OMIT_MARK))) {
-          if (item?.type === 'text' && typeof item.text === 'string') remember(item.text);
+          if (item?.type === 'text' && typeof item.text === 'string') remember(item.text, forceFull ? undefined : action);
+          if (action && hasFullTree(item.text)) {
+            const at = item.text.lastIndexOf('Window: ');
+            shownTrees.add(item.text.slice(at).replace(/\n+$/, ''));
+          }
           return item;
         }
         let out = '', seenText = '', pos = 0;
@@ -630,7 +653,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           const omitted = omittedAt >= 0 && (visibleAt < 0 || omittedAt < visibleAt);
           const at = omitted ? omittedAt : visibleAt;
           const plain = item.text.slice(pos, at < 0 ? undefined : at);
-          remember(plain); seenText += plain; add(plain);
+          remember(plain, forceFull ? undefined : action); seenText += plain; add(plain);
+          if (action && hasFullTree(plain)) shownTrees.add(plain.slice(plain.lastIndexOf('Window: ')).replace(/\n+$/, ''));
           if (at < 0) break;
           const start = at + (omitted ? GUARD_OMIT_MARK : GUARD_MARK).length, end = item.text.indexOf(GUARD_END, start);
           const tree = item.text.slice(start, end < 0 ? undefined : end);
@@ -640,8 +664,21 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             pos = end + GUARD_END.length;
             continue;
           }
+          if (end >= 0 && action && full && !forceFull && !failed && !stopped && !action.overlap && shownTrees.has(tree.replace(/\n+$/, ''))) {
+            remember(tree, action);
+            pos = end + GUARD_END.length;
+            continue;
+          }
           let sent = filter ? filteredTree(tree, visible, shownText) : undefined;
-          sent ??= forceFull ? tree : compact(tree, seenText, action);
+          if (sent === undefined) {
+            sent = forceFull ? tree : compact(tree, seenText, action, refreshNumbers);
+            if (forceFull) remember(tree);
+            if (full) {
+              sent = tree;
+              const entry = seen.get(documentKey(windowFromText(tree) ?? {}));
+              if (entry) { entry.valid = undefined; entry.believed = undefined; }
+            }
+          }
           // A call that acted and ended on exactly the tree Claude saw before it gets that tree whole:
           // "no change" read as if the actions hadn't run, and Claude read again in 2 of 9 traced
           // calculator-click runs (2026-10-10). Claude's own full read earlier in this result is enough.
@@ -652,7 +689,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             const entry = seen.get(documentKey(windowFromText(tree) ?? {}));
             if (entry?.valid) for (const [num, key] of numbered(tree.replace(/\n+$/, '').split('\n'))) { entry.valid.add(num); entry.believed?.set(num, key); }
           }
-          if (forceFull) remember(tree);
+          if (sent === tree) shownTrees.add(tree.replace(/\n+$/, ''));
           if (end < 0 && observedInResult && !observedInResult.invalid) observedInResult.incomplete = true;
           add(sent); seenText += '\n' + sent;
           if (end < 0) break;
@@ -664,7 +701,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         failure ?? { message: failureReason(content) });
       if (note) out.push({ type: 'text', text: note });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
-      if ((resultTrim || firstAcquisition) && !forceFull) for (let i = 0; i < out.length; i++) {
+      if ((resultTrim || firstAcquisition) && !full) for (let i = 0; i < out.length; i++) {
         const item = out[i];
         if (item?.type !== 'text' || typeof item.text !== 'string') continue;
         const key = documentKey(windowFromText(item.text));

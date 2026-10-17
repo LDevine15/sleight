@@ -16,16 +16,17 @@ const tree = (shifted = false) => header + '\n0 standard window Fixture\n' +
   Array.from({ length: 100 }, (_, i) => `\t${i + 1} button Row ${shifted ? i + 1 : i}`).join('\n');
 const filtered = expression => `const state = await app.getAXState(); nodeRepl.write(${expression});`;
 
-async function engine(t, { maxItems, acquire = true } = {}) {
+async function engine(t, { maxItems, acquire = true, valueOnAction = false } = {}) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-filtered-read-')));
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
   const pending = new Map(), actions = [];
-  let id = 0, shifted = false, changed = false, content = [];
-  const current = () => changed ? tree(shifted).replace('"Fixture"', '"Other"') : tree(shifted);
+  let id = 0, shifted = false, changed = false, value = false, content = [];
+  const current = () => (changed ? tree(shifted).replace('"Fixture"', '"Other"') : tree(shifted)) +
+    (valueOnAction ? '\n\t101 text field Value: ' + (value ? 'after' : 'before') : '');
   const write = value => content.push({ type: 'text', text: typeof value === 'string' ? value :
     JSON.stringify(Array.isArray(value) && maxItems !== undefined ? value.slice(0, maxItems) : value) });
-  const raw = { getAXState: async () => current(), click: async n => actions.push(n), pressKey: async key => actions.push(key) };
+  const raw = { getAXState: async () => current(), click: async n => actions.push(n), pressKey: async key => { actions.push(key); value = true; } };
   const context = createContext({ evaluations: 0, cua: {
     getApp: async () => { write(current()); return raw; }, listApps: async () => [],
   }, nodeRepl: { write }, console: { log: (...args) => write(format(...args)) } });
@@ -279,11 +280,11 @@ for (const expression of ['"unrelated"', 'state', 'state.length', '({ rows: stat
   });
 }
 
-test('an explicit full read overrides filtered output', async t => {
+test('a derived value filters even an explicit full read', async t => {
   const h = await engine(t);
   const result = await h.call(filtered('state.split("\\n").slice(2, 3)').replace('getAXState()', 'getAXState({disableDiffing:true})'));
-  assert.match(output(result), /standard window/);
-  assert.match(output(result), /Row 99/);
+  assert.doesNotMatch(output(result), /standard window|Row 99/);
+  assert.match(output(result), /Row 0/);
 });
 
 test('a result reporting a changed window keeps its full tree', async t => {
@@ -411,3 +412,45 @@ test('a call that acted keeps its tree diff instead of a filtered header', () =>
     { type: 'text', text: 'Row 7\n[sleight:filtered-read]{"visible":"Row 7"}\n' }], { action });
   assert.match(result.map(item => item.text).join('\n'), /sleight: (?:lines changed|no change since)|Row 99/);
 });
+
+for (const code of ['await app.getAXState({ disableDiffing: true })',
+  'nodeRepl.write(await app.getAXState({ disableDiffing: true }))']) {
+  test('a standalone explicit full read stays whole: ' + code, async t => {
+    const h = await engine(t);
+    const result = await h.call(code);
+    assert.equal(result.isError, false);
+    assert.match(output(result), /standard window/);
+    assert.match(output(result), /Row 99/);
+  });
+}
+
+for (const read of ['await app.getAXState({ disableDiffing: true })',
+  'nodeRepl.write(await app.getAXState({ disableDiffing: true }))']) {
+  test('an action final full read is shown once and still computes its UI change: ' + read, async t => {
+    const h = await engine(t, { valueOnAction: true });
+    const result = await h.call('await app.pressKey("Right"); ' + read);
+    assert.equal(result.isError, false, output(result));
+    assert.equal(output(result).match(/standard window/g)?.length, 1);
+    assert.match(output(result), /Value: after/);
+    assert.match(output(result), /sleight: UI changed \(value\)/);
+  });
+}
+
+for (const disable of [false, true]) {
+  test('filtered hidden numbers stay unknown with disableDiffing=' + disable, async t => {
+    const h = await engine(t);
+    h.shift();
+    const result = await h.call(filtered('state.split("\\n").slice(9, 10)').replace('getAXState()',
+      disable ? 'getAXState({ disableDiffing: true })' : 'getAXState()'));
+    assert.doesNotMatch(output(result), /Row 100/);
+    const action = await h.call('await app.click(i + 1)');
+    assert.equal(action.isError, true);
+    assert.deepEqual(h.actions, []);
+    // A number Claude never saw needs the whole window: a plain read lists only lines whose text changed.
+    assert.match(output(action), /read the whole window with getAXState\(\{ disableDiffing: true \}\)/);
+    const fresh = await h.call('await app.getAXState()');
+    assert.match(output(fresh), /Row 100/);
+    assert.equal((await h.call('await app.click(1)')).isError, false);
+    assert.deepEqual(h.actions, [1]);
+  });
+}

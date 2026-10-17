@@ -1281,8 +1281,8 @@ export function createRelay({
       const stale = name === 'js' ? compactor.staleIndex(numberWindow(code, leaseWindow), code) : undefined;
       if (stale) {
         leaseStop(msg, promptNotice(stale.number !== undefined
-          ? `element ${stale.number} may be stale. Numbers in this window changed since your last full read, and ${stale.number} isn't one you've seen since. Use a number from a + line in the latest result, or read the window again with getAXState({ disableDiffing: true }) first.`
-          : `this call computes an element number (${stale.computed}), and numbers in this window changed since your last full read. Use a literal number from a + line in the latest result, or read the window again with getAXState({ disableDiffing: true }) first.`, prompt));
+          ? `element ${stale.number} may be stale. Numbers in this window changed since your last full read, and ${stale.number} isn't one you've seen since. Use a number from a + line in the latest result, or read the whole window with getAXState({ disableDiffing: true }) first.`
+          : `this call computes an element number (${stale.computed}), and numbers in this window changed since your last full read. Use a literal number from a + line in the latest result, or read the whole window with getAXState({ disableDiffing: true }) first.`, prompt));
         return false;
       }
       if (engineForbiddenTargets && isForbiddenSettingsWindow(leaseWindow)) {
@@ -3256,12 +3256,12 @@ export function createRelay({
         const note = openMenuNote(msg.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n'), prompt);
         if (note) msg.result.content.push({ type: 'text', text: note });
       }
-      // sleight's own advice says getAXState({ disableDiffing: true }) gives a full read. Compacting
-      // it to "no change" sent Claude to a screenshot instead (2026-10-08). Recovery's visible read
-      // is full too. The read wrapper decides whether to emit each observation.
+      // Explicit reads stay whole unless Claude printed a derived value. Recovery still forces
+      // full output; neither choice skips the action's UI comparison.
       if (!automatic) msg.result.content = compactor.process(dropRepeatedImages(dropRepeatedText(msg.result.content), prompt),
         { code: jsCode, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
-          forceFull: healthPlan?.fullVisible === true || /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
+          forceFull: healthPlan?.fullVisible === true,
+          explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
       filterMarks.delete(msg.id);
     }
