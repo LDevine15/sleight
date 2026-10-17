@@ -330,13 +330,13 @@ test('default census parser refuses absolute, basename-only and relative executa
   let output;
   const mocked = t.mock.method(childProcess, 'execFileSync', (command, args) => {
     assert.equal(command, '/bin/ps');
-    assert.deepEqual(args, ['-axww', '-o', 'pid=,ppid=,comm=']);
+    assert.deepEqual(args, ['-axww', '-o', 'pid=,ppid=,pgid=,comm=']);
     return output;
   });
   syncBuiltinESMExports();
   t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
   for (const executable of [plan.executable, 'Google Chrome', './Google Chrome', 'relative/Google Chrome']) {
-    output = `  100 1 ${executable}\n  101 1 /fixture/unrelated\n`;
+    output = `  100 1 70 ${executable}\n  101 1 70 /fixture/unrelated\n`;
     await assert.rejects(real.checkBrowserOwner(plan), error => {
       assert.deepEqual(error.ownerCheck?.otherPids, [100]); return true;
     });
@@ -345,7 +345,7 @@ test('default census parser refuses absolute, basename-only and relative executa
   await assert.rejects(real.checkBrowserOwner(plan), /PROCESS_LIST_UNAVAILABLE/);
   output = 'not a process row\n';
   await assert.rejects(real.checkBrowserOwner(plan), /PROCESS_LIST_INVALID/);
-  output = '  101 1 /fixture/unrelated\n';
+  output = '  101 1 70 /fixture/unrelated\n';
   assert.equal((await real.checkBrowserOwner(plan)).ok, true);
 });
 
@@ -472,4 +472,15 @@ test('each task census refuses a newly arrived owner before reset, saves refusal
   assert.deepEqual(fixture.events, ['reset', 'agent', 'observe', 'sites closed', 'browser closed']);
   assert.deepEqual(JSON.parse(readFileSync(join(fixture.dir, 'out/browser.json'))).ownerCheck.otherPids, [200]);
   assert.equal(existsSync(fixture.lockPath), false);
+});
+
+test('captured comm census refuses parenthesized, case-varied and truncated Firefox names', async t => {
+  const plan = real.realBrowserPlan({ browser: 'firefox', round: 'captured-census' });
+  let output;
+  const mocked = t.mock.method(childProcess, 'execFileSync', () => output);
+  syncBuiltinESMExports(); t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+  for (const name of ['(firefox)', '(Firefox)', 'FIREFOX', 'firefox content', '(firefox-bin)', '/Applications/Firefox.app/Contents/MacOS/Firefox']) {
+    output = `  320 1 70 ${name}\n  321 1 70 /fixture/unrelated\n`;
+    await assert.rejects(real.checkBrowserOwner(plan), error => { assert.deepEqual(error.ownerCheck.otherPids, [320]); return true; });
+  }
 });

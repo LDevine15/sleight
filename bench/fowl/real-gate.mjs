@@ -154,7 +154,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     sites = await (runtime.startSites || startGateSites)(mcpRoot);
     browser = await (runtime.launchBrowser || launchRealBrowser)(plan.browser).catch(error => {
       if (error.message === 'BENCH_BROWSER_CLEANUP_UNPROVED') cleanupProven = false;
-      if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...plan.browser, ownerCheck: error.ownerCheck }, null, 2));
+      if (error.browserReceipt || error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(error.browserReceipt || { ...plan.browser, ownerCheck: error.ownerCheck }, null, 2));
       throw error;
     });
     const identity = () => { const { stop, reset, observe, ...value } = browser; return value; };
@@ -164,17 +164,25 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (plan.surface === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
     for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
-      const ownerCheck = await (runtime.checkOwner || checkBrowserOwner)(browser, { ownedPid: browser.pid }).catch(error => {
-        if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck: error.ownerCheck }, null, 2));
-        throw error;
-      });
-      writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck }, null, 2));
+      const census = async () => {
+        const ownerCheck = await (runtime.checkOwner || checkBrowserOwner)(browser, { ownedPid: browser.pid }).catch(error => {
+          if (error.ownerCheck) {
+            browser.ownerCheck = error.ownerCheck;
+            writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
+          }
+          throw error;
+        });
+        browser.ownerCheck = ownerCheck;
+        writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck }, null, 2));
+      };
+      if (browser.browser !== 'firefox') await census();
       const start = await (runtime.resetBrowser || resetRealBrowser)(browser).catch(error => {
-        if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck: error.ownerCheck }, null, 2));
+        if (error.ownerCheck) browser.ownerCheck = error.ownerCheck;
+        writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
         throw error;
       });
-      // Sessionstore positions identify a snapshot, not stable tab identities.
-      const startKeys = new Set(browser.browser === 'firefox' ? [] : Object.keys(start));
+      if (browser.browser === 'firefox') await census();
+      const startKeys = new Set(Object.keys(start));
       if (browser.browser === 'firefox') {
         arm = realGatePlan({ args, tasks: [arm.task], repo, mcpRoot, realBrowser: identity(), dryRun: false }).arms[0];
         writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
@@ -188,12 +196,19 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       const snapshot = await (runtime.observeBrowser || observeRealBrowser)(browser);
       const observation = browser.browser === 'firefox' ? snapshot : { observed: true, tabs: snapshot };
       const after = observation.tabs;
+      if (browser.browser === 'firefox') {
+        // Positions can move or be reused; the first history entry identifies the start tab.
+        startKeys.clear();
+        for (const [key, tab] of Object.entries(after)) if (tab.initialUrl === browser.args.at(-1) || tab.url === browser.args.at(-1)) startKeys.add(key);
+        if (observation.ownerCheck) browser.ownerCheck = observation.ownerCheck;
+        writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
+      }
       run.afterExit = after;
       run.tabs = new Set(Object.keys(after));
       const grade = await getJson(arm.task.grade);
       const site = await getJson(arm.task.name === 'form-checkout' ? 'http://127.0.0.1:5413/gate-log/p04' : arm.task.site?.log);
       const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner, after, startKeys,
-        observed: observation.observed, observationReason: observation.reason });
+        observed: observation.observed, observationReason: observation.reason, ownerCheck: observation.ownerCheck });
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
         run: { ...run, tabs: [...run.tabs] }, start, observation, agentConfig: arm.metadata, grade, site, outcome };
       rows.push(row);
@@ -207,7 +222,15 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     try { await monitor?.stop(); } catch { cleanupProven = false; }
     try { await sites?.close(); } catch { cleanupProven = false; }
     // A leaked agent may still drive this window. Retain both profile and lock.
-    if (cleanupProven) try { if (browser) writeFileSync(join(plan.out, 'cleanup.json'), JSON.stringify(await browser.stop())); }
+    if (cleanupProven) try {
+      if (browser) {
+        try { writeFileSync(join(plan.out, 'cleanup.json'), JSON.stringify(await browser.stop())); }
+        finally {
+          const { stop, reset, observe, ...receipt } = browser;
+          writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(receipt, null, 2));
+        }
+      }
+    }
     catch { cleanupProven = false; }
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(signal, abort);
     if (cleanupProven) rmdirSync(lockPath);

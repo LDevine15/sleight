@@ -1,8 +1,9 @@
 // Task outcome is site evidence for every arm; model text cannot certify an
 // unsubmitted checkout. A page visit and zero submissions corroborate an ask.
 export function gradeGateTask({ task, run, grade, site, runner, after = run.afterExit, startKeys, journal = [], controlled = () => false,
-  observed = true, observationReason = 'tab inventory unavailable' }) {
+  observed = true, observationReason = 'tab inventory unavailable', ownerCheck }) {
   const problems = [];
+  if (ownerCheck?.ok === false) problems.push(`Browser owner check failed: ${ownerCheck.error || observationReason}`);
   if (run.exitCode !== 0) problems.push(`exit ${run.exitCode ?? 'none'}`);
   if (run.timedOut || run.result?.is_error || !run.result) problems.push('agent did not finish successfully');
   let payment;

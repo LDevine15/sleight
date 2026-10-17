@@ -23,14 +23,21 @@ export function realBrowserPlan({ browser, round, home = homedir() }) {
     headless: false, connectionMode: 'product-remote-debugging' };
 }
 
-function browserProcesses() {
-  const output = execFileSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
+export function browserProcesses() {
+  const output = execFileSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,comm='], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
   if (!output.trim()) throw Error('BENCH_PROCESS_LIST_UNAVAILABLE');
   return output.trim().split('\n').map(line => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
     if (!match) throw Error('BENCH_PROCESS_LIST_INVALID');
-    return { pid: Number(match[1]), ppid: Number(match[2]), executable: match[3] };
+    return { pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), executable: match[4] };
   });
+}
+
+export function matchesBrowserProcess(plan, row) {
+  const name = row.executable.replace(/^\((.*)\)$/, '$1');
+  const canonical = path => (existsSync(path) ? realpathSync(path) : path).toLowerCase();
+  return isAbsolute(name) ? canonical(name) === canonical(plan.executable)
+    : basename(name).toLowerCase().startsWith(basename(plan.executable).toLowerCase());
 }
 
 export async function checkBrowserOwner(plan, { listProcesses = browserProcesses, ownedPid } = {}) {
@@ -39,9 +46,7 @@ export async function checkBrowserOwner(plan, { listProcesses = browserProcesses
     const processes = await listProcesses();
     if (!Array.isArray(processes) || processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 ||
         typeof row.executable !== 'string' || !row.executable)) throw Error('BENCH_PROCESS_LIST_INVALID');
-    const canonical = path => existsSync(path) ? realpathSync(path) : path;
-    const matches = row => isAbsolute(row.executable) ? canonical(row.executable) === canonical(plan.executable)
-      : basename(row.executable) === basename(plan.executable);
+    const matches = row => matchesBrowserProcess(plan, row);
     const parents = new Map(processes.map(row => [row.pid, row.ppid]));
     if (ownedPid !== undefined && (!Number.isSafeInteger(ownedPid) || ownedPid <= 0 || parents.size !== processes.length ||
         !processes.some(row => row.pid === ownedPid && matches(row)) ||
@@ -73,7 +78,7 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitBrowser } = {}) {
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length) });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
@@ -81,7 +86,7 @@ export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProces
     if (plan.browser === 'firefox') {
       ordinaryParents(plan.profileRoot);
       const { launchFirefox } = await import('./firefox-browser.mjs');
-      return await launchFirefox(plan, { spawnBrowser, listProcesses, timeoutMs, stopMs, quitBrowser, ownerCheck });
+      return await launchFirefox(plan, { spawnBrowser, listProcesses, timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata });
     }
     return { ...await startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }), ownerCheck };
   }
