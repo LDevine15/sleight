@@ -365,13 +365,21 @@ for (const [name, options] of [
   ['typing after save', { suffix: 'await app.typeText("unsaved")' }],
   ['a failed call', { failed: true }],
   ['overlap', { overlap: true }],
-  ['an incomplete read', { after: doc => doc + '\n…(20)' }],
-  ['a degraded read', { after: doc => doc.replace(', Value: before', '') }],
+  ['an incomplete read without a disk write', { write: false, after: doc => doc + '\n…(20)' }],
+  ['a degraded read without a disk write', { write: false, after: doc => doc.replace(', Value: before', '') }],
 ]) {
   test(`click then save stays unconfirmed with ${name}`, t => {
     const note = saveAfterClick(t, options);
     assert.match(note, /saved: not confirmed/);
     assert.doesNotMatch(note, /saved: observed/);
+  });
+}
+
+// A degraded or incomplete trailing read can't show save state, but the same window's file write still does
+// (Fable study, 2026-10-17: "not confirmed (degraded read)" cost six checking turns).
+for (const [name, after] of [['an incomplete read', doc => doc + '\n…(20)'], ['a degraded read', doc => doc.replace(', Value: before', '')]]) {
+  test(`click then save is observed from the same file's write despite ${name}`, t => {
+    assert.match(saveAfterClick(t, { after }), /saved: observed ".*a\.txt" \(its file on disk changed during this call\)/);
   });
 }
 

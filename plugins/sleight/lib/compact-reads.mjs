@@ -549,9 +549,13 @@ function resultNote(action, after, failed, failure) {
   if (action.save) {
     const fileWritten = sameDocument && before.window.app === after.window.app && before.window.title === after.window.title &&
       action.fileTime !== undefined && (fileTime(after.window.url) ?? -Infinity) > (action.fileTime ?? -Infinity);
+    // A degraded or incomplete trailing read can't show the save state, but the same window's file changing on disk
+    // during the call still can. "not confirmed (degraded read)" after a save that worked sent Claude through six
+    // checking turns, about 17 s of a 38.5 s textedit-calculator run (Fable study, 2026-10-17).
+    const readIssue = degradedRead ? 'degraded read' : incomplete ? 'incomplete read' : degraded ? 'degraded read' : undefined;
     const unavailable = failed ? 'call failed' : action.overlap ? 'overlapping calls' : action.mixedSave && !(fileWritten && action.fileSaveSafe) ? 'mixed save targets' : !after ? invalidRead ?? 'no read after input'
       : !before ? 'no earlier read' : before.window.app !== after.window.app ? 'another app'
-        : degradedRead ? 'degraded read' : incomplete ? 'incomplete read' : degraded ? 'degraded read' : undefined;
+        : fileWritten ? undefined : readIssue;
     const document = after && /^standard window\b/.test(after.root) && !/\b(?:save|open)-panel\b/.test(after.root);
     const editedTitleCleared = sameDocument && edited(before.window.title) && !edited(after.window.title) &&
       before.window.title.replace(/(?: — | - )Edited$/, '') === after.window.title && before.window.url === after.window.url;
@@ -566,7 +570,9 @@ function resultNote(action, after, failed, failure) {
     const panelStep = !unavailable && after && (panelRoot(after.root) ||
       (panelRoot(before?.root) && /^standard window\b/.test(after.root) && after.window.url?.startsWith('file://') && !action.namedURL));
     if (panelStep) saved = undefined;
-    else saved = unavailable ? `not confirmed (${unavailable})` : !document ? 'not confirmed (no document save state change seen)'
+    else saved = unavailable ? `not confirmed (${unavailable})`
+      : readIssue ? `observed ${JSON.stringify(after.window.url)} (its file on disk changed during this call)`
+      : !document ? 'not confirmed (no document save state change seen)'
       : !sameDocument && !named ? `not confirmed (${after.window.url ? 'different document' : 'document identity unavailable'})`
       : modifiedCleared || editedTitleCleared ? `observed ${JSON.stringify(after.window.url)} (modified state cleared; cause unknown)`
       : named ? `observed ${JSON.stringify(after.window.url)} (named file URL)`

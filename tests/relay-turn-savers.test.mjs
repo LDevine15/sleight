@@ -71,6 +71,30 @@ test('the relay normalizes a returned acquisition before lease read classificati
   assert.match(body(h, 1), /Window: "note.txt"/);
 });
 
+test('an app handle getState becomes getAXState; cua, browsers and unrelated names keep theirs', t => {
+  const rewrite = relayModule.nativeGetStateCode;
+  assert.equal(typeof rewrite, 'function');
+  for (const [code, expected] of [
+    ['let app = await cua.getApp("Preview"); await app.getState()', 'let app = await cua.getApp("Preview"); await app.getAXState()'],
+    ['const pv = await cua.getApp("Preview")\nawait pv . getState({ disableDiffing: true })', 'const pv = await cua.getApp("Preview")\nawait pv . getAXState({ disableDiffing: true })'],
+    ['await app.getState()', 'await app.getAXState()'],
+    ['await app?.getState()', 'await app?.getAXState()'],
+    ['let app = await cua.getApp("X"); await app.typeText("see app.getState() docs"); await app.getState()',
+      'let app = await cua.getApp("X"); await app.typeText("see app.getState() docs"); await app.getAXState()'],
+  ]) assert.equal(rewrite(code), expected, code);
+  for (const code of ['const app = await cua.getTab("x"); await app.getState()', '// app.getState()\nawait cua.getState()'])
+    assert.equal(rewrite(code), code, code);
+  assert.equal(rewrite('app = await cua.getApp("X"); await app.getState()', () => false, () => true), 'app = await cua.getApp("X"); await app.getAXState()',
+    'a rebinding in this call wins over a stale browser handle');
+  for (const code of ['await cua.getState()', 'await store.getState()', 'await x.app.getState()', 'await app.getStateful()', 'await tab.getState()'])
+    assert.equal(rewrite(code), code, code);
+  assert.equal(rewrite('await calc.getState()', id => id === 'calc'), 'await calc.getAXState()');
+  assert.equal(rewrite('await app.getState()', () => false, id => id === 'app'), 'await app.getState()');
+  const h = harness(t);
+  h.call(1, 'let app = await cua.getApp("Example"); await app.getState()');
+  assert.match(h.sent.find(m => m.id === 1)?.params.arguments.code ?? '', /await app\.getAXState\(\)/);
+});
+
 function opener(t, result, options = {}) {
   const calls = [];
   const h = harness(t, { localTools: { tools: [{ name: 'open_file' }], call: async (...args) => { calls.push(args); return result; } }, ...options });

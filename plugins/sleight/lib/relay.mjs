@@ -100,6 +100,24 @@ import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
 import { compactJsDescription } from './tool-description.mjs';
 
+// App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
+// in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
+export function nativeGetStateCode(code, isNative = () => false, isBrowser = () => false) {
+  if (typeof code !== 'string' || !code.includes('getState')) return code;
+  // Same-length mask, so text typed into a document ("see app.getState()") is never rewritten.
+  const masked = code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, v => ' '.repeat(v.length));
+  const bound = new Set(), other = new Set();
+  for (const m of masked.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])\s*(await\s+cua\s*\.\s*getApp\s*\()?/g)) (m[2] ? bound : other).add(m[1]);
+  let out = '', last = 0;
+  for (const m of masked.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)(\s*(?:\?\.|\.)\s*)getState(?=\s*\()/g)) {
+    const id = m[1];
+    if (id === 'cua' || !(bound.has(id) || (!isBrowser(id) && (isNative(id) || (id === 'app' && !other.has(id)))))) continue;
+    const at = m.index + id.length + m[2].length;
+    out += code.slice(last, at) + 'getAXState'; last = at + 'getState'.length;
+  }
+  return last ? out + code.slice(last) : code;
+}
+
 // Compile without executing. A complete prefix excludes function bodies and blocks; an invalid
 // token in place of return distinguishes executable code from comments, strings and regexes.
 export function finalReturnCode(code) {
@@ -2010,6 +2028,8 @@ export function createRelay({
     }
     if (jsArgs && typeof msg.params.arguments?.code === 'string') {
       msg.params.arguments.code = finalReturnCode(msg.params.arguments.code);
+      const fixed = nativeGetStateCode(msg.params.arguments.code, id => nativeHandles.has(id), id => browserHandles.has(id));
+      if (fixed !== msg.params.arguments.code) { msg.params.arguments.code = fixed; trace('getstate-rewritten', { id: msg.id }); }
     }
     // `let app = await cua.getApp("X"); app` echoes the handle it just bound, which the
     // acquisition adds nothing to. Haiku 5.5 sent it 3 times on 2026-10-08, and the lease
