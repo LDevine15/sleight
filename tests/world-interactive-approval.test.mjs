@@ -145,6 +145,19 @@ test('the live-rendered card (cursor-forward spacing, reason box, ◉ marker) is
   assert.equal(result.is_error, false, result.reason);
   assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
 });
+// Verbatim from the 15:23Z live run's approval-block.json: some lines lose their spaces, the card ends on spaces, a ⏺ follows.
+const seen = selected => '\nComputer Use wants to control these apps\n\n\n   │ I need to use Calculator to clear the input and compute 80 × 55 by clicking its buttons.\n  \n\n◉Calculator\n\n\n\n7otherappswillbehiddenwhileClaudeworks.\n\n\n\n' +
+  (selected === 'allow' ? ' Deny,andtellClaudewhattododifferently(esc)\n\n❯Allowforthissession(1app)' : '❯Deny,andtellClaudewhattododifferently(esc)\n\nAllowforthissession(1app)') +
+  '\n\n\n\n\n\nEntertoconfirm·Esctocancel\n\n   \n \n\n\n   \n⏺\n\n\n   ';
+test('the card exactly as the 15:23Z live run rendered it is answered for an allowlisted app and refused otherwise', async t => {
+  const p = fixture(t); p.allowedApps = ['Calculator'];
+  const { result, writes } = await session(p, { screens: [seen('deny')], afterDown: seen('allow') });
+  assert.equal(result.is_error, false, result.reason);
+  assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
+  const other = fixture(t); other.allowedApps = ['Calculator Pro'];
+  const refused = await session(other, { screens: [seen('deny')] });
+  assertBlock(refused.result, refused.events, 'computer-use approval is outside the task allowlist or unsupported');
+});
 test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
   const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });
   assertBlock(foreign.result, foreign.events, 'computer-use approval is outside the task allowlist or unsupported');

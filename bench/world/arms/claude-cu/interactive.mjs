@@ -175,6 +175,9 @@ function terminalText(raw, prompt) {
   return text;
 }
 
+// Lines are compared with whitespace removed: the live 2.1.289 card draws some lines with no spaces between words
+// ("Allowforthissession(1app)", 2026-10-17 15:23Z) and ends on a run of spaces rather than a newline.
+const squeeze = text => text.replace(/\s+/g, '');
 function sessionCard(text, allowedApps, allowedGrants = []) {
   const title = 'Computer Use wants to control these apps', index = text.lastIndexOf(title);
   if (index < 0) return;
@@ -182,30 +185,31 @@ function sessionCard(text, allowedApps, allowedGrants = []) {
     !/^[\s│]*(?:\n|$)/.test(text.slice(index + title.length))) return { pending: true };
   // A boxed line before the apps is the request's own reason text, which grants nothing; any other line there refuses.
   const card = text.slice(index + title.length), rows = card.split('\n')
-    .map(raw => ({ line: raw.replace(/^[\s│]+|[\s│]+$/g, ''), boxed: /^\s*│/.test(raw) }))
+    .map(raw => ({ line: squeeze(raw.replace(/│/g, ' ')), boxed: /^\s*│/.test(raw) }))
     .filter(row => row.line && !/^[─╭╮╰╯]+$/.test(row.line)), lines = rows.map(row => row.line);
-  const allow = lines.findIndex(line => /^(?:❯\s*)?Allow for this session \(\d+ apps?\)$/.test(line));
-  if (allow < 0 || !card.endsWith('\n')) return { pending: true };
-  const deny = lines.findIndex(line => /^(?:❯\s*)?Deny, and tell Claude what to do differently \(esc\)$/.test(line));
+  const allow = lines.findIndex(line => /^(?:❯)?Allowforthissession\(\d+apps?\)$/.test(line));
+  if (allow < 0 || !/\n\s*$/.test(card)) return { pending: true };
+  const deny = lines.findIndex(line => /^(?:❯)?Deny,andtellClaudewhattododifferently\(esc\)$/.test(line));
+  const allowed = new Map(allowedApps.map(app => [squeeze(app), app]));
   const names = [], selected = [];
   let appSection = false, flags = false;
   for (const [i, line] of lines.slice(0, deny < 0 ? allow : deny).entries()) {
-    const app = /^([●◉○✔✓])\s*(.+?)(?: \((already granted|not installed)\))?$/.exec(line);
+    const app = /^([●◉○✔✓])(.+?)(?:\((alreadygranted|notinstalled)\))?$/.exec(line);
     if (!appSection && rows[i].boxed) continue;
     if (app && !flags) { appSection = true; names.push(app[2]); if (app[1] === '●' || app[1] === '◉') selected.push(app[2]); }
-    else if (appSection && line === 'Also requested:' && !flags) flags = true;
-    else if (flags && /^· (?:clipboardRead|clipboardWrite|systemKeyCombos)$/.test(line)) {
-      if (!allowedGrants.includes(line.slice(2))) return { blocked: 'computer-use approval grant is outside the task allowlist' };
-    } else if (appSection && /^\d+ other apps? will be hidden while Claude works\.$/.test(line)) continue;
-    else if (appSection && /^⚠ (?:equivalent to shell access|can read\/write any file|can change system settings)$/.test(line)) {
-      const grant = { '⚠ equivalent to shell access': 'shellAccess', '⚠ can read/write any file': 'fileAccess', '⚠ can change system settings': 'systemSettings' }[line];
+    else if (appSection && line === 'Alsorequested:' && !flags) flags = true;
+    else if (flags && /^·(?:clipboardRead|clipboardWrite|systemKeyCombos)$/.test(line)) {
+      if (!allowedGrants.includes(line.slice(1))) return { blocked: 'computer-use approval grant is outside the task allowlist' };
+    } else if (appSection && /^\d+otherapps?willbehiddenwhileClaudeworks\.$/.test(line)) continue;
+    else if (appSection && /^⚠(?:equivalenttoshellaccess|canread\/writeanyfile|canchangesystemsettings)$/.test(line)) {
+      const grant = { '⚠equivalenttoshellaccess': 'shellAccess', '⚠canread/writeanyfile': 'fileAccess', '⚠canchangesystemsettings': 'systemSettings' }[line];
       if (!allowedGrants.includes(grant)) return { blocked: 'computer-use approval grant is outside the task allowlist' };
     } else return { blocked: 'unsupported computer-use approval card' };
   }
-  const count = Number(/\((\d+) apps?\)$/.exec(lines[allow])[1]);
+  const count = Number(/\((\d+)apps?\)$/.exec(lines[allow])[1]);
   if (deny < 0 || allow !== deny + 1 || !names.length || !count || count !== selected.length ||
-    new Set(names).size !== names.length || names.some(app => !allowedApps.includes(app)) ||
-    /not shown/.test(card) || lines.slice(allow + 1).some(line => line !== 'Enter to confirm · Esc to cancel'))
+    new Set(names).size !== names.length || names.some(app => !allowed.has(app)) ||
+    /notshown/.test(squeeze(card)) || lines.slice(allow + 1).filter(line => line !== '⏺').some(line => line !== 'Entertoconfirm·Esctocancel'))
     return { blocked: 'computer-use approval is outside the task allowlist or unsupported' };
   const cursors = lines.filter(line => line.startsWith('❯'));
   if (cursors.length !== 1) return { blocked: 'computer-use approval selection is ambiguous' };
