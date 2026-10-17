@@ -68,7 +68,7 @@ export function noticeInventory(prompt, source = readFileSync(new URL('../plugin
       const name = node.expression.getText(ast);
       if (['leaseStop', 'documentStop', 'flowStop', 'changeStop', 'remapNotes.set', 'promptFailures.set'].includes(name) && node.arguments[1]) add(node.arguments[1], name);
     }
-    if (ts.isFunctionDeclaration(node) && ['openMenuNote', 'selectionRecovery', 'confirmRecovery', 'reportPreapprovals'].includes(node.name?.text)) {
+    if (ts.isFunctionDeclaration(node) && ['openMenuNote', 'selectionRecovery', 'confirmRecovery', 'reportPreapprovals', 'requireNote'].includes(node.name?.text)) {
       function returns(child) {
         if (ts.isReturnStatement(child) && child.expression) add(child.expression, node.name.text);
         if (ts.isVariableDeclaration(child) && child.name.getText(ast) === 'text') {
@@ -115,7 +115,7 @@ export function sharedNoticeInventory(prompt) {
     function visit(node, selected = false) {
       if (ts.isFunctionDeclaration(node)) selected = functions[file]?.includes(node.name?.text);
       if (selected && ts.isReturnStatement(node) && node.expression) add(node.expression);
-      if (ts.isVariableDeclaration(node) && node.initializer && selected && ['recovery', 'reason'].includes(node.name.getText(ast))) add(node.initializer);
+      if (ts.isVariableDeclaration(node) && node.initializer && selected && ['recovery', 'reason', 'kind'].includes(node.name.getText(ast))) add(node.initializer);
       if (file === 'clipboard.mjs' && ts.isCallExpression(node) && node.expression.getText(ast) === 'notice') add(node.arguments[0]);
       ts.forEachChild(node, child => visit(child, selected));
     }
