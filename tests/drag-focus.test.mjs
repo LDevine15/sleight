@@ -25,6 +25,7 @@ test('the launcher restores focus after a timed-out drag child', async () => {
     return { ok: false, error: 'drag child timed out after 30 s' };
   });
   assert.equal(result.isError, true); assert.match(result.content[0].text, /timed out/);
+  assert.match(result.content[0].text, /for files or list items, use Copy or Cut and Paste, or the app's Move command/);
   assert.deepEqual(calls.map(c => [c.script, c.args.op]), [['drag-focus.js', 'capture'], ['drag.js', undefined], ['drag-focus.js', 'release'], ['drag-focus.js', 'restore']]);
   assert.equal(calls[3].args.previousPid, 99);
 });

@@ -114,6 +114,7 @@ function axElement(el) {
     return pair;
   };
   return {
+    reference: el,
     role: () => scalar('AXRole'), subrole: () => scalar('AXSubrole'), name: () => scalar('AXTitle'),
     position: () => geometry('AXPosition', 1), size: () => geometry('AXSize', 2),
     value: () => scalar('AXValue'), uiElements: () => axElements(axAttribute(el, 'AXChildren')),
@@ -157,6 +158,50 @@ function content(win, bounds) {
   };
   walk(win, bounds, 0);
   return { areas, toolbars };
+}
+// Non-text drags need only the two hit elements and their ancestors. Walking
+// unrelated rows can exhaust the scan limit before reaching either point.
+function dragContent(pid, win, bounds, from, to) {
+  const app = $.AXUIElementCreateApplication(pid);
+  if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
+  const areas = [];
+  let textSource = null;
+  for (const [index, offset] of [from, to].entries()) {
+    const point = at(bounds, offset), hit = Ref();
+    if (!inside(bounds, point)) throw new Error('drag point is outside the window content; nothing was pressed');
+    const error = Number($.AXUIElementCopyElementAtPosition(app, point.x, point.y, hit));
+    if (error) throw axFailure('endpoint hit test', error);
+    let el = axElement(ObjC.castRefToObject(hit[0])), matched = false;
+    const path = [];
+    for (let depth = 0; depth < 32; depth++) {
+      if ($.CFEqual(el.reference, win.reference)) { matched = true; break; }
+      const role = el.role(), subrole = attempt(() => el.subrole(), '');
+      if (role === 'AXWindow' || role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(subrole)) {
+        throw new Error('drag endpoint is outside the chosen window content (title bar, toolbar or another window); nothing was pressed');
+      }
+      if (index === 0 && ['AXTextArea', 'AXTextField'].includes(role)) textSource = el;
+      path.push({ el, role, bounds: attempt(() => frame(el), null) });
+      el = axElement(axAttribute(el.reference, 'AXParent'));
+    }
+    if (!matched) throw new Error('AX endpoint parent path exceeded its limit before the chosen window; nothing was pressed');
+    if (textSource) {
+      const selected = textSource.attributes.byName('AXSelectedText').value();
+      if (typeof selected !== 'string' || !selected.trim()) throw new Error('Select non-whitespace text in this window before dragging; nothing was pressed');
+      return content(win, bounds);
+    }
+    let visible = bounds, body = false;
+    for (const item of path.reverse()) {
+      if (!item.bounds) throw new Error('AX endpoint geometry is unavailable; nothing was pressed');
+      visible = clip(visible, item.bounds);
+      if (!inside(visible, point)) throw new Error('drag endpoint is outside the visible window content; nothing was pressed');
+      if (['AXScrollArea', 'AXTextArea', 'AXTextField', 'AXWebArea', 'AXTable', 'AXOutline', 'AXImage', 'AXSplitGroup'].includes(item.role) ||
+          (item.role === 'AXGroup' && item.bounds.Y > bounds.Y)) {
+        areas.push({ ...item, bounds: visible }); body = true;
+      }
+    }
+    if (!body) throw new Error('drag endpoint is outside the window content area; nothing was pressed');
+  }
+  return { areas, toolbars: [] };
 }
 function validatePoints(info, bounds, from, to, app) {
   const start = at(bounds, from), end = at(bounds, to);
@@ -543,8 +588,9 @@ function run(argv) {
       raiseWindow(win);
       delay(settleMs / 1000);
       checkWindow(main, pid, win);
-      scanned = { info: content(win, main.bounds), bounds: main.bounds };
+      scanned = { info: dragContent(pid, win, main.bounds, pointFrom, pointTo), bounds: main.bounds };
       const points = validatePoints(scanned.info, main.bounds, pointFrom, pointTo, app);
+      scanned.text = !!points.text;
       if (points.text) points.text.pid = pid;
       // Another document of this app must not receive the press: check fresh
       // own-app order at both ends, then other apps' coverage below.
@@ -628,13 +674,13 @@ function run(argv) {
           return JSON.stringify({ ok: false, path, app, windowId: main.id, ...units, ...outcome,
             error: [outcome.error, releaseError].filter(Boolean).join('; ') });
         }
-        if (!points.text || after !== points.text.text) {
+        if ((!points.text && (!postingError || didPress)) || (points.text && after !== points.text.text)) {
           const outcome = finishTextDrop(points.text, main);
           if (postingError && !outcome.error) outcome.error = postingError;
           return JSON.stringify({ ok: !outcome.error, app, windowId: main.id, from, to, ...units, holdMs, steps, path, fallbackReason,
             textChanged: points.text ? true : null, deliveryVerified: !!points.text && !outcome.error, ...outcome });
         }
-        fallbackReason = 'background text unchanged';
+        fallbackReason = !points.text && postingError ? `background unavailable: ${postingError}` : 'background text unchanged';
         backgroundSnapshot = points.text;
         unchangedText();
       }
@@ -657,8 +703,9 @@ function run(argv) {
     delay(settleMs / 1000);
     main = windows(true).find(w => w.id === main.id && w.pid === pid && w.layer === 0);
     if (!main || !sameBounds(frame(win), main.bounds)) throw new Error('the chosen window changed or disappeared; read it again');
-    // Reuse the background path's content scan while the window hasn't moved.
-    const info = scanned && sameBounds(scanned.bounds, main.bounds) ? scanned.info : content(win, main.bounds);
+    // Reuse a text scan while the window hasn't moved; non-text endpoints are cheap to recheck.
+    const info = scanned?.text && sameBounds(scanned.bounds, main.bounds) ? scanned.info
+      : dragContent(pid, win, main.bounds, pointFrom, pointTo);
     const { start, end, text } = validatePoints(info, main.bounds, pointFrom, pointTo, app);
     if (text) text.pid = pid;
     // Match the exact window at both endpoints, even for another window of
