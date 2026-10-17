@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, utimesSync } from 'node:fs';
+import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -13,7 +14,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'sleight-open-fast-')), path = join(dir, 'note.txt');
-  writeFileSync(path, 'hello'); utimesSync(path, 10, 10); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path, 'hello'); utimesSync(path, 10, 10); t.after(() => removeTemp(dir));
   return { app, path };
 }
 

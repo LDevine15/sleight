@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { constants, createContext, runInContext } from 'node:vm';
 import { PassThrough } from 'node:stream';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRelay, openMenuNote } from '../plugins/sleight/lib/relay.mjs';
@@ -202,7 +203,7 @@ test('the relay carries the runtime receipt into the compactor without driving a
   const context = createContext({ query: 'amber', cua: { getApp: async () => { write(current()); return raw; }, listApps: async () => [] }, nodeRepl: { write } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 'wm1-fixture', changeReview: false,
     inputLease: new InputLease({ directory, holder: 'fixture' }) });
-  t.after(() => { relay.dispose(); streams.forEach(s => s.destroy()); rmSync(directory, { recursive: true, force: true }); });
+  t.after(() => { relay.dispose(); streams.forEach(s => s.destroy()); removeTemp(directory); });
   clientOut.on('data', data => {
     for (const line of data.toString().trim().split('\n')) {
       const msg = JSON.parse(line); pending.get(msg.id)?.(msg.result);
