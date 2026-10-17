@@ -23,7 +23,7 @@ test('same-title replacement, app restart or helper replacement cannot reuse a l
   assert.deepEqual(verifyWindowIdentity(leased, observed), observed);
 });
 const source = readFileSync(new URL('../plugins/sleight/lib/window-identity.js', import.meta.url), 'utf8');
-function inspect(request, numbers, focused = 1, cg = false) {
+function inspect(request, numbers, focused = 1, cg = false, events = []) {
   const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const windows = numbers.map((AXWindowNumber, i) => ({ AXTitle: 'Untitled', AXDocument: null, AXWindowNumber,
     AXPosition: { x: i * 400, y: 20 }, AXSize: { width: 300, height: 200 } }));
@@ -32,10 +32,11 @@ function inspect(request, numbers, focused = 1, cg = false) {
   Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => true,
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
     AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
-    AXUIElementCopyAttributeValue: (element, name, value) => { value[0] = element[name] ?? null; return 0; },
+    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); value[0] = element[name] ?? null; return 0; },
     CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
     NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
     NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
+    CGEventSourceSecondsSinceLastEventType: (source, type) => { events.push('hid'); assert.equal(source, 1); assert.equal(type, 0xFFFFFFFF); return 12.5; },
     CGWindowListCopyWindowInfo: () => list(cg ? windows.map((window, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0,
       kCGWindowNumber: 11 + i, kCGWindowBounds: { X: window.AXPosition.x, Y: 20, Width: 300, Height: 200 } })) : []) });
   return JSON.parse(runInNewContext(source + '\nrun([JSON.stringify(request)])', { $, request, Ref: () => [],
@@ -53,4 +54,15 @@ test('native identity maps AX geometry to CG numbers and detects a known number 
   assert.equal(selected.matches, 1); assert.equal(selected.windowNumber, 12);
   assert.equal(inspect({ ...target, nativeIdentity: { windowNumber: 99 } }, [11, 22]).status, 'mismatch');
   assert.notEqual(inspect({ ...target, nativeIdentity: { windowNumber: 99 } }, [null, null]).status, 'mismatch');
+});
+
+test('native identity includes the HID system idle duration without requesting trust', () => {
+  assert.equal(inspect(target, [11, 22]).hidIdleSeconds, 12.5);
+});
+
+test('HID idle is sampled after the native reads so input during AX inspection cannot be missed', () => {
+  const events = [];
+  assert.equal(inspect(target, [11, 22], 1, false, events).status, 'ok');
+  assert.equal(events.at(-1), 'hid');
+  assert.equal(events.filter(event => event === 'hid').length, 1);
 });

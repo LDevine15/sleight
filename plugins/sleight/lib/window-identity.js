@@ -29,6 +29,9 @@ function run(argv) {
       return ObjC.castRefToObject(value[0]);
     };
     const scalar = value => value === null ? null : ObjC.deepUnwrap(value);
+    const hidIdleSeconds = () => {
+      try { return Number($.CGEventSourceSecondsSinceLastEventType(1, 0xFFFFFFFF)); } catch { return null; }
+    };
     const windows = attr(app, 'AXWindows');
     let matches = [];
     if (Number(windows.count) > 64) throw new Error('Too many windows');
@@ -69,7 +72,7 @@ function run(argv) {
     }
     if (matches.length !== 1) return JSON.stringify({ status: 'ok', matches: matches.length,
       appId: request.appId, title: request.title, url: request.url, epoch: windowEpoch, window: 0,
-      pid, processStart: Number(running.launchDate.timeIntervalSince1970) });
+      pid, processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds() });
     const window = matches[0];
     // A unique header must also describe the app's focused window. Otherwise the engine's handle
     // and Accessibility disagree about which window a background input would reach.
@@ -81,6 +84,6 @@ function run(argv) {
     }
     return JSON.stringify({ status: 'ok', matches: 1, appId: request.appId, title: request.title,
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,
-      processStart: Number(running.launchDate.timeIntervalSince1970) });
+      processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds() });
   } catch (error) { return JSON.stringify({ status: 'unknown', error: String(error.message || error) }); }
 }

@@ -182,6 +182,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     // such reads cost 27 s across the benchmark runs of 2026-10-09.
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
+    state.actionIndex = 0; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
     // What Claude was last shown for the numbers this call acts on (number -> line).
@@ -368,6 +369,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (...args) => {
           checkNative();
+          const actionIndex = state.actionIndex++;
           const firstAction = !state.acted;
           state.acted = true;
           state.actionVersion++;
@@ -568,6 +570,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (state.guarded && !cancel && !dialog && !panel && (!observed || ['title', 'app', 'url'].some(key => observed[key] !== state.expected?.[key]))) {
             // Without document scope or change review, the stop carries the window it saw, so the
             // relay can lease that window for Claude's retry (Chess retitles itself on each move).
+            if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: actionIndex,
+              prev: state.lastAction, root: /^\\d+ .*$/m.exec(text ?? '')?.[0] ?? null }) + '\\n');
             throw (state.adoptUrl ? stop : message => new Error(message))(state.reason + ' Observed ' + JSON.stringify(observed));
           }
           await checkLease();
@@ -603,7 +607,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           state.reads = new WeakMap();
           // No Shift settle after setValue here, as drag.js does after its own text writes: the
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
-          return value.apply(raw, args);
+          const result = await value.apply(raw, args);
+          state.lastAction = name === 'click' && byId && kind !== 'line'
+            ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line } : null;
+          return result;
         };
         // An action Claude didn't await that fails would reject with no handler, and that ends the
         // engine's JavaScript session with every handle (3/3, 2026-10-07). Handle every action's
