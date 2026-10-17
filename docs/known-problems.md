@@ -18,7 +18,9 @@ our own runs. Dates and engine versions are given where they matter.
   `typeText` 3 of 3, and `pressKey` 3 of 3 right after a click, 0 of 4 right after another key. So a call that opens a menu
   or navigates by key (Cmd+Down in Finder) may stop as before. We don't know why a key after a key doesn't count.
 - Only plain action statements split this way. Of the 7 word-edit calls (2026-10-17) that clicked OK on Word's Replace All
-  alert and then stopped, 5 now split; the 2 with `.catch()` on an action still stop. None has run live yet.
+  alert and then stopped, 5 now split; the 2 with `.catch()` on an action still stop. None has run live yet. A dialog-close
+  continuation also needs HID idle since the dialog was leased, so any mouse or key input after it appeared stops the
+  rest, and it stops when the app has a second window with the same title and URL.
 
 ## The pointer, drags and hover
 

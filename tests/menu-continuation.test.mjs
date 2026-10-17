@@ -185,6 +185,15 @@ test('DR1: callbacks that do more than test one regex, and renames of non-names,
     'const a = b; await b.click("OK"); await b.pressKey("x");']) assert.equal(splitMenuActions(code), undefined, code);
 });
 
+// LW1 review: a rename counts only for open_file's handles or a name the relay binds to the leased app.
+test('LW1: only vouched-for handles may be renamed', () => {
+  const code = name => `const a = ${name}; await a.click({ id: "ok" }); await a.pressKey("Return");`;
+  assert.equal(splitMenuActions(code('__sleightOpenedApp12'))?.actions.length, 2);
+  for (const name of ['other', 'finder', '__sleightOpenedApp', 'x__sleightOpenedApp3']) assert.equal(splitMenuActions(code(name)), undefined, name);
+  assert.equal(splitMenuActions(code('word'), { alias: name => name === 'word' })?.actions.length, 2);
+  assert.equal(splitMenuActions(code('__sleightOpenedApp3'), { alias: () => false }), undefined);
+});
+
 test('DR1: only the covered window, after the receipt\'s own action, is a dialog remainder', () => {
   const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End");');
   const covered = { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report', appId: 'org.test' };
@@ -203,7 +212,7 @@ test('DR1: only the covered window, after the receipt\'s own action, is a dialog
 
 test('DR1: the returned window needs one focused match, the same process, its certified number and HID idle', () => {
   const covered = { title: 'report', app: 'Fixture Editor', url: null, appId: 'org.test' };
-  const observed = { ...covered, status: 'ok', matches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
+  const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
   const baseline = { ...observed, title: '', window: 2, windowNumber: 31 }, since = performance.now() - 100;
   assert.equal(returnedWindow(covered, baseline, observed, since), true);
   assert.equal(returnedWindow(covered, undefined, observed, since), true);
@@ -211,8 +220,12 @@ test('DR1: the returned window needs one focused match, the same process, its ce
     { processStart: 2 }, { epoch: 'other' }, { title: 'other' }, { url: 'file:///x' }, { appId: 'other' }, { windowNumber: null }]) {
     assert.equal(returnedWindow(covered, baseline, { ...observed, ...changed }, since), false, JSON.stringify(changed));
   }
+  // LW1 review: without a certified window, a second same-title window (narrowed to the focused one) stops.
+  for (const headerMatches of [2, 0, undefined]) assert.equal(returnedWindow(covered, baseline, { ...observed, headerMatches }, since), false);
+  assert.equal(returnedWindow(covered, baseline, observed, NaN), false, 'a parent without its time never continues');
   const certified = { ...covered, nativeIdentity: observed };
   assert.equal(returnedWindow(certified, baseline, observed, since), true);
+  assert.equal(returnedWindow(certified, baseline, { ...observed, headerMatches: 2 }, since), true);
   assert.equal(returnedWindow(certified, baseline, { ...observed, windowNumber: 23 }, since), false);
   assert.equal(returnedWindow(certified, baseline, { ...observed, window: 3 }, since), false);
 });
@@ -221,9 +234,14 @@ test('DR1: stop notes name methods, keys and selectors, never typed text', () =>
   const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End"); await app.typeText("hunter2"); await app.setValue(4, "pin 1234"); await app.click(7); await app.click([1, 2]);');
   const stop = { index: 1, windowStop: true, completed: 1, name: 'pressKey', error: 'Input lease stopped this action: window or URL changed.' };
   const note = stopNote(stop, plan);
-  assert.equal(note, 'sleight: this call ran 1 action (click "ok"); not sent: pressKey "super+End", typeText, setValue, click 7 and 1 more.');
+  assert.equal(note, 'sleight: this call ran 1 action (click id "ok"); not sent: pressKey "super+End", typeText, setValue, click 7 and 1 more.');
   assert.doesNotMatch(note, /hunter2|1234/);
-  assert.equal(stopNote({ ...stop, index: 0, completed: 0 }, plan), 'sleight: this call ran 0 actions; not sent: click "ok", pressKey "super+End", typeText, setValue and 2 more.');
+  assert.equal(stopNote({ ...stop, index: 0, completed: 0 }, plan), 'sleight: this call ran 0 actions; not sent: click id "ok", pressKey "super+End", typeText, setValue and 2 more.');
+  // LW1 review: label text and keys that type a character stay out.
+  const typed = splitMenuActions('await app.click({ label: "Card 4242" }); await app.pressKey("a"); await app.pressKey("shift+B"); await app.pressKey("ctrl+c");');
+  assert.equal(stopNote(stop, typed), 'sleight: this call ran 1 action (click); not sent: pressKey, pressKey, pressKey "ctrl+c".');
+  const named = splitMenuActions('await app.click("Card 4242"); await app.pressKey("Return"); await app.pressKey("shift+Tab"); await app.pressKey("ArrowDown"); await app.pressKey("7");');
+  assert.equal(stopNote(stop, named), 'sleight: this call ran 1 action (click); not sent: pressKey "Return", pressKey "shift+Tab", pressKey "ArrowDown", pressKey.');
   assert.equal(stopNote(stop), 'sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent.');
   assert.equal(stopNote({ ...stop, completed: 0 }, undefined, 2), 'sleight: this call ran 2 actions; the stopped pressKey and everything after it were not sent.');
   assert.equal(stopNote({ ...stop, windowStop: false }, plan), undefined);

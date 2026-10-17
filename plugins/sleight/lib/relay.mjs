@@ -2235,7 +2235,7 @@ export function createRelay({
     menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
       const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
-      if (leaseWindow !== call.target || !(remainder.dialog ? returnedWindow(covered, call.baseline, observed, since)
+      if (leaseWindow !== call.target || !(remainder.dialog ? returnedWindow(covered, call.baseline, observed, Math.min(since, covered.at))
         : unchangedMenuWindow(expected, call.baseline, observed, since))) {
         observeServerMessage(msg); return;
       }
@@ -2382,7 +2382,9 @@ export function createRelay({
     if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
         msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
         !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
-      const plan = splitMenuActions(msg.params.arguments?.code);
+      // A renamed handle counts only when it is open_file's or bound to the leased app.
+      const plan = splitMenuActions(msg.params.arguments?.code, { alias: name => handleBundles.has(name)
+        ? handleBundles.get(name)?.appId === leaseWindow.appId : /^__sleightOpenedApp\d+$/.test(name) });
       if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
         const target = leaseWindow, generation = stopGeneration;
         const admission = { plan, target, generation };
@@ -3356,10 +3358,16 @@ export function createRelay({
       if (leaseWindow && call.identityRequired) leaseWindow.identityRequired = true;
       if (leaseWindow && call.nativeIdentity) leaseWindow.nativeIdentity = call.nativeIdentity;
       if (leaseWindow && call.identityError) leaseWindow.identityError = call.identityError;
-      // A dialog or sheet remembers the window it covered, so a call whose own action closes it can go on there.
+      // A dialog or sheet remembers the standard window it covered, so a call whose own action closes it can go on
+      // there. Word shows a document with a sheet as a dialog root, under the same title and URL it had as a standard
+      // window. Two untitled dialogs compare equal, so the parent carries the time it was set, and continuing needs
+      // HID idle since then.
+      if (leaseWindow && (/^Window: .*\r?\n0 standard window\b/m.test(text) || sameWindow(previous, window) && previous.standard)) leaseWindow.standard = true;
       if (leaseWindow?.appId && previous?.appId === leaseWindow.appId && /^Window: .*\r?\n0 (?:sheet|dialog)\b/m.test(text)) {
         if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }
-        else if (previous.title || previous.url) { const { parent: _, ...covered } = previous; leaseWindow.parent = covered; }
+        else if (previous.standard && (previous.title || previous.url)) {
+          const { parent: _, ...covered } = previous; leaseWindow.parent = { ...covered, at: performance.now() };
+        }
       }
       if (leaseWindow?.appId && call.read && !msg.result?.isError) {
         const selector = call.selector ?? handleSelectors.get(call.handle);

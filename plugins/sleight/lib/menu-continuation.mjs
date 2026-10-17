@@ -14,11 +14,12 @@ const literalArgs = args => !args.some((t, i) => !t.string && !/^(?:\d+|true|fal
   !(args[i + 1]?.v === ':' && /^[A-Za-z_$][\w$]*$/.test(t.v)));
 
 // `let te = await cua.getApp("App")` (or { windowId: 12 }, or `app = …`) names the handle it binds.
-function acquisition(ts) {
+function acquisition(ts, alias) {
   const i = declared(ts);
   // `const a = __sleightOpenedApp3`: a handle the call renames. Nothing is sent, and the rest acts on the new name.
+  // Only a name the caller vouches for: open_file's handles, or one bound to the leased app.
   if (ts.length === i + 3 && isName(ts[i]) && punct(ts[i + 1], '=') && isName(ts[i + 2]) && !forbidden.has(ts[i + 2].v) &&
-      ts[i + 2].v !== ts[i].v) return ts[i].v;
+      ts[i + 2].v !== ts[i].v) return alias(ts[i + 2].v) ? ts[i].v : undefined;
   if (!isName(ts[i]) || ts[i + 1]?.v !== '=' || ts[i + 2]?.v !== 'await' || ts[i + 3]?.v !== 'cua' || ts[i + 4]?.v !== '.' ||
       ts[i + 5]?.v !== 'getApp' || ts[i + 6]?.v !== '(' || ts.at(-1)?.v !== ')' || ts.slice(i + 2, i + 7).some(t => t.string)) return;
   const args = ts.slice(i + 7, -1);
@@ -101,7 +102,7 @@ function trailingRead(ts, handle, names) {
 // arguments, reads or control flow: the guard's input index must name exactly this span.
 // The call may start by acquiring that handle and end by reading it (textedit-calculator,
 // 2026-10-17: both shapes stopped on their own menu click, about 8 to 10 s a run).
-export function splitMenuActions(code) {
+export function splitMenuActions(code, { alias = name => /^__sleightOpenedApp\d+$/.test(name) } = {}) {
   if (typeof code !== 'string' || code.length > 65536) return;
   const masked = maskCallbacks(code), split = statementSpans(masked);
   if (!split) return;
@@ -113,7 +114,7 @@ export function splitMenuActions(code) {
     if (ts.at(-1)?.v === ';') ts.pop();
     if (!ts.length) continue;
     statements++;
-    if (statements === 1 && (acquired = acquisition(ts))) continue;
+    if (statements === 1 && (acquired = acquisition(ts, alias))) continue;
     const action = ts[0]?.v === 'await' && !ts[0].string && isName(ts[1]) && ts[2]?.v === '.' && ACTIONS.includes(ts[3]?.v) &&
       !ts[3].string && ts[4]?.v === '(' && ts.at(-1)?.v === ')';
     if (!action) {
@@ -218,12 +219,14 @@ export function dialogRemainder(plan, receipt, covered, content) {
 const idle = (observed, since) => Number.isFinite(observed.hidIdleSeconds) && Number.isFinite(since) &&
   observed.hidIdleSeconds >= (performance.now() - since) / 1000 + 0.05;
 
-// The covered window is the app's focused one again: one match for its title and URL, the process the dialog's
-// baseline had, its certified native window when it had one, and no user input since the call was sampled.
+// The covered window is the app's focused one again: its certified native window, or else the only window with its
+// title and URL before focus narrows them (a second same-title window would take the rest otherwise), the process
+// the dialog's baseline had, and no user input since the dialog was leased and the call was sampled.
 export function returnedWindow(covered, baseline, observed, since) {
   if (!covered || !observed || !Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0 || !idle(observed, since)) return false;
   if (baseline && ['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return false;
   const certified = covered.nativeIdentity;
+  if (!certified && observed.headerMatches !== 1) return false;
   try {
     verifyWindowIdentity({ appId: covered.appId, title: covered.title, url: covered.url,
       ...(certified ? { windowNumber: certified.windowNumber, nativeIdentity: certified } : {}) }, observed);
@@ -231,16 +234,20 @@ export function returnedWindow(covered, baseline, observed, since) {
   } catch { return false; }
 }
 
-// What a lease stop sent and didn't, so Claude needn't take a screenshot to find out. Method names, keys and
-// selectors only: typed or set text stays out.
+// A key that types nothing: a named key, or a shortcut with a modifier other than Shift.
+const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|backspace|forwarddelete|home|end|pageup|pagedown|(?:arrow)?(?:up|down|left|right)|f\d{1,2})|(?:[a-z]+\+)*(?:super|cmd|command|meta|ctrl|control|alt|option)\+(?:[a-z]+\+)*[^+]+)$/i;
+
+// What a lease stop sent and didn't, so Claude needn't take a screenshot to find out. Method names, IDs, element
+// numbers and non-typing keys only: typed or set text, single characters and label text stay out.
 export function stopNote(receipt, plan, earlier = 0) {
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
   const count = n => `${n} action${n === 1 ? '' : 's'}`;
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
     const name = action => {
-      const method = tokens(plan.code.slice(action.start, action.end))[3]?.v, value = action.selector?.value;
-      return value === undefined ? method : `${method} ${JSON.stringify(typeof value === 'string' && value.length > 30 ? value.slice(0, 29) + '…' : value)}`;
+      const method = tokens(plan.code.slice(action.start, action.end))[3]?.v, { kind, value } = action.selector ?? {};
+      const shown = kind === 'number' || kind === 'id' && value.length <= 40 || kind === 'key' && NAMED_KEY.test(value);
+      return shown ? `${method} ${kind === 'id' ? `id ${JSON.stringify(value)}` : kind === 'key' ? JSON.stringify(value) : value}` : method;
     };
     const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
     const ran = plan.actions.slice(0, n);

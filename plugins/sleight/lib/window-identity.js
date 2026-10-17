@@ -39,6 +39,8 @@ function run(argv) {
       const window = windows.objectAtIndex(i);
       if (scalar(attr(window, 'AXTitle')) === request.title && scalar(attr(window, 'AXDocument', true)) === request.url) matches.push(window);
     }
+    // Before the number or focus narrows them: a caller with no number for the window needs exactly one.
+    const headerMatches = matches.length;
     const focused = attr(app, 'AXFocusedWindow');
     let cg;
     const number = window => {
@@ -70,7 +72,7 @@ function run(argv) {
       const focusedNumber = number(focused);
       if (Number.isSafeInteger(focusedNumber) && focusedNumber > 0) matches = matches.filter(window => number(window) === focusedNumber);
     }
-    if (matches.length !== 1) return JSON.stringify({ status: 'ok', matches: matches.length,
+    if (matches.length !== 1) return JSON.stringify({ status: 'ok', matches: matches.length, headerMatches,
       appId: request.appId, title: request.title, url: request.url, epoch: windowEpoch, window: 0,
       pid, processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds() });
     const window = matches[0];
@@ -82,7 +84,7 @@ function run(argv) {
       if (windowReferences.length >= 1024) throw new Error('Window identity capacity reached');
       index = windowReferences.push(window) - 1;
     }
-    return JSON.stringify({ status: 'ok', matches: 1, appId: request.appId, title: request.title,
+    return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title,
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,
       processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds() });
   } catch (error) { return JSON.stringify({ status: 'unknown', error: String(error.message || error) }); }
