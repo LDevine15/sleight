@@ -11,6 +11,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   result, failures included, with the model ids each arm actually ran.
   Browser tasks are tested only against turbo, never sleight's engine browser path (owner, 2026-10-17), so the native claim
   suite is the 9 native tasks in bench/claim-tasks.txt.
+  The word "fastest" is used only if sleight has the lowest expected time on a majority of the 9 native tasks and the lowest total,
+  with 5 runs on every task within 20%. Otherwise the wording is "completed every task, fastest on N of 9". The post says the suite
+  is sleight's own, which tasks the skill was tuned on, and that competitors ran their defaults (owner, 2026-10-17, set before the
+  claim run).
   Claim results run a fixed claim suite, one task per skill, 3 runs per arm, with 5 runs where sleight and an arm are
   within 20%. They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
   check. An arm's results stand until that arm, the engine or the model changes, so a new competitor or a sleight fix round
