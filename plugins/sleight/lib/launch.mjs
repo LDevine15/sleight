@@ -375,14 +375,8 @@ const DRAG_TOOL = {
     properties: {
       app: { type: 'string', description: 'App name, bundle ID or path' },
       windowId: { type: 'integer', minimum: 1, description: 'Exact window ID from the engine inventory or app state' },
-      from: { oneOf: [
-        { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
-        { type: 'integer', minimum: 0 }, { type: 'string', enum: ['the current text selection'] },
-      ] },
-      to: { oneOf: [
-        { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
-        { type: 'integer', minimum: 0 }, { type: 'string', pattern: '^end of line [1-9][0-9]*$' },
-      ] },
+      from: { description: 'Element number, [x, y], or "the current text selection"' },
+      to: { description: 'Element number, [x, y], or "end of line N"' },
       holdMs: { type: 'integer', description: 'How long to hold before moving (default 500)' },
       steps: { type: 'integer', description: 'Moves between start and end (default 25)' },
     },
@@ -415,7 +409,7 @@ function leanToolDescription(tool) {
     ['If that makes no change, it tries background PID posting with a 500 ms hold when the points are uncovered.', 'Then uncovered PID posting (500 ms hold) if unchanged.'],
     ['A drag that holds the mouse down and moves in steps, for what app.drag in the js tool can\'t do, such as moving selected text (select it with js first).', 'Stepped drag; select text with js first.'],
     ['`from` accepts an element number from the last window read or "the current text selection"; `to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. Both also accept coordinate pairs, in the same frame as the app\'s engine screenshot, from that window\'s top-left corner.',
-      '`from`/`to`: unique named element numbers from read, or window-relative engine screenshot coordinates. `from`: "the current text selection"; `to`: "end of line N" (1-based AX visual line).'],
+      '`from`/`to`: unique named element numbers from read, or window-relative engine screenshot coordinates. `from`: "the current text selection"; `to`: "end of line N" (1-based visual line in focused text area).'],
     ['The result names the path. ', ''],
     ['Reports takeoverMs. ', ''],
     ['`path` is absolute or starts with ~/.', 'Absolute or ~/ path.'],

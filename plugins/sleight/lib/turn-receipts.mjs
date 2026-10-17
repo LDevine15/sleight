@@ -198,7 +198,12 @@ export class TurnJournal {
           call.before = current?.window.app === args.app && (!args.windowTitle || args.windowTitle === current.window.title) ? current : undefined;
           call.summary.app = call.localTarget.app; call.summary.window = call.localTarget.title;
           const point = value => Array.isArray(value) && value.length === 2 && value.every(Number.isFinite) ? value : undefined;
-          actions[0].target = { ...(point(args.from) ? { from: point(args.from) } : {}), ...(point(args.to) ? { to: point(args.to) } : {}),
+          const endpoint = (value, from) => point(value) || (value && typeof value === 'object' && Object.keys(value).length === 1 &&
+            typeof value.line === 'string' ? { line: redacted(value.line) } : undefined) || (Number.isSafeInteger(value) && value >= 0 ? value :
+            from && value === 'the current text selection' ? value :
+              !from && typeof value === 'string' && /^end of line [1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value.slice(12))) ? value : undefined);
+          actions[0].target = { ...(endpoint(args.from, true) !== undefined ? { from: endpoint(args.from, true) } : {}),
+            ...(endpoint(args.to, false) !== undefined ? { to: endpoint(args.to, false) } : {}),
             ...(point(args.at) ? { position: point(args.at) } : {}), ...(Number.isInteger(args.element) ? { element: args.element } : {}),
             ...(Array.isArray(args.path) ? { path: args.path.map(redacted) } : {}) };
           for (const name of ['text', 'value']) if (typeof args[name] === 'string') { actions[0].input = redacted(args[name]); if (args[name].length) secrets.add(args[name]); }

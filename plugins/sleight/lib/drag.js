@@ -93,40 +93,59 @@ const selectionEndpoint = p => p === 'the current text selection';
 const lineEndpoint = p => typeof p === 'string' && /^end of line [1-9]\d*$/.test(p) && Number.isSafeInteger(Number(p.slice(12)));
 const elementEndpoint = p => Number.isSafeInteger(p) && p >= 0;
 
-function elementForLine(win, line) {
+function elementIdentity(line) {
   if (typeof line !== 'string') throw new Error('element number has no observed identity; read this window again');
   const roles = { AXButton: 'button', AXCheckBox: 'checkbox', AXRadioButton: 'radio button', AXImage: 'image',
     AXRow: 'row', AXCell: 'cell', AXGroup: 'group', AXTextArea: 'text entry area', AXTextField: 'text field',
     AXStaticText: 'text', AXLink: 'link', AXTable: 'table', AXOutline: 'outline', AXScrollArea: 'scroll area' };
-  const lineRole = Object.values(roles).sort((a, b) => b.length - a.length).find(role => line === role || line.startsWith(role + ' '));
-  const id = /(?:^|[, ]+)ID: ([^,\n]+)(?:,|$)/.exec(line)?.[1];
-  const description = /(?:^|[, ]+)Description: ([^,\n]+)(?:,|$)/.exec(line)?.[1];
-  const label = lineRole && line.slice(lineRole.length).trim().replace(/^(?:\([^()]*\)\s*)+/, '').split(',')[0];
-  const title = label && !/^[A-Za-z ]+:/.test(label) ? label : undefined;
-  if (!lineRole || !(id || description || title)) throw new Error('element has no supported AX name or ID; use coordinates from a fresh screenshot');
-  const matches = [];
+  const role = Object.keys(roles).sort((a, b) => roles[b].length - roles[a].length)
+    .find(key => line === roles[key] || line.startsWith(roles[key] + ' '));
+  const body = role && line.slice(roles[role].length).trim().replace(/^(?:\([^()]*\)\s*)+/, '').replace(/^Selected, /, '');
+  // Like compact-reads' sibling labels, only named attribute boundaries end a value; commas in names stay.
+  const fields = 'Description|Value|Secondary Actions|ID|Help|Details|URL';
+  const attribute = name => new RegExp('(?:^|, )' + name + ': (.*?)(?=, (?:' + fields + '):|$)').exec(body)?.[1];
+  const title = body && body.split(new RegExp('(?:^|, )(?:' + fields + '): '))[0];
+  const id = attribute('ID'), description = attribute('Description');
+  if (!role || !(id || description || title)) throw new Error('element has no supported AX name or ID; use coordinates from a fresh screenshot');
+  return { role, id, description, title };
+}
+
+function matchesIdentity(el, identity, role = attempt(() => el.role(), '')) {
+  const { id, description, title } = identity;
+  return role === identity.role &&
+    (!id || attempt(() => el.attributes.byName('AXIdentifier').value(), null) === id) &&
+    (!description || attempt(() => el.attributes.byName('AXDescription').value(), null) === description) &&
+    (!title || attempt(() => el.name(), null) === title || attempt(() => el.attributes.byName('AXDescription').value(), null) === title);
+}
+
+function elementsForLines(win, lines) {
+  const entries = Object.entries(lines).map(([number, line]) => ({ number, identity: elementIdentity(line) }));
+  const started = Date.now();
   let visited = 0;
   const walk = (el, depth) => {
-    if (depth > 12 || ++visited > 300) throw new Error('AX element scan exceeded its depth or 300-element limit');
-    const role = el.role();
+    if (depth >= 64 || ++visited > 5000) throw new Error('AX element scan exceeded its depth or 5000-element limit');
+    if (Date.now() - started > 1500) throw new Error('AX element scan exceeded its time limit');
+    const role = attempt(() => el.role(), '');
     if (role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(attempt(() => el.subrole(), ''))) return;
-    const prefix = roles[role];
-    if (prefix && prefix === lineRole) {
-      if ((!id || attempt(() => el.attributes.byName('AXIdentifier').value(), null) === id) &&
-          (!description || attempt(() => el.attributes.byName('AXDescription').value(), null) === description) &&
-          (!title || attempt(() => el.name(), null) === title || attempt(() => el.attributes.byName('AXDescription').value(), null) === title)) matches.push(el);
+    for (const entry of entries) if (matchesIdentity(el, entry.identity, role)) {
+      if (entry.el) throw new Error('element identity must match exactly one named AX element in this window; ambiguous, read again');
+      entry.el = el;
     }
     for (const child of attempt(() => el.uiElements(), [])) walk(child, depth + 1);
   };
-  walk(win, 0);
-  if (matches.length !== 1) throw new Error('element identity must match exactly one named AX element in this window; missing or ambiguous, read again');
-  return matches[0];
+  if (entries.length) walk(win, 0);
+  if (entries.some(entry => !entry.el)) throw new Error('element identity must match exactly one named AX element in this window; missing, read again');
+  return Object.fromEntries(entries.map(entry => [entry.number, entry]));
 }
 
-function requireAncestor(el, win, message = 'the focused text selection is outside the chosen window') {
+function requireAncestor(el, win, message = 'the focused text selection is outside the chosen window', contentOnly = false) {
   for (let depth = 0; depth < 64; depth++) {
     if ($.CFEqual(el.reference, win.reference)) return;
-    if (el.role() === 'AXWindow') break;
+    const role = el.role();
+    if (contentOnly && (role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(attempt(() => el.subrole(), '')))) {
+      throw new Error('drag element moved into window chrome outside the content; read the window again');
+    }
+    if (role === 'AXWindow') break;
     el = axElement(axAttribute(el.reference, 'AXParent'));
   }
   throw new Error(message);
@@ -134,8 +153,16 @@ function requireAncestor(el, win, message = 'the focused text selection is outsi
 
 // Numbers name identities from the relay's observed tree, never a fresh traversal index.
 // Text points use a nonempty glyph range; a zero-length line-end range can be at (0, 0).
-function semanticPoints(request, pid, win, main) {
+function semanticPoints(request, pid, win, main, knownElements) {
   const references = [], state = [], bounds = main.bounds;
+  const numbers = [...new Set([request.from, request.to].filter(elementEndpoint))];
+  if (numbers.length) {
+    const observed = request.elementWindow;
+    if (!observed || observed.title !== main.title || (observed.windowId !== undefined && observed.windowId !== main.id)) {
+      throw new Error('element number belongs to another or unobserved window; read this window again');
+    }
+  }
+  const elements = knownElements || elementsForLines(win, Object.fromEntries(numbers.map(n => [n, request.elementLines?.[n]])));
   let textArea;
   const text = () => {
     if (textArea) return textArea;
@@ -165,11 +192,10 @@ function semanticPoints(request, pid, win, main) {
     if (coordinate(endpoint)) return toPoints(endpoint, screenshotScale(request, bounds, main.title));
     let point;
     if (elementEndpoint(endpoint)) {
-      const observed = request.elementWindow;
-      if (!observed || observed.title !== main.title || (observed.windowId !== undefined && observed.windowId !== main.id)) {
-        throw new Error('element number belongs to another or unobserved window; read this window again');
-      }
-      const el = elementForLine(win, request.elementLines?.[endpoint]), r = frame(el);
+      const { el, identity } = elements[endpoint];
+      if (!matchesIdentity(el, identity)) throw new Error('drag element identity changed before input; read the window again');
+      requireAncestor(el, win, 'drag element left the chosen window; read the window again', true);
+      const r = frame(el);
       references.push(el.reference);
       point = { x: r.X + r.Width / 2, y: r.Y + r.Height / 2 };
       if (!inside(bounds, point)) throw new Error('resolved element endpoint is outside the chosen window');
@@ -194,11 +220,11 @@ function semanticPoints(request, pid, win, main) {
     return [point.x - bounds.X, point.y - bounds.Y];
   };
   const from = resolve(request.from), to = resolve(request.to);
-  return { from, to, references, signature: JSON.stringify({ from, to, state, bounds: [bounds.X, bounds.Y, bounds.Width, bounds.Height] }) };
+  return { from, to, references, elements, signature: JSON.stringify({ from, to, state, bounds: [bounds.X, bounds.Y, bounds.Width, bounds.Height] }) };
 }
 
 function checkSemantic(before, request, pid, win, main) {
-  const after = semanticPoints(request, pid, win, main);
+  const after = semanticPoints(request, pid, win, main, before.elements);
   if (after.signature !== before.signature || after.references.length !== before.references.length ||
       after.references.some((el, i) => !$.CFEqual(el, before.references[i]))) throw new Error('drag element, text, selection or geometry changed before input; read the window again');
 }
@@ -477,7 +503,7 @@ function axTextArea(pid, point, reference) {
   return {
     value: () => ObjC.unwrap(ObjC.castRefToObject(get(el, 'AXValue'))),
     selection: () => rangeOf(get(el, 'AXSelectedTextRange')),
-    lineRange: line => rangeOf(ask(el, 'AXRangeForLine', $(line))),
+    lineRange: line => rangeOf(ask(el, 'AXRangeForLine', $.NSNumber.numberWithInteger(line))),
     hasAttributes: (location, length, baseline) => attributedTextHasAttributes(
       ObjC.castRefToObject(ask(el, 'AXAttributedStringForRange', range(baseline, location + length - baseline))),
       location + length - baseline, location - baseline),

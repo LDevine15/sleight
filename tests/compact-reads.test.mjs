@@ -336,3 +336,13 @@ test('a re-acquired window shown whole later in the call drops its duplicate acq
   assert.deepEqual(dropAcquisitionTree(head, [{ type: 'text', text: tree('Other', 'Saved') }]), head);
   assert.deepEqual(dropAcquisitionTree(head, [{ type: 'text', text: 'no tree here' }]), head);
 });
+
+
+test('observed line inventory can remap replay identities without guessing element numbers', () => {
+  const c = createReadCompactor();
+  const window = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
+  apply(c, tree(['\t171 image ID: source', '\t192 image ID: target']));
+  const lines = c.seenLines(window);
+  assert.equal(lines[171], 'image ID: source'); assert.equal(lines[192], 'image ID: target');
+  assert.equal(c.seenLines({ ...window, title: 'unobserved' }), undefined);
+});
