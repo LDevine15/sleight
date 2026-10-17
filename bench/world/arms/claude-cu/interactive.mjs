@@ -285,7 +285,9 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
     // Only the card (or the screen's last lines), never the session banner with the account's name and email above it.
     const at = text.lastIndexOf('Computer Use wants to control these apps');
     const shown = at >= 0 ? text.slice(at) : text.split('\n').slice(-20).join('\n');
-    approvalBlock = { reason: why, cardText: shown.replaceAll(homedir(), '~').replace(/\/(?:Users|home)\/[^/\s]+/g, '~') };
+    const scrubbed = value => value.replaceAll(homedir(), '~').replace(/\/(?:Users|home)\/[^/\s]+/g, '~');
+    // The raw tail (escapes kept) shows how the terminal redrew the card, for parser fixes.
+    approvalBlock = { reason: why, cardText: scrubbed(shown), rawTail: JSON.stringify(scrubbed(screen.slice(-4000))) };
     onEvent?.({ type: 'approval_block', ...approvalBlock });
   };
   const pty = launch(plan, data => { screen = (screen + data).slice(-65536); }, { onSpawn });
