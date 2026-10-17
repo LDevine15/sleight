@@ -314,6 +314,13 @@ Claude spent two turns on a second read and a screenshot before its first edit.
 `SLEIGHT_OPEN_AUTO_SHOT=0` (A/B baseline) leaves the screenshot out. `SLEIGHT_OPEN_SHOT=1` adds one to
 every `open_file` result.
 
+`SLEIGHT_OPEN_RULES=short` (for an A/B, off by default) gives an `open_file` result the skill's rules
+without the lines about acquiring an app, choosing a window, tap coordinates, the drag, hover and
+banner tools, and the doctor (4,897 characters down to 3,605). It keeps every safety passage word for
+word. The whole skill comes with Claude's first `js` result. Haiku thought before its answer in 18/18
+sleight preview-read runs, each given the whole skill in its first result, against 2/5 Peekaboo runs (2026-10-17).
+That is a correlation, and the A/B has not run.
+
 ## Launch re-read
 
 `SLEIGHT_LAUNCH_REREAD=1` (for an A/B, not yet run): when an acquisition launched the app and its

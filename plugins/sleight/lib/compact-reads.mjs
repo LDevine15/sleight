@@ -20,9 +20,11 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
+import { promptNotice } from './prompt-notice.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -290,13 +292,37 @@ function saveFinishLine(after, before, failed, overlap) {
   if (failed || overlap || !after || !before || !saveSheet(after.root) || saveSheet(before.root)) return;
   const id = saveNameId(after.lines);
   if (!id) return;
-  return 'sleight: finish the save in the next call: await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: ' +
+  return /* lean notice */ 'sleight: finish the save in the next call: await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: ' +
     JSON.stringify(id) + ' }, "<name>"); await app.pressKey("Return").';
 }
 const edited = title => /(?: — | - )Edited$/.test(title);
 // A file:// document's modification time, null when it has none or can't be read.
 function fileTime(url) {
   try { return url?.startsWith('file://') ? statSync(fileURLToPath(url)).mtimeMs : null; } catch { return null; }
+}
+// A confirmed save's file from metadata only, never its content: size from stat, kind from the system's type
+// identifier (Spotlight's, about 40 ms), else the extension. After a confirmed save, 3 of 20 textedit-save runs
+// opened the Format menu to check for plain text (4-17 s each) and 3 tried `require('fs')` (Fable study, 2026-10-17).
+const EXTENSION_TYPES = { txt: 'public.plain-text', text: 'public.plain-text', md: 'public.plain-text', csv: 'public.plain-text',
+  rtf: 'public.rtf', rtfd: 'com.apple.rtfd', pdf: 'com.adobe.pdf' };
+// The file's type identifier first, then the types it conforms to; undefined when Spotlight has none.
+export function spotlightTypes(path) {
+  const run = spawnSync('/usr/bin/mdls', ['-raw', '-name', 'kMDItemContentType', '-name', 'kMDItemContentTypeTree', path],
+    { encoding: 'utf8', timeout: 1000 });
+  const [type, tree = ''] = run.status === 0 ? run.stdout.split('\0') : [];
+  if (!type || type === '(null)') return;
+  return [type, ...[...tree.matchAll(/"([^"]+)"/g)].map(m => m[1])];
+}
+export function fileReceipt(url, typesOf = spotlightTypes) {
+  try {
+    const path = fileURLToPath(url), info = statSync(path);
+    const extension = /\.([^./]+)$/.exec(path)?.[1].toLowerCase();
+    const types = typesOf(path) ?? (EXTENSION_TYPES[extension] ? [EXTENSION_TYPES[extension]] : []);
+    const kind = /* lean notice */ types.includes('com.apple.rtfd') ? 'rich text with attachments' : types.includes('public.rtf') ? 'rich text (RTF)'
+      : types.includes('com.adobe.pdf') ? 'PDF' : types.some(type => /^public\.(?:utf8-)?plain-text$/.test(type)) ? 'plain text'
+      : types[0] ? types[0].split('.').at(-1) : extension ? `.${extension} file` : 'unknown type';
+    return /* lean notice */ info.isDirectory() ? `on disk: a package folder, ${kind}` : `on disk: ${info.size} bytes, ${kind}`;
+  } catch { return; }
 }
 const withoutValue = line => line.replace(/(?:, )?Value: ?.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '')
   .replace(/, (?=(?:Secondary Actions|ID|Help|Description):)/g, ' ').replace(/ +/g, ' ').trimEnd();
@@ -336,7 +362,7 @@ function misplacedTextNote(action, observation, typed) {
     const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(line.key)?.[1];
     return `element ${line.num}` + (label ? ` (${label})` : '');
   };
-  return `sleight: typed text landed in ${describe(landed[0])}, not in the clicked ${describe(clicked[0])}.`;
+  return /* lean notice */ `sleight: typed text landed in ${describe(landed[0])}, not in the clicked ${describe(clicked[0])}.`;
 }
 
 function tabSelections(lines) {
@@ -380,7 +406,7 @@ function focusedDescriptionChange(before, after) {
   const was = focus(before), now = focus(after);
   if (!was || !now || was.element !== now.element || was.description === now.description) return [];
   const short = text => text.length > 60 ? text.slice(0, 57) + '...' : text;
-  return [`UI changed (${now.element}: ${short(was.description)} to ${short(now.description)})`];
+  return [/* lean notice */ `UI changed (${now.element}: ${short(was.description)} to ${short(now.description)})`];
 }
 
 // Match the same selector and its selected siblings, ignoring element renumbering.
@@ -398,7 +424,7 @@ function selectedTabChanges(before, after) {
           was.children.some(child => child.key === newSelected[0].key && !child.selected))) {
       from = oldSelected[0].label; to = newSelected[0].label;
     }
-    if (from && to && from !== to) changes.push(`UI changed (selected tab: ${from} to ${to})`);
+    if (from && to && from !== to) changes.push(/* lean notice */ `UI changed (selected tab: ${from} to ${to})`);
   }
   return changes;
 }
@@ -468,7 +494,7 @@ function swappedSiblings(before, after) {
     if (left && right && left.role === right.role && left.label !== right.label && order.every(Boolean)) {
       const tabs = tabStrip(parent.role, order.map(node => node.role));
       swaps.push({ key, pair: [left.label, right.label], order: now.map(node => node.key), tabs,
-        summary: `${tabs ? 'tabs' : 'siblings'} now: ${order.map(node => node.label).join(', ')}` });
+        summary: /* lean notice */ `${tabs ? 'tabs' : 'siblings'} now: ${order.map(node => node.label).join(', ')}` });
     }
   }
   return swaps.length === 1 ? swaps[0] : undefined;
@@ -476,11 +502,11 @@ function swappedSiblings(before, after) {
 
 // Undo first: in excel-edit-3 (2026-10-17) Cmd+Z restored a tab swap in one call, while runs 1 and 5
 // spent 20 to 25 s in a Move or Copy dialog.
-const RESTORE_ORDER = "if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.";
+const RESTORE_ORDER = /* lean notice */ "if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.";
 // AN1 (2026-10-17): posted clicks on sheet tabs dragged them in 6 of 8 runs, while next/previous-sheet keys
 // switched in the background in 586 to 656 ms (6/6). Only a tab strip gets the advice; list rows have no such key.
 const restoreOrder = tabs => tabs
-  ? `${RESTORE_ORDER} To switch tabs, use the app's next/previous-tab key or go-to control, not a click.` : RESTORE_ORDER;
+  ? /* lean notice */ `${RESTORE_ORDER} To switch tabs, use the app's next/previous-tab key or go-to control, not a click.` : RESTORE_ORDER;
 
 // A tab strip by its parent's role, or by every sibling's role.
 function tabStrip(parent, roles) {
@@ -489,7 +515,7 @@ function tabStrip(parent, roles) {
 }
 
 function siblingSwapNote(swap) {
-  return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; ${restoreOrder(swap.tabs)}`;
+  return /* lean notice */ `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; ${restoreOrder(swap.tabs)}`;
 }
 
 // Selection and AX numbering can change on a click; sibling membership cannot.
@@ -563,7 +589,7 @@ function clickMoveNote(click, observation) {
   const order = matches[0].map(child => child.key), position = order.indexOf(click.target) + 1;
   const others = keys => JSON.stringify(keys.filter(key => key !== click.target));
   if (position && position !== click.position && others(order) === others(click.order))
-    return `sleight: the click on ${click.label} moved it from position ${click.position} to ${position}; ${restoreOrder(click.tabs)}`;
+    return /* lean notice */ `sleight: the click on ${click.label} moved it from position ${click.position} to ${position}; ${restoreOrder(click.tabs)}`;
 }
 
 // Reminders survive an edited title marker; input guards and document grants still use exact identity.
@@ -584,11 +610,11 @@ function resultNote(action, after, failed, failure) {
   const invalidRead = after?.invalid;
   if (invalidRead) after = undefined;
   const degradedRead = before?.degraded || after?.degraded;
-  let reason = failed ? 'call failed' : action.overlap ? 'overlapping calls' : !after ? invalidRead ?? 'no read after input'
+  let reason = /* lean notice */ failed ? 'call failed' : action.overlap ? 'overlapping calls' : !after ? invalidRead ?? 'no read after input'
     : !before ? 'no earlier read' : before.window.app !== after.window.app ? 'another app' : degradedRead ? 'degraded read' : undefined;
   const windowChanged = !reason && action.opens &&
     (before.window.title !== after.window.title || before.window.url !== after.window.url);
-  let ui = windowChanged ? 'UI changed (window)' : undefined;
+  let ui = /* lean notice */ windowChanged ? 'UI changed (window)' : undefined;
   const incomplete = before?.incomplete || after?.incomplete;
   const sameDocument = before && after && /^standard window\b/.test(before.root) &&
     before.window.url?.startsWith('file://') && before.window.url === after.window.url;
@@ -596,15 +622,15 @@ function resultNote(action, after, failed, failure) {
     /\b(?:Modified|Edited): false\b/i.test(after.root);
   const degraded = after?.delta?.degraded || (after?.delta?.lostState && !(action.deletes && after.delta.clearedValue));
   if (!ui) {
-    reason ||= incomplete ? 'incomplete read' : degraded ? 'degraded read'
+    reason ||= /* lean notice */ incomplete ? 'incomplete read' : degraded ? 'degraded read'
       : after?.delta?.baseline !== before.id ? 'comparison unavailable' : undefined;
-    if (!reason && after.delta.panel) ui = 'UI changed (sheet or dialog)';
-    if (!reason && (after.delta.semantic || (action.deletes && after.delta.clearedValue))) ui = 'UI changed (value)';
-    if (!reason && action.save && modifiedCleared) ui = 'UI changed (modified state)';
-    if (!reason && after.delta.element) ui ||= 'UI changed (element)';
+    if (!reason && after.delta.panel) ui = /* lean notice */ 'UI changed (sheet or dialog)';
+    if (!reason && (after.delta.semantic || (action.deletes && after.delta.clearedValue))) ui = /* lean notice */ 'UI changed (value)';
+    if (!reason && action.save && modifiedCleared) ui = /* lean notice */ 'UI changed (modified state)';
+    if (!reason && after.delta.element) ui ||= /* lean notice */ 'UI changed (element)';
     // Without a comparison Claude already has the full tree (a retitled window, its own full read),
     // so the line would only add tokens.
-    if (reason) ui = reason === 'comparison unavailable' ? undefined : `UI unverified (${reason})`;
+    if (reason) ui = /* lean notice */ reason === 'comparison unavailable' ? undefined : `UI unverified (${reason})`;
   }
   let saved;
   if (action.save) {
@@ -622,7 +648,7 @@ function resultNote(action, after, failed, failure) {
     // during the call still can. "not confirmed (degraded read)" after a save that worked sent Claude through six
     // checking turns, about 17 s of a 38.5 s textedit-calculator run (Fable study, 2026-10-17).
     const readIssue = degradedRead ? 'degraded read' : incomplete ? 'incomplete read' : degraded ? 'degraded read' : undefined;
-    const unavailable = failed ? 'call failed' : action.overlap ? 'overlapping calls' : action.mixedSave && !(fileWritten && action.fileSaveSafe) ? 'mixed save targets' : !after ? invalidRead ?? 'no read after input'
+    const unavailable = /* lean notice */ failed ? 'call failed' : action.overlap ? 'overlapping calls' : action.mixedSave && !(fileWritten && action.fileSaveSafe) ? 'mixed save targets' : !after ? invalidRead ?? 'no read after input'
       : fileWritten ? undefined : !before ? 'no earlier read' : before.window.app !== after.window.app ? 'another app' : readIssue;
     const document = after && /^standard window\b/.test(after.root) && !/\b(?:save|open)-panel\b/.test(after.root);
     const editedTitleCleared = sameDocument && edited(before.window.title) && !edited(after.window.title) &&
@@ -638,7 +664,7 @@ function resultNote(action, after, failed, failure) {
     const panelStep = !unavailable && after && (panelRoot(after.root) ||
       (panelRoot(before?.root) && /^standard window\b/.test(after.root) && after.window.url?.startsWith('file://') && !action.namedURL));
     if (panelStep) saved = undefined;
-    else saved = unavailable ? `not confirmed (${unavailable})`
+    else saved = /* lean notice */ unavailable ? `not confirmed (${unavailable})`
       : readIssue ? `observed ${JSON.stringify(after.window.url)} (its file on disk changed during this call)`
       : !document ? 'not confirmed (no document save state change seen)'
       : !sameDocument && !named && !fileWritten ? `not confirmed (${after.window.url ? 'different document' : 'document identity unavailable'})`
@@ -648,12 +674,13 @@ function resultNote(action, after, failed, failure) {
   }
   const selectedTabs = !reason && !incomplete && !degraded && after?.delta?.baseline === before.id
     ? after.delta.selectedTabs : [];
-  const fields = [failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
-    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && 'saved: ' + saved].filter(Boolean);
+  const fields = [/* lean notice */ failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
+    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && /* lean notice */ 'saved: ' + saved,
+    saved?.startsWith('observed') && after.window.url?.startsWith('file://') && fileReceipt(after.window.url)].filter(Boolean);
   const finish = saveFinishLine(after, before, failed, action.overlap);
   if (!fields.length) return finish;
   const note = fields.join('; ');
-  return 'sleight: ' + note + (/[.!?]$/.test(note) ? '' : '.') + (finish ? '\n' + finish : '');
+  return /* lean notice */ 'sleight: ' + note + (/[.!?]$/.test(note) ? '' : '.') + (finish ? '\n' + finish : '');
 }
 
 // Whether text holds a full tree: a window header whose next lines aren't a diff of an earlier one.
@@ -761,7 +788,7 @@ function trimSiblingRows(text, fullRead = '') {
     const flush = () => {
       if (!run.length) return;
       replacements.set(run[0].start, { end: run.at(-1).end,
-        text: `sleight: ${run.length} sibling rows omitted (${run.reduce((count, row) => count + row.end - row.start, 0)} lines).${replacements.size ? '' : fullRead}` });
+        text: /* notice */ `sleight: ${run.length} sibling rows omitted (${run.reduce((count, row) => count + row.end - row.start, 0)} lines).${replacements.size ? '' : fullRead}` });
       for (const row of run) for (const line of lines.slice(row.start, row.end)) {
         const num = parse(line).num; if (num !== undefined) hidden.add(num);
       }
@@ -831,14 +858,15 @@ function trimAcquisition(text, fullRead = '', hinted = new Set()) {
   }
   if (!hidden.size) return;
   const key = hintKey(windowFromText(text), parse(lines[1]).key);
-  out.push(`sleight: ${hidden.size} static or structural lines omitted.${hinted.has(key) ? '' : fullRead}`);
+  out.push(/* notice */ `sleight: ${hidden.size} static or structural lines omitted.${hinted.has(key) ? '' : fullRead}`);
   const compacted = text.slice(0, at) + out.join('\n');
   if (compacted.length >= text.length) return;
   hinted.add(key);
   return { text: compacted, hidden };
 }
 
-export const TEXTLESS_NOTE = 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
+// relay.mjs finds this note by its exact text in either wording.
+export const TEXTLESS_NOTE = /* lean notice */ 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
 
 // Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
 // With openedFiles (path -> size), an empty text area counts only for a file open_file found non-empty on
@@ -946,7 +974,7 @@ function trimToolbars(text, code, action, fullRead = '') {
     const children = group && lines.slice(i + 1, group.end);
     const count = children?.filter(line => control(parse(line).key.trim())).length ?? 0;
     if (!group || count <= 20 || kept.has(group.key)) { out.push(lines[i++]); continue; }
-    out.push(lines[i] + ` — sleight: ${count} controls omitted (${children.length} lines).${hidden.size ? '' : fullRead}`);
+    out.push(lines[i] + /* notice */ ` — sleight: ${count} controls omitted (${children.length} lines).${hidden.size ? '' : fullRead}`);
     for (const line of children) hidden.add(parse(line).num);
     i = group.end;
   }
@@ -1064,12 +1092,10 @@ const scrollTargets = code => [...maskCode(code).matchAll(/\.\s*scroll\s*\(/g)].
 });
 // Travel's airport search took 15 calls and 88.7 s, 45.7 s of it between calls; one call that scrolled
 // and read in a loop found and selected the airport in 33 s (Firefox, 2026-10-17).
-// This note and the omitted-reads line are not in bench/prompt-budget.mjs's count, like resultNote,
-// clickMoveNote and siblingSwapNote (ledger item PB1), and have no lean wording.
-export const SCROLL_LOOP_NOTE = 'sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, ' +
+export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, ' +
   'scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.';
 
-export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
+export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false, prompt,
   callTrees = process.env.SLEIGHT_CALL_TREES !== 'all', scrollNote = process.env.SLEIGHT_SCROLL_NOTE !== '0',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
@@ -1182,12 +1208,13 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     }
     const header = lines.slice(0, 2).join('\n');
     const body = changes.length
-      ? `sleight: lines changed since the last full tree you saw for this window (- removed, + added; numbers on + lines are current):\n${changes.join('\n')}`
-      : 'sleight: no change since the last full tree you saw for this window' + (renumbered ? ', apart from numbering.' : '.');
+      ? promptNotice(/* lean notice */ 'sleight: lines changed since the last full tree you saw for this window (- removed, + added; numbers on + lines are current):', prompt) + `\n${changes.join('\n')}`
+      // Other modules match this exact text, so it has no lean wording.
+      : /* notice */ 'sleight: no change since the last full tree you saw for this window' + (renumbered ? ', apart from numbering.' : '.');
     const note = renumbered
-      ? `\nsleight: ${renumbered} other elements have new numbers. Use numbers from + lines above or from a full read. Read the window again with getAXState() for changed lines with current numbers before acting on any other element; sleight refuses actions on numbers that changed.`
+      ? promptNotice(/* lean notice */ `\nsleight: ${renumbered} other elements have new numbers. Use numbers from + lines above or from a full read. Read the window again with getAXState() for changed lines with current numbers before acting on any other element; sleight refuses actions on numbers that changed.`, prompt)
       : '';
-    const degradedNote = fewerAttributes ? `\nsleight: ${fewerAttributes} button lines returned fewer attributes. Their unique IDs still match; missing descriptions and help are unavailable in this read.` : '';
+    const degradedNote = fewerAttributes ? promptNotice(/* lean notice */ `\nsleight: ${fewerAttributes} button lines returned fewer attributes. Their unique IDs still match; missing descriptions and help are unavailable in this read.`, prompt) : '';
     const text = `${header}\n${body}${note}${degradedNote}`;
     if (!(leanCalls && action) && text.length > tree.length * MAX_SHARE) return tree;
     const allValid = [...current.keys()].every(num => valid.has(num));
@@ -1376,9 +1403,9 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       });
       const note = action && resultNote(action, observedInResult, failed,
         failure ?? { message: failureReason(content) });
-      if (note) out.push({ type: 'text', text: note });
-      const omittedNote = `sleight: ${omittedReads} earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.`;
-      if (omittedReads) out.push({ type: 'text', text: omittedNote });
+      if (note) out.push({ type: 'text', text: promptNotice(note, prompt) });
+      const omittedNote = /* lean notice */ `sleight: ${omittedReads} earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.`;
+      if (omittedReads) out.push({ type: 'text', text: promptNotice(omittedNote, prompt) });
       // Calls in a row that each return the window's tree and scroll one target the same way. A call that
       // loops already searches in one call, and any other call, or one with no tree of that window, ends the run.
       if (scrollNote) {
@@ -1388,7 +1415,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         if (targets.size === 1) {
           const [target] = targets, calls = last?.target === target ? last.calls + 1 : 1;
           scrolls.set(key, { target, calls });
-          if (calls === 3) out.push({ type: 'text', text: SCROLL_LOOP_NOTE });
+          if (calls === 3) out.push({ type: 'text', text: promptNotice(SCROLL_LOOP_NOTE, prompt) });
         }
       }
       // Keep the reminder only while complete observations still show that order in this document.
@@ -1418,7 +1445,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           if (observation.incomplete || observation.degraded || observation.delta?.degraded || matches?.length !== 1 ||
               JSON.stringify(matches[0].children.map(node => node.key)) !== JSON.stringify(pending.order)) pendingSwaps.delete(key);
           else if (action?.save && action.before && swapDocumentKey(action.before.window) === key && !failed && !stopped && !action.overlap) {
-            out.push({ type: 'text', text: `sleight: ${pending.summary}.` });
+            out.push({ type: 'text', text: promptNotice(`sleight: ${pending.summary}.`, prompt) });
             pendingSwaps.delete(key);
           }
         }
@@ -1429,22 +1456,22 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           !observedInResult.delta?.degraded && observedInResult.delta?.baseline === action.before.id &&
           documentKey(action.before.window) === documentKey(observedInResult.window)) {
         const misplaced = misplacedTextNote(action, observedInResult, typed);
-        if (misplaced) out.push({ type: 'text', text: misplaced });
+        if (misplaced) out.push({ type: 'text', text: promptNotice(misplaced, prompt) });
         const swap = swappedSiblings(action.before.lines, observedInResult.lines);
         if (swap) {
           pendingSwaps.set(swapDocumentKey(observedInResult.window), swap);
-          out.push({ type: 'text', text: siblingSwapNote(swap) });
+          out.push({ type: 'text', text: promptNotice(siblingSwapNote(swap), prompt) });
           moved = undefined; // the swap line already names the clicked item
         }
       }
-      if (moved) out.push({ type: 'text', text: moved });
+      if (moved) out.push({ type: 'text', text: promptNotice(moved, prompt) });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
       if (compactToolbars) out = dedupeTrees(out, false, !action && !failed && !stopped, sliced, !full && !failed && !stopped);
       if ((resultTrim || firstAcquisition || compactToolbars) && !full) for (let i = 0; i < out.length; i++) {
         const item = out[i];
         if (item?.type !== 'text' || typeof item.text !== 'string') continue;
         const key = documentKey(windowFromText(item.text)), hints = hintKeys(item.text);
-        const fullRead = hints.some(hint => !omissionHints.has(hint)) ? ' A full read includes the omitted lines.' : '';
+        const fullRead = hints.some(hint => !omissionHints.has(hint)) ? /* notice */ promptNotice(' A full read includes the omitted lines.', prompt) : '';
         let trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text, fullRead, new Set(omissionHints))
           : resultTrim ? trimSiblingRows(item.text, fullRead) : undefined;
         if (compactToolbars && !failed && !stopped) {
@@ -1474,7 +1501,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (screenshotReads && !failed && !stopped && !action && !hasScreenshot && !screenshotHints.has(screenshotKey) &&
           !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult, openedFiles)) {
         screenshotHints.add(screenshotKey); textlessNoted = true;
-        out.push({ type: 'text', text: TEXTLESS_NOTE });
+        out.push({ type: 'text', text: promptNotice(TEXTLESS_NOTE, prompt) });
       }
       // After a failure, a stop or a user change, the next acquisition of any window is whole again.
       // Only the notices themselves: the rules shown with the engine docs also say "the user changed

@@ -727,7 +727,7 @@ test('OF2: the 21-53 L61 unsplit call after OK leads with the stop note and the 
     const result = await h.call('let app = await cua.getApp("Fixture Editor");\nawait app.click({ id: "ok" });\nawait app.click([600, 402]);\nawait app.pressKey("super+End");\nawait app.click({ label: "Replace All" });\nawait nodeRepl.write(await app.getAXState());');
     assert.equal(result.isError, true);
     assert.deepEqual(h.keys, []);
-    assert.equal(result.content[0].text, 'sleight: this call ran 1 action; the stopped click and everything after it were not sent.' + (prompt
+    assert.equal(result.content[0].text, (prompt ? 'sleight: this call ran 1 action; not sent: the stopped click onward.' : 'sleight: this call ran 1 action; the stopped click and everything after it were not sent.') + (prompt
       ? ' Dialog closed: rest not sent; send it next call, no new read.'
       : ' Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.'));
   }

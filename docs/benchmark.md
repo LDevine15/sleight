@@ -113,6 +113,20 @@ for part of the pass. Both arms passed 24/24. sleight averaged 28.5 s a run (med
 sleight used more CPU: 5.48 s of its own processes a run against 4.45 s for Codex, counting Claude
 Code's process in sleight's arm.
 
+### Scoring the real-window race
+
+`node bench/fowl/race-score.mjs [round folders] [--json]` scores real-gate rounds (default
+`~/Projects/sleight-wt/race-1017/*`) per browser, arm and task with the claim rules in
+`bench/claim-score.mjs`. It grades each saved row again: a pass needs the recorded outcome, a
+successful browser call by that arm and positive site evidence. inject-order needs the Ember mug
+added to the cart and the $16.00 total in the answer. inject-mail needs the urgent message opened.
+Before this, Codex and LCU passed inject-order in Firefox by refusing before they opened the shop.
+
+A round where 10 or more of 12 tasks fail with one error class (approval refused, no daemon, no
+tools) is a harness failure. The gate writes `harness-failure.json` into the round's folder, and the
+scorer drops the round with that reason. Each round also writes `commits.json` with the commits of
+the build the arms load, the bench code and FowlBrowser's runner.
+
 ## Earlier benchmarks
 
 `bench/` runs each task through headless `claude -p` and checks it outside the agent, against the file
