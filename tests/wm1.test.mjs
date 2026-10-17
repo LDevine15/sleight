@@ -21,18 +21,49 @@ const item = text => ({ type: 'text', text });
 const mark = '[sleight:filtered-read:wm1]';
 const warning = /typed text landed in/;
 
-test('a selected menu-bar title warns about a tracking loop while the root is a window', () => {
+test('a selected menu-bar title gives numbered recovery without promising it will work', () => {
   for (const prompt of [undefined, 'lean']) {
     const note = openMenuNote(header + '\n' + menu, prompt);
-    assert.match(note, prompt === 'lean' ? /possible menu tracking loop/ : /menu may still be open in a tracking loop/);
-    assert.match(note, prompt === 'lean' ? /document input won't land/ : /keys and clicks into the document won't land/);
-    assert.match(note, /Escape.*click.*menu-bar title/);
-    assert.match(note, /Table/);
+    assert.match(note, prompt === 'lean' ? /Menu may trap input/ : /a menu may be stuck open; keys and clicks may not reach the document/);
+    assert.match(note, prompt === 'lean' ? /Escape once, then click menu-bar item/ : /Try one Escape; if it stays, click its menu-bar item by number/);
+    assert.match(note, /\(`app.click\(132\)`\); if (?:it still stays|still stuck), tell the user/);
+    assert.doesNotMatch(note, /closes it|won't land/);
   }
 });
 
 test('selected menu-bar items with an explicit role also warn', () => {
-  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', 'menu bar item (selected) Table')), /tracking loop/);
+  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', 'menu bar item (selected) Table')), /app.click\(132\)/);
+});
+
+test('the relay gives full advice once until selection disappears, then starts a new episode', t => {
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams;
+  const replies = [];
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: false, changeReview: false });
+  t.after(() => { relay.dispose(); streams.forEach(stream => stream.destroy()); });
+  clientOut.on('data', data => replies.push(...data.toString().trim().split('\n').map(JSON.parse)));
+  let id = 0;
+  const read = rows => {
+    clientIn.write(JSON.stringify({ id: ++id, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.getAXState();' } } }) + '\n');
+    serverOut.write(JSON.stringify({ id, result: { content: [item(rows)] } }) + '\n');
+    return replies.find(reply => reply.id === id).result.content.map(part => part.text ?? '').join('\n');
+  };
+  assert.match(read('## Computer Use\n\nNative reference.\n' + header + '\n' + menu), /Escape/);
+  for (const rows of [menu, menu.replace('132', '142'), menu.replace('Table', 'Insert')]) {
+    const out = read(header + '\n' + rows);
+    assert.doesNotMatch(out, /Try one Escape|if it still stays|Escape or a click/);
+    const notes = out.split('\n').filter(line => /^sleight:.*menu.*(?:stuck|open)/.test(line));
+    assert.ok(notes.length <= 1);
+  }
+  read('No tree in this reply.');
+  assert.doesNotMatch(read(header + '\n' + menu), /Try one Escape/);
+  read(header + '\n…(20)');
+  assert.doesNotMatch(read(header + '\n' + menu), /Try one Escape/);
+  read(header + '\n+ 20 button Save');
+  assert.doesNotMatch(read(header + '\n' + menu), /Try one Escape/);
+  assert.doesNotMatch(read('## Computer Use\n\nNative reference.\n' + header + '\n' + menu), /Try one Escape/);
+  read(header + '\n' + menu.replace('(selected) ', ''));
+  assert.match(read(header + '\n' + menu), /Try one Escape/);
 });
 
 test('menu warnings require selection under the menu bar and keep Cancel recovery', () => {
@@ -63,6 +94,36 @@ test('runtime typed text in the changed body names it and the clicked Search fie
   assert.match(out, /typed text landed in element 29 \(Page 1 content\), not in the clicked element 12 \(Search Document\)/);
   assert.equal(out.match(warning)?.length, 1);
   assert.doesNotMatch(out, /filtered-read|"typed"/);
+});
+
+test('the word-edit call shape permits a trailing Return and AX read', () => {
+  const code = 'await app.click(12); await app.typeText("amber"); await app.pressKey("Return"); await app.getAXState();';
+  assert.match(result([search, body], { code }), warning);
+  assert.match(result([search, body], { code: 'await app.click(12); await app.typeText(query); await app.getAXState();' }), warning);
+  for (const code of ['await app.click(12); await app.pressKey("Return"); await app.typeText(query);',
+    'await app.click(12); await app.typeText(query); await other.pressKey("Return");']) {
+    assert.doesNotMatch(result([search, body], { code }), warning);
+  }
+});
+
+test('a field cleared on Return and its newly added row never imply misplaced typing', () => {
+  const code = 'await app.click(12); await app.typeText(query); await app.pressKey("Return"); await app.getAXState();';
+  const added = '\t13 row\n\t\t14 text field (settable) Description: Task, Value: amber';
+  assert.doesNotMatch(result([search, added], { before: [search], code }), warning);
+});
+
+test('short input and common text already in the destination stay silent', () => {
+  for (const typed of ['a', ' a ', 'ab', '  ab  ']) {
+    assert.doesNotMatch(result([search, body.replace('Amber', typed)], { typed: [typed] }), warning);
+  }
+  assert.doesNotMatch(result([search, body.replace('Amber', 'the report')],
+    { before: [search, beforeBody.replace('Report', 'the draft')], typed: ['the'] }), warning);
+});
+
+test('new settable elements and matching fields at a different position path stay silent', () => {
+  assert.doesNotMatch(result([search, body], { before: [search] }), warning);
+  assert.doesNotMatch(result([search, '\t90 group\n' + body], { before: [search, beforeBody] }), warning);
+  assert.doesNotMatch(result([search, beforeBody.replace('29 text', '30 text').replace('Page 1 content', 'Other content'), body]), warning);
 });
 
 test('the clicked field showing the typed text suppresses the warning even if the body changed too', () => {
@@ -137,7 +198,7 @@ test('the relay carries the runtime receipt into the compactor without driving a
   let content = [], changed = false, id = 0;
   const write = text => content.push(item(text));
   const current = () => tree([search, changed ? body : beforeBody]);
-  const raw = { getAXState: async () => current(), click: async () => {}, typeText: async () => { changed = true; } };
+  const raw = { getAXState: async () => current(), click: async () => {}, typeText: async () => { changed = true; }, pressKey: async () => {} };
   const context = createContext({ query: 'amber', cua: { getApp: async () => { write(current()); return raw; }, listApps: async () => [] }, nodeRepl: { write } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 'wm1-fixture', changeReview: false,
     inputLease: new InputLease({ directory, holder: 'fixture' }) });
@@ -167,7 +228,7 @@ test('the relay carries the runtime receipt into the compactor without driving a
     clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
   });
   assert.equal((await call('var app = await cua.getApp("example.fixture")')).isError, false);
-  const reply = await call('await app.click(12); await app.typeText(query);');
+  const reply = await call('await app.click(12); await app.typeText("amber"); await app.pressKey("Return"); await app.getAXState();');
   assert.equal(reply.isError, false, JSON.stringify(reply.content));
   const out = reply.content.map(i => i.text).join('\n');
   assert.match(out, warning);

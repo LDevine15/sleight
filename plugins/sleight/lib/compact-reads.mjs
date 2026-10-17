@@ -222,8 +222,9 @@ function actionKind(code, before) {
     ['click', 'typeText', 'paste'].includes(call[1]) || call[1] === 'pressKey' && /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''));
   const first = calls[0], number = first[1] === 'click' && /^\s*(\d+)\s*$/.exec(argsOf(first))?.[1];
   const clicked = number && before?.lines.map(parse).find(line => line.num === Number(number));
-  const typedTarget = clicked && textField(clicked.key) && calls.length > 1 && calls.slice(1).every(call =>
-    call[1] === 'typeText' && receiver(call) === receiver(first)) ? clicked : undefined;
+  const typedTarget = clicked && textField(clicked.key) && calls[1]?.[1] === 'typeText' && calls.slice(1).every((call, index) =>
+    receiver(call) === receiver(first) && (index === 0 || call[1] === 'pressKey' && index === calls.length - 2 &&
+      /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''))) ? clicked : undefined;
   return { save, opens, deletes, clickAndTyping, typedTarget, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
@@ -268,17 +269,33 @@ const textField = line => /^\s*(?:text (?:entry area|area|field)|search (?:text 
   /\([^)]*\bsettable\b[^)]*\)/.test(line);
 const fieldKey = line => withoutValue(line).replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
 const fieldValue = line => stateFields(line).find(field => field.startsWith('value:'))?.slice(6).toLowerCase();
+// Match a field at the same position under the same ancestors, independent of AX numbering.
+function positionedFields(lines) {
+  const stack = [], fields = [];
+  let roots = 0;
+  for (const line of lines) {
+    const match = ELEMENT.exec(line);
+    if (!match) continue;
+    const depth = match[1].length;
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const parent = stack.at(-1), position = parent ? parent.children++ : roots++;
+    const node = { ...parse(line), depth, children: 0,
+      path: `${parent?.path ?? ''}/${depth}:${position}:${fieldKey(match[3])}` };
+    stack.push(node);
+    if (textField(node.key)) fields.push(node);
+  }
+  return fields;
+}
 function misplacedTextNote(action, observation, typed) {
-  if (!action.typedTarget || !Array.isArray(typed) || typed.length !== 1 || typeof typed[0] !== 'string' || !typed[0].trim()) return;
-  const value = typed[0].toLowerCase(), target = fieldKey(action.typedTarget.key);
-  const before = action.before.lines.map(parse).filter(line => line.num !== undefined && textField(line.key));
-  const after = observation.lines.map(parse).filter(line => line.num !== undefined && textField(line.key));
+  if (!action.typedTarget || !Array.isArray(typed) || typed.length !== 1 || typeof typed[0] !== 'string' || typed[0].trim().length < 3) return;
+  const value = typed[0].trim().toLowerCase(), target = fieldKey(action.typedTarget.key);
+  const before = positionedFields(action.before.lines), after = positionedFields(observation.lines);
   const clicked = after.filter(line => fieldKey(line.key) === target);
   if (before.filter(line => fieldKey(line.key) === target).length !== 1 || clicked.length !== 1 || fieldValue(clicked[0].key)?.includes(value)) return;
-  const landed = observation.delta.addedLines.filter(line => line.num !== undefined && textField(line.key) &&
+  const landed = after.filter(line =>
     fieldKey(line.key) !== target && fieldValue(line.key)?.includes(value) &&
-    !before.some(old => fieldKey(old.key) === fieldKey(line.key) && fieldValue(old.key)?.includes(value)));
-  if (landed.length !== 1) return;
+    !before.some(old => old.path === line.path && fieldValue(old.key)?.includes(value)));
+  if (landed.length !== 1 || !before.some(old => old.path === landed[0].path)) return;
   const describe = line => {
     const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(line.key)?.[1];
     return `element ${line.num}` + (label ? ` (${label})` : '');

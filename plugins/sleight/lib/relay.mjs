@@ -165,11 +165,7 @@ const FIRST_CALL_RULE = 'execute exactly one of the API calls shown below, optio
 // entry is cua.getState(), and 50 of 80 runs spent their first turn on it. With this wording 0 of 12
 // did, with turns 7.91 to 7.17 and total time 30.6 s to 27.0 s a run, every run passing (A/B, 2026-10-11).
 const FIRST_CALL_BATCH = 'start with one of the API calls shown below, assigning the app to a variable. For a Mac app you can name, start with `let app = await cua.getApp("Calculator")` (its name or bundle ID): it returns that app\'s UI state. Use cua.getState() only to find an app or browser you can\'t name. When you already know the first actions on that app, put them after it in the same call: sleight acquires the app and checks its window before they run. Chain every later action whose target you already know (keys, text, `{ id }` or `{ label }` clicks) in one call too, but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.';
-// An open menu in front of a window reads as "0 menu Secondary Actions: Cancel". Escape left it open in
-// 3 of 3 tries in the head-to-head (TextEdit and Finder, 2026-10-09), and its Cancel action closed it.
-export function openMenuNote(text, prompt) {
-  const menu = typeof text === 'string' && /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel\b/m.exec(text);
-  if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
+function selectedMenuItem(text) {
   if (typeof text !== 'string' || /^\d+ menu(?: |$)(?!bar\b)/m.test(text)) return;
   let bar;
   for (const line of text.split('\n')) {
@@ -178,10 +174,19 @@ export function openMenuNote(text, prompt) {
     if (bar !== undefined && item[1].length <= bar) bar = undefined;
     if (/^menu bar(?: |$)/.test(item[3]) && !/^menu bar item\b/.test(item[3])) bar = item[1].length;
     else if (bar !== undefined && item[1].length === bar + 1 && /\([^)]*\bselected\b[^)]*\)/.test(item[3])) {
-      const title = item[3].replace(/^menu bar item\s+/, '').replace(/\([^)]*\)\s*/g, '').split(', ')[0];
-      return promptNotice(`sleight: a menu may still be open in a tracking loop (${title}, element ${item[2]}); keys and clicks into the document won't land. Escape or a click on that menu-bar title (${title}) closes it.`, prompt);
+      return item[2];
     }
   }
+}
+
+// An open menu in front of a window reads as "0 menu Secondary Actions: Cancel". Escape left it open in
+// 3 of 3 tries in the head-to-head (TextEdit and Finder, 2026-10-09), and its Cancel action closed it.
+export function openMenuNote(text, prompt, repeated = false) {
+  const menu = typeof text === 'string' && /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel\b/m.exec(text);
+  if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
+  const number = selectedMenuItem(text);
+  if (number) return repeated ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
+    promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number (\`app.click(${number})\`); if it still stays, tell the user.`, prompt);
 }
 
 // SLEIGHT_FIRST_CALL_BATCH=merge, under A/B. Since 668b462 a call continues into a window its own
@@ -226,9 +231,8 @@ export function promptNotice(text, prompt) {
     .replace('For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.', 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.')
     .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
     .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
-    .replace('a menu may still be open in a tracking loop', 'possible menu tracking loop')
-    .replace("keys and clicks into the document won't land.", "document input won't land.")
-    .replace(/Escape or a click on that menu-bar title \([^)]*\) closes it\./, 'Escape or click the menu-bar title.')
+    .replace('a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number', 'Menu may trap input. Escape once, then click menu-bar item')
+    .replace('; if it still stays, tell the user.', '; if still stuck, tell the user.')
     .replace('` does.', '`.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')
@@ -826,6 +830,7 @@ export function createRelay({
   });
   const forgetGuard = () => { guardReady = false; guardGeneration++; };
   const screenshots = new Map(); // lowercased app name -> { latest, byTitle } pixel sizes of its engine screenshots
+  const stuckMenus = new Set();
   // Every tools/call gets the next number. An acquisition's read can stand in for the guard's
   // first read only in the call right after it (priorRead.seq + 1).
   let callSeq = 0, priorRead;
@@ -3344,7 +3349,13 @@ export function createRelay({
         if (note) msg.result.content.push({ type: 'text', text: promptNotice(note, prompt) });
       }
       if (!automatic && jsCode !== undefined) {
-        const note = openMenuNote(msg.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n'), prompt);
+        const text = msg.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+        const tree = text.slice(Math.max(0, text.lastIndexOf('Window: ')));
+        const key = documentKey(windowFromText(tree));
+        const note = openMenuNote(tree, prompt, key && stuckMenus.has(key));
+        if (key && selectedMenuItem(tree)) stuckMenus.add(key);
+        else if (key && !msg.result.isError && /^\d+ (?:standard window|window|sheet|dialog)\b/m.test(tree) &&
+            !/…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree)) stuckMenus.delete(key);
         if (note) msg.result.content.push({ type: 'text', text: note });
       }
       // Explicit reads stay whole unless Claude printed a derived value. Recovery still forces
