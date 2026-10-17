@@ -1010,7 +1010,49 @@ function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = f
   });
 }
 
+// A call that reads one window more than CALL_TREES times shows only its last read of that window.
+// The travel task's 40-read airport search returned 41 full trees, 140,731 characters, which spilled
+// to a file Claude couldn't open (Firefox, 2026-10-17); with only the last tree it is 3,620. The code
+// still gets every read, the earlier ones become omitted reads (as emit:false makes them), and errors,
+// notices, Claude's own output and other windows' trees stay. Incomplete reads are never left out.
+const CALL_TREES = 2;
+function omitEarlierReads(content, limit = CALL_TREES) {
+  const reads = [];
+  content.forEach((item, index) => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return;
+    for (let pos = 0; ;) {
+      const at = item.text.indexOf(GUARD_MARK, pos);
+      if (at < 0) break;
+      const end = item.text.indexOf(GUARD_END, at + GUARD_MARK.length);
+      if (end < 0) break;
+      const tree = item.text.slice(at + GUARD_MARK.length, end), window = windowFromText(tree);
+      if (window && ELEMENT.test(tree.split('\n')[1] ?? '') && !/…\(\d+\)/.test(tree)) reads.push({ index, at, key: documentKey(window) });
+      pos = end + GUARD_END.length;
+    }
+  });
+  const counts = new Map();
+  for (const read of reads) counts.set(read.key, (counts.get(read.key) ?? 0) + 1);
+  const last = new Map(reads.map(read => [read.key, read]));
+  const hidden = reads.filter(read => counts.get(read.key) > limit && last.get(read.key) !== read);
+  if (!hidden.length) return { content, omitted: 0 };
+  return { omitted: hidden.length, content: content.map((item, index) => {
+    const spans = hidden.filter(read => read.index === index).reverse();
+    let text = item?.text;
+    for (const { at } of spans) text = text.slice(0, at) + GUARD_OMIT_MARK + text.slice(at + GUARD_MARK.length);
+    return spans.length ? { ...item, text } : item;
+  }) };
+}
+
+// The first argument of each literal scroll call: an element number, locator or point.
+const scrollTargets = code => [...maskCode(code).matchAll(/\.\s*scroll\s*\(/g)]
+  .map(match => /^\s*(\[[^\]]*\]|\{[^}]*\}|[^,)]*)/.exec(code.slice(match.index + match[0].length))[1].trim());
+// Travel's airport search took 15 calls and 88.7 s, 45.7 s of it between calls; one call that scrolled
+// and read in a loop found and selected the airport in 33 s (Firefox, 2026-10-17).
+export const SCROLL_LOOP_NOTE = 'sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, ' +
+  'scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.';
+
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
+  callTrees = process.env.SLEIGHT_CALL_TREES !== 'all', scrollNote = process.env.SLEIGHT_SCROLL_NOTE !== '0',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
@@ -1018,6 +1060,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
+  // window key -> { target, calls }: consecutive calls on that window that scrolled the same target.
+  const scrolls = new Map();
   const omissionHints = readHints.omissionHints ??= new Set();
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
@@ -1216,6 +1260,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         return text === item.text ? [item] : text ? [{ ...item, text }] : [];
       });
       if (filtered?.full) explicitFull = true;
+      let omittedReads = 0;
+      if (callTrees) ({ content, omitted: omittedReads } = omitEarlierReads(content));
       const stopped = content.some(item => item?.type === 'text' &&
         /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
       if (compactAcquisition && acquisition && (failed || stopped)) forceFull = true;
@@ -1309,6 +1355,18 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const note = action && resultNote(action, observedInResult, failed,
         failure ?? { message: failureReason(content) });
       if (note) out.push({ type: 'text', text: note });
+      const omittedNote = `sleight: ${omittedReads} earlier reads of the same window in this call left out; the last is shown.`;
+      if (omittedReads) out.push({ type: 'text', text: omittedNote });
+      const scrolledWindow = observedInResult && !observedInResult.invalid && documentKey(observedInResult.window);
+      if (scrollNote && scrolledWindow && typeof code === 'string') {
+        const targets = new Set(scrollTargets(code)), target = [...targets][0], last = scrolls.get(scrolledWindow);
+        if (targets.size !== 1) scrolls.delete(scrolledWindow);
+        else {
+          const calls = last?.target === target ? last.calls + 1 : 1;
+          scrolls.set(scrolledWindow, { target, calls });
+          if (calls === 3) out.push({ type: 'text', text: SCROLL_LOOP_NOTE });
+        }
+      }
       // Keep the reminder only while complete observations still show that order in this document.
       const observation = observedInResult;
       const safeClickRead = !failed && !stopped && !forceFull && !action?.overlap && observation &&

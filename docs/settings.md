@@ -284,6 +284,15 @@ call returned a newer full one. It tied the default (24.8 s against 23.8 s a run
 also drops runs of 20 or more sibling rows from a result over 25,000 characters, keeping selected
 rows, folders and rows matching the window title or file name (unit-tested, not yet measured live).
 
+A call that reads one window more than twice shows only its last read of that window, plus a line
+saying how many were left out. The code still gets every read, and errors, notices and other windows'
+trees stay. Travel's 40-read airport search in Firefox (2026-10-17) returned 140,778 characters and
+spilled to a file; replayed, it is 3,620. `SLEIGHT_CALL_TREES=all` (A/B baseline) shows every read.
+After three calls in a row scroll the same list, a note suggests searching it in one call with a capped
+loop that checks for progress and verifies the selection. In a live probe without a model, one such call
+found and selected the airport in 33 s, against 88.7 s over 15 calls. `SLEIGHT_SCROLL_NOTE=0` (A/B baseline) leaves the note out. Neither
+is measured end to end yet.
+
 `SLEIGHT_COMPACT_REACQUIRE=1` (opt-in) compacts the tree of a window Claude acquires again after
 seeing it whole, sending "no change" or the changed lines as a read does. It cut
 prompt tokens 9% but lost its 2026-10-17 A/B on excel-edit and word-edit (156.3 s against 149.4 s
