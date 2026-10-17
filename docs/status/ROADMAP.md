@@ -49,6 +49,9 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    The opt-in flags A/B (2026-10-17) made small native tasks faster and Office slower. Flags that hurt a class of window are
    switched off by a categorical rule measured from the window at run time, never by app name (owner, 2026-10-17). A Fable study
    picks the signal from the A/B traces, then a live check confirms it before any flag becomes a default.
+   No shortcuts on the claim (owner, 2026-10-17): every fix the live runs surface (IT2 field focus, FL1 notice wording, XD1
+   cross-window drag, the Excel tab swap, HY1C hygiene, the claude-cu arm) lands before sleight's final claim run, and the tag
+   follows the claim. Lanes build in parallel while the Mac runs the claim's live work, so neither waits on the other.
    Safari's race uses a dedicated Safari profile, "sleight benchmark", which the owner made on 2026-10-17, with Safari quit
    before each round as for Chrome (owner, 2026-10-17). The world sleight arm is logged in (owner, same day).
    Before browser numbers are published, one gate round runs turbo on a real, isolated Helium or Chrome profile instead of the
