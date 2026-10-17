@@ -289,6 +289,9 @@ export function promptNotice(text, prompt) {
     .replace('; if it still stays, tell the user.', '; if still stuck, tell the user.')
     .replace('` does.', '`.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
+    .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
+    .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')
+    .replace(', already acquired (`let app = ', ', acquired (`let app = ')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')
     .replace('Change review: an action is still pending, so this read cannot take a later copy. ', 'Change review: pending action. ')
     .replace(/Numbers in this window changed since your last full read, and .*? isn't one you've seen since\. /, '')
@@ -598,6 +601,7 @@ export function createRelay({
   openShot = process.env.SLEIGHT_OPEN_SHOT === '1',
   // open_file adds a screenshot only when the opened document's tree holds none of its text or cells.
   openAutoShot = process.env.SLEIGHT_OPEN_AUTO_SHOT !== '0',
+  openShotTimeoutMs = 5000,
   onClientReply = () => {},
 }) {
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
@@ -1624,7 +1628,7 @@ export function createRelay({
   function openScreenshot(handle) {
     return new Promise(resolve => {
       const id = `sleight-open-shot-${nextInternalId++}`;
-      const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, 5000);
+      const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, openShotTimeoutMs);
       internalRequests.set(id, reply => {
         clearTimeout(timer);
         resolve(reply.error || reply.result?.isError ? undefined
@@ -2101,9 +2105,11 @@ export function createRelay({
             : [{ type: 'text', text: `${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
               'Find its window before acting.' }];
           // Excel's and Word's trees hold no cells or body text. In 10 of 10 edit runs (2026-10-17) Claude then
-          // read the window again and took a screenshot, two model turns, before its first edit.
+          // read the window again and took a screenshot, two model turns, before its first edit. Only a window
+          // whose URL is the opened file gets one: with no URL, the read may show another window.
+          const matched = typeof shownPath === 'string' && [openedFile.path, openedFile.real].includes(shownPath);
           let pictured = false;
-          if (textless && confirmed && !state.isError) {
+          if (textless && matched && !state.isError) {
             const started = Date.now(), image = await openScreenshot(handle);
             trace('open-screenshot', { id: msg.id, ms: Date.now() - started, ok: !!image });
             if (generation !== stopGeneration || closing || disposed) return;
@@ -2112,9 +2118,12 @@ export function createRelay({
               state = { ...state, content: [...(state.content ?? []).filter(c => c?.text !== TEXTLESS_NOTE), image] };
             }
           }
+          // After `const app`, `let app` is a redeclaration error, so the handle is named for use as is. Beside a
+          // notice that the window shows another file, the handle is only named.
           const combined = { ...state, content: [...opened, ...(state.content ?? []),
-            ...(!state.isError ? [{ type: 'text', text: (pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
-              `Window handle: \`${handle}\`, already acquired (\`let app = ${handle};\`).` }] : [])] };
+            ...(!state.isError ? [{ type: 'text', text: promptNotice((pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
+              `Window handle: \`${handle}\`` + (!confirmed ? '.' : constApp ? ', already acquired. Use it in place of `app`.'
+                : `, already acquired (\`let app = ${handle};\`).`), prompt) }] : [])] };
           if (pictured) recordScreenshot(combined.content);
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
@@ -2194,6 +2203,8 @@ export function createRelay({
       msg.params.arguments = { ...rest, code: command };
     }
     if (jsArgs && typeof msg.params.arguments?.code === 'string') {
+      // With or without the input lease: after `const app`, a suggested `let app = …` is a redeclaration error.
+      if (/(?:^|[;\n])\s*const\s+app\s*=/.test(msg.params.arguments.code)) constApp = true;
       msg.params.arguments.code = finalReturnCode(msg.params.arguments.code);
       const fixed = nativeGetStateCode(msg.params.arguments.code, id => nativeHandles.has(id), id => browserHandles.has(id));
       if (fixed !== msg.params.arguments.code) { msg.params.arguments.code = fixed; trace('getstate-rewritten', { id: msg.id }); }
@@ -3779,7 +3790,7 @@ export function createRelay({
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
-      if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadTextless()) textlessOpens.add(msg.id);
+      if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }
     if (msg.method === undefined && resultCalls.has(msg.id)) {

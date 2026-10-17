@@ -295,7 +295,8 @@ document area doesn't show text values and should be read with a screenshot.
 
 When the window `open_file` opened is such a document (a sheet with no cell values, a page with no
 body text, from a file that isn't empty), its result also includes the window's screenshot, taken by
-one more engine read, in place of that note. In 10 of 10 excel-edit and word-edit runs (2026-10-17),
+one more engine read, in place of that note. It comes only where the note would, and only when the
+window's URL is the opened file, so `SLEIGHT_TEXTLESS_HINT=0` leaves it out too. In 10 of 10 excel-edit and word-edit runs (2026-10-17),
 Claude spent two turns on a second read and a screenshot before its first edit.
 `SLEIGHT_OPEN_AUTO_SHOT=0` (A/B baseline) leaves the screenshot out. `SLEIGHT_OPEN_SHOT=1` adds one to
 every `open_file` result.
