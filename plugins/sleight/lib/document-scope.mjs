@@ -181,6 +181,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     // relay split off its acquisition takes that read as its header instead of reading again: 53
     // such reads cost 27 s across the benchmark runs of 2026-10-09.
     state.acted = false; state.startApp = state.activeApp;
+    state.actionVersion ??= 0;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
     // What Claude was last shown for the numbers this call acts on (number -> line).
@@ -303,14 +304,14 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         if (name === 'getAXState') return async (options = {}) => {
           checkNative();
           state.binding = undefined;
-          const reads = state.reads, reading = {};
+          const reads = state.reads, reading = {}, version = state.actionVersion;
           reads.set(proxy, reading);
           const text = await raw.getAXState({ ...options, disableDiffing: true, emit: false });
           const emitted = options?.emit !== false;
           if (emitted) nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
           else nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
           // Input replaces the map; a newer observation replaces this entry.
-          if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted, omit: !emitted, modalOpened: clickOpenedModal(proxy, text) });
+          if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted, omit: !emitted, version, modalOpened: clickOpenedModal(proxy, text) });
           if (typeof text === 'string' && parse(text)) state.codeReads.set(proxy, elements(text));
           state.activeApp = proxy;
           return text;
@@ -369,6 +370,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           checkNative();
           const firstAction = !state.acted;
           state.acted = true;
+          state.actionVersion++;
           await checkLease();
           if (state.fileOnly && name === 'pressKey' && isCancel(name, args)) {
             state.activeApp = proxy;

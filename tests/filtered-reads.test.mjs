@@ -1,0 +1,244 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { PassThrough } from 'node:stream';
+import { constants, createContext, runInContext } from 'node:vm';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
+import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
+
+const header = 'Window: "Fixture", App: Fixture Editor.';
+const tree = (shifted = false) => header + '\n0 standard window Fixture\n' +
+  Array.from({ length: 100 }, (_, i) => `\t${i + 1} button Row ${shifted ? i + 1 : i}`).join('\n');
+const filtered = expression => `const state = await app.getAXState(); nodeRepl.write(${expression});`;
+
+async function engine(t, { maxItems } = {}) {
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-filtered-read-')));
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams;
+  const pending = new Map(), actions = [];
+  let id = 0, shifted = false, changed = false, content = [];
+  const current = () => changed ? tree(shifted).replace('"Fixture"', '"Other"') : tree(shifted);
+  const write = value => content.push({ type: 'text', text: typeof value === 'string' ? value :
+    JSON.stringify(Array.isArray(value) && maxItems !== undefined ? value.slice(0, maxItems) : value) });
+  const raw = { getAXState: async () => current(), click: async n => actions.push(n), pressKey: async key => actions.push(key) };
+  const context = createContext({ cua: {
+    getApp: async () => { write(current()); return raw; }, listApps: async () => [],
+  }, nodeRepl: { write }, console: { log: write } });
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 'filtered-fixture',
+    changeReview: false, inputLease: new InputLease({ directory: dir, holder: 'fixture' }) });
+  clientOut.setEncoding('utf8').on('data', data => {
+    for (const line of data.trim().split('\n')) {
+      const msg = JSON.parse(line);
+      pending.get(msg.id)?.(msg.result); pending.delete(msg.id);
+    }
+  });
+  let queue = Promise.resolve();
+  serverIn.setEncoding('utf8').on('data', data => {
+    for (const line of data.trim().split('\n')) {
+      const msg = JSON.parse(line);
+      if (msg.method !== 'tools/call') continue;
+      queue = queue.then(async () => {
+        content = [];
+        let isError = false;
+        const code = msg.params.arguments.code.replace(/\bvar app\s*=/, 'globalThis.app =');
+        try { await runInContext('(async () => { ' + code + ' })()', context,
+          { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }); }
+        catch (error) { isError = true; write(error.message); }
+        serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content, isError,
+          _meta: { 'codex/toolSurface': { app: { appId: 'example.fixture' } } } } }) + '\n');
+      });
+    }
+  });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); rmSync(dir, { recursive: true, force: true }); });
+  const call = code => new Promise(resolve => {
+    const callId = ++id; pending.set(callId, resolve);
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: callId, method: 'tools/call',
+      params: { name: 'js', arguments: { code } } }) + '\n');
+  });
+  const acquisition = await call('var app = await cua.getApp("example.fixture")');
+  assert.equal(acquisition.isError, false);
+  assert.match(JSON.stringify(acquisition.content), /Row 99/, 'the first acquisition keeps its tree');
+  return { call, actions, shift: () => { shifted = true; }, change: () => { changed = true; } };
+}
+
+const output = result => result.content.map(c => c.text ?? '').join('\n');
+
+for (const expression of [
+  'state.split("\\n").filter(line => line.includes("Row 7")).join("\\n")',
+  'state.split("\\n").filter(line => line.includes("Row 7"))',
+  'state.match(/Row 7\\d/g)',
+  'state.split("\\n").filter(() => false)',
+  'state.slice(0, 0)',
+]) {
+  test('a derived string or array keeps its value and just the window header: ' + expression, async t => {
+    const h = await engine(t);
+    const result = await h.call(filtered(expression));
+    assert.equal(result.isError, false);
+    if (!expression.includes('false') && !expression.includes('0, 0')) assert.match(output(result), /Row 7/);
+    assert.match(output(result), /Window: "Fixture", App: Fixture Editor\./);
+    assert.doesNotMatch(output(result), /standard window|no change since|lines changed since|Row 99|sleight:filtered/);
+  });
+}
+
+for (const code of [
+  'nodeRepl.write((await app.getAXState()).split("\\n").filter(line => line.includes("Row 7")));',
+  'const state = await app.getAXState(); const rows = state.split("\\n").filter(line => line.includes("Row 7")); nodeRepl.write(rows);',
+]) {
+  test('inline and assigned filtered reads omit the redundant tree: ' + code, async t => {
+    const h = await engine(t);
+    const result = await h.call(code);
+    assert.equal(result.isError, false);
+    assert.match(output(result), /Row 7/);
+    assert.match(output(result), /Window:/);
+    assert.doesNotMatch(output(result), /standard window|Row 99/);
+  });
+}
+
+test('a filtered emit:false read preserves the caller choice to hide the header', async t => {
+  const h = await engine(t);
+  const result = await h.call(filtered('state.split("\\n").slice(2, 3)').replace('getAXState()', 'getAXState({emit:false})'));
+  assert.equal(result.isError, false);
+  assert.match(output(result), /Row 0/);
+  assert.doesNotMatch(output(result), /Window:|standard window/);
+});
+
+test('an action before the filtered read still permits a header-only result', async t => {
+  const h = await engine(t);
+  const result = await h.call('await app.click(1); ' + filtered('state.split("\\n").filter(line => line.includes("Row 7"))'));
+  assert.equal(result.isError, false);
+  assert.deepEqual(h.actions, [1]);
+  assert.doesNotMatch(output(result), /standard window|Row 99/);
+});
+
+for (const suffix of ['await app.click(1);', 'const act = app.click; await act(1);']) {
+  test('input after the read keeps a full tree: ' + suffix, async t => {
+    const h = await engine(t);
+    const result = await h.call('const state = await app.getAXState(); ' + suffix +
+      ' nodeRepl.write(state.split("\\n").filter(line => line.includes("Row 7")));');
+    assert.equal(result.isError, false);
+    assert.match(output(result), /standard window/);
+    assert.match(output(result), /Row 99/);
+  });
+}
+
+test('the existing refusal of unawaited input still applies to filtered reads', async t => {
+  const h = await engine(t);
+  const result = await h.call('const state = await app.getAXState(); app.click(1); nodeRepl.write(state.split("\\n"));');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.actions, []);
+});
+
+for (const expression of ['"unrelated"', 'state', 'state.length', '({ rows: state.split("\\n") })']) {
+  test('unrelated output, whole trees and other result types retain the normal tree: ' + expression, async t => {
+    const h = await engine(t);
+    const result = await h.call(filtered(expression));
+    assert.equal(result.isError, false);
+    assert.match(output(result), /standard window/);
+  });
+}
+
+test('an explicit full read overrides filtered output', async t => {
+  const h = await engine(t);
+  const result = await h.call(filtered('state.split("\\n").slice(2, 3)').replace('getAXState()', 'getAXState({disableDiffing:true})'));
+  assert.match(output(result), /standard window/);
+  assert.match(output(result), /Row 99/);
+});
+
+test('a result reporting a changed window keeps its full tree', async t => {
+  const h = await engine(t);
+  h.change();
+  const result = await h.call(filtered('state.split("\\n").slice(2, 3)'));
+  assert.match(output(result), /standard window/);
+  assert.match(output(result), /Other/);
+});
+
+test('a user window change after a filtered result still stops input', async t => {
+  const h = await engine(t);
+  await h.call(filtered('state.split("\\n").slice(2, 3)'));
+  h.change();
+  const action = await h.call('await app.click(1);');
+  assert.equal(action.isError, true);
+  assert.deepEqual(h.actions, []);
+});
+
+test('hidden rows do not become the baseline or authorize old numeric input', async t => {
+  const h = await engine(t);
+  h.shift();
+  const result = await h.call(filtered('state.split("\\n").filter(line => line.includes("Row 7"))'));
+  assert.doesNotMatch(output(result), /Row 100/);
+  const action = await h.call('await app.click(1);');
+  assert.deepEqual(h.actions, [/* Row 0 disappeared, so 1 must not click Row 1. */]);
+  assert.equal(action.isError, true);
+  assert.match(output(action), /Row 100/, 'the refusal shows a fresh full tree');
+});
+
+test('the next normal read shows changes hidden by a filtered read', async t => {
+  const h = await engine(t);
+  h.shift();
+  await h.call(filtered('state.split("\\n").filter(line => line.includes("Row 7"))'));
+  const full = await h.call('await app.getAXState();');
+  assert.match(output(full), /Row 100/, 'the next normal read still shows hidden changes');
+});
+
+test('a reassigned read variable is not evidence that output came from the read', async t => {
+  const h = await engine(t);
+  const result = await h.call('let state = await app.getAXState(); state = "unrelated"; nodeRepl.write(state);');
+  assert.match(output(result), /standard window/);
+});
+
+for (const code of [
+  filtered('({ state: "unrelated" }).state'),
+  'let state = await app.getAXState(); state &&= "unrelated"; nodeRepl.write(state);',
+]) {
+  test('property names and compound assignments do not imply read-derived output: ' + code, async t => {
+    const h = await engine(t);
+    assert.match(output(await h.call(code)), /standard window/);
+  });
+}
+
+for (const [expression, options, number] of [
+  ['state.match(/Row 7/)', {}, 1],
+  ['state.split("\\n").slice(2)', { maxItems: 2 }, 50],
+]) {
+  test('array metadata or truncated entries do not authorize hidden numbers: ' + expression, async t => {
+    const h = await engine(t, options);
+    h.shift();
+    await h.call(filtered(expression));
+    const result = await h.call(`await app.click(${number});`);
+    assert.notDeepEqual(h.actions, [number], 'the old number must never act on its replacement');
+    assert.deepEqual(h.actions, result.isError ? [] : [number - 1], 'a safe remap may still act on the original row');
+  });
+}
+
+test('new numbers actually shown in a filtered array remain usable', async t => {
+  const h = await engine(t);
+  h.shift();
+  await h.call(filtered('state.split("\\n").filter(line => line.includes("Row 7"))'));
+  const result = await h.call('await app.click(7);');
+  assert.equal(result.isError, false);
+  assert.deepEqual(h.actions, [7]);
+});
+
+for (const options of [{ failed: true }, { notice: 'sleight: the user changed the app.' }, { action: { overlap: true } }]) {
+  test('filtered results keep the full tree on an error, user change or overlap: ' + JSON.stringify(options), () => {
+    const c = createReadCompactor();
+    c.process([{ type: 'text', text: tree() }]);
+    const result = c.process([{ type: 'text', text: GUARD_MARK + tree() + GUARD_END },
+      { type: 'text', text: 'Row 7\n[sleight:filtered-read]{"visible":"Row 7"}\n' + (options.notice ?? '') }], options);
+    assert.match(result.map(item => item.text).join('\n'), /Row 99/);
+  });
+}
+
+test('a filtered receipt cannot suppress the first tree in a session or an error', () => {
+  for (const failed of [false, true]) {
+    const c = createReadCompactor();
+    const content = [{ type: 'text', text: GUARD_MARK + tree() + GUARD_END },
+      { type: 'text', text: 'Row 7' }, { type: 'text', text: '[sleight:filtered-read]\n' }];
+    const result = c.process(content, { failed });
+    assert.match(result.map(c => c.text).join('\n'), /Row 99/);
+  }
+});

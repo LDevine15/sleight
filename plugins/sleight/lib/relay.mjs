@@ -72,7 +72,7 @@ import { verifyWindowIdentity } from './window-identity.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
-import { createReadCompactor, dropAcquisitionTree, hasFullTree } from './compact-reads.mjs';
+import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode } from './compact-reads.mjs';
 import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget } from './result-budget.mjs';
@@ -2288,7 +2288,7 @@ export function createRelay({
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
             const prior = !documentMode && !changeReview && !careful && (!treeFreeFirstAction(originalCode) || focusedChecked.has(msg.id)) && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
               target?.app === priorRead.app ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
-            msg.params.arguments.code = guardedCode(swipeCode, target, reason,
+            msg.params.arguments.code = guardedCode(filteredReadCode(swipeCode), target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, timing: guardTiming, careful: careful || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
