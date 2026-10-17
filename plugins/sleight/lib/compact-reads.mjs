@@ -22,7 +22,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
-import { finalExpression } from './no-output.mjs';
+import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -38,8 +38,11 @@ export const filteredReadMark = () => `[sleight:filtered-read:${randomBytes(8).t
 
 export function filteredReadCode(code, mark = FILTERED_MARK) {
   const final = finalExpression(code);
-  const write = final && /^(await\s+)?nodeRepl\.write\s*\(([\s\S]*)\)$/.exec(final.expression);
-  if (!write) return code;
+  if (!final) return code;
+  const write = /^(await\s+)?(nodeRepl\.write|console\.log)\s*\(([\s\S]*)\)$/.exec(final.expression);
+  const expression = write ? write[3].replace(/,(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*$/, '') : final.expression;
+  // A computed property accepts one assignment expression, not a comma list or spread arguments.
+  if (write ? !finalExpression(`({[\n${expression}\n]: 0})`) : !bareValue(expression)) return code;
   const masked = maskCode(code);
   const reads = [...masked.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*getAXState\s*\(/g)];
   if (reads.length !== 1) return code;
@@ -55,12 +58,12 @@ export function filteredReadCode(code, mark = FILTERED_MARK) {
     const escaped = name.replace(/\$/g, '\\$');
     if (new RegExp(`(?<![\\w$])${escaped}\\s*(?:=(?!=|>)|\\+\\+|--|(?:\\*\\*|&&|\\|\\||\\?\\?|[+*/%&|^-])=)`).test(masked.slice(end))) return code;
   }
-  if (read.index < final.start && !references(maskCode(write[2]))) return code;
+  if (read.index < final.start && !references(maskCode(expression))) return code;
   return code.slice(0, final.start) + `\n{
-  const __sleightValue = (${write[2]});
-  ${write[1] ?? ''}nodeRepl.write(__sleightValue);
+  const __sleightValue = ${write ? '' : 'await '}(\n${expression}\n);
   const __sleightGuard = globalThis.__sleightDocumentGuard;
   const __sleightLast = __sleightGuard?.reads.get(${read[1]});
+  ${write ? `${write[1] ?? ''}${write[2]}(__sleightValue);` : `if (__sleightValue !== __sleightLast?.text) { ${printValueCode('__sleightValue')}; }`}
   const __sleightFiltered = __sleightLast?.emitted && __sleightLast.version === __sleightGuard.actionVersion &&
     !__sleightGuard.failures?.length && (typeof __sleightValue === 'string' || Array.isArray(__sleightValue)) && __sleightValue !== __sleightLast.text;
   try {

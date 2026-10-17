@@ -25,7 +25,7 @@ export function finalExpression(code) {
   }
 }
 
-function bareValue(expression) {
+export function bareValue(expression) {
   return !/^(?:['"]use strict['"]|(?:await\s+)?(?:nodeRepl\.(?:write|emitImage|emitAudio)|console\.\w+)\s*\()/.test(expression)
     && !/\.(?:click|dblclick|drag|dragTo|scroll|selectText|setValue|paste|press|pressKey|typeText|fill|check|uncheck|setChecked|selectOption|goto|close|waitForTimeout)\s*\(/.test(expression);
 }
@@ -50,10 +50,14 @@ export function autoPrintCode(code, enabled = false) {
   if (!enabled) return code;
   const final = finalExpression(code);
   if (!final || !bareValue(final.expression) || !pure(final.expression)) return code;
-  return code.slice(0, final.start) + `\nawait (async (__sleightValue) => {
+  return code.slice(0, final.start) + '\n' + printValueCode(final.expression) + code.slice(final.end);
+}
+
+export function printValueCode(expression) {
+  return `await (async (__sleightValue) => {
   const { inspect } = await import('node:util');
   const text = typeof __sleightValue === 'string' ? __sleightValue : inspect(__sleightValue,
     { depth: 3, maxArrayLength: 20, maxStringLength: 2000, customInspect: false, getters: false });
   nodeRepl.write(text.length > 4000 ? text.slice(0, 3978) + '\\n[output truncated]' : text);
-})(\n${final.expression}\n)` + code.slice(final.end);
+})(\n${expression}\n)`;
 }
