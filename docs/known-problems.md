@@ -255,8 +255,8 @@ native reference, and oversized first results defer the browser reference while 
   benchmark" profile and on Helium with `--load-extension`, turbo passed on Helium, and Claude in Chrome passed wikipedia and
   mdn on the copy. Claude in Chrome connects from the copy only with Chrome's real keychain key (with the mock keychain it was
   signed out). The gate's Claude Code arms run with `--permission-mode default`: the same login started in auto mode later that day, and
-  under auto Claude in Chrome sent each page action to a prompt in Chrome that timed out (3 of 3). Turbo can't run on this
-  Mac's Chrome, whose binary is mode 775 (see below), so the gate refuses that round.
+  under auto Claude in Chrome sent each page action to a prompt in Chrome that timed out (3 of 3). Turbo refused this Mac's
+  Chrome, whose binary is mode 775, until the signature check below. No gate round has run on that Chrome since.
 - Chrome Beta, Dev and Canary, Chromium, Brave, Edge and Vivaldi are in turbo's browser table but unqualified, and turbo stays
   off for them. The operator qualifies one at a time with the owner present. Turn on that browser's remote debugging at its own
   inspect address (`brave://inspect/#remote-debugging`, `edge://…`, `vivaldi://…`, `chrome://…` for the rest), then run
@@ -274,9 +274,22 @@ native reference, and oversized first results defer the browser reference while 
   (`.in_use/<pid>` and `.claude-plugin/types/`, seen in other plugins' cache folders on 2026-10-16) make the
   receipt stale until the next session start rewrites it. Whether they appear in sleight's installed folder
   mid-session, and so turn turbo off for a running session, hasn't been measured.
-- Turbo refuses a browser executable that others can write. On the Mac we tested, Google Chrome's is mode 775,
-  so setup picks Helium (755) or skips Chrome, and `--doctor` says why. Whether `chmod go-w` on Chrome's
-  binary stays after Chrome updates is unmeasured.
+- A drag install into /Applications by an admin leaves Chrome's executable mode 775, group admin, and macOS App
+  Management blocks `chmod` on another app's bundle. Turbo accepts such a group-writable executable only for qualified
+  Chrome (Google's Team ID EQHXZ8M8AV) or Helium (imput's, S4Q33XPHB4) at its place in /Applications or
+  ~/Applications, and only when the group is admin (80) or the user's own primary group. Chrome Beta, Dev and Canary
+  don't get it, even with `SLEIGHT_TURBO_UNQUALIFIED=1`. The kernel's live status for the running main process must
+  show valid code with the kill, library-validation and runtime flags, and the cdhash it runs must match the bundle on
+  disk that `codesign --verify` checks against the browser's Developer ID requirement. A world-writable executable, or
+  a group-writable one of any other browser or group, is still refused. Setup checks the bundle on disk (54 ms on this
+  Mac's Chrome, then cached). The connection checks the process once per browser launch (one codesign call, 20 to 30 ms
+  on this Mac's Chrome bundle on disk). The live check hasn't run against a real Chrome yet. Brave, Edge and Vivaldi
+  have no Team ID in the table, so they still need mode 755.
+- The signature proof covers only the browser's main process. Helpers (renderer, GPU, network) start later from the
+  bundle on disk and aren't proven, so someone who can write the bundle after the proof could run code in a helper.
+  An older Chrome or Helium with a valid signature from the same team and the same flags also passes, so a downgrade isn't caught. Both
+  need write access to the bundle, which macOS App Management limits. A browser update that replaces the bundle while
+  the old process runs makes the cdhashes differ, and turbo refuses that process until the browser restarts.
 - Turbo has no mobile viewport control. Use the engine's separate browser path for that task.
   Tabs and refs cannot cross paths. Never retry a safety refusal or an uncertain action through
   the other path. Embedded frame hosts are refused for input, while their page reads remain available.

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, writeFileSync, symlinkSync, chmodSync, utimesSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync, symlinkSync, chmodSync, chownSync, utimesSync, rmSync, mkdirSync, copyFileSync, readFileSync, lstatSync, renameSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { macCommandSkip } from './requirements.mjs';
 import { createSelectedConnection } from '../plugins/sleight/lib/direct-browser/selected-connection.mjs';
-import { createNativeProcessProvider, isNativeProcessProvider } from '../plugins/sleight/lib/direct-browser/host.mjs';
+import { createNativeProcessProvider, isNativeProcessProvider, parseProcessMetadata } from '../plugins/sleight/lib/direct-browser/host.mjs';
+import { codeRequirement, signedBrowserAt, verifiedOnDisk, writeClass } from '../plugins/sleight/lib/direct-browser/executable-trust.mjs';
 
 class FakeSocket extends EventTarget {
   static instances = [];
@@ -67,6 +68,174 @@ test('a root-owned immutable executable may serve the current user owned profile
   f.options.testDependencies.processMetadata = async (_pid, expected) => { assert.equal(expected, executable); return f.metadata; };
   const p = await createSelectedConnection(f.options); await f.connect(p);
   const closing = p.disconnect(); f.sockets[0].closed(); assert.equal(await closing, true);
+});
+// A group-writable executable at a signed browser's fixed place in a private app root. The kernel's code status is
+// answered by f.status (flags, arch, cdhash) and codesign by `sign.verify` (whether the requirement plus cdhash holds).
+const LIVE_FLAGS = 0x22013301; // what the kernel reported for an ad hoc kill,library,runtime process on this Mac
+const CDHASH = '03f46f9f79e69851d671abc204fe28c9cb08dc81';
+function signedFixture(t, mode = 0o775, sign = { verify: true, flags: LIVE_FLAGS }) {
+  const f = fixture(t), apps = join(f.root, 'Applications'), name = 'Signed Browser';
+  const bundle = join(apps, `${name}.app`), executable = join(bundle, `Contents/MacOS/${name}`);
+  mkdirSync(dirname(executable), { recursive: true }); writeFileSync(executable, 'synthetic'); chmodSync(executable, mode);
+  const requirement = 'identifier "com.example.signed" and anchor apple generic and certificate leaf[subject.OU] = "ABCDE12345"';
+  f.executable = executable; f.options.config.executable = executable; f.codesign = [];
+  f.status = () => ({ ...f.metadata, flags: sign.flags, arch: 'arm64', cdhash: CDHASH });
+  Object.assign(f.options.testDependencies, {
+    signedAppRoots: [apps],
+    signedBrowsers: [{ name, bundleId: 'com.example.signed', team: 'ABCDE12345', executable, requirement, qualified: true }],
+    processMetadata: async (pid, expected) => { assert.equal(pid, 4312); assert.equal(expected, executable); f.metadataCalls = (f.metadataCalls ?? 0) + 1; return f.metadata; },
+    codeStatus: async (pid, expected) => { assert.equal(pid, 4312); assert.equal(expected, executable); f.statusCalls = (f.statusCalls ?? 0) + 1; return f.status(); },
+  });
+  const lsof = f.options.testDependencies.execFile;
+  f.options.testDependencies.execFile = async (file, args, options) => {
+    if (file !== '/usr/bin/codesign') return lsof(file, args, options);
+    f.codesign.push(args); assert.equal(options.env.PATH, '/usr/bin:/bin');
+    assert.deepEqual(args, ['--verify', '--strict', '--architecture', 'arm64', `-R=(${requirement}) and cdhash H"${CDHASH}"`, bundle]);
+    f.onVerify?.();
+    if (!sign.verify) throw Object.assign(Error('failed'), { code: 3 });
+    return { stdout: '', stderr: '' };
+  };
+  return f;
+}
+test('a group-writable signed browser connects once its running process proves the signature, proved once per incarnation', async t => {
+  const f = signedFixture(t), p = await createSelectedConnection(f.options);
+  assert.equal(f.codesign.length, 1); assert.equal(f.statusCalls, 1);
+  assert.equal(await f.connect(p), p.session); assert.equal(await p.verifyConnection(p.session), true);
+  assert.equal(f.codesign.length, 1, 'the proof is cached for the same incarnation and executable');
+  const closing = p.disconnect(); f.sockets[0].closed(); assert.equal(await closing, true);
+});
+const otherGroup = path => lstatSync(path).gid + 1000;
+for (const [name, make, code] of [
+  ['a world-writable signed browser', t => signedFixture(t, 0o777), /SELECTED_PATH_UNSAFE/],
+  ['a group-writable executable outside a signed browser place', t => { const f = fixture(t); chmodSync(f.executable, 0o770); return f; }, /SELECTED_PATH_UNSAFE/],
+  ['a group-writable signed browser whose group is neither admin nor the user\'s', t => {
+    const f = signedFixture(t); f.options.testDependencies.primaryGid = otherGroup(f.executable); return f; }, /SELECTED_PATH_UNSAFE/],
+  ['an unqualified browser with a Team ID', t => { const f = signedFixture(t); f.options.testDependencies.signedBrowsers[0].qualified = false; return f; }, /SELECTED_PATH_UNSAFE/],
+  ['a signature that fails the browser requirement or the running cdhash', t => signedFixture(t, 0o775, { verify: false, flags: LIVE_FLAGS }), /SELECTED_SIGNATURE_UNPROVED/],
+  ['a process without library validation', t => signedFixture(t, 0o775, { verify: true, flags: LIVE_FLAGS & ~0x2000 }), /SELECTED_SIGNATURE_UNPROVED/],
+  ['a process whose code the kernel no longer counts valid', t => signedFixture(t, 0o775, { verify: true, flags: LIVE_FLAGS & ~0x1 }), /SELECTED_SIGNATURE_UNPROVED/],
+  ['a process without the kill flag', t => signedFixture(t, 0o775, { verify: true, flags: LIVE_FLAGS & ~0x200 }), /SELECTED_SIGNATURE_UNPROVED/],
+  ['a debugged process', t => signedFixture(t, 0o775, { verify: true, flags: LIVE_FLAGS | 0x10000000 }), /SELECTED_SIGNATURE_UNPROVED/],
+  ['an unsigned process', t => signedFixture(t, 0o775, { verify: false, flags: 0 }), /SELECTED_SIGNATURE_UNPROVED/],
+  ['a status read of another incarnation', t => { const f = signedFixture(t), status = f.status; f.status = () => ({ ...status(), incarnation: 'p4312-s999-u1' }); return f; }, /SELECTED_PROCESS_UNPROVED/],
+  ['a failed status read', t => { const f = signedFixture(t); f.status = () => { throw Error('SELECTED_SIGNATURE_UNPROVED'); }; return f; }, /SELECTED_SIGNATURE_UNPROVED/],
+  ['a pid reused during the signature check', t => { const f = signedFixture(t); f.onVerify = () => { f.metadata = { ...f.metadata, incarnation: 'p4312-s999-u1' }; }; return f; }, /SELECTED_PROCESS_UNPROVED/],
+]) test('refuses ' + name + ' before any socket opens', async t => {
+  const f = make(t);
+  await assert.rejects(async () => { const p = await createSelectedConnection(f.options); await p.connect(); }, code);
+  assert.equal(f.sockets.length, 0);
+  if (/world|group is|unqualified/.test(name)) assert.deepEqual(f.codesign, [], 'refused before any signature check');
+});
+test('the relaxation tolerates group write only for admin (80) or the user\'s primary group', () => {
+  const stat = (mode, gid) => ({ mode: 0o100000 | mode, gid });
+  assert.equal(writeClass(stat(0o755, 12), 20), 'strict');
+  assert.equal(writeClass(stat(0o775, 80), 501), 'signature');
+  assert.equal(writeClass(stat(0o775, 20), 20), 'signature');
+  assert.equal(writeClass(stat(0o775, 20), 501), undefined, 'staff when the user\'s primary group is not staff');
+  assert.equal(writeClass(stat(0o775, 12), 20), undefined, 'everyone');
+  assert.equal(writeClass(stat(0o777, 80), 20), undefined);
+  assert.equal(writeClass(stat(0o757, 80), 20), undefined);
+});
+test('real gid: a signed browser whose group is everyone (12) is refused (Darwin)', {
+  skip: process.platform !== 'darwin' || !process.getgroups().includes(12) ? 'needs membership of group 12 on macOS' : false,
+}, async t => {
+  const f = signedFixture(t); chownSync(f.executable, -1, 12);
+  await assert.rejects(createSelectedConnection(f.options), /SELECTED_PATH_UNSAFE/); assert.deepEqual(f.codesign, []);
+});
+async function compilePeerHost(t) {
+  const directory = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-process-helper-'))));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = fileURLToPath(new URL('../plugins/sleight/lib/direct-browser/native/peer-host.c', import.meta.url));
+  const helper = join(directory, 'peer-host');
+  await promisify(execFile)('/usr/bin/xcrun', ['clang', '-Wall', '-Werror', source, '-lbsm', '-o', helper], { timeout: 60000, maxBuffer: 65536 });
+  return helper;
+}
+test('real codesign and kernel status: a group-writable ad hoc signed bundle is accepted only with the requirement, flags and running cdhash (Darwin)', {
+  skip: macCommandSkip('xcrun') || macCommandSkip('codesign'),
+}, async t => {
+  const f = fixture(t), apps = join(f.root, 'Applications'), name = 'Signed Browser', run = promisify(execFile);
+  const bundle = join(apps, `${name}.app`), executable = join(bundle, `Contents/MacOS/${name}`);
+  const replacement = join(f.root, `spare/${name}.app/Contents/MacOS/${name}`);
+  mkdirSync(dirname(executable), { recursive: true }); mkdirSync(dirname(replacement), { recursive: true });
+  const helper = await compilePeerHost(t);
+  // The same call and error mapping as host.mjs createNativeProcessProvider, with a helper compiled here.
+  const read = async (mode, pid, expected) => {
+    try { return parseProcessMetadata((await run(helper, [mode, String(pid), expected], { timeout: 3000, maxBuffer: 1024 })).stdout, pid, mode === '--code-status'); }
+    catch { throw Error(mode === '--code-status' ? 'SELECTED_SIGNATURE_UNPROVED' : 'SELECTED_PROCESS_UNPROVED'); }
+  };
+  // A fresh inode each time: the kernel caches a signature per vnode, so rewriting a launched file in place would kill the next launch.
+  const place = (program, path) => { rmSync(path, { force: true }); copyFileSync(program, path); };
+  const sign = async (path, flags, program = '/bin/sleep') => { place(program, path);
+    await run('/usr/bin/codesign', ['-f', '-s', '-', '-i', 'com.sleight.test', ...(flags ? ['-o', flags] : []), path], { timeout: 10000 }); chmodSync(path, 0o775); };
+  const attempt = async (requirement = 'identifier "com.sleight.test"', afterStart) => {
+    const child = spawn(executable, ['30'], { stdio: 'ignore' }), closed = once(child, 'close');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await afterStart?.(child);
+      rmSync(join(f.root, 'SingletonLock')); symlinkSync(hostname() + '-' + child.pid, join(f.root, 'SingletonLock'));
+      writeFileSync(f.active, '9222\n/devtools/browser/fixture\n');
+      const options = { config: { profileRoot: f.root, executable }, testDependencies: { ...f.options.testDependencies,
+        signedAppRoots: [apps], signedBrowsers: [{ name, bundleId: 'com.sleight.test', team: 'ABCDE12345', executable, requirement, qualified: true }],
+        processMetadata: (pid, expected) => read('--process-pid', pid, expected), codeStatus: (pid, expected) => read('--code-status', pid, expected),
+        execFile: (file, args, opts) => file === '/usr/bin/codesign' ? run(file, args, opts) : { stdout: `p${child.pid}\nu${f.uid}\nf12\nn127.0.0.1:9222\n` } } };
+      return await createSelectedConnection(options).then(() => 'accepted', error => error.message);
+    } finally { child.kill(); await closed; }
+  };
+  await sign(executable, 'kill,library,runtime');
+  assert.equal(await attempt(), 'accepted');
+  assert.equal(await attempt('identifier "com.sleight.other"'), 'SELECTED_SIGNATURE_UNPROVED');
+  assert.equal(await attempt('identifier "com.sleight.test" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"'), 'SELECTED_SIGNATURE_UNPROVED');
+  // A runs; then B, another program signed the same way that satisfies the requirement on its own, replaces A's path.
+  await sign(replacement, 'kill,library,runtime', '/bin/cat');
+  let running;
+  assert.equal(await attempt(undefined, async child => {
+    running = await read('--code-status', child.pid, executable);
+    renameSync(replacement, executable);
+    await run('/usr/bin/codesign', ['--verify', '--strict', '-R=identifier "com.sleight.test"', bundle], { timeout: 10000 });
+    const shown = await run('/usr/bin/codesign', ['--display', '--verbose=4', '--architecture', running.arch, executable], { timeout: 10000 });
+    assert.notEqual(/^CDHash=([0-9a-f]{40})$/m.exec(shown.stderr)?.[1], running.cdhash, 'the file on disk now has another cdhash');
+  }), 'SELECTED_SIGNATURE_UNPROVED', 'the running cdhash is not the verified file\'s');
+  assert.equal(running.flags & 0x10201, 0x10201);
+  await sign(executable, undefined);
+  assert.equal(await attempt(), 'SELECTED_SIGNATURE_UNPROVED', 'no kill, library-validation and runtime flags');
+  chmodSync(executable, 0o777);
+  assert.equal(await attempt(), 'SELECTED_PATH_UNSAFE');
+});
+test('real codesign: setup accepts the signed bundle on disk and refuses a tampered or unsigned one (Darwin)', {
+  skip: macCommandSkip('codesign'),
+}, async t => {
+  const root = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-signed-'))));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const run = promisify(execFile), requirement = 'identifier "com.sleight.test"';
+  const make = async (label, change) => {
+    const executable = join(root, `${label}.app/Contents/MacOS/${label}`); mkdirSync(dirname(executable), { recursive: true });
+    copyFileSync('/bin/sleep', executable);
+    await run('/usr/bin/codesign', ['-f', '-s', '-', '-i', 'com.sleight.test', '-o', 'kill,library,runtime', executable], { timeout: 10000 });
+    await change?.(executable); chmodSync(executable, 0o775);
+    return verifiedOnDisk(executable, requirement, lstatSync(executable));
+  };
+  assert.equal(await make('Signed'), true);
+  assert.equal(await make('Tampered', path => { const bytes = readFileSync(path); bytes[0x4000 + 100] ^= 0xff; writeFileSync(path, bytes); }), false);
+  assert.equal(await make('Unsigned', path => run('/usr/bin/codesign', ['--remove-signature', path], { timeout: 10000 })), false);
+});
+test('the browser table yields the Developer ID requirement only at the fixed places', () => {
+  const chrome = signedBrowserAt('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', { appRoots: ['/Applications'] });
+  assert.equal(chrome.team, 'EQHXZ8M8AV');
+  assert.equal(chrome.requirement, codeRequirement({ bundleId: 'com.google.Chrome', team: 'EQHXZ8M8AV' }));
+  assert.match(chrome.requirement, /^identifier "com\.google\.Chrome" and anchor apple generic and .*certificate leaf\[subject\.OU\] = "EQHXZ8M8AV"$/);
+  assert.equal(signedBrowserAt('/Applications/Helium.app/Contents/MacOS/Helium', { appRoots: ['/Applications'] }).team, 'S4Q33XPHB4');
+  for (const path of ['/tmp/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Google Chrome.app/Contents/MacOS/Other',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser', '/Applications/x/../Google Chrome.app/Contents/MacOS/Google Chrome'])
+    assert.equal(signedBrowserAt(path, { appRoots: ['/Applications'] }), undefined, path);
+  // Chrome Beta, Dev and Canary carry Google's Team ID but are unqualified, so the relaxation never covers them,
+  // whatever SLEIGHT_TURBO_UNQUALIFIED says.
+  const before = process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  try {
+    process.env.SLEIGHT_TURBO_UNQUALIFIED = '1';
+    for (const channel of ['Google Chrome Beta', 'Google Chrome Dev', 'Google Chrome Canary'])
+      assert.equal(signedBrowserAt(`/Applications/${channel}.app/Contents/MacOS/${channel}`, { appRoots: ['/Applications'] }), undefined, channel);
+  } finally { if (before === undefined) delete process.env.SLEIGHT_TURBO_UNQUALIFIED; else process.env.SLEIGHT_TURBO_UNQUALIFIED = before; }
+  assert.throws(() => codeRequirement({ bundleId: 'x" or true', team: 'EQHXZ8M8AV' }), /SIGNATURE_REQUIREMENT_INVALID/);
 });
 test('CDP routes flattened commands, events and errors without using Browser.getVersion as proof', async t => {
   const f = fixture(t), p = await createSelectedConnection(f.options); await f.connect(p); const socket = f.sockets[0], events = [];

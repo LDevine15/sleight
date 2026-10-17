@@ -10,8 +10,27 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
+#include <stdint.h>
+#include <mach/machine.h>
 
-static int process_metadata(const char *argument, const char *expected) {
+/* xnu bsd/sys/codesign.h; csops is in libsystem_kernel but not in the user SDK headers. */
+int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+#define CS_OPS_STATUS 0
+#define CS_OPS_CDHASH 5
+
+/* The architecture whose slice the kernel runs, as codesign --architecture names it. */
+static const char *architecture(const struct proc_archinfo *info) {
+  cpu_subtype_t subtype = info->p_cpusubtype & ~CPU_SUBTYPE_MASK;
+  if (info->p_cputype == CPU_TYPE_ARM64)
+    return subtype == CPU_SUBTYPE_ARM64E ? "arm64e" : subtype == CPU_SUBTYPE_ARM64_ALL || subtype == CPU_SUBTYPE_ARM64_V8 ? "arm64" : NULL;
+  if (info->p_cputype == CPU_TYPE_X86_64)
+    return subtype == CPU_SUBTYPE_X86_64_H ? "x86_64h" : subtype == CPU_SUBTYPE_X86_64_ALL ? "x86_64" : NULL;
+  return NULL;
+}
+
+/* With code set, also the kernel's live code-signing status, the cdhash of the code directory the process runs and
+ * its architecture, read between the two birth reads so they belong to the same incarnation. */
+static int process_metadata(const char *argument, const char *expected, int code) {
   char *end = NULL, canonical[PATH_MAX], actual[PROC_PIDPATHINFO_MAXSIZE];
   errno = 0;
   long value = strtol(argument, &end, 10);
@@ -23,18 +42,32 @@ static int process_metadata(const char *argument, const char *expected) {
   memset(actual, 0, sizeof(actual));
   if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &first, sizeof(first)) != sizeof(first) ||
       first.pbi_pid != (unsigned)pid || first.pbi_uid != getuid() || !first.pbi_start_tvsec ||
-      proc_pidpath(pid, actual, sizeof(actual)) <= 0 || !realpath(actual, canonical) || strcmp(canonical, expected) ||
-      proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &last, sizeof(last)) != sizeof(last) ||
+      proc_pidpath(pid, actual, sizeof(actual)) <= 0 || !realpath(actual, canonical) || strcmp(canonical, expected)) return 65;
+  uint32_t status = 0;
+  unsigned char cdhash[20];
+  struct proc_archinfo arch;
+  const char *name = NULL;
+  memset(cdhash, 0, sizeof(cdhash)); memset(&arch, 0, sizeof(arch));
+  if (code && (csops(pid, CS_OPS_STATUS, &status, sizeof(status)) || csops(pid, CS_OPS_CDHASH, cdhash, sizeof(cdhash)) ||
+      proc_pidinfo(pid, PROC_PIDARCHINFO, 0, &arch, sizeof(arch)) != sizeof(arch) || !(name = architecture(&arch)))) return 65;
+  if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &last, sizeof(last)) != sizeof(last) ||
       last.pbi_pid != first.pbi_pid || last.pbi_uid != first.pbi_uid ||
       last.pbi_start_tvsec != first.pbi_start_tvsec || last.pbi_start_tvusec != first.pbi_start_tvusec) return 65;
-  printf("{\"uid\":%u,\"pid\":%d,\"start\":%.3f,\"incarnation\":\"p%d-s%llu-u%llu\"}\n",
+  printf("{\"uid\":%u,\"pid\":%d,\"start\":%.3f,\"incarnation\":\"p%d-s%llu-u%llu\"",
     first.pbi_uid, pid, (double)first.pbi_start_tvsec * 1000.0 + (double)first.pbi_start_tvusec / 1000.0,
     pid, (unsigned long long)first.pbi_start_tvsec, (unsigned long long)first.pbi_start_tvusec);
+  if (code) {
+    printf(",\"flags\":%u,\"arch\":\"%s\",\"cdhash\":\"", status, name);
+    for (size_t i = 0; i < sizeof(cdhash); i++) printf("%02x", cdhash[i]);
+    printf("\"");
+  }
+  printf("}\n");
   return 0;
 }
 
 int main(int argc, char **argv) {
-  if (argc == 4 && !strcmp(argv[1], "--process-pid")) return process_metadata(argv[2], argv[3]);
+  if (argc == 4 && !strcmp(argv[1], "--process-pid")) return process_metadata(argv[2], argv[3], 0);
+  if (argc == 4 && !strcmp(argv[1], "--code-status")) return process_metadata(argv[2], argv[3], 1);
   if (argc != 3 || strcmp(argv[1], "--peer-fd") || strcmp(argv[2], "3")) return 64;
   struct sockaddr_un address;
   socklen_t length = sizeof(address);

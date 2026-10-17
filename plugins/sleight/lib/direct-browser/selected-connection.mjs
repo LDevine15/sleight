@@ -9,18 +9,22 @@ import { promisify } from 'node:util';
 import { parseActivePort, validateEndpoint } from './discovery.mjs';
 import { createCDPFilter } from './cdp-filter.mjs';
 import { createNativeProcessProvider, isNativeProcessProvider } from './host.mjs';
+import { proofKey, proveRunningCode, signedBrowserAt, writeClass } from './executable-trust.mjs';
 
 const fail = code => { throw Error(code); };
 const ordinaryObject = value => value && typeof value === 'object' && !Array.isArray(value);
-const equalStat = (a, b) => ['dev', 'ino', 'uid', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(k => a[k] === b[k]);
+const equalStat = (a, b) => ['dev', 'ino', 'uid', 'gid', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(k => a[k] === b[k]);
 const methodName = value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/.test(value);
 
-function securePath(path, uid, directory = false, executable = false) {
+// signed: the executable is a signed browser at its fixed place (executable-trust.mjs), so a group write bit for
+// admin or the user's primary group (primaryGid) is allowed here and observe() demands the running process's
+// signature proof instead. World write, and group write for any other group, are always refused.
+function securePath(path, uid, directory = false, executable = false, signed = false, primaryGid) {
   try {
     const stat = lstatSync(path);
     if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || realpathSync(path) !== path ||
         stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== uid && !(executable && stat.uid === 0) ||
-        (stat.mode & 0o022) || executable && !(stat.mode & 0o100)) throw Error();
+        (executable && signed ? !writeClass(stat, primaryGid) : stat.mode & 0o022) || executable && !(stat.mode & 0o100)) throw Error();
     return stat;
   } catch { fail('SELECTED_PATH_UNSAFE'); }
 }
@@ -98,13 +102,38 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   const run = deps.execFile ?? promisify(execFile);
   const closeTimeout = deps.closeTimeoutMs ?? 3000, openTimeout = deps.openTimeoutMs ?? 10000;
   if (![closeTimeout, openTimeout].every(v => Number.isSafeInteger(v) && v > 0 && v <= 30000)) fail('SELECTED_CONFIG_REQUIRED');
+  // Only a signed browser at its fixed place may have a group-writable executable, and only for a process whose
+  // signature was proven (executable-trust.mjs). A proof is kept for one incarnation and executable inode.
+  const requirement = signedBrowserAt(application, { appRoots: deps.signedAppRoots, browsers: deps.signedBrowsers })?.requirement;
+  const signed = typeof requirement === 'string', primaryGid = deps.primaryGid ?? process.getgid?.();
+  // The live code-signing status comes from the same native provider as the metadata (host.mjs), or a test's.
+  const codeStatus = deps.codeStatus ?? metadata.codeStatus;
+  let proven;
+  const validInfo = (info, pid) => ordinaryObject(info) && info.pid === pid && info.uid === uid && Number.isFinite(info.start) && info.start > 0 &&
+    typeof info.incarnation === 'string' && new RegExp('^p' + pid + '-s[1-9]\\d*-u\\d+$').test(info.incarnation);
+  async function proveSignature(executableStat, info) {
+    const writers = writeClass(executableStat, primaryGid);
+    if (writers === 'strict') return;
+    if (!signed || writers !== 'signature') fail('SELECTED_PATH_UNSAFE');
+    const key = proofKey(info.incarnation, executableStat);
+    if (proven === key) return;
+    if (typeof codeStatus !== 'function') fail('SELECTED_SIGNATURE_UNPROVED');
+    let status;
+    try { status = await codeStatus(info.pid, application); } catch { fail('SELECTED_SIGNATURE_UNPROVED'); }
+    if (!validInfo(status, info.pid) || status.incarnation !== info.incarnation || status.start !== info.start) fail('SELECTED_PROCESS_UNPROVED');
+    await proveRunningCode(run, status, requirement, application);
+    // The same incarnation before and after the status read and codesign, so they examined this process and no reused pid.
+    const after = await metadata(info.pid, application);
+    if (!validInfo(after, info.pid) || after.incarnation !== info.incarnation || after.start !== info.start) fail('SELECTED_PROCESS_UNPROVED');
+    proven = key;
+  }
   async function observe() {
-    const rootStat = securePath(root, uid, true), executableStat = securePath(application, uid, false, true);
+    const rootStat = securePath(root, uid, true), executableStat = securePath(application, uid, false, true, signed, primaryGid);
     const lock = selectedPid(root, uid), info = await metadata(lock.pid, application);
-    if (!ordinaryObject(info) || info.pid !== lock.pid || info.uid !== uid || !Number.isFinite(info.start) || info.start <= 0 ||
-        typeof info.incarnation !== 'string' || !new RegExp('^p' + lock.pid + '-s[1-9]\\d*-u\\d+$').test(info.incarnation)) fail('SELECTED_PROCESS_UNPROVED');
+    if (!validInfo(info, lock.pid)) fail('SELECTED_PROCESS_UNPROVED');
+    await proveSignature(executableStat, info);
     const file = endpointFile(root, uid, info.start);
-    if (!equalStat(rootStat, securePath(root, uid, true)) || !equalStat(executableStat, securePath(application, uid, false, true)) ||
+    if (!equalStat(rootStat, securePath(root, uid, true)) || !equalStat(executableStat, securePath(application, uid, false, true, signed, primaryGid)) ||
         JSON.stringify(lock) !== JSON.stringify(selectedPid(root, uid))) fail('STALE_INSTANCE');
     return { root, application, uid, pid: info.pid, start: info.start, incarnation: info.incarnation,
       rootDevice: rootStat.dev, rootInode: rootStat.ino, executableDevice: executableStat.dev, executableInode: executableStat.ino, lock, file };
