@@ -13,8 +13,8 @@ want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especi
   on. It needs a live word-edit check.
 - RF1: const-warning strip, enabled-element preference among duplicate labels, API names after a missing method. Default on.
 - SK1 (`SLEIGHT_SKILL=screenshot`) and RB1 (`SLEIGHT_COMPACT_TOOLBARS=1`), opt-in until the word-edit/excel-edit A/B.
-- CP1 with CP1R (`SLEIGHT_COMPACT_CONFIRMATIONS=1`, policy 5,946 to about 4,000 chars), opt-in until the owner reads the wording
-  in `plugins/sleight/lib/compact-confirmations.mjs` (side-by-side table in `ledger/claims/CP1R/REPORT.md`).
+- CP1 with CP1R (`SLEIGHT_COMPACT_CONFIRMATIONS=1`, policy 5,946 to about 4,000 chars), wording approved by the owner
+  (2026-10-17 12:52Z, "ya it's fine"). It becomes the default if the A/B measures a win.
 - CU1 with CU1R and `eb8bde6e`: the claude-cu arm keeps its computer-use server under telemetry opt-out and answers the session card
   only when each app and grant the card lists is on the task's fixture allowlist. Two Sonnet-high reviews; the second found the hook denied
   every real `request_access` (the schema's required `reason`) and the block record kept the account banner, both fixed. Needs its
