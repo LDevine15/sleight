@@ -334,11 +334,29 @@ export function shownStandardWindows(text) {
 // the dialog gone and that exact window focused, standard, in the process it was seen in, with no HID input since.
 // `stale` is the dialog lease (with .parent), `shown` the last result's shownStandardWindows, `reply` this call's read,
 // `gone` whether the helper found no window with the dialog's title and URL, `observed` the helper's look at the parent.
+// Which relay states never take the parent lease: the flag off, a stale window that isn't the recovery re-acquisition's,
+// an active select_window selection, document scope, change review, no helper, element numbers in the rest (they may be
+// the dialog's), or a read showing anything but the covered window with its bundle.
+export function parentLeaseGate({ enabled, recovered, selected, documentMode, changeReview, helper, numbers = [], stale, window }) {
+  if (!enabled) return 'off';
+  if (!recovered) return 'not-recovered';
+  if (selected) return 'selected-window';
+  if (documentMode) return 'document-scope';
+  if (changeReview) return 'change-review';
+  if (!helper) return 'no-helper';
+  const parent = stale?.parent;
+  if (!parent) return 'no-parent';
+  if (!window || window.appId !== parent.appId || ['title', 'app', 'url'].some(key => window[key] !== parent[key])) return 'not-the-covered-window';
+  if (numbers.length) return 'element-numbers';
+}
 export function parentLeaseRefusal({ stale, shown, reply, gone, observed, now = performance.now() }) {
   const parent = stale?.parent;
   if (!parent) return 'no-parent';
   if (!COVER_ROLES.includes(parent.over)) return 'not-over-a-dialog';
   if (!parent.appId || stale.appId !== parent.appId) return 'other-bundle';
+  // The helper skips windows without a title, so `gone` can't see an untitled dialog or palette. A sheet is no window
+  // of its own: the tree and the native sheet count below see it.
+  if (!stale.title && parent.over !== 'sheet') return 'untitled-cover';
   const key = documentKey({ title: parent.title, app: parent.app, url: parent.url });
   if (!shown?.has(key)) return 'not-shown';
   const window = typeof reply === 'string' ? windowFromText(reply) : undefined;
@@ -442,7 +460,7 @@ const CHANGED = { menu: 'opened a menu', tab: 'opened a tab', navigation: 'chang
 export function continuedNote(plan, n, kind, { over, title, failed } = {}) {
   if (!plan || !Number.isSafeInteger(n) || n < 1 || n >= plan.actions.length) return;
   const list = actionList(plan);
-  const what = kind === 'dialog' ? `closed the ${over === 'sheet' ? 'sheet' : ['window', 'floating window'].includes(over) ? 'panel' : 'dialog'}`
+  const what = kind === 'dialog' ? `closed the ${over === 'sheet' ? 'sheet' : PALETTE_ROLES.includes(over) ? 'panel' : 'dialog'}`
     : CHANGED[kind] ?? CHANGED.navigation;
   const first = list(plan.actions.slice(0, n)), rest = list(plan.actions.slice(n));
   const where = typeof title === 'string' && title ? ` in ${JSON.stringify(title)}` : '';

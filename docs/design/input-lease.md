@@ -155,7 +155,9 @@ instead (`parentLeaseRefusal`) only if all of these hold:
   sheets, in the process it was seen in, with no HID input since it was last seen standard.
 - It is the one window with that header, or the native window certified when it was read. A window without a URL needs that
   certification.
+- The dialog had a title (or was a sheet), and the rest has no literal element numbers.
 
-The rest is then admitted pinned to the native window just observed, for that call only. `SLEIGHT_PARENT_LEASE=0` keeps the
+The rest is then admitted pinned to the native window just observed, for that call only. At that admission an unavailable
+or ambiguous identity stops the call. `SLEIGHT_PARENT_LEASE=0` keeps the
 refusal. LA1 adopted a window inside a call and failed two reviews for typing into a window it hadn't verified, so this applies
 only between calls and only to the window the relay recorded under the dialog.

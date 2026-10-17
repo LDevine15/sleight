@@ -44,8 +44,9 @@ our own runs. Dates and engine versions are given where they matter.
   A click close doesn't need a key, so it should continue. Neither has run live.
 - The parent lease (the window under a dialog that closed between calls) hasn't run live, and fires only on the relay's
   recovery re-acquisition after the lease dropped. A call whose first action finds the document while the lease still holds
-  the dialog stops as before. An untitled alert whose AXTitle is missing looks gone to the helper; then only the focus check
-  on the document and the tree's missing dialog stop input going in while it is still open.
+  the dialog stops as before. It never takes the window under an untitled dialog or palette, since the helper can't show one
+  gone, so Word's alert (3 of the 7 stale refusals in the study) still stops. A rest with a literal element number stops too,
+  since the number may be the dialog's.
 - Since `typeText` and `pressKey` can reset HID idle, a dialog-close continuation won't fire after keys sent after the
   document's last standard read. The Word Replace All run sent Escape and Cmd+H after that read.
 - Over a window without a URL, a dialog or sheet continues only when that window's native identity was certified at its

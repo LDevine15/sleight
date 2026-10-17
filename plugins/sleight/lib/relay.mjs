@@ -72,7 +72,7 @@ import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal } from './menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -1302,6 +1302,18 @@ export function createRelay({
   let stateRead = false; // a getState read went to the engine this session, so its app ids are Claude's to use
   let lastConfirmedWindow; // the lease's last window with a confirmed bundle ID, kept when the lease drops
   let lastShown = new Set(); // the standard windows the last observed result showed (shownStandardWindows), for the parent lease
+  // Call id -> the window the parent lease pinned for that call. The pin lasts until the call's reply goes out.
+  const parentPins = new Map();
+  function releasePin(id) {
+    const target = parentPins.get(id);
+    if (!target) return;
+    parentPins.delete(id);
+    if (target.parentPin?.id !== id) return;
+    const { nativeIdentity, identityRequired } = target.parentPin;
+    delete target.parentPin;
+    if (nativeIdentity === undefined) delete target.nativeIdentity; else target.nativeIdentity = nativeIdentity;
+    if (identityRequired === undefined) delete target.identityRequired; else target.identityRequired = identityRequired;
+  }
   let selectedWindow;
   let selectionVerified = false;
   function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
@@ -1328,7 +1340,7 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
     standardWindows.clear(); appProcesses.clear(); processProbes.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
@@ -1715,6 +1727,8 @@ export function createRelay({
     msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content, undefined, compactReacquire), ...reply.result.content];
   }
   const toClient = (msg, afterWrite) => {
+    // Every call's reply ends it, by whatever path: its parent lease pin ends too.
+    if (msg.method === undefined && msg.id !== undefined) releasePin(msg.id);
     if (msg.method === undefined && stoppedClients.has(msg.id)) return;
     const directEnding = msg.method === undefined && directTurnEnds.get(msg.id);
     if (directEnding?.pending) { directEnding.replies.push(msg); return; }
@@ -2429,9 +2443,10 @@ export function createRelay({
             { type: 'text', text: promptNotice(`sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.`, prompt) }] } });
         };
         const parent = expected.parent;
-        if (!parentLease || !recovered || selectedWindow || !parent || !windowIdentity || documentMode || changeReview ||
-            !(leaseWindow?.appId === parent.appId && sameWindow(leaseWindow, parent))) {
-          if (parentLease && recovered && parent) trace('parent-lease-refused', { id: msg.id, reason: 'not-the-covered-window' });
+        const gate = parentLeaseGate({ enabled: parentLease, recovered, selected: !!selectedWindow, documentMode, changeReview,
+          helper: !!windowIdentity, numbers, stale: expected, window: leaseWindow });
+        if (gate) {
+          if (parent && !['off', 'not-recovered'].includes(gate)) trace('parent-lease-refused', { id: msg.id, reason: gate });
           stale(); return;
         }
         const target = leaseWindow, text = (raw ?? reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n');
@@ -2452,6 +2467,7 @@ export function createRelay({
             // The pin ends with this call (parentPin), so a later helper epoch doesn't refuse the document.
             target.parentPin = { id: msg.id, nativeIdentity: target.nativeIdentity, identityRequired: target.identityRequired };
             target.nativeIdentity = observed; target.identityRequired = true;
+            parentPins.set(msg.id, target);
             trace('parent-lease', { id: msg.id, over: parent.over });
             proceed();
           });
@@ -2524,7 +2540,7 @@ export function createRelay({
     }
     if (remainder?.dialog && !call.baseline) refuse('no-baseline');
     // The helper skips windows without a title, so an untitled popover would look gone while still open.
-    if (remainder?.closeCheck && !call.target.title) { refuse('palette-untitled'); return false; }
+    if (popoverContinuation && remainder?.closeCheck && !call.target.title) { refuse('palette-untitled'); return false; }
     if (remainder?.tab && !call.baseline) refuseTab('no-baseline');
     // The tab's native check pins the window by its number, so a baseline without one can't continue.
     if (remainder?.tab && call.baseline && !(Number.isSafeInteger(call.baseline.windowNumber) && call.baseline.windowNumber > 0)) {
@@ -2744,7 +2760,8 @@ export function createRelay({
       callDetails.set(msg.id, 'native window admission');
       const started = performance.now();
       Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
-        const identity = nativeIdentity(expected, observed);
+        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin.
+        const identity = target.parentPin?.id === msg.id ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
         noteProcess(identity);
         if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
@@ -3734,7 +3751,7 @@ export function createRelay({
       // The bundle ID comes from the handle, so the header's app must match too: another app's dialog (SecurityAgent)
       // over the document is not the document's.
       const over = (popoverContinuation ? /^Window: .*\r?\n0 (sheet|dialog|window|floating window|popover|system dialog)\b/m
-        : /^Window: .*\r?\n0 (sheet|dialog|system dialog)\b/m).exec(text)?.[1];
+        : /^Window: .*\r?\n0 (sheet|dialog|window|floating window|system dialog)\b/m).exec(text)?.[1];
       if (over && leaseWindow?.appId && previous?.appId === leaseWindow.appId && window.app === previous.app) {
         const key = documentKey({ title: previous.title, app: previous.app, url: previous.url });
         if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }

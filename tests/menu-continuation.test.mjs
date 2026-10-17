@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -426,6 +426,26 @@ test('TW2: a navigation into a page names it in any case', () => {
   for (const role of ['HTML Content', 'HTML content', 'Web Area']) assert.equal(menuRemainder(plan, receipt, expected, page(role)), undefined, role);
 });
 
+test('OT2 review: the parent lease gate excludes every mode it must', () => {
+  const parent = { title: 'Report', app: 'Word', url: 'file:///tmp/r.docx', appId: 'com.example.word' };
+  const ok = { enabled: true, recovered: true, selected: false, documentMode: false, changeReview: false, helper: true, numbers: [],
+    stale: { parent }, window: { ...parent } };
+  assert.equal(parentLeaseGate(ok), undefined);
+  for (const [change, reason] of [
+    [{ enabled: false }, 'off'], [{ recovered: false }, 'not-recovered'], [{ selected: true }, 'selected-window'],
+    [{ documentMode: true }, 'document-scope'], [{ changeReview: true }, 'change-review'], [{ helper: false }, 'no-helper'],
+    [{ stale: {} }, 'no-parent'], [{ window: undefined }, 'not-the-covered-window'], [{ window: { ...parent, appId: 'com.example.other' } }, 'not-the-covered-window'],
+    [{ window: { ...parent, title: 'Other' } }, 'not-the-covered-window'], [{ window: { ...parent, url: null } }, 'not-the-covered-window'],
+    [{ numbers: [3] }, 'element-numbers'],
+  ]) assert.equal(parentLeaseGate({ ...ok, ...change }), reason, JSON.stringify(change));
+});
+
+test('OT2 review: a popover the call closed is a panel in the continued note, not a dialog', () => {
+  const plan = splitMenuActions('await app.click({ id: "close" }); await app.pressKey("super+End");');
+  for (const over of ['popover', 'window', 'floating window']) assert.match(continuedNote(plan, 1, 'dialog', { over }), /closed the panel/, over);
+  assert.match(continuedNote(plan, 1, 'dialog', { over: 'dialog' }), /closed the dialog/);
+});
+
 test('OT2: a result shows a standard window only under a header whose own section has a standard root', () => {
   const doc = 'Window: "Report", App: Word.\n0 standard window Report, URL: file:///tmp/r.docx\n\t1 button OK';
   const key = JSON.stringify({ title: 'Report', app: 'Word', url: 'file:///tmp/r.docx' });
@@ -476,6 +496,22 @@ test('OT2: the parent lease takes the covered window only when every condition h
     ['another certified window', { stale: { ...stale, parent: { ...parent, nativeIdentity: { ...certified, windowNumber: 41 } } } }, 'identity-mismatch'],
     ['another helper epoch for a certified window', { stale: { ...stale, parent: { ...parent, nativeIdentity: { ...certified, epoch: 'old' } } } }, 'identity-mismatch'],
   ]) assert.equal(parentLeaseRefusal({ ...base, ...change }), reason, name);
+  // Review B: an untitled cover can't be shown gone; a sheet is checked by the tree and the native sheet count.
+  assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, title: '' } }), 'untitled-cover');
+  assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, title: '', parent: { ...parent, over: 'popover' } } }), 'untitled-cover');
+  assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, title: '', parent: { ...parent, over: 'sheet' } } }), undefined);
+  // Review F: HID idle counts from min(at, seenAt) = 800 to now = 1000, so 0.2 s plus 0.05 s.
+  for (const [seconds, reason] of [[0.15, 'hid-input'], [0.2, 'hid-input'], [0.24, 'hid-input'], [0.26, undefined], [undefined, 'hid-input'],
+    [Number.NaN, 'hid-input'], [Infinity, 'hid-input'], [null, 'hid-input'], ['5', 'hid-input']]) {
+    assert.equal(parentLeaseRefusal({ ...base, observed: { ...observed, hidIdleSeconds: seconds } }), reason, String(seconds));
+  }
+  // The later reference alone (at = 900) would pass 0.16 s; seenAt keeps it a refusal.
+  assert.equal(parentLeaseRefusal({ ...base, observed: { ...observed, hidIdleSeconds: 0.16 } }), 'hid-input');
+  assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, parent: { ...parent, seenAt: 900 } }, observed: { ...observed, hidIdleSeconds: 0.16 } }), undefined);
+  // Review F: every root must be standard, not just one.
+  const twice = `${reply}\nWindow: "Report", App: Word.\n0 dialog Report, URL: ${url}`;
+  assert.equal(parentLeaseRefusal({ ...base, reply: twice }), 'returned-root-not-standard');
+  assert.equal(parentLeaseRefusal({ ...base, reply: `${reply}\n${reply}` }), undefined);
   // A certified window narrows same-title windows by its number.
   assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, parent: { ...parent, nativeIdentity: certified } }, observed: { ...observed, headerMatches: 2 } }), undefined);
 });

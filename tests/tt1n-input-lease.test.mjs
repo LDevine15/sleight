@@ -954,7 +954,8 @@ for (const [name, root, title, { open = false, ...options }, continues, reason, 
   ['a popover its own button closed continues', 'popover', 'Format', {}, true],
   ['Escape on a popover continues', 'popover', 'Format', {}, true, undefined, 'await app.pressKey("Escape"); await app.pressKey("super+End");'],
   ['a popover with the flag off stops', 'popover', 'Format', { popoverContinuation: false }, false, 'no-covered-window'],
-  ['a floating window with the flag off stops', 'floating window', 'Format', { popoverContinuation: false }, false, 'no-covered-window'],
+  ['a floating window with the flag off continues, as before', 'floating window', 'Format', { popoverContinuation: false }, true],
+  ['an untitled window with the flag off continues, as before', 'window', '', { popoverContinuation: false }, true],
   ['an untitled popover its button closed stops', 'popover', '', {}, false, 'palette-untitled'],
   ['a popover still open after its button stops', 'popover', 'Format', { open: true }, false, 'palette-still-open'],
 ]) test(`OT2: ${name}`, async t => {
@@ -978,24 +979,29 @@ for (const [name, root, title, { open = false, ...options }, continues, reason, 
 // so the lease dropped; the next call's recovery re-acquisition showed the document and stopped as stale.
 const parentOf = (expected, native, extra = {}) => ({ ...dialogIdentity(expected, native), windowSubrole: 'AXStandardWindow',
   ...extra, focus: { sheets: 0, role: null, subrole: null, inWindow: false, inPage: false, ...extra.focus } });
-async function parentFixture(t, { parent = {}, gone = true, reply, ...options } = {}) {
+// Insert Table has a title, so the helper can show it gone; Word's untitled alert can't be (untitled-cover).
+const insertTable = 'Window: "Insert Table", App: Fixture Editor.\n0 dialog Insert Table\n\t1 text All done. We made 1 replacement.\n\t2 button OK, ID: ok';
+async function parentFixture(t, { parent = {}, gone = true, reply, cover = insertTable, ...options } = {}) {
   const state = { closed: false };
   const events = [];
-  const h = await fixture(t, { base: page, after: alert, afterItem: page, ...options,
+  const coverTitle = /^Window: "([^"]*)"/.exec(cover)[1];
+  let h;
+  h = await fixture(t, { base: page, after: cover, afterItem: page, ...options,
     identity: (expected, native) => !state.closed ? dialogIdentity(expected, native)
-      : expected.title === '' ? (gone ? { status: 'ok', matches: 0, headerMatches: 0 } : dialogIdentity(expected, native))
-      : typeof parent === 'function' ? parent(expected, native) : parentOf(expected, native, parent),
+      : expected.title === coverTitle ? (typeof gone === 'function' ? gone(expected, native)
+        : gone ? { status: 'ok', matches: 0, headerMatches: 0 } : dialogIdentity(expected, native))
+      : typeof parent === 'function' ? parent(expected, native, h) : parentOf(expected, native, parent),
     trace: (direction, msg) => { if (/^parent-lease/.test(direction)) events.push(direction === 'parent-lease' ? 'accepted' : msg.reason); } });
   assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
   const closed = await h.call('await app.click({ id: "ok" }); nodeRepl.write(\'Window: "report.txt", App: Fixture Editor.\\n\');');
   assert.match(JSON.stringify(closed), /0 standard window report\.txt/);
   state.closed = true;
   if (reply) h.setText(reply);
-  return { ...h, events };
+  return Object.assign(h, { events });
 }
 const nextCall = 'await app.pressKey("super+End");';
 
-test('OT2: the next call after OK closed the alert leases the document it covered and runs', async t => {
+test('OT2: the next call after OK closed Insert Table leases the document it covered and runs', async t => {
   const h = await parentFixture(t);
   const result = await h.call(nextCall);
   assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 600));
@@ -1029,7 +1035,58 @@ test('OT2: the pinned native window must still match when the rest is admitted',
   assert.deepEqual(pinned, [22], 'the admission asked for the window number the parent check observed');
 });
 
-for (const [name, options, reason] of [
+// Review A: the pinned admission fails closed. Unpinned, an unavailable or ambiguous identity drops the requirement.
+for (const [name, answer] of [
+  ['unavailable', { status: 'unknown', error: 'probe unavailable' }],
+  ['ambiguous', { status: 'ok', matches: 2, headerMatches: 2, epoch: 'helper', window: 0, pid: 123, processStart: 1 }],
+]) test(`OT2: an ${name} identity at the pinned admission stops`, async t => {
+  const h = await parentFixture(t, { parent: (expected, native) => expected.nativeIdentity ? answer : parentOf(expected, native) });
+  const result = await h.call(nextCall);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(h.events, ['accepted']);
+});
+
+// Review C: labels and IDs resolve in the window the guard reads, so they go on.
+test('OT2: a labelled click in the rest goes on after the parent lease', async t => {
+  const h = await parentFixture(t);
+  const clicks = h.clicks.length;
+  const result = await h.call('await app.click({ label: "Replace All" });');
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 400));
+  assert.equal(h.clicks.length, clicks + 1);
+  assert.deepEqual(h.events, ['accepted']);
+});
+
+// Review D: a call that stops before any result is observed still ends its pin.
+test('OT2: the pin ends with its call when the rest stops at admission', async t => {
+  let epoch = 'helper', refuse = true;
+  const h = await parentFixture(t, { parent: (expected, native) => expected.nativeIdentity && refuse
+    ? { status: 'mismatch', error: 'Known window number disappeared' } : parentOf(expected, native, { epoch }) });
+  assert.equal((await h.call(nextCall)).isError, true);
+  refuse = false; epoch = 'helper-2';
+  const later = await h.call('await app.pressKey("Return");');
+  assert.notEqual(later.isError, true, JSON.stringify(later).slice(0, 400));
+  assert.deepEqual(h.keys, ['Return']);
+});
+
+// Review F: the lease moving while the helper looks (a read in between) refuses.
+test('OT2: a lease that moved during the parent check refuses', async t => {
+  let sent = false;
+  const h = await parentFixture(t, { parent: async (expected, native, fixture) => {
+    if (!sent && !expected.nativeIdentity) {
+      sent = true;
+      fixture.send({ jsonrpc: '2.0', id: 99, method: 'tools/call', params: { name: 'js', arguments: { code: 'let s = await app.getAXState(); s' } } });
+      for (let i = 0; i < 20; i++) await tick();
+    }
+    return parentOf(expected, native);
+  } });
+  const result = await h.call(nextCall);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(h.events, ['lease-moved']);
+});
+
+for (const [name, options, reason, code = nextCall] of [
   ['the flag off', { parentLease: false }, undefined],
   ['user input since the document was seen', { parent: { hidIdleSeconds: 0 } }, 'hid-input'],
   ['another window with the same title and URL', { parent: { headerMatches: 2 } }, 'header-matches-2'],
@@ -1041,9 +1098,20 @@ for (const [name, options, reason] of [
   ['a window that is not standard natively', { parent: { windowSubrole: 'AXFloatingWindow' } }, 'not-standard-native'],
   ['no native answer', { parent: () => ({ status: 'unknown', error: 'probe unavailable' }) }, 'identity-unavailable'],
   ['another document in front', { reply: page.replaceAll('report.txt', 'other.txt') }, 'not-the-covered-window'],
+  // Review B: the helper skips untitled windows, so an untitled alert would always look gone.
+  ['an untitled alert it covered', { cover: alert }, 'untitled-cover'],
+  // Review C: a literal number may be the dialog's.
+  ['an element number in the rest', {}, 'element-numbers', 'await app.click(2);'],
+  // Review F.
+  ['a missing HID idle time', { parent: { hidIdleSeconds: undefined } }, 'hid-input'],
+  ['a non-finite HID idle time', { parent: { hidIdleSeconds: Number.NaN } }, 'hid-input'],
+  ['a helper that never answers the dialog check', { menuContinuationTimeoutMs: 30, gone: () => new Promise(() => {}) }, 'dialog-still-open'],
+  ['a helper that never answers the window check', { menuContinuationTimeoutMs: 30, parent: () => new Promise(() => {}) }, 'identity-unavailable'],
 ]) test(`OT2: the parent lease refuses ${name}`, async t => {
   const h = await parentFixture(t, options);
-  const result = await h.call(nextCall);
+  const clicks = h.clicks.length;
+  const result = await h.call(code);
+  assert.equal(h.clicks.length, clicks);
   assert.equal(result.isError, true);
   assert.deepEqual(h.keys, []);
   assert.match(JSON.stringify(result), /nothing from this call ran/);
