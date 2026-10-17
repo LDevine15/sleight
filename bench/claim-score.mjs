@@ -16,7 +16,7 @@ export function excluded(row, file, rules) {
   if (row.skipped || row.seconds == null) return 'skipped';
   for (const r of rules.reasons) if (new RegExp(r.match, 'i').test(row.reason ?? '')) return r.why;
   for (const f of rules.files) if (file.startsWith(f.prefix) && (!f.arm || f.arm === row.arm)) return f.why;
-  for (const w of rules.windows) if (w.tasks.includes(row.task) && file < w.before) return w.why;
+  for (const w of rules.windows) if (w.tasks.includes(row.task) && (!w.arm || w.arm === row.arm) && file < w.before) return w.why;
   return undefined;
 }
 

@@ -20,6 +20,7 @@
   ],
   "windows": [
     { "tasks": ["textedit-drag"], "before": "2026-10-16T20-12", "why": "a stale full-screen screencaptureui overlay covered every drag target" },
-    { "tasks": ["word-edit", "excel-edit"], "before": "2026-10-16T21-40", "why": "Excel's recovery prompt and Word's recovered fixture, before Office was cleared" }
+    { "tasks": ["word-edit", "excel-edit"], "before": "2026-10-16T21-40", "why": "Excel's recovery prompt and Word's recovered fixture, before Office was cleared" },
+    { "tasks": ["excel-edit"], "arm": "sleight", "before": "2026-10-17T10-51", "why": "sleight build whose swap note a ribbon 'Sort & Filter' suppressed (fixed in 5a6ba6c0); excel-edit rerun 5 times on the fixed build" }
   ]
 }

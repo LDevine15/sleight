@@ -23,3 +23,10 @@ test('expected time is the mean attempt divided by the pass rate, and never-pass
   assert.equal(table.a.t.median, 10);
   assert.equal(table.b.t.expected, null);
 });
+
+test('a window exclusion with an arm drops only that arm\'s rows', () => {
+  const own = { tasks: ['excel-edit'], reasons: [], files: [], windows: [{ tasks: ['excel-edit'], arm: 'sleight', before: '2026-10-17T10-51', why: 'pre-fix' }] };
+  assert.equal(excluded({ task: 'excel-edit', arm: 'sleight', seconds: 60 }, '2026-10-17T10-25-49.json', own), 'pre-fix');
+  assert.equal(excluded({ task: 'excel-edit', arm: 'codex', seconds: 60 }, '2026-10-17T04-43-59.json', own), undefined);
+  assert.equal(excluded({ task: 'excel-edit', arm: 'sleight', seconds: 60 }, '2026-10-17T10-51-44.json', own), undefined);
+});
