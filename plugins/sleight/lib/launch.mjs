@@ -231,7 +231,8 @@ export function paymentConfirmationSetting(env = process.env) {
   return value === 'always' || value === 'never' ? value : 'requested';
 }
 
-// The skill's body, sent after the engine's first-call docs. Missing or unreadable means none.
+// The skill's body. The relay defers its Browsers section until a browser result.
+// Missing or unreadable means none.
 // Under the sheet A/B, the menu rule gets the call to send. 9 textedit-save runs opened Format in one call
 // and chose Make Plain Text in the next, 33.8 s over 11 calls (turn study, 2026-10-11).
 export function skillRules(path = join(LIB, '..', 'skills', 'drive-mac-apps', 'SKILL.md'), env = process.env) {
