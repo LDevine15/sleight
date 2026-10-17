@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 21:35 UTC, after the boot)
+## Banner (2026-10-17 21:50 UTC)
 
 Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
 no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. Build work runs as
@@ -16,38 +16,29 @@ runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 46
 10.5 against 10.4), preview-read (Peekaboo 4.4 against 4.6 median) and excel-edit (claude-cu 54 against 74). LAWS ties the
 headline's wording to the browser race, which isn't done.
 
-**Fixes for the three losses, all lanes finished by 21:35Z** (Fable loss studies 20:5xZ, items in `~/Projects/sleight-wt/ledger/LEDGER.md`,
-last section; each committed on its own local branch `worktree-agent-<id>`, also pushed to `private` as `arch/lane-<id>`):
-- agent-aa17fa2300d3ec00c (compact-reads): done, cb88e02b on worktree-agent-aa17fa2300d3ec00c, unmerged pending a Sonnet-high review.
-  It confirms a save from the app's last standard-window read when the pre-save read was a menu or missing, drops stale "a menu is open"
-  notes, attaches the moved-click note in calls with several clicks (with Undo first in its wording), and matches combined
-  `{ id, label }` locators. The lease change for URL-less menu headers was left out (it broke 43 lease tests). The safe route is
-  letting splitMenuActions accept a read between actions, which needs a check of whether the engine's REPL keeps top-level variables
-  across calls.
-- agent-a8f6b4dfe726ba8e4 (guard after Return): a69c1d55, Sonnet-high safety review 21:3xZ "merge after fixes": no age bound on
-  observations (an alert opened after a later read is missed), the 100 ms margin is too short, unmeasured but default on. An Opus
-  lane is fixing it on the same branch: 250 ms margin, age bound, secure-field refusal, a trace event, and default off
-  (`SLEIGHT_GUARD_LIGHT_RETURN=1`) until a live measurement of how late alerts appear after Return.
-- agent-a336b5cee71ace575 (relay, launch, skill): done, 044434df on worktree-agent-a336b5cee71ace575, unmerged pending a
-  Sonnet-high review. Rules come before the tree (`SLEIGHT_RULES_FIRST=0` baseline). open_file skips `open -g` on a confirmed window,
-  and its approval runs alongside the cold probe, so a prompt can be answered for nothing if the lookup then fails (known-problems).
-  The textless-document note is on by default (`SLEIGHT_TEXTLESS_HINT=0` baseline). The skill gained "A confirmed save covers other
-  sheets and pages. Don't recheck them." and dropped a line the js description already has (927 of 930 words). bench/timing.mjs counts
-  open_file (preview-read-1 took 658 ms, of which 210 ms in the engine).
-- agent-aa3c3758d99912080 (turbo): done, bf60a6a2 on worktree-agent-aa3c3758d99912080, unmerged. A group-writable Chrome is
-  accepted only after the running process proves its code signature (Team IDs Chrome EQHXZ8M8AV and Helium S4Q33XPHB4, plus the kill,
-  library-validation and runtime flags, with pid and start time checked before and after). Security-sensitive: needs a Sonnet-high
-  review (the lane's reviewer checklist is in its report in this session's transcript: pid binding, flags parsing, test-only
-  overrides, Team IDs, an older Google-signed framework swap) before merge, then a live turbo-on-Chrome check.
-- agent-a031a24d54f178c6e (race harness): done and merged (d1e4a215). All harness causes. LCU and Cua's approvals used the world
-  allowlist without Firefox, so each race arm now gets the round's browser plus Preview and TextEdit (benchmark apps only). Cua's
-  driver daemon wasn't running. The round now starts it through LaunchServices and stops only one it started. Codex depends on the
-  engine's Always allow list. The round now sets it to the round's apps and restores it, as run.mjs does for the claim. Peekaboo rounds
-  must start from Terminal.app, which admission now enforces. Not run live yet. Commands are in `bench/fowl/rounds.sh`'s header.
-- agent-ad5cfb3df41d7b6dc (real-window gate arms): done and merged (d2cb8a5b). The Claude in Chrome stall was Claude Code's
-  `auto` permission mode on the gate arms; the gate now passes `--permission-mode default` to every arm. Smoke from Terminal.app
-  21:09Z passed Claude in Chrome on wikipedia and mdn, and FowlBrowser and turbo (Helium) on wikipedia.
-Next session: check each branch for commits (`git log 369bc9a2..worktree-agent-<id>`), review (Sonnet high), merge, full check, then
+**Loss fixes and pending branches: all five reviewed (Sonnet high, 21:3x-21:45Z), each "merge after fixes" or "merge" with
+follow-ups, and an Opus fix lane runs on each branch now** (items in `~/Projects/sleight-wt/ledger/LEDGER.md`, last section;
+branches `worktree-agent-<id>`, backed up on `private` as `arch/lane-<id>`). Trial merges onto 56117980 conflict only in
+docs/known-problems.md.
+- agent-aa17fa2300d3ec00c (compact-reads, cb88e02b): "merge". Fixing: a `{ id, label }` locator could fall back to a bare
+  label-only line; actionKind and clickedSiblings didn't parse combined locators; the save-baseline URL test didn't discriminate;
+  the menu note was dropped on a different window's last tree. The menu-header lease change stays out (it broke 43 lease tests).
+- agent-a8f6b4dfe726ba8e4 (guard after Return, a69c1d55): "merge after fixes". Fixing: no age bound on observations, 100 ms
+  margin to 250 ms, secure-field refusal, a trace event, and default off (`SLEIGHT_GUARD_LIGHT_RETURN=1`) until a live
+  measurement of how late alerts appear after Return.
+- agent-a336b5cee71ace575 (rules-first, open_file, textless note, save skill line, 044434df): "merge after fixes". Fixing: the
+  open skip could hand Claude another window of the app (the match must be the main window); the skill line over-claimed
+  (now "as of the save", later edits need another save); the textless note fired on blank new documents; a failed lookup left
+  its approval prompt blocking later ones; the tree-header match was loose.
+- agent-aa3c3758d99912080 (turbo group-writable Chrome, bf60a6a2): "merge after fixes". Fixing: the proof read the file on disk,
+  not the running code (now `csops` status and the running cdhash against the verified file); the group wasn't checked (admin or
+  the user's own only); Beta, Dev and Canary got the relaxation; helpers and downgrades undocumented. Then a live turbo-on-Chrome
+  check.
+- agent-ac2392d909bf6200b (LW2 and LW3 dialog continuation, f3c15d05 and fd834163): "merge after one small fix". Fixing: an app
+  restart before the first process note kept the old process's windows; dialogs over URL-less windows need a certified identity;
+  a timing-dependent test; docs. The reviewer confirms the staleness bound blocks the Escape/super+h Word shape (speed, not
+  safety).
+Next: merge each branch after its fix lane reports (read the diff), one full check, then
 A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
 sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
 
