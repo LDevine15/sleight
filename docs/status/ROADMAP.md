@@ -39,6 +39,11 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
 Before the gate, the owner reloads FowlBrowser's extension in Helium and runs the sleight-arm login. Chrome's Allow and
 `ledger/claim-suite-owner-checklist.md` are the owner's too.
 
+1b. Heads-down first (owner, 2026-10-17): build every token, turn and reliability fix found on 2026-10-16 (TT1N to TT4, TK1 to
+   TK3, TS1 to TS5), merge and freeze, then one combined A/B (old vs new sleight, claim plus held-out tasks), then the all-arms
+   claim run (5 runs where any arm fails, scored by `bench/claim-score.mjs`), then the release pass and the tag. The tag moves
+   later so 1.3.0 includes the fixes and the claim measures the released build.
+
 ## 2. After 1.3.0, in the owner's order
 
 Post-release work builds on branches now and merges after the tag (owner, 2026-10-14).
