@@ -85,6 +85,11 @@ TODO: full release pass result.
   reported as "not confirmed (mixed save targets)" and Claude saved again.
 - When a click also swaps two sibling elements, such as Excel's sheet tabs after a rename, the result says so with the new
   order, and the next save repeats it once. All three excel-edit failures in the 2026-10-17 claim run were this swap.
+- When the tree shows a menu-bar item as selected with no menu in front, the result warns that a menu may be stuck open and how to close
+  it. In a 2026-10-17 word-edit run, Word ignored keys for 20 calls in that state with no warning.
+- When text typed after a click shows up in a different existing field than the one clicked, the result says where it went.
+- `SLEIGHT_WARM_ENGINE=1` (opt-in until an A/B) pays the engine's first-call start
+  (about 0.73 s measured) before Claude's first call. `SLEIGHT_OPEN_FAST=1` (also opt-in) overlaps `open_file`'s setup steps.
 - The skill tells Claude to acquire an app the task names directly, and to use the changed lines an
   action returns instead of reading again to confirm them. It moves files with Copy and then the
   menu's Move item, since Cut is often disabled for files.
