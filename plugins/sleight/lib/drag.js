@@ -76,7 +76,7 @@ function screenshotScale(request, bounds, title) {
   const s = own ?? request.screenshot;
   if (!Array.isArray(s) || s.length !== 2 || !s.every(n => Number.isFinite(n) && n > 0)) return null;
   const x = s[0] / bounds.Width, y = s[1] / bounds.Height;
-  return Math.abs(x - y) <= 0.03 * Math.max(x, y) && x >= 0.25 && x <= 4 ? { x, y } : null;
+  return Math.abs(x - y) <= 0.03 * Math.max(x, y) && x >= 0.25 && x <= 4 ? { x, y, size: s } : null;
 }
 const toPoints = (p, scale) => scale ? [p[0] / scale.x, p[1] / scale.y] : p;
 function resolveWindow(own, request) {
@@ -969,7 +969,11 @@ function run(argv) {
     const resolved = semantic ? semanticPoints(request, pid, win, main) : null;
     const pointFrom = resolved ? resolved.from : toPoints(from, scale), pointTo = resolved ? resolved.to : toPoints(to, scale);
     const verifySemantic = () => { if (resolved) checkSemantic(resolved, request, pid, chosenWindow, main); };
-    units = scale ? { screenshotScale: Math.round(scale.x * 1000) / 1000 }
+    // Name the frame Claude's numbers were read in, not the internal pixels-per-point factor. In
+    // both Firefox settings runs (2026-10-17) Claude retried drags sent in the shown image's frame,
+    // and `screenshotScale: 2` sat beside Claude Code's "multiply by 1.28". The size here is the
+    // one Claude Code calls the original.
+    units = scale ? { coordinates: `engine screenshot pixels, ${scale.size[0]} × ${scale.size[1]}` }
       : { coordinates: request.screenshot ? 'window points: the latest screenshot is of another window size' : 'window points: no engine screenshot of this app yet' };
     // A drag no other app lets through is decided before any window scan: without selected text it
     // is refused below anyway, and the raise and scan took 10 to 13 s to get there (2026-10-09).

@@ -302,7 +302,7 @@ export function promptNotice(text, prompt) {
     .replace('The helper answered the control read.', '')
     .replace(/sleight: .*? has no Accessibility document windows, but macOS still lists "Save Panel Accessory View", a possible orphan Save panel\. /, 'sleight: possible orphan Save panel. ')
     .replace(/sleight: the user is in a full-screen or Split View Space, and none of .*?'s windows are on it\. /, 'sleight: off-Space windows. ')
-    .replace('The engine reads coordinates in these screenshot pixels. Claude Code shows this image smaller, at ', 'Shown at ')
+    .replace('The engine and the drag tool read coordinates in these screenshot pixels. Claude Code shows this image smaller, at ', 'Shown at ')
     .replace(', engine screenshot ', ', ')
     .replace('Computer use recovered for ', 'Recovered: ')
     .replace('Change review could not take a later copy: ', 'Change review unavailable: ')
@@ -951,6 +951,7 @@ export function createRelay({
   });
   const forgetGuard = () => { guardReady = false; guardGeneration++; };
   const screenshots = new Map(); // lowercased app name -> { latest, byTitle } pixel sizes of its engine screenshots
+  const framesNoted = new Set(); // [app, title, size] keys whose coordinate frame note Claude has seen
   const stuckMenus = new Set();
   // Every tools/call gets the next number. An acquisition's read can stand in for the guard's
   // first read only in the call right after it (priorRead.seq + 1).
@@ -3759,13 +3760,24 @@ export function createRelay({
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
       if (jsCode !== undefined) recordScreenshot(msg.result.content, certifiedRead);
       if (simFocusNote && !automatic && !confirmedBrowser && !msg.result.isError && typeof jsCode === 'string') {
-        // A standalone screenshot need not contain a Window header. Associate only its exact
-        // acquired handle, never the session's most recently observed app or an ambiguous batch.
-        const handle = /^\s*await\s+([A-Za-z_$][\w$]*)\.(?:getScreenshot|getAXStateAndScreenshot)\(\s*\)\s*;?\s*$/.exec(jsCode)?.[1];
-        const target = handle && handleBundles.get(handle);
+        // A screenshot need not contain a Window header. Associate only the one acquired handle the
+        // code screenshots and doesn't reassign, never the session's most recently observed app.
+        // Batches count: both Firefox settings runs (2026-10-17) took their first screenshot with
+        // emitImage or a later write, got no note, and sent drags in the shown image's frame.
+        const handles = new Set([...jsCode.matchAll(/\b([A-Za-z_$][\w$]*)\.(?:getScreenshot|getAXStateAndScreenshot)\s*\(/g)].map(m => m[1]));
+        const handle = handles.size === 1 ? [...handles][0] : undefined;
+        const reassigned = handle && new RegExp(`(?:^|[^\\w$.])${handle.replace(/\$/g, '\\$')}\\s*=(?!=)`).test(jsCode);
+        const target = handle && !reassigned && handleBundles.get(handle);
         const appId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
-        const note = target && (!appId || appId === target.appId) && simulatorScreenshotNote(msg.result.content, target, imageSize);
-        if (note) msg.result.content.push({ type: 'text', text: promptNotice(note, prompt) });
+        // emitImage repeats the same picture; dropRepeatedImages removes the copy below.
+        const note = target && (!appId || appId === target.appId) &&
+          simulatorScreenshotNote(dropRepeatedImages(msg.result.content), target, imageSize);
+        // Once per window and size: Claude Code's own line repeats the multiplier on every image.
+        const key = note && JSON.stringify([target.appId ?? target.app, target.title, imageSize(msg.result.content.find(c => c?.type === 'image').data)]);
+        if (note && !framesNoted.has(key)) {
+          framesNoted.add(key);
+          msg.result.content.push({ type: 'text', text: promptNotice(note, prompt) });
+        }
       }
       if (!automatic && jsCode !== undefined) {
         const text = msg.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
