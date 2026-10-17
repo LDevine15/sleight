@@ -23,6 +23,42 @@ async function execute(rows, code, options = {}) {
   return { inputs, error, taken: takeGuardStop([text(output.join('\n'))], mark) };
 }
 
+for (const line of ['close button', 'close button (enabled), ID: window-close',
+  'close button Description: Close, ID: window-close']) {
+  test('a numbered window close stops before input: ' + line, async () => {
+    const f = await execute('\t1 ' + line, 'await app.click(1);');
+    assert.deepEqual(f.inputs, []);
+    assert.match(f.error?.message ?? '', /element 1 is the window's close button; close a window by label or with Cmd\+W/);
+    assert.equal(f.taken.input, false);
+    assert.equal(f.taken.receipt?.index, 0);
+  });
+}
+
+for (const selector of ['"Close"', '{ label: "Close" }', '{ id: "window-close" }']) {
+  test('an explicit window close still passes: ' + selector, async () => {
+    const f = await execute('\t1 close button Description: Close, ID: window-close', `await app.click(${selector});`);
+    assert.equal(f.error, undefined);
+    assert.deepEqual(f.inputs, [1]);
+  });
+}
+
+for (const line of ['button Target', 'button Close', 'button Description: close button',
+  'button Target, ID: close button', 'minimize button', 'full screen button']) {
+  test('other numbered controls still pass: ' + line, async () => {
+    const f = await execute('\t1 ' + line, 'await app.click(1);');
+    assert.equal(f.error, undefined);
+    assert.deepEqual(f.inputs, [1]);
+  });
+}
+
+test('a close number computed from the current read still stops before input', async () => {
+  const f = await execute('\t1 close button',
+    'const text = await app.getAXState(); const n = Number(/(\\d+) close button/.exec(text)[1]); await app.click(n);',
+    { literals: [] });
+  assert.deepEqual(f.inputs, []);
+  assert.match(f.error?.message ?? '', /element 1 is the window's close button/);
+});
+
 for (const selector of ['"Insert"', '{ label: "Insert" }']) {
   test(`one content match beats menu-bar descendants for ${selector}`, async () => {
     const f = await execute('\t1 tab group Ribbon\n\t\t2 tab Insert\n3 menu bar\n\t4 Insert\n\t5 menu Extra\n\t\t6 menu item Insert', `await app.click(${selector});`);

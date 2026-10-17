@@ -610,6 +610,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // Only the resolved target's role makes a field click quiet; coordinates and words in a
           // button's description say nothing about whether it takes text input.
           const line = name === 'click' && typeof args[0] === 'number' ? elements(text ?? '').get(args[0]) : undefined;
+          if (!byId && /^close button(?: |,|$)/i.test(line ?? '')) {
+            throw stop('element ' + args[0] + " is the window's close button; close a window by label or with Cmd+W");
+          }
           const editable = typeof line === 'string' && /^(?:text field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line);
           const keys = name === 'pressKey' && typeof args[0] === 'string' ? args[0].toLowerCase().split('+') : [];
           const key = keys.pop(), modifiers = keys.every(k => ['super', 'cmd', 'command', 'meta', 'shift', 'alt', 'option', 'ctrl', 'control'].includes(k));
