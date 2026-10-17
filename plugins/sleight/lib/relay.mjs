@@ -76,7 +76,7 @@ import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRe
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
-import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason } from './compact-reads.mjs';
+import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason, TEXTLESS_NOTE } from './compact-reads.mjs';
 import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
@@ -289,6 +289,9 @@ export function promptNotice(text, prompt) {
     .replace('; if it still stays, tell the user.', '; if still stuck, tell the user.')
     .replace('` does.', '`.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
+    .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
+    .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')
+    .replace(', already acquired (`let app = ', ', acquired (`let app = ')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')
     .replace('Change review: an action is still pending, so this read cannot take a later copy. ', 'Change review: pending action. ')
     .replace(/Numbers in this window changed since your last full read, and .*? isn't one you've seen since\. /, '')
@@ -596,6 +599,9 @@ export function createRelay({
   warmEngine = false,
   openFast = false,
   openShot = process.env.SLEIGHT_OPEN_SHOT === '1',
+  // open_file adds a screenshot only when the opened document's tree holds none of its text or cells.
+  openAutoShot = process.env.SLEIGHT_OPEN_AUTO_SHOT !== '0',
+  openShotTimeoutMs = 5000,
   onClientReply = () => {},
 }) {
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
@@ -1605,6 +1611,33 @@ export function createRelay({
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code: `await ${handle}.getScreenshot()` } } });
     });
   }
+  // The last screenshot's size per app and window title, for drag to convert Claude's pixels.
+  function recordScreenshot(content, certifiedRead) {
+    const shot = screenshotOf(content);
+    if (!shot) return;
+    const entry = screenshots.get(shot[0].toLowerCase()) ?? { byTitle: {}, byWindow: {} };
+    entry.latest = shot[1];
+    if (shot[2] !== undefined) entry.byTitle[shot[2]] = [shot[1].width, shot[1].height];
+    // Equal titles share a byTitle key; a cross-window drag converts B's points only with B's own (XD1R).
+    if (shot[2] !== undefined && certifiedRead?.title === shot[2] && certifiedRead.app?.toLowerCase() === shot[0].toLowerCase()) {
+      entry.byWindow[certifiedRead.number] = [shot[1].width, shot[1].height];
+    }
+    screenshots.set(shot[0].toLowerCase(), entry);
+  }
+  // The open_file window's picture, or undefined when the engine refuses, fails or takes over 5 s.
+  function openScreenshot(handle) {
+    return new Promise(resolve => {
+      const id = `sleight-open-shot-${nextInternalId++}`;
+      const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, openShotTimeoutMs);
+      internalRequests.set(id, reply => {
+        clearTimeout(timer);
+        resolve(reply.error || reply.result?.isError ? undefined
+          : (reply.result?.content ?? []).filter(c => c?.type === 'image' && typeof c.data === 'string').at(-1));
+      });
+      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code: `await ${handle}.getScreenshot()` }, _meta: { [META_KEY]: turnMeta() } } });
+    });
+  }
   async function fullerLaunchRead(msg, plan) {
     const text = content => (content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
     const size = value => [...value.matchAll(/^\t*\d+ /gm)].length;
@@ -2057,24 +2090,46 @@ export function createRelay({
         const id = `sleight-open-file-${nextInternalId++}`, handle = `__sleightOpenedApp${nextInternalId++}`;
         if (typeof openedFile?.path === 'string') compactor.noteOpenedFile(openedFile.path, openedFile.real, openedFile.size);
         callGenerations.set(id, generation);
-        splitCalls.set(id, reply => {
-          openShots.delete(id);
+        splitCalls.set(id, async reply => {
+          openShots.delete(id); openReads.delete(id);
+          const textless = textlessOpens.delete(id);
           if (generation !== stopGeneration || closing || disposed) return;
-          const state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
+          let state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
           // The read is of the app's main window. A window showing another file means this one may not be in front.
           const shown = !state.isError && typeof openedFile?.path === 'string' &&
             windowFromText((state.content ?? []).filter(c => c?.type === 'text').map(c => c.text).join('\n'));
           let shownPath;
           try { shownPath = shown?.url ? fileURLToPath(shown.url) : undefined; } catch { shownPath = null; }
-          const opened = shownPath === undefined || [openedFile.path, openedFile.real].includes(shownPath) ? result.content ?? []
+          const confirmed = shownPath === undefined || [openedFile.path, openedFile.real].includes(shownPath);
+          const opened = confirmed ? result.content ?? []
             : [{ type: 'text', text: `${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
               'Find its window before acting.' }];
+          // Excel's and Word's trees hold no cells or body text. In 10 of 10 edit runs (2026-10-17) Claude then
+          // read the window again and took a screenshot, two model turns, before its first edit. Only a window
+          // whose URL is the opened file gets one: with no URL, the read may show another window.
+          const matched = typeof shownPath === 'string' && [openedFile.path, openedFile.real].includes(shownPath);
+          let pictured = false;
+          if (textless && matched && !state.isError) {
+            const started = Date.now(), image = await openScreenshot(handle);
+            trace('open-screenshot', { id: msg.id, ms: Date.now() - started, ok: !!image });
+            if (generation !== stopGeneration || closing || disposed) return;
+            if (image) {
+              pictured = true;
+              state = { ...state, content: [...(state.content ?? []).filter(c => c?.text !== TEXTLESS_NOTE), image] };
+            }
+          }
+          // After `const app`, `let app` is a redeclaration error, so the handle is named for use as is. Beside a
+          // notice that the window shows another file, the handle is only named.
           const combined = { ...state, content: [...opened, ...(state.content ?? []),
-            ...(!state.isError ? [{ type: 'text', text: `Window handle: \`${handle}\`.` }] : [])] };
+            ...(!state.isError ? [{ type: 'text', text: promptNotice((pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
+              `Window handle: \`${handle}\`` + (!confirmed ? '.' : constApp ? ', already acquired. Use it in place of `app`.'
+                : `, already acquired (\`let app = ${handle};\`).`), prompt) }] : [])] };
+          if (pictured) recordScreenshot(combined.content);
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
         });
         if (openShot) openShots.set(id, handle);
+        else if (openAutoShot) openReads.add(id);
         // bench/timing.mjs counts this read as the open_file call's engine time.
         trace('acquisition-split', { id: msg.id, acquisition: id });
         callSeqs.set(id, callSeqs.get(msg.id));
@@ -2148,6 +2203,8 @@ export function createRelay({
       msg.params.arguments = { ...rest, code: command };
     }
     if (jsArgs && typeof msg.params.arguments?.code === 'string') {
+      // With or without the input lease: after `const app`, a suggested `let app = …` is a redeclaration error.
+      if (/(?:^|[;\n])\s*const\s+app\s*=/.test(msg.params.arguments.code)) constApp = true;
       msg.params.arguments.code = finalReturnCode(msg.params.arguments.code);
       const fixed = nativeGetStateCode(msg.params.arguments.code, id => nativeHandles.has(id), id => browserHandles.has(id));
       if (fixed !== msg.params.arguments.code) { msg.params.arguments.code = fixed; trace('getstate-rewritten', { id: msg.id }); }
@@ -2173,7 +2230,7 @@ export function createRelay({
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
-  const openShots = new Map();
+  const openShots = new Map(), openReads = new Set(), textlessOpens = new Set();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Map(), menuForwards = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
@@ -3700,17 +3757,7 @@ export function createRelay({
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       chromeSettle = !automatic && !confirmedBrowser && jsCode !== undefined && !msg.error &&
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
-      const shot = jsCode !== undefined && screenshotOf(msg.result.content);
-      if (shot) {
-        const entry = screenshots.get(shot[0].toLowerCase()) ?? { byTitle: {}, byWindow: {} };
-        entry.latest = shot[1];
-        if (shot[2] !== undefined) entry.byTitle[shot[2]] = [shot[1].width, shot[1].height];
-        // Equal titles share a byTitle key; a cross-window drag converts B's points only with B's own (XD1R).
-        if (shot[2] !== undefined && certifiedRead?.title === shot[2] && certifiedRead.app?.toLowerCase() === shot[0].toLowerCase()) {
-          entry.byWindow[certifiedRead.number] = [shot[1].width, shot[1].height];
-        }
-        screenshots.set(shot[0].toLowerCase(), entry);
-      }
+      if (jsCode !== undefined) recordScreenshot(msg.result.content, certifiedRead);
       if (simFocusNote && !automatic && !confirmedBrowser && !msg.result.isError && typeof jsCode === 'string') {
         // A standalone screenshot need not contain a Window header. Associate only its exact
         // acquired handle, never the session's most recently observed app or an ambiguous batch.
@@ -3743,6 +3790,7 @@ export function createRelay({
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
+      if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }
     if (msg.method === undefined && resultCalls.has(msg.id)) {
@@ -3865,7 +3913,7 @@ export function createRelay({
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
         menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); splitInputs.clear();
-        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
+        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); openReads.clear(); textlessOpens.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');
           stoppedClients.add(id);

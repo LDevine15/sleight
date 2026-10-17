@@ -838,6 +838,8 @@ function trimAcquisition(text, fullRead = '', hinted = new Set()) {
   return { text: compacted, hidden };
 }
 
+export const TEXTLESS_NOTE = 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
+
 // Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
 // With openedFiles (path -> size), an empty text area counts only for a file open_file found non-empty on
 // disk: a blank new document is an empty text area too, and the hint cost it a screenshot turn.
@@ -1020,7 +1022,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
-  let latest, observedInResult, observationId = 0;
+  let latest, observedInResult, observationId = 0, textlessNoted = false;
   // app -> its last standard-window read of a file document, the save baseline when the read just
   // before a save is a menu or nothing at all.
   const documents = new Map();
@@ -1230,7 +1232,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (compactToolbars && !filter && !failed && !stopped && !action) content = dedupeTrees(content, true, true, sliced, !forceFull && !explicitFull);
       const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
-      observedInResult = undefined;
+      observedInResult = undefined; textlessNoted = false;
       const full = forceFull || explicitFull && !filter;
       const refreshNumbers = typeof code === 'string' && /\.\s*getAXState\s*\(/.test(maskCode(code));
       const shownTrees = new Set();
@@ -1389,8 +1391,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const screenshotKey = hintKey(observedInResult?.window, observedInResult?.root);
       if (screenshotReads && !failed && !stopped && !action && !hasScreenshot && !screenshotHints.has(screenshotKey) &&
           !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult, openedFiles)) {
-        screenshotHints.add(screenshotKey);
-        out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
+        screenshotHints.add(screenshotKey); textlessNoted = true;
+        out.push({ type: 'text', text: TEXTLESS_NOTE });
       }
       // After a failure, a stop or a user change, the next acquisition of any window is whole again.
       // Only the notices themselves: the rules shown with the engine docs also say "the user changed
@@ -1500,5 +1502,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     noteOpenedFile(path, real, size) {
       for (const name of new Set([path, real])) if (typeof name === 'string') openedFiles.set(name, Number(size) || 0);
     },
+    // Whether the last process() call added the textless-document note. open_file then adds a screenshot
+    // in its place, so the hint switch, a spent hint and an earlier screenshot of the window apply to both.
+    lastReadNoted() { return textlessNoted; },
   };
 }

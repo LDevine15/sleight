@@ -112,7 +112,7 @@ test('open_file acquires a persistent handle and returns its compacted window in
   h.reply(acquisition.id, [text(tree())]); await tick();
   assert.match(body(h, 1), /Opened note.txt/);
   assert.match(body(h, 1), /Window: "note.txt"/);
-  assert.match(body(h, 1), /Window handle: `__sleightOpenedApp\d+`\./);
+  assert.match(body(h, 1), /Window handle: `__sleightOpenedApp\d+`, already acquired/);
   assert.doesNotMatch(JSON.stringify(h.received), /sleight\/openedApp/);
   assert.equal(h.calls.length, 1);
   assert.equal(h.received.filter(m => m.id === 1).length, 1);

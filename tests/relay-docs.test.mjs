@@ -143,7 +143,7 @@ for (const confirmPayments of ['always', 'requested', 'never']) test(`opt-in com
 test('open_file holds engine docs and drops empty text, keeping its handle, tree and skill', async t => {
   const h = harness(t), first = await h.open();
   assert.doesNotMatch(body(first), /## Computer Use|Native API reference/);
-  assert.match(body(first), /Window handle: `__sleightOpenedApp\d+`\./);
+  assert.match(body(first), /Window handle: `__sleightOpenedApp\d+`, already acquired/);
   assert.ok(first.content.some(c => c.text === tree));
   assert.match(body(first), new RegExp(rules));
   assert.ok(first.content.every(c => c.type !== 'text' || c.text.trim()));
@@ -179,8 +179,9 @@ for (const rulesFirst of [undefined, false]) test(`open_file puts the skill ${ru
   assert.match(String(split?.detail.acquisition), /^sleight-open-file-/);
 });
 
+// With the open_file screenshot off; open-shot.test.mjs covers it on.
 for (const textlessHint of [undefined, false]) test(`a textless document gets one screenshot note after its tree, textlessHint=${textlessHint}`, async t => {
-  const h = harness(t, textlessHint === false ? { textlessHint } : {}), first = await h.open(1, [text(docs), text(textless)]);
+  const h = harness(t, { openAutoShot: false, ...(textlessHint === false ? { textlessHint } : {}) }), first = await h.open(1, [text(docs), text(textless)]);
   const texts = first.content.map(c => c.text);
   const note = texts.findIndex(value => textlessNote.test(value));
   if (textlessHint === false) { assert.equal(note, -1); return; }
@@ -382,4 +383,95 @@ for (const [shown, confirmed] of [['file:///tmp/other.txt', false], ['file:///pr
   assert.equal(/Opened \/tmp\/note\.txt/.test(out), confirmed);
   assert.equal(/main window shows file:\/\/\/tmp\/other\.txt, not \/tmp\/note\.txt/.test(out), !confirmed);
   assert.doesNotMatch(JSON.stringify(h.received), /openedFile/);
+});
+
+// The open_file screenshot of a textless document: gated as the textless note is, with that note as its fallback.
+const bookTools = (path = '/tmp/book.xlsx') => ({ tools: [{ name: 'open_file' }], call: async () => ({ content: [text('Opened book.xlsx.')],
+  _meta: { 'sleight/openedApp': 'org.example.editor', 'sleight/openedFile': { path, size: 9000 } } }) });
+const shotImage = { type: 'image', data: 'AA==', mimeType: 'image/png' };
+const shotCall = h => h.sent.find(m => /^sleight-open-shot-/.test(String(m.id)));
+const wait = async (h, id) => { for (let i = 0; i < 50 && !h.received.some(m => m.id === id); i++) await new Promise(resolve => setTimeout(resolve, 2)); };
+// Engine docs come once: a second copy reads as a restarted session, which suppresses the note.
+async function openBook(h, window = textless, withDocs = true) {
+  h.tool(1, 'open_file', { app: 'Example', path: '/tmp/book.xlsx' }); await tick();
+  h.reply(h.sent.at(-1).id, [...(withDocs ? [text(docs)] : []), text(window)]); await tick();
+}
+
+test('the open_file screenshot replaces the textless note and is sent with the turn', async t => {
+  const h = harness(t, { localTools: bookTools() });
+  await openBook(h);
+  const call = shotCall(h);
+  assert.match(call.params.arguments.code, /^await __sleightOpenedApp\d+\.getScreenshot\(\)$/);
+  assert.ok(!h.received.some(m => m.id === 1), 'the open waits for its screenshot');
+  h.reply(call.id, [shotImage]); await tick();
+  const out = result(h, 1);
+  assert.deepEqual(out.content.filter(c => c.type === 'image'), [shotImage]);
+  assert.doesNotMatch(body(out), textlessNote);
+  assert.match(body(out), /screenshot added.*Window handle: `(__sleightOpenedApp\d+)`, already acquired \(`let app = \1;`\)\./);
+});
+
+for (const [name, options, before] of [['SLEIGHT_TEXTLESS_HINT=0', { textlessHint: false }, false],
+  ['a hint already spent on the window', {}, true]]) test(`no open_file screenshot with ${name}`, async t => {
+  const h = harness(t, { localTools: bookTools(), ...options });
+  if (before) {
+    h.call(5, 'await app.getAXState()'); h.reply(5, [text(docs), text(textless)]);
+    assert.match(body(result(h, 5)), textlessNote);
+  }
+  await openBook(h, textless, !before);
+  assert.equal(shotCall(h), undefined);
+  assert.doesNotMatch(body(result(h, 1)), textlessNote);
+  assert.equal(result(h, 1).content.some(c => c.type === 'image'), false);
+});
+
+test('a window with no URL keeps the note and gets no screenshot', async t => {
+  const h = harness(t, { localTools: bookTools() });
+  await openBook(h, textless.replace(', URL: file:///tmp/book.xlsx', ''));
+  assert.equal(shotCall(h), undefined);
+  assert.match(body(result(h, 1)), textlessNote);
+  assert.match(body(result(h, 1)), /already acquired/);
+});
+
+test('a window showing another file is only named, without a screenshot or "already acquired"', async t => {
+  const h = harness(t, { localTools: bookTools('/tmp/other.xlsx') });
+  await openBook(h);
+  assert.equal(shotCall(h), undefined);
+  const out = body(result(h, 1));
+  assert.match(out, /main window shows file:\/\/\/tmp\/book\.xlsx, not \/tmp\/book\.xlsx/);
+  assert.match(out, /^Window handle: `__sleightOpenedApp\d+`\.$/m);
+  assert.doesNotMatch(out, /already acquired/);
+});
+
+test('after `const app` the handle line suggests no `let app` redeclaration', async t => {
+  const h = harness(t, { localTools: bookTools() });
+  h.call(5, 'const app = await cua.getApp("Example")'); h.reply(5, [text(docs), text(tree)]);
+  await openBook(h, textless, false);
+  h.reply(shotCall(h).id, [shotImage]); await tick();
+  const out = body(result(h, 1));
+  assert.doesNotMatch(out, /let app =/);
+  assert.match(out, /Window handle: `__sleightOpenedApp\d+`, already acquired\. Use it in place of `app`\./);
+});
+
+test('a screenshot that times out falls back to the note', async t => {
+  const h = harness(t, { localTools: bookTools(), openShotTimeoutMs: 5 });
+  await openBook(h);
+  assert.ok(shotCall(h));
+  await wait(h, 1);
+  const out = result(h, 1);
+  assert.equal(out.content.some(c => c.type === 'image'), false);
+  assert.match(body(out), textlessNote);
+  assert.ok(h.traces.some(row => row.kind === 'open-screenshot' && row.detail.ok === false));
+});
+
+test('Stop during the screenshot drops it', async t => {
+  const h = harness(t, { localTools: bookTools(), stopGraceMs: 1, stopEngine: async () => ({ collected: true }) });
+  await openBook(h);
+  const call = shotCall(h);
+  assert.ok(call);
+  h.tool(2, 'turn_ended', { sleight_stop: true });
+  await wait(h, 2);
+  assert.ok(h.received.some(m => m.id === 2), 'Stop completed');
+  h.reply(call.id, [shotImage]);
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(h.received.some(m => JSON.stringify(m).includes('"type":"image"')), false);
+  assert.equal(h.received.some(m => m.id === 1 && m.result?.content?.some(c => /Window handle/.test(c.text ?? ''))), false);
 });

@@ -8,13 +8,15 @@ const tree = 'Window: "note.txt", App: Example Editor.\n0 standard window note.t
 const image = { type: 'image', data: 'AA==', mimeType: 'image/png' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function open(t, { flag, failShot = false, failOpen = false, failRead = false, changeReview = false, warmRepl = false } = {}) {
+async function open(t, { flag, autoFlag, window = tree, openedFile, failShot = false, failOpen = false, failRead = false, changeReview = false, warmRepl = false } = {}) {
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
   const sent = [], received = [], events = [], approvals = [], leases = [];
-  const previous = process.env.SLEIGHT_OPEN_SHOT;
+  const previous = process.env.SLEIGHT_OPEN_SHOT, previousAuto = process.env.SLEIGHT_OPEN_AUTO_SHOT;
   if (flag === undefined) delete process.env.SLEIGHT_OPEN_SHOT;
   else process.env.SLEIGHT_OPEN_SHOT = flag;
+  if (autoFlag === undefined) delete process.env.SLEIGHT_OPEN_AUTO_SHOT;
+  else process.env.SLEIGHT_OPEN_AUTO_SHOT = autoFlag;
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview, warmRepl,
     ask: async message => { approvals.push(message); return 'accept'; },
     inputLease: { acquire: target => { leases.push(target); return 'lease'; }, renew() {}, release() {}, close() {} },
@@ -22,10 +24,13 @@ async function open(t, { flag, failShot = false, failOpen = false, failRead = fa
       call: async (_name, _args, approve) => {
         if (!await approve(['open_file', 'Example Editor'], 'Allow opening?')) throw Error('declined');
         return failOpen ? { isError: true, content: [{ type: 'text', text: 'Open refused.' }] }
-          : { content: [{ type: 'text', text: 'Opened note.txt.' }], _meta: { 'sleight/openedApp': 'org.example.editor' } };
+          : { content: [{ type: 'text', text: 'Opened note.txt.' }], _meta: { 'sleight/openedApp': 'org.example.editor',
+            ...(openedFile ? { 'sleight/openedFile': openedFile } : {}) } };
       } } });
   if (previous === undefined) delete process.env.SLEIGHT_OPEN_SHOT;
   else process.env.SLEIGHT_OPEN_SHOT = previous;
+  if (previousAuto === undefined) delete process.env.SLEIGHT_OPEN_AUTO_SHOT;
+  else process.env.SLEIGHT_OPEN_AUTO_SHOT = previousAuto;
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); });
   clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
   let content = [];
@@ -36,17 +41,17 @@ async function open(t, { flag, failShot = false, failOpen = false, failRead = fa
     if (options?.emit !== false) content.push(image);
     return 'fake pixels';
   };
-  const raw = { getScreenshot: shot, getAXState: async () => tree,
+  const raw = { getScreenshot: shot, getAXState: async () => window,
     getAXStateAndScreenshot: async options => {
       events.push('screenshot');
       if (failShot) throw Error('Screenshot unavailable');
-      if (options?.emit !== false) { write(tree); content.push(image); }
-      return { state: tree, screenshot: 'fake pixels' };
+      if (options?.emit !== false) { write(window); content.push(image); }
+      return { state: window, screenshot: 'fake pixels' };
     } };
   const context = createContext({ cua: { listApps: async () => [], getApp: async () => {
     events.push('acquire');
     if (failRead) throw Error('Window read refused');
-    write(tree); return raw;
+    write(window); return raw;
   } }, nodeRepl: { write, emitImage: async () => content.push(image) } });
   let queue = Promise.resolve();
   serverIn.on('data', data => {
@@ -56,7 +61,9 @@ async function open(t, { flag, failShot = false, failOpen = false, failRead = fa
       queue = queue.then(async () => {
         content = [];
         let isError = false;
-        try { await runInContext(`(async () => { ${msg.params.arguments.code} })()`, context); }
+        // The engine's REPL keeps top-level bindings between calls; the relay's handle is a `var`.
+        const code = msg.params.arguments.code.replace(/\bvar (__sleightOpenedApp\d+) =/, 'globalThis.$1 =');
+        try { await runInContext(`(async () => { ${code} })()`, context); }
         catch (error) { isError = true; write(error.message); }
         serverOut.write(JSON.stringify({ id: msg.id, result: { content, isError,
           _meta: { 'codex/toolSurface': { app: { appId: 'org.example.editor' } } } } }) + '\n');
@@ -109,4 +116,58 @@ test('failed open and failed acquisition do not request a screenshot', async t =
     assert.equal(h.result.isError, true);
     assert.equal(h.events.includes('screenshot'), false);
   }
+});
+
+// A workbook's tree as Excel shows it: a content area with sheet buttons and no cell values (excel-edit, 2026-10-17).
+const sheet = ['Window: "Book", App: Example Editor.', '0 standard window Book, URL: file:///tmp/book.xlsx',
+  '\t1 layout area Content Area, Description: Workbook area, Used range: A1 to B4', '\t\t2 button Insert sheet, ID: addBlankSheetButton',
+  '\t3 combo box (settable) Description: name box, Value: A1, ID: NameBox'].join('\n');
+const textlessNote = /the document area exposes no text values/;
+const all = h => h.result.content.map(c => c.text ?? '').join('\n');
+
+test('a textless document gets its screenshot in the open result, with no note to take one', async t => {
+  const h = await open(t, { window: sheet, openedFile: { path: '/tmp/book.xlsx', size: 9000 } });
+  assert.deepEqual(h.events, ['acquire', 'screenshot']);
+  assert.equal(h.result.isError, false);
+  assert.deepEqual(h.result.content.filter(c => c.type === 'image'), [image]);
+  assert.ok(h.result.content.findIndex(c => c.text === sheet) < h.result.content.findIndex(c => c.type === 'image'));
+  assert.doesNotMatch(all(h), textlessNote);
+  assert.match(all(h), /screenshot added, the tree has no document text\. Window handle: `(__sleightOpenedApp\d+)`, already acquired \(`let app = \1;`\)\./);
+  const calls = h.sent.filter(msg => msg.method === 'tools/call');
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].params.arguments.code, /^await __sleightOpenedApp\d+\.getScreenshot\(\)$/);
+  assert.equal(h.approvals.length, 1);
+  assert.equal(h.leases.length, 1, 'the screenshot reserves nothing more');
+});
+
+test('SLEIGHT_OPEN_AUTO_SHOT=0 keeps the baseline: the note and no screenshot', async t => {
+  const h = await open(t, { autoFlag: '0', window: sheet, openedFile: { path: '/tmp/book.xlsx', size: 9000 } });
+  assert.deepEqual(h.events, ['acquire']);
+  assert.equal(h.result.content.some(c => c.type === 'image'), false);
+  assert.match(all(h), textlessNote);
+  assert.doesNotMatch(all(h), /screenshot added/);
+});
+
+test('a screenshot failure on a textless document keeps the note, tree and handle', async t => {
+  const h = await open(t, { window: sheet, openedFile: { path: '/tmp/book.xlsx', size: 9000 }, failShot: true });
+  assert.deepEqual(h.events, ['acquire', 'screenshot']);
+  assert.equal(h.result.isError, false);
+  assert.equal(h.result.content.some(c => c.type === 'image'), false);
+  assert.ok(h.result.content.some(c => c.text === sheet));
+  assert.match(all(h), textlessNote);
+  assert.match(all(h), /Window handle: `__sleightOpenedApp\d+`, already acquired/);
+});
+
+test('no screenshot for a document with text, a blank new file, or a window showing another file', async t => {
+  const blank = ['Window: "Untitled", App: Example Editor.', '0 standard window Untitled, URL: file:///tmp/new.txt',
+    '\t1 text area (settable)'].join('\n');
+  for (const [window, openedFile] of [[tree, undefined], [blank, { path: '/tmp/new.txt', size: 0 }],
+    [sheet, { path: '/tmp/other.xlsx', size: 9000 }]]) {
+    const h = await open(t, { window, openedFile });
+    assert.deepEqual(h.events, ['acquire'], window);
+    assert.equal(h.result.content.some(c => c.type === 'image'), false);
+  }
+  // The same empty text area holds text when the file on disk has some.
+  const h = await open(t, { window: blank, openedFile: { path: '/tmp/new.txt', size: 40 } });
+  assert.deepEqual(h.events, ['acquire', 'screenshot']);
 });
