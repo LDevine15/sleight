@@ -213,7 +213,7 @@ export function openMenuNote(text, prompt, shown = 0) {
   if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
   const number = selectedMenuItem(text);
   if (!number) return;
-  if (shown >= 2) return `sleight: a menu may still be stuck open (menu-bar item ${number}), and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.`;
+  if (shown >= 2) return promptNotice(`sleight: a menu may still be stuck open (menu-bar item ${number}), and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.`, prompt);
   return shown ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
     promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number (\`app.click(${number})\`); if it still stays, tell the user.`, prompt);
 }
@@ -298,6 +298,7 @@ export function promptNotice(text, prompt) {
     .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
     .replace('a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number', 'Menu may trap input. Escape once, then click menu-bar item')
     .replace('; if it still stays, tell the user.', '; if still stuck, tell the user.')
+    .replace(', and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.', '; keys may be lost. Check typing landed, then use a toolbar control or shortcut, not more Escape or clicks.')
     .replace('` does.', '`.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
