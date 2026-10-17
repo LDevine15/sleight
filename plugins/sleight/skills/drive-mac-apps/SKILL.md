@@ -32,6 +32,9 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 - `await app.paste("text")` avoids autocorrect and capitalization. Replace documents with select-all
   and paste in one call.
+- Fill spreadsheet cells as one paste at the block's top-left cell, tabs between columns and
+  newlines between rows: `await app.paste("<a>\t<b>\n<c>\t<d>", { format: "text" })`. It overwrites
+  the whole block: paste only when you know every cell's value, blanks included.
 - Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
   call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
 - Acquire a document that's already open. Don't reopen it.
@@ -80,14 +83,11 @@ Click a button that may open a page dialog (pay, delete, leave) with
 
 ## sleight's other tools
 
-- `app.drag` moves things that follow the pointer at once. Moving selected text needs the button
-  held first: select it in `js`, then call `drag` with `app`, `windowId`, and `from` and `to` from the
-  latest screenshot of that window. If it reports lost text, press Cmd+Z in that window and read it.
+- To move selected text, select it in `js`, then call the `drag` tool, not `app.drag`.
 - Engine events don't trigger hover. Use `Help:` fields, `Secondary Actions:`, a right-click
   or a key first. Only then `hover`, after telling the user it moves their pointer and brings the app
   forward for about two seconds.
-- `notifications` presses buttons on banners, which leave in seconds, so act at once. `menu_bar`
-  reaches status icons.
+- `notifications` presses buttons on banners, which leave in seconds, so act at once.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.
 - `SLEIGHT_CHANGE_REVIEW=1`: acquire before editing, save before `review_changes`, and never decide for
