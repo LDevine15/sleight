@@ -1129,7 +1129,11 @@ export function createRelay({
     return `Call select_window with ${JSON.stringify(args)}.`;
   }
   function confirmRecovery() {
-    return `Send exactly \u0060${constApp ? '' : 'let app = '}await cua.getApp(${JSON.stringify(selectedWindow.appId)})\u0060 in js.`;
+    return `Begin js with \u0060${constApp ? '' : 'let app = '}await cua.getApp(${JSON.stringify(selectedWindow.appId)})\u0060 (name or bundle ID); actions may follow on its returned handle.`;
+  }
+  function selectedCancel(code) {
+    return selectedWindow && selectedWindow.windowNumber !== undefined && leaseWindow?.appId === selectedWindow.appId &&
+      sameWindow(leaseWindow, selectedWindow) && isChangeCancel(code, lastWindowText);
   }
   let constApp = false;
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
@@ -1264,7 +1268,7 @@ export function createRelay({
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
-      if (selectedWindow && (!selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameWindow(leaseWindow, selectedWindow))) {
+      if (selectedWindow && !selectedCancel(code) && (isChangeCancel(code, lastWindowText) || !selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameWindow(leaseWindow, selectedWindow))) {
         leaseStop(msg, `selected window is not confirmed. ${confirmRecovery()}`); return false;
       }
       if (!leaseWindow?.appId) {
@@ -1999,20 +2003,24 @@ export function createRelay({
     return true;
   }
   function splitAcquisition(msg) {
-    if (documentMode || selectedWindow || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
+    if (documentMode || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
         msg.id === undefined || typeof msg.params.arguments?.code !== 'string') return false;
     const code = msg.params.arguments.code;
     const action = compactor.beginAction(code), saveRead = action?.save && !action.before && !action.mixedSave;
     if (!inputLease && !saveRead) return false;
-    const m = code.match(/^\s*((?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/);
+    const prefix = selectedWindow
+      ? /^\s*((?:(?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?await\s+cua\.getApp\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\{\s*(?:windowId|"windowId")\s*:\s*\d+\s*\})\s*\)\s*;?)/
+      : /^\s*((?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/;
+    const m = code.match(prefix);
     let acquire = m?.[1], rest = m && code.slice(m[0].length).trim();
+    if (selectedWindow && !rest) return false;
     // An action with no confirmed window yet, such as the call after a failed one, used to be
     // refused with the acquisition to send first: 13 refusals in 29 TextEdit runs, a turn each
     // (2026-10-10). The relay now sends that acquisition and then the call.
     // Only for a bundle ID the engine confirmed: an unconfirmed name keeps the refusal.
     // The call goes on only when the acquisition shows the window the lease last had: after an
     // error the front window may have changed, and keys or text would land in it unseen.
-    let expected, saveBaseline = false, saveHandle;
+    let expected = selectedWindow, saveBaseline = false, saveHandle;
     // Without an earlier tree there is no AXDocument URL to stat. Read it inside this tool call,
     // then beginAction samples its mtime before forwarding Save. No file contents are read.
     if (!rest && saveRead && (!inputLease || leaseWindow?.appId)) {
@@ -2037,7 +2045,9 @@ export function createRelay({
         leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return;
       }
       if (reply.error || reply.result?.isError) { toClient({ ...reply, id: msg.id }); return; }
-      if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected))) {
+      const acquiredNumber = acquire.match(/cua\.getApp\(\s*\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}\s*\)/)?.[1];
+      if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
+          (!selectedWindow || !acquiredNumber || Number(acquiredNumber) === expected.windowNumber))) {
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
           { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
         return;
@@ -2245,18 +2255,21 @@ export function createRelay({
     }
     if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
         !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
-        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
+        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code) || selectedCancel(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return; }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return; }
       if (leaseWindow.identityRequired && !leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
-      const expected = leaseWindow;
+      const target = leaseWindow;
+      // A menu header can omit the document URL; Cancel still checks the selected native window.
+      const expected = selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
+        ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
       const generation = stopGeneration;
       running.add(msg.id);
       callDetails.set(msg.id, 'native window admission');
       const started = performance.now();
       Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
         const identity = nativeIdentity(expected, observed);
-        if (generation !== stopGeneration || leaseWindow !== expected || closing || disposed) throw new Error('Input lease: window changed while checking. Read again.');
+        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error('Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
         else focusedChecked.add(msg.id);
         trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
@@ -3125,7 +3138,7 @@ export function createRelay({
       // A guard stop happens before its action and carries the header it just read.
       // A window-change stop carries the window it saw, and the lease moves to it. Leasing that
       // window still refuses if another session holds it.
-      const guardStop = msg.result?.isError && /^(?:sleight stopped before |Input lease stopped this action: window or URL changed)/m.test(text);
+      const guardStop = msg.result?.isError && /^(?:Error: )?(?:sleight stopped before |Input lease stopped this action: (?:window or URL|app) changed)/m.test(text);
       const window = !msg.error && (!msg.result?.isError || guardStop) && windowFromText(text);
       const known = observedAppId(call, window, msg.result);
       // An action whose result shows another window of the same app (a close, a new window). Said
@@ -3136,6 +3149,7 @@ export function createRelay({
         windowNote = `sleight: this call acted on ${documentLabel(leaseWindow)}. The window it shows now is ${documentLabel(window)}.`;
       }
       const previous = leaseWindow;
+      if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
       if (leaseWindow?.appId) lastConfirmedWindow = leaseWindow;
       if (leaseWindow && !call.read && sameWindow(previous, window)) {

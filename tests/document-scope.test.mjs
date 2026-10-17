@@ -329,3 +329,37 @@ test('an un-awaited action that fails leaves no unhandled rejection, and the cal
     await assert.rejects(runInNewContext(`(async () => { ${awaited} })()`, { app, cua: { getApp: async () => app }, nodeRepl: { write() {} } }), /element 9 is gone/);
   } finally { process.off('unhandledRejection', onUnhandled); }
 });
+
+for (const stale of [
+  { title: 'Other', app: 'Other Editor', url: null },
+  { title: 'report.txt', app: 'Fixture Editor', url: 'file:///b/report.txt' },
+]) test(`acquisition prior belongs only to its handle, not a stale ${stale.app} handle`, async () => {
+  const expected = { title: 'report.txt', app: 'Fixture Editor', url: 'file:///a/report.txt' };
+  const tree = window => `Window: "${window.title}", App: ${window.app}.\n0 standard window${window.url ? `, URL: ${window.url}` : ''}`;
+  const inputs = [];
+  const raw = window => ({ getAXState: async () => tree(window), pressKey: async key => inputs.push(key) });
+  const apps = { stale: raw(stale), selected: raw(expected) };
+  const context = { cua: { getApp: async name => apps[name] }, nodeRepl: { write() {} } };
+  const run = code => runInNewContext(`(async () => { ${code} })()`, context);
+  await run(readCode('globalThis.app = await cua.getApp("stale");'));
+  await run(readCode('globalThis.editor = await cua.getApp("selected");'));
+  await assert.rejects(run(guardedCode('await app.pressKey("Super+C");', expected, 'stopped', undefined,
+    { adoptUrl: true, firstOff: true, focused: true, prior: { text: tree(expected), windows: null } })), /stopped/);
+  assert.deepEqual(inputs, []);
+});
+
+test('two aliases of the acquired handle may reuse its prior read', async () => {
+  const expected = { title: 'report.txt', app: 'Fixture Editor', url: null };
+  const text = 'Window: "report.txt", App: Fixture Editor.\n0 standard window';
+  const inputs = [];
+  let reads = 0;
+  const raw = { getAXState: async () => { reads++; return text; }, pressKey: async key => inputs.push(key) };
+  const context = { cua: { getApp: async () => raw }, nodeRepl: { write() {} } };
+  const run = code => runInNewContext(`(async () => { ${code} })()`, context);
+  await run(readCode('globalThis.app = await cua.getApp("fixture");'));
+  await run(readCode('globalThis.editor = await cua.getApp("fixture");'));
+  await run(guardedCode('await app.pressKey("Super+C");', expected, 'stopped', undefined,
+    { prior: { text, windows: null } }));
+  assert.deepEqual(inputs, ['Super+C']);
+  assert.equal(reads, 1, 'only the post-action read is needed for the same proxy');
+});

@@ -835,7 +835,8 @@ test('a click cannot continue into another app or a different document window', 
     let changed = false;
     const f = fixture({ current: () => changed ? after : tree(expected, '\t19 button Remove Group'),
       action: name => { if (name === 'click') changed = true; } });
-    await assert.rejects(f.run('await app.click(19); await app.click({ label: "Delete Group" });', { adoptUrl: true }), /changed window/);
+    await assert.rejects(f.run('await app.click(19); await app.click({ label: "Delete Group" });', { adoptUrl: true }),
+      /App: Other\./.test(after) ? /app changed\. 1 earlier action in this call ran/ : /changed window/);
     assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [19]);
   }
 });

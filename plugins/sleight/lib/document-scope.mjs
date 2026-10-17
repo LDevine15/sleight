@@ -199,7 +199,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     // such reads cost 27 s across the benchmark runs of 2026-10-09.
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
-    state.actionIndex = 0; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.actionIndex = 0; state.completedActions = 0; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
     state.inputSent = false;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
@@ -400,7 +400,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             state.activeApp = proxy;
             state.reads = new WeakMap();
             input();
-            return await value.apply(raw, args);
+            const result = await value.apply(raw, args);
+            state.completedActions++;
+            return result;
           }
           const cached = state.reads.get(proxy);
           let text = cached?.text, modalOpened = cached?.modalOpened ?? false;
@@ -412,7 +414,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // The acquisition just before this call read the whole tree. A launching app can take 15 s
           // per read under load (2026-10-09), so reuse it when the app's windows, as the inventory
           // lists them, are exactly what they were then.
-          if (text === undefined && !skipFirst && state.prior) {
+          if (text === undefined && !skipFirst && state.prior && proxy === state.startApp) {
             const prior = state.prior; state.prior = undefined;
             const start = clock();
             // A read Claude made in the call just before, less than 10 s ago (the relay checks), is
@@ -603,7 +605,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             // Without document scope or change review, the stop carries the window it saw, so the
             // relay can lease that window for Claude's retry (Chess retitles itself on each move).
             attempt.windowStop = true;
-            throw (state.adoptUrl ? stop : message => new Error(message))(state.reason + ' Observed ' + JSON.stringify(observed));
+            const reason = state.adoptUrl && observed && state.expected && observed.app !== state.expected.app
+              ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran; nothing was sent to the new app. The next action will lease the observed window. Resend only the remaining actions without select_window.'
+              : state.reason;
+            throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
           }
           await checkLease();
           state.activeApp = proxy;
@@ -643,6 +648,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
           const result = await value.apply(raw, args);
+          state.completedActions++;
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }
             : name === 'pressKey' && typeof args[0] === 'string' ? { kind: 'key', value: args[0] }
