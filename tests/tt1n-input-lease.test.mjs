@@ -634,12 +634,12 @@ test('DR1: a lease stop says which actions ran and which were not sent', async t
 // from the call's bound capture (Firefox travel, 2026-10-17). A diff read, a full read and a lone click followed (9.4 s).
 const picker = rendered => 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n' +
   '\t1 text field Dates' + (rendered ? ', Value: Dec 14\n\t2 text Check-in set' : '') + '\n' +
-  ['button Monday, December 14', 'button Saturday, December 19', 'button Add adult', 'button Add child']
+  ['button Monday, December 14, ID: d14', 'button Saturday, December 19, ID: d19', 'button Add adult, ID: add-adult', 'button Add child, ID: add-child']
     .map((line, i) => `\t${i + (rendered ? 3 : 2)} ${line}`).join('\n');
-async function pickerFixture(t) {
+async function pickerFixture(t, { failRead = false } = {}) {
   // The engine's capture: a read takes a new one, and any click replaces the elements it holds.
   let stale = false;
-  return fixture(t, { base: picker(false), onRead: () => { stale = false; },
+  return fixture(t, { base: picker(false), onRead: () => { if (failRead && stale) throw new Error('read failed'); stale = false; },
     onAction: (name, number) => {
       if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
       stale = true;
@@ -654,12 +654,22 @@ test('AB3: a refused element says what ran, what was not sent, and where the res
   assert.equal(result.isError, true);
   assert.deepEqual(h.clicks, [2, 3], 'the refused click is not resent and nothing after it runs');
   const text = result.content.map(c => c.text ?? '').join('\n');
-  assert.match(text, /sleight: this call ran 1 action \(click\); the engine refused the next click \(element 3\): its number came from this call's first read, and an earlier action in the call replaced that element\. Not sent after it: click, click 5\./);
+  assert.match(text, /sleight: this call ran 1 action \(click\); the engine refused the next click \(element 3\): its number came from this call's first read, and the element changed \(perhaps replaced by an earlier action\)\. Not sent after it: click, click 5\./);
   // click(5) was Add child in the tree Claude saw; it is 6 now.
   assert.match(text, /In this result's window, the refused action and the rest are now click 4, click 5, click 6\. /);
   assert.match(text, /sleight now reads this window before each numbered or named action, so the rest can go in one call\./);
   assert.match(text, /Dates, Value: Dec 14/, 'the fresh tree is in the result');
   assert.doesNotMatch(text.slice(text.indexOf('sleight: this call ran')), /December 19|Add adult/, 'the note names no label text');
+});
+
+test('AB3 review: when the read after a refusal fails, the note claims no current window', async t => {
+  const h = await pickerFixture(t, { failRead: true });
+  const result = await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" }); await app.click(5);');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [2, 3]);
+  const text = result.content.map(c => c.text ?? '').join('\n');
+  assert.match(text, /Not sent after it: click 5\. sleight couldn't read the window after it, so read it before acting\./);
+  assert.doesNotMatch(text, /is current|are now/);
 });
 
 test('AB3: after a refusal, the rest goes in one call', async t => {

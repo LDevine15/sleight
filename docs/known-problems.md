@@ -46,10 +46,10 @@ our own runs. Dates and engine versions are given where they matter.
   helper once per app; if that fails, the next dialog close over a window read before any other process note stops.
 - A batch of numbered or named actions reuses the call's first read until an opener, so an action that rebuilds the
   elements it holds (a date picker after its first date) makes the engine refuse the next number. We've seen this once
-  (Firefox travel, 2026-10-17). That call still stops, and from then on that window, by app and URL or title, reads
-  before each numbered or named action until the engine's session resets, about 50 to 400 ms an action (the read
-  timings measured 2026-10-09). We can't read the engine's source, so we don't know for sure that a refused number sends
-  no input. The stop doesn't resend it.
+  (Firefox travel, 2026-10-17). That call still stops, and that window, by app and URL or title, then reads before
+  each numbered or named action until three of them pass, about 50 to 400 ms an action (the read timings measured
+  2026-10-09). The read after the refusal gives up after 5 s, and the note then doesn't list targets. We can't read the
+  engine's source, so we don't know for sure that a refused number doesn't send input. The stop doesn't resend it.
 
 ## The pointer, drags and hover
 

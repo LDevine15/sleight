@@ -2406,7 +2406,7 @@ export function createRelay({
     if (action && taken.receipt) action.failure = { message: taken.receipt.error ?? failureReason(taken.content),
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
-    const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id), { content: taken.content, seen: call.seen });
+    const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id), { content: taken.content, seen: call.seen, uniqueSeen: call.uniqueSeen });
     if (note) msg.result.content = [...msg.result.content, { type: 'text', text: promptNotice(note, prompt) }];
     const stopped = !msg.error && msg.result.isError;
     const ineligible = !stopped ? 'no-stop' : documentMode ? 'document-scope' : changeReview ? 'change-review' : menuContinued.has(msg.id) ? 'continued'
@@ -2885,7 +2885,7 @@ export function createRelay({
           }
           else if (documentMode || inputLease || (changeReview && target)) {
             const seenWindow = numberWindow(originalCode, target), numbers = literalNumbers(originalCode);
-            const seenLines = compactor.seenLines(seenWindow, numbers);
+            const seenLines = compactor.seenLines(seenWindow, numbers), uniqueSeen = compactor.uniqueSeen(seenWindow, numbers);
             // The acquisition just before this call, if it read this same app less than 10 s ago.
             // Reuse is for the default mode, and only when reads are slow: a settled read before an action
             // takes about 50 ms, but 17 to 57 s on a loaded Mac (2026-10-09), and without it a window
@@ -2898,7 +2898,7 @@ export function createRelay({
               target?.app === priorRead.app && sameWindow(seenWindow, target) ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
             const menuBaseline = menuBaselines.get(msg.id);
             const stopMark = guardStopMark();
-            menuCalls.set(msg.id, { ...menuAdmissions.get(msg.id), mark: stopMark, seen: seenLines,
+            menuCalls.set(msg.id, { ...menuAdmissions.get(msg.id), mark: stopMark, seen: seenLines, uniqueSeen,
               request: { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: originalCode } } } });
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
             const typedTarget = compactor.beginAction(originalCode)?.typedTarget;
@@ -2917,7 +2917,7 @@ export function createRelay({
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines, literals: numbers,
-                uniqueSeen: compactor.uniqueSeen(seenWindow, numbers) });
+                uniqueSeen });
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);

@@ -494,6 +494,51 @@ test('AB3: a bound element the engine refuses is not resent, the stop carries a 
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
 });
 
+test('AB3 review: a flagged window binds again after three clean actions that read first', async () => {
+  let stale = false, refuse = true;
+  const rows = '\t1 button First\n\t2 button Second\n\t3 button Third';
+  const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, rows); },
+    action: (name, [number]) => {
+      if (stale && refuse) { refuse = false; throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`); }
+      stale = true;
+    } });
+  await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true }), /2 is an invalid element ID/);
+  f.calls.length = 0;
+  // The first action reads anyway; the next three read because the window is flagged, and the fifth binds.
+  await f.run('await app.click(1); await app.click(2); await app.click(3); await app.click(2); await app.click(3);', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read', 'click', 'read', 'click', 'click', 'read']);
+  f.calls.length = 0;
+  await f.run('await app.click(1); await app.click(2);', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+});
+
+test('AB3 review: a failed read after the refusal leaves no fresh tree and says so in the receipt', async () => {
+  let stale = false;
+  const f = fixture({ strict: true, current: () => { if (stale) throw new Error('read failed'); return tree(expected, '\t1 button First\n\t2 button Second'); },
+    action: (name, [number]) => {
+      if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
+      stale = true;
+    } });
+  await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true, guardStopMark: '[stop]' }), /2 is an invalid element ID/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+  assert.equal(f.output.filter(line => typeof line === 'string' && line.startsWith(GUARD_MARK)).length, 0);
+  const receipt = JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
+  assert.equal(receipt.refused, true); assert.equal(receipt.fresh, false);
+});
+
+test('AB3 review: the read after a refusal gives up after its bound', async () => {
+  let stale = false;
+  const f = fixture({ strict: true, current: () => stale ? new Promise(() => {}) : tree(expected, '\t1 button First\n\t2 button Second'),
+    action: (name, [number]) => {
+      if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
+      stale = true;
+    } });
+  // Fire the bound at once instead of after 5 s.
+  f.context.setTimeout = (fn, ms) => setTimeout(fn, ms === 5000 ? 0 : ms);
+  await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true, guardStopMark: '[stop]' }), /2 is an invalid element ID/);
+  assert.equal(JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6)).fresh, false);
+});
+
 test('AB3: a refusal on a fresh read leaves binding on', async () => {
   let refuse = true;
   const f = fixture({ strict: true, current: () => tree(expected, '\t1 button First\n\t2 button Second'),

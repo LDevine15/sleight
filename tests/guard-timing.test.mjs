@@ -37,12 +37,14 @@ test('timing is removed from mixed results and malformed metrics cannot enter a 
   // The light check after Return is traced, so an A/B shows how often it fired.
   const light = JSON.stringify({ phase: 'light', ms: 310, chars: 0, failed: false });
   const refused = JSON.stringify({ phase: 'light-refused', ms: 600, chars: 0, failed: false });
-  const content = [{ type: 'text', text: `before\n${mark}${good}\n${mark}${skipped}\n${mark}${light}\n${mark}${refused}\nafter` },
+  // AB3: the read after the engine refused an element number.
+  const afterRefusal = JSON.stringify({ phase: 'after-refusal', ms: 45, chars: 120, failed: false });
+  const content = [{ type: 'text', text: `before\n${mark}${good}\n${mark}${skipped}\n${mark}${light}\n${mark}${refused}\n${mark}${afterRefusal}\nafter` },
     { type: 'text', text: `${mark}{"phase":"secret","ms":-1}` }, { type: 'image', data: 'unchanged' }];
   assert.deepEqual(stripGuardTiming(content, metric => metrics.push(metric)),
     [{ type: 'text', text: 'before\nafter' }, { type: 'image', data: 'unchanged' }]);
   assert.deepEqual(metrics, [{ phase: 'after-call', ms: 12.5, chars: 30, failed: false }, { phase: 'skipped', ms: 0, chars: 0, failed: false },
-    JSON.parse(light), JSON.parse(refused)]);
+    JSON.parse(light), JSON.parse(refused), JSON.parse(afterRefusal)]);
 });
 
 test('the relay traces metrics by call ID before delivering a clean full header', t => {
