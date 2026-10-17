@@ -122,3 +122,11 @@ for (const code of ['await second.click(2); await first.click(2)', 'await first.
     assert.match(stopped.result.content[0].text, /numbered actions.*one handle/);
   });
 }
+
+test('after an action retitles the same app\'s window, the number check uses the current window, not the handle\'s old read', t => {
+  const f = fixture(t);
+  f.call('open', 'await first.click(2)');
+  f.reply('open', GUARD_MARK + 'Window: "First sheet", App: First.\n0 standard window\n\t2 button Sheet OK', 'fixture.first');
+  const { update } = f.act('await first.click(2)');
+  assert.deepEqual(update.seenLines, { 2: 'button Sheet OK' });
+});

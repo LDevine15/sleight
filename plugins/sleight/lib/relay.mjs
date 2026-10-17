@@ -1143,8 +1143,10 @@ export function createRelay({
     const handles = numberedHandles(code);
     const window = handles.length === 1 && handleBundles.get(handles[0]);
     const numbers = literalNumbers(code), lines = compactor.seenLines(window, numbers);
-    // An unknown handle or a window whose numbers Claude never saw retains the old check.
-    return window && numbers.every(n => lines?.[n] !== undefined) ? window : fallback;
+    // An unknown handle or a window whose numbers Claude never saw retains the old check. Only another app's handle
+    // changes the window: handleBundles moves on reads, so after an action retitled or opened a sheet in the same
+    // app, its entry is the old window and the lease target is the current one.
+    return window && fallback && window.app !== fallback.app && numbers.every(n => lines?.[n] !== undefined) ? window : fallback;
   }
   const handleOrigins = new Map(); // handle -> the getApp argument that acquired it
   const handleSelectors = new Map();
