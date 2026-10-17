@@ -5,6 +5,7 @@ import { constants, createContext, runInContext } from 'node:vm';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { format } from 'node:util';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
@@ -15,7 +16,7 @@ const tree = (shifted = false) => header + '\n0 standard window Fixture\n' +
   Array.from({ length: 100 }, (_, i) => `\t${i + 1} button Row ${shifted ? i + 1 : i}`).join('\n');
 const filtered = expression => `const state = await app.getAXState(); nodeRepl.write(${expression});`;
 
-async function engine(t, { maxItems } = {}) {
+async function engine(t, { maxItems, acquire = true } = {}) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-filtered-read-')));
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
@@ -25,9 +26,9 @@ async function engine(t, { maxItems } = {}) {
   const write = value => content.push({ type: 'text', text: typeof value === 'string' ? value :
     JSON.stringify(Array.isArray(value) && maxItems !== undefined ? value.slice(0, maxItems) : value) });
   const raw = { getAXState: async () => current(), click: async n => actions.push(n), pressKey: async key => actions.push(key) };
-  const context = createContext({ cua: {
+  const context = createContext({ evaluations: 0, cua: {
     getApp: async () => { write(current()); return raw; }, listApps: async () => [],
-  }, nodeRepl: { write }, console: { log: write } });
+  }, nodeRepl: { write }, console: { log: (...args) => write(format(...args)) } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 'filtered-fixture',
     changeReview: false, inputLease: new InputLease({ directory: dir, holder: 'fixture' }) });
   clientOut.setEncoding('utf8').on('data', data => {
@@ -59,13 +60,142 @@ async function engine(t, { maxItems } = {}) {
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: callId, method: 'tools/call',
       params: { name: 'js', arguments: { code } } }) + '\n');
   });
-  const acquisition = await call('var app = await cua.getApp("example.fixture")');
-  assert.equal(acquisition.isError, false);
-  assert.match(JSON.stringify(acquisition.content), /Row 99/, 'the first acquisition keeps its tree');
-  return { call, actions, shift: () => { shifted = true; }, change: () => { changed = true; } };
+  if (acquire) {
+    const acquisition = await call('var app = await cua.getApp("example.fixture")');
+    assert.equal(acquisition.isError, false);
+    assert.match(JSON.stringify(acquisition.content), /Row 99/, 'the first acquisition keeps its tree');
+  }
+  return { call, actions, evaluations: () => context.evaluations,
+    shift: () => { shifted = true; }, change: () => { changed = true; } };
 }
 
 const output = result => result.content.map(c => c.text ?? '').join('\n');
+
+for (const code of [
+  'const d = await app.getAXState(); d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n") || "none"',
+  'const d = await app.getAXState(); d.split("\\n").filter(() => false).join("\\n") || "none"',
+  'await app.getAXState().then(s => s.split("\\n").filter(l => /Row 7/.test(l)).join("\\n"));',
+  'app.getAXState().then(s => s.split("\\n").filter(l => /Row 7/.test(l)).join("\\n"));',
+  'const d = await app.getAXState(); await Promise.resolve(d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n"));',
+  'const d = await app.getAXState(); console.log(d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n"));',
+  'const d = await app.getAXState(); console.log(d.split("\\n").filter(l => /Row 7/.test(l)));',
+  'console.log((await app.getAXState()).split("\\n").filter(l => /Row 7/.test(l)).join("\\n"));',
+  'const d = await app.getAXState(); d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n") // selected rows',
+  'const d = await app.getAXState(); console.log(d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n"),);',
+]) {
+  test('a final read-derived value prints by default and filters its tree: ' + code, async t => {
+    const h = await engine(t);
+    const result = await h.call(code);
+    assert.equal(result.isError, false);
+    assert.match(output(result), code.includes('false') ? /none/ : /Row 7/);
+    assert.match(output(result), /Window: "Fixture", App: Fixture Editor\./);
+    assert.doesNotMatch(output(result), /standard window|Row 99|no change since|filtered-read/);
+  });
+}
+
+for (const ending of [
+  '(++globalThis.evaluations, d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n"))',
+  'console.log((++globalThis.evaluations, d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n")))',
+]) {
+  test('the final value is evaluated and printed once: ' + ending, async t => {
+    const h = await engine(t);
+    const result = await h.call('const d = await app.getAXState(); ' + ending);
+    assert.equal(result.isError, false);
+    assert.equal(h.evaluations(), 1);
+    assert.equal(output(result).match(/\t8 button Row 7\n/g)?.length, 1);
+    assert.doesNotMatch(output(result), /standard window|Row 99/);
+  });
+}
+
+for (const expression of ['d.length', '({ rows: d.split("\\n").slice(2, 3) })', '("prefix:" + d).repeat(10)']) {
+  test('read-derived bare values use the bounded autoprint formatter: ' + expression, async t => {
+    const h = await engine(t);
+    const result = await h.call('const d = await app.getAXState(); ' + expression);
+    assert.equal(result.isError, false);
+    const printed = result.content.filter(c => c.type === 'text' && !c.text.startsWith('Window:'));
+    assert.equal(printed.length, 1);
+    assert.ok(printed[0].text.length <= 4000);
+    assert.match(printed[0].text, expression === 'd.length' ? /^\d+$/ : expression.startsWith('({') ? /rows: \[/ : /\[output truncated\]$/);
+  });
+}
+
+test('a final filtered value on first acquisition keeps the whole window tree', async t => {
+  const h = await engine(t, { acquire: false });
+  const result = await h.call('var app = await cua.getApp("example.fixture"); const d = await app.getAXState(); d.split("\\n").slice(2, 3)');
+  assert.equal(result.isError, false);
+  assert.match(output(result), /standard window/);
+  assert.match(output(result), /Row 99/);
+});
+
+for (const code of ['await app.getAXState();', 'const d = await app.getAXState(); d;']) {
+  test('an unfiltered bare read keeps its ordinary diff without duplicate output: ' + code, async t => {
+    const h = await engine(t);
+    const result = await h.call(code);
+    assert.equal(result.isError, false);
+    assert.match(output(result), /no change since/);
+    assert.doesNotMatch(output(result), /Row 99/);
+    assert.equal(output(result).match(/Window:/g)?.length, 1);
+  });
+}
+
+for (const code of [
+  'const d = await app.getAXState(); await app.click(1); d.split("\\n").slice(2, 3)',
+  'const d = await app.getAXState(); const act = app.click; await act(1); d.split("\\n").slice(2, 3)',
+  'const d = await app.getAXState(); const other = await app.getAXState(); d.split("\\n").slice(2, 3)',
+  'let d = await app.getAXState(); d = "unrelated"; d.split("\\n")',
+  'const d = await app.getAXState(); "unrelated"',
+  'const d = await app.getAXState(); console.log(d.split("\\n").slice(2, 3), "other")',
+  'const d = await app.getAXState(); console.log("first", d.split("\\n").slice(2, 3))',
+  'const d = await app.getAXState(); console.log(...[d.split("\\n").slice(2, 3), "other"])',
+  'const d = await app.getAXState(); d.split("\\n").filter(() => { throw new Error("fixture failure"); })',
+]) {
+  test('excluded final values preserve the normal tree: ' + code, async t => {
+    const h = await engine(t);
+    const result = await h.call(code);
+    assert.match(output(result), /standard window|no change since|lines changed since/);
+    if (code.includes('fixture failure')) {
+      assert.equal(result.isError, true);
+      assert.match(output(result), /fixture failure/);
+    }
+    if (code.includes('console.log') && !code.includes('...')) assert.match(output(result), /other|first/);
+  });
+}
+
+test('a bare filtered result preserves window-change refusal and hidden numeric guards', async t => {
+  const h = await engine(t);
+  h.shift();
+  const result = await h.call('const d = await app.getAXState(); d.split("\\n").filter(l => /Row 7/.test(l)).join("\\n")');
+  assert.doesNotMatch(output(result), /Row 100/);
+  const action = await h.call('await app.click(1);');
+  assert.equal(action.isError, true);
+  assert.deepEqual(h.actions, []);
+  h.change();
+  const changed = await h.call('const d = await app.getAXState(); d.split("\\n").slice(2, 3)');
+  assert.match(output(changed), /standard window|Input lease:|Document scope:/);
+});
+
+test('autoprint truncation never authorizes element numbers from hidden array entries', async t => {
+  const h = await engine(t);
+  h.shift();
+  const filtered = await h.call('const d = await app.getAXState(); d.split("\\n").slice(2)');
+  assert.equal(filtered.isError, false);
+  assert.match(output(filtered), /more items/);
+  assert.doesNotMatch(output(filtered), /Row 50|Row 100/);
+  const action = await h.call('await app.click(50);');
+  assert.notDeepEqual(h.actions, [50]);
+  assert.deepEqual(h.actions, action.isError ? [] : [49]);
+});
+
+test('a derived object is inspected without running getters or custom inspectors', async t => {
+  const h = await engine(t);
+  const result = await h.call(`const d = await app.getAXState(); ({ length: d.length,
+    get danger() { ++globalThis.evaluations; throw new Error('getter ran'); },
+    [Symbol.for('nodejs.util.inspect.custom')]() { ++globalThis.evaluations; return 'custom ran'; } })`);
+  assert.equal(result.isError, false);
+  assert.equal(h.evaluations(), 0);
+  assert.match(output(result), /danger: \[Getter\]/);
+  assert.doesNotMatch(output(result), /custom ran|getter ran/);
+});
 
 for (const expression of [
   'state.split("\\n").filter(line => line.includes("Row 7")).join("\\n")',

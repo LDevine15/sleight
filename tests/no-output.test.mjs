@@ -53,6 +53,15 @@ test('autoprint is opt-in and prints a pure final expression exactly once', asyn
   assert.deepEqual(output, ['hello!']);
 });
 
+test('non-native final expressions keep the no-output notice and optional printing rules', () => {
+  for (const code of ['const d = "rows"; d.split("\\n").join("\\n");',
+    'const d = await source.read(); d.filter(row => row.visible);']) {
+    assert.match(noOutputNotice(code, empty), /nodeRepl\.write/);
+    assert.equal(autoPrintCode(code), code);
+    assert.equal(autoPrintCode(code, true), code);
+  }
+});
+
 test('autoprint does not repeat a prior action', async () => {
   const code = 'await tab.click(1); "done";';
   let clicks = 0;
