@@ -31,9 +31,9 @@ under `.claude/worktrees/agent-<id>`):
   Mac's Chrome with SELECTED_PATH_UNSAFE, and the owner's chmod failed under macOS App Management. Needs a safety review.
 - agent-a031a24d54f178c6e (race harness): why LCU (1/12) and Cua (0/12, zero tool calls) fail in the real-window Firefox round, and
   Codex (1/12, `/tmp/fb-rounds/real-29077030-2b63-4bb2-ad77-0c63a48b4921-codex`).
-- agent-ad5cfb3df41d7b6dc (real-window gate arms, branch at 86f119cf, merged): resumed to fix the Claude in Chrome arm's prompt
-  stall. A direct `claude -p --chrome --allowedTools "mcp__claude-in-chrome__*"` run on the benchmark profile read Wikipedia with no
-  prompt and an empty approved-sites list, so the stall is the gate arm's configuration, not site approvals.
+- agent-ad5cfb3df41d7b6dc (real-window gate arms): done and merged (d2cb8a5b). The Claude in Chrome stall was Claude Code's
+  `auto` permission mode on the gate arms; the gate now passes `--permission-mode default` to every arm. Smoke from Terminal.app
+  21:09Z passed Claude in Chrome on wikipedia and mdn, and FowlBrowser and turbo (Helium) on wikipedia.
 Next session: check each branch for commits (`git log 369bc9a2..worktree-agent-<id>`), review (Sonnet high), merge, full check, then
 A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
 sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
