@@ -17,12 +17,24 @@ const read = (c, value, options) => c.process([text(value)], options);
 const output = content => content.map(item => item.text ?? '').join('\n');
 
 test('the screenshot variant hints at textless document panes, layout areas and tables despite toolbar values', () => {
-  for (const area of ['split group Document Pane', 'layout area Content Area, Description: Document contents',
-    'table', 'text entry area (settable) Value: ']) {
+  for (const area of ['split group Document Pane', 'layout area Content Area, Description: Document contents', 'table']) {
     const value = tree(pane.map(line => line.replace('split group Document Pane', area)));
     const result = read(createReadCompactor({ screenshotReads: true }), value);
     assert.deepEqual(result, [text(value), text(note)], area);
   }
+});
+
+test('an empty text area hints only when open_file found its file non-empty on disk', () => {
+  const value = tree(pane.map(line => line.replace('split group Document Pane', 'text entry area (settable) Value: ')));
+  for (const [size, hinted] of [[undefined, false], [0, false], [5, true]]) {
+    const c = createReadCompactor({ screenshotReads: true });
+    if (size !== undefined) c.noteOpenedFile('/tmp/draft', '/private/tmp/draft', size);
+    assert.deepEqual(read(c, value), hinted ? [text(value), text(note)] : [text(value)], String(size));
+  }
+  // A blank new document: an empty text area with no file behind it.
+  const blank = ['Window: "Untitled", App: Fixture Editor.', '0 standard window Untitled', '\t1 scroll area',
+    '\t\t2 text area (settable) Value: ', '\t3 toggle button Bold, Value: off'].join('\n');
+  assert.deepEqual(read(createReadCompactor({ screenshotReads: true }), blank), [text(blank)]);
 });
 
 test('the default read and unselected variants remain unchanged', () => {

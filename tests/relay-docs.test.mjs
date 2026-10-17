@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { RESULT_LIMIT } from '../plugins/sleight/lib/result-budget.mjs';
-import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { createRelay, beforeFirstTree } from '../plugins/sleight/lib/relay.mjs';
 import { GUARD_MARK } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const text = text => ({ type: 'text', text });
@@ -153,6 +153,41 @@ test('open_file holds engine docs and drops empty text, keeping its handle, tree
   h.call(3); h.reply(3, [text('4')]);
   assert.doesNotMatch(body(result(h, 3)), /Native API reference/);
   assert.ok(!h.traces.some(row => row.kind === 'engine-session-restarted'));
+});
+
+const textless = ['Window: "Book", App: Example.', '0 standard window Book, URL: file:///tmp/book.xlsx',
+  '\t1 layout area Content Area, Description: Workbook area', '\t\t2 button Insert sheet', '\t3 text field (settable) Value: A1'].join('\n');
+const textlessNote = /the document area exposes no text values\. Read the window with `nodeRepl\.emitImage\(await app\.getScreenshot\(\)\)`/;
+
+for (const rulesFirst of [undefined, false]) test(`open_file puts the skill ${rulesFirst === false ? 'after' : 'before'} the tree, rulesFirst=${rulesFirst}`, async t => {
+  const h = harness(t, rulesFirst === false ? { rulesFirst } : {}), first = await h.open(1, [text(docs + tree)]);
+  const texts = first.content.map(c => c.text);
+  const skill = texts.findIndex(value => value.includes(rules)), window = texts.findIndex(value => value.startsWith('Window: '));
+  assert.ok(skill >= 0 && window >= 0);
+  assert.equal(texts.filter(value => value.includes(rules)).length, 1);
+  if (rulesFirst === false) assert.ok(window < skill);
+  else {
+    assert.ok(skill < window);
+    // The tree is the last thing Claude reads, apart from the handle line.
+    assert.match(texts.at(-1), /^Window handle: /);
+    assert.equal(window, texts.length - 2);
+  }
+  assert.doesNotMatch(body(first), /Native API reference/);
+  // bench/timing.mjs pairs the window read with this call by the trace line.
+  const split = h.traces.find(row => row.kind === 'acquisition-split');
+  assert.equal(split?.detail.id, 1);
+  assert.match(String(split?.detail.acquisition), /^sleight-open-file-/);
+});
+
+for (const textlessHint of [undefined, false]) test(`a textless document gets one screenshot note after its tree, textlessHint=${textlessHint}`, async t => {
+  const h = harness(t, textlessHint === false ? { textlessHint } : {}), first = await h.open(1, [text(docs), text(textless)]);
+  const texts = first.content.map(c => c.text);
+  const note = texts.findIndex(value => textlessNote.test(value));
+  if (textlessHint === false) { assert.equal(note, -1); return; }
+  assert.ok(note > texts.findIndex(value => value.startsWith('Window: ')));
+  assert.ok(note > texts.findIndex(value => value.includes(rules)));
+  h.call(2, 'await app.getAXState()'); h.reply(2, [text(textless)]);
+  assert.doesNotMatch(body(result(h, 2)), textlessNote, 'once per window');
 });
 
 test('js first still gets engine docs and the skill immediately', t => {
@@ -328,4 +363,23 @@ test('a collected engine restart discards the previous held docs', async t => {
   serverOut.write(JSON.stringify({ id: 4, result: { content: [text(docs.replace('Native API reference.', 'Replacement API reference.')), text('4')] } }) + '\n');
   assert.match(body(result(h, 4)), /Replacement API reference/);
   assert.doesNotMatch(body(result(h, 4)), /Native API reference/);
+});
+
+test('rules go before the engine header, not a docs line that starts with "Window: "', () => {
+  const item = text('RULES'), docsLine = text('## Docs\nWindow: names the window a read returns.\nMore docs.');
+  assert.deepEqual(beforeFirstTree([docsLine, text(tree)], item), [docsLine, item, text(tree)]);
+  assert.deepEqual(beforeFirstTree([text('Window: no header here')], item), [text('Window: no header here'), item]);
+  const shared = beforeFirstTree([text('Window: docs line\n' + tree)], item);
+  assert.deepEqual(shared, [text('Window: docs line\n'), item, text(tree)]);
+});
+
+for (const [shown, confirmed] of [['file:///tmp/other.txt', false], ['file:///private/tmp/note.txt', true],
+  ['file:///tmp/note.txt', true], [null, true]]) test(`open_file checks the read window's URL against the path: ${shown}`, async t => {
+  const h = harness(t, { localTools: { tools: [{ name: 'open_file' }], call: async () => ({ content: [text('Opened /tmp/note.txt in Example in the background.')],
+    _meta: { 'sleight/openedApp': 'org.example.editor', 'sleight/openedFile': { path: '/tmp/note.txt', real: '/private/tmp/note.txt', size: 5 } } }) } });
+  const window = tree.replace('0 standard window note.txt', '0 standard window note.txt' + (shown ? ', URL: ' + shown : ''));
+  const out = body(await h.open(1, [text(window)]));
+  assert.equal(/Opened \/tmp\/note\.txt/.test(out), confirmed);
+  assert.equal(/main window shows file:\/\/\/tmp\/other\.txt, not \/tmp\/note\.txt/.test(out), !confirmed);
+  assert.doesNotMatch(JSON.stringify(h.received), /openedFile/);
 });

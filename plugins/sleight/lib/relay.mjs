@@ -58,8 +58,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, menuRoot } from './document-scope.mjs';
+import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, menuRoot } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -441,6 +442,16 @@ function replaceLastImage(content, data) {
   return next;
 }
 
+// Inserts item before the first window tree, splitting engine docs off a text item that carries both.
+// Content without a tree gets it last.
+export function beforeFirstTree(content, item) {
+  const index = content.findIndex(c => c.type === 'text' && WINDOW_HEADER.test(c.text ?? ''));
+  if (index < 0) return [...content, item];
+  const tree = content[index], at = tree.text.search(WINDOW_HEADER);
+  const split = at > 0 ? [{ ...tree, text: tree.text.slice(0, at) }, item, { ...tree, text: tree.text.slice(at) }] : [item, tree];
+  return [...content.slice(0, index), ...split, ...content.slice(index + 1)];
+}
+
 function lines(stream, onLine) {
   let buffer = '';
   stream.setEncoding('utf8');
@@ -548,6 +559,16 @@ export function createRelay({
   // 156.3 s and 9/10 against 149.4 s and 10/10), with more Excel turns.
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   firstCallRules,
+  // The first-call rules go before the result's first window tree, so the last thing Claude reads is the
+  // answer-bearing tree. With 5 KB of rules after preview-read's 2.3 KB tree, Haiku thought on turn 2 in 5/5
+  // sleight runs against 2/5 for Peekaboo (2026-10-17). SLEIGHT_RULES_FIRST=0 keeps them last, for the A/B.
+  rulesFirst = process.env.SLEIGHT_RULES_FIRST !== '0',
+  // A read whose document area exposes no text values gets one note to screenshot it. Claude's first Excel
+  // read returned no cell values and a screenshot followed in 5/5 excel-edit runs, about 3 s a run (2026-10-17).
+  // The note costs about 30 tokens and no engine call; attaching a screenshot would cost an image and a
+  // serial capture on every such read.
+  // SLEIGHT_TEXTLESS_HINT=0 leaves the note out, for the A/B; SLEIGHT_SKILL=screenshot keeps it on.
+  textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0' || process.env.SLEIGHT_SKILL === 'screenshot',
   confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
@@ -598,7 +619,7 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
-  let compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, readHints });
+  let compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -753,7 +774,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
@@ -1807,8 +1828,9 @@ export function createRelay({
   }
 
   // A claimed form capability can still fail to answer. Expire without granting anything.
-  function requestElicitation(params) {
+  function requestElicitation(params, onId) {
     const id = `sleight-elicit-${nextElicitId++}`;
+    onId?.(id);
     return new Promise(resolve => {
       const finish = msg => { clearTimeout(timer); elicitations.delete(id); resolve(msg); };
       const timer = setTimeout(() => finish({ result: { action: 'decline' } }), 300000);
@@ -1818,10 +1840,18 @@ export function createRelay({
     });
   }
 
+  // Withdraws an elicitation of ours that is still open (MCP cancellation) and answers it as a decline.
+  function cancelElicitation(id) {
+    const finish = elicitations.get(id);
+    if (!finish) return;
+    toClient({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'The call failed before it needed this answer.' } });
+    finish({ result: { action: 'decline' } });
+  }
+
   // Asks the client's user through an elicitation of our own.
-  function elicit(message) {
+  function elicit(message, onId) {
     if (clientCanElicit === false) return Promise.resolve('cancel');
-    return requestElicitation({ message, mode: 'form', requestedSchema: { type: 'object', properties: {} } })
+    return requestElicitation({ message, mode: 'form', requestedSchema: { type: 'object', properties: {} } }, onId)
       .then(msg => msg.result?.action ?? 'cancel');
   }
 
@@ -1844,8 +1874,12 @@ export function createRelay({
     const scoped = approvalScope === 'session' && !options.once;
     const preapprovable = !options.once && keyParts.length === 2 &&
       ['drag', 'menu_bar', 'open_file'].includes(keyParts[0]);
+    // withdraw() declines a pending ask whose call failed first: later asks stop waiting on it, an
+    // elicitation of ours is cancelled, and a later answer grants nothing. A native panel stays up.
+    let withdrawn = false, elicitation, settle;
+    const gone = new Promise(resolve => { settle = resolve; });
     const decided = asking.then(async () => {
-      if (generation !== stopGeneration || closing || disposed) return false;
+      if (withdrawn || generation !== stopGeneration || closing || disposed) return false;
       let auditFailed = false;
       try {
         if (preapprovable && userListGrant(keyParts[1], 'high', keyParts[0], [callId])) return true;
@@ -1855,18 +1889,24 @@ export function createRelay({
       try {
         action = ask
           ? await askPrompt([callId], message, scoped, options.kind ? { kind: options.kind, detail: options.detail } : undefined)
-          : await elicit(options.detail ? `${message} ${options.detail}` : message);
+          : await elicit(options.detail ? `${message} ${options.detail}` : message, id => { elicitation = id; });
       } catch {
         action = 'cancel';
       }
-      trace('local-approval', { key, action, ...(options.once ? { once: true } : {}) });
-      if (generation !== stopGeneration || closing || disposed) return false;
+      trace('local-approval', { key, action, ...(options.once ? { once: true } : {}), ...(withdrawn ? { withdrawn } : {}) });
+      if (withdrawn || generation !== stopGeneration || closing || disposed) return false;
       if (action !== 'accept') return false;
       if (scoped) approved.add(key);
       return true;
     });
-    asking = decided.catch(() => {});
-    return decided;
+    const answer = Promise.race([decided, gone]);
+    asking = answer.catch(() => {});
+    answer.withdraw = () => {
+      if (withdrawn) return;
+      withdrawn = true; settle(false);
+      if (elicitation !== undefined) cancelElicitation(elicitation);
+    };
+    return answer;
   }
 
   async function callLocal(msg, plan) {
@@ -1879,17 +1919,24 @@ export function createRelay({
     let result;
     const name = msg.params.name;
     const args = msg.params.arguments ?? {};
-    let resolved, prepared;
+    let resolved, prepared, preparedAsk, preparedFailed = false;
     if (name === 'select_window') clearSelection();
     try {
       current();
       if (openFast && name === 'open_file' && localTools.prepareOpen) {
         prepared = localTools.prepareOpen(args, async (parts, message, options) => {
-          const allowed = await approve(parts, message, msg.id, options);
+          preparedAsk = approve(parts, message, msg.id, options);
+          if (preparedFailed) preparedAsk.withdraw();
+          const allowed = await preparedAsk;
           current();
           return allowed;
         });
         prepared.current = current;
+        // The approval runs alongside the target probe (118 to 138 ms cold, 2026-10-17) instead of after it.
+        // That probe only finds the running app for the lease, and open_file proceeds when the app isn't
+        // running, so the approval is needed whatever it finds. A Stop still refuses before any open,
+        // and remembers no grant.
+        Promise.resolve(prepared.approval).catch(() => {});
       }
       // These tools reserve the whole app for their actions.
       const appTool = ['drag', 'hover', 'select_window', 'open_file'].includes(name);
@@ -1979,6 +2026,8 @@ export function createRelay({
         leaseWindow = undefined;
       }
     } catch (err) {
+      // A failed lookup or lease leaves the early open_file approval unanswered; decline it here.
+      preparedFailed = true; preparedAsk?.withdraw();
       result = { content: [{ type: 'text', text: String(err?.message ?? err) }], isError: true };
     }
     localRunning.delete(msg.id);
@@ -1987,21 +2036,32 @@ export function createRelay({
     finishedCall(msg.id);
     const openedApp = result._meta?.['sleight/openedApp'];
     if (name === 'open_file' && openedApp) {
-      const { 'sleight/openedApp': _, ...meta } = result._meta;
+      const { 'sleight/openedApp': _, 'sleight/openedFile': openedFile, ...meta } = result._meta;
       result = { ...result, _meta: meta };
       if (!result.isError && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(openedApp)) {
         const id = `sleight-open-file-${nextInternalId++}`, handle = `__sleightOpenedApp${nextInternalId++}`;
+        if (typeof openedFile?.path === 'string') compactor.noteOpenedFile(openedFile.path, openedFile.real, openedFile.size);
         callGenerations.set(id, generation);
         splitCalls.set(id, reply => {
           openShots.delete(id);
           if (generation !== stopGeneration || closing || disposed) return;
           const state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
-          const combined = { ...state, content: [...(result.content ?? []), ...(state.content ?? []),
+          // The read is of the app's main window. A window showing another file means this one may not be in front.
+          const shown = !state.isError && typeof openedFile?.path === 'string' &&
+            windowFromText((state.content ?? []).filter(c => c?.type === 'text').map(c => c.text).join('\n'));
+          let shownPath;
+          try { shownPath = shown?.url ? fileURLToPath(shown.url) : undefined; } catch { shownPath = null; }
+          const opened = shownPath === undefined || [openedFile.path, openedFile.real].includes(shownPath) ? result.content ?? []
+            : [{ type: 'text', text: `${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
+              'Find its window before acting.' }];
+          const combined = { ...state, content: [...opened, ...(state.content ?? []),
             ...(!state.isError ? [{ type: 'text', text: `Window handle: \`${handle}\`.` }] : [])] };
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
         });
         if (openShot) openShots.set(id, handle);
+        // bench/timing.mjs counts this read as the open_file call's engine time.
+        trace('acquisition-split', { id: msg.id, acquisition: id });
         callSeqs.set(id, callSeqs.get(msg.id));
         handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
           arguments: { code: `var ${handle} = await cua.getApp(${JSON.stringify(openedApp)})` } } });
@@ -3261,7 +3321,8 @@ export function createRelay({
         /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
       const rules = (docs || browserResult) && rulesFor(browserResult);
       if (rules) {
-        msg.result.content.push({ type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') });
+        const item = { type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') };
+        msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;
     }

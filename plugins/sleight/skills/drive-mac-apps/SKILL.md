@@ -7,8 +7,7 @@ description: Use when a task needs a web page or native macOS app operated throu
 # Driving Mac apps with sleight
 
 `mcp__plugin_sleight_computer__js` runs persistent JavaScript with `cua`. `js_reset` restarts it.
-Follow engine docs and app instructions. Prefer a CLI, API or dedicated tool when one covers
-the task.
+Follow engine docs and app instructions.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 
 Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes
@@ -21,7 +20,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   switching apps. Keep the handle and `await` every action.
 - After renumbering, prefer stable IDs or labels to element numbers:
   `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
-- End on the action. Its result already includes changed lines. Don't read just to confirm them.
+- End on the action. Its result includes changed lines. Don't read just to confirm them.
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
   changed, read again before retrying.
@@ -39,11 +38,13 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - Acquire a document that's already open. Don't reopen it.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
 - Transfer numbers as digits.
-- Move files with Copy, then the menu's Move item (Cut is often disabled for files), not a drag.
+- Move files with Copy, then the menu's Move item, not Cut or a drag.
 - In a Save panel, send Go to Folder, the folder, Return, the name and the final Return in one call,
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
+- A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
+  later edits.
 - If scrolling fails, use search or keyboard navigation.
 
 ## When to stop
@@ -85,7 +86,7 @@ Click a button that may open a page dialog (pay, delete, leave) with
 - Engine events don't trigger hover. Use `Help:` fields, `Secondary Actions:`, a right-click
   or a key first. Only then `hover` with `app` and `at`, after telling the user it moves their pointer
   and brings the app forward for about two seconds.
-- `notifications` lists banners on screen and presses their buttons. Banners leave in seconds, so act
+- `notifications` lists on-screen banners and presses their buttons. Banners leave in seconds, so act
   at once. `menu_bar` reaches status icons. The user approves each once per session.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.

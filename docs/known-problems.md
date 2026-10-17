@@ -29,6 +29,9 @@ our own runs. Dates and engine versions are given where they matter.
   Return, so one that takes longer can miss it. It stays off until we measure that. Its native
   observer starts on the engine's `press_key` approval, so an engine that stops asking per action leaves only full reads.
   We haven't measured how much the observer's AX polling (every 25 ms for 700 ms after a key) slows the app.
+- `open_file` asks for its approval while sleight looks up the app. When that lookup or the input lease fails first,
+  sleight counts the approval as declined and asks Claude Code to cancel its prompt (we haven't checked that Claude Code
+  closes it). sleight's own panel stays up until answered, the answer grants nothing, and later approvals can show beside it.
 
 ## The pointer, drags and hover
 

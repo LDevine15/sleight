@@ -12,7 +12,7 @@
 //   launch.mjs record|replay …  turn a finished run into a script, and run it again (replay.mjs)
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -523,8 +523,12 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
         Promise.resolve().then(() => hasDocument(bundleId, path)),
         new Promise(resolve => { timer = setTimeout(() => resolve(false), 1000); }),
       ]) === true;
+      // A visible window for this exact file URL needs no `open -g` (150 to 200 ms, 2026-10-17), as the skill
+      // has Claude acquire an already-open document. The open still runs when the file changed during this
+      // call or since this session last opened it.
       const lastOpened = openedFiles?.get(key), latest = lstatSync(path);
-      present = present && Number.isFinite(lastOpened) && latest.isFile() && latest.mtimeMs <= lastOpened;
+      present = present && latest.isFile() && latest.mtimeMs === info.mtimeMs &&
+        (lastOpened === undefined || latest.mtimeMs <= lastOpened);
     } catch { present = false; }
     finally { clearTimeout(timer); }
   }
@@ -532,7 +536,11 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   try { if (!present) await exec('/usr/bin/open', ['-g', '-b', bundleId, path]); }
   catch (err) { return text(`macOS couldn't open ${raw} in ${app}: ${String(err.message || err).split('\n')[0]}`, true); }
   if (!present) openedFiles?.set(key, started);
-  return { ...text(`Opened ${raw} in ${app} in the background.`), _meta: { 'sleight/openedApp': bundleId } };
+  // The relay checks the window it reads next against this path (or its real path, /tmp being /private/tmp).
+  let real = path;
+  try { real = realpathSync(path); } catch { /* The open already ran; the plain path still names the file. */ }
+  return { ...text(`Opened ${raw} in ${app} in the background.`),
+    _meta: { 'sleight/openedApp': bundleId, 'sleight/openedFile': { path, real, size: info.size } } };
 }
 
 const approveOpenFile = (args, approve) => approve(['open_file', args.app],

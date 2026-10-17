@@ -94,6 +94,24 @@ TODO: full release pass result.
   8.1 s (medians, 3 runs each).
 - The engine's `js` tool description reaches Claude whole. Claude Code cut it at 2,048 of its 3,511 characters, dropping the
   app example and output rules. sleight now sends a 1,536-character version with the safety guidance first.
+- A result's skill rules come before its first window tree instead of after it
+  (`SLEIGHT_RULES_FIRST=0` keeps them last). In the 2026-10-17 claim run, with 5 KB of rules after
+  preview-read's 2.3 KB tree, Haiku thought on its second turn in 5 of 5 runs against 2 of 5 for Peekaboo.
+  Not yet measured with the change.
+- A read whose document area doesn't show text values, such as an Excel sheet, gets one note to read the
+  window with a screenshot (`SLEIGHT_TEXTLESS_HINT=0` leaves it out). In 5 of 5 excel-edit runs of the
+  2026-10-17 claim run, Claude's first Excel read returned no cell values and a screenshot followed, about
+  3 s a run. An empty text area gets the note only when `open_file` found its file non-empty, so a blank new
+  document doesn't.
+- `open_file` skips `open -g` (150 to 200 ms) when the app's main window already shows that exact file, unless the
+  file changed during the call or after this session opened it. When the window read after it shows another file,
+  the result says so instead of reporting the file opened. Its approval runs alongside the app lookup
+  (118 to 138 ms cold). Not yet measured live.
+- The skill says a confirmed save covers the document's sheets and pages until later edits. In 3 of 5 excel-edit runs
+  (2026-10-17), Claude went back to an earlier sheet after saving, which set off a 10 to 25 s repair. It no
+  longer repeats the engine's advice to prefer a CLI or API.
+- `bench/timing.mjs` counts `open_file` calls, with the open as local time and the window read as engine
+  time. Runs that used it reported 0 calls before.
 - `SLEIGHT_OPEN_SHOT=1` (opt-in until an A/B) adds the window's screenshot to `open_file`'s first read. In replays Haiku stopped
   re-checking a text-only result: second-turn thinking was 0 in 5 of 6 runs, and output fell from 478 to 312 tokens.
 - The skill tells Claude to acquire an app the task names directly, and to use the changed lines an

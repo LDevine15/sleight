@@ -827,10 +827,14 @@ function trimAcquisition(text, fullRead = '', hinted = new Set()) {
 }
 
 // Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
-function textlessDocument(observation) {
+// With openedFiles (path -> size), an empty text area counts only for a file open_file found non-empty on
+// disk: a blank new document is an empty text area too, and the hint cost it a screenshot turn.
+function textlessDocument(observation, openedFiles) {
   if (!observation || observation.invalid || observation.incomplete || observation.degraded ||
       !/^(?:standard|floating) window\b/.test(observation.root)) return false;
   const lines = observation.lines.map(parse);
+  let fileSize;
+  try { fileSize = observation.window?.url ? openedFiles?.get(fileURLToPath(observation.window.url)) : undefined; } catch { /* Not a file URL. */ }
   return lines.some((line, i) => {
     if (line.num === undefined) return false;
     const key = line.key.trimStart();
@@ -838,6 +842,7 @@ function textlessDocument(observation) {
         !/^(?:split group|group|container|scroll area)\b/.test(key)) return false;
     if (!/^(?:layout area|table|document|text (?:entry )?area)\b/.test(key) &&
         !/\b(?:document pane|document area|content area)\b/i.test(key)) return false;
+    if (openedFiles && /^text (?:entry )?area\b/.test(key) && !(fileSize > 0)) return false;
     const depth = line.key.length - key.length;
     for (let j = i; j < lines.length; j++) {
       const child = lines[j], body = child.key.trimStart();
@@ -1002,6 +1007,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const omissionHints = readHints.omissionHints ??= new Set();
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
+  const openedFiles = readHints.openedFiles ??= new Map();
   let latest, observedInResult, observationId = 0;
   // app -> its last standard-window read of a file document, the save baseline when the read just
   // before a save is a menu or nothing at all.
@@ -1370,7 +1376,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       }
       const screenshotKey = hintKey(observedInResult?.window, observedInResult?.root);
       if (screenshotReads && !failed && !stopped && !action && !hasScreenshot && !screenshotHints.has(screenshotKey) &&
-          !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult)) {
+          !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult, openedFiles)) {
         screenshotHints.add(screenshotKey);
         out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
       }
@@ -1478,5 +1484,9 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Result attribution resets independently of the element history used by the guard.
     // An engine restart or js_reset also makes each window's next acquisition whole.
     reset() { latest = observedInResult = undefined; documents.clear(); for (const entry of seen.values()) entry.stale = true; },
+    // open_file's file and its size on disk, under its given and real paths, for the textless-document hint.
+    noteOpenedFile(path, real, size) {
+      for (const name of new Set([path, real])) if (typeof name === 'string') openedFiles.set(name, Number(size) || 0);
+    },
   };
 }

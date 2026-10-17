@@ -1,4 +1,4 @@
-// Read only AXDocument in an already running process. Unknown observations keep the ordinary open.
+// Read only AXDocument and window state in an already running process. Unknown observations keep the ordinary open.
 ObjC.import('AppKit');
 ObjC.import('ApplicationServices');
 function run(argv) {
@@ -23,11 +23,14 @@ function run(argv) {
       const document = Ref();
       if (Number($.AXUIElementCopyAttributeValue(windows.objectAtIndex(i), $('AXDocument'), document)) !== 0) continue;
       if (ObjC.unwrap(ObjC.castRefToObject(document[0])) !== expected) continue;
-      const window = windows.objectAtIndex(i), minimized = Ref(), visible = Ref();
+      const window = windows.objectAtIndex(i), minimized = Ref(), visible = Ref(), main = Ref();
       if (Number($.AXUIElementCopyAttributeValue(window, $('AXMinimized'), minimized)) !== 0 ||
           ObjC.unwrap(ObjC.castRefToObject(minimized[0])) !== false) continue;
       if (Number($.AXUIElementCopyAttributeValue(window, $('AXVisible'), visible)) !== 0 ||
           ObjC.unwrap(ObjC.castRefToObject(visible[0])) !== true) continue;
+      // The read after open_file is of the app's main window, so another document in front still needs the open.
+      if (Number($.AXUIElementCopyAttributeValue(window, $('AXMain'), main)) !== 0 ||
+          ObjC.unwrap(ObjC.castRefToObject(main[0])) !== true) continue;
       return JSON.stringify({ ok: true, matches: true });
     }
     return JSON.stringify({ ok: true, matches: false });

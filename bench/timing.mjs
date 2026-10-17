@@ -6,9 +6,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const TOOLS = new Set(['js', 'drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'js_reset']);
-// sleight's own tools run inside the relay process and never reach the engine.
-const LOCAL = new Set(['drag', 'hover', 'menu_bar', 'notifications', 'select_window']);
+const TOOLS = new Set(['js', 'drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'js_reset', 'open_file']);
+// sleight's own tools run inside the relay process and never reach the engine. open_file then reads
+// the opened window through the engine, which counts as its engine time.
+const LOCAL = new Set(['drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'open_file']);
 
 // Tool-call timing from every trace-*.jsonl in dir. A local tool's time is its
 // own (localMs). Any other call the relay answered itself (a refusal) has no
@@ -30,6 +31,12 @@ export function traceTiming(dir) {
       if (id === undefined) continue;
       const key = `${file}:${id}`;
       if (e.direction === 'acquisition-split') { acquisitions.set(`${file}:${e.msg.acquisition}`, key); continue; }
+      // Traces from before open_file logged its read: the read goes to the engine while that call waits.
+      if (e.direction === 'to-server' && /^sleight-open-file-/.test(id) && !acquisitions.has(key)) {
+        const waiting = [...calls.entries()].filter(([k, c]) => k.startsWith(`${file}:`) && c.tool === 'open_file' &&
+          c.answered === undefined && ![...acquisitions.values()].includes(k));
+        if (waiting.length === 1) acquisitions.set(key, waiting[0][0]);
+      }
       const owner = calls.get(acquisitions.get(key));
       if (owner) {
         if (e.direction === 'to-server' && owner.acquireSent === undefined) owner.acquireSent = t;
@@ -53,15 +60,18 @@ export function traceTiming(dir) {
   const local = done.filter(c => LOCAL.has(c.tool)), relayed = done.filter(c => !LOCAL.has(c.tool));
   const sum = (list, f) => list.reduce((total, c) => total + f(c), 0);
   const guardReads = done.flatMap(c => c.guardReads ?? []);
-  const acquireMs = c => c.acquireSent !== undefined && c.acquireDone !== undefined ? c.acquireDone - c.acquireSent : 0;
+  const acquired = c => c.acquireSent !== undefined && c.acquireDone !== undefined;
+  const acquireMs = c => acquired(c) ? c.acquireDone - c.acquireSent : 0;
   return {
     calls: done.length,
     refused: relayed.filter(c => c.sent === undefined).length,
     toolMs: sum(done, c => c.answered - c.received),
-    engineMs: sum(relayed, c => (c.sent !== undefined && c.engineDone !== undefined ? c.engineDone - c.sent : 0) + acquireMs(c)),
+    engineMs: sum(relayed, c => (c.sent !== undefined && c.engineDone !== undefined ? c.engineDone - c.sent : 0) + acquireMs(c)) +
+      sum(local, acquireMs),
     relayMs: sum(relayed, c => (c.sent === undefined || c.engineDone === undefined ? c.answered - c.received
-      : (c.sent - c.received) + (c.answered - c.engineDone)) - acquireMs(c)),
-    localMs: sum(local, c => c.answered - c.received),
+      : (c.sent - c.received) + (c.answered - c.engineDone)) - acquireMs(c)) +
+      sum(local, c => acquired(c) ? c.answered - c.acquireDone : 0),
+    localMs: sum(local, c => (acquired(c) ? c.acquireSent : c.answered) - c.received),
     ...(guardReads.length ? { guardReads: guardReads.length,
       guardReadMs: sum(guardReads, r => r.ms), guardReadFailures: guardReads.filter(r => r.failed).length } : {}),
   };

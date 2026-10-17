@@ -42,6 +42,19 @@ test('an acquisition sent ahead of its actions counts as engine time, not relay 
   assert.equal(timing.relayMs, 1262 - 950 - 300);
 });
 
+for (const linked of [true, false]) test(`open_file counts as a call: its open is local time and its window read engine time, linked=${linked}`, t => {
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-timing-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'trace-1.jsonl'), [
+    line(0, 'call-received', call(2, 'open_file')), line(1, 'from-client', call(2, 'open_file')),
+    // Traces from before the relay logged the link still pair the read with the waiting open_file.
+    ...(linked ? [line(440, 'acquisition-split', { id: 2, acquisition: 'sleight-open-file-7' })] : []),
+    line(442, 'to-server', call('sleight-open-file-7', 'js')), line(652, 'from-server', { id: 'sleight-open-file-7' }),
+    line(658, 'to-client', { jsonrpc: '2.0', id: 2, result: {} }),
+  ].join('\n') + '\n');
+  assert.deepEqual(traceTiming(dir), { calls: 1, refused: 0, toolMs: 658, engineMs: 210, relayMs: 6, localMs: 442 });
+});
+
 test('no trace leaves only the model split', () => {
   assert.equal(traceTiming('/no/such/dir'), undefined);
   assert.deepEqual(runTiming({ duration_ms: 5000, duration_api_ms: 4000 }), { totalMs: 5000, modelMs: 4000 });

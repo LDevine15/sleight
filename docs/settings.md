@@ -287,6 +287,10 @@ seeing it whole, sending "no change" or the changed lines as a read does. It cut
 prompt tokens 9% but lost its 2026-10-17 A/B on excel-edit and word-edit (156.3 s against 149.4 s
 over 5 rounds, 9/10 against 10/10 passes).
 
+`SLEIGHT_RULES_FIRST=0` (A/B baseline) puts the skill's rules after the first window tree in a
+result instead of before it. `SLEIGHT_TEXTLESS_HINT=0` (A/B baseline) leaves out the note that a
+document area doesn't show text values and should be read with a screenshot.
+
 ## Launch re-read
 
 `SLEIGHT_LAUNCH_REREAD=1` (for an A/B, not yet run): when an acquisition launched the app and its

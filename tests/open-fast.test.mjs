@@ -50,11 +50,11 @@ function harness(t, options) {
   clientOut.on('data', bytes => received.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, ...options });
   t.after(() => relay.close());
-  return { received, relay, send: (name = 'open_file') => clientIn.write(JSON.stringify({ id: 1, method: 'tools/call', params: { name,
+  return { received, relay, send: (name = 'open_file', id = 1) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name,
     arguments: { app, path: '/tmp/note.txt' } } }) + '\n') };
 }
 
-test('fast open overlaps resolution with target lookup but defers its one approval until lookup succeeds', async t => {
+test('fast open overlaps resolution and its one approval with target lookup; the open waits for the lookup', async t => {
   const target = deferred(), resolution = deferred(), approval = deferred(), events = [];
   const h = harness(t, { openFast: true, ask: async () => { events.push('approval'); return approval.promise; },
     inputLease: { acquire: () => { events.push('lease'); return 'lease'; }, renew: () => events.push('renew'), release() {}, close() {} },
@@ -66,7 +66,7 @@ test('fast open overlaps resolution with target lookup but defers its one approv
         events.push('action'); return { content: [] };
       } } });
   h.send(); await tick();
-  assert.deepEqual(new Set(events), new Set(['target', 'resolve']));
+  assert.deepEqual(new Set(events), new Set(['target', 'resolve', 'approval']));
   approval.resolve('accept'); resolution.resolve(appId); await tick();
   assert.ok(!events.includes('action'));
   target.resolve({ appId, app, title: null, url: null }); await tick();
@@ -86,8 +86,22 @@ test('fast open denial, failed target and Stop during preparation cannot open a 
     if (mode === 'stopped') await h.relay.close();
     target.resolve(mode === 'target-failed' ? Promise.reject(Error('target changed')) : { appId, app });
     await tick(); assert.equal(actions, 0, mode);
-    assert.equal(prompts, mode === 'denied' ? 1 : 0, mode + ' must not leave an approval or grant');
+    // The approval runs alongside the lookup, so the user answers once whatever the lookup finds.
+    assert.equal(prompts, 1, mode);
   }
+});
+
+test('an approval answered after Stop opens nothing', async t => {
+  const answer = deferred(); let prompts = 0, calls = 0;
+  const h = harness(t, { openFast: true, ask: async () => { prompts++; return answer.promise; },
+    localTools: { tools: [{ name: 'open_file' }], target: async () => ({ appId, app }),
+      prepareOpen: (args, approve) => launch.prepareOpenFile(args, approve, { resolve: async () => appId }),
+      call: async (_name, _args, approve) => { if (await approve(['open_file', app], 'Allow?')) calls++; return { content: [] }; } } });
+  h.send(); await tick();
+  assert.equal(prompts, 1);
+  await h.relay.close();
+  answer.resolve('accept'); await tick(); await tick();
+  assert.equal(calls, 0);
 });
 
 test('local open reuses preparation, preserves its approval wording and refuses before observation on denial', async t => {
@@ -103,7 +117,8 @@ test('local open reuses preparation, preserves its approval wording and refuses 
       ...prepared, hasDocument: async () => { checks++; return true; }, exec: async () => { opens++; },
     });
     assert.equal(result.isError, allowed ? undefined : true);
-    assert.equal(resolutions, 1); assert.equal(prompts, 1); assert.equal(checks, allowed ? 1 : 0); assert.equal(opens, allowed ? 1 : 0);
+    // The probe confirms the document's window, so no background open runs.
+    assert.equal(resolutions, 1); assert.equal(prompts, 1); assert.equal(checks, allowed ? 1 : 0); assert.equal(opens, 0);
   }
 });
 
@@ -128,30 +143,33 @@ test('flag-off and other local tools do not start speculative preparation', asyn
   }
 });
 
-test('fast open requires session freshness and rechecks file changes during observation', async t => {
+test('a confirmed window skips the open unless the file changed during the call or since this session opened it', async t => {
   const args = fixture(t);
-  for (const mode of ['unknown', 'fresh', 'newer', 'changed-during-probe']) {
+  for (const mode of ['unknown', 'fresh', 'newer', 'changed-during-probe', 'not-open']) {
     const openedFiles = new Map(), events = [];
     utimesSync(args.path, 10, 10);
-    if (mode !== 'unknown') openedFiles.set(JSON.stringify([appId, args.path]), 20000);
+    if (['fresh', 'newer'].includes(mode)) openedFiles.set(JSON.stringify([appId, args.path]), 20000);
     if (mode === 'newer') utimesSync(args.path, 30, 30);
     await launch.openDocument(args, { fast: true, openedFiles, resolve: async () => appId,
       hasDocument: async () => {
         if (mode === 'changed-during-probe') utimesSync(args.path, 30, 30);
-        return true;
+        return mode !== 'not-open';
       }, exec: async () => events.push('open') });
-    assert.deepEqual(events, mode === 'fresh' ? [] : ['open'], mode);
+    assert.deepEqual(events, ['unknown', 'fresh'].includes(mode) ? [] : ['open'], mode);
   }
 });
 
-test('successful background open establishes freshness for this session and app only', async t => {
+test('a file changed after this session opened it opens again', async t => {
   const args = fixture(t), openedFiles = new Map(), events = [];
+  let open = false;
   const options = { fast: true, openedFiles, resolve: async () => appId,
-    hasDocument: async () => true, exec: async () => events.push('open') };
+    hasDocument: async () => open, exec: async () => { events.push('open'); open = true; } };
   await launch.openDocument(args, options);
   await launch.openDocument(args, options);
   assert.deepEqual(events, ['open']);
-  await launch.openDocument(args, { ...options, resolve: async () => 'org.example.other' });
+  const later = (Date.now() + 60000) / 1000;
+  utimesSync(args.path, later, later);
+  await launch.openDocument(args, options);
   assert.deepEqual(events, ['open', 'open']);
 });
 
@@ -178,7 +196,7 @@ test('document probe child gets a one-second timeout instead of the generic help
   assert.equal(options.timeout, 1000);
 });
 
-function observe({ ids = [appId], documents = [], hidden = false, minimized = false, visible = true, visibilityError = false, axError = false } = {}) {
+function observe({ ids = [appId], documents = [], mains, hidden = false, minimized = false, visible = true, visibilityError = false, axError = false } = {}) {
   const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const $ = key => key;
   Object.assign($, { NSWorkspace: { sharedWorkspace: { runningApplications: list(ids.map(bundleIdentifier => ({ bundleIdentifier, processIdentifier: 123 }))) } },
@@ -186,7 +204,8 @@ function observe({ ids = [appId], documents = [], hidden = false, minimized = fa
     AXUIElementCreateApplication: pid => ({ pid }), AXUIElementSetMessagingTimeout: () => 0,
     AXUIElementCopyAttributeValue: (element, key, out) => {
       if (axError) return -1;
-      if (key === 'AXWindows') out[0] = list(documents.map(document => ({ document })));
+      if (key === 'AXWindows') out[0] = list(documents.map((document, i) => ({ document, main: mains ? mains[i] : true })));
+      else if (key === 'AXMain') { if (element.main === 'error') return -1; out[0] = element.main; }
       else if (key === 'AXHidden') out[0] = hidden;
       else if (key === 'AXMinimized') out[0] = minimized;
       else if (key === 'AXVisible') out[0] = visible;
@@ -213,4 +232,51 @@ test('document probe cannot reuse hidden, minimized or unknown-visibility window
   for (const state of [{ hidden: true }, { minimized: true }, { visible: false }, { visibilityError: true }]) {
     assert.equal(observe({ documents: ['file:///tmp/a%20b.txt'], ...state }).matches, false, JSON.stringify(state));
   }
+});
+
+test('document probe skips the open only when the matching window is the main one', () => {
+  const path = 'file:///tmp/a%20b.txt', other = 'file:///tmp/other.txt';
+  assert.equal(observe({ documents: [other, path], mains: [false, true] }).matches, true);
+  // TextEdit showing A and B with B in front: the read after open_file would return B.
+  for (const mains of [[false, true], [false, false], ['error', true]]) {
+    assert.equal(observe({ documents: [path, other], mains }).matches, false, JSON.stringify(mains));
+  }
+});
+
+function failingFirstLookup(t, options) {
+  let lookups = 0, opened = 0;
+  const first = deferred();
+  const h = harness(t, { openFast: true, ...options,
+    localTools: { tools: [{ name: 'open_file' }],
+      target: () => lookups++ === 0 ? first.promise : { appId, app },
+      prepareOpen: (args, approve) => launch.prepareOpenFile(args, approve, { resolve: async () => appId }),
+      call: async (_name, _args, approve) => { if (await approve(['open_file', app], 'Allow?')) opened++; return { content: [] }; } } });
+  return { ...h, opened: () => opened, fail: () => first.resolve(Promise.reject(Error('Input lease: target changed'))) };
+}
+
+test('a failed lookup declines its pending approval: later asks go ahead and a late yes grants nothing', async t => {
+  const answers = [];
+  const h = failingFirstLookup(t, { ask: () => { const answer = deferred(); answers.push(answer); return answer.promise; } });
+  h.send('open_file', 1); await tick();
+  assert.equal(answers.length, 1);
+  h.fail(); await tick(); await tick();
+  assert.equal(h.received.find(m => m.id === 1)?.result.isError, true);
+  h.send('open_file', 2); await tick(); await tick();
+  assert.equal(answers.length, 2, 'the second approval must not wait behind the failed call');
+  answers[0].resolve('accept'); answers[1].resolve('decline'); await tick(); await tick();
+  h.send('open_file', 3); await tick(); await tick();
+  assert.equal(answers.length, 3, 'a yes to the failed call is not a session grant');
+  answers[2].resolve('accept'); await tick(); await tick();
+  assert.equal(h.opened(), 1);
+});
+
+test('a failed lookup cancels its elicitation', async t => {
+  const h = failingFirstLookup(t, {});
+  h.send('open_file', 1); await tick();
+  const request = h.received.find(m => m.method === 'elicitation/create');
+  assert.ok(request);
+  h.fail(); await tick(); await tick();
+  assert.deepEqual(h.received.find(m => m.method === 'notifications/cancelled')?.params.requestId, request.id);
+  assert.equal(h.received.find(m => m.id === 1)?.result.isError, true);
+  assert.equal(h.opened(), 0);
 });
