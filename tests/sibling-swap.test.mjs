@@ -72,10 +72,50 @@ test('sort commands, chorded keys and drags never blame a click for reordering',
   }
 });
 
-test('selection flags and element renumbering do not hide a sibling swap', () => {
+test('a changed selected state suppresses a sibling swap despite element renumbering', () => {
   const before = ['\t1 tab bar', '\t\t2 radio button (selected) Description: First, ID: a', '\t\t3 radio button (selectable) Description: Second, ID: b'];
   const after = ['\t5 tab bar', '\t\t6 radio button (selected) Description: Second, ID: b', '\t\t7 radio button (selectable) Description: First, ID: a'];
+  assert.doesNotMatch(result(before, after), /clicking also swapped/);
+});
+
+test('unchanged selection flags permit a swap with element renumbering', () => {
+  const before = ['\t1 tab bar', '\t\t2 radio button (selected) Description: First, ID: a', '\t\t3 radio button (selectable) Description: Second, ID: b'];
+  const after = ['\t5 tab bar', '\t\t6 radio button (selectable) Description: Second, ID: b', '\t\t7 radio button (selected) Description: First, ID: a'];
   assert.match(result(before, after), /clicking also swapped First and Second;/);
+});
+
+test('a clicked row moving to the top with a changed checked state is not a click swap', () => {
+  const before = ['\t1 list', '\t\t2 row (checkable) Alpha', '\t\t3 row (checkable) Beta'];
+  const after = ['\t1 list', '\t\t2 row (checked) Beta', '\t\t3 row (checkable) Alpha'];
+  assert.doesNotMatch(result(before, after, 'await app.click(3)'), /also swapped/);
+});
+
+test('a leaderboard reranked by a typed Value change is not a click swap', () => {
+  const before = ['\t1 list', '\t\t2 row Alpha, Value: 10', '\t\t3 row Beta, Value: 9'];
+  const after = ['\t1 list', '\t\t2 row Beta, Value: 11', '\t\t3 row Alpha, Value: 10'];
+  assert.doesNotMatch(result(before, after, 'await app.click(3); await app.typeText("11")'), /also swapped/);
+});
+
+test('a Value change in an unmoved child also suppresses the group swap', () => {
+  const before = [...rows, '\t\t79 tab Extra, Value: 1'];
+  const after = [...swapped, '\t\t79 tab Extra, Value: 2'];
+  assert.doesNotMatch(result(before, after), /also swapped/);
+});
+
+for (const label of ['Move Up', 'Down', 'Sort', 'Order', 'Rank']) {
+  for (const target of ['90', `{ label: "${label}" }`, `{ id: "${label}" }`]) {
+    test(`a reorder control suppresses the swap note: ${label} via ${target}`, () => {
+      const control = `\t90 button Description: ${label}, ID: ${label}`;
+      assert.doesNotMatch(result([...rows, control], [...swapped, control], `await app.click(${target})`), /also swapped/);
+    });
+  }
+}
+
+test('reorder labels and IDs are checked even when the click names the other attribute', () => {
+  for (const [control, target] of [
+    ['\t90 button Description: Move Up, ID: action', '{ id: "action" }'],
+    ['\t90 button Description: Apply, ID: moveUp', '{ label: "Apply" }'],
+  ]) assert.doesNotMatch(result([...rows, control], [...swapped, control], `await app.click(${target})`), /also swapped/);
 });
 
 test('lowercase labels and nonadjacent sibling swaps are reported', () => {
@@ -146,15 +186,38 @@ function session() {
   return { c, call };
 }
 
-test('a later save repeats the observed order after typing and reads in the same session', () => {
+test('a later save repeats the observed order once after typing and reads in the same session', () => {
   const { c, call } = session();
   call(sheetRows('Inventory', true), 'await app.typeText("more")');
   c.process([text(tree(sheetRows('Inventory', true)))]);
   for (let i = 0; i < 2; i++) {
     const out = call(sheetRows('Inventory', true), 'await app.pressKey("super+s")');
     assert.match(out, /saved:/);
-    assert.match(out, /sleight: tabs now: Review 16f3255b, Inventory\./);
+    if (i === 0) assert.match(out, /sleight: tabs now: Review 16f3255b, Inventory\./);
+    else assert.doesNotMatch(out, /tabs now:/);
     assert.doesNotMatch(out, /also swapped/);
+  }
+});
+
+for (const marker of [' — Edited', ' - Edited', ' Edited']) {
+  test(`typing and saving across a trailing${marker} marker retains one reminder`, () => {
+    const { c } = session();
+    const call = (title, code) => c.process([text(GUARD_MARK + tree(sheetRows('Inventory', true))
+      .replaceAll('Draft', title) + GUARD_END)], { action: c.beginAction(code) }).map(i => i.text).join('\n');
+    call('Draft' + marker, 'await app.typeText("more")');
+    assert.match(call('Draft', 'await app.pressKey("super+s")'), /sleight: tabs now: Review 16f3255b, Inventory\./);
+    assert.doesNotMatch(call('Draft', 'await app.pressKey("super+s")'), /tabs now:/);
+  });
+}
+
+test('edited-marker normalization retains distinct document titles, URLs and apps', () => {
+  for (const change of [doc => doc.replaceAll('Draft', 'Other — Edited'),
+    doc => doc.replace('App: Editor.', 'App: Other.'),
+    doc => doc.replace('standard window Draft', 'standard window Draft, URL: file:///tmp/other')]) {
+    const { c } = session();
+    const out = c.process([text(GUARD_MARK + change(tree(sheetRows('Inventory', true))) + GUARD_END)],
+      { action: c.beginAction('await app.pressKey("super+s")') }).map(i => i.text).join('\n');
+    assert.doesNotMatch(out, /tabs now:/);
   }
 });
 

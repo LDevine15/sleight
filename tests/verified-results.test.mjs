@@ -315,12 +315,19 @@ for (const [name, options] of [
   ['an ID click', { target: '{ id: "First Text View" }' }],
   ['an unresolved number', { target: '99' }],
   ['coordinates', { target: '{ x: 10, y: 20 }' }],
-  ...['button', 'menu item', 'row', 'link'].map(role => [role, { role }]),
   ['select-all alone', { target: '{ id: "First Text View" }', edit: 'await app.pressKey("super+a");' }],
   ['plain typing', { target: '{ id: "First Text View" }', edit: 'await app.typeText("759");' }],
 ]) test(`a subsequent edit on the same handle resolves ${name} for file-time save evidence`, t => {
   assert.match(saveAfterClick(t, options), /saved: observed .* \(its file on disk changed during this call\)/);
 });
+
+for (const role of ['button', 'menu item', 'row', 'link']) {
+  test(`a resolved ${role} remains navigation when followed by editing and save`, t => {
+    const note = saveAfterClick(t, { role });
+    assert.match(note, /saved: not confirmed \(mixed save targets\)/);
+    assert.doesNotMatch(note, /saved: observed/);
+  });
+}
 
 test('a click without an earlier tree leaves save proof unavailable rather than mixed', t => {
   assert.match(saveAfterClick(t, { target: '2', baseline: false }), /saved: not confirmed \(no earlier read\)/);

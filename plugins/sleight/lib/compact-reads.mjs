@@ -149,7 +149,7 @@ function actionKind(code, before) {
   const literal = args => /^\s*['"]([^'"\\]*)['"]\s*(?:,|$)/.exec(args)?.[1];
   const argsOf = call => code.slice(call.index + call[0].length).split(')')[0];
   const savePanel = /\b(?:sheet|dialog)\b.*\b(?:save-panel|save)\b/i.test(before?.root ?? '');
-  let save = false, opens = false, navigates = false, deletes = false, saveCall, saveHandle;
+  let save = false, opens = false, navigates = false, deletes = false, reorders = false, saveCall, saveHandle;
   const editableClicks = new Set();
   // A folder and name count only on the way to a save: an Open panel reached the same way named the
   // file it opened, and its URL would have read as a save.
@@ -179,12 +179,19 @@ function actionKind(code, before) {
       const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
       const line = number && before?.lines.find(line => parse(line).num === Number(number));
       const target = line && parse(line).key.trim();
+      const named = /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"]([^'"\\]*)['"]/.exec(args)?.[1];
+      const namedTargets = named && before?.lines.map(line => parse(line).key.trim())
+        .filter(line => hasLabel(line, named) || hasIdentifier(line, named));
+      reorders ||= [named, ...[target, ...(namedTargets ?? [])].filter(Boolean).flatMap(body =>
+        [describeSibling({ body })?.label, /(?:^|, )ID: ([^,]+)/.exec(body)?.[1]])]
+        .some(label => label && /move|up|down|sort|order|rank/i.test(label));
       // ID and first-call clicks have no numbered line. A following edit on the same handle
       // supplies context; only the existing save-state or file-time evidence can prove a save.
       const followsEdit = calls.slice(calls.indexOf(call) + 1).some(next => receiver(call) && receiver(next) === receiver(call) &&
         (['paste', 'typeText'].includes(next[1]) || next[1] === 'pressKey' && /^(?:super|cmd|command)\+a$/i.test(literal(argsOf(next)) ?? '')));
-      const editable = !before || followsEdit || target && (/^text (?:entry area|area|field)\b/.test(target) ||
-        (!/^(?:[^(:]*button|menu item|row|link)\b/.test(target) && /^[^(,:]+\([^)]*\bsettable\b[^)]*\).*\bValue:/.test(target)));
+      const editable = target ? /^text (?:entry area|area|field)\b/.test(target) ||
+        (!/^(?:[^(:]*button|menu item|row|link)\b/.test(target) && /^[^(,:]+\([^)]*\bsettable\b[^)]*\).*\bValue:/.test(target))
+        : !before || followsEdit;
       if (editable) editableClicks.add(call);
       isSave = (!!target && hasLabel(target, 'Save')) ||
         /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"](?:Save|button Save)['"]\s*\}?\s*$/.test(args);
@@ -211,7 +218,7 @@ function actionKind(code, before) {
   const namedURL = save && folderHandle === saveHandle && nameHandle === saveHandle && baseName(fileName) &&
     namedPath && isAbsolute(namedPath) ? pathToFileURL(join(namedPath, fileName)).href : undefined;
   const otherTarget = navigates || otherRead || acquisitionAfterSave || calls.some(call => receiver(call) !== saveHandle);
-  const clickAndTyping = calls.some(call => call[1] === 'click') && calls.every(call =>
+  const clickAndTyping = !reorders && calls.some(call => call[1] === 'click') && calls.every(call =>
     ['click', 'typeText', 'paste'].includes(call[1]) || call[1] === 'pressKey' && /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''));
   return { save, opens, deletes, clickAndTyping, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
@@ -363,6 +370,12 @@ function swappedSiblings(before, after) {
     const previous = old.get(key);
     if (matches.length !== 1 || previous?.length !== 1) continue;
     const was = previous[0].children, parent = matches[0], now = parent.children;
+    // A value or real selection change can itself reorder a list. Only the engine's
+    // "Selected, " label prefix is ignored when comparing these sibling states.
+    if (was.some(node => {
+      const matches = now.filter(other => other.key === node.key);
+      return matches.length !== 1 || JSON.stringify(stateFields(node.body)) !== JSON.stringify(stateFields(matches[0].body));
+    })) continue;
     const changed = was.map((node, i) => node.key !== now[i].key ? i : -1).filter(i => i >= 0);
     if (changed.length !== 2) continue;
     const [i, j] = changed, a = was[i], b = was[j];
@@ -383,6 +396,10 @@ function swappedSiblings(before, after) {
 function siblingSwapNote(swap) {
   return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; if that wasn't intended, fix the order with the app's move command.`;
 }
+
+// Reminders survive an edited title marker; input guards and document grants still use exact identity.
+const swapDocumentKey = window => window && documentKey({ ...window,
+  title: window.title.replace(/(?: — | - | )Edited$/, '') });
 
 // Capture the error before relay notices and trees can bury it. The engine puts its exception
 // after ordinary output; a guard exception carries its tree after the first line.
@@ -847,13 +864,14 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const observation = observedInResult;
       if (failed || stopped || action?.overlap || action && (!observation || observation.invalid)) pendingSwaps.clear();
       if (observation && !observation.invalid) {
-        const key = documentKey(observation.window), pending = pendingSwaps.get(key);
+        const key = swapDocumentKey(observation.window), pending = pendingSwaps.get(key);
         if (pending) {
           const matches = siblingGroups(observation.lines).get(pending.key);
           if (observation.incomplete || observation.degraded || observation.delta?.degraded || matches?.length !== 1 ||
               JSON.stringify(matches[0].children.map(node => node.key)) !== JSON.stringify(pending.order)) pendingSwaps.delete(key);
-          else if (action?.save && action.before && documentKey(action.before.window) === key && !failed && !stopped && !action.overlap) {
+          else if (action?.save && action.before && swapDocumentKey(action.before.window) === key && !failed && !stopped && !action.overlap) {
             out.push({ type: 'text', text: `sleight: ${pending.summary}.` });
+            pendingSwaps.delete(key);
           }
         }
       }
@@ -864,7 +882,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           documentKey(action.before.window) === documentKey(observedInResult.window)) {
         const swap = swappedSiblings(action.before.lines, observedInResult.lines);
         if (swap) {
-          pendingSwaps.set(documentKey(observedInResult.window), swap);
+          pendingSwaps.set(swapDocumentKey(observedInResult.window), swap);
           out.push({ type: 'text', text: siblingSwapNote(swap) });
         }
       }
