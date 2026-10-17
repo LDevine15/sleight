@@ -20,9 +20,17 @@ want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especi
   every real `request_access` (the schema's required `reason`) and the block record kept the account banner, both fixed. Needs its
   live check.
 
-**Running.** DG1R (Codex lane, log `ledger/lane-runs/dg1r.log`): review fixes to `codex/dg1` (drag by element number or text
-selection). Its element scan stopped at depth 12 or 300 elements, so deep web text would refuse, and titles with commas could match
-another element. DG1 merges after it. No live run is going: the next ones wait for the owner to say they're away and a Puddle window.
+**Running.** Puddle window w-live-1017 (HOLD 12:54:00Z, cap 100 min, auto-release ~14:34Z): `~/Projects/sleight-wt/sitting-1017b/run.sh`
+(`nohup`, pid in `run.pid`, log `run.log`). Its claude-cu live check ran first and failed (calculator-click, 300.7 s): the model saw no
+tools, because the task went out 0.61 s after start and the in-process computer-use server connects at ~1.1 s, and the harness
+waited for a RESULT line, which the world task prompts don't contain. Both fixed in `716a6109` (send after the debug log shows the server
+connected; end on the turn's last text), unit-tested only, needs a short window for the recheck. Then the A/B: OLD `2c687b2a` (the
+claim build) against NEW `e8467903` with every opt-in flag (WARM_ENGINE, OPEN_FAST, OPEN_SHOT, SKILL=screenshot, COMPACT_TOOLBARS,
+COMPACT_CONFIRMATIONS), 20 native tasks, 3 rounds, logs `ab.log` and `ab-<side>-r<n>.log`; the script closes this run's Finder
+fixture windows and touches `/tmp/sleight-bench-done` at the end. Score: `node bench/ab-score.mjs --old ~/Projects/sleight-wt/ab-old/bench/results
+--new ~/Projects/sleight-wt/ab-new/bench/results --since 2026-10-17T12-59`.
+**Unpushed on this branch** until a full check runs after the window: DG1 with DG1R and `29db25d5` (merge `f3d999a6`; drag by element
+number or selection; after a second review, replaying a selection or line-end drag requires `--allow-positions`), and `716a6109`.
 sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed, scored to
 `~/Projects/sleight-wt/sitting-1017/claim-score-final.txt`, and Puddle's window w-flagab-1017 was released at 12:13:06Z.
 Its harness bugs: run.mjs crashed in the unlock because something else removed `/tmp/sleight-live.lock` mid-run (fixed in
