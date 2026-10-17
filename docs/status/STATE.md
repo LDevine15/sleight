@@ -163,7 +163,7 @@ Next, in order:
   only the engine server. During a pass with the Codex arm, the runner sets ChatGPT's "Always allow"
   list to the benchmark apps (owner's OK, 2026-10-09) and restores it on exit; a killed runner leaves
   it changed, so restore from the newest `~/Library/Logs/sleight/ComputerUseAppApprovals.before-*`.
-  It has held only Word and Codex since 2026-10-11. The owner's 6 apps are in
+  It has listed only Word and Codex since 2026-10-11. The owner's 6 apps are in
   `ComputerUseAppApprovals.before-2026-10-11T14-19-10-653Z.json`, and the owner will restore it later (owner, 2026-10-17).
 - `~/Library/Caches/sleight-bench/keyboard-taps`: compiled from `bench/keyboard-taps.swift`, lists
   keyboard filter taps. The runner builds it if missing.
