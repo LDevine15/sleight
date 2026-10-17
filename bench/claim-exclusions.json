@@ -98,6 +98,13 @@
       ],
       "arm": "sleight",
       "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
+    },
+    {
+      "arm": "sleight",
+      "names": [
+        "2026-10-17T11-53-13-451Z.json"
+      ],
+      "why": "sleight's 11:53Z claim pass on the build before WE1, GS1, SN1 and LS1; replaced by the final claim run 2026-10-17T19-07-02-548Z on bb6f99f6 (5 runs on all 9 tasks)"
     }
   ],
   "windows": [
