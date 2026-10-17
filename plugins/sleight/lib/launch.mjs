@@ -482,7 +482,7 @@ const runOpen = (file, argv) => new Promise((resolve, reject) =>
 // executable files, relative paths, and anything but an existing regular file. The open goes to the
 // resolved bundle ID, so the app checked is the app that opens the file.
 export async function openDocument(args, { exec = runOpen, resolve = resolveAppId, home = homedir(),
-  fast = false, bundleId: preparedId, current = () => {},
+  fast = false, bundleId: preparedId, current = () => {}, openedFiles,
   hasDocument = async (appId, path) => {
     const result = await runScript('open-file-window.js', { appId, path });
     return result.ok === true && result.matches === true;
@@ -503,23 +503,37 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
     return text(`open_file doesn't open files in ${app}, which runs or installs what it opens or isn't driven by sleight.`, true);
   }
   current();
+  const started = Date.now(), key = JSON.stringify([bundleId, path]);
   let present = false;
   if (fast) {
-    try { present = await hasDocument(bundleId, path) === true; } catch {}
+    let timer;
+    try {
+      present = await Promise.race([
+        Promise.resolve().then(() => hasDocument(bundleId, path)),
+        new Promise(resolve => { timer = setTimeout(() => resolve(false), 1000); }),
+      ]) === true;
+      const lastOpened = openedFiles?.get(key), latest = lstatSync(path);
+      present = present && Number.isFinite(lastOpened) && latest.isFile() && latest.mtimeMs <= lastOpened;
+    } catch { present = false; }
+    finally { clearTimeout(timer); }
   }
   current();
   try { if (!present) await exec('/usr/bin/open', ['-g', '-b', bundleId, path]); }
   catch (err) { return text(`macOS couldn't open ${raw} in ${app}: ${String(err.message || err).split('\n')[0]}`, true); }
+  if (!present) openedFiles?.set(key, started);
   return { ...text(`Opened ${raw} in ${app} in the background.`), _meta: { 'sleight/openedApp': bundleId } };
 }
 
 const approveOpenFile = (args, approve) => approve(['open_file', args.app],
   `Allow Claude to open files in ${args.app}? They open in the background.`);
 
-export function prepareOpenFile(args, approve, { resolve = resolveAppId } = {}) {
+export function prepareOpenFile(args, approve, { resolve = resolveAppId, openedFiles } = {}) {
+  let approval;
   return {
+    openedFiles,
     bundleId: Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => ''),
-    approval: Promise.resolve().then(() => approveOpenFile(args, approve)),
+    // Resolution can overlap target lookup; approval starts only when the caller is ready.
+    get approval() { return approval ??= Promise.resolve().then(() => approveOpenFile(args, approve)); },
   };
 }
 
@@ -549,7 +563,8 @@ export function runScript(script, request, options = {}) {
   const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
-  const execOptions = { timeout: cleanup ? 3000 : 30000, ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
+  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup ? 3000 : 30000,
+    ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
   return new Promise(resolve => {
     ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
@@ -809,6 +824,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const sessionId = randomUUID();
 
   let appHealth = healthHelperFactory();
+  const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
   const approval = approvalOptions();
@@ -873,7 +889,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     localTools: {
       tools: localToolDefinitions(),
       prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
-        approve(parts, wordForHost(message, wording()), options)),
+        approve(parts, wordForHost(message, wording()), options), { openedFiles }),
       call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared),
       target: async args => {
