@@ -16,7 +16,7 @@ import { assertLogin } from '../preflight.mjs';
 import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
-import { gradeGateTask, browserEvidence } from './real-gate-grade.mjs';
+import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles } from './support.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -180,6 +180,26 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
   }
 }
 
+// The commits a round ran: the build whose plugin the arms load (repo), the bench code running the round (harness) and
+// FowlBrowser's runner (mcpRoot). dirty counts modified tracked files, so a result can be traced to code that existed.
+export function gitHead(dir) {
+  try {
+    const git = args => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const changed = git(['status', '--porcelain', '--untracked-files=no']);
+    return { commit: git(['rev-parse', 'HEAD']), dirty: changed ? changed.split('\n').length : 0 };
+  } catch (error) { return { commit: null, error: error.message.split('\n')[0] }; }
+}
+export function roundCommits({ repo, mcpRoot, harness = repoRoot, head = gitHead }) {
+  return { build: { repo, ...head(repo) }, harness: { repo: harness, ...head(harness) }, ...(mcpRoot ? { fowlbrowser: { repo: mcpRoot, ...head(mcpRoot) } } : {}) };
+}
+
+// Writes harness-failure.json when one error class failed 10 or more of the round's 12 tasks; scorers drop the round.
+export function markHarnessFailure(out, rows, total) {
+  const verdict = harnessFailure(rows.map(row => ({ task: row.task.name, ok: row.outcome?.ok === true, errorClass: row.errorClass })), total);
+  if (verdict) writeFileSync(join(out, 'harness-failure.json'), JSON.stringify({ ...verdict, decided: 'automatic', at: new Date().toISOString() }, null, 2));
+  return verdict;
+}
+
 // What would stop a live round before it starts, read without launching anything.
 export function gatePreflight(plan, { executable = executableProblem } = {}) {
   const problems = profileSourceProblems(plan.browser);
@@ -240,6 +260,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   const rows = [];
   try {
     mkdirSync(plan.out, { recursive: true, mode: 0o700 });
+    writeFileSync(join(plan.out, 'commits.json'), JSON.stringify((runtime.commits || roundCommits)({ repo, mcpRoot }), null, 2));
     // Resolve pinned native receipts before the first browser launch.
     realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: plan.browser, dryRun: false });
     // An offline test that injects admission never touches the Mac's approvals or daemons unless it injects prep too.
@@ -319,15 +340,20 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       const visits = navigation ? (navigation.observed ? navigation.urls : []) : null;
       const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner, after, startKeys,
         observed: observation.observed, observationReason: observation.reason, ownerCheck: observation.ownerCheck, evidence, visits });
+      const text = name => { try { return readFileSync(join(arm.dir, name), 'utf8'); } catch { return ''; } };
+      const errorClass = outcome.ok ? null : runErrorClass({ eventsText: text('events.jsonl'), stderr: text('stderr.txt') });
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
         successfulBrowserCalls: evidence?.successfulCalls ?? null, run: { ...run, tabs: [...run.tabs] }, start, observation, navigation: navigation ?? null,
-        agentConfig: arm.metadata, grade, site, outcome };
+        agentConfig: arm.metadata, grade, site, outcome, errorClass };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
     }
   } catch (error) {
-    if (existsSync(plan.out)) writeFileSync(join(plan.out, 'failure.json'), JSON.stringify({ error: error.message, completed: rows.length }));
+    if (existsSync(plan.out)) {
+      writeFileSync(join(plan.out, 'failure.json'), JSON.stringify({ error: error.message, completed: rows.length }));
+      markHarnessFailure(plan.out, rows, plan.arms.length);
+    }
     throw error;
   } finally {
     await armPrep?.release();
@@ -351,14 +377,17 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   for (const row of rows) row.focusGrade = row.surface === 'sleight-turbo' ? gradeHostMonitor(monitor?.log || [], row.run, rows.map(row => row.run))
     : { ok: null, cell: 'not measured', events: [], problems: [] };
   writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
+  const harness = markHarnessFailure(plan.out, rows, plan.arms.length);
   const used = browser ? (({ stop, reset, observe, ...value }) => value)(browser) : plan.browser;
   const profileText = used.profileMode === 'benchmark-copy' ? `a copy of Chrome's "sleight benchmark" (${used.profileFolder ?? 'folder unknown'})`
     : `fresh at ${used.profileRoot}`;
   const lines = [`Browser: ${used.browser} ${used.version ?? '(version unknown)'}, profile ${profileText}` +
     `${used.loadedExtensions?.length ? `, loaded ${used.loadedExtensions.join(', ')}` : ''}.`, '',
     '| task | arm | outcome | focus | ms | calls | errors |', '|---|---|---|---|---:|---:|---:|',
-    ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`)];
+    ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
+    ...(harness ? ['', `Harness failure, excluded from scoring: ${harness.reason}.`] : [])];
   writeFileSync(join(plan.out, 'report.md'), lines.join('\n') + '\n');
+  if (harness) console.error(`Harness failure: ${harness.reason}; rerun this round`);
   if (!cleanupProven || rows.some(row => !row.outcome.ok || row.focusGrade.ok === false)) process.exitCode = 1;
   return rows;
 }
