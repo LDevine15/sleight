@@ -75,8 +75,20 @@ TODO: full release pass result.
   whole window. Finder drags hit the scan limit in the 2026-10-16 runs. A timed-out drag suggests
   Copy or Cut and Paste.
 - The skill tells Claude to acquire an app the task names directly, and to use the changed lines an
-  action returns instead of reading again to confirm them.
-  TODO: these four entries' A/B result.
+  action returns instead of reading again to confirm them. It moves files with Copy and then the
+  menu's Move item, since Cut is often disabled for files.
+- A call that opens a menu with its own label click and then picks an item goes on in the same call.
+  The guard still stops at the menu, and sleight continues only if the window and its focus are
+  unchanged and there was no keyboard or mouse input since the call was sent.
+- A click into a text area before Cmd+S no longer hides an observed save: when the same document's
+  file changed on disk during the call, the result says it saved.
+- An element number is checked against the window of the app the call acts on. A click in one app
+  after a read of another was stopped as stale.
+- The skill's browser how-to arrives with the first browser result instead of in every native
+  session. Its submit and redaction rules still come first.
+- `SLEIGHT_COMPACT_ACQUISITION=1` sends an app's first tree with only the elements that take actions
+  and short text, and refuses a click on a number it left out.
+  TODO: these entries' A/B result.
 
 ### Browsers
 
