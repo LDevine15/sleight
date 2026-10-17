@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 00:40 UTC, flushed before the owner's clear: heads-down on fixes, then one A/B, the claim run and the tag)
+## Banner (2026-10-17 01:45 UTC: TT2, TT3, TT4 and TS13 merged with review fixes; TK1, TK2, TK3 and TT1N2 building)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
@@ -18,21 +18,22 @@ the owner's call. Score only with `node bench/claim-score.mjs --results ~/Projec
 
 **Build lanes in flight.** They run as headless `codex exec` (gpt-6.1-sol high) under launchd, so the clear doesn't stop them.
 Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with the prompt `queue/tt/lane-prompt-tt.md`. Logs go to `ledger/lane-runs/`.
-- TT2 DONE at 00:37 UTC on `codex/tt2` `0c286dd9`, waiting for sleight-arch's review and merge (the next session's first job). It
-  covers the relay: open_file returns the window, a top-level `return` works, and the file's mtime confirms a save.
-- TT3, pid 58228: drag. Non-text drags hit-test their endpoints, and a timeout points to Copy and Paste.
-- TT4, pid 58235: compact reads. No full tree after a filtered return.
-- TS13, pid 67634: skill and result text. No confirming read after an action, and getApp on an app the task names.
-  Each reports in `ledger/claims/<ID>/` (DONE, BLOCKED or STALE, plus REPORT.md). Review each branch, run one full check per
-  merge, push, fast-forward.
-- Next in line (same files as a running lane): TK1 compact first acquisition after TT4, TK2 engine docs once and shorter after
-  TT2, TK3 skill placement after TS13 (it blocked on the skill lock, correctly). Relaunch with the same prompt template (claim
-  folders TK3 hold a BLOCKED from the lock clash: remove BLOCKED and OWNER before relaunching it).
-- TT1N (the input lease accepting a menu its own call opened) is sleight-arch's own design job: the guard sees only title, app and
-  URL, with no window number or in-call focus history (`claims/TT1N/REPORT.md`, branch `codex/tt1n` `b440ac07` holds 10 tests,
-  2 red by design). The fix needs sleight's native window identity between the two actions. The lease protects the owner.
+- Merged 2026-10-17 01:30 UTC (pushed `f4fd763f`, full check exit 0, 5,605 tests, 0 fail): TT2 (open_file returns the window,
+  top-level `return`, save confirmed by mtime), TT3 (non-text drags hit-test their endpoints), TT4 (no full tree after a filtered
+  return), TS13 (skill: getApp on a named app, and action results stand as confirmation). Sonnet-high reviews found real bugs, fixed here: TT2's final
+  `return (x)` joined an unterminated previous line; TT3's Copy-and-Paste advice fired after a successful drag, and its 32-level
+  parent walk was too short for Electron (31 levels measured); TT4's marker was forgeable by window text and dropped the next
+  action's UI-change note. TT3's text-drag path depends on `$.CFEqual` in JXA: a read-only probe matched windows in 6 apps, but
+  textedit-drag still needs its live run before the claim run.
+- Building (`codex exec` lanes, logs in `ledger/lane-runs/`): TK2 engine docs (pid 8829), TK3 skill placement (pid 8830, relaunched
+  with a lock and budget; its old lock-clash report is `lane-runs/tk3-blocked-lock-report-20261017.md`), then TK1 compact first
+  acquisition and TT1N2 once the TT4 fixes push. Each reports in `ledger/claims/<ID>/`. Review each branch with a Sonnet-high
+  reviewer, run one full check per merge batch, push, fast-forward.
+- TT1N2 (`queue/tt/TT1N2.md`, sleight-arch's design): the guard still stops on the menu header; the relay, outside the engine,
+  continues the rest of the call only when the stop follows the call's own label click, the root is that menu, the native window
+  number and focus are unchanged, and there was no hardware input since the call was sent (HID idle). Needs a live check that
+  engine background clicks leave HID idle untouched.
 - Not ours: PID 41395, a read-only `codex exec` started 2026-10-16 01:46 local. Leave it.
-- This session's lane watcher stops at the clear. Next session: check `ls ledger/claims/{TT2,TT3,TT4,TS13}`.
 
 **Where the claim stands** (scored, 2026-10-16 runs; expected seconds to a correct result, passes/runs). sleight completed 9/9
 native tasks; lcu 6/9, codex 6/9, cua 7/9, peekaboo 3/9. After skill fix `14327dd4` (rerun 2026-10-17 00:05 UTC, load 4.5 at start)
