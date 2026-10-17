@@ -6,6 +6,10 @@ export const GUARD_OMIT_MARK = '[sleight:guard-read-omitted]\n';
 export const GUARD_END = '\n[/sleight:guard-read]\n';
 export const GUARD_READY = '[sleight:guard-ready]';
 
+// The engine's window header line: `Window: "<title>", App: <name>.` windowFromText repeats it, as the
+// guard runs that function's source in the engine.
+export const WINDOW_HEADER = /^Window: (.*), App: (.+)\r?$/m;
+
 export function windowFromText(text) {
   // The title is one JSON string. Safari writes a raw inch mark inside it (bestbuy.com, 2026-10-11:
   // 23.8"), which is not JSON, so take the quotes off when parsing throws. Two headers still disagree.

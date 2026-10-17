@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { RESULT_LIMIT } from '../plugins/sleight/lib/result-budget.mjs';
-import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { createRelay, beforeFirstTree } from '../plugins/sleight/lib/relay.mjs';
 import { GUARD_MARK } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const text = text => ({ type: 'text', text });
@@ -363,4 +363,23 @@ test('a collected engine restart discards the previous held docs', async t => {
   serverOut.write(JSON.stringify({ id: 4, result: { content: [text(docs.replace('Native API reference.', 'Replacement API reference.')), text('4')] } }) + '\n');
   assert.match(body(result(h, 4)), /Replacement API reference/);
   assert.doesNotMatch(body(result(h, 4)), /Native API reference/);
+});
+
+test('rules go before the engine header, not a docs line that starts with "Window: "', () => {
+  const item = text('RULES'), docsLine = text('## Docs\nWindow: names the window a read returns.\nMore docs.');
+  assert.deepEqual(beforeFirstTree([docsLine, text(tree)], item), [docsLine, item, text(tree)]);
+  assert.deepEqual(beforeFirstTree([text('Window: no header here')], item), [text('Window: no header here'), item]);
+  const shared = beforeFirstTree([text('Window: docs line\n' + tree)], item);
+  assert.deepEqual(shared, [text('Window: docs line\n'), item, text(tree)]);
+});
+
+for (const [shown, confirmed] of [['file:///tmp/other.txt', false], ['file:///private/tmp/note.txt', true],
+  ['file:///tmp/note.txt', true], [null, true]]) test(`open_file checks the read window's URL against the path: ${shown}`, async t => {
+  const h = harness(t, { localTools: { tools: [{ name: 'open_file' }], call: async () => ({ content: [text('Opened /tmp/note.txt in Example in the background.')],
+    _meta: { 'sleight/openedApp': 'org.example.editor', 'sleight/openedFile': { path: '/tmp/note.txt', real: '/private/tmp/note.txt', size: 5 } } }) } });
+  const window = tree.replace('0 standard window note.txt', '0 standard window note.txt' + (shown ? ', URL: ' + shown : ''));
+  const out = body(await h.open(1, [text(window)]));
+  assert.equal(/Opened \/tmp\/note\.txt/.test(out), confirmed);
+  assert.equal(/main window shows file:\/\/\/tmp\/other\.txt, not \/tmp\/note\.txt/.test(out), !confirmed);
+  assert.doesNotMatch(JSON.stringify(h.received), /openedFile/);
 });

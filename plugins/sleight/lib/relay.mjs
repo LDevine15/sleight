@@ -58,8 +58,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END } from './document-scope.mjs';
+import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -412,9 +413,9 @@ function replaceLastImage(content, data) {
 // Inserts item before the first window tree, splitting engine docs off a text item that carries both.
 // Content without a tree gets it last.
 export function beforeFirstTree(content, item) {
-  const index = content.findIndex(c => c.type === 'text' && /^Window: /m.test(c.text ?? ''));
+  const index = content.findIndex(c => c.type === 'text' && WINDOW_HEADER.test(c.text ?? ''));
   if (index < 0) return [...content, item];
-  const tree = content[index], at = tree.text.search(/^Window: /m);
+  const tree = content[index], at = tree.text.search(WINDOW_HEADER);
   const split = at > 0 ? [{ ...tree, text: tree.text.slice(0, at) }, item, { ...tree, text: tree.text.slice(at) }] : [item, tree];
   return [...content.slice(0, index), ...split, ...content.slice(index + 1)];
 }
@@ -1788,8 +1789,9 @@ export function createRelay({
   }
 
   // A claimed form capability can still fail to answer. Expire without granting anything.
-  function requestElicitation(params) {
+  function requestElicitation(params, onId) {
     const id = `sleight-elicit-${nextElicitId++}`;
+    onId?.(id);
     return new Promise(resolve => {
       const finish = msg => { clearTimeout(timer); elicitations.delete(id); resolve(msg); };
       const timer = setTimeout(() => finish({ result: { action: 'decline' } }), 300000);
@@ -1799,10 +1801,18 @@ export function createRelay({
     });
   }
 
+  // Withdraws an elicitation of ours that is still open (MCP cancellation) and answers it as a decline.
+  function cancelElicitation(id) {
+    const finish = elicitations.get(id);
+    if (!finish) return;
+    toClient({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'The call failed before it needed this answer.' } });
+    finish({ result: { action: 'decline' } });
+  }
+
   // Asks the client's user through an elicitation of our own.
-  function elicit(message) {
+  function elicit(message, onId) {
     if (clientCanElicit === false) return Promise.resolve('cancel');
-    return requestElicitation({ message, mode: 'form', requestedSchema: { type: 'object', properties: {} } })
+    return requestElicitation({ message, mode: 'form', requestedSchema: { type: 'object', properties: {} } }, onId)
       .then(msg => msg.result?.action ?? 'cancel');
   }
 
@@ -1825,8 +1835,12 @@ export function createRelay({
     const scoped = approvalScope === 'session' && !options.once;
     const preapprovable = !options.once && keyParts.length === 2 &&
       ['drag', 'menu_bar', 'open_file'].includes(keyParts[0]);
+    // withdraw() declines a pending ask whose call failed first: later asks stop waiting on it, an
+    // elicitation of ours is cancelled, and a later answer grants nothing. A native panel stays up.
+    let withdrawn = false, elicitation, settle;
+    const gone = new Promise(resolve => { settle = resolve; });
     const decided = asking.then(async () => {
-      if (generation !== stopGeneration || closing || disposed) return false;
+      if (withdrawn || generation !== stopGeneration || closing || disposed) return false;
       let auditFailed = false;
       try {
         if (preapprovable && userListGrant(keyParts[1], 'high', keyParts[0], [callId])) return true;
@@ -1836,18 +1850,24 @@ export function createRelay({
       try {
         action = ask
           ? await askPrompt([callId], message, scoped, options.kind ? { kind: options.kind, detail: options.detail } : undefined)
-          : await elicit(options.detail ? `${message} ${options.detail}` : message);
+          : await elicit(options.detail ? `${message} ${options.detail}` : message, id => { elicitation = id; });
       } catch {
         action = 'cancel';
       }
-      trace('local-approval', { key, action, ...(options.once ? { once: true } : {}) });
-      if (generation !== stopGeneration || closing || disposed) return false;
+      trace('local-approval', { key, action, ...(options.once ? { once: true } : {}), ...(withdrawn ? { withdrawn } : {}) });
+      if (withdrawn || generation !== stopGeneration || closing || disposed) return false;
       if (action !== 'accept') return false;
       if (scoped) approved.add(key);
       return true;
     });
-    asking = decided.catch(() => {});
-    return decided;
+    const answer = Promise.race([decided, gone]);
+    asking = answer.catch(() => {});
+    answer.withdraw = () => {
+      if (withdrawn) return;
+      withdrawn = true; settle(false);
+      if (elicitation !== undefined) cancelElicitation(elicitation);
+    };
+    return answer;
   }
 
   async function callLocal(msg, plan) {
@@ -1860,13 +1880,15 @@ export function createRelay({
     let result;
     const name = msg.params.name;
     const args = msg.params.arguments ?? {};
-    let resolved, prepared;
+    let resolved, prepared, preparedAsk, preparedFailed = false;
     if (name === 'select_window') clearSelection();
     try {
       current();
       if (openFast && name === 'open_file' && localTools.prepareOpen) {
         prepared = localTools.prepareOpen(args, async (parts, message, options) => {
-          const allowed = await approve(parts, message, msg.id, options);
+          preparedAsk = approve(parts, message, msg.id, options);
+          if (preparedFailed) preparedAsk.withdraw();
+          const allowed = await preparedAsk;
           current();
           return allowed;
         });
@@ -1965,6 +1987,8 @@ export function createRelay({
         leaseWindow = undefined;
       }
     } catch (err) {
+      // A failed lookup or lease leaves the early open_file approval unanswered; decline it here.
+      preparedFailed = true; preparedAsk?.withdraw();
       result = { content: [{ type: 'text', text: String(err?.message ?? err) }], isError: true };
     }
     localRunning.delete(msg.id);
@@ -1973,16 +1997,25 @@ export function createRelay({
     finishedCall(msg.id);
     const openedApp = result._meta?.['sleight/openedApp'];
     if (name === 'open_file' && openedApp) {
-      const { 'sleight/openedApp': _, ...meta } = result._meta;
+      const { 'sleight/openedApp': _, 'sleight/openedFile': openedFile, ...meta } = result._meta;
       result = { ...result, _meta: meta };
       if (!result.isError && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(openedApp)) {
         const id = `sleight-open-file-${nextInternalId++}`, handle = `__sleightOpenedApp${nextInternalId++}`;
+        if (typeof openedFile?.path === 'string') compactor.noteOpenedFile(openedFile.path, openedFile.real, openedFile.size);
         callGenerations.set(id, generation);
         splitCalls.set(id, reply => {
           openShots.delete(id);
           if (generation !== stopGeneration || closing || disposed) return;
           const state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
-          const combined = { ...state, content: [...(result.content ?? []), ...(state.content ?? []),
+          // The read is of the app's main window. A window showing another file means this one may not be in front.
+          const shown = !state.isError && typeof openedFile?.path === 'string' &&
+            windowFromText((state.content ?? []).filter(c => c?.type === 'text').map(c => c.text).join('\n'));
+          let shownPath;
+          try { shownPath = shown?.url ? fileURLToPath(shown.url) : undefined; } catch { shownPath = null; }
+          const opened = shownPath === undefined || [openedFile.path, openedFile.real].includes(shownPath) ? result.content ?? []
+            : [{ type: 'text', text: `${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
+              'Find its window before acting.' }];
+          const combined = { ...state, content: [...opened, ...(state.content ?? []),
             ...(!state.isError ? [{ type: 'text', text: `Window handle: \`${handle}\`.` }] : [])] };
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);

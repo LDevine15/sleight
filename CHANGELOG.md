@@ -101,11 +101,13 @@ TODO: full release pass result.
 - A read whose document area doesn't show text values, such as an Excel sheet, gets one note to read the
   window with a screenshot (`SLEIGHT_TEXTLESS_HINT=0` leaves it out). In 5 of 5 excel-edit runs of the
   2026-10-17 claim run, Claude's first Excel read returned no cell values and a screenshot followed, about
-  3 s a run.
-- `open_file` skips `open -g` (150 to 200 ms) when a visible window already shows that exact file, unless the
-  file changed during the call or after this session opened it. Its approval runs alongside the app lookup
+  3 s a run. An empty text area gets the note only when `open_file` found its file non-empty, so a blank new
+  document doesn't.
+- `open_file` skips `open -g` (150 to 200 ms) when the app's main window already shows that exact file, unless the
+  file changed during the call or after this session opened it. When the window read after it shows another file,
+  the result says so instead of reporting the file opened. Its approval runs alongside the app lookup
   (118 to 138 ms cold). Not yet measured live.
-- The skill says a confirmed save covers the document's other sheets and pages. In 3 of 5 excel-edit runs
+- The skill says a confirmed save covers the document's sheets and pages until later edits. In 3 of 5 excel-edit runs
   (2026-10-17), Claude went back to an earlier sheet after saving, which set off a 10 to 25 s repair. It no
   longer repeats the engine's advice to prefer a CLI or API.
 - `bench/timing.mjs` counts `open_file` calls, with the open as local time and the window read as engine

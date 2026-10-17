@@ -21,8 +21,9 @@ our own runs. Dates and engine versions are given where they matter.
   alert and then stopped, 5 now split; the 2 with `.catch()` on an action still stop. None has run live yet. A dialog-close
   continuation also needs HID idle since the dialog was leased, so any mouse or key input after it appeared stops the
   rest, and it stops when the app has a second window with the same title and URL.
-- `open_file` asks for its approval while sleight looks up the app. When that lookup or the input lease then fails, the
-  user has answered for a call that opens nothing, and a yes still counts for the session.
+- `open_file` asks for its approval while sleight looks up the app. When that lookup or the input lease fails first,
+  sleight counts the approval as declined and asks Claude Code to cancel its prompt (we haven't checked that Claude Code
+  closes it). sleight's own panel stays up until answered, the answer grants nothing, and later approvals can show beside it.
 
 ## The pointer, drags and hover
 
