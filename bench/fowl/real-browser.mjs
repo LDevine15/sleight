@@ -4,13 +4,18 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 export function realBrowserPlan({ browser, round, home = homedir() }) {
-  if (!['chrome', 'helium', 'firefox'].includes(browser)) throw Error('real browser must be chrome, helium or firefox');
+  if (!['chrome', 'helium', 'firefox', 'safari'].includes(browser)) throw Error('real browser must be chrome, helium, firefox or safari');
   if (typeof round !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/.test(round)) throw Error('invalid round identity');
   const profileRoot = join(home, 'Library/Caches/sleight-bench/real-browser', round, 'profile');
   const executable = browser === 'chrome' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    : browser === 'helium' ? '/Applications/Helium.app/Contents/MacOS/Helium' : '/Applications/Firefox.app/Contents/MacOS/firefox';
+    : browser === 'helium' ? '/Applications/Helium.app/Contents/MacOS/Helium'
+    : browser === 'safari' ? '/Applications/Safari.app/Contents/MacOS/Safari' : '/Applications/Firefox.app/Contents/MacOS/firefox';
   const marker = `Sleight Gate ${round}`;
   const url = 'data:text/html,' + encodeURIComponent(`<title>${marker}</title><h1>${marker}</h1>`);
+  if (browser === 'safari') return { browser, executable, profileRoot, marker, markerUrl: url,
+    profileName: 'sleight benchmark', profileOwned: false, headless: false, connectionMode: 'engine-computer',
+    launchMode: 'NSWorkspace-background', resetMode: 'fresh-profile-window', inventoryMode: 'AX-tab-bar',
+    quitMode: 'NSRunningApplication-owned-pid-and-launch-date', unavailableGraders: ['completed downloads', 'device viewport'] };
   if (browser === 'firefox') return { browser, executable, profileRoot, marker, command: executable,
     args: ['-profile', profileRoot, '-no-remote', '-new-instance', url],
     headless: false, connectionMode: 'engine-computer', version: '157', versionVerified: false,
@@ -36,6 +41,8 @@ export function browserProcesses() {
 export function matchesBrowserProcess(plan, row) {
   const name = row.executable.replace(/^\((.*)\)$/, '$1');
   const canonical = path => (existsSync(path) ? realpathSync(path) : path).toLowerCase();
+  if (plan.browser === 'safari' && (name.toLowerCase().startsWith('/applications/safari.app/') ||
+      /^(?:safari\b|com\.apple\.webkit\.webcontent\b)/i.test(basename(name)))) return true;
   return isAbsolute(name) ? canonical(name) === canonical(plan.executable)
     : basename(name).toLowerCase().startsWith(basename(plan.executable).toLowerCase());
 }
@@ -78,11 +85,16 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata } = {}) {
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length) });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
   try {
+    if (plan.browser === 'safari') {
+      ordinaryParents(plan.profileRoot);
+      const { launchSafari } = await import('./safari-browser.mjs');
+      return await launchSafari(plan, { spawnBrowser, listProcesses, timeoutMs, quitMs, ownerCheck, safariBridge, restoreWait });
+    }
     if (plan.browser === 'firefox') {
       ordinaryParents(plan.profileRoot);
       const { launchFirefox } = await import('./firefox-browser.mjs');
@@ -201,14 +213,14 @@ const inventory = (browser, targets) => Object.fromEntries(targets.filter(target
   .map(target => [`${browser.browser}:${target.targetId}`, { url: target.url, title: target.title }]));
 
 export async function observeRealBrowser(browser, { connect = realBrowserCommands } = {}) {
-  if (browser.browser === 'firefox') return browser.observe();
+  if (['firefox', 'safari'].includes(browser.browser)) return browser.observe();
   const connection = await connect(browser);
   try { return inventory(browser, (await connection.send('Target.getTargets')).targetInfos); }
   finally { await connection.close(); }
 }
 
 export async function resetRealBrowser(browser, { connect = realBrowserCommands, timeoutMs = 5000 } = {}) {
-  if (browser.browser === 'firefox') return browser.reset();
+  if (['firefox', 'safari'].includes(browser.browser)) return browser.reset();
   const connection = await connect(browser);
   try {
     const previous = (await connection.send('Target.getTargets')).targetInfos.filter(target => target.type === 'page');

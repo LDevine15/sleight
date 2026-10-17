@@ -20,22 +20,22 @@ const codexHome = () => join(homedir(), '.codex-bench');
 export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, round, realBrowser, dryRun = true }) {
   if (args.remote || args.gui || args.swap || args.serve || args['keep-tabs']) throw Error('real-browser gate owns its local window, browser order, sites and cleanup; omit remote/gui/swap/serve/keep-tabs');
   if (tasks.some(task => task.surface && task.surface !== args.surface)) throw Error('real-browser gate runs one surface per round');
-  const surface = args.surface || (args['real-browser'] === 'firefox' ? 'sleight' : 'sleight-turbo');
+  const surface = args.surface || (['firefox', 'safari'].includes(args['real-browser']) ? 'sleight' : 'sleight-turbo');
   if (!REAL_SURFACES.includes(surface)) throw Error(`real-browser surfaces: ${REAL_SURFACES.join(', ')}`);
   round ??= realBrowser?.marker?.slice('Sleight Gate '.length) ?? randomUUID();
   const browser = realBrowser ?? realBrowserPlan({ browser: args['real-browser'], round });
   const out = resolve(args.out || `/tmp/fb-rounds/real-${round}-${surface}`);
   const candidates = tasks.filter(task => !args.only || args.only.split(',').includes(task.name));
   if (!candidates.length) throw Error('No gate tasks selected');
-  if (browser.browser === 'firefox' && surface === 'sleight-turbo') throw Error('Firefox has no turbo surface; use sleight');
-  if (browser.browser !== 'firefox' && surface === 'sleight') throw Error('Chrome/Helium use sleight-turbo');
+  if (['firefox', 'safari'].includes(browser.browser) && surface === 'sleight-turbo') throw Error('Firefox/Safari have no turbo surface; use sleight');
+  if (!['firefox', 'safari'].includes(browser.browser) && surface === 'sleight') throw Error('Chrome/Helium use sleight-turbo');
   const unsupported = candidates.flatMap(task => {
     const reason = task.takeover ? 'Takeover requires the separate user-takeover test protocol'
       : taskSupport(task, surface, { realBrowser: browser.browser });
     return reason ? [{ task, status: 'not-supported', reason }] : [];
   });
   const selected = candidates.filter(task => !unsupported.some(row => row.task === task));
-  if (selected.some(task => !/^[a-zA-Z0-9_-]+$/.test(task.name) || !['chrome', 'helium', 'firefox'].includes(task.browser))) throw Error('Invalid browser task');
+  if (selected.some(task => !/^[a-zA-Z0-9_-]+$/.test(task.name) || !['chrome', 'helium', 'firefox', 'safari'].includes(task.browser))) throw Error('Invalid browser task');
   if (new Set(selected.map(task => task.name)).size !== selected.length) throw Error('Duplicate gate task names');
   const arms = selected.map(original => {
     const task = { ...original, browser: browser.browser };
@@ -194,7 +194,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       });
       if (!run.groupClean) { cleanupProven = false; throw Error('BENCH_AGENT_CLEANUP_UNPROVED'); }
       const snapshot = await (runtime.observeBrowser || observeRealBrowser)(browser);
-      const observation = browser.browser === 'firefox' ? snapshot : { observed: true, tabs: snapshot };
+      const observation = ['firefox', 'safari'].includes(browser.browser) ? snapshot : { observed: true, tabs: snapshot };
       const after = observation.tabs;
       if (browser.browser === 'firefox') {
         // Positions can move or be reused; the first history entry identifies the start tab.

@@ -1,7 +1,7 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
 # (bench/fowl/sleight-surface.patch). Claude arms run on the owner's account login with no CLAUDE* variables from the host session.
-# Real gate: --real-browser chrome|helium|firefox --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex [--dry-run]
+# Real gate: --real-browser chrome|helium|firefox|safari --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex [--dry-run]
 # Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser|fowl+sleight|browser-use [rounds.mjs options]
 set -eu
 PIN=8b68924

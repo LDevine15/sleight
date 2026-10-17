@@ -88,7 +88,7 @@ test('real browser launch is visible, loopback-only, unique per round and refuse
     assert.ok(!plan.args.some(arg => /headless|no-sandbox|disable-web-security/.test(arg)));
     assert.notEqual(plan.profileRoot, realBrowserPlan({ browser: name, round: 'fixture-456' }).profileRoot);
   }
-  assert.throws(() => realBrowserPlan({ browser: 'safari', round: 'fixture' }), /browser/);
+  assert.throws(() => realBrowserPlan({ browser: 'unsupported', round: 'fixture' }), /browser/);
   assert.throws(() => realBrowserPlan({ browser: 'chrome', round: '../Default' }), /round/);
 });
 

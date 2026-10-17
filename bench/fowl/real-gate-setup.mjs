@@ -16,19 +16,20 @@ export function codexBrowserSetup({ dir, prompt, realBrowser }) {
   prompt = windowPrompt(realBrowser) + prompt;
   return { command: 'codex', args: codexExecPlan(prompt, { cwd: dir, model: 'gpt-6-luna', effort: 'high' }),
     prompt, mcpConfig: null, mcpConfigFile: join(codexHome(), 'config.toml'), env: { CODEX_HOME: codexHome() }, metadata: { model: 'gpt-6-luna', effort: 'high',
-      configDir: codexHome(), browser: realBrowser.browser, profile: realBrowser.profileRoot, headless: false, focus: 'not measured' } };
+      configDir: codexHome(), browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot, headless: false, focus: 'not measured' } };
 }
 export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRun = false, repo = repoRoot,
   model = 'haiku', effort = 'high', settings = join(dir, 'settings.json') }) {
   if (!REAL_SURFACES.includes(surface)) throw Error(`Unknown real-browser arm: ${surface}`);
-  const browserName = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox' }[realBrowser.browser];
+  const browserName = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox', safari: 'Safari' }[realBrowser.browser];
   const prompt = task.prompt.replaceAll('{browser}', browserName).replaceAll('{repo}', repo).replaceAll('{out}', dir) +
     `\n\nEnd your answer with one line starting with RESULT: that states ${task.result}.`;
   if (surface === 'codex') return codexBrowserSetup({ dir, prompt, realBrowser });
   const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(key =>
     typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
   const engine = surface === 'sleight';
-  if ((engine && realBrowser.browser !== 'firefox') || (surface === 'sleight-turbo' && realBrowser.browser === 'firefox')) throw Error('Firefox uses plain sleight; Chrome/Helium use sleight-turbo');
+  const computer = ['firefox', 'safari'].includes(realBrowser.browser);
+  if ((engine && !computer) || (surface === 'sleight-turbo' && computer)) throw Error('Firefox/Safari use plain sleight; Chrome/Helium use sleight-turbo');
   const common = engine ? worldAgentSetup({ surface: 'sleight', dir, hostEnv: env }) : null;
   const arm = engine ? { ...common,
     settings: { ...common.settings, ...genericSettings({ servers: ['plugin:sleight:computer'] }, repo) },
@@ -46,6 +47,6 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     settingsOverrides: engine || surface === 'sleight-turbo' ? { ...arm.settings, hooks: { ...arm.settings.hooks,
       Elicitation: [{ matcher: 'plugin:sleight:computer', hooks: [{ type: 'command', timeout: 5,
         command: `node "${join(repo, 'bench/fowl/origin-hook.mjs')}"` }] }] } } : arm.settings, env: { ...arm.env, ANTHROPIC_SMALL_FAST_MODEL: modelId(model) }, allowed: arm.allowed,
-    metadata: { ...arm.metadata, browser: realBrowser.browser, profile: realBrowser.profileRoot,
+    metadata: { ...arm.metadata, browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
       headless: false, focus: surface === 'sleight-turbo' ? 'host monitor' : 'not measured' } };
 }

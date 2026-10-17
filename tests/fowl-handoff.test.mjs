@@ -184,10 +184,9 @@ test('origin-hook accepts the hand-off apps and 127.0.0.1, and declines other ap
   const { answer } = await load('../bench/fowl/origin-hook.mjs');
   const hook = (message) => ({ mcp_server_name: 'plugin:sleight:computer', message });
   assert.equal(answer(hook('Allow Browser use to access http://127.0.0.1:5431?')), 'accept');
-  for (const app of ['Preview', 'TextEdit', 'Google Chrome', 'Helium']) {
+  for (const app of ['Preview', 'TextEdit', 'Google Chrome', 'Helium', 'Safari']) {
     assert.equal(answer(hook(`Allow Computer Use to use "${app}"?`)), 'accept', app);
   }
-  assert.equal(answer(hook('Allow Computer Use to use "Safari"?')), 'decline');
   assert.equal(answer(hook('Allow Computer Use to use "Mail"?')), 'decline');
   assert.equal(answer(hook('Allow Browser use to access https://example.com?')), 'decline');
   assert.equal(answer(hook('Allow download from http://127.0.0.1:5431/t/invoice-preview/?')), 'accept');
