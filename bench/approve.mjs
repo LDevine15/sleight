@@ -19,7 +19,11 @@ export function benchmarkDecision(e, env = process.env) {
   const ownerPresentApps = ['iPhone Mirroring', 'com.apple.ScreenContinuity'];
   const speedApps = env.BENCH_SUITE === 'app-speed-map' ? speedPlan({ ownerPresent: env.BENCH_OWNER_PRESENT === '1' }).apps
     .flatMap(app => [app.app, app.bundle, ...(batteryTasks.find(task => task.bundle === app.bundle)?.aliases ?? [])]) : undefined;
-  const apps = speedApps ?? (env.BENCH_SUITE === 'world' ? WORLD_APPS : env.BENCH_SUITE === 'battery' ? approvedApps(env.BENCH_OWNER_PRESENT === '1') :
+  // The real-window browser race (bench/fowl/real-gate.mjs) names its round's apps; only those on the allowlist count.
+  const raceApps = env.BENCH_SUITE === 'browser-race' ? (() => {
+    try { return JSON.parse(env.BENCH_RACE_APPS ?? '[]').filter(app => [...BENCH_APPS, ...REAL_APPS].includes(app)); } catch { return []; }
+  })() : undefined;
+  const apps = speedApps ?? raceApps ?? (env.BENCH_SUITE === 'world' ? WORLD_APPS : env.BENCH_SUITE === 'battery' ? approvedApps(env.BENCH_OWNER_PRESENT === '1') :
     [...BENCH_APPS, ...(env.BENCH_SUITE === 'real' ? REAL_APPS : []),
     ...(env.BENCH_SUITE === 'real' && env.BENCH_OWNER_PRESENT === '1' ? ownerPresentApps : [])]);
   const choices = e.requested_schema?.properties?.choice?.enum ?? [];

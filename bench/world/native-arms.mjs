@@ -1,5 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { prepareGenericArm } from '../plugin-arm.mjs';
 
@@ -32,6 +34,42 @@ export function nativeArmPlan(name, { armHome, dir = join(armHome, `mcp-${name}-
     args: ['--mcp-config', join(dir, 'mcp.json'), '--strict-mcp-config', '--setting-sources', '', '--tools', '',
       '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence', '--no-chrome'] };
 }
+
+// Cua's MCP command is a proxy: it exits at once unless its daemon listens on the arm's socket ("no Cua Driver daemon
+// listening", which cost the first Firefox round all 12 tasks, 2026-10-17). The daemon starts through LaunchServices so
+// macOS applies the grants on CuaDriver.app itself, as the setup plan's start command does.
+export function cuaDaemonPlan(dir) {
+  const app = join(resolve(dir), 'CuaDriver.app'), socket = join(resolve(dir), 'driver.sock');
+  return { socket, executable: join(app, 'Contents/MacOS/cua-driver'),
+    start: ['open', '-n', '-g', ...Object.entries(CUA_ENV).filter(([key]) => key !== 'CUA_DRIVER_EMBEDDED')
+      .flatMap(([key, value]) => ['--env', `${key}=${value}`]), app, '--args', 'serve', '--socket', socket] };
+}
+export const socketListening = path => new Promise(done => {
+  const socket = createConnection({ path });
+  socket.once('connect', () => { socket.destroy(); done(true); });
+  socket.once('error', () => done(false));
+});
+const daemonPids = executable => execFileSync('/bin/ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n')
+  .flatMap(line => { const m = /^\s*(\d+)\s+(.*)$/.exec(line); return m && m[2].startsWith(`${executable} serve`) ? [Number(m[1])] : []; });
+// Starts the daemon when nothing listens and returns a stop that ends only a daemon this call started.
+export async function ensureCuaDaemon(dir, { listening = socketListening, run = execFileSync, pids = daemonPids,
+  sleep = ms => new Promise(done => setTimeout(done, ms)), timeoutMs = 15000 } = {}) {
+  const plan = cuaDaemonPlan(dir);
+  if (await listening(plan.socket)) return { started: false, socket: plan.socket, stop: async () => {} };
+  const before = new Set(pids(plan.executable));
+  rmSync(plan.socket, { force: true }); // a dead daemon's socket file; nothing listens on it
+  run(plan.start[0], plan.start.slice(1), { stdio: 'ignore' });
+  for (const end = Date.now() + timeoutMs; !(await listening(plan.socket));) {
+    if (Date.now() > end) throw Error(`Cua daemon did not listen on ${plan.socket} within ${timeoutMs / 1000} s`);
+    await sleep(250);
+  }
+  const started = pids(plan.executable).filter(pid => !before.has(pid));
+  return { started: true, socket: plan.socket, pids: started, stop: async () => {
+    for (const pid of started) try { process.kill(pid, 'SIGTERM'); } catch {}
+    for (const end = Date.now() + 5000; started.some(alive) && Date.now() < end;) await sleep(100);
+  } };
+}
+const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 export function prepareNativeArm(name, { root, armHome, env = process.env, dryRun = false } = {}) {
   const plan = nativeArmPlan(name, { armHome });

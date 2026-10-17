@@ -297,6 +297,12 @@ test('Firefox CLI dry plans enumerate all pinned tasks for all five arms without
     assert.equal(plan.arms.length, 12);
     assert.deepEqual(plan.unsupported.map(row => row.task.name), ['mobile', 'takeover']);
     assert.equal(plan.browser.connectionMode, 'engine-computer');
+    if (['lcu', 'cua', 'peekaboo'].includes(surface)) {
+      assert.equal(plan.arms[0].environment.BENCH_SUITE, 'browser-race');
+      assert.deepEqual(JSON.parse(plan.arms[0].environment.BENCH_RACE_APPS).slice(0, 2), ['Firefox', 'org.mozilla.firefox']);
+    }
+    if (surface === 'codex') assert.deepEqual(plan.armPrep.approvals, ['org.mozilla.firefox', 'com.apple.Preview', 'com.apple.TextEdit']);
+    if (surface === 'cua') assert.ok(plan.armPrep.cuaDaemon.includes('serve'));
     assert.equal(existsSync(out), false);
     assert.equal(existsSync(plan.browser.profileRoot), false);
     assert.equal(existsSync(join(home, '.config')), false);

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nativeArmPlan, NATIVE_PINS, CUA_ENV } from './native-arms.mjs';
+import { nativeArmPlan, NATIVE_PINS, cuaDaemonPlan } from './native-arms.mjs';
 import { worldCLI } from './native-world.mjs';
 
 export function setupPlan(name, argv) {
@@ -31,8 +31,7 @@ export function setupPlan(name, argv) {
       : 'The pinned package README places provider credentials and settings under ~/.peekaboo. Individual runtime files were not audited.',
     runtimeWrites: name === 'cua' ? [join(homedir(), '.cua-driver'), '$CUA_HOME/config.toml', join(homedir(), '.cua-driver/config.json'), join(homedir(), '.cua-driver/version_check.json')]
       : [join(homedir(), '.peekaboo')],
-    ...(name === 'cua' ? { ownerStart: ['open', '-n', '-g', ...Object.entries(CUA_ENV).filter(([key]) => key !== 'CUA_DRIVER_EMBEDDED')
-      .flatMap(([key, value]) => ['--env', `${key}=${value}`]), app, '--args', 'serve', '--socket', join(dir, 'driver.sock')],
+    ...(name === 'cua' ? { ownerStart: cuaDaemonPlan(dir).start,
       untouched: ['/Applications', '~/.local/bin', 'shell rc files'],
       removal: ['rm', '-rf', dir, join(homedir(), '.cua-driver')],
       removalNote: 'Manual plan only. Stop the staged daemon first, and preserve any pre-existing Cua state before removing its runtime folder.' }
