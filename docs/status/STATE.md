@@ -74,11 +74,33 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    (save classification, swap note on RW1R) are running. Then review, merge, full check, and a sleight-only claim rerun (LAWS:
    a sleight fix round reruns only that arm).
 11. In flight at the owner's clear (no new subagents after these, owner):
-   - Fable study A (a6fc500f): why the claude-cu arm doesn't call tools, and whether its approvals can come from the allowlist.
-     Told to wait for "go live" before any live session, and it may ask. Scratch /private/tmp/claude-501/fable-cu/.
-   - Fable study B (a4434178): token and turn waste across all 9 claim tasks, replays only. Scratch /private/tmp/claude-501/fable-audit/.
-   - Fable study C (aa709f2d): how the engine delivers background clicks and keys, the cause of Excel's tab swap and Word's
-     misplaced typing, offline (Ghidra at nice 20). Scratch /private/tmp/claude-501/fable-input/.
+   - Fable study A (done, scratch /private/tmp/claude-501/fable-cu/): the claude-cu arm sets DISABLE_TELEMETRY and DO_NOT_TRACK,
+     which turn off Claude Code's feature flags, so the computer-use server is never created (Haiku wrote fake tool text because
+     the request had no tools in it). `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1` keeps telemetry off and uses the cached flag.
+     Second bug: the prompt gate's ready regex misses the input placeholder. Pre-approval: request_access goes to the session's
+     dialog host, and hooks don't answer the app card. `request_user_dialog` exists only in stream-json print sessions, which get no
+     computer-use server. The only unattended path is the harness pressing "Allow for this session" in the pty when every app
+     the card names is on the allowlist. That is the owner's decision (sleight-arch said so on 2026-10-17), and the study's live.mjs is
+     written but was not run. Proposed arm diff in the study's report (env flag, gate regex, allowlist-checked card answerer).
+   - Fable study B (done, scratch /private/tmp/claude-501/fable-audit/): on 8 of 9 tasks Haiku with sleight already uses fewer
+     turns and less thinking than any Claude competitor. The exceptions are preview-read (the screenshot effect) and word-edit.
+     Causes ranked by model seconds per suite pass, largest first. Document text the AX tree doesn't expose, with no screenshot
+     path in the skill, costs ~33 s, mostly word-edit (lcu passed by taking a screenshot every turn). Results of 7 KB or more,
+     mostly ribbons, cost ~31 s (correlational). Recovery turns after refusals and errors cost ~14 s, drag needing screen
+     coordinates ~10 s, and the first call's 5.9 KB confirmations policy ~8 s (0.9 s and ~90 thinking tokens per task, n=6).
+     Verification turns cost ~6 s. A screenshot on every read didn't add a measurable cost over 3 images. Queued items, by
+     expected saving: SK1 (skill plus a note point at a screenshot when the document pane hides its text), RB1 (elide ribbon
+     groups over ~20 controls and dedupe tree lines), RF1 (strip the engine's const warning and prefer the enabled element on
+     "N elements with label"), DG1 (drag by element or selection) and CP1 (a compact confirmations policy).
+   - Fable study C (done): the engine posts mouse and key events to the app's pid (CGEventPostToPid, NSEvent-built, window
+     fields set, down/up at one point, the cursor left where it is) and leaves AXFocused alone. Excel: the rename starts inside a mouseDown
+     whose mouseUp never arrives, so the next tab click completes a stale drag (medium confidence). Word: keys go to the current
+     first responder, and Office's task-pane field takes focus after the click returns, so typing 70-135 ms later goes to the
+     body (high confidence). Proposed in document-scope.mjs (~649): a short wait before typeText/paste after an editable click
+     in the same call, and, if a live probe confirms, one balancing leftMouseUp after a double-click or secondary action before a
+     click on another element. The probe posts one leftMouseUp at the Review tab after an Excel rename and then clicks tab 7, 3 runs (no swap
+     in 3/3 confirms); Word click(12), 300 ms, typeText, 3 runs against 0 ms. Report in this session's transcript; scratch
+     /private/tmp/claude-501/fable-input/ (Ghidra stopped and its processes ended).
    - Lanes SH1 (screenshot with open_file's first read, flag SLEIGHT_OPEN_SHOT=1) and JD1 (every tool description under 2,048
      chars; Claude Code truncates sleight's js description from 3,511) on codex/sh1 and codex/jd1. Review, merge, full check.
    - Puddle window w-flagab-1017 (cap 75) queued behind Puddle's own measurement (~11:50Z): sleight-only claim rerun on the new
