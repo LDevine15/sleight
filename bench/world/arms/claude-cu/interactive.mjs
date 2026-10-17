@@ -7,12 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { outsideGit, CLAUDE_VERSION, defaultArmRoot } from '../browser.mjs';
 import { PRICES, runCost } from '../../../api-auth.mjs';
-import { validateAllowedApps } from './permission.mjs';
+import { validateAllowedApps, validateAllowedGrants } from './permission.mjs';
 
 const wait = ms => new Promise(done => setTimeout(done, ms));
 export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), workDir, prompt = '', model = 'claude-haiku-5-5',
-  effort = 'high', sessionId = randomUUID(), timeoutMs = 300000, command, allowedApps = [], hostEnv = process.env } = {}) {
+  effort = 'high', sessionId = randomUUID(), timeoutMs = 300000, command, allowedApps = [], allowedGrants = [], hostEnv = process.env } = {}) {
   allowedApps = validateAllowedApps(allowedApps);
+  allowedGrants = validateAllowedGrants(allowedGrants);
   armDir = resolve(armDir); outsideGit(armDir);
   if (existsSync(armDir) && lstatSync(armDir).isSymbolicLink()) throw new Error('arm root must not be a symlink');
   let parent = armDir;
@@ -31,8 +32,8 @@ export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), 
     ENABLE_TOOL_SEARCH: 'false', DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', TERM: 'xterm-256color',
     CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1', ANTHROPIC_SMALL_FAST_MODEL: model });
   Object.assign(env, { BENCH_CU_TURN_RECEIPT: turnFile, BENCH_CU_SESSION: sessionId, BENCH_CU_NONCE: nonce,
-    BENCH_CU_ALLOWED_APPS: JSON.stringify(allowedApps), BENCH_CU_CWD: cwd });
-  return { armDir, cwd, prompt, model, effort, sessionId, timeoutMs, allowedApps, env, settingsFile, mcpFile, turnFile, nonce,
+    BENCH_CU_ALLOWED_APPS: JSON.stringify(allowedApps), BENCH_CU_ALLOWED_GRANTS: JSON.stringify(allowedGrants), BENCH_CU_CWD: cwd });
+  return { armDir, cwd, prompt, model, effort, sessionId, timeoutMs, allowedApps, allowedGrants, env, settingsFile, mcpFile, turnFile, nonce,
     configFile: join(config, '.claude.json'), command: command ?? join(armDir, 'node_modules/.bin/claude'),
     args: ['--session-id', sessionId, '--model', model, '--effort', effort, '--no-chrome', '--setting-sources', '',
       '--settings', settingsFile, '--strict-mcp-config', '--mcp-config', mcpFile, '--tools', 'ToolSearch,WaitForMcpServers', '--disable-slash-commands'],
@@ -42,10 +43,11 @@ export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), 
 export function interactiveAgentSetup({ dir, prompt, model, effort, task, armDir, hostEnv = process.env } = {}) {
   const browser = { chrome: 'Google Chrome', helium: 'Helium', firefox: 'Firefox', safari: 'Safari' }[task?.browser];
   const allowedApps = task?.allowedApps ?? (task?.app ? [task.app] : browser ? [browser] : []);
-  const plan = interactivePlan({ armDir, workDir: dir, prompt, model, effort, allowedApps, timeoutMs: (task?.budgetSeconds ?? 600) * 1000, hostEnv });
+  const plan = interactivePlan({ armDir, workDir: dir, prompt, model, effort, allowedApps, allowedGrants: task?.allowedGrants,
+    timeoutMs: (task?.budgetSeconds ?? 600) * 1000, hostEnv });
   return { command: process.execPath, args: [fileURLToPath(import.meta.url), '--run', '--parent-lock', '--arm-dir', plan.armDir,
     '--work-dir', plan.cwd, '--prompt', prompt, '--model', plan.model, '--effort', plan.effort, '--timeout-ms', String(plan.timeoutMs),
-    '--allowed-apps', JSON.stringify(plan.allowedApps)],
+    '--allowed-apps', JSON.stringify(plan.allowedApps), '--allowed-grants', JSON.stringify(plan.allowedGrants)],
     prompt, env: plan.env, mcpConfig: null, metadata: { interactive: true, auth: plan.auth, claudeVersion: CLAUDE_VERSION } };
 }
 
@@ -169,9 +171,11 @@ function terminalText(raw, prompt) {
   return text;
 }
 
-function sessionCard(text, allowedApps) {
+function sessionCard(text, allowedApps, allowedGrants = []) {
   const title = 'Computer Use wants to control these apps', index = text.lastIndexOf(title);
   if (index < 0) return;
+  if (!/^[\s│]*$/.test(text.slice(text.lastIndexOf('\n', index) + 1, index)) ||
+    !/^[\s│]*(?:\n|$)/.test(text.slice(index + title.length))) return { pending: true };
   const card = text.slice(index + title.length), lines = card.split('\n').map(line => line.replace(/^[\s│]+|[\s│]+$/g, ''))
     .filter(line => line && !/^[─╭╮╰╯]+$/.test(line));
   const allow = lines.findIndex(line => /^(?:❯\s*)?Allow for this session \(\d+ apps?\)$/.test(line));
@@ -183,9 +187,13 @@ function sessionCard(text, allowedApps) {
     const app = /^([●○✔✓])\s+(.+?)(?: \((already granted|not installed)\))?$/.exec(line);
     if (app && !flags) { appSection = true; names.push(app[2]); if (app[1] === '●') selected.push(app[2]); }
     else if (appSection && line === 'Also requested:' && !flags) flags = true;
-    else if (flags && /^· (?:clipboardRead|clipboardWrite|systemKeyCombos)$/.test(line)) continue;
-    else if (appSection && !/^\d+ other apps? will be hidden while Claude works\.$/.test(line) &&
-      !/^⚠ (?:equivalent to shell access|can read\/write any file|can change system settings)$/.test(line)) return { blocked: 'unsupported computer-use approval card' };
+    else if (flags && /^· (?:clipboardRead|clipboardWrite|systemKeyCombos)$/.test(line)) {
+      if (!allowedGrants.includes(line.slice(2))) return { blocked: 'computer-use approval grant is outside the task allowlist' };
+    } else if (appSection && /^\d+ other apps? will be hidden while Claude works\.$/.test(line)) continue;
+    else if (appSection && /^⚠ (?:equivalent to shell access|can read\/write any file|can change system settings)$/.test(line)) {
+      const grant = { '⚠ equivalent to shell access': 'shellAccess', '⚠ can read/write any file': 'fileAccess', '⚠ can change system settings': 'systemSettings' }[line];
+      if (!allowedGrants.includes(grant)) return { blocked: 'computer-use approval grant is outside the task allowlist' };
+    } else return { blocked: 'unsupported computer-use approval card' };
   }
   const count = Number(/\((\d+) apps?\)$/.exec(lines[allow])[1]);
   if (deny < 0 || allow !== deny + 1 || !names.length || !count || count !== selected.length ||
@@ -250,7 +258,13 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
   const start = Date.now(); prepare(plan); verify(plan);
   if (signal?.aborted) return { type: 'result', is_error: true, result: '', reason: 'cancelled', duration_ms: Date.now() - start, groupClean: true };
   if (onEvent) transcript.onEvent = onEvent;
-  let screen = '', closed, sent = false, exiting = false, reason, timedOut = false, gateBlocked;
+  let screen = '', closed, sent = false, exiting = false, reason, timedOut = false, gateBlocked, approvalBlock, pendingAt, keyRender;
+  const approvalWaitMs = Math.min(1000, plan.timeoutMs / 2);
+  const block = (why, text) => {
+    gateBlocked = true; reason = why;
+    approvalBlock = { reason: why, cardText: text.replaceAll(homedir(), '~').replace(/\/(?:Users|home)\/[^/\s]+/g, '~') };
+    onEvent?.({ type: 'approval_block', ...approvalBlock });
+  };
   const pty = launch(plan, data => { screen = (screen + data).slice(-65536); }, { onSpawn });
   pty.closed.then(result => { closed = result; });
   try {
@@ -260,14 +274,24 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
       if (state.foreignTool) { reason = 'foreign tool observed'; break; }
       if (signal?.aborted) { reason = 'cancelled'; break; }
       if (closed) { if (!exiting) reason = 'session exited before confirmed RESULT and idle prompt'; break; }
-      if (Date.now() - start >= plan.timeoutMs) { timedOut = true; reason = 'interactive task timeout'; break; }
-      if (sent && !exiting && !/Grant Accessibility|Screen Recording|System Settings|Do you trust|Trust this folder|Sign in to Claude/i.test(text)) {
-        const card = sessionCard(text, plan.allowedApps);
-        if (card?.blocked) { gateBlocked = true; reason = card.blocked; break; }
-        if (card?.answer) { screen = ''; pty.write(card.answer); await wait(pollMs); continue; }
-        if (card?.pending) { await wait(pollMs); continue; }
+      if (pendingAt !== undefined && Date.now() - pendingAt >= approvalWaitMs) {
+        block(keyRender !== undefined ? 'computer-use approval did not render a fresh selection' : 'unsupported or incomplete computer-use approval card', text || keyRender); break;
       }
-      if (gate.blocked) { gateBlocked = true; reason = gate.blocked; break; }
+      if (Date.now() - start >= plan.timeoutMs) {
+        if (pendingAt !== undefined) block('unsupported or incomplete computer-use approval card', text || keyRender);
+        else { timedOut = true; reason = 'interactive task timeout'; }
+        break;
+      }
+      if (sent && !exiting && !/Grant Accessibility|Screen Recording|Do you trust|Trust this folder|Sign in to Claude/i.test(text)) {
+        const render = text.slice(Math.max(0, text.lastIndexOf('Computer Use wants to control these apps'))).trim();
+        if (keyRender !== undefined && (!render || render === keyRender)) { await wait(pollMs); continue; }
+        const card = sessionCard(text, plan.allowedApps, plan.allowedGrants);
+        if (card?.blocked) { block(card.blocked, text); break; }
+        if (card?.answer) { pendingAt = Date.now(); keyRender = render; screen = ''; pty.write(card.answer); await wait(pollMs); continue; }
+        if (card?.pending) { pendingAt ??= Date.now(); await wait(pollMs); continue; }
+        pendingAt = undefined; keyRender = undefined;
+      }
+      if (gate.blocked) { block(gate.blocked, text); break; }
       if (!sent && gate.ready) { sent = true; screen = ''; pty.write('\x1b[200~' + plan.prompt + '\x1b[201~\r'); }
       else if (sent && state.answer && gate.ready && turnEnded(plan) && !exiting) {
         exiting = true; screen = ''; pty.write('\x04'); await wait(50);
@@ -282,7 +306,7 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
   return { type: 'result', subtype: clean ? 'success' : 'error', is_error: !clean, result: state.answer ?? '',
     duration_ms: Date.now() - start, num_turns: state.modelCalls, calls: state.calls, usage: state.usage, modelUsage: state.modelUsage,
     ...(priced && { total_cost_usd: runCost({ modelUsage: state.modelUsage }) }), groupClean: closed?.clean === true, timedOut,
-    ...(gateBlocked && { gateBlocked }),
+    ...(gateBlocked && { gateBlocked, approvalBlock }),
     ...(reason && { reason }), requestedModel: plan.model, effort: plan.effort, session_id: plan.sessionId, auth: plan.auth };
 }
 
@@ -293,7 +317,7 @@ async function main() {
       if (args[i] === '--run') live = true;
       else if (args[i] === '--dry-run') dryRun = true;
       else if (args[i] === '--parent-lock') parentLock = true;
-      else if (['--arm-dir', '--work-dir', '--prompt', '--prompt-file', '--model', '--effort', '--timeout-ms', '--allowed-apps'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--')) {
+      else if (['--arm-dir', '--work-dir', '--prompt', '--prompt-file', '--model', '--effort', '--timeout-ms', '--allowed-apps', '--allowed-grants'].includes(args[i]) && args[i + 1] && !args[i + 1].startsWith('--')) {
         const key = args[i].slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase()); options[key] = args[++i];
       } else throw new Error('unknown or incomplete interactive option');
     }
@@ -301,6 +325,7 @@ async function main() {
     const { promptFile, ...rest } = options;
     if (promptFile && rest.prompt) throw new Error('choose prompt or prompt-file');
     const plan = interactivePlan({ ...rest, ...(rest.allowedApps && { allowedApps: JSON.parse(rest.allowedApps) }),
+      ...(rest.allowedGrants && { allowedGrants: JSON.parse(rest.allowedGrants) }),
       ...(rest.timeoutMs && { timeoutMs: Number(rest.timeoutMs) }), prompt: promptFile ? readFileSync(promptFile, 'utf8') : rest.prompt });
     const controller = new AbortController(); process.once('SIGINT', () => controller.abort()); process.once('SIGTERM', () => controller.abort());
     let release, result;

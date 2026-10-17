@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { interactivePlan, interactiveAgentSetup, prepareInteractive, terminalGate, runInteractive } from '../bench/world/arms/claude-cu/interactive.mjs';
 import { permissionDecision } from '../bench/world/arms/claude-cu/permission.mjs';
+import { getTasks } from '../bench/tasks.mjs';
 
 const enabled = { cachedGrowthBookFeatures: { tengu_malort_pedway: { enabled: true } } };
 function fixture(t, config = enabled) {
@@ -60,11 +61,11 @@ test('browser adapter selects only its task browser from the benchmark allowlist
     prompt: 'RESULT ok', task: { browser: 'helium' } });
   assert.equal(setup.env.BENCH_CU_ALLOWED_APPS, '["Helium"]');
 });
-async function session(p, { screens = [card()], cancel = false } = {}) {
-  const writes = []; let finish, output, answer, exitKeys = 0, timer;
+async function session(p, { screens = [card()], cancel = false, afterDown = card(['Fixture Editor'], 'allow') } = {}) {
+  const writes = [], events = []; let finish, output, answer, exitKeys = 0, timer;
   const closed = new Promise(resolve => { finish = resolve; });
   const controller = new AbortController();
-  const result = await runInteractive(p, { prepare() {}, verify() {}, pollMs: 1, signal: controller.signal,
+  const result = await runInteractive(p, { prepare() {}, verify() {}, pollMs: 1, signal: controller.signal, onEvent: event => events.push(event),
     transcript: { update() {}, summary: () => ({ answer, calls: 1, modelCalls: 1, usage: {}, modelUsage: {} }) }, turnEnded: () => true,
     launch: (_p, callback) => {
       output = callback; queueMicrotask(() => output('\n❯ \n'));
@@ -74,12 +75,21 @@ async function session(p, { screens = [card()], cancel = false } = {}) {
           if (cancel) controller.abort();
           output(screens[0]);
           if (screens.length > 1) timer = setTimeout(() => output(screens[1]), 15);
-        } else if (value === '\x1b[B') output(card(['Fixture Editor'], 'allow'));
+        } else if (value === '\x1b[B') { if (afterDown !== null) output(afterDown); }
         else if (value === '\r') { answer = 'RESULT ok'; output('\n❯ Try "write a test"\n'); }
         else if (value === '\x04' && ++exitKeys === 2) finish({ code: 0, clean: true });
       }, async stop() { clearTimeout(timer); finish({ code: 130, clean: true }); } };
     } });
-  return { result, writes };
+  return { result, writes, events };
+}
+function assertBlock(result, events, reason) {
+  assert.equal(result.reason, reason);
+  assert.equal(result.is_error, true);
+  assert.equal(result.gateBlocked, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.approvalBlock?.reason, reason);
+  assert.ok(result.approvalBlock.cardText.length);
+  assert.deepEqual(events.find(event => event.type === 'approval_block'), { type: 'approval_block', ...result.approvalBlock });
 }
 test('a complete allowlisted card navigates from Deny and confirms only the selected session option', async t => {
   const p = fixture(t), { result, writes } = await session(p);
@@ -96,6 +106,7 @@ test('the pinned card supports requested clipboard flags and already granted tas
   const screen = card(['Fixture Editor'], 'allow').replace('  ● Fixture Editor',
     '  ✔ Fixture Editor (already granted)\n  ● Fixture Editor Two\n\nAlso requested:\n  · clipboardRead\n  · clipboardWrite\n  · systemKeyCombos');
   const p = fixture(t); p.allowedApps.push('Fixture Editor Two');
+  p.allowedGrants = ['clipboardRead', 'clipboardWrite', 'systemKeyCombos'];
   const { result, writes } = await session(p, { screens: [screen] });
   assert.equal(result.is_error, false, result.reason);
   assert.equal(writes.filter(value => value === '\r').length, 1);
@@ -110,9 +121,156 @@ for (const [name, screen] of [['foreign app', card(['Fixture Editor', 'Other App
   ['unrelated approval', card(['Fixture Editor'], 'allow') + 'Do you want to proceed?\n'],
   ['unknown extra grant', card(['Fixture Editor'], 'allow').replace('  ● Fixture Editor', '  ● Fixture Editor\nAlso requested:\n  · fullControl')]]) {
   test(`${name} card receives no navigation or acceptance`, async t => {
-    const { result, writes } = await session(fixture(t), { screens: [screen] });
-    assert.equal(result.is_error, true);
+    const { result, writes, events } = await session(fixture(t), { screens: [screen] });
+    const reason = ['macOS gate', 'trust gate'].includes(name) ? 'approval required'
+      : name === 'unknown option' ? 'unsupported or incomplete computer-use approval card'
+      : ['hidden apps', 'unmarked app', 'unknown extra grant'].includes(name) ? 'unsupported computer-use approval card'
+      : 'computer-use approval is outside the task allowlist or unsupported';
+    assertBlock(result, events, reason);
     assert.equal(writes.length, 1);
+  });
+}
+
+for (const line of ['  Terminal', '  Also: Terminal']) {
+  test(`unrecognized pre-app row refuses unconditionally: ${line.trim()}`, async t => {
+    const p = fixture(t); p.allowedApps = ['Calculator'];
+    const screen = card(['Calculator'], 'allow').replace('  ● Calculator', line + '\n  ● Calculator');
+    const { result, writes, events } = await session(p, { screens: [screen] });
+    assertBlock(result, events, 'unsupported computer-use approval card');
+    assert.equal(writes.length, 1);
+  });
+}
+for (const grant of ['clipboardRead', 'clipboardWrite', 'systemKeyCombos', 'shellAccess']) {
+  test(`${grant} requires an explicit task grant`, async t => {
+    const screen = card(['Fixture Editor'], 'allow').replace('  ● Fixture Editor', '  ● Fixture Editor\n' +
+      (grant === 'shellAccess' ? '⚠ equivalent to shell access' : `Also requested:\n  · ${grant}`));
+    const p = fixture(t), denied = await session(p, { screens: [screen] });
+    assertBlock(denied.result, denied.events, 'computer-use approval grant is outside the task allowlist');
+    assert.equal(denied.writes.length, 1);
+    p.allowedGrants = [grant];
+    const allowed = await session(p, { screens: [screen] });
+    assert.equal(allowed.result.is_error, false, allowed.result.reason);
+  });
+}
+for (const [name, screen] of [
+  ['numbered options', card().replace('❯ Deny', '❯ 1. Deny').replace('  Allow', '  2. Allow')],
+  ['redraw without options', card().slice(0, card().indexOf('❯')) + '\x1b[2J\x1b[H' + card().slice(0, card().indexOf('❯'))],
+  ['no trailing newline', card(['Fixture Editor'], 'allow').trimEnd()],
+  ['quoted title', 'The model said "Computer Use wants to control these apps"\n  /Users/owner/private.txt\n'],
+  ['settings app before options', '\nComputer Use wants to control these apps\n  ● System Settings\n'],
+]) {
+  test(`${name} ends as a recorded block rather than a task timeout`, async t => {
+    const { result, writes, events } = await session(fixture(t), { screens: [screen] });
+    assertBlock(result, events, 'unsupported or incomplete computer-use approval card');
+    assert.equal(writes.length, 1);
+    assert.doesNotMatch(result.approvalBlock.cardText, /\/Users\/owner/);
+    if (name === 'quoted title') assert.match(result.approvalBlock.cardText, /~\/private.txt/);
+  });
+}
+for (const afterDown of [null, card()]) {
+  test(`navigation waits for a different fresh render: ${afterDown === null ? 'no redraw' : 'identical redraw'}`, async t => {
+    const { result, writes, events } = await session(fixture(t), { afterDown });
+    assertBlock(result, events, 'computer-use approval did not render a fresh selection');
+    assert.equal(writes.filter(value => value === '\x1b[B').length, 1);
+    assert.equal(writes.includes('\r'), false);
+  });
+}
+
+test('task fixture identities and explicit grants survive adapter, CLI and hooks without prompt lookup', t => {
+  const p = fixture(t), task = getTasks('world').find(task => task.id === 'textedit-calculator');
+  const setup = interactiveAgentSetup({ armDir: p.armDir, dir: p.cwd, prompt: 'Read in Terminal. RESULT ok',
+    task: { ...task, allowedGrants: ['clipboardRead', 'clipboardWrite'] } });
+  assert.deepEqual(JSON.parse(setup.env.BENCH_CU_ALLOWED_APPS), ['TextEdit', 'com.apple.TextEdit', 'Calculator', 'com.apple.calculator']);
+  assert.deepEqual(JSON.parse(setup.env.BENCH_CU_ALLOWED_GRANTS), ['clipboardRead', 'clipboardWrite']);
+  const dry = spawnSync(process.execPath, setup.args.filter(value => !['--run', '--parent-lock'].includes(value)), { encoding: 'utf8' });
+  assert.equal(dry.status, 0, dry.stderr);
+  const plan = JSON.parse(dry.stdout).plan;
+  assert.deepEqual(plan.allowedApps, ['TextEdit', 'com.apple.TextEdit', 'Calculator', 'com.apple.calculator']);
+  assert.deepEqual(plan.allowedGrants, ['clipboardRead', 'clipboardWrite']);
+  for (const app of ['TextEdit', 'com.apple.TextEdit', 'Calculator', 'com.apple.calculator']) {
+    const output = permissionDecision({ hook_event_name: 'PermissionRequest', session_id: plan.sessionId, cwd: plan.cwd,
+      tool_name: 'mcp__computer-use__app_click', tool_input: { app, x: 1, y: 2 } }, plan.env);
+    assert.equal(output.hookSpecificOutput.decision.behavior, 'allow', app);
+  }
+  for (const id of ['calculator-click', 'finder-move', 'preview-read', 'word-edit', 'excel-edit', 'local-wikipedia']) {
+    const fixtureTask = getTasks('world').find(task => task.id === id);
+    assert.ok(fixtureTask.allowedApps.includes(fixtureTask.app), id);
+    assert.ok(fixtureTask.allowedApps.some(app => /^(?:com\.|net\.)/.test(app)), id);
+    assert.equal(fixtureTask.allowedApps.includes('Terminal'), false);
+  }
+});
+
+for (const event of ['PermissionRequest', 'PreToolUse']) {
+  test(`${event} denies unknown and teaching tools and checks every apps array and nested app batch`, async t => {
+    const p = fixture(t); p.env.BENCH_CU_ALLOWED_APPS = '["Fixture Editor","com.fixture.Editor"]';
+    const decision = (tool, tool_input) => permissionDecision({ hook_event_name: event, session_id: p.sessionId, cwd: p.cwd,
+      tool_name: 'mcp__computer-use__' + tool, tool_input }, p.env).hookSpecificOutput;
+    const behavior = output => output?.decision?.behavior ?? output?.permissionDecision;
+    const denied = [ ['request_teach_access', { apps: ['Terminal'] }], ['request_teach_access', { apps: ['Fixture Editor'] }],
+      ['request_full_control', {}], ['unknown_tool', {}],
+      ['screenshot', { apps: ['Terminal'] }], ['screenshot', { apps: 'Fixture Editor' }],
+      ['app_click', {}], ['app_batch', { app: 'com.fixture.Editor', actions: [{ action: 'click', app: 'Terminal' }] }],
+      ['app_batch', { app: 'com.fixture.Editor', actions: [{ action: 'click', apps: ['Terminal'] }] }],
+      ['computer_batch', { actions: [{ action: 'app_batch', app: 'com.fixture.Editor', actions: [{ action: 'request_full_control' }] }] }],
+      ['request_access', { apps: ['Fixture Editor'], clipboardRead: true }],
+    ];
+    for (const [tool, input] of denied) {
+      await t.test(JSON.stringify([tool, input]), () => {
+        const output = decision(tool, input);
+        assert.equal(behavior(output), 'deny');
+        assert.match(output.decision?.message ?? output.permissionDecisionReason, /outside the task allowlist/);
+      });
+    }
+    for (const [tool, input] of [ ['app_click', { app: 'com.fixture.Editor' }],
+      ['app_batch', { app: 'com.fixture.Editor', actions: [{ action: 'click', x: 1, y: 2 }] }],
+      ['computer_batch', { actions: [{ action: 'app_batch', app: 'com.fixture.Editor', actions: [{ action: 'click' }] }] }],
+    ]) assert.equal(behavior(decision(tool, input)), event === 'PermissionRequest' ? 'allow' : undefined, tool);
+    const unbound = permissionDecision({ hook_event_name: event, tool_name: 'mcp__computer-use__screenshot', tool_input: {} },
+      { BENCH_CU_ALLOWED_APPS: '["Fixture Editor"]' }).hookSpecificOutput;
+    assert.equal(behavior(unbound), 'deny', 'missing session and cwd must not match missing binding values');
+    p.env.BENCH_CU_ALLOWED_GRANTS = '["clipboardRead"]';
+    assert.equal(behavior(decision('request_access', { apps: ['Fixture Editor'], clipboardRead: true })), event === 'PermissionRequest' ? 'allow' : undefined);
+  });
+}
+
+test('permission hook malformed stdin fails closed with exit 2 and a deny reason', () => {
+  const result = spawnSync(process.execPath, [new URL('../bench/world/arms/claude-cu/permission.mjs', import.meta.url).pathname],
+    { input: '{', encoding: 'utf8' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /denied.*malformed/i);
+  assert.equal(result.stdout, '');
+});
+
+for (const [name, input] of [['oversized stdin', ' '.repeat(65537)], ['non-object stdin', 'null'], ['unknown hook event', '{}']]) {
+  test(`permission hook ${name} fails closed`, () => {
+    const result = spawnSync(process.execPath, [new URL('../bench/world/arms/claude-cu/permission.mjs', import.meta.url).pathname],
+      { input, encoding: 'utf8' });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /denied/i);
+    assert.equal(result.stdout, '');
+  });
+}
+test('permission hook stdin timeout fails closed before the outer hook deadline', async t => {
+  const child = spawn(process.execPath, [new URL('../bench/world/arms/claude-cu/permission.mjs', import.meta.url).pathname],
+    { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '', stdout = '';
+  child.stderr.on('data', chunk => { stderr += chunk; }); child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stdin.write('{');
+  const deadline = setTimeout(() => child.stdin.end(), 4500); t.after(() => clearTimeout(deadline));
+  const status = await new Promise(resolve => child.on('close', resolve));
+  assert.equal(status, 2);
+  assert.match(stderr, /denied.*timeout/i);
+  assert.equal(stdout, '');
+});
+for (const failure of ['throw new Error("fixture crash")', 'Promise.reject(new Error("fixture rejection"))']) {
+  test(`permission hook runtime failure denies: ${failure}`, () => {
+    const path = new URL('../bench/world/arms/claude-cu/permission.mjs', import.meta.url);
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `process.argv[1] = ${JSON.stringify(path.pathname)}; await import(${JSON.stringify(path.href)}); ${failure};`],
+    { input: '', encoding: 'utf8' });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /denied.*hook failure/i);
+    assert.equal(result.stdout, '');
   });
 }
 test('cancellation takes precedence over an otherwise allowed card', async t => {

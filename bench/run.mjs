@@ -388,13 +388,14 @@ function footprint(apps, client) {
     finish: async () => { const used = await stop?.(); return used && { ...used, split: cpuSplit(used, { client }) }; } };
 }
 
-async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermissionRefusal, privateMail = false, onSpawn, fixtureLifecycle = false, auditDrag = false, timeoutMs = TIMEOUT_MS } = {}) {
+async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermissionRefusal, privateMail = false, onSpawn, fixtureLifecycle = false, auditDrag = false, timeoutMs = TIMEOUT_MS, allowedApps = [], allowedGrants = [] } = {}) {
   if (privateMail) assertPrivateClaudePolicy();
   if (arm.interactive) {
-    const plan = interactivePlan({ armDir: arm.cwd, prompt, model, effort, timeoutMs, hostEnv: armEnv(arm, env) });
+    const plan = interactivePlan({ armDir: arm.cwd, prompt, model, effort, timeoutMs, allowedApps, allowedGrants, hostEnv: armEnv(arm, env) });
     const events = [];
     const out = await runInteractive(plan, { signal: signal ?? controller.signal, onSpawn,
       onEvent: auditDrag ? event => events.push(JSON.stringify(event)) : undefined });
+    if (out.approvalBlock && evidenceDir && !privateMail) writeFileSync(join(evidenceDir, 'approval-block.json'), scrub(JSON.stringify(out.approvalBlock, null, 2)) + '\n', { mode: 0o600 });
     const approvalStop = out.gateBlocked ? out.reason : !out.groupClean ? 'interactive cleanup unverified' : undefined;
     if (approvalStop) onPermissionRefusal?.();
     return { code: out.is_error ? 1 : 0, out, groupClean: out.groupClean, timedOut: out.timedOut,
@@ -573,7 +574,8 @@ pass: for (let run = 1; run <= runs; run++) {
             }
             const response = await runClaude(prompt, ARMS[armName], !task.privateMail && !task.noScreenshot && armName === 'sleight' ? { SLEIGHT_TRACE: evidenceDir } : {},
               { signal: controller.signal, evidenceDir, ...callbacks, privateMail: task.privateMail,
-                fixtureLifecycle: true, onSpawn: task.privateMail ? undefined : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
+                fixtureLifecycle: true, onSpawn: task.privateMail ? undefined : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS,
+                allowedApps: task.allowedApps, allowedGrants: task.allowedGrants, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
             if (!task.privateMail) response.footprint = await cpu.finish();
             if (stopWatching) response.appWindows = await stopWatching();
             if (!task.privateMail) response.timing = runTiming(response.out, armName === 'sleight' ? traceTiming(evidenceDir) : undefined);

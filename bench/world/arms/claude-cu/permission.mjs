@@ -7,24 +7,50 @@ export function validateAllowedApps(apps) {
   return [...new Set(apps)];
 }
 
-function allowedCall(name, input, apps, depth = 0) {
-  if (depth > 8 || !input || typeof input !== 'object' || Array.isArray(input)) return false;
-  if (name === 'request_access' && (!Array.isArray(input.apps) || !input.apps.length || !input.apps.every(app => apps.includes(app)))) return false;
-  if (name === 'open_application' && !apps.includes(input.app ?? input.bundle_id)) return false;
-  for (const key of ['app', 'app_name', 'bundle_id']) if (key in input && !apps.includes(input[key])) return false;
-  if (name === 'computer_batch') return Array.isArray(input.actions) && input.actions.length > 0 && input.actions.every(action =>
-    typeof action?.action === 'string' && allowedCall(action.action, action, apps, depth + 1));
+const grants = ['clipboardRead', 'clipboardWrite', 'systemKeyCombos', 'shellAccess', 'fileAccess', 'systemSettings'];
+export function validateAllowedGrants(values) {
+  if (!Array.isArray(values) || values.some(value => !grants.includes(value))) throw new Error('invalid computer-use grant allowlist');
+  return [...new Set(values)];
+}
+
+const tools = new Set(['request_access', 'screenshot', 'click', 'type', 'key', 'scroll', 'move', 'drag', 'wait',
+  'open_application', 'computer_batch', 'app_screenshot', 'app_click', 'app_type', 'app_key', 'app_scroll', 'app_drag', 'app_batch']);
+function allowedTargets(input, apps, allowedGrants, depth = 0) {
+  if (depth > 16) return false;
+  if (!input || typeof input !== 'object') return true;
+  if (Array.isArray(input)) return input.every(value => allowedTargets(value, apps, allowedGrants, depth + 1));
+  for (const [key, value] of Object.entries(input)) {
+    if (['app', 'app_name', 'bundle_id'].includes(key) && !apps.includes(value)) return false;
+    if (key === 'apps' && (!Array.isArray(value) || !value.length || !value.every(app => apps.includes(app)))) return false;
+    if (grants.includes(key) && (typeof value !== 'boolean' || value && !allowedGrants.includes(key))) return false;
+    if (!allowedTargets(value, apps, allowedGrants, depth + 1)) return false;
+  }
+  return true;
+}
+function allowedCall(name, input, apps, allowedGrants, depth = 0, app) {
+  if (depth > 8 || !tools.has(name) || !input || typeof input !== 'object' || Array.isArray(input) ||
+    !allowedTargets(input, apps, allowedGrants)) return false;
+  if (name === 'request_access' && (!Array.isArray(input.apps) || !input.apps.length ||
+    Object.keys(input).some(key => !['action', 'apps', 'clipboardRead', 'clipboardWrite', 'systemKeyCombos'].includes(key)))) return false;
+  const target = input.app ?? input.app_name ?? input.bundle_id ?? app;
+  if ((name === 'open_application' || name.startsWith('app_')) && !apps.includes(target)) return false;
+  if (name === 'computer_batch' || name === 'app_batch') return Array.isArray(input.actions) && input.actions.length > 0 && input.actions.every(action =>
+    typeof action?.action === 'string' && allowedCall(action.action, action, apps, allowedGrants, depth + 1, name === 'app_batch' ? target : undefined));
   return true;
 }
 
 export function permissionDecision(input, env = process.env) {
   const event = input?.hook_event_name;
-  if (!['PermissionRequest', 'PreToolUse'].includes(event)) return {};
-  let apps = [];
-  try { apps = validateAllowedApps(JSON.parse(env.BENCH_CU_ALLOWED_APPS)); } catch {}
-  const bound = input.session_id === env.BENCH_CU_SESSION && input.cwd === env.BENCH_CU_CWD;
+  if (!['PermissionRequest', 'PreToolUse'].includes(event)) throw new Error('malformed hook event');
+  let apps = [], allowedGrants = [];
+  try {
+    apps = validateAllowedApps(JSON.parse(env.BENCH_CU_ALLOWED_APPS));
+    allowedGrants = validateAllowedGrants(JSON.parse(env.BENCH_CU_ALLOWED_GRANTS ?? '[]'));
+  } catch { apps = []; }
+  const bound = typeof env.BENCH_CU_SESSION === 'string' && !!env.BENCH_CU_SESSION && typeof env.BENCH_CU_CWD === 'string' && !!env.BENCH_CU_CWD &&
+    input.session_id === env.BENCH_CU_SESSION && input.cwd === env.BENCH_CU_CWD;
   const tool = /^mcp__computer-use__(\w+)$/.exec(input.tool_name ?? '')?.[1];
-  const allowed = bound && apps.length > 0 && !!tool && allowedCall(tool, input.tool_input, apps);
+  const allowed = bound && apps.length > 0 && !!tool && allowedCall(tool, input.tool_input, apps, allowedGrants);
   if (event === 'PreToolUse') {
     if (bound && /^(?:ToolSearch|WaitForMcpServers)$/.test(input.tool_name ?? '') || allowed) return {};
     return { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny',
@@ -36,9 +62,15 @@ export function permissionDecision(input, env = process.env) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let text = '';
+  const deny = reason => { process.stderr.write(`Computer-use benchmark denied: ${reason}.\n`); process.exit(2); };
+  const timer = setTimeout(() => deny('hook stdin timeout'), 4000);
+  process.on('uncaughtException', () => deny('hook failure'));
+  process.on('unhandledRejection', () => deny('hook failure'));
+  process.stdin.on('error', () => deny('hook stdin failure'));
   process.stdin.setEncoding('utf8');
-  process.stdin.on('data', chunk => { text += chunk; if (text.length > 65536) process.exit(1); });
+  process.stdin.on('data', chunk => { text += chunk; if (text.length > 65536) deny('oversized hook stdin'); });
   process.stdin.on('end', () => {
-    try { process.stdout.write(JSON.stringify(permissionDecision(JSON.parse(text)))); } catch { process.exitCode = 1; }
+    clearTimeout(timer);
+    try { process.stdout.write(JSON.stringify(permissionDecision(JSON.parse(text)))); } catch { deny('malformed hook stdin'); }
   });
 }
