@@ -94,6 +94,13 @@ TODO: full release pass result.
   passed it.
 - Guard stops say whether any input was sent. When a label matches a menu-bar item and exactly one
   element in the window, the click goes to the window's element, and other ambiguities list the candidates.
+- A call whose own key or click moves a window without editable document content to another place,
+  such as a folder, goes on in the same call, on the same window and input evidence as menus.
+- When an action leaves the same element focused but changes its description, such as another sheet
+  becoming active, the result says so. A changed selected tab is reported too.
+- A window's close button is never clicked by element number. Close a window by label or Cmd+W.
+- A call that re-acquires an app and then shows the same window whole drops the duplicate first
+  tree. Word runs sent both in every call.
 - `SLEIGHT_COMPACT_ACQUISITION=1` sends an app's first tree with only the elements that take actions
   and short text, and refuses a click on a number it left out.
   TODO: these entries' A/B result.
