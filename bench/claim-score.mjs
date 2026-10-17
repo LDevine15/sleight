@@ -42,10 +42,10 @@ export function score(rows) {
   return out;
 }
 
-export function claim(table, rules) {
-  const tasks = rules.tasks, others = rules.arms.filter(a => a !== ME && table[a]), stats = {}, totals = {}, pairs = [], reasons = [];
+export function claim(table, rules, me = ME) {
+  const tasks = rules.tasks, others = rules.arms.filter(a => a !== me && table[a]), stats = {}, totals = {}, pairs = [], reasons = [];
   const off = (a, b, d) => Math.abs(a - b) / Math[d](a, b);
-  for (const arm of [ME, ...others]) {
+  for (const arm of [me, ...others]) {
     for (const task of tasks) {
       const t = table[arm]?.[task]; if (!t) continue;
       const s = [...t.passes].sort((a, b) => a - b);
@@ -55,23 +55,23 @@ export function claim(table, rules) {
     totals[arm] = tasks.every(t => table[arm]?.[t]?.expected != null) ? tasks.reduce((a, t) => a + table[arm][t].expected, 0) : null;
   }
   for (const task of tasks) for (const arm of others) {
-    const a = table[ME]?.[task], b = table[arm]?.[task], ea = a?.expected ?? null, eb = b?.expected ?? null, both = ea != null && eb != null;
+    const a = table[me]?.[task], b = table[arm]?.[task], ea = a?.expected ?? null, eb = b?.expected ?? null, both = ea != null && eb != null;
     const p = { task, arm, sleight: ea, other: eb, offMin: both ? off(ea, eb, 'min') : null, offMax: both ? off(ea, eb, 'max') : null,
-      runs: { [ME]: a?.runs.length ?? 0, [arm]: b?.runs.length ?? 0 } };
+      runs: { [me]: a?.runs.length ?? 0, [arm]: b?.runs.length ?? 0 } };
     p.withinMin = both && p.offMin <= 0.2; p.withinMax = both && p.offMax <= 0.2;
-    p.short = (STRICT === 'max' ? p.withinMax : p.withinMin) ? [ME, arm].filter(n => p.runs[n] < 5).map(n => `${n} ${p.runs[n]}/5`) : null;
+    p.short = (STRICT === 'max' ? p.withinMax : p.withinMin) ? [me, arm].filter(n => p.runs[n] < 5).map(n => `${n} ${p.runs[n]}/5`) : null;
     pairs.push(p);
   }
   const lowest = tasks.filter(task => {
-    const e = table[ME]?.[task]?.expected;
+    const e = table[me]?.[task]?.expected;
     return e != null && others.every(arm => { const o = table[arm]?.[task]?.expected; return o == null || e < o; });
   });
-  const majority = Math.floor(tasks.length / 2) + 1, completed = tasks.filter(t => table[ME]?.[t]?.passes.length).length;
-  if (lowest.length < majority) reasons.push(`${ME} has the lowest expected time on ${lowest.length} of ${tasks.length}; "fastest" needs ${majority}`);
-  if (totals[ME] == null) reasons.push(`${ME} has no total (a task with no pass or no runs)`);
+  const majority = Math.floor(tasks.length / 2) + 1, completed = tasks.filter(t => table[me]?.[t]?.passes.length).length;
+  if (lowest.length < majority) reasons.push(`${me} has the lowest expected time on ${lowest.length} of ${tasks.length}; "fastest" needs ${majority}`);
+  if (totals[me] == null) reasons.push(`${me} has no total (a task with no pass or no runs)`);
   else {
-    const beat = others.filter(a => totals[a] != null && totals[a] <= totals[ME]);
-    if (beat.length) reasons.push(`${ME}'s total ${totals[ME].toFixed(0)} s is not the lowest: ${beat.map(a => `${a} ${totals[a].toFixed(0)} s`).join(', ')}`);
+    const beat = others.filter(a => totals[a] != null && totals[a] <= totals[me]);
+    if (beat.length) reasons.push(`${me}'s total ${totals[me].toFixed(0)} s is not the lowest: ${beat.map(a => `${a} ${totals[a].toFixed(0)} s`).join(', ')}`);
   }
   const topUp = pairs.filter(p => p.short?.length);
   if (topUp.length) reasons.push(`5 runs missing on ${topUp.length} pair(s) within 20%: ${topUp.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}`);
