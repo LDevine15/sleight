@@ -62,10 +62,10 @@ test('transition barrier resolves an ID after element renumbering', async () => 
   assert.equal(compiled.error, null); assert.equal(compiled.value, 'after'); assert.equal(compiled.reads, 3);
 });
 
-for (const [mode, reads] of [['default', 2], ['careful', 3]]) test(`field click then typing preserves the ${mode} guard's read count`, async () => {
+for (const mode of ['default', 'careful']) test(`field click then typing checks focus once in ${mode} mode`, async () => {
   const plan = dependencyPlan([{ read: true }, { click: { id: 'entry' } }, { type: 'after' }]);
   const compiled = await relayTrial(true, { mode, plan: plan.code });
-  assert.equal(compiled.error, null); assert.equal(compiled.value, 'after'); assert.equal(compiled.reads, reads);
+  assert.equal(compiled.error, null); assert.equal(compiled.value, 'after'); assert.equal(compiled.reads, 3);
 });
 
 test('user takeover stops the dependent suffix in the full relay', async () => {

@@ -1,5 +1,4 @@
 import { elementWait } from './element-wait.mjs';
-const EDITABLE_CLICK_SETTLE_MS = 250;
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -99,6 +98,29 @@ export function sameElement(was, now) {
     if (hasIdentifier(full, name) || hasLabel(full, name)) return true;
   }
   return false;
+}
+
+// Only a resolved focus outside the clicked field's subtree proves a mismatch.
+// Missing rows or focus leave the existing misplaced-text observation to report it.
+function differentFocusTarget(text, before) {
+  const focus = /^The focused UI element is (\d+) (.+)\r?$/m.exec(text ?? '');
+  if (!focus) return;
+  const rows = (text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*)\r?$/.exec(line)).filter(Boolean)
+    .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
+  const resolve = (number, line) => {
+    const numbered = rows.find(row => row.number === number && sameElement(line, row.line));
+    if (numbered) return numbered;
+    const matches = rows.filter(row => sameElement(line, row.line));
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const clicked = resolve(before.number, before.line), focused = resolve(Number(focus[1]), focus[2]);
+  if (!clicked || !focused) return;
+  const start = rows.indexOf(clicked);
+  for (let i = start; i < rows.length; i++) {
+    if (i > start && rows[i].depth <= clicked.depth) break;
+    if (rows[i] === focused) return;
+  }
+  return clicked.number;
 }
 
 export const documentKey = window => window && JSON.stringify(window);
@@ -256,6 +278,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     const hasIdentifier = ${hasIdentifier.toString()};
     const hasLabel = ${hasLabel.toString()};
     const sameElement = ${sameElement.toString()};
+    const differentFocusTarget = ${differentFocusTarget.toString()};
     const wait = ${elementWait.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     const input = () => {
@@ -443,6 +466,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // Cmd+Shift+G, then typing a path outran the Open panel without it (textedit-drag, 2026-10-09).
           // Typing, pasting and plain keys change no window, so the action after them goes ahead.
           const before = state.previous.get(proxy);
+          const checkFocus = ['typeText', 'paste'].includes(name) && before?.editable && before.completed;
           const spec = args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : undefined;
           const bare = name === 'click' && typeof args[0] === 'string' && !/^\\d+$/.test(args[0]) ? args[0] : undefined;
           const byId = typeof spec?.id === 'string' || typeof spec?.label === 'string' || typeof spec?.line === 'string' || bare !== undefined;
@@ -473,7 +497,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             state.quietEdits && (before.editKey || before.editable && ['typeText', 'paste'].includes(name)));
           let observed;
           if (text === undefined && bind) text = state.binding.text;
-          if (text === undefined && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
+          if (text === undefined && !checkFocus && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
             observed = skipFirst ? state.expected : state.callHeaders.get(proxy);
             if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false }) + '\\n');
           } else {
@@ -615,11 +639,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               : state.reason;
             throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
           }
-          // Background field clicks can return before the field takes first responder. Count
-          // guard reads toward the settling interval, then check the lease again before input.
-          if (['typeText', 'paste'].includes(name) && before?.name === 'click' && before.editable && before.completedAt !== undefined) {
-            const remaining = ${EDITABLE_CLICK_SETTLE_MS} - (clock() - before.completedAt);
-            if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.ceil(remaining)));
+          // The engine names focus after the tree. Reuse the guard's fresh read; a field's inner
+          // node can hold focus too. Only positive evidence of focus elsewhere stops the text.
+          if (checkFocus) {
+            const number = differentFocusTarget(text, before);
+            if (number !== undefined) {
+              throw new Error("sleight stopped before " + name + ": another element has focus. Use app.setValue(" + number + ", <text>) instead.");
+            }
           }
           await checkLease();
           state.activeApp = proxy;
@@ -646,7 +672,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             /(?:…|\\.\\.\\.)$/.test(label ?? '') || /^(?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(label ?? '')) ||
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
-          const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey,
+          const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line,
             textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text) };
           state.previous.set(proxy, previous);
           if (text !== undefined && !bind) state.binding = { proxy, text };
@@ -660,7 +686,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
           const result = await value.apply(raw, args);
-          if (editable) previous.completedAt = clock();
+          if (editable) previous.completed = true;
           state.completedActions++;
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }
