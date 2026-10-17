@@ -2761,7 +2761,7 @@ export function createRelay({
       // own rules ride along here instead of costing Claude a skill turn (one per benchmark run).
       if (docs && firstCallRules && !rulesShown) {
         rulesShown = true;
-        msg.result.content.push({ type: 'text', text: firstCallRules });
+        msg.result.content.push({ type: 'text', text: firstCallRules + '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' });
       }
       if (docs) docsShown = true;
     }

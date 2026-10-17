@@ -15,27 +15,29 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 ## Calls
 
-- `let app = await cua.getApp("<name or bundle ID>")` returns UI state. Put known actions in that
-  call: sleight checks the window before input. Keep the handle and `await` every action.
-- Use element numbers, or stable IDs and labels when actions renumber the window:
+- When the task specifies an app, start with `let app = await cua.getApp("<name or bundle ID>")`.
+  Use `cua.getState()` only to find an app you can't name. Batch known actions; sleight checks
+  the window before input. Keep the handle and `await` every action.
+- After renumbering, prefer stable IDs or labels to element numbers:
   `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
-- Results show changes since the last full tree. Read again with `await app.getAXState()`.
+- End on the action. Its result already includes changed lines. Don't read just to confirm them.
+  For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
   changed, read again before retrying.
-- Among several windows, call `select_window` with the app and an exact `url` or `title`, then
-  acquire the app alone and check its Window line.
+- Among windows, call `select_window` with the app and exact `url` or `title`, then acquire
+  alone and check its Window line.
 - Multiply tap coordinates by the screenshot multiplier.
 
 ## Text, menus and files
 
-- For exact text, `await app.paste("text")` avoids autocorrect and capitalization. Replace a whole
-  document with select-all and paste in one call, then read back and compare.
+- `await app.paste("text")` avoids autocorrect and capitalization. Replace documents with select-all
+  and paste in one call, then read back and compare.
 - Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
   call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
   `menu_bar` is only for status icons.
 - Acquire a document that's already open. Don't reopen it.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
-- Type numbers moved between apps as digits, since displays add separators.
+- Transfer numbers as digits.
 - Move files or list items with Cut/Copy and Paste or Move, not a drag.
 - In a Save panel, send Go to Folder, the folder, Return, the name and the final Return in one call,
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
