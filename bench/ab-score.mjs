@@ -32,6 +32,19 @@ export function scoreSide(rows, claimTasks) {
   return groups;
 }
 
+// One bench/run.mjs invocation per side per round, so each results file is a round. Pairing round i of each side
+// keeps one slow outlier from swinging a sum of per-task medians.
+export function roundTotals(rows) {
+  const rounds = new Map();
+  for (const row of rows) {
+    const r = rounds.get(row.round) ?? { runs: 0, passes: 0, totalS: 0, modelS: 0, turns: 0 };
+    r.runs++; r.passes += row.passed ? 1 : 0; r.totalS += (row.timing?.totalMs ?? 0) / 1000;
+    r.modelS += (row.timing?.modelMs ?? 0) / 1000; r.turns += row.turns ?? 0;
+    rounds.set(row.round, r);
+  }
+  return [...rounds.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, r]) => r);
+}
+
 export function readRows(dir, since, model, reasons = []) {
   const rows = [], dropped = {};
   for (const file of readdirSync(dir).filter(f => /^\d{4}-.*\.json$/.test(f) && f >= since).sort()) {
@@ -40,7 +53,7 @@ export function readRows(dir, since, model, reasons = []) {
       const why = row.skipped || row.seconds == null ? 'skipped'
         : !(row.models ?? []).every(m => m === model) ? `model ${(row.models ?? []).join('+') || 'unknown'}`
         : reasons.find(r => new RegExp(r.match, 'i').test(row.reason ?? ''))?.why;
-      if (why) dropped[why] = (dropped[why] ?? 0) + 1; else rows.push(row);
+      if (why) dropped[why] = (dropped[why] ?? 0) + 1; else rows.push({ ...row, round: file });
     }
   }
   return { rows, dropped };
@@ -53,7 +66,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const reasons = JSON.parse(readFileSync(join(root, 'bench/claim-exclusions.json'), 'utf8')).reasons;
   const sides = Object.fromEntries(['old', 'new'].map(side => {
     const { rows, dropped } = readRows(arg(`--${side}`), since, model, reasons);
-    return [side, { ...scoreSide(rows, claim), dropped }];
+    return [side, { ...scoreSide(rows, claim), rounds: roundTotals(rows), dropped }];
   }));
   if (process.argv.includes('--json')) { console.log(JSON.stringify(sides, null, 1)); process.exit(0); }
   const fmt = v => v == null ? '-' : Number.isInteger(v) ? String(v) : v.toFixed(1);
@@ -64,6 +77,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       const cell = side => { const t = sides[side][group][task]; return t ? `${t.passes}/${t.runs}, ${['turns', 'totalS', 'modelS', 'output', 'prompt'].map(k => fmt(t[k])).join(', ')}` : '-'; };
       console.log(`${task} | ${cell('old')} | ${cell('new')}`);
     }
+  }
+  console.log('\nround | old passes, total s, model s, turns | new ... | new - old total s');
+  const n = Math.max(sides.old.rounds.length, sides.new.rounds.length);
+  for (let i = 0; i < n; i++) {
+    const o = sides.old.rounds[i], w = sides.new.rounds[i], cell = r => r ? `${r.passes}/${r.runs}, ${fmt(r.totalS)}, ${fmt(r.modelS)}, ${r.turns}` : '-';
+    console.log(`${i + 1} | ${cell(o)} | ${cell(w)} | ${o && w ? fmt(w.totalS - o.totalS) : '-'}`);
   }
   for (const side of ['old', 'new']) if (Object.keys(sides[side].dropped).length) console.log(`${side} dropped:`, JSON.stringify(sides[side].dropped));
 }

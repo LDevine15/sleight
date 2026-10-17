@@ -21,3 +21,10 @@ test('the A/B score splits claim and held-out tasks and drops rows from another 
   assert.equal(side.heldOut.total.passes, 1);
   assert.equal(side.heldOut['finder-rename'].turns, 6);
 });
+
+test('round totals pair one results file per round, failures included', async () => {
+  const { roundTotals } = await import('../bench/ab-score.mjs');
+  const rows = [{ ...row('calculator-click', true, 3), round: 'b' }, { ...row('finder-rename', false, 5), round: 'b' },
+    { ...row('calculator-click', true, 4), round: 'a' }];
+  assert.deepEqual(roundTotals(rows), [{ runs: 1, passes: 1, totalS: 4, modelS: 3.2, turns: 4 }, { runs: 2, passes: 1, totalS: 8, modelS: 6.4, turns: 8 }]);
+});

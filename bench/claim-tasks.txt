@@ -1,1 +1,1 @@
-calculator-click,calculator-menu,textedit-save,textedit-drag,finder-move,preview-read,word-edit,excel-edit,textedit-calculator
+calculator-click,calculator-menu,textedit-save,textedit-drag,finder-move,preview-read,textedit-calculator,word-edit,excel-edit

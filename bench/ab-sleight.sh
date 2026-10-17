@@ -4,12 +4,14 @@
 # always runs first. Owner away only (the arms show windows). Score with:
 #   node bench/ab-score.mjs --old ~/Projects/sleight-wt/ab-old/bench/results --new ~/Projects/sleight-wt/ab-new/bench/results --since <stamp printed below>
 # NEW_ENV turns on the new side's opt-in flags under test (one string of NAME=value pairs).
-#   OLD=d8e52789 NEW=private/pane/auto-mode NEW_ENV=SLEIGHT_COMPACT_ACQUISITION=1 ROUNDS=3 bench/ab-sleight.sh
+# Pin NEW to a commit, never a branch that can move during the run, and measure exactly what ships (no NEW_ENV).
+#   OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh
 set -u
 repo=${0:A:h:h}; OLD=${OLD:?}; NEW=${NEW:?}; ROUNDS=${ROUNDS:-3}; NEW_ENV=${NEW_ENV:-}
-NATIVE=calculator-click,calculator-menu,textedit-save,textedit-drag,finder-move,preview-read,word-edit,excel-edit,textedit-calculator
+NATIVE=calculator-click,calculator-menu,textedit-save,textedit-drag,finder-move,preview-read,textedit-calculator
 HELD=textedit-edit,chess-drag,preview-pdf,finder-files,finder-rename,finder-create-folder,textedit-two-windows,textedit-window-drag,textedit-replace-save,textedit-replace-all,textedit-insert-line
-TASKS=${TASKS:-$NATIVE,$HELD}
+# Office last: a stuck Word or Excel costs every later task (cleared by hand three times on 2026-10-16).
+TASKS=${TASKS:-$NATIVE,$HELD,word-edit,excel-edit}
 for side in old new; do
   dir=$HOME/Projects/sleight-wt/ab-$side; ref=${(P)${side:u}}
   [[ -d $dir ]] || git -C $repo worktree add --detach $dir $ref || exit 1

@@ -34,11 +34,18 @@ Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with 
   into windows without editable document content; HID idle from the baseline sample), TW3 plus a focused-description note (the
   excel-edit-1 sheet switch), TW4 (no numbered close-button clicks), duplicate acquisition trees dropped by default for the same
   window, and the skill's re-acquire-when-switching-apps line.
-- Overnight sitting (owner, 2026-10-17: "do overnight but let's not start it yet"): when they say go, message "puddle arch" for the
-  quiet window, then (1) live checks: textedit-drag on TT3's path and engine background clicks vs HID idle, (2) the combined A/B
-  below, (3) keep measured wins on by default and revert measured losses, one full check, (4) the all-arms native claim run.
-- Combined A/B, ready once the lanes merge: `OLD=d8e52789 NEW=private/pane/auto-mode NEW_ENV=SLEIGHT_COMPACT_ACQUISITION=1
-  ROUNDS=3 bench/ab-sleight.sh`, scored by `bench/ab-score.mjs`. 9 claim plus 11 held-out native tasks, about 1.7 to 2 hours, owner
+- Overnight sitting (owner, 2026-10-17: "do overnight but let's not start it yet"), tightened after Fable's final review: when they
+  say go, check `timeout 10 gh auth token` (124 means the keychain is locked: stop), message "puddle arch" for the quiet window, then
+  (1) live checks: textedit-drag on TT3's path, and engine background clicks vs HID idle. If engine clicks touch HID idle, the
+  continuations never fire: strip their two CHANGELOG entries and note the 33 ms admission cost in known-problems. (2) The A/B,
+  `OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh`, with no NEW_ENV, so it measures the release build itself (TK1 stays a flag).
+  Read only the paired round totals and pass counts, never per-task medians from 3 runs. (3) A 15-minute triage gate: read the new
+  side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only if new passes aren't below old and
+  no new stop class appears. A revert creates a build the A/B never measured, so any revert is decided from traces and labeled that way.
+  (4) The all-arms native claim run, one arm at a time, Office tasks last (claim-tasks.txt), checking Word and Excel aren't
+  running between arms. Before it starts, set `since` in bench/claim-exclusions.json to its start stamp with the reason, so
+  yesterday's pre-fix rows don't mix in. Call the 11 extra tasks "tasks outside the claim suite", not held-out: several drove fixes.
+- Combined A/B scored by `bench/ab-score.mjs` (paired round totals). 9 claim tasks plus 11 native tasks outside the claim suite, about 1.7 to 2 hours, owner
   away. Live checks owed then too: textedit-drag on TT3's path, and engine background clicks leaving HID idle untouched (TT1N2).
 - Owner decisions today (in LAWS and ROADMAP): browser tasks race only turbo, so the native claim suite is 9 tasks; the headline
   "fastest plugin on macOS" needs the real-window browser race (BR1, BR2) before the launch post, not before the tag; Chromium
