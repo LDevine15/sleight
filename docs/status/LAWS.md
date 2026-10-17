@@ -93,6 +93,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Lanes and benchmark arms run with a throwaway Claude config, so they never put a keychain prompt on the owner's screen, and
   sleight-arch never answers macOS permission prompts for the owner.
 - Apps are approved without the owner only through the benchmark's own allowlist.
+  For the claude-cu arm, the harness may press Claude Code's "Allow for this session" card in its own terminal only when every
+  app the card names is on that allowlist (owner, 2026-10-17).
 - Screenshots and recordings capture single windows, never the whole screen, and published results show home paths as `~` with the
   owner's name scrubbed.
 - During another project's timed window (`/tmp/sleight-hold`), live runs and heavy checks wait.

@@ -80,7 +80,7 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
      Second bug: the prompt gate's ready regex misses the input placeholder. Pre-approval: request_access goes to the session's
      dialog host, and hooks don't answer the app card. `request_user_dialog` exists only in stream-json print sessions, which get no
      computer-use server. The only unattended path is the harness pressing "Allow for this session" in the pty when every app
-     the card names is on the allowlist. That is the owner's decision (sleight-arch said so on 2026-10-17), and the study's live.mjs is
+     the card names is on the allowlist. The owner approved it on 2026-10-17 (LAWS), and the study's live.mjs is
      written but was not run. Proposed arm diff in the study's report (env flag, gate regex, allowlist-checked card answerer).
    - Fable study B (done, scratch /private/tmp/claude-501/fable-audit/): on 8 of 9 tasks Haiku with sleight already uses fewer
      turns and less thinking than any Claude competitor. The exceptions are preview-read (the screenshot effect) and word-edit.
