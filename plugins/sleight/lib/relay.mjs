@@ -2382,9 +2382,11 @@ export function createRelay({
     callGenerations.set(prefixId, generation);
     splitCalls.set(prefixId, reply => {
       const raw = rawHeads.get(prefixId); rawHeads.delete(prefixId);
-      if (generation !== stopGeneration || closing || disposed) {
-        leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return;
-      }
+      const ended = () => {
+        if (generation === stopGeneration && !closing && !disposed) return false;
+        leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return true;
+      };
+      if (ended()) return;
       if (reply.error || reply.result?.isError) { toClient({ ...reply, id: msg.id }); return; }
       const acquiredNumber = acquire.match(/cua\.getApp\(\s*\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}\s*\)/)?.[1];
       if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
@@ -2410,7 +2412,7 @@ export function createRelay({
           .then(async gone => ({ gone, observed: gone ? await look({ appId: parent.appId, title: parent.title, url: parent.url, ...certified, focus: true }) : undefined }))
           .then(({ gone, observed }) => {
             running.delete(msg.id); callDetails.delete(msg.id);
-            if (generation !== stopGeneration || closing || disposed) { leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return; }
+            if (ended()) return;
             const reason = leaseWindow !== target ? 'lease-moved'
               : parentLeaseRefusal({ stale: expected, shown, reply: text, gone, observed, now: clock() });
             if (reason) { trace('parent-lease-refused', { id: msg.id, reason }); stale(); return; }
