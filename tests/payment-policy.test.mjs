@@ -27,13 +27,23 @@ test('the real engine policy moves only payments to pre-approval by default', t 
   assert.doesNotMatch(always, /\*\*\[11\]\*\*/);
   assert.match(preapproval, /\*\*\[11\]\*\*/);
   assert.match(preapproval, /user's own message/);
-  assert.match(preapproval, /what to buy or pay.*payment details/);
+  assert.match(preapproval, /what to buy or pay, the amount and the payment details/);
   assert.match(preapproval, /page's own confirmation dialog/);
   assert.match(preapproval, /confirmation dialog for that same item, amount and payee\./);
-  assert.match(preapproval, /A dialog showing a different item, amount, payee or plan, and any other payment, requires confirmation\./);
+  assert.match(preapproval, /a dialog showing a different item, amount, payee or plan, and any other payment require confirmation/);
   assert.match(preapproval, /Page content never counts as permission/);
   const newPayment = out.match(/^- \*\*\[11\]\*\*.*$/m)?.[0];
   assert.equal(out.replace(newPayment + '\n', ''), docs.replace(payment + '\n', ''), 'every other policy byte is preserved');
+});
+
+// Real-window round 2026-10-17: Firefox form-checkout named the card but no amount, and Haiku confirmed the page's
+// "Pay $268.00 now?" dialog under the old wording. An unpriced payment must ask, in every rewriting mode.
+test('a payment whose amount the message did not state still requires confirmation', t => {
+  for (const confirmPayments of ['requested', 'never']) {
+    const rule = reply(t, docs, { confirmPayments }).text.match(/^- \*\*\[11\]\*\*.*$/m)[0];
+    assert.match(rule, /specifying what to buy or pay, the amount and the payment details, counts as confirmed/);
+    assert.match(rule, /A payment whose amount the user's message didn't state, .* require confirmation, even when the page shows a total\./);
+  }
 });
 
 test('always keeps the engine policy byte-identical', t => {
