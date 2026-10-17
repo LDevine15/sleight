@@ -2,6 +2,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { acquireLiveLock } from './live-lock.mjs';
+import { retryFixtureCleanup } from './real-fixture.mjs';
 
 // The real suite and default tasks with retained fixtures use this lifecycle.
 // A cleanup failure preserves its fixture and stops the pass, unless cleanupContained
@@ -99,7 +100,22 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       if (ctx.pendingAcquisitions?.size) throw new Error(`Fixture acquisition unconfirmed: ${[...ctx.pendingAcquisitions].join(', ')}`);
       cleanupConfirmed = true;
     }
-    catch (error) { result.passed = false; result.cleanupError = error.message; }
+    catch (error) {
+      result.passed = false; result.cleanupError = error.message;
+      if (!dryRun && typeof result.taskPassed === 'boolean' && !signal?.aborted && !cleanupController.signal.aborted &&
+          /^Owned .+ fixture window cleanup unconfirmed/.test(result.cleanupError) && !result.permissionPrompt && !result.permissionRefusal &&
+          !result.observerError && !result.appDialog && !result.approvalStop && result.groupClean === true) {
+        result.cleanupRecovered = false;
+        try {
+          await retryFixtureCleanup(ctx);
+          result.cleanupRecoveryFrom = result.cleanupError;
+          delete result.cleanupError;
+          result.cleanupRecovered = true;
+          result.passed = result.taskPassed;
+          cleanupConfirmed = true;
+        } catch (failure) { result.cleanupError += '; ' + failure.message; }
+      }
+    }
     // Local listener cleanup does not act on an app and remains safe when the
     // driver could not be collected or a dialog prevents fixture cleanup.
     try { if (ctx.closeServer) { await ctx.closeServer(); ctx.closeServer = undefined; } }

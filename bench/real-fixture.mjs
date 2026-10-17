@@ -39,10 +39,12 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   if ((request.fixtureKind === 'web-page' || fixtureLaunch === 'retained-url') && ctx.ownerAway !== true) {
     throw Object.assign(new Error('Browser blank-window setup requires an explicit owner-away boundary'), { noMutation: true });
   }
-  request = { ...request, fixtureLaunch, stopOnAppDialog: ctx.stopOnAppDialog || request.stopOnAppDialog, ownerAway: ctx.ownerAway === true };
+  request = { ...request, runToken: ctx.nonce || request.runToken, fixtureLaunch,
+    stopOnAppDialog: ctx.stopOnAppDialog || request.stopOnAppDialog, ownerAway: ctx.ownerAway === true };
   ctx.signal?.throwIfAborted();
   ctx.cleanupSignal?.throwIfAborted();
   const startedAtMs = Date.now();
+  ctx.fixtureStartedAtMs ??= startedAtMs;
   ctx.windowLeases ??= [];
   const control = join(ctx.dir, `window-${ctx.windowLeases.length}-control.json`);
   const signal = ctx.signal;
@@ -108,6 +110,23 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         throw new Error(`Owned ${request.app} fixture window cleanup unconfirmed${diagnostics.closeFailure ? ': ' + diagnostics.closeFailure : ''}`);
       }
       diagnostics.windowCleanupConfirmed = true;
+    },
+    async recover() {
+      if (createdWindow || lease.running !== false || !lease.launched) throw new Error('Fixture recovery requires an app launched by this run');
+      diagnostics.appQuit = false;
+      diagnostics.helperCollectionConfirmed = await lease.dispose();
+      if (!diagnostics.helperCollectionConfirmed) throw new Error('Fixture helper collection unconfirmed; recovery refused');
+      await ctx.beforeFixtureCleanup?.();
+      ctx.cleanupSignal?.throwIfAborted();
+      const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', script, JSON.stringify({
+        ...request, mode: 'recover', running: lease.running, launched: lease.launched,
+        fixtureDir: ctx.dir, runToken: ctx.nonce || request.token, startedAtMs: ctx.fixtureStartedAtMs,
+      })], { signal: ctx.cleanupSignal, timeoutMs: 90000 });
+      const receipt = result.stdout?.split('\n').some(line => { try { return JSON.parse(line).stage === 'recovered'; } catch { return false; } });
+      if (!result.groupClean || result.exit?.code !== 0 || !receipt) throw new Error(`Owned ${request.app} fixture recovery unconfirmed${result.stderr?.trim() ? ': ' + result.stderr.trim() : ''}`);
+      diagnostics.cleanup = 'closed retained fixture';
+      diagnostics.windowCleanupConfirmed = true;
+      diagnostics.appQuit = true;
     },
     async dispose() { controller.abort(); return (await response).groupClean === true; },
   };
@@ -210,4 +229,10 @@ export async function closeFixtures(ctx) {
     } catch (error) { errors.push(error.message); }
   }
   if (errors.length) throw new Error(errors.join('; '));
+}
+
+export async function retryFixtureCleanup(ctx) {
+  const leases = ctx.windowLeases ?? [];
+  if (!leases.length || ctx.pendingAcquisitions?.size) throw new Error('Fixture recovery ownership unconfirmed');
+  for (const lease of [...leases].reverse()) await lease.recover();
 }
