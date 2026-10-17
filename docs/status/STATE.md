@@ -3,35 +3,33 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 17:55 UTC, owner away since 17:16Z, on their phone)
+## Banner (2026-10-17 19:10 UTC, owner away since 17:16Z, on their phone)
 
-Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim (owner, 2026-10-17): every fix the
-live runs surface lands before sleight's final claim run, then the tag (ROADMAP 1b). Puddle is shut down, and sleight has the Mac.
-Build agents run as Claude subagents (Opus high builds, Sonnet high reviews, Fable studies).
+Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim; the owner is "focused on winning
+everything we can" (2026-10-17). Puddle is shut down, and sleight has the Mac. Build agents are Claude subagents (Opus high builds,
+Sonnet high reviews, Fable studies).
 
-**Since the 17:08Z boot** (all pushed to `pane/auto-mode` on `private` and fast-forwarded into the main checkout):
-- e2fd539a WE1: native warm-up no longer declines the user's first approval (an in-order engine queued the call's prompt behind the
-  private inventory cell, where the fail-closed rule declined it). Root cause of the stop-then-lazy-start test timeout, so
-  `SLEIGHT_WARM_ENGINE` is on by default. Full check 6,695 tests, 0 fail, exit 0.
-- 1e4c838b RT1 (Fable red-team of today's merges): the temp sweep keeps `sleight-review-*` (change review's undo copies) and probe
-  banks; pass hygiene closes windows only with `--owner-away`.
-- 4cc32214, 29eb0816, 725bd30d: xl1-probe startup waits and a probe-client crash fix. The Excel probe ran 4 times (17:17-17:20Z):
-  AX -25204 and empty windows at launch, then a crash that left Excel running (quit by NSRunningApplication), then "Rename editor
-  unavailable" after the tab double-click, and its cleanup couldn't answer Excel's save alert, which is an AXDialog window, so
-  sleight-arch answered the fixture's own Don't Save through System Events. XP1 in the ledger.
-- Uncommitted, reviewed: GS1 (relay rewrites `<handle>.getState(` to `getAXState(`, strings masked) and SN1 (a same-window file
-  write confirms a save despite a degraded read). Full check pending, after the top-ups finish.
+**Running:** sleight's final claim run (`~/Projects/sleight-wt/sitting-1017c/claim-final.sh`, ARMS=sleight RUNS=5, all 9 tasks,
+started 19:07Z) on bb6f99f6 from the `ab-old` worktree. Results go to `~/Projects/sleight-wt/ab-old/bench/results`; copy them to the
+main checkout's results, then add the 11:53Z sleight file to the exact-name exclusions and score. Then one top-up round for the arms
+within 20% (LAWS), then the wording.
 
-**Landed after the banner's first write:** GS1+SN1 (20ba6d20), CU1 claude-cu harness fix (f644b96b), CS1/CS2/CS5
-claim-score rules (976ec3cb) plus per-run exclusions, XP1 probe cleanup for Excel's alert-window save prompt, the owner's 5-run
-rule clarification in LAWS (20% over the slower arm, one top-up round after sleight's final run). Top-ups are done: lcu
-calculator-click 5/5, textedit-calculator 4/5; claude-cu textedit-drag 4/5 (57 s expected, now ahead of sleight's 67 on the
-old build), textedit-calculator 5 counted, word-edit 5/5. Scorer today: "completed every task, fastest on 4 of 9", totals 373
-vs claude-cu 476. RA1 (re-acquire compaction, b0e47ba9) is merged locally as 5330defd, not pushed, while a Sonnet-high review runs.
+**In the claim build (bb6f99f6), all pushed:** WE1 warm-up fix with warm-up on by default; GS1 getState rewrite; SN1 save note;
+LS1 (a split call whose acquisition shows renumbering at or below its literal numbers stops before input); RA1 re-acquire
+compaction, opt-in after it lost its A/B (156.3 s, 9/10 against 149.4 s, 10/10); CU1 claude-cu harness fix; CS1/CS2/CS5 claim-score
+rules with per-run exclusions; the RT1 temp-sweep and hygiene fixes, and the XP1 probe fixes. Full check 6,721 tests, 0 fail.
 
-**Running:** RA1 A/B (`~/Projects/sleight-wt/sitting-1017c/ab-ra1.sh`, started 17:53Z): commit 5330defd on both sides, old side
-`SLEIGHT_COMPACT_REACQUIRE=0`, excel-edit and word-edit, 5 alternating rounds. Results in `~/Projects/sleight-wt/ab-{old,new}/bench/results`
-since 2026-10-17T17-53. Score with `node bench/ab-score.mjs`.
+**After the claim build:** LW1 (d734b73b, pushed): when a call's own click closes a same-document dialog, the rest of the call runs on the document, and
+stop notices list actions run and not sent. Two Sonnet-high safety reviews passed, but live it didn't trigger once in two word-edit runs
+(115.8 and 99.4 s against 94.4 and 94.2). Its build agent is diagnosing from the traces. Full check with LW1: 6,742 tests, 0 fail.
+
+**Decisions today (owner):** the 5-run rule is kept and clarified (20% over the slower arm, one top-up round after sleight's final
+run). sleight may press a sibling button or tab through Accessibility (LAWS). That exception is unused for now. Excel's sheet tabs
+don't list any AX actions (AXPress -25206), and setting AXSelected, AXSelectedChildren or AXFocused switches nothing, so TP1 was dropped.
+
+**Measured today.** The Sonnet 5.5 diagnostic ran word-edit in 43 to 63 s, excel-edit in 59 to 90 s, with the same turn counts as Haiku. The turns
+come from sleight and the apps. Excel tab swap: a posted click on a sheet tab drags it toward the real pointer's x (probe arms A, B
+and C 3/3 each). A turn's seconds follow Haiku's thinking time (r 0.95), not the context size.
 
 **Studies (17:0xZ, reports in the session transcript; items in `~/Projects/sleight-wt/ledger/LEDGER.md`, last section):**
 claude-cu wins on excel-edit by retyping sorted rows in one Name Box batch; it loses big on textedit-save (104 s), calculator-menu,
