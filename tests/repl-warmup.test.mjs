@@ -100,6 +100,56 @@ test('setup code installs the guard without querying an app, browser or tab', as
   assert.equal(typeof context.__sleightDocumentGuardSetup, 'function');
 });
 
+test('native warm-up has its own silent cell so a slow inventory cannot hold the first JS', async t => {
+  for (const failure of ['pending', 'reject', 'throw']) {
+    const h = relayFixture(t, { warmEngine: true });
+    const calls = [], pending = [];
+    const context = createContext({ cua: { listApps: options => {
+      calls.push(JSON.stringify(options));
+      if (failure === 'throw') throw Error('unavailable');
+      const work = failure === 'reject' ? Promise.reject(Error('unavailable')) : new Promise(() => {});
+      pending.push(work.catch(() => {}));
+      return work;
+    } }, nodeRepl: { write() {} } });
+    h.send(js(2));
+    await runInContext('(async () => {' + h.warm.params.arguments.code + '})()', context);
+    // The engine drains native work started by a cell before replying, even if JS did not await it.
+    assert.equal(pending.length, 0, 'guard cell must finish before native inventory starts');
+    h.respond({ id: h.warm.id, result: { content: [] } }); await tick();
+    const native = h.sent.find(msg => msg.params?.name === 'js' && msg.id !== h.warm.id && msg.id !== 2);
+    assert.ok(native, 'native inventory runs in a separate private cell');
+    await runInContext('(async () => {' + native.params.arguments.code + '})()', context);
+    assert.deepEqual(calls, ['{"emit":false}']);
+    assert.ok(h.sent.some(msg => msg.id === 2), 'client is released without a native reply');
+    assert.ok(h.sent.findIndex(msg => msg.id === 2) < h.sent.indexOf(native), 'already waiting JS goes first');
+    h.respond({ id: native.id, result: { isError: true, content: [{ type: 'text', text: 'inventory failure' }] } });
+    assert.equal(h.received.some(msg => msg.id === native.id), false);
+  }
+  const off = relayFixture(t, { warmEngine: false });
+  off.respond({ id: off.warm.id, result: { content: [] } }); await tick();
+  assert.equal(off.sent.filter(msg => msg.params?.name === 'js').length, 1);
+});
+
+test('private native warm-up declines prompts, preserves docs and never blocks unused shutdown', async t => {
+  const asked = [], h = relayFixture(t, { warmEngine: true, ask: async () => { asked.push('prompt'); return 'accept'; } });
+  h.respond({ id: h.warm.id, result: { content: [] } }); await tick();
+  const native = h.sent.find(msg => String(msg.id).startsWith('sleight-native-warm-'));
+  assert.ok(native);
+  h.respond({ id: 'private-permission', method: 'elicitation/create', params: { message: 'Permission?' } }); await tick();
+  assert.deepEqual(asked, []);
+  assert.equal(h.sent.find(msg => msg.id === 'private-permission').result.action, 'decline');
+  const docs = { type: 'text', text: '# Computer Use Confirmations Policy\nAlways ask.' };
+  h.respond({ id: native.id, result: { content: [docs] } });
+  h.send(js(2)); h.respond({ id: 2, result: { content: [] } });
+  assert.ok(h.received.find(msg => msg.id === 2).result.content.some(c => c.text === docs.text));
+  const unused = relayFixture(t, { warmEngine: true });
+  unused.respond({ id: unused.warm.id, result: { content: [] } }); await tick();
+  let stopped = false;
+  const shutdown = unused.relay.shutdown().then(() => { stopped = true; }); await tick();
+  assert.equal(stopped, true, 'unanswered inventory is outside the lease drain');
+  await shutdown;
+});
+
 function relayFixture(t, options = {}) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const sent = [], received = [];

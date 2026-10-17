@@ -481,7 +481,12 @@ const runOpen = (file, argv) => new Promise((resolve, reject) =>
 // doesn't resolve, the apps the engine refuses (terminals and OpenAI's apps), launchers, script and
 // executable files, relative paths, and anything but an existing regular file. The open goes to the
 // resolved bundle ID, so the app checked is the app that opens the file.
-export async function openDocument(args, { exec = runOpen, resolve = resolveAppId, home = homedir() } = {}) {
+export async function openDocument(args, { exec = runOpen, resolve = resolveAppId, home = homedir(),
+  fast = false, bundleId: preparedId, current = () => {}, openedFiles,
+  hasDocument = async (appId, path) => {
+    const result = await runScript('open-file-window.js', { appId, path });
+    return result.ok === true && result.matches === true;
+  } } = {}) {
   const app = String(args.app ?? '').trim();
   const raw = String(args.path ?? '');
   const path = raw.startsWith('~/') ? join(home, raw.slice(2)) : raw;
@@ -492,14 +497,44 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   try { info = lstatSync(path); } catch { return text(`No file at ${raw}.`, true); }
   if (!info.isFile()) return text(`${raw} isn't a regular file.`, true);
   if (info.mode & 0o111) return text(`open_file doesn't open executable files (${raw}).`, true);
-  const bundleId = await resolve(app);
+  const bundleId = await (preparedId ?? resolve(app));
   if (!BUNDLE_ID.test(bundleId)) return text(`macOS has no app named ${app}.`, true);
   if (matchBlockedApp(app, bundleId) || LAUNCHER_BUNDLES.has(bundleId.toLowerCase())) {
     return text(`open_file doesn't open files in ${app}, which runs or installs what it opens or isn't driven by sleight.`, true);
   }
-  try { await exec('/usr/bin/open', ['-g', '-b', bundleId, path]); }
+  current();
+  const started = Date.now(), key = JSON.stringify([bundleId, path]);
+  let present = false;
+  if (fast) {
+    let timer;
+    try {
+      present = await Promise.race([
+        Promise.resolve().then(() => hasDocument(bundleId, path)),
+        new Promise(resolve => { timer = setTimeout(() => resolve(false), 1000); }),
+      ]) === true;
+      const lastOpened = openedFiles?.get(key), latest = lstatSync(path);
+      present = present && Number.isFinite(lastOpened) && latest.isFile() && latest.mtimeMs <= lastOpened;
+    } catch { present = false; }
+    finally { clearTimeout(timer); }
+  }
+  current();
+  try { if (!present) await exec('/usr/bin/open', ['-g', '-b', bundleId, path]); }
   catch (err) { return text(`macOS couldn't open ${raw} in ${app}: ${String(err.message || err).split('\n')[0]}`, true); }
+  if (!present) openedFiles?.set(key, started);
   return { ...text(`Opened ${raw} in ${app} in the background.`), _meta: { 'sleight/openedApp': bundleId } };
+}
+
+const approveOpenFile = (args, approve) => approve(['open_file', args.app],
+  `Allow Claude to open files in ${args.app}? They open in the background.`);
+
+export function prepareOpenFile(args, approve, { resolve = resolveAppId, openedFiles } = {}) {
+  let approval;
+  return {
+    openedFiles,
+    bundleId: Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => ''),
+    // Resolution can overlap target lookup; approval starts only when the caller is ready.
+    get approval() { return approval ??= Promise.resolve().then(() => approveOpenFile(args, approve)); },
+  };
 }
 
 export const HOVER_TOOL = {
@@ -528,7 +563,8 @@ export function runScript(script, request, options = {}) {
   const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
-  const execOptions = { timeout: cleanup ? 3000 : 30000, ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
+  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup ? 3000 : 30000,
+    ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
   return new Promise(resolve => {
     ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
@@ -585,7 +621,7 @@ async function performDrag(args, runLocal) {
   return text(rest, !ok);
 }
 
-export async function callLocalTool(name, args, approve, runLocal = runScript) {
+export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
       return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
@@ -597,10 +633,10 @@ export async function callLocalTool(name, args, approve, runLocal = runScript) {
   }
   if (name === 'select_window') return selectWindow(args, { approve, runScript: runLocal });
   if (name === 'open_file') {
-    if (!await approve(['open_file', args.app], `Allow Claude to open files in ${args.app}? They open in the background.`)) {
+    if (!await approveOpenFile(args, approve)) {
       return text(`The user didn't allow opening files in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
-    return openDocument(args);
+    return openDocument(args, prepared ? { ...prepared, fast: true } : undefined);
   }
   if (name === 'drag') {
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
@@ -788,6 +824,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const sessionId = randomUUID();
 
   let appHealth = healthHelperFactory();
+  const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
   const approval = approvalOptions();
@@ -820,6 +857,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     resultTrim: process.env.SLEIGHT_RESULT_TRIM === '1',
     firstCallBatch: firstCallBatchSetting(process.env.SLEIGHT_FIRST_CALL_BATCH),
     warmRepl: process.env.SLEIGHT_WARM_REPL !== '0',
+    warmEngine: process.env.SLEIGHT_WARM_ENGINE === '1',
+    openFast: process.env.SLEIGHT_OPEN_FAST === '1',
     onClientReply: message => firstCallObserver?.reply(message),
     confirmPayments: paymentConfirmationSetting(),
     clientIn: replayClient.clientIn,
@@ -849,8 +888,10 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     // SLEIGHT_SELECT_WINDOW=0 window selection.
     localTools: {
       tools: localToolDefinitions(),
-      call: (name, args, approve, runLocal, resolved) => callLocalTool(name, args, (parts, message, options) =>
-        approve(parts, wordForHost(message, wording()), options), runLocal, resolved),
+      prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
+        approve(parts, wordForHost(message, wording()), options), { openedFiles }),
+      call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
+        approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared),
       target: async args => {
         const result = await appHealth.target(args);
         if (!result.ok) throw new Error(`Input lease: ${result.error}`);
