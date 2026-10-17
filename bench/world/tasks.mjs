@@ -231,7 +231,8 @@ export function getWorldTasks({ defaults, real, open = openFixture }) {
   return [...original, ...retained, ...added, ...browserKinds.map(id => browserTask(id, open))].map(task => ({ ...task, fixtureLifecycle: true,
     allowedApps: (task.id === 'textedit-calculator' ? ['TextEdit', 'Calculator'] : [task.app]).flatMap(app => fixtureApps[app] ?? []),
     // The cross-app task copies a number: Claude Code's computer use asks for the clipboard with its apps (live 2026-10-17 15:58Z).
-    allowedGrants: task.id === 'textedit-calculator' ? ['clipboardRead', 'clipboardWrite'] : [],
+    // Finder's own card always carries "can read/write any file": that is the app, not an extra grant (live 15:59Z).
+    allowedGrants: task.id === 'textedit-calculator' ? ['clipboardRead', 'clipboardWrite'] : task.app === 'Finder' ? ['fileAccess'] : [],
     timeoutMs: 300000, half: task.half ?? (task.id === 'textedit-calculator' ? 'cross-app' : 'native'),
     prompt: ctx => neutral(task.prompt(ctx)) }));
 }
