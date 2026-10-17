@@ -33,10 +33,11 @@ agent with findings fixed under tests that failed first. The full check exited 0
 is measured live yet. Fable's final review said "lock in the code as is; change the plan", and the plan above includes its changes.
 
 **In flight.**
-- BR1F, pid 27925, a detached `codex exec` that keeps running through the clear, started 2026-10-17 02:12 UTC. It fixes BR1's review findings on
-  a new branch `codex/br1f` cut from `private/codex/br1` `a069a845` (the harness that races browsers in a real window; reviewed, NOT merged).
-  It reports in `~/Projects/sleight-wt/ledger/claims/BR1F/`. Merge BR1 plus BR1F only after the overnight sitting, since it edits
-  `bench/codex-arm.mjs`, which the claim run's Codex arm uses. Review the BR1F branch first.
+- BR1 (`a069a845`), BR1F (`b838ec52`) and BR1G (`private/codex/br1g` `2dae81fb`) are done, reviewed and NOT merged: the harness that
+  races browsers in a real window. A Sonnet-high review of BR1F found a census that failed open on short `ps` names, a stray tab
+  aborting the reset, evidence lost on unproved cleanup, and no census after launch. BR1G fixed all of them test-first (62 tests,
+  read by sleight-arch). The review also confirmed BR1's `codex-arm.mjs` change leaves native Codex runs as they were. Merge
+  br1g (it contains both) after the overnight sitting. The marker tab in `startKeys` is latent (no task uses keepMin).
 - Queued after BR1 merges: BR2, which adds Safari and Firefox to that harness (`queue/tt/BR2.md`). Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
   --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
