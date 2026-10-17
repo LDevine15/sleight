@@ -20,7 +20,10 @@ test('drag audit requires a successful awaited call, not model prose or an uncal
 for (const code of ['await app.getScreenshot()', 'await app.getAXStateAndScreenshot()', 'await loc.waitFor({state:"visible"})',
   'await app.scroll(1,"down")', 'console.log(JSON.stringify(await app.getAXState()))',
   '(await cua.listWindows()).find(w => w.title === "fixture")', '(await cua.listWindows()).filter(w => w.title)',
-  'await cua.listApps()', 'await cua.getState()', 'await app.getAXState()']) {
+  'await cua.listApps()', 'await cua.getState()', 'await app.getAXState()',
+  // Every textedit-window-drag run failed on these until 2026-10-17 (WD1): screenshots and plain string reads.
+  'await nodeRepl.emitImage(await app.getScreenshot())', 'console.log(JSON.stringify(await app.getAXState()).slice(0, 2000))',
+  'const st = await app.getAXState(); console.log(String(st).includes("omega"), String(st).indexOf("alpha"))']) {
   test(`read and control calls preserve drag evidence: ${code}`, { skip }, () => {
     assert.deepEqual(dragMethodAudit(claude(code + '; await app.drag({})')), { drag: true, replacement: false, complete: true });
   });
@@ -184,6 +187,15 @@ for (const key of ['super+shift+v', 'shift+Insert', 'Command+Shift+V', 'Control+
     assert.equal(dragMethodAudit(claude(`await app.drag({}); await app.pressKey(${JSON.stringify(key)})`)).replacement, true);
   });
 }
+
+test('a refused drag tool call before a successful one keeps the proof complete', { skip }, () => {
+  const call = (id, isError) => [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'mcp__plugin_sleight_computer__drag', input: { app: 'TextEdit', from: [1, 2], to: [3, 4] } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError }] } },
+  ].map(JSON.stringify).join('\n');
+  assert.deepEqual(dragMethodAudit(call('refused', true) + '\n' + call('moved', false)), { drag: true, replacement: false, complete: true });
+  assert.deepEqual(dragMethodAudit(call('refused', true)), { drag: false, replacement: false, complete: true });
+});
 
 test('bare calls outside the named builtin set remain incomplete', { skip }, () => {
   for (const code of ['sleep(1)', 'custom()', 'eval("1")', 'Function("return 1")()']) {

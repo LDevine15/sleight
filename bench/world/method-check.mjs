@@ -8,7 +8,10 @@ const builtins = new Set(['setTimeout', 'clearTimeout', 'setInterval', 'isNaN', 
 const ordinaryTools = new Set(['notifications', 'turn_ended', 'blocked_app', 'hover', 'open_file', 'js_reset', 'ToolSearch']);
 const methods = new Set(['getApp', 'getState', 'listApps', 'listWindows', 'getAXState', 'getScreenshot', 'getAXStateAndScreenshot',
   'click', 'doubleClick', 'rightClick', 'scroll', 'drag', 'pressKey', 'press', 'keypress', 'keyPress', 'selectText',
-  'performAction', 'performSecondaryAction', 'focus', 'hover', 'waitFor', 'log', 'stringify', 'find', 'filter']);
+  'performAction', 'performSecondaryAction', 'focus', 'hover', 'waitFor', 'log', 'stringify', 'find', 'filter',
+  // Pure string and array reads. The engine API has no method by these names, so none can type or paste.
+  'slice', 'includes', 'indexOf', 'lastIndexOf', 'startsWith', 'endsWith', 'trim', 'split', 'join', 'map', 'some', 'every',
+  'match', 'test', 'toString', 'toLowerCase', 'toUpperCase', 'at', 'keys', 'values', 'entries']);
 const logical = new Set([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken,
   ts.SyntaxKind.AmpersandAmpersandEqualsToken, ts.SyntaxKind.BarBarEqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken]);
 function literal(node) {
@@ -70,7 +73,7 @@ export function dragMethodAudit(transcript) {
         if (ts.isCallExpression(node)) {
           const expr = node.expression, method = ts.isPropertyAccessExpression(expr) ? expr.name.text :
             ts.isElementAccessExpression(expr) && ts.isStringLiteral(expr.argumentExpression) ? expr.argumentExpression.text : '';
-          const known = ts.isPropertyAccessExpression(expr) ? methods.has(method) || writers.test(method) || expr.getText(file) === 'nodeRepl.write' : ts.isIdentifier(expr) && builtins.has(expr.text);
+          const known = ts.isPropertyAccessExpression(expr) ? methods.has(method) || writers.test(method) || ['nodeRepl.write', 'nodeRepl.emitImage'].includes(expr.getText(file)) : ts.isIdentifier(expr) && builtins.has(expr.text);
           if (!known || indirect.test(method)) audit.complete = false;
           if (writers.test(method)) audit.replacement = true;
           if (/^(pressKey|press|keypress|keyPress)$/.test(method)) {
@@ -89,7 +92,8 @@ export function dragMethodAudit(transcript) {
     } else {
       const action = String(input.action ?? input.op ?? tool);
       if (tool === 'js_reset') { apps.clear(); engine = true; }
-      if (/^(drag|mouse_drag|drag_and_drop)$/.test(action) && success) audit.drag = true;
+      // A refused drag moved nothing and typed nothing, so it neither proves nor spoils the method (WD1, 2026-10-17).
+      if (/^(drag|mouse_drag|drag_and_drop)$/.test(action)) { if (success) audit.drag = true; }
       else if (writers.test(action) || writeAction.test(action)) audit.replacement = true;
       else if (!ordinaryTools.has(tool) && !/^(?:click|double_click|mouse_move|move|scroll|press|keypress|key|hotkey|screenshot|see|read|list|get|focus|select|menu)(?:$|[_\s.-])/i.test(action)) audit.complete = false;
       if (cutOrPaste(JSON.stringify(input))) audit.replacement = true;
