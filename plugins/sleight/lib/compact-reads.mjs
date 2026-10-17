@@ -21,11 +21,53 @@ import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
 import { trimBrowserResults } from './browser-read-cap.mjs';
+import { finalExpression } from './no-output.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
 const MAX_SHARE = 0.6; // a diff longer than this share of the tree is sent whole
 const ELEMENT = /^(\t*)(\d+) (.*)$/;
+const FILTERED_MARK = '[sleight:filtered-read]';
+const maskCode = code => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g,
+  value => ' '.repeat(value.length));
+
+// Recognize the common read/filter/write shape without changing bindings or evaluating twice.
+// The runtime receipt, not source order, decides whether input happened after that read.
+export function filteredReadCode(code) {
+  const final = finalExpression(code);
+  const write = final && /^(await\s+)?nodeRepl\.write\s*\(([\s\S]*)\)$/.exec(final.expression);
+  if (!write) return code;
+  const masked = maskCode(code);
+  const reads = [...masked.matchAll(/\b([A-Za-z_$][\w$]*)\s*\.\s*getAXState\s*\(/g)];
+  if (reads.length !== 1) return code;
+  const read = reads[0], sources = new Set(), declarations = new Map();
+  const references = source => [...source.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)/g)].some(match =>
+    sources.has(match[1]) && !/^\s*:/.test(source.slice(match.index + match[1].length)));
+  for (const match of masked.slice(0, final.start).matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;]+)(?:;|$)/g)) {
+    if ((match.index <= read.index && match.index + match[0].length > read.index) || references(match[2])) {
+      sources.add(match[1]); declarations.set(match[1], match.index + match[0].length);
+    }
+  }
+  for (const [name, end] of declarations) {
+    const escaped = name.replace(/\$/g, '\\$');
+    if (new RegExp(`(?<![\\w$])${escaped}\\s*(?:=(?!=|>)|\\+\\+|--|(?:\\*\\*|&&|\\|\\||\\?\\?|[+*/%&|^-])=)`).test(masked.slice(end))) return code;
+  }
+  if (read.index < final.start && !references(maskCode(write[2]))) return code;
+  return code.slice(0, final.start) + `\n{
+  const __sleightValue = (${write[2]});
+  ${write[1] ?? ''}nodeRepl.write(__sleightValue);
+  const __sleightGuard = globalThis.__sleightDocumentGuard;
+  const __sleightLast = __sleightGuard?.reads.get(${read[1]});
+  const __sleightFiltered = __sleightLast?.emitted && __sleightLast.version === __sleightGuard.actionVersion &&
+    !__sleightGuard.failures?.length && (typeof __sleightValue === 'string' || Array.isArray(__sleightValue)) && __sleightValue !== __sleightLast.text;
+  try {
+    const visible = typeof __sleightValue === 'string' ? __sleightValue : Array.isArray(__sleightValue)
+      ? Object.entries(Object.getOwnPropertyDescriptors(__sleightValue))
+        .filter(([key, d]) => /^(?:0|[1-9]\\d*)$/.test(key) && Number(key) < __sleightValue.length && typeof d.value === 'string').map(([, d]) => d.value) : [];
+    nodeRepl.write(${JSON.stringify(FILTERED_MARK)} + JSON.stringify(__sleightFiltered ? { visible } : { full: true }) + '\\n');
+  } catch { /* Unserializable output keeps the ordinary result. */ }
+}` + code.slice(final.end);
+}
 
 // number -> text without the number, for every element line.
 const numbered = lines => lines.map(parse).filter(l => l.num !== undefined).map(l => [l.num, l.key]);
@@ -454,12 +496,49 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     }
   }
 
+  function filteredTree(tree, visible, shownText) {
+    const window = windowFromText(tree), lines = tree.replace(/\n+$/, '').split('\n');
+    const entry = window && seen.get(documentKey(window));
+    if (!entry || !ELEMENT.test(lines[1] ?? '')) return;
+    const observation = observe(tree, window, lines);
+    if (observation.degraded || observation.incomplete) return;
+    const current = new Map(numbered(lines));
+    const believed = new Map(entry.believed ?? numbered(entry.lines));
+    for (const text of [visible].flat()) for (const line of text.split('\n')) {
+      const shown = parse(line);
+      if (shown.num !== undefined && current.get(shown.num) === shown.key &&
+          (shownText.includes(line) || shownText.includes(JSON.stringify(line).slice(1, -1)))) believed.set(shown.num, shown.key);
+    }
+    entry.believed = believed;
+    entry.valid = new Set([...believed].filter(([num, key]) => current.get(num) === key).map(([num]) => num));
+    // Keep entry.lines as the visible baseline: hidden changes must appear on the next normal read.
+    return lines[0];
+  }
+
   return {
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
     process(content, { forceFull = false, action, failed = false, code } = {}) {
       if (!Array.isArray(content)) return content;
+      let filtered;
+      content = content.flatMap(item => {
+        if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+        const text = item.text.replace(/\[sleight:filtered-read\]([^\r\n]*)(?:\r?\n|$)/g, (_, json) => {
+          try { filtered = JSON.parse(json); } catch { filtered = { full: true }; }
+          return '';
+        });
+        return text === item.text ? [item] : text ? [{ ...item, text }] : [];
+      });
+      if (filtered?.full) forceFull = true;
+      const stopped = content.some(item => item?.type === 'text' &&
+        /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
+      if (filtered && (failed || stopped || action?.overlap)) forceFull = true;
+      const visible = filtered?.visible;
+      const filter = !forceFull && !failed && !stopped && !action?.overlap &&
+        (typeof visible === 'string' || Array.isArray(visible) && visible.every(line => typeof line === 'string'));
+      const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
+        .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
       observedInResult = undefined;
       const out = content.flatMap(item => {
         if (item?.type === 'text' && /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? '')) failed = true;
@@ -484,7 +563,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             pos = end + GUARD_END.length;
             continue;
           }
-          let sent = forceFull ? tree : compact(tree, seenText, action);
+          let sent = filter ? filteredTree(tree, visible, shownText) : undefined;
+          sent ??= forceFull ? tree : compact(tree, seenText, action);
           // A call that acted and ended on exactly the tree Claude saw before it gets that tree whole:
           // "no change" read as if the actions hadn't run, and Claude read again in 2 of 9 traced
           // calculator-click runs (2026-10-10). Claude's own full read earlier in this result is enough.
