@@ -240,7 +240,16 @@ function fileTime(url) {
 const withoutValue = line => line.replace(/(?:, )?Value: ?.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '')
   .replace(/, (?=(?:Secondary Actions|ID|Help|Description):)/g, ' ').replace(/ +/g, ' ').trimEnd();
 
-function resultNote(action, after, failed) {
+// Capture the error before relay notices and trees can bury it. The engine puts its exception
+// after ordinary output; a guard exception carries its tree after the first line.
+export function failureReason(content) {
+  return (content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string' && !/^#/.test(item.text))
+    .flatMap(item => item.text.split('\n'))
+    .filter(line => !/^\s*\d+ |^\s+at /.test(line)).map(line => line.trim())
+    .filter(line => line && !/^(?:#|Warning:|Window: |URL: |\[\/?sleight:|sleight:guard-ready)/.test(line)).at(-1);
+}
+
+function resultNote(action, after, failed, failure) {
   const before = action.before;
   const invalidRead = after?.invalid;
   if (invalidRead) after = undefined;
@@ -294,10 +303,12 @@ function resultNote(action, after, failed) {
       : named ? `observed ${JSON.stringify(after.window.url)} (named file URL)`
       : fileWritten ? `observed ${JSON.stringify(after.window.url)} (its file on disk changed during this call)` : 'not confirmed (no document save state change seen)';
   }
-  const fields = [failed ? 'call failed (partial input possible)' : ui, saved && 'saved: ' + saved].filter(Boolean);
+  const fields = [failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
+    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, saved && 'saved: ' + saved].filter(Boolean);
   const finish = saveFinishLine(after, before, failed, action.overlap);
   if (!fields.length) return finish;
-  return 'sleight: ' + fields.join('; ') + '.' + (finish ? '\n' + finish : '');
+  const note = fields.join('; ');
+  return 'sleight: ' + note + (/[.!?]$/.test(note) ? '' : '.') + (finish ? '\n' + finish : '');
 }
 
 // Whether text holds a full tree: a window header whose next lines aren't a diff of an earlier one.
@@ -572,7 +583,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, acquisition = false, action, failed = false, code, filterMark = FILTERED_MARK } = {}) {
+    process(content, { forceFull = false, acquisition = false, action, failed = false, failure, code, filterMark = FILTERED_MARK } = {}) {
       if (!Array.isArray(content)) return content;
       let filtered;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -643,7 +654,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
         return !out && item.text.includes(GUARD_OMIT_MARK) ? [] : { ...item, text: out };
       });
-      const note = action && resultNote(action, observedInResult, failed);
+      const note = action && resultNote(action, observedInResult, failed,
+        failure ?? { message: failureReason(content) });
       if (note) out.push({ type: 'text', text: note });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
       if ((resultTrim || firstAcquisition) && !forceFull) for (let i = 0; i < out.length; i++) {

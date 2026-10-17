@@ -37,24 +37,26 @@ export function splitMenuActions(code) {
 }
 
 export function takeGuardStop(content, mark) {
-  let receipt, count = 0;
+  let receipt, count = 0, input = false;
   const head = [];
   const cleaned = content.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') { if (!count) head.push(item); return [item]; }
     const text = item.text.split('\n').filter(line => {
       if (!line.startsWith(mark)) { if (!count) head.push({ ...item, text: line }); return true; }
-      count++;
-      try { receipt = JSON.parse(line.slice(mark.length)); } catch { receipt = undefined; }
+      let record;
+      try { record = JSON.parse(line.slice(mark.length)); } catch { /* An invalid receipt proves nothing. */ }
+      if (record?.input === true) { input = true; return false; }
+      count++; receipt = record;
       return false;
     }).join('\n');
     return text ? [{ ...item, text }] : [];
   });
-  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined };
+  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input };
 }
 
 export function menuRemainder(plan, receipt, expected, content) {
   const n = receipt?.index, prev = receipt?.prev;
-  if (!plan || !Number.isSafeInteger(n) || n < 1 || n >= plan.actions.length || !prev) return;
+  if (!plan || receipt?.windowStop === false || !Number.isSafeInteger(n) || n < 1 || n >= plan.actions.length || !prev) return;
   const selector = plan.actions[n - 1].selector;
   if (!selector || selector.value !== prev.value || !['label', 'id'].includes(prev.kind) ||
       (selector.kind === 'id' && prev.kind !== 'id')) return;
