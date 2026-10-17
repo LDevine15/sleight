@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 03:21 UTC, overnight sitting running: the A/B started 02:41)
+## Banner (2026-10-17 04:03 UTC, overnight sitting: A/B done, claim run started 04:03)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -18,26 +18,25 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    `typeText` 3 of 3, `pressKey` 3 of 3 right after a click and 0 of 4 right after a key. Navigation by key can still stop. The
    CHANGELOG navigation entry and known-problems say so (`hid-probe.mjs`, `hid-probe.json`). textedit-drag and chess-drag run
    inside the A/B instead of a separate check.
-2. Running: the A/B, `OLD=d8e52789 NEW=ef833641 ROUNDS=3 bench/ab-sleight.sh` (since stamp `2026-10-17T02-41`, log `ab.log`), 9
-   claim tasks plus 11 tasks outside the claim suite, Office last, about 2 hours. Score with `bench/ab-score.mjs --old
-   ~/Projects/sleight-wt/ab-old/bench/results --new ~/Projects/sleight-wt/ab-new/bench/results --since 2026-10-17T02-41`, reading
-   only paired round totals and pass counts.
-   So far: round 1 old 18/20, new 16/20. Round 2 new ran 15 of 20 (12 passed) and stopped on "Owned document lost focus;
-   cleanup refused" after textedit-two-windows. A Sonnet-high trace triage of round 1 found one sleight regression: TT3's
-   endpoint check clipped by ancestor frames, and Chess's board reports frames that cut off its right half, so every drag there was
-   refused. Fixed uncommitted in this worktree (drag.js, 2 tests that failed first; a review found a text-field widening hole, fixed
-   with its own failing test). It commits after the A/B with a full check, before the claim run starts. excel-edit (a sheet tab
-   reordered after a double-click rename) and finder-rename (setValue on the name field, then over-claimed) read as model variance.
-3. Then a 15-minute triage gate: the new side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only
-   if new passes aren't below old and no new stop class appears.
-4. Then the all-arms claim run: `sitting-1017/claim.sh` (sleight, lcu, codex, cua; Word and Excel quit between arms), then peekaboo
-   from a Terminal window with `ARMS=peekaboo`. Set `since` in bench/claim-exclusions.json to its start stamp first. Score with
+2. Done: the A/B (since `2026-10-17T02-41`, `bench/ab-score.mjs` output in `sitting-1017/ab-score.txt`). Claim tasks: new 22/24
+   passes in 272.6 s summed per-task means against old 20/23 in 319.0 s, 74 turns against 84. Outside the claim suite: new 19/25
+   in 395.3 s against old 19/23 in 461.9 s. Paired round totals: -99.5 s, -167.7 s, +90.0 s (round 3's new side ran 4 more tasks).
+   Both sides lost runs to the harness: the two-window fixture's cleanup stopped a pass on each side ("Owned document lost focus"),
+   and Word was left stuck in an AX-opened menu loop (old side, round 3).
+3. Done: triage (two Sonnet-high trace reads of every new-side failure). One sleight regression: TT3's endpoint check refused every
+   Chess drag on the board's right half, because Chess reports parent frames that miss the point. Fixed in `1933db78` (2 tests
+   failed first, a review's text-field hole fixed too, full check 5,879 tests exit 0) and checked live: chess-drag 2/2, with the
+   drag that was refused before now delivered in the background. excel-edit's failures are an Excel tab reorder after a rename
+   (also seen before both builds; known-problems), finder-rename and finder-create-folder were model variance. FC1 (`024c4c5a`,
+   merged) makes the two-window cleanup close by the window's own button after a cold launch. It needs a live check.
+4. Running since 04:03: the all-arms claim run, `sitting-1017/claim.sh` (sleight, lcu, codex, cua; Word and Excel quit between
+   arms, with an Escape posted to a stuck app), then peekaboo from a Terminal window with `ARMS=peekaboo`. `since` is
+   `2026-10-17T04-03` in bench/claim-exclusions.json. Then 5 runs where sleight and an arm are within 20%. Score with
    `bench/claim-score.mjs` and word the claim by the LAWS rule.
 
-**The build is frozen** at `ef833641`, with every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each reviewed by a Sonnet-high
-agent with findings fixed under tests that failed first. The full check exited 0 on 5,872 tests, and the private
-`pane/auto-mode` is at `78ecde7a` (docs and bench config since the freeze). The CHANGELOG 1.3.0 section lists the fixes, and none
-is measured live yet. Fable's final review said "lock in the code as is; change the plan", and the plan above includes its changes.
+**The build is frozen** at `1933db78`: `ef833641` (every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each
+reviewed by a Sonnet-high agent) plus the Chess drag fix, FC1's bench fixture change and docs. The full check exited 0 on 5,879
+tests. The CHANGELOG 1.3.0 section lists the fixes, and the A/B above is their first live measurement.
 
 **In flight.**
 - BR1 (`a069a845`), BR1F (`b838ec52`) and BR1G (`private/codex/br1g` `2dae81fb`) are done, reviewed and NOT merged: the harness that
