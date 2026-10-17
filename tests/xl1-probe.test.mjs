@@ -84,3 +84,110 @@ test('cleanup waits for the same answered sheet but rejects a replacement or an 
   assert.throws(() => context.cleanupSheetStep([other], sheet, same), /Unexpected cleanup sheet/);
   assert.throws(() => context.cleanupSheetStep([sheet, other], sheet, same), /Unexpected cleanup sheet/);
 });
+
+async function hostContext() {
+  const { readFile } = await import('node:fs/promises');
+  const { runInNewContext } = await import('node:vm');
+  const source = await readFile(new URL('../bench/xl1-probe-host.js', import.meta.url), 'utf8');
+  const context = { ObjC: { import() {} } };
+  runInNewContext(source, context);
+  return context;
+}
+const fixture = '/private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx';
+const urlForms = ['file:///private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx', 'file:///tmp/sleight-xl1-AbC123/XL1-A-1.xlsx',
+  'file:///tmp/sleight-xl1-AbC123/XL1-A-1.xlsx/', 'file://localhost/private/tmp/sleight-xl1-AbC123/XL1%2DA%2D1.xlsx',
+  'file:///private/tmp//sleight-xl1-AbC123/XL1-A-1.xlsx'];
+const others = ['file:///private/tmp/sleight-xl1-AbC123/XL1-A-2.xlsx', 'file:///Users/someone/Book1.xlsx',
+  'file:///private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx.bak', 'https://example.com/private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx', null];
+
+test('host and probe compare resolved file paths, tolerating /private, slashes and percent-encoding', async () => {
+  const context = await hostContext();
+  const { fileUrlPath, normalPath } = await load();
+  for (const url of urlForms) {
+    assert.equal(context.filePath(url), context.normalPath(fixture), url);
+    assert.equal(fileUrlPath(url), normalPath(fixture), url);
+  }
+  for (const url of others) {
+    assert.notEqual(context.filePath(url), context.normalPath(fixture), String(url));
+    assert.notEqual(fileUrlPath(url), normalPath(fixture), String(url));
+  }
+});
+
+const win = (fields) => ({ indicator: false, role: 'AXWindow', subrole: 'AXStandardWindow', width: 800, height: 600, document: null, ...fields });
+
+test('the owned window is the single window whose document is the fixture; panels and the capture indicator are ignored', async () => {
+  const { chooseOwnedWindow } = await hostContext();
+  const owned = win({ document: urlForms[1] });
+  const infos = [win({ indicator: true, subrole: 'AXUnknown', width: 40, height: 20 }), win({ subrole: 'AXFloatingWindow', width: 300 }),
+    owned, win({ subrole: 'AXUnknown', width: 1, height: 1 })];
+  assert.equal(chooseOwnedWindow(infos, fixture, true).index, 2);
+  assert.equal(chooseOwnedWindow(infos, fixture, false).index, 2);
+});
+
+test('a second document window, a missing fixture window or an app dialog refuses input with a content-free diagnostic', async () => {
+  const { chooseOwnedWindow } = await hostContext();
+  const owned = win({ document: urlForms[0] });
+  const cases = [
+    [[owned, win({ document: 'file:///Users/someone/Secret%20Plan.xlsx' })], /Foreign or ambiguous app window; no input sent/],
+    [[owned, win({})], /Foreign or ambiguous app window; no input sent/],
+    [[owned, win({ document: urlForms[1] })], /Foreign or ambiguous app window; no input sent/],
+    [[win({ document: 'file:///private/tmp/sleight-xl1-AbC123/XL1-B-1.xlsx' })], /Owned workbook window not found; no input sent/],
+    [[win({ subrole: 'AXFloatingWindow' })], /Owned workbook window not found; no input sent/],
+    [[owned, win({ subrole: 'AXDialog' })], /Unexpected app dialog; no input sent/],
+  ];
+  for (const [infos, message] of cases) {
+    const choice = chooseOwnedWindow(infos, fixture, true);
+    assert.equal(choice.index, undefined);
+    assert.match(choice.error, message);
+    assert.equal(choice.windows.length, infos.length);
+    for (const entry of choice.windows) {
+      assert.deepEqual(Object.keys(entry).sort(), ['hasDocument', 'height', 'indicator', 'owned', 'role', 'subrole', 'width']);
+    }
+    assert.doesNotMatch(JSON.stringify(choice.windows), /Secret|someone|xlsx|file:/);
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(chooseOwnedWindow(cases[0][0], fixture, true).windows)), [
+    { role: 'AXWindow', subrole: 'AXStandardWindow', width: 800, height: 600, hasDocument: true, owned: true, indicator: false },
+    { role: 'AXWindow', subrole: 'AXStandardWindow', width: 800, height: 600, hasDocument: true, owned: false, indicator: false }]);
+  // Cleanup still finds the owned window beside a foreign document (it answers only that window's sheet).
+  assert.equal(chooseOwnedWindow(cases[0][0], fixture, false).index, 0);
+  assert.equal(chooseOwnedWindow(cases[2][0], fixture, false).index, undefined);
+});
+
+test('a host refusal carries its diagnostic out of checkHost', async () => {
+  const { checkHost } = await load();
+  assert.deepEqual(checkHost({ ok: true, pid: 4 }), { ok: true, pid: 4 });
+  const error = (() => { try { checkHost({ ok: false, error: 'Owned workbook window not found; no input sent', windows: [{ owned: false }] }); } catch (e) { return e; } })();
+  assert.match(error.message, /not found/);
+  assert.deepEqual(error.details, { windows: [{ owned: false }] });
+});
+
+test('cleanup always asks the owned process to quit after a trial error and records what it left', async () => {
+  const { cleanupFixture } = await load();
+  const calls = [], records = [];
+  const persist = async record => { records.push(record); };
+  const owned = { path: fixture, started: 1, front: 2, pid: 9, birth: 3 };
+  // The engine client fails to close; quit is still attempted and its refusal is recorded with the windows left.
+  const refusal = Object.assign(new Error('Excel normal exit unconfirmed; retaining fixture and lock'),
+    { details: { exited: false, left: { windows: [{ role: 'AXWindow', owned: true }] } } });
+  await assert.rejects(cleanupFixture({ client: { close: async () => { calls.push('close'); throw new Error('pipe closed'); } }, owned,
+    pointer: { x: 1, y: 2 }, persist, host: async (op, extra) => { calls.push(op); assert.deepEqual(extra, { pointer: { x: 1, y: 2 } }); throw refusal; } }),
+  /exit unconfirmed/);
+  assert.deepEqual(calls, ['close', 'quit']);
+  assert.equal(records.at(-1).phase, 'cleanup');
+  assert.equal(records.at(-1).exited, false);
+  assert.deepEqual(records.at(-1).left, { windows: [{ role: 'AXWindow', owned: true }] });
+  // A confirmed exit returns no remaining fixture; an engine close error is still reported.
+  calls.length = 0;
+  await assert.rejects(cleanupFixture({ client: { close: async () => { throw new Error('pipe closed'); } }, owned, pointer: { x: 1, y: 2 }, persist,
+    host: async op => { calls.push(op); return { ok: true, exited: true, pointerRestored: true }; } }), /pipe closed/);
+  assert.equal(records.at(-1).exited, true);
+  assert.equal(await cleanupFixture({ owned, pointer: {}, persist, host: async () => ({ ok: true, exited: true, pointerRestored: true }) }), undefined);
+  // An unbound launch binds first so quit can prove identity.
+  calls.length = 0;
+  const unbound = { path: fixture, started: 1, front: 2 };
+  assert.equal(await cleanupFixture({ owned: unbound, pointer: {}, persist, host: async op => {
+    calls.push(op); return op === 'bind' ? { ok: true, pid: 9, birth: 3 } : { ok: true, exited: true, pointerRestored: true }; } }), undefined);
+  assert.deepEqual(calls, ['bind', 'quit']);
+  assert.equal(unbound.pid, 9);
+  assert.equal(await cleanupFixture({ persist, host: async () => assert.fail('no fixture') }), undefined);
+});

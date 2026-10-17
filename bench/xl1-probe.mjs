@@ -36,6 +36,47 @@ export function sheetTabs(state) {
   return tabs;
 }
 
+// /tmp and /var are symlinks into /private; compare resolved paths, never raw URLs.
+export function normalPath(path) {
+  return String(path).replace(/\/+/g, '/').replace(/(.)\/$/, '$1').replace(/^\/private(?=\/(?:tmp|var|etc)(?:\/|$))/, '');
+}
+export function fileUrlPath(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'file:' || parsed.host && parsed.host !== 'localhost') return null;
+    return normalPath(decodeURIComponent(parsed.pathname));
+  } catch { return null; }
+}
+
+// A host refusal keeps its diagnostic (window roles and sizes, never titles or paths) for the report.
+export function checkHost(value) {
+  if (value.ok) return value;
+  const { ok, error, ...details } = value;
+  throw Object.assign(new Error(error ?? 'Host fixture check failed'), { details });
+}
+
+// Always ask the owned process to quit, even after a trial or engine-close error, and record what it left.
+// Returns undefined once exit is confirmed; throws (leaving the fixture owned) otherwise.
+export async function cleanupFixture({ client, owned, pointer, host, persist }) {
+  let closeError;
+  if (client) { try { await client.close(); } catch (error) { closeError = error; } }
+  if (owned) {
+    if (!owned.pid) {
+      const bound = await host('bind').catch(() => ({}));
+      if (bound.pid) Object.assign(owned, { pid: bound.pid, birth: bound.birth });
+    }
+    let result;
+    try { result = await host('quit', { pointer }); } catch (error) {
+      await persist({ phase: 'cleanup', path: owned.path, exited: false, error: error.message, ...error.details });
+      throw error;
+    }
+    await persist({ phase: 'cleanup', path: owned.path, ...result });
+    assert.ok(result.exited && result.pointerRestored, 'Owned process exit or pointer restore unconfirmed');
+  }
+  if (closeError) throw closeError;
+  return undefined;
+}
+
 export async function runTrials({ prepare, sample, balance, park, act, read, cleanup, record, sleep: pause = sleep }) {
   const rows = [];
   for (const arm of ['A', 'B', 'C', 'D', 'E']) for (let index = 1; index <= 3; index++) {
@@ -85,9 +126,10 @@ async function main(argv) {
     const { stdout } = await promisify(execFile)('/usr/bin/osascript', ['-l', 'JavaScript',
       fileURLToPath(new URL('./xl1-probe-host.js', import.meta.url)), JSON.stringify({ op, ...owned, ...extra })],
     { timeout: 45000, maxBuffer: 1024 * 1024 });
-    const value = JSON.parse(stdout);
-    assert.ok(value.ok, value.error ?? 'Host fixture check failed');
-    return value;
+    try { return checkHost(JSON.parse(stdout)); } catch (error) {
+      if (error.details) await persist({ phase: 'host-refused', op, error: error.message, ...error.details });
+      throw error;
+    }
   };
   const plain = result => (result.content ?? []).filter(item => item.type === 'text').map(item => item.text).join('\n');
   const call = async (code, allowRenameSheet = false) => {
@@ -100,19 +142,15 @@ async function main(argv) {
     const state = plain(result);
     assert.doesNotMatch(state, /input lease.*(?:stopped|changed)|document scope.*stopped|outcome unconfirmed/i);
     const window = windowFromText(state);
-    if (window?.url) assert.equal(new URL(window.url).pathname.replace(/^\/private(?=\/var\/)/, ''),
-      owned.path.replace(/^\/private(?=\/var\/)/, ''), 'Engine selected another document');
+    if (window?.url) assert.equal(fileUrlPath(window.url), normalPath(owned.path), 'Engine selected another document');
     return state;
   };
   const read = async () => sheetTabs(await call('await app.getAXState({ disableDiffing: true })'));
   const cleanup = async () => {
-    if (client) { await client.close(); client = undefined; }
-    if (owned) {
-      const result = await host('quit', { pointer });
-      assert.ok(result.exited && result.pointerRestored, 'Owned process exit or pointer restore unconfirmed');
-      await persist({ phase: 'cleanup', path: owned.path, ...result });
-      owned = undefined;
-    }
+    const closing = client; client = undefined;
+    // On failure owned stays set, so the final cleanup tries the gentle quit again.
+    await cleanupFixture({ client: closing, owned, pointer, host, persist });
+    owned = undefined;
   };
   try {
     // Wait before starting, then recheck before every engine or pointer action.
