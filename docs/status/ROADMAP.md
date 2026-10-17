@@ -46,6 +46,8 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    The all-arms claim run is done (2026-10-17, sleight fastest on 5 of 9). Before publishing it, sleight fixes the three tasks its
    own results lost (preview-read, textedit-calculator, excel-edit) and reruns only its arm: about an hour of fixes and tests
    beat stretching the claim to cover them (owner, 2026-10-17).
+   Safari's race uses a dedicated Safari profile, "sleight benchmark", which the owner made on 2026-10-17, with Safari quit
+   before each round as for Chrome (owner, 2026-10-17). The world sleight arm is logged in (owner, same day).
    Before browser numbers are published, one gate round runs turbo on a real, isolated Helium or Chrome profile instead of the
    headless Chromium, so the quoted number is the product path. The owner's chosen headline is "fastest plugin on macOS"
    (2026-10-17). It is publishable only if sleight leads the native claim run and turbo leads lcu, Cua, Peekaboo and Codex on browser
