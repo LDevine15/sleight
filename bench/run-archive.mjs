@@ -15,9 +15,24 @@ export function pruneRunImages({ roots, docsDir, exclusionsFile, now = Date.now(
   try {
     held = canonicalHolders(held ?? inventory());
     let references = readFileSync(exclusionsFile, 'utf8');
-    JSON.parse(references);
-    for (const file of readdirSync(docsDir, { withFileTypes: true })) {
-      if (file.isFile() && file.name.endsWith('.md')) references += '\n' + readFileSync(join(docsDir, file.name), 'utf8');
+    const rules = JSON.parse(references);
+    const repo = dirname(dirname(exclusionsFile));
+    const readReferences = path => {
+      const info = lstatSync(path);
+      if (info.isSymbolicLink()) throw new Error('symlinked reference path');
+      if (info.isDirectory()) for (const entry of readdirSync(path)) readReferences(join(path, entry));
+      else if (info.isFile()) references += '\n' + readFileSync(path, 'utf8');
+    };
+    readReferences(docsDir);
+    for (const path of ['docs/benchmark.md', 'docs/design', 'docs/status', 'README.md', 'CHANGELOG.md']) {
+      const file = join(repo, path);
+      if (existsSync(file)) readReferences(file);
+    }
+    const resultsDir = join(repo, 'bench/results'), claimRuns = new Set();
+    if (existsSync(resultsDir)) for (const entry of readdirSync(resultsDir, { withFileTypes: true })) {
+      const stamp = entry.name.replace(/\.json$/, '');
+      if (entry.isFile() && entry.name.endsWith('.json') && STAMP.test(stamp) &&
+          (typeof rules.since !== 'string' || stamp >= rules.since)) claimRuns.add(stamp);
     }
     const cited = references.match(/\d{4}-\d\d-\d\dT\d\d(?:-\d\d(?:-\d\d(?:-\d{3}Z)?)?)?/g) ?? [];
     const walk = (path, runTime) => {
@@ -38,10 +53,11 @@ export function pruneRunImages({ roots, docsDir, exclusionsFile, now = Date.now(
     };
     const visit = (path, name) => {
       if (cited.some(prefix => name.startsWith(prefix)) || isHeld(path, held)) return;
+      if (claimRuns.has(name) && now - stampTime(name) <= 30 * 24 * 3600 * 1000) return;
       const time = stampTime(name);
       if (Number.isFinite(time) && now - time > IMAGE_AGE_MS) walk(path, time);
     };
-    for (const root of roots) {
+    for (const root of canonicalHolders(roots)) {
       if (!existsSync(root) || !lstatSync(root).isDirectory()) continue;
       for (const entry of readdirSync(root, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;

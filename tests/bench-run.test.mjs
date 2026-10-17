@@ -76,7 +76,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     beginPassHygiene: async () => {
       calls.push('window baseline');
       if (hygieneError) throw new Error(hygieneError);
-      return { finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
+      return { trackLaunch: async (apps, operation) => { calls.push(['tracked setup', apps]); return operation(); }, finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
     },
     assertLogin: plan => { calls.push(['login preflight', plan]); const message = typeof loginError === 'function' ? loginError(plan) : loginError; if (message) throw new Error(message); },
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
@@ -85,7 +85,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
       return { generic: true, cwd: '/private/tmp/own-arm', args: ['--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence'], env: {}, identity: {}, servers: ['rival'] };
     },
     genericSettings, acceptGenericCatalog() {}, worldCLI, worldArm, worldSettings, assertWorldCLI,
-    isNativeArm,
+    isNativeArm, nativeArmPlan,
     prepareNativeArm: (name, options) => {
       const plan = nativeArmPlan(name, options);
       if (options.dryRun || plan.unsupported) return plan;
@@ -1186,4 +1186,26 @@ test('arms never inherit the host Claude session that started the pass', async (
     assert.equal(env.PATH, '/usr/bin');
     assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test');
   }
+});
+
+
+test('default setup is registered as a fixture launch and its app scopes final hygiene', async () => {
+  const result = await runner({ suite: 'default' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(call => Array.isArray(call) && call[0] === 'tracked setup').length, 3);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.ok(options.touchedApps.includes('Safari'));
+  assert.ok(options.armPids.includes(1234));
+});
+
+test('blocked pass sends exact cold-launch receipts to native gentle cleanup and excludes warm apps', async () => {
+  const result = await runner({ outcome: { groupClean: false }, leases: [
+    { app: 'fixture', bundle: 'org.fixture', pid: 42, processStartedAtMs: 12000, running: false, launched: true },
+    { app: 'owner', bundle: 'org.owner', pid: 43, processStartedAtMs: 13000, running: true, launched: false },
+  ] });
+  assert.equal(result.error, undefined);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.equal(options.blocked, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(options.launched)), [{ pid: 42, start: 12, bundle: 'org.fixture' }]);
+  assert.ok(options.touchedApps.includes('org.fixture'));
 });

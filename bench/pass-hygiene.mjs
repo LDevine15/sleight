@@ -10,16 +10,24 @@ const identity = ({ pid, start, bundle }) => ({ pid, start, bundle });
 const valid = item => Number.isSafeInteger(item.pid) && item.pid > 0 && Number.isFinite(item.start) && item.start > 0 && typeof item.bundle === 'string' && item.bundle.length > 0;
 
 // Include off-screen baseline windows too: changing Spaces never transfers ownership.
-export function planWindows(before, after, launched = []) {
+export function planWindows(before, after, launched = [], touchedApps = [], armPids = [], touchedProcesses = new Map()) {
   const oldWindows = new Set(before.windows.map(windowKey)), oldApps = new Set(before.apps.map(processKey));
   const owned = new Set(launched.filter(valid).map(processKey)), quits = new Set();
+  const members = new Set(armPids), processes = after.processes ?? [];
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const proc of processes) if (members.has(proc.ppid) && !members.has(proc.pid)) { members.add(proc.pid); grew = true; }
+  }
+  const touched = window => owned.has(processKey(window)) || members.has(window.pid) ||
+    processes.some(proc => proc.pid === window.pid && touchedProcesses.get(proc.pid) === proc.start && Math.round(proc.start * 1000) === Math.round(window.start * 1000)) ||
+    touchedApps.includes(window.bundle) || touchedApps.includes(window.name);
   const plan = [];
   for (const window of after.windows) {
     if (!valid(window) || !Number.isSafeInteger(window.id) || oldWindows.has(windowKey(window))) continue;
     const key = processKey(window);
     if (owned.has(key) && !oldApps.has(key) && !before.windows.some(old => processKey(old) === key)) {
       if (!quits.has(key)) { plan.push({ ...identity(window), action: 'quit' }); quits.add(key); }
-    } else plan.push({ ...window, action: 'close' });
+    } else plan.push({ ...window, action: touched(window) ? 'close' : 'keep' });
   }
   for (const app of after.apps.filter(valid)) {
     const key = processKey(app);
@@ -31,34 +39,52 @@ export function planWindows(before, after, launched = []) {
 }
 
 export async function finishWindows(before, { snapshot, act, launched = [], daemons = [], dryRun = false,
-  blocked = false, beforeAction = async () => {}, log = console.log } = {}) {
+  touchedApps = [], armPids = [], touchedProcesses = new Map(), daemonPaths = [], blocked = false, beforeAction = async () => {}, log = console.log } = {}) {
   const result = { planned: [], leftWindows: [], errors: [] };
   for (const daemon of daemons) {
     log(`${dryRun ? 'would stop' : 'stop'} owned daemon ${daemon.name ?? ''}`);
     if (!dryRun) try { await daemon.stop(); } catch (error) { result.errors.push(error.message); }
   }
-  const current = await snapshot();
-  result.planned = planWindows(before, current, launched);
-  const stoppedApps = new Set();
-  for (const item of result.planned) {
-    log(`${dryRun ? 'would ' : blocked ? 'kept: ' : ''}${item.action} ${JSON.stringify(item)}`);
-    if (blocked || dryRun || stoppedApps.has(processKey(item))) continue;
-    try { await beforeAction(); }
-    catch (error) { blocked = true; result.errors.push(error.message); continue; }
-    try { await act(item); }
-    catch (error) {
-      result.errors.push(error.message);
-      // A close may have produced a Save sheet: never attempt the app's other windows after it.
-      stoppedApps.add(processKey(item));
+  let current;
+  try { current = await snapshot(); }
+  catch (error) { blocked = true; result.errors.push(error.message); }
+  // A discovery timeout must not prevent exact launch receipts from getting their gentle Quit.
+  const known = current ?? { apps: launched, windows: [] };
+  result.planned = planWindows(before, known, launched, touchedApps, armPids, touchedProcesses);
+  const oldProcesses = new Set((before.processes ?? []).map(proc => `${proc.pid}:${proc.start}`));
+  for (const proc of current?.processes ?? []) {
+    if (daemonPaths.includes(proc.path) && proc.start > before.at && !oldProcesses.has(`${proc.pid}:${proc.start}`)) {
+      const item = { ...proc, action: 'stop' };
+      result.planned.unshift(item);
+      log(`${dryRun ? 'would stop' : 'stop'} owned daemon ${JSON.stringify(item)}`);
+      if (!dryRun) try { await act(item); } catch (error) { result.errors.push(error.message); }
     }
   }
-  const after = dryRun ? current : await snapshot();
-  result.leftWindows = planWindows(before, after).map(({ action, ...window }) => window);
+  const stoppedApps = new Set(), phantoms = new Set(), dialogs = new Map();
+  for (const item of result.planned.filter(item => item.action !== 'stop')) {
+    log(`${dryRun ? 'would ' : blocked && item.action === 'close' ? 'kept: ' : ''}${item.action} ${JSON.stringify(item)}`);
+    if (item.action === 'keep' || dryRun || stoppedApps.has(processKey(item)) || (blocked && item.action === 'close')) continue;
+    if (item.action === 'close') {
+      try { await beforeAction(); }
+      catch (error) { blocked = true; result.errors.push(error.message); continue; }
+    }
+    try {
+      const outcome = await act(item);
+      if (outcome?.skipped === 'no-ax-window' && item.onScreen === false) phantoms.add(windowKey(item));
+      if (outcome?.dialog) {
+        stoppedApps.add(processKey(item)); dialogs.set(processKey(item), { ...identity(item), reason: 'application dialog' });
+      }
+    } catch (error) { result.errors.push(error.message); stoppedApps.add(processKey(item)); }
+  }
+  let after = current;
+  if (!dryRun) try { after = await snapshot(); } catch (error) { result.errors.push(error.message); }
+  result.leftWindows = after ? planWindows(before, after).filter(item => item.onScreen !== false || !phantoms.has(windowKey(item))).map(({ action, ...window }) => window) : [];
   for (const item of result.planned.filter(item => item.action === 'quit')) {
-    if (after.apps.some(app => processKey(app) === processKey(item)) && !result.leftWindows.some(window => processKey(window) === processKey(item))) {
-      result.leftWindows.push({ ...identity(item), reason: 'still running after Quit' });
+    if ((!after || after.apps.some(app => processKey(app) === processKey(item))) && !result.leftWindows.some(window => processKey(window) === processKey(item))) {
+      result.leftWindows.push({ ...identity(item), reason: after ? 'still running after Quit' : 'Quit unconfirmed: snapshot unavailable' });
     }
   }
+  result.leftWindows.push(...dialogs.values());
   for (const item of result.leftWindows) log(`leftWindows ${JSON.stringify(item)}`);
   return result;
 }
@@ -98,5 +124,58 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     return value;
   };
   const before = await snapshot();
-  return { finish: options => finishWindows(before, { ...options, snapshot, act: call }) };
+  const launches = [], members = new Map(), trackingErrors = [];
+  let timer, pendingSamples = 0, sampling = Promise.resolve();
+  const observe = value => {
+    const processes = value.processes ?? [], live = new Map(processes.map(proc => [proc.pid, proc]));
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const proc of processes) {
+        const parent = live.get(proc.ppid);
+        if (parent && members.get(parent.pid) === parent.start && members.get(proc.pid) !== proc.start) {
+          members.set(proc.pid, proc.start); grew = true;
+        }
+      }
+    }
+    return processes.filter(proc => members.get(proc.pid) === proc.start).map(proc => proc.pid);
+  };
+  const sample = pid => {
+    pendingSamples++;
+    sampling = sampling.then(async () => {
+      const value = await snapshot();
+      const root = value.processes?.find(proc => proc.pid === pid);
+      if (root) members.set(root.pid, root.start);
+      observe(value);
+    }).catch(error => { trackingErrors.push(error.message); }).finally(() => { pendingSamples--; });
+    return sampling;
+  };
+  return {
+    recordArm(pid) {
+      if (!timer) { timer = setInterval(() => { if (!pendingSamples) sample(); }, 1000); timer.unref(); }
+      return sample(pid);
+    },
+    async trackLaunch(apps, operation) {
+      const initial = await snapshot(), existing = new Set(initial.apps.map(processKey));
+      try { return await operation(); }
+      finally {
+        const after = await snapshot();
+        launches.push(...after.apps.filter(app => !existing.has(processKey(app)) && (apps.includes(app.bundle) || apps.includes(app.name))));
+      }
+    },
+    async finish(options = {}) {
+      clearInterval(timer); timer = undefined;
+      await sampling;
+      const result = await finishWindows(before, { ...options, armPids: [],
+        launched: [...launches, ...(options.launched ?? [])],
+        snapshot: async () => {
+          const value = await snapshot();
+          observe(value);
+          return value;
+        }, act: call,
+        touchedProcesses: members,
+      });
+      result.errors.push(...trackingErrors);
+      return result;
+    },
+  };
 }

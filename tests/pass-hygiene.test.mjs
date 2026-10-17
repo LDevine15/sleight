@@ -12,7 +12,7 @@ const baseline = { apps: [app(1), app(2)], windows: [win(10, 1), { ...win(20, 2)
 const current = { apps: [...baseline.apps, app(3), app(4)], windows: [...baseline.windows, win(11, 1), win(21, 2), win(30, 3), win(40, 4)] };
 
 test('quits only proven cold launches; closes only new windows of other apps', () => {
-  assert.deepEqual(hygiene.planWindows(baseline, current, [app(3), app(1)]), [
+  assert.deepEqual(hygiene.planWindows(baseline, current, [app(3), app(1)], current.apps.map(app => app.bundle)), [
     { ...win(11, 1), action: 'close' }, { ...win(21, 2), action: 'close' },
     { ...app(3), action: 'quit' }, { ...win(40, 4), action: 'close' },
   ]);
@@ -20,13 +20,13 @@ test('quits only proven cold launches; closes only new windows of other apps', (
 
 test('PID reuse does not inherit launch ownership and window IDs are process-scoped', () => {
   const after = { apps: [app(1, 100)], windows: [win(10, 1, 100)] };
-  assert.deepEqual(hygiene.planWindows(baseline, after, [app(1)]), [{ ...win(10, 1, 100), action: 'close' }]);
+  assert.deepEqual(hygiene.planWindows(baseline, after, [app(1)]), [{ ...win(10, 1, 100), action: 'keep' }]);
 });
 
 test('dry run prints every planned action without acting or stopping a daemon', async () => {
   const calls = [], logs = [];
   const result = await hygiene.finishWindows(baseline, {
-    snapshot: async () => current, act: async item => calls.push(item), launched: [app(3)],
+    touchedApps: current.apps.map(app => app.bundle), snapshot: async () => current, act: async item => calls.push(item), launched: [app(3)],
     dryRun: true, log: line => logs.push(line), daemons: [{ stop: () => calls.push('stop') }],
   });
   assert.equal(calls.length, 0);
@@ -37,7 +37,7 @@ test('dry run prints every planned action without acting or stopping a daemon', 
 test('a refused quit and close are left in results; no prompt response is attempted', async () => {
   const calls = [];
   const result = await hygiene.finishWindows(baseline, {
-    snapshot: async () => current, launched: [app(3)],
+    touchedApps: current.apps.map(app => app.bundle), snapshot: async () => current, launched: [app(3)],
     act: async item => { calls.push(item.action); throw new Error('prompt or identity changed'); }, log() {},
   });
   assert.deepEqual(calls, ['close', 'close', 'quit', 'close']);
@@ -48,7 +48,7 @@ test('a refused quit and close are left in results; no prompt response is attemp
 test('an owned app still running with no window after Quit is reported', async () => {
   let reads = 0;
   const result = await hygiene.finishWindows({ apps: [], windows: [] }, {
-    snapshot: async () => ++reads === 1 ? { apps: [app(3)], windows: [win(30, 3)] } : { apps: [app(3)], windows: [] },
+    touchedApps: current.apps.map(app => app.bundle), snapshot: async () => ++reads === 1 ? { apps: [app(3)], windows: [win(30, 3)] } : { apps: [app(3)], windows: [] },
     launched: [app(3)], act: async () => {}, log() {},
   });
   assert.deepEqual(result.leftWindows, [{ ...app(3), reason: 'still running after Quit' }]);
@@ -60,7 +60,7 @@ test('a proven cold-launched app whose fixture window already closed still gets 
 
 test('an observation stop prevents every later action, including in other apps', async () => {
   let checks = 0;
-  const result = await hygiene.finishWindows(baseline, { snapshot: async () => current,
+  const result = await hygiene.finishWindows(baseline, { touchedApps: current.apps.map(app => app.bundle), snapshot: async () => current,
     beforeAction: async () => { checks++; throw new Error('permission prompt'); }, act: () => assert.fail('blocked'), log() {} });
   assert.equal(checks, 1); assert.equal(result.leftWindows.length, 4);
 });
@@ -68,7 +68,7 @@ test('an observation stop prevents every later action, including in other apps',
 test('permission, user interruption and uncollected drivers block window actions but collect owned daemons', async () => {
   const calls = [];
   const result = await hygiene.finishWindows(baseline, {
-    snapshot: async () => current, blocked: true, act: () => assert.fail('blocked'), log() {},
+    touchedApps: current.apps.map(app => app.bundle), snapshot: async () => current, blocked: true, act: () => assert.fail('blocked'), log() {},
     daemons: [{ stop: async () => calls.push('owned stop') }],
   });
   assert.deepEqual(calls, ['owned stop']);
@@ -96,4 +96,125 @@ test('native adapter checks its baseline and routes every helper through owned p
   assert.deepEqual(result.planned, []);
   assert.equal(calls.filter(call => call.command === '/usr/bin/xcrun').length, 1, 'compiled source hash is cached');
   assert.ok(calls.every(call => call.options.timeoutMs > 0));
+});
+
+test('unrelated new windows are listed but only touched fixture apps are closed', async () => {
+  const calls = [];
+  const result = await hygiene.finishWindows(baseline, { snapshot: async () => current,
+    touchedApps: [app(1).bundle], act: async item => calls.push(item), log() {} });
+  assert.deepEqual(calls, [{ ...win(11, 1), action: 'close' }]);
+  assert.equal(result.leftWindows.length, 4);
+});
+
+test('blocked passes still gently quit proven launches while window closes stay plan-only', async () => {
+  const calls = [];
+  await hygiene.finishWindows(baseline, { snapshot: async () => current, launched: [app(3)],
+    blocked: true, beforeAction: () => assert.fail('no window observation on a blocked quit'),
+    act: async item => calls.push(item), log() {} });
+  assert.deepEqual(calls, [{ ...app(3), action: 'quit' }]);
+});
+
+test('snapshot errors preserve known plans and leftovers and still quit proven launches', async () => {
+  let reads = 0;
+  const calls = [];
+  const result = await hygiene.finishWindows(baseline, { launched: [app(3)], touchedApps: [app(1).bundle],
+    snapshot: async () => { if (++reads > 1) throw new Error('snapshot timeout'); return current; },
+    act: async item => calls.push(item), log() {} });
+  assert.equal(result.planned.length, 4);
+  assert.equal(result.leftWindows.length, 4);
+  assert.match(result.errors.join(), /snapshot timeout/);
+  const failed = await hygiene.finishWindows(baseline, { launched: [app(3)],
+    snapshot: async () => { throw new Error('initial timeout'); }, act: async item => calls.push(item), log() {} });
+  assert.equal(calls.filter(item => item.action === 'quit').length, 2);
+  assert.match(failed.errors.join(), /initial timeout/);
+});
+
+test('a missing AX window skips a phantom without stopping real windows or listing the phantom', async () => {
+  const windows = [{ ...win(11, 1), onScreen: false }, win(12, 1)], calls = [];
+  const result = await hygiene.finishWindows(baseline, { snapshot: async () => ({ apps: baseline.apps, windows }),
+    touchedApps: [app(1).bundle], act: async item => { calls.push(item.id); return item.id === 11 ? { skipped: 'no-ax-window' } : { closed: true }; }, log() {} });
+  assert.deepEqual(calls, [11, 12]);
+  assert.deepEqual(result.leftWindows.map(item => item.id), [12]);
+});
+
+test('a sheet reported after a successful close stops the app before another close', async () => {
+  const calls = [];
+  const result = await hygiene.finishWindows(baseline, { snapshot: async () => ({ apps: baseline.apps, windows: [win(11, 1), win(12, 1)] }),
+    touchedApps: [app(1).bundle], act: async item => { calls.push(item.id); return { closed: true, dialog: true }; }, log() {} });
+  assert.deepEqual(calls, [11]);
+  assert.ok(result.leftWindows.some(item => item.reason === 'application dialog'));
+});
+
+test('native adapter registers default fixture launches and leaves pre-existing apps unowned', async t => {
+  const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-launch-')));
+  let state = baseline;
+  const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun') writeFileSync(args.at(-1), 'fake');
+    return { stdout: JSON.stringify(state), groupClean: true, exit: { code: 0 } };
+  };
+  const pass = await hygiene.beginPassHygiene({ cacheDir, run });
+  assert.equal(typeof pass.trackLaunch, 'function');
+  await pass.trackLaunch([app(3).bundle, app(1).bundle], async () => { state = current; });
+  const result = await pass.finish({ dryRun: true, log() {} });
+  assert.ok(result.planned.some(item => item.action === 'quit' && item.pid === 3));
+  assert.ok(!result.planned.some(item => item.action === 'quit' && item.pid === 1));
+});
+
+test('arm descendants are touched and only fresh exact arm daemons receive stop actions', async () => {
+  const proc = (pid, ppid, start, path) => ({ pid, ppid, start, path });
+  const before = { ...baseline, at: 100, processes: [proc(8, 1, 50, '/arm/daemon')] };
+  const after = { apps: [...baseline.apps, app(3), app(4)], windows: [win(30, 3), win(40, 4)],
+    processes: [proc(8, 1, 50, '/arm/daemon'), proc(9, 1, 101, '/arm/daemon'), proc(3, 20, 3, '/app'), proc(20, 1, 101, '/arm/client')] };
+  const calls = [];
+  await hygiene.finishWindows(before, { snapshot: async () => after, armPids: [20], daemonPaths: ['/arm/daemon'],
+    act: async item => calls.push(item), log() {} });
+  assert.deepEqual(calls.map(item => [item.action, item.pid]), [['stop', 9], ['close', 3]]);
+});
+
+test('arm sampling retains descendant identity after reparenting and rejects a reused PID', async t => {
+  const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-arm-'))), actions = [];
+  let state = { ...baseline, processes: [], at: 100 };
+  const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun') writeFileSync(args.at(-1), 'fake');
+    else if (JSON.parse(args[0]).action !== 'snapshot') { actions.push(JSON.parse(args[0])); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
+    return { stdout: JSON.stringify(state), groupClean: true, exit: { code: 0 } };
+  };
+  const pass = await hygiene.beginPassHygiene({ cacheDir, run });
+  assert.equal(typeof pass.recordArm, 'function');
+  state = { apps: [...baseline.apps, app(3)], windows: [win(30, 3)],
+    processes: [{ pid: 20, ppid: 1, start: 101 }, { pid: 3, ppid: 20, start: 3 }] };
+  await pass.recordArm(20);
+  state.processes = [{ pid: 3, ppid: 1, start: 3 }];
+  await pass.finish({ log() {} });
+  assert.deepEqual(actions.map(item => [item.action, item.pid]), [['close', 3]]);
+  actions.length = 0;
+  state = { apps: [app(3, 200)], windows: [win(30, 3, 200)], processes: [{ pid: 3, ppid: 1, start: 200 }] };
+  await pass.finish({ log() {} });
+  assert.deepEqual(actions, []);
+});
+
+test('an unmatched on-screen window stays listed and does not suppress the next real close', async () => {
+  const calls = [], windows = [win(11, 1), win(12, 1)];
+  const result = await hygiene.finishWindows(baseline, { touchedApps: [app(1).bundle],
+    snapshot: async () => ({ apps: baseline.apps, windows }),
+    act: async item => { calls.push(item.id); return { skipped: 'no-ax-window' }; }, log() {} });
+  assert.deepEqual(calls, [11, 12]);
+  assert.deepEqual(result.leftWindows.map(item => item.id), [11, 12]);
+});
+
+test('daemon dry run preserves new and pre-existing helpers without signaling', async () => {
+  const before = { apps: [], windows: [], at: 100, processes: [{ pid: 8, start: 90, path: '/arm/daemon' }] };
+  const after = { ...before, processes: [...before.processes, { pid: 9, start: 101, path: '/arm/daemon' }, { pid: 10, start: 102, path: '/owner/helper' }] };
+  const result = await hygiene.finishWindows(before, { snapshot: async () => after, dryRun: true,
+    daemonPaths: ['/arm/daemon'], act: () => assert.fail('dry run'), log() {} });
+  assert.deepEqual(result.planned.map(item => [item.action, item.pid]), [['stop', 9]]);
+});
+
+
+test('a phantom that becomes visible is retained in the final leftover report', async () => {
+  let reads = 0;
+  const result = await hygiene.finishWindows(baseline, { touchedApps: [app(1).bundle],
+    snapshot: async () => ({ apps: baseline.apps, windows: [{ ...win(11, 1), onScreen: ++reads > 1 }] }),
+    act: async () => ({ skipped: 'no-ax-window' }), log() {} });
+  assert.deepEqual(result.leftWindows.map(item => item.id), [11]);
 });

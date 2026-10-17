@@ -2,9 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultRoots, isHeld, listLeftovers, MAX_AGE_MS } from './temp-leftovers.mjs';
+import { defaultRoots, isHeld, listLeftovers, keepTemp, MAX_AGE_MS } from './temp-leftovers.mjs';
 
 const RETAIN = new Set(['sleight-live.lock', 'sleight-real-evidence']);
+const inClaim = path => /(?:^|\/)ledger\/claims(?:\/|$)/.test(path);
+const retained = item => RETAIN.has(item.name) || /^sleight-.*-evidence/.test(item.name) || inClaim(item.path);
 
 export function canonicalHolders(held) {
   return new Set([...held].map(path => { try { return realpathSync(path); } catch { return path; } }));
@@ -20,10 +22,12 @@ export function readHeldPaths(run = spawnSync) {
 export function sweepTemp({ roots = defaultRoots(), now = Date.now(), held, inventory = readHeldPaths,
   dryRun = false, log = console.log } = {}) {
   const result = { freedBytes: 0, planned: [], removed: [] };
+  if (keepTemp()) { log('temp sweep kept: SLEIGHT_KEEP_TEMP=1'); return result; }
   try {
+    roots = [...canonicalHolders(roots)].filter(root => !inClaim(root));
     const refresh = held === undefined;
     held = canonicalHolders(held ?? inventory());
-    const candidates = listLeftovers({ roots, now, held }).filter(item => !RETAIN.has(item.name))
+    const candidates = listLeftovers({ roots, now, held }).filter(item => !retained(item))
       .map(item => ({ ...item, info: lstatSync(item.path) }));
     const currentHeld = refresh && !dryRun ? canonicalHolders(inventory()) : held;
     for (const item of candidates) {
@@ -33,7 +37,7 @@ export function sweepTemp({ roots = defaultRoots(), now = Date.now(), held, inve
       try {
         // Recheck age, name, git ownership and holders immediately before removal.
         const info = lstatSync(item.path);
-        if (!info.isDirectory() || info.dev !== item.info.dev || info.ino !== item.info.ino ||
+        if (retained(item) || !info.isDirectory() || info.dev !== item.info.dev || info.ino !== item.info.ino ||
           now - info.mtimeMs < MAX_AGE_MS || existsSync(join(item.path, '.git')) || isHeld(item.path, currentHeld)) continue;
         rmSync(item.path, { recursive: true, force: false });
         result.removed.push(item.path); result.freedBytes += item.size;

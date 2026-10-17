@@ -56,3 +56,37 @@ test('retention refuses deletion when reference files cannot be read', t => {
   const result = archiveTools.pruneRunImages({ roots: [root], docsDir: join(root, 'missing'), exclusionsFile: join(root, 'missing.json'), held: new Set(), log() {} });
   assert.deepEqual(result.removed, []); assert.match(result.warning, /reference/);
 });
+
+
+test('retention scans all publication references and protects post-baseline result JSON for 30 days', t => {
+  const root = registerTemp(t, mkdtempSync(join(tmpdir(), 'bench-retention-'))), docs = join(root, 'docs'), bank = join(root, 'archive'), results = join(root, 'bench', 'results');
+  mkdirSync(results, { recursive: true });
+  for (const file of ['docs/benchmarks/nested/study.md', 'docs/design/nested/plan.md', 'docs/status/report.md', 'docs/benchmark.md', 'README.md', 'CHANGELOG.md']) {
+    mkdirSync(join(root, file.split('/').slice(0, -1).join('/')), { recursive: true });
+  }
+  const stamps = ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05', '2026-09-06', '2026-10-02', '2026-09-07', '2026-10-03'];
+  const files = ['docs/benchmarks/nested/study.md', 'docs/design/nested/plan.md', 'docs/status/report.md', 'docs/benchmark.md', 'README.md', 'CHANGELOG.md'];
+  for (const [i, day] of stamps.entries()) {
+    const stamp = day + 'T10-00-00-000Z', dir = join(bank, stamp); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'screen.png'), 'image');
+    if (i < files.length) writeFileSync(join(root, files[i]), stamp);
+    else writeFileSync(join(results, stamp + '.json'), JSON.stringify({ results: [] }));
+  }
+  const exclusions = join(root, 'bench', 'claim-exclusions.json'); writeFileSync(exclusions, JSON.stringify({ since: '2026-09-01T00-00' }));
+  const result = archiveTools.pruneRunImages({ roots: [bank, bank], docsDir: join(docs, 'benchmarks'), exclusionsFile: exclusions,
+    now: Date.parse('2026-10-17T12:00:00Z'), held: new Set(), log() {} });
+  assert.deepEqual(result.removed.map(path => path.split('/').at(-2)), ['2026-09-07T10-00-00-000Z']);
+  assert.equal(existsSync(join(bank, '2026-10-02T10-00-00-000Z', 'screen.png')), true);
+});
+
+
+test('nested non-Markdown publication references also retain run images', t => {
+  const root = registerTemp(t, mkdtempSync(join(tmpdir(), 'bench-retention-')));
+  const docs = join(root, 'docs/benchmarks/nested'), bank = join(root, 'archive'), stamp = '2026-09-08T10-00-00-000Z';
+  mkdirSync(docs, { recursive: true }); mkdirSync(join(root, 'bench'));
+  writeFileSync(join(docs, 'references.json'), JSON.stringify({ result: stamp }));
+  const exclusions = join(root, 'bench/claim-exclusions.json'); writeFileSync(exclusions, '{}');
+  mkdirSync(join(bank, stamp), { recursive: true }); writeFileSync(join(bank, stamp, 'screen.png'), 'image');
+  const result = archiveTools.pruneRunImages({ roots: [bank], docsDir: join(root, 'docs/benchmarks'), exclusionsFile: exclusions,
+    now: Date.parse('2026-10-17T12:00:00Z'), held: new Set(), log() {} });
+  assert.deepEqual(result.removed, []);
+});

@@ -57,7 +57,7 @@ import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
 import { WORLD_APPS } from './world/tasks.mjs';
-import { isNativeArm, prepareNativeArm } from './world/native-arms.mjs';
+import { isNativeArm, nativeArmPlan, prepareNativeArm } from './world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
 import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
 import { dragMethodAudit } from './world/method-check.mjs';
@@ -284,6 +284,7 @@ function armServers(arm) {
     let buffer = '', catalog, keySource;
     const discover = signal => runOwned(claudeBin, args, { cwd: arm.cwd, env: privatePass ? privateDriverEnvironment(armEnv(arm)) : armEnv(arm), timeoutMs: 60000,
       signal: AbortSignal.any([initialized.signal, signal]),
+      onSpawn: pid => { armPids.push(pid); windowHygiene?.recordArm?.(pid); },
       onStdout: data => {
         buffer += data;
         let i;
@@ -387,7 +388,7 @@ const OUTSIDE_TOOLS = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'Web
 // CPU a run costs the Mac (footprint.mjs), sampled from when the driver starts until it exits.
 function footprint(apps, client) {
   let stop;
-  return { onSpawn: pgid => { stop = startFootprint({ pgid, apps: apps.filter(Boolean) }); },
+  return { onSpawn: pgid => { armPids.push(pgid); windowHygiene?.recordArm?.(pgid); stop = startFootprint({ pgid, apps: apps.filter(Boolean) }); },
     finish: async () => { const used = await stop?.(); return used && { ...used, split: cpuSplit(used, { client }) }; } };
 }
 
@@ -450,7 +451,7 @@ async function calculatorReady(stage) {
   try { liveConditions.push({ stage, ...await assertCalculatorReady({ signal: controller.signal }) }); }
   catch (error) { controller.abort(error); throw error; }
 }
-const realContexts = [], passCleanupErrors = [];
+const realContexts = [], passCleanupErrors = [], armPids = [], touchedApps = new Set();
 let windowHygiene, hygieneResult;
 const resultsDir = join(ROOT, 'bench', 'results');
 if (!isDryRun) mkdirSync(resultsDir, { recursive: true });
@@ -560,6 +561,7 @@ pass: for (let run = 1; run <= runs; run++) {
       const dir = join(suite === 'real' ? realpathSync(tmpdir()) : tmpdir(), 'sleight-bench', stamp, `${armName}-${task.id}-${run}`);
       mkdirSync(dir, { recursive: true });
       const ctx = { dir, nonce, ownerAway, ownerPresent, ...(guardedPass && { stopOnAppDialog: true }) };
+      for (const app of [task.app, ...task.allowedApps ?? []].filter(Boolean)) touchedApps.add(app);
       if (suite === 'real' || task.fixtureLifecycle || guardedPass) {
         if (task.privateMail) assertPrivateClaudePolicy();
         if (task.privateMail) ctx.privateTask = task;
@@ -584,7 +586,7 @@ pass: for (let run = 1; run <= runs; run++) {
             }
             const response = await runClaude(prompt, ARMS[armName], !task.privateMail && !task.noScreenshot && armName === 'sleight' ? { SLEIGHT_TRACE: evidenceDir } : {},
               { signal: controller.signal, evidenceDir, ...callbacks, privateMail: task.privateMail,
-                fixtureLifecycle: true, onSpawn: task.privateMail ? undefined : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS,
+                fixtureLifecycle: true, onSpawn: task.privateMail ? pid => { armPids.push(pid); windowHygiene?.recordArm?.(pid); } : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS,
                 allowedApps: task.allowedApps, allowedGrants: task.allowedGrants, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
             if (!task.privateMail) response.footprint = await cpu.finish();
             if (stopWatching) response.appWindows = await stopWatching();
@@ -637,7 +639,7 @@ pass: for (let run = 1; run <= runs; run++) {
       }
       // A setup this Mac can't do (no iOS runtime for the simulator task) skips
       // the run rather than ending the pass; skipped runs stay out of the table.
-      try { await task.setup?.(ctx); } catch (err) {
+      try { await windowHygiene.trackLaunch([task.app].filter(Boolean), () => task.setup?.(ctx)); } catch (err) {
         results.push({ arm: armName, task: task.id, run, skipped: true, reason: `setup: ${err.message}` });
         finishRun(results.at(-1));
         save();
@@ -704,6 +706,8 @@ pass: for (let run = 1; run <= runs; run++) {
     if (windowHygiene) {
       try {
         hygieneResult = await windowHygiene.finish({ dryRun: hygieneDryRun,
+          touchedApps: [...touchedApps, ...realContexts.flatMap(ctx => (ctx.windowLeases ?? []).flatMap(lease => [lease.app, lease.bundle]).filter(Boolean))],
+          armPids, daemonPaths: armNames.filter(isNativeArm).flatMap(name => Object.values(nativeArmPlan(name, { armHome: ARM_HOME, dir: ARMS[name].cwd }).mcp.mcpServers).map(server => server.command)),
           blocked: ownerPresent || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
           launched: realContexts.flatMap(ctx => (ctx.windowLeases ?? []).filter(lease => lease.launched && lease.running === false)
             .map(lease => ({ pid: lease.pid, start: lease.processStartedAtMs / 1000, bundle: lease.bundle }))),

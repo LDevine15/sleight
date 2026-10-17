@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Darwin
 
 func failure(_ message: String) -> NSError { NSError(domain: "PassHygiene", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
 func attr(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -9,7 +10,30 @@ func attr(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 func identity(_ app: NSRunningApplication) -> [String: Any]? {
     guard let start = app.launchDate?.timeIntervalSince1970, let bundle = app.bundleIdentifier else { return nil }
-    return ["pid": Int(app.processIdentifier), "start": start, "bundle": bundle]
+    return ["pid": Int(app.processIdentifier), "start": start, "bundle": bundle, "name": app.localizedName ?? ""]
+}
+func processInfo(_ pid: Int32) -> [String: Any]? {
+    var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size == MemoryLayout<kinfo_proc>.stride else { return nil }
+    let time = info.kp_proc.p_un.__p_starttime
+    var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return nil }
+    return ["pid": Int(pid), "ppid": Int(info.kp_eproc.e_ppid),
+            "start": Double(time.tv_sec) + Double(time.tv_usec) / 1_000_000, "path": String(cString: path)]
+}
+func processes() throws -> [[String: Any]] {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL], size = 0
+    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0 else { throw failure("Process inventory unavailable") }
+    var rows = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 128)
+    size = rows.count * MemoryLayout<kinfo_proc>.stride
+    let status = rows.withUnsafeMutableBytes { sysctl(&mib, u_int(mib.count), $0.baseAddress, &size, nil, 0) }
+    guard status == 0 else { throw failure("Process inventory incomplete") }
+    return rows.prefix(size / MemoryLayout<kinfo_proc>.stride).compactMap { processInfo($0.kp_proc.p_pid) }
+}
+func hasDialog(_ windows: [AXUIElement]) -> Bool {
+    windows.contains { attr($0, "AXModal") as? Bool == true || attr($0, "AXRole") as? String == "AXSheet" ||
+        !(attr($0, "AXSheets") as? [AXUIElement] ?? []).isEmpty }
 }
 func snapshot() throws -> [String: Any] {
     guard let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
@@ -26,7 +50,7 @@ func snapshot() throws -> [String: Any] {
         row["onScreen"] = window[kCGWindowIsOnscreen as String] as? Bool ?? false
         rows.append(row)
     }
-    return ["apps": apps, "windows": rows]
+    return ["apps": apps, "windows": rows, "processes": try processes(), "at": Date().timeIntervalSince1970]
 }
 func exactApp(_ request: [String: Any]) throws -> NSRunningApplication {
     guard let pid = request["pid"] as? Int, pid > 0, pid <= Int(Int32.max),
@@ -44,6 +68,16 @@ func waitBriefly(_ done: () -> Bool) {
 }
 func perform(_ request: [String: Any]) throws -> [String: Any] {
     if request["action"] as? String == "snapshot" { return try snapshot() }
+    if request["action"] as? String == "stop" {
+        guard let pid = request["pid"] as? Int32, pid > 0,
+              let actual = processInfo(pid), let start = request["start"] as? Double,
+              let actualStart = actual["start"] as? Double, (start * 1000).rounded() == (actualStart * 1000).rounded(),
+              actual["path"] as? String == request["path"] as? String else { throw failure("Daemon identity changed; kept") }
+        guard Darwin.kill(pid, SIGTERM) == 0 else { throw failure("Daemon stop refused; kept") }
+        waitBriefly { processInfo(pid) == nil }
+        guard processInfo(pid) == nil else { throw failure("Daemon still running; kept") }
+        return ["stopped": true]
+    }
     let app = try exactApp(request)
     if request["action"] as? String == "quit" {
         // One gentle request only. A save/terminate prompt stays for the operator.
@@ -57,26 +91,26 @@ func perform(_ request: [String: Any]) throws -> [String: Any] {
     AXUIElementSetMessagingTimeout(element, 1)
     guard let windows = attr(element, "AXWindows") as? [AXUIElement] else { throw failure("AX windows unavailable; kept") }
     // A sheet or modal window stops this app. Never press its buttons or dismiss it.
-    for window in windows {
-        if attr(window, "AXModal") as? Bool == true || attr(window, "AXRole") as? String == "AXSheet" ||
-            !(attr(window, "AXSheets") as? [AXUIElement] ?? []).isEmpty {
-            throw failure("Application dialog; kept")
-        }
+    if hasDialog(windows) { return ["dialog": true] }
+    guard let window = windows.first(where: { attr($0, "AXWindowNumber") as? Int == id }) else {
+        return ["skipped": "no-ax-window"]
     }
-    guard let window = windows.first(where: { attr($0, "AXWindowNumber") as? Int == id }),
-          let rawButton = attr(window, "AXCloseButton"), CFGetTypeID(rawButton) == AXUIElementGetTypeID() else {
-        throw failure("Exact AX window or close button unavailable; kept")
+    guard let rawButton = attr(window, "AXCloseButton"), CFGetTypeID(rawButton) == AXUIElementGetTypeID() else {
+        throw failure("Exact AX close button unavailable; kept")
     }
     let button = unsafeBitCast(rawButton, to: AXUIElement.self)
     guard attr(button, "AXEnabled") as? Bool == true else { throw failure("Close disabled; kept") }
     _ = try exactApp(request)
     guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else { throw failure("Close refused; kept") }
-    var closed = false
+    var closed = false, dialog = false
     waitBriefly {
         guard let current = attr(element, "AXWindows") as? [AXUIElement] else { return false }
+        dialog = hasDialog(current)
         closed = !current.contains(where: { attr($0, "AXWindowNumber") as? Int == id })
-        return closed
+        return closed || dialog
     }
+    if let current = attr(element, "AXWindows") as? [AXUIElement] { dialog = dialog || hasDialog(current) }
+    if dialog { return ["closed": closed, "dialog": true] }
     if !closed { throw failure("Window still open; kept without answering a prompt") }
     return ["closed": true]
 }
