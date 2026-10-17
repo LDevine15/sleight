@@ -37,6 +37,18 @@ test('an empty text area hints only when open_file found its file non-empty on d
   assert.deepEqual(read(createReadCompactor({ screenshotReads: true }), blank), [text(blank)]);
 });
 
+// The first-call rules ride before the tree and quote "a result says the user changed the app". An unanchored stop
+// match read that as a stop, which suppressed this note and the open screenshot in every A/B 2 run (2026-10-17).
+test('first-call rules quoting a user-changed stop do not suppress the textless note', () => {
+  const value = tree(pane);
+  const rules = text('- If acquisition returns an empty tree, or a result says the user changed the app or a header changed, read again.');
+  const c = createReadCompactor({ screenshotReads: true });
+  assert.ok(output(c.process([rules, text(value)])).includes(note));
+  assert.equal(c.lastReadNoted(), true);
+  const stop = createReadCompactor({ screenshotReads: true });
+  assert.ok(!output(stop.process([text(value), text('sleight: the user changed the app.')])).includes(note), 'a real stop still suppresses it');
+});
+
 test('the default read and unselected variants remain unchanged', () => {
   const value = tree(pane);
   assert.deepEqual(read(createReadCompactor({ screenshotReads: false }), value), [text(value)]);
