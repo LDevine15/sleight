@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +61,9 @@ export function permissionDecision(input, env = process.env) {
   const tool = /^mcp__computer-use__(\w+)$/.exec(input.tool_name ?? '')?.[1];
   const allowed = bound && apps.length > 0 && !!tool && allowedCall(tool, input.tool_input, apps, allowedGrants);
   if (event === 'PreToolUse') {
+    // The harness reads the request's reason and apps from here: the card draws them before the transcript has the call.
+    if (allowed && tool === 'request_access' && typeof env.BENCH_CU_ACCESS_FILE === 'string' && env.BENCH_CU_ACCESS_FILE)
+      writeFileSync(env.BENCH_CU_ACCESS_FILE, JSON.stringify({ reason: input.tool_input.reason ?? '', apps: input.tool_input.apps }), { mode: 0o600 });
     if (bound && /^(?:ToolSearch|WaitForMcpServers)$/.test(input.tool_name ?? '') || allowed) return {};
     return { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny',
       permissionDecisionReason: 'Computer-use benchmark tool or app is outside the task allowlist.' } };

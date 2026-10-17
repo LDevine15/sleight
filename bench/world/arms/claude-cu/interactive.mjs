@@ -28,13 +28,14 @@ export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), 
   outsideGit(cwd);
   const settingsFile = join(armDir, 'interactive-settings.json'), mcpFile = join(armDir, 'empty-mcp.json');
   const turnFile = join(armDir, `turn-${sessionId}.json`), debugFile = join(armDir, `debug-${sessionId}.log`), nonce = randomUUID();
+  const accessFile = join(armDir, `access-${sessionId}.json`);
   const env = Object.fromEntries(['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'TERM'].filter(k => typeof hostEnv[k] === 'string').map(k => [k, hostEnv[k]]));
   Object.assign(env, { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
     DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', TERM: 'xterm-256color',
     CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1', ANTHROPIC_SMALL_FAST_MODEL: model });
-  Object.assign(env, { BENCH_CU_TURN_RECEIPT: turnFile, BENCH_CU_SESSION: sessionId, BENCH_CU_NONCE: nonce,
+  Object.assign(env, { BENCH_CU_ACCESS_FILE: accessFile, BENCH_CU_TURN_RECEIPT: turnFile, BENCH_CU_SESSION: sessionId, BENCH_CU_NONCE: nonce,
     BENCH_CU_ALLOWED_APPS: JSON.stringify(allowedApps), BENCH_CU_ALLOWED_GRANTS: JSON.stringify(allowedGrants), BENCH_CU_CWD: cwd });
-  return { armDir, cwd, prompt, model, effort, sessionId, timeoutMs, allowedApps, allowedGrants, env, settingsFile, mcpFile, turnFile, debugFile, nonce,
+  return { armDir, cwd, prompt, model, effort, sessionId, timeoutMs, allowedApps, allowedGrants, env, settingsFile, mcpFile, turnFile, debugFile, accessFile, nonce,
     configFile: join(config, '.claude.json'), command: command ?? join(armDir, 'node_modules/.bin/claude'),
     args: ['--session-id', sessionId, '--model', model, '--effort', effort, '--no-chrome', '--setting-sources', '',
       '--settings', settingsFile, '--strict-mcp-config', '--mcp-config', mcpFile, '--tools', 'ToolSearch,WaitForMcpServers', '--disable-slash-commands',
@@ -181,7 +182,7 @@ function terminalText(screen, prompt) {
 // Lines are compared with whitespace removed: the live 2.1.289 card draws some lines with no spaces between words
 // ("Allowforthissession(1app)", 2026-10-17 15:23Z) and ends on a run of spaces rather than a newline.
 const squeeze = text => text.replace(/\s+/g, '');
-function sessionCard(text, allowedApps, allowedGrants = [], reason) {
+function sessionCard(text, allowedApps, allowedGrants = [], reason, requested) {
   const title = 'Computer Use wants to control these apps', index = text.lastIndexOf(title);
   if (index < 0) return;
   if (!/^[\s│]*$/.test(text.slice(text.lastIndexOf('\n', index) + 1, index)) ||
@@ -215,6 +216,10 @@ function sessionCard(text, allowedApps, allowedGrants = [], reason) {
     } else return { blocked: 'unsupported computer-use approval card' };
   }
   if (!appSection && above.length) return { blocked: 'unsupported computer-use approval card' };
+  // When the hook recorded the request, the card must name exactly the apps Claude asked for.
+  if (Array.isArray(requested) && requested.some(app => typeof app !== 'string')) return { blocked: 'unsupported computer-use approval card' };
+  if (Array.isArray(requested) && names.some(name => !requested.map(squeeze).includes(name) && !requested.map(app => squeeze(allowed.get(squeeze(app)) ?? app)).includes(name)))
+    return { blocked: 'computer-use approval is outside the task allowlist or unsupported' };
   const count = Number(/\((\d+)apps?\)$/.exec(lines[allow])[1]);
   if (deny < 0 || allow !== deny + 1 || !names.length || !count || count !== selected.length ||
     new Set(names).size !== names.length || names.some(app => !allowed.has(app)) ||
@@ -327,7 +332,9 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
       if (sent && !exiting && !/Grant Accessibility|Screen Recording|Do you trust|Trust this folder|Sign in to Claude/i.test(text)) {
         const render = text.slice(Math.max(0, text.lastIndexOf('Computer Use wants to control these apps'))).trim();
         if (keyRender !== undefined && (!render || render === keyRender)) { await wait(pollMs); continue; }
-        const card = sessionCard(text, plan.allowedApps, plan.allowedGrants, state.accessReason);
+        let access;
+        try { access = plan.accessFile && existsSync(plan.accessFile) ? JSON.parse(readFileSync(plan.accessFile, 'utf8')) : undefined; } catch {}
+        const card = sessionCard(text, plan.allowedApps, plan.allowedGrants, access?.reason ?? state.accessReason, access?.apps);
         if (card?.blocked) { block(card.blocked, text); break; }
         // A frame that changed elsewhere (the ⏺ line) can arrive before the redraw a key causes: never send one key twice in a row.
         if (card?.answer && card.answer === lastKey) { await wait(pollMs); continue; }

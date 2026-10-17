@@ -228,6 +228,28 @@ test('an unboxed reason line matching the request_access reason is accepted, any
   const inside = await session(p, { screens: [cardWith('Terminal')], accessReason: 'Use Calculator, not Terminal.' });
   assertBlock(inside.result, inside.events, 'unsupported computer-use approval card');
 });
+// Live 16:07Z: the transcript didn't yet hold the request_access call when the card drew, so the hook records it for the harness.
+test('the PreToolUse hook records an allowed request_access reason and apps for the harness', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'sleight-cu-access-')); t.after(() => removeTemp(dir));
+  const env = { BENCH_CU_ALLOWED_APPS: '["Calculator"]', BENCH_CU_SESSION: 's', BENCH_CU_CWD: '/w', BENCH_CU_ACCESS_FILE: join(dir, 'a.json') };
+  const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/w', tool_name: 'mcp__computer-use__request_access', tool_input: { apps: ['Calculator'], reason: 'Do it.' } };
+  assert.deepEqual(permissionDecision(input, env), {});
+  assert.deepEqual(JSON.parse(readFileSync(env.BENCH_CU_ACCESS_FILE, 'utf8')), { reason: 'Do it.', apps: ['Calculator'] });
+  const denied = { ...input, tool_input: { apps: ['Terminal'], reason: 'x' } }, other = join(dir, 'b.json');
+  permissionDecision(denied, { ...env, BENCH_CU_ACCESS_FILE: other });
+  assert.equal(existsSync(other), false);
+});
+test('the reason and apps the hook recorded admit an unboxed reason line; a card naming other apps is refused', async t => {
+  const reason = 'Switch Calculator to Scientific mode, clear the input, and compute 21 × 21.';
+  const cardWith = (selected = 'deny') => card(['Calculator'], selected).replace('  ● Calculator', `   ${reason}\n  ● Calculator`);
+  const p = fixture(t); p.allowedApps = ['Calculator', 'TextEdit']; p.accessFile = join(p.armDir, 'access-test.json');
+  writeFileSync(p.accessFile, JSON.stringify({ reason, apps: ['Calculator'] }));
+  const ok = await session(p, { screens: [cardWith()], afterDown: cardWith('allow') });
+  assert.equal(ok.result.is_error, false, ok.result.reason);
+  writeFileSync(p.accessFile, JSON.stringify({ reason, apps: ['TextEdit'] }));
+  const other = await session(p, { screens: [cardWith()] });
+  assertBlock(other.result, other.events, 'computer-use approval is outside the task allowlist or unsupported');
+});
 test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
   const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });
   assertBlock(foreign.result, foreign.events, 'computer-use approval is outside the task allowlist or unsupported');
