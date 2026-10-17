@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BENCH_APPS, REAL_APPS, closeBenchTextEdit, quitChess, quitSimApp, getTasks } from './tasks.mjs';
 import { selectSuiteTasks, assertShopSmokeRuns } from './shop.mjs';
@@ -49,13 +49,15 @@ import { privateMailResult, publicPrivateMailRows, publishPrivateMailResults } f
 import { assertPrivateClaudePolicy } from './private-policy.mjs';
 import { CONFIG_DIR, LEDGER_FILE, DEFAULT_CAP_USD, addSpend, benchAuth, runCost } from './api-auth.mjs';
 import { assertLogin, assertEngineSockets, quote } from './preflight.mjs';
-import { archiveOldRuns } from './run-archive.mjs';
+import { archiveOldRuns, pruneRunImages } from './run-archive.mjs';
+import { sweepTemp } from '../scripts/temp-sweep.mjs';
+import { beginPassHygiene } from './pass-hygiene.mjs';
 import { prepareGenericArm, acceptGenericCatalog, genericSettings } from './plugin-arm.mjs';
 import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
 import { WORLD_APPS } from './world/tasks.mjs';
-import { isNativeArm, prepareNativeArm } from './world/native-arms.mjs';
+import { isNativeArm, nativeArmPlan, prepareNativeArm } from './world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
 import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
 import { dragMethodAudit } from './world/method-check.mjs';
@@ -73,6 +75,7 @@ function gitRoot(dir) {
   catch { return undefined; }
 }
 const isDryRun = process.argv.includes('--dry-run');
+const hygieneDryRun = process.argv.includes('--hygiene-dry-run');
 if (process.argv.includes('--world')) throw new Error('use --suite world for world isolation');
 const isSetupOnly = process.argv.includes('--setup-only');
 const ownerAway = process.argv.includes('--owner-away');
@@ -281,6 +284,7 @@ function armServers(arm) {
     let buffer = '', catalog, keySource;
     const discover = signal => runOwned(claudeBin, args, { cwd: arm.cwd, env: privatePass ? privateDriverEnvironment(armEnv(arm)) : armEnv(arm), timeoutMs: 60000,
       signal: AbortSignal.any([initialized.signal, signal]),
+      onSpawn: pid => { armPids.push(pid); windowHygiene?.recordArm?.(pid); },
       onStdout: data => {
         buffer += data;
         let i;
@@ -384,7 +388,7 @@ const OUTSIDE_TOOLS = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'Web
 // CPU a run costs the Mac (footprint.mjs), sampled from when the driver starts until it exits.
 function footprint(apps, client) {
   let stop;
-  return { onSpawn: pgid => { stop = startFootprint({ pgid, apps: apps.filter(Boolean) }); },
+  return { onSpawn: pgid => { armPids.push(pgid); windowHygiene?.recordArm?.(pgid); stop = startFootprint({ pgid, apps: apps.filter(Boolean) }); },
     finish: async () => { const used = await stop?.(); return used && { ...used, split: cpuSplit(used, { client }) }; } };
 }
 
@@ -441,26 +445,44 @@ const scrub = text => {
 };
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-if (!isDryRun && armNames.some(name => !ARMS[name].unsupported)) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
 const results = [];
 const liveConditions = [];
 async function calculatorReady(stage) {
   try { liveConditions.push({ stage, ...await assertCalculatorReady({ signal: controller.signal }) }); }
   catch (error) { controller.abort(error); throw error; }
 }
-const realContexts = [], passCleanupErrors = [];
+const realContexts = [], passCleanupErrors = [], armPids = [], touchedApps = new Set();
+let windowHygiene, hygieneResult;
+const hygieneErrors = [];
+let hygieneErrorCount = 0;
+const recordHygieneError = error => {
+  hygieneErrorCount++;
+  if (hygieneErrors.length < 20) hygieneErrors.push(scrub(error.message));
+  console.error(privatePass ? 'Pass hygiene: inventory unavailable; tasks continue.' : `Pass hygiene: ${scrub(error.message)}; tasks continue.`);
+};
+const hygieneBoundary = async () => {
+  try { await windowHygiene?.betweenTasks?.(); } catch (error) { recordHygieneError(error); }
+};
+const fixtureContexts = [];
 const resultsDir = join(ROOT, 'bench', 'results');
 if (!isDryRun) mkdirSync(resultsDir, { recursive: true });
 const file = join(resultsDir, `${stamp}${isDryRun ? '-dry' : isSetupOnly ? '-setup' : ''}.json`);
 // Written after every run, so a run cut short keeps what it finished.
 const save = (final = false) => {
+  const tracking = windowHygiene?.hygieneError;
+  const finishErrors = hygieneResult?.errors.slice(0, hygieneResult.errors.length - (hygieneResult.trackingErrors?.length ?? 0)) ?? [];
+  const count = hygieneErrorCount + (tracking?.count ?? 0) + finishErrors.length;
+  const hygieneError = count ? { errors: [...hygieneErrors, ...finishErrors, ...(tracking?.errors ?? [])].slice(0, 20), count } : undefined;
+  if (final && hygieneError) console.error(privatePass ? 'Pass hygiene: inventory unavailable; tasks continued.' : `Pass hygiene: ${scrub(hygieneError.errors.join('; '))} (${count} errors)`);
   if (isDryRun) {
     if (final) console.log(JSON.stringify({ dryRun: true, world, arms: armNames, results }, null, 2));
     return;
   }
   if (privatePass) {
     if (!fullName) throw new Error('PRIVATE_MAIL_OWNER_AUDIT_UNAVAILABLE');
-    const json = JSON.stringify({ results: publicPrivateMailRows(results) }, null, 2);
+    const json = JSON.stringify({ results: publicPrivateMailRows(results),
+      ...(hygieneError && { hygieneError: { count: hygieneError.count, code: 'HYGIENE_INVENTORY_UNAVAILABLE' } }),
+      ...(hygieneResult && { leftWindows: hygieneResult.leftWindows.map(({ pid, id }) => ({ pid, ...(id && { id }) })) }) }, null, 2);
     publishPrivateMailResults(file, json, { ownerName: fullName,
       terms: realContexts.flatMap(ctx => ctx.privateTask.privateTerms(ctx)) });
     return;
@@ -469,7 +491,9 @@ const save = (final = false) => {
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
     arms: armNames, ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
-    ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }) }, null, 2);
+    ...(hygieneError && { hygieneError }),
+    ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }),
+    ...(hygieneResult && { hygiene: hygieneResult, leftWindows: hygieneResult.leftWindows }) }, null, 2);
   writeFileSync(file, scrub(json) + '\n');
 };
 // The runner owns the pass lock. Real tasks reuse it, so they cannot wait on
@@ -504,6 +528,13 @@ if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name]
   console.error('Acquiring /tmp/sleight-live.lock.');
   unlock = await acquireLiveLock(undefined, { wait: !guardedPass, signal: controller.signal, interval: 2000 });
   lockIdentity = statSync('/tmp/sleight-live.lock');
+  // Without a baseline the receipts-only handle closes no window but still quits proven launches.
+  try { windowHygiene = await beginPassHygiene({ cacheDir: ARM_HOME, signal: controller.signal }); }
+  catch (error) { recordHygieneError(error); windowHygiene = error.receiptsOnly; }
+  sweepTemp({ dryRun: hygieneDryRun });
+  if (!hygieneDryRun) for (const base of new Set([tmpdir(), realpathSync(tmpdir())])) archiveOldRuns(join(base, 'sleight-bench'), join(ARM_HOME, 'runs-archive'));
+  pruneRunImages({ roots: [join(ARM_HOME, 'runs-archive'), ...new Set([tmpdir(), realpathSync(tmpdir())])].map((base, i) => i === 0 ? base : join(base, 'sleight-real-evidence')),
+    docsDir: join(ROOT, 'docs', 'benchmarks'), exclusionsFile: join(ROOT, 'bench', 'claim-exclusions.json'), dryRun: hygieneDryRun });
   // Codex can't answer app prompts headless, so the engine's "Always allow" list holds exactly the
   // benchmark apps for the pass, then goes back to what it was (exit handler below).
   if (armNames.some(n => ARMS[n].codex) && !process.argv.includes('--codex-no-write')) {
@@ -546,10 +577,13 @@ pass: for (let run = 1; run <= runs; run++) {
         save();
         continue;
       }
+      await hygieneBoundary();
       const nonce = randomBytes(4).toString('hex');
       const dir = join(suite === 'real' ? realpathSync(tmpdir()) : tmpdir(), 'sleight-bench', stamp, `${armName}-${task.id}-${run}`);
       mkdirSync(dir, { recursive: true });
       const ctx = { dir, nonce, ownerAway, ownerPresent, ...(guardedPass && { stopOnAppDialog: true }) };
+      fixtureContexts.push(ctx);
+      for (const app of [task.app, ...task.allowedApps ?? []].filter(Boolean)) touchedApps.add(app);
       if (suite === 'real' || task.fixtureLifecycle || guardedPass) {
         if (task.privateMail) assertPrivateClaudePolicy();
         if (task.privateMail) ctx.privateTask = task;
@@ -574,7 +608,7 @@ pass: for (let run = 1; run <= runs; run++) {
             }
             const response = await runClaude(prompt, ARMS[armName], !task.privateMail && !task.noScreenshot && armName === 'sleight' ? { SLEIGHT_TRACE: evidenceDir } : {},
               { signal: controller.signal, evidenceDir, ...callbacks, privateMail: task.privateMail,
-                fixtureLifecycle: true, onSpawn: task.privateMail ? undefined : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS,
+                fixtureLifecycle: true, onSpawn: task.privateMail ? pid => { armPids.push(pid); windowHygiene?.recordArm?.(pid); } : cpu.onSpawn, timeoutMs: task.timeoutMs ?? TIMEOUT_MS,
                 allowedApps: task.allowedApps, allowedGrants: task.allowedGrants, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
             if (!task.privateMail) response.footprint = await cpu.finish();
             if (stopWatching) response.appWindows = await stopWatching();
@@ -627,13 +661,17 @@ pass: for (let run = 1; run <= runs; run++) {
       }
       // A setup this Mac can't do (no iOS runtime for the simulator task) skips
       // the run rather than ending the pass; skipped runs stay out of the table.
-      try { await task.setup?.(ctx); } catch (err) {
+      try {
+        if (windowHygiene) await windowHygiene.trackLaunch([task.app].filter(Boolean), () => task.setup?.(ctx));
+        else await task.setup?.(ctx);
+      } catch (err) {
         results.push({ arm: armName, task: task.id, run, skipped: true, reason: `setup: ${err.message}` });
         finishRun(results.at(-1));
         save();
         console.error(`SKIP ${armName} ${task.id} #${run} (setup: ${err.message})`);
         continue;
       }
+      await hygieneBoundary();
       const prompt = task.prompt(ctx);
 
       if (isDryRun) {
@@ -691,23 +729,29 @@ pass: for (let run = 1; run <= runs; run++) {
 
 } finally {
   try {
-    if (!isDryRun) for (const ctx of realContexts) for (const lease of ctx.windowLeases ?? []) {
-      if (lease.running !== false || !lease.launched) continue;
-      try { await lease.quit({ final: true }); }
-      catch (error) {
-        const message = privatePass ? 'PRIVATE_MAIL_CLEANUP_UNCONFIRMED' : scrub(error.message);
-        if (!privatePass) passCleanupErrors.push({ app: lease.app, error: message });
-        if (ctx.result) {
-          ctx.result.passed = false;
-          if (!privatePass) ctx.result.cleanupError = [...new Set([ctx.result.cleanupError, message].filter(Boolean))].join('; ');
-        }
-        console.error(`Pass cleanup failed: ${message}`); process.exitCode = 1;
+    if (windowHygiene) {
+      try {
+        hygieneResult = await windowHygiene.finish({ dryRun: hygieneDryRun,
+          ...(privatePass && { log: () => {} }),
+          touchedApps: [...touchedApps, ...realContexts.flatMap(ctx => (ctx.windowLeases ?? []).flatMap(lease => [lease.app, lease.bundle]).filter(Boolean))],
+          fixturePaths: fixtureContexts.flatMap(ctx => [ctx.dir, ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean)),
+          fixtureNames: fixtureContexts.flatMap(ctx => [ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean).map(path => basename(path))),
+          armPids, daemonPaths: armNames.filter(isNativeArm).flatMap(name => Object.values(nativeArmPlan(name, { armHome: ARM_HOME, dir: ARMS[name].cwd }).mcp.mcpServers).map(server => server.command)),
+          blocked: ownerPresent || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
+          launched: realContexts.flatMap(ctx => (ctx.windowLeases ?? []).filter(lease => lease.launched && lease.running === false)
+            .map(lease => ({ pid: lease.pid, start: lease.processStartedAtMs / 1000, bundle: lease.bundle }))),
+          beforeAction: async () => {
+            controller.signal.throwIfAborted(); assertNoHold();
+            if (await observePermission()) throw new Error('macOS permission prompt: hygiene stopped');
+          } });
+      } catch (error) {
+        recordHygieneError(error);
+        passCleanupErrors.push({ phase: 'window hygiene', error: scrub(error.message) });
       }
     }
     if (!isDryRun && unlock) for (const cleanup of [closeBenchTextEdit, quitChess, quitSimApp]) {
-      // TextEdit tasks launch TextEdit themselves (launchBenchTextEdit), so the pass quits it again.
-      try { await cleanup(suite === 'real' || cleanup === quitSimApp || armNames.some(name => ARMS[name].generic) ? { ownedOnly: true }
-        : cleanup === closeBenchTextEdit ? { quit: true } : undefined); }
+      // Unscoped legacy tails could close windows that predate this pass.
+      try { if (!hygieneDryRun) await cleanup({ ownedOnly: true }); }
       catch (error) { console.error(privatePass ? 'Pass cleanup failed: PRIVATE_MAIL_CLEANUP_UNCONFIRMED' : `Pass cleanup failed: ${error.message}`); process.exitCode = 1; }
     }
     save(true);

@@ -1,0 +1,148 @@
+import AppKit
+import ApplicationServices
+import CoreGraphics
+import Darwin
+
+func failure(_ message: String) -> NSError { NSError(domain: "PassHygiene", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+func attr(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+}
+func identity(_ app: NSRunningApplication) -> [String: Any]? {
+    guard let start = app.launchDate?.timeIntervalSince1970, let bundle = app.bundleIdentifier else { return nil }
+    return ["pid": Int(app.processIdentifier), "start": start, "bundle": bundle, "name": app.localizedName ?? ""]
+}
+func processInfo(_ pid: Int32) -> [String: Any]? {
+    var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size == MemoryLayout<kinfo_proc>.stride else { return nil }
+    let time = info.kp_proc.p_un.__p_starttime
+    var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return nil }
+    return ["pid": Int(pid), "ppid": Int(info.kp_eproc.e_ppid),
+            "start": Double(time.tv_sec) + Double(time.tv_usec) / 1_000_000, "path": String(cString: path)]
+}
+func processes() throws -> [[String: Any]] {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL], size = 0
+    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0 else { throw failure("Process inventory unavailable") }
+    var rows = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 128)
+    size = rows.count * MemoryLayout<kinfo_proc>.stride
+    let status = rows.withUnsafeMutableBytes { sysctl(&mib, u_int(mib.count), $0.baseAddress, &size, nil, 0) }
+    guard status == 0 else { throw failure("Process inventory incomplete") }
+    return rows.prefix(size / MemoryLayout<kinfo_proc>.stride).compactMap { processInfo($0.kp_proc.p_pid) }
+}
+func hasDialog(_ windows: [AXUIElement]) -> Bool {
+    windows.contains { attr($0, "AXModal") as? Bool == true || attr($0, "AXRole") as? String == "AXSheet" ||
+        !(attr($0, "AXSheets") as? [AXUIElement] ?? []).isEmpty }
+}
+func snapshot() throws -> [String: Any] {
+    guard let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+        throw failure("CGWindowList unavailable")
+    }
+    let apps = NSWorkspace.shared.runningApplications.compactMap(identity)
+    var rows: [[String: Any]] = []
+    var axWindows: [Int: [AXUIElement]] = [:]
+    if AXIsProcessTrusted() {
+        for app in apps {
+            guard let pid = app["pid"] as? Int else { continue }
+            let element = AXUIElementCreateApplication(Int32(pid))
+            AXUIElementSetMessagingTimeout(element, 1)
+            axWindows[pid] = attr(element, "AXWindows") as? [AXUIElement] ?? []
+        }
+    }
+    for window in windows {
+        guard window[kCGWindowLayer as String] as? Int == 0,
+              let pid = window[kCGWindowOwnerPID as String] as? Int,
+              let id = window[kCGWindowNumber as String] as? Int,
+              var row = apps.first(where: { $0["pid"] as? Int == pid }) else { continue }
+        row["id"] = id
+        row["onScreen"] = window[kCGWindowIsOnscreen as String] as? Bool ?? false
+        if let exact = axWindows[pid]?.first(where: { attr($0, "AXWindowNumber") as? Int == id }) {
+            row["title"] = attr(exact, "AXTitle") as? String
+            row["document"] = attr(exact, "AXDocument") as? String
+            row["dialog"] = hasDialog([exact])
+        }
+        rows.append(row)
+    }
+    return ["apps": apps, "windows": rows, "processes": try processes(), "at": Date().timeIntervalSince1970]
+}
+func exactApp(_ request: [String: Any]) throws -> NSRunningApplication {
+    guard let pid = request["pid"] as? Int, pid > 0, pid <= Int(Int32.max),
+          let app = NSRunningApplication(processIdentifier: Int32(pid)), !app.isTerminated,
+          let start = request["start"] as? Double, let actualStart = app.launchDate?.timeIntervalSince1970,
+          (actualStart * 1000).rounded() == (start * 1000).rounded(),
+          let bundle = request["bundle"] as? String, app.bundleIdentifier == bundle else {
+        throw failure("Process identity changed; kept")
+    }
+    return app
+}
+func waitBriefly(_ done: () -> Bool) {
+    let deadline = Date().addingTimeInterval(1)
+    while !done() && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+}
+func perform(_ request: [String: Any]) throws -> [String: Any] {
+    if request["action"] as? String == "snapshot" { return try snapshot() }
+    if request["action"] as? String == "stop" {
+        guard let pid = request["pid"] as? Int32, pid > 0,
+              let actual = processInfo(pid), let start = request["start"] as? Double,
+              let actualStart = actual["start"] as? Double, (start * 1000).rounded() == (actualStart * 1000).rounded(),
+              actual["path"] as? String == request["path"] as? String else { throw failure("Daemon identity changed; kept") }
+        guard Darwin.kill(pid, SIGTERM) == 0 else { throw failure("Daemon stop refused; kept") }
+        waitBriefly { processInfo(pid) == nil }
+        guard processInfo(pid) == nil else { throw failure("Daemon still running; kept") }
+        return ["stopped": true]
+    }
+    let app = try exactApp(request)
+    if request["action"] as? String == "quit" {
+        // One gentle request only. A save/terminate prompt stays for the operator.
+        guard app.terminate() else { throw failure("Quit refused; kept") }
+        waitBriefly { app.isTerminated }
+        return ["running": !app.isTerminated]
+    }
+    guard request["action"] as? String == "close", let id = request["id"] as? Int,
+          AXIsProcessTrusted() else { throw failure("AX close unavailable; kept") }
+    let element = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetMessagingTimeout(element, 1)
+    guard let windows = attr(element, "AXWindows") as? [AXUIElement] else { throw failure("AX windows unavailable; kept") }
+    // A sheet or modal window stops this app. Never press its buttons or dismiss it.
+    if hasDialog(windows) { return ["dialog": true] }
+    guard let window = windows.first(where: { attr($0, "AXWindowNumber") as? Int == id }) else {
+        return ["skipped": "no-ax-window"]
+    }
+    if let fixtures = request["fixtures"] as? [String: Any] {
+        let names = fixtures["fixtureNames"] as? [String] ?? [], paths = fixtures["fixturePaths"] as? [String] ?? []
+        let title = attr(window, "AXTitle") as? String ?? ""
+        let rawDocument = attr(window, "AXDocument") as? String ?? ""
+        let document = rawDocument.hasPrefix("file:") ? URL(string: rawDocument)?.path ?? "" : rawDocument
+        guard names.contains(title) || paths.contains(where: { document == $0 || document.hasPrefix($0 + "/") }) else {
+            throw failure("Fixture title or document changed; kept")
+        }
+    }
+    guard let rawButton = attr(window, "AXCloseButton"), CFGetTypeID(rawButton) == AXUIElementGetTypeID() else {
+        throw failure("Exact AX close button unavailable; kept")
+    }
+    let button = unsafeBitCast(rawButton, to: AXUIElement.self)
+    guard attr(button, "AXEnabled") as? Bool == true else { throw failure("Close disabled; kept") }
+    _ = try exactApp(request)
+    guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else { throw failure("Close refused; kept") }
+    var closed = false, dialog = false
+    waitBriefly {
+        guard let current = attr(element, "AXWindows") as? [AXUIElement] else { return false }
+        dialog = hasDialog(current)
+        closed = !current.contains(where: { attr($0, "AXWindowNumber") as? Int == id })
+        return closed || dialog
+    }
+    if let current = attr(element, "AXWindows") as? [AXUIElement] { dialog = dialog || hasDialog(current) }
+    if dialog { return ["closed": closed, "dialog": true] }
+    if !closed { throw failure("Window still open; kept without answering a prompt") }
+    return ["closed": true]
+}
+do {
+    guard CommandLine.arguments.count == 2, let data = CommandLine.arguments[1].data(using: .utf8),
+          let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw failure("Invalid request") }
+    let result = try perform(request)
+    print(String(data: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), encoding: .utf8)!)
+} catch {
+    fputs("\(error.localizedDescription)\n", stderr)
+    exit(1)
+}

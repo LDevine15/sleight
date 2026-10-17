@@ -46,7 +46,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -64,13 +64,21 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
   const sandbox = {
     process: { argv: ['node', 'run', '--suite', suite, '--arm', arm, '--runs', '3', ...(setupOnly ? ['--setup-only'] : []), ...(dryRun ? ['--dry-run'] : []), ...(calculatorGate ? ['--calculator-gate'] : []), ...(cleanArms ? ['--clean-arms'] : []), ...extraArgs], env: base, on() {}, once() {} },
     console: { log: text => logs.push(text), error: text => logs.push(text) }, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, clearInterval,
-    dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => '/private/tmp/unit',
+    basename: path => path.split('/').at(-1), dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => '/private/tmp/unit',
     existsSync: path => path === '/tmp/sleight-hold' ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync() {}, statSync: () => ({ dev: 1, ino: 1 }),
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
     privateDriverEnvironment, assertPrivateClaudePolicy: () => calls.push('policy audit'),
     DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: options => { calls.push(['auth mode', options.mode]); return auth; }, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
     CONFIG_DIR: '/isolated/claude',
+    sweepTemp: options => calls.push(['temp sweep', options]),
+    pruneRunImages: options => calls.push(['image retention', options]),
+    beginPassHygiene: async () => {
+      calls.push('window baseline');
+      const handle = { get hygieneError() { return hygieneTracking; }, betweenTasks: async () => { calls.push('hygiene boundary'); if (hygieneBoundaryError) throw new Error(hygieneBoundaryError); }, trackLaunch: async (apps, operation) => { calls.push(['tracked setup', apps]); return operation(); }, finish: async options => { calls.push(['window hygiene', options]); return hygieneResult; } };
+      if (hygieneError) throw Object.assign(new Error(hygieneError), hygieneReceiptsOnly && { receiptsOnly: handle });
+      return handle;
+    },
     assertLogin: plan => { calls.push(['login preflight', plan]); const message = typeof loginError === 'function' ? loginError(plan) : loginError; if (message) throw new Error(message); },
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
     prepareGenericArm: () => {
@@ -78,7 +86,7 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
       return { generic: true, cwd: '/private/tmp/own-arm', args: ['--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence'], env: {}, identity: {}, servers: ['rival'] };
     },
     genericSettings, acceptGenericCatalog() {}, worldCLI, worldArm, worldSettings, assertWorldCLI,
-    isNativeArm,
+    isNativeArm, nativeArmPlan,
     prepareNativeArm: (name, options) => {
       const plan = nativeArmPlan(name, options);
       if (options.dryRun || plan.unsupported) return plan;
@@ -147,6 +155,69 @@ async function runner({ extraArgs = [], suite = 'real', arm = 'sleight', outcome
   const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
   return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, commands, exitCode: sandbox.process.exitCode };
 }
+
+test('pass snapshots under the lock before discovery; temp and image cleanup run before tasks', async () => {
+  const result = await runner({ drive: true });
+  assert.equal(result.error, undefined);
+  assert.ok(result.calls.indexOf('window baseline') > result.calls.indexOf('lock'));
+  assert.ok(result.calls.indexOf('window baseline') < result.calls.findIndex(call => Array.isArray(call) && call[0] === 'login preflight'));
+  for (const name of ['temp sweep', 'image retention']) assert.ok(result.calls.findIndex(call => Array.isArray(call) && call[0] === name) < result.calls.indexOf('real run'));
+});
+test('window baseline failure is logged without skipping or losing timed runs', async () => {
+  const result = await runner({ suite: 'default', drive: true, hygieneError: 'CGWindowList unavailable' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.saved.at(-1).results.length, 3);
+  assert.ok(result.saved.at(-1).results.every(row => !row.skipped && typeof row.seconds === 'number'));
+  assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /CGWindowList unavailable/);
+  assert.ok(result.logs.some(line => /hygiene.*CGWindowList unavailable/i.test(line)));
+  assert.equal(result.calls.at(-1), 'unlock');
+});
+test('a failed baseline still hands exact launch receipts to the gentle Quit path', async () => {
+  const result = await runner({ hygieneError: 'AX timeout', hygieneReceiptsOnly: true,
+    hygieneResult: { leftWindows: [{ pid: 42, bundle: 'org.fixture', reason: 'still running after Quit' }], errors: [] }, leases: [
+      { app: 'fixture', bundle: 'org.fixture', pid: 42, processStartedAtMs: 12000, running: false, launched: true },
+      { app: 'owner', bundle: 'org.owner', pid: 43, processStartedAtMs: 13000, running: true, launched: false },
+    ] });
+  assert.equal(result.error, undefined);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')?.[1];
+  // Every run shares the fake lease list; the warm owner app never appears.
+  assert.deepEqual([...new Set(options.launched.map(item => JSON.stringify(item)))], [JSON.stringify({ pid: 42, start: 12, bundle: 'org.fixture' })]);
+  assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /AX timeout/);
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 42, bundle: 'org.fixture', reason: 'still running after Quit' }]);
+});
+test('between-task snapshot failures preserve timed runs and fixture attribution reaches cleanup', async () => {
+  const task = { id: 'fixture', app: 'Fixture', setup(ctx) { ctx.document = join(ctx.dir, 'Owned.txt'); }, prompt: () => 'task', check: () => true };
+  const result = await runner({ suite: 'default', tasks: [task], hygieneBoundaryError: 'snapshot timed out' });
+  assert.equal(result.error, undefined);
+  assert.ok(result.saved.at(-1).results.every(row => !row.skipped && typeof row.seconds === 'number'));
+  assert.match(JSON.stringify(result.saved.at(-1).hygieneError), /snapshot timed out/);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.ok(options.fixturePaths.some(path => path.endsWith('/Owned.txt')));
+  assert.ok(options.fixtureNames.includes('Owned.txt'));
+});
+test('left windows are published and hygiene dry run reaches every deletion and window planner', async () => {
+  const result = await runner({ extraArgs: ['--hygiene-dry-run'], hygieneResult: { leftWindows: [{ pid: 42, id: 7 }], errors: [] } });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 42, id: 7 }]);
+  for (const name of ['temp sweep', 'image retention', 'window hygiene']) assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === name)?.[1].dryRun, true);
+});
+test('a pass interrupted by a driver or dialog keeps new windows; planning dry run does no hygiene inventory', async () => {
+  for (const outcome of [{ groupClean: false }, { appDialog: { category: 'save' } }]) {
+    const result = await runner({ outcome });
+    assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')?.[1].blocked, true);
+  }
+  const dry = await runner({ dryRun: true });
+  assert.equal(dry.calls.includes('window baseline'), false);
+  assert.ok(!dry.calls.some(call => Array.isArray(call) && ['temp sweep', 'image retention'].includes(call[0])));
+});
+test('owner-present cleanup is report-only and private results carry only leftover IDs', async () => {
+  const result = await runner({ privateMail: true, extraArgs: ['--owner-present'],
+    hygieneResult: { leftWindows: [{ pid: 42, id: 7, bundle: 'fixture', reason: 'invented private label' }], errors: [] } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')?.[1].blocked, true);
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 42, id: 7 }]);
+  assert.equal(JSON.stringify(result.saved).includes('invented private label'), false);
+});
 
 test('missing isolated login stops before tool discovery or the first task', async () => {
   const result = await runner({ loginError: 'Not logged in. Fix: isolated auth login', drive: true });
@@ -765,7 +836,7 @@ test('real safety errors stop after one run but still execute the common cleanup
   }
 });
 
-test('permission and driver stops quit a launched Device Hub lease once before unlocking', async () => {
+test('permission and driver stops never retry the legacy force-quit path', async () => {
   for (const outcome of [{ permissionPrompt: true }, { groupClean: false }]) {
     let quits = 0;
     const lease = { app: 'DeviceHub', running: false, launched: true, quit: async options => {
@@ -773,7 +844,7 @@ test('permission and driver stops quit a launched Device Hub lease once before u
     } };
     const result = await runner({ outcome, leases: [lease] });
     assert.equal(result.error, undefined);
-    assert.equal(quits, 1);
+    assert.equal(quits, 0);
     assert.equal(result.calls.at(-1), 'unlock');
   }
 });
@@ -794,21 +865,22 @@ test('the default simulator uses streaming permission detection and publishes sc
   assert.equal(result.tailScopes[2]?.ownedOnly, true);
 });
 
-test('a default simulator cleanup failure stops the pass and retries only its retained launched PID', async () => {
+test('a default simulator cleanup failure stops the pass without retrying force quit', async () => {
   let quits = 0;
   const result = await runner({ suite: 'default', fixtureLifecycle: true, outcome: { cleanupError: 'close failed' },
     leases: [{ app: 'DeviceHub', running: false, launched: true, quit: async () => { quits++; } }] });
   assert.equal(result.error, undefined);
   assert.equal(result.calls.filter(call => call === 'real run').length, 1);
-  assert.equal(quits, 1);
+  assert.equal(quits, 0);
   assert.equal(result.saved.at(-1).results[0].passed, false);
 });
 
-test('pass cleanup preserves pre-existing apps and publishes a failed owned-app quit', async () => {
+test('pass cleanup preserves pre-existing apps and publishes refused gentle cleanup as leftWindows', async () => {
   const existing = { app: 'Safari', running: true, launched: true, quit: () => assert.fail('preserve pre-existing app') };
   const launched = { app: 'Preview', running: false, launched: true, quit: async () => { throw new Error('quit unconfirmed'); } };
-  const result = await runner({ outcome: { permissionPrompt: true }, leases: [existing, launched] });
-  assert.match(result.saved.at(-1).results[0].cleanupError, /quit unconfirmed/);
+  const result = await runner({ outcome: { permissionPrompt: true }, leases: [existing, launched],
+    hygieneResult: { leftWindows: [{ pid: 7, id: 42 }], errors: ['quit unconfirmed'] } });
+  assert.deepEqual(result.saved.at(-1).leftWindows, [{ pid: 7, id: 42 }]);
   assert.equal(result.saved.at(-1).results[0].passed, false);
 });
 
@@ -845,10 +917,9 @@ test('Codex default approvals contain only the five core benchmark bundle IDs', 
   assert.equal(result.error, undefined);
   assert.deepEqual(result.calls.find(c => Array.isArray(c) && c[0] === 'approve'),
     ['approve', 'com.apple.calculator', 'com.apple.TextEdit', 'com.apple.Chess', 'com.apple.iphonesimulator', 'com.apple.dt.Devices']);
-  assert.deepEqual(result.tailScopes.map(scope => scope?.ownedOnly), [undefined, undefined, true]);
-  // TextEdit tasks launch TextEdit themselves since 2026-10-11, so a default pass quits it at the end
-  // (closeBenchTextEdit still quits only when every open document is the pass's own).
-  assert.equal(result.tailScopes[0]?.quit, true);
+  assert.deepEqual(result.tailScopes.map(scope => scope?.ownedOnly), [true, true, true]);
+  // The snapshot planner replaces unscoped cleanup; legacy tails require owned references.
+  assert.equal(result.tailScopes[0]?.quit, undefined);
 });
 
 test('a Codex real run drives through Codex with the real apps approved and the pass signal', async () => {
@@ -1141,4 +1212,44 @@ test('arms never inherit the host Claude session that started the pass', async (
     assert.equal(env.PATH, '/usr/bin');
     assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test');
   }
+});
+
+
+test('default setup is registered as a fixture launch and its app scopes final hygiene', async () => {
+  const result = await runner({ suite: 'default' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(call => Array.isArray(call) && call[0] === 'tracked setup').length, 3);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.ok(options.touchedApps.includes('Safari'));
+  assert.ok(options.armPids.includes(1234));
+});
+
+test('blocked pass sends exact cold-launch receipts to native gentle cleanup and excludes warm apps', async () => {
+  const result = await runner({ outcome: { groupClean: false }, leases: [
+    { app: 'fixture', bundle: 'org.fixture', pid: 42, processStartedAtMs: 12000, running: false, launched: true },
+    { app: 'owner', bundle: 'org.owner', pid: 43, processStartedAtMs: 13000, running: true, launched: false },
+  ] });
+  assert.equal(result.error, undefined);
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.equal(options.blocked, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(options.launched)), [{ pid: 42, start: 12, bundle: 'org.fixture' }]);
+  assert.ok(options.touchedApps.includes('org.fixture'));
+});
+
+
+test('published hygiene errors count every failure once and log final snapshot failures', async () => {
+  const errors = Array(20).fill('tracking unavailable');
+  const result = await runner({ hygieneTracking: { errors, count: 25 },
+    hygieneResult: { leftWindows: [], errors: ['final snapshot unavailable', ...errors], trackingErrors: errors, trackingErrorCount: 25 } });
+  assert.equal(result.saved.at(-1).hygieneError.count, 26);
+  assert.equal(result.saved.at(-1).hygieneError.errors.length, 20);
+  assert.ok(result.logs.some(line => /hygiene.*final snapshot unavailable/i.test(line)));
+});
+
+test('private hygiene logs and saved results omit window titles and document paths', async () => {
+  const result = await runner({ privateMail: true, hygieneResult: { leftWindows: [], errors: [] } });
+  const options = result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1];
+  assert.equal(typeof options.log, 'function');
+  options.log('leftWindows title=private-secret document=/private-secret');
+  assert.equal(JSON.stringify(result.logs).includes('private-secret'), false);
 });
