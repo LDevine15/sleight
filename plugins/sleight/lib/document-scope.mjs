@@ -105,13 +105,15 @@ export function disabledLabelNote(text, label) {
     .split(/(?:^|, )(?:Value|ID|Help|Secondary Actions|URL):/)[0].replace(/^Description: /, '');
   for (const step of [-1, 1]) {
     for (let i = at + step; rows[i] && rows[i].depth >= hit.depth; i += step) {
-      if (rows[i].depth === hit.depth && !disabled(rows[i].body) && name(rows[i].body)) beside.push(rows[i]);
+      if (rows[i].depth === hit.depth && !disabled(rows[i].body) && name(rows[i].body)) beside.push({ ...rows[i], distance: Math.abs(i - at) });
     }
   }
-  beside.sort((a, b) => a.number - b.number);
-  const shown = beside.slice(0, 12).map(row => row.number + ' ' + name(row.body)).join(', ');
+  // The eight nearest, in tree order, each name cut to 40 characters.
+  const near = [...beside].sort((a, b) => a.distance - b.distance).slice(0, 8).sort((a, b) => a.number - b.number);
+  const cut = value => value.length > 40 ? value.slice(0, 37) + '...' : value;
+  const shown = near.map(row => row.number + ' ' + cut(name(row.body))).join(', ');
   return JSON.stringify(label) + ' is element ' + hit.number + ', and it is disabled.' +
-    (shown ? ' Enabled beside it: ' + shown + (beside.length > 12 ? ' and ' + (beside.length - 12) + ' more' : '') + '.' : '') +
+    (shown ? ' Enabled beside it: ' + shown + (beside.length > near.length ? ' and ' + (beside.length - near.length) + ' more' : '') + '.' : '') +
     ' A disabled item needs a selection or an earlier step, such as Copy before Paste or Move.';
 }
 
@@ -226,6 +228,11 @@ export function guardedCode(code, window, reason = 'Document scope stopped this 
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
   // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed, and the call went on without it: ' + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
+  // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
+  if (guard.getAppFailures?.length) {
+    const caught = guard.getAppFailures.join('; ');
+    nodeRepl.write('sleight: ' + caught + (caught.endsWith('.') ? '' : '.') + '\\n');
+  }
   if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
     const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
@@ -267,7 +274,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     // such reads cost 27 s across the benchmark runs of 2026-10-09.
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
-    state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
     state.inputSent = false;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
@@ -314,7 +321,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
       if (before.name === 'click' && before.modal === false && hasModal(text)) before.opened = current;
       return !!before.opened;
     };
-    state.failures = [];
+    state.failures = []; state.getAppFailures = [];
     // Element lines at this call's first action, which Claude's numbers refer to.
     state.callElements = new WeakMap();
     const elements = ${elementLines.toString()};
@@ -508,7 +515,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         const act = async (attempt, ...args) => {
           checkNative();
           // The action as Claude wrote it, for a stop that lists what ran.
-          const shown = name + '(' + args.slice(0, 2).map(arg => {
+          // Typed, pasted, set or selected text shows as its length only.
+          const textAt = ['typeText', 'paste'].includes(name) ? 0 : ['setValue', 'selectText'].includes(name) ? 1 : -1;
+          const shown = name + '(' + args.slice(0, 2).map((arg, at) => {
+            if (at === textAt && typeof arg === 'string') return '<' + arg.length + ' characters>';
             let text; try { text = JSON.stringify(arg); } catch {}
             text ??= String(arg);
             return text.length > 40 ? text.slice(0, 37) + '...' : text;
@@ -530,7 +540,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             state.activeApp = proxy;
             state.reads = new WeakMap();
             input();
-            const result = await value.apply(raw, args);
+            let result;
+            try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
             state.completedActions++;
             state.ran.push(shown);
             return result;
@@ -672,6 +683,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
                 // two app-switch stops cost textedit-calculator-2 two calls (2026-10-17).
                 ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran' +
                   (state.ran.length ? ', in ' + state.expected.app + ': ' + state.ran.slice(0, 10).join(', ') + (state.ran.length > 10 ? ' and ' + (state.ran.length - 10) + ' more' : '') : '') +
+                  (state.unknown.length ? '; sent to ' + state.expected.app + ' with the result unknown: ' + state.unknown.slice(0, 10).join(', ') : '') +
                   '. Not run: this ' + shown + ' and every action after it; nothing was sent to ' + observed.app + '. The lease moves to ' + observed.app +
                   '. Send the actions that didn\\'t run in a new call that starts with let <handle> = await cua.getApp(' + JSON.stringify(observed.app) + ') and acts through that handle, without select_window.' +
                   ' One call acts in one app: to switch apps, end the call and start the next with that app\\'s getApp.'
@@ -816,7 +828,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // No Shift settle after setValue here, as drag.js does after its own text writes: the
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
-          const result = await value.apply(raw, args);
+          // Input went out before the engine answered, so a rejected action may have acted.
+          let result;
+          try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
           previous.done = Date.now();
           if (editable) previous.completed = true;
           state.completedActions++;
@@ -857,8 +871,14 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           throw new Error('cua.getApp({ windowId: ' + JSON.stringify(windowId) + ' }) names no window: a window ID is a positive number. ' +
             'For one window of an app, call select_window with the app and its exact title or file URL, then let <handle> = await cua.getApp("<app>").');
         }
-        return state.activeApp = wrap(await state.getApp(...args));
-      } catch (error) { state.failures?.push('getApp: ' + (error?.message ?? error)); throw error; }
+        const handle = wrap(await state.getApp(...args));
+        state.getAppFailures = [];
+        return state.activeApp = handle;
+      } catch (error) {
+        let shown; try { shown = JSON.stringify(args[0]); } catch {}
+        state.getAppFailures?.push('getApp(' + (shown ?? String(args[0])) + ') failed (your code caught it): ' + (error?.message ?? error));
+        throw error;
+      }
     };
     state.wrap = wrap;
   };`;

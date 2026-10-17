@@ -62,8 +62,9 @@ function run(argv) {
     // to reading (finder-move-2, 2026-10-17). Name what the app's windows are titled now.
     if (!selected.length) {
       const titles = windows.map(window => attribute(window, 'AXTitle')).filter(title => typeof title === 'string');
-      throw new Error(`Expected exactly one matching window, found 0. ${name}'s windows now: ` +
-        (titles.length ? titles.slice(0, 10).map(title => JSON.stringify(title)).join(', ') + (titles.length > 10 ? ` and ${titles.length - 10} more` : '') : 'none') +
+      const cut = title => JSON.stringify(title.length > 60 ? title.slice(0, 57) + '...' : title);
+      throw new Error(`Expected exactly one matching window, found 0. ${name} has ${titles.length} window${titles.length === 1 ? '' : 's'} now` +
+        (titles.length ? ': ' + titles.slice(0, 5).map(cut).join(', ') + (titles.length > 5 ? ` and ${titles.length - 5} more` : '') : '') +
         '. A window that navigated or was renamed is still the same window: select it by the title it has now, or act on it through the handle you have.');
     }
     if (selected.length !== 1) throw new Error(`Expected exactly one matching window, found ${selected.length}. Window numbers: ${JSON.stringify(selected.map(target => windowNumber(target.window)))}`);
