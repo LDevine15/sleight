@@ -344,16 +344,19 @@ const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|b
 
 // What a lease stop sent and didn't, so Claude needn't take a screenshot to find out. Method names, IDs, element
 // numbers and non-typing keys only: typed or set text, single characters and label text stay out.
-export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen } = {}) {
+// `closed`: the lease held a dialog, sheet or panel over a standard window, so an action that ran and then a stop onto a
+// standard window means the call's own action closed it (OK, then a click: 6 of 15 Office mid-call stops, 2026-10-17).
+export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen, closed = false } = {}) {
   if (receipt?.refused === true) return refusalNote(receipt, plan, earlier, content, seen, uniqueSeen);
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
+  const dialog = closed && /^standard window(?: |,|$)/.test(stopTree(receipt, content ?? [])?.line ?? '');
   // The stop leased the window it shows, so the rest needs no re-read: in the Firefox race round (2026-10-17) Claude
   // spent a call only reading again after 10 of 12 new-tab stops.
-  const recipe = ran => ran ? ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.' : '';
+  const recipe = ran => !ran ? '' : dialog ? ' Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.'
+    : ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.';
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
-    const name = actionName(plan);
-    const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
+    const list = actionList(plan);
     const ran = plan.actions.slice(0, n);
     return `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.${recipe(n)}`;
   }
@@ -366,6 +369,26 @@ const actionName = plan => action => {
   const shown = kind === 'number' || kind === 'id' && value.length <= 40 || kind === 'key' && NAMED_KEY.test(value);
   return shown ? `${method} ${kind === 'id' ? `id ${JSON.stringify(value)}` : kind === 'key' ? JSON.stringify(value) : value}` : method;
 };
+const actionList = plan => {
+  const name = actionName(plan);
+  return actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
+};
+
+// The line a call that went on past its own dialog close, menu, tab or navigation opens with. It had opened with the stop
+// it no longer was in 6 of 6 such Office calls (2026-10-17), and 4 cost a turn redoing or checking an action that had run.
+// `n` actions ran before the window changed, `over` is the root the lease held (sheet, dialog, window), `title` the
+// window the rest went to, and `failed` whether the rest's result is an error. Names as in stopNote.
+const CHANGED = { menu: 'opened a menu', tab: 'opened a tab', navigation: 'changed the window' };
+export function continuedNote(plan, n, kind, { over, title, failed } = {}) {
+  if (!plan || !Number.isSafeInteger(n) || n < 1 || n >= plan.actions.length) return;
+  const list = actionList(plan);
+  const what = kind === 'dialog' ? `closed the ${over === 'sheet' ? 'sheet' : ['window', 'floating window'].includes(over) ? 'panel' : 'dialog'}`
+    : CHANGED[kind] ?? CHANGED.navigation;
+  const first = list(plan.actions.slice(0, n)), rest = list(plan.actions.slice(n));
+  const where = typeof title === 'string' && title ? ` in ${JSON.stringify(title)}` : '';
+  return failed ? `sleight: ${first} ${what}, and the call went on${where} with ${rest} until an error stopped it.`
+    : `sleight: all ${count(plan.actions.length)} ran: ${first} ${what}, then ${rest}${where}.`;
+}
 
 // The engine refused an element number its capture no longer held: a date picker re-rendered its days after the
 // first date's click (Firefox travel, 2026-10-17), and Claude spent a diff read, a full read and a lone click (9.4 s)
@@ -388,8 +411,7 @@ function refusalNote(receipt, plan, earlier, content, seen, uniqueSeen) {
     const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
     return `sleight: this call ran ${count(ran)}; ${refused}. Nothing after it was sent.${current}${after}`;
   }
-  const name = actionName(plan);
-  const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
+  const name = actionName(plan), list = actionList(plan);
   const lines = fresh ? [...elementLines(fresh)] : [];
   const only = found => found.length === 1 ? found[0][0] : '?';
   const now = action => {

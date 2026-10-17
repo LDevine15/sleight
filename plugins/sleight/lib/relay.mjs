@@ -71,7 +71,7 @@ import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
   unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
@@ -286,6 +286,9 @@ export function batchingDescription(description, variant = true, prompt) {
 }
 const TURN_END_DESCRIPTION = 'Internal to sleight: its hooks call this when a Claude turn ends. Never call it yourself.';
 
+// The guard's window-change stop as the engine reports it, the first line of the exception.
+const STOP_LINE = /^(?:Error: )?(?:Input lease stopped this action: window or URL changed\.|Selected window changed\.)/;
+
 // Applied only at sleight-authored notice sites, never to engine text or user data.
 export function promptNotice(text, prompt) {
   if (prompt !== 'lean') return text;
@@ -326,6 +329,9 @@ export function promptNotice(text, prompt) {
     .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ')
     .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ')
     .replace('sleight reconnected after a ChatGPT engine update.', 'sleight: engine reconnected.')
+    .replace(/^sleight: all (\d+ actions?) ran: /, 'sleight: $1 ran: ')
+    .replace(/, and the call went on( in "[^\n]*")? with (.*) until an error stopped it\.$/, '; went on$1 with $2 until an error.')
+    .replace(' Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.', ' Dialog closed: rest not sent; send it next call, no new read.')
     .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.');
 }
 const SHUTDOWN_GRACE_MS = 3000;
@@ -1575,7 +1581,7 @@ export function createRelay({
             !unchangedMenuWindow(expected, baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt), clock()) ||
             tab && tabFocusRefusal(observed)) {
           if (tab) trace('tab-continuation-refused', { id: msg.id, reason: 'final-check' });
-          menuForwards.delete(msg.id);
+          menuForwards.delete(msg.id); continuedLeads.delete(msg.id);
           menuCalls.delete(msg.id);
           if (head) splitHeads.set(msg.id, head); else splitHeads.delete(msg.id);
           const clipboardReply = clipboardReplies.get(msg.id);
@@ -1740,6 +1746,13 @@ export function createRelay({
       splitCodes.delete(msg.id);
       msg = msg.result ? { ...msg, result: { ...msg.result, content: [...head, ...(msg.result.content ?? [])] } }
         : { jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...head, { type: 'text', text: msg.error?.message ?? 'error' }] } };
+      // A continued call opens with what ran, and a stop's ran/not-sent line rises above an acquisition's tree.
+      const lead = continuedLeads.get(msg.id); continuedLeads.delete(msg.id);
+      const leadText = lead && continuedNote(lead.plan, lead.ran, lead.kind, { over: lead.over, title: lead.title, failed: !!msg.result.isError });
+      const content = msg.result.content;
+      const stop = msg.result.isError ? content.findIndex(item => item?.type === 'text' && /^sleight: this call ran /.test(item.text ?? '')) : -1;
+      if (leadText || stop > 0) msg = { ...msg, result: { ...msg.result, content: [...(leadText ? [{ type: 'text', text: promptNotice(leadText, prompt) }] : []),
+        ...(stop > 0 ? [content[stop]] : []), ...content.filter((_, i) => stop <= 0 || i !== stop)] } };
     }
     if (helperProbes.has(msg.id) && msg.method === undefined) {
       const probe = helperProbes.get(msg.id);
@@ -2261,6 +2274,8 @@ export function createRelay({
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const openShots = new Map(), openReads = new Set(), textlessOpens = new Set();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Map(), menuForwards = new Map();
+  // What a continued call ran before its window changed, for the line its final result opens with.
+  const continuedLeads = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
     if (!inputLease || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
@@ -2421,8 +2436,12 @@ export function createRelay({
     if (action && taken.receipt) action.failure = { message: taken.receipt.error ?? failureReason(taken.content),
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
-    const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id), { content: taken.content, seen: call.seen, uniqueSeen: call.uniqueSeen });
-    if (note) msg.result.content = [...msg.result.content, { type: 'text', text: promptNotice(note, prompt) }];
+    // A lease on a dialog or sheet remembers the window it covered (parent), so a stop onto a standard window after the
+    // call's own action is that action closing it.
+    const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id), { content: taken.content, seen: call.seen, uniqueSeen: call.uniqueSeen,
+      closed: !!(call.target ?? leaseWindow)?.parent });
+    // First, not after the tree: in an Office study (2026-10-17) the ran/not-sent line sat at line 134 of a 7 KB result.
+    if (note) msg.result.content = [{ type: 'text', text: promptNotice(note, prompt) }, ...msg.result.content];
     const stopped = !msg.error && msg.result.isError;
     const ineligible = !stopped ? 'no-stop' : documentMode ? 'document-scope' : changeReview ? 'change-review' : menuContinued.has(msg.id) ? 'continued'
       : guardMode?.split(',').some(mode => mode.trim() === 'careful') ? 'careful' : !call.target ? 'not-admitted' : undefined;
@@ -2481,12 +2500,16 @@ export function createRelay({
       const original = structuredClone(msg), head = splitHeads.get(msg.id);
       // Keep output from before the refused action, drop its exception, then let the normal
       // result path record the menu tree. The remainder goes through the ordinary admission gates.
-      msg.result = { ...msg.result, isError: false, content: [...taken.head,
+      // The real engine puts the exception first, so the head opens with the stop it no longer is (6 of 6 continued
+      // Office calls, 2026-10-17); the final result leads with continuedNote instead.
+      msg.result = { ...msg.result, isError: false, content: [...taken.head.filter(item => !(item?.type === 'text' && STOP_LINE.test(item.text ?? ''))),
         { type: 'text', text: GUARD_MARK + remainder.tree + GUARD_END }] };
       menuContinued.set(msg.id, taken.receipt.index);
-      trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind: remainder.dialog ? 'dialog' : remainder.tab ? 'tab' : remainder.navigation ? 'navigation' : 'menu' });
+      const kind = remainder.dialog ? 'dialog' : remainder.tab ? 'tab' : remainder.navigation ? 'navigation' : 'menu';
+      trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind });
       splitCalls.set(msg.id, reply => {
         if (!current()) { toClient({ ...reply, result: { ...reply.result, isError: true } }); return; }
+        continuedLeads.set(msg.id, { plan: call.plan, ran: taken.receipt.index, kind, over: covered?.over, title: remainder.window?.title });
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
         leaseWindow = lease;
         menuBaselines.set(msg.id, remainder.window);
@@ -3979,7 +4002,7 @@ export function createRelay({
         // Collection makes late results impossible. Resolve pending caller requests explicitly.
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
-        menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); splitInputs.clear();
+        menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); continuedLeads.clear(); splitInputs.clear();
         filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); openReads.clear(); textlessOpens.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');
