@@ -8,10 +8,10 @@ import { mergeArmHooks } from '../arm-hooks.mjs';
 
 export const NATIVE_SURFACES = ['lcu', 'cua', 'peekaboo'];
 export function windowPrompt(browser) {
-  if (!browser?.marker || !browser.profileRoot || !['chrome', 'helium', 'firefox'].includes(browser.browser)) throw Error('Isolated real browser required');
-  const name = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox' }[browser.browser];
+  if (!browser?.marker || !browser.profileRoot || !['chrome', 'helium', 'firefox', 'safari'].includes(browser.browser)) throw Error('Isolated real browser required');
+  const name = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox', safari: 'Safari' }[browser.browser];
   return `Use only the dedicated ${name} window initially titled "${browser.marker}"` +
-    `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile. If it cannot be identified, stop. User activity still ends the input lease.\n\n`;
+    `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileName || browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile. If it cannot be identified, stop. User activity still ends the input lease.\n\n`;
 }
 export function nativeBrowserSetup({ surface, repo, dir, realBrowser, dryRun = false,
   armHome = join(homedir(), 'Library/Caches/sleight-bench'), env = process.env }) {
@@ -39,5 +39,5 @@ export function nativeBrowserSetup({ surface, repo, dir, realBrowser, dryRun = f
     args: [...common.args, '--no-chrome', '--no-session-persistence'], settings: { ...common.settings, ...settings },
     promptPrefix: common.promptPrefix + windowPrompt(realBrowser),
     metadata: { ...common.metadata, surface, identity, configDir: common.env.CLAUDE_CONFIG_DIR,
-      browser: realBrowser.browser, profile: realBrowser.profileRoot, headless: false, focus: 'not measured' } };
+      browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot, headless: false, focus: 'not measured' } };
 }

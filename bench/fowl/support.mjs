@@ -6,7 +6,14 @@ export function taskSupport(task, surface, { world = false, remote = null, realB
   if (realBrowser) {
     if (remote) return 'Real browser gate is local only';
     if (!REAL_BROWSER_ARMS.includes(surface)) return 'Real browser gate uses sleight-turbo, sleight, lcu, cua, peekaboo or codex';
-    if (!['chrome', 'helium', 'firefox'].includes(task.browser)) return 'Real browser gate supports browser tasks only';
+    if (!['chrome', 'helium', 'firefox', 'safari'].includes(task.browser)) return 'Real browser gate supports browser tasks only';
+    if (realBrowser === 'safari') {
+      if (surface === 'sleight-turbo') return 'Safari has no turbo surface; use sleight on the engine computer surface';
+      if (task.viewport) return 'Safari computer arms have no qualified device viewport and restoration path';
+      if (task.downloads) return 'Safari AX tab inventory cannot observe completed downloads';
+      if (task.takeover) return 'Takeover requires the separate user-takeover test protocol';
+      return null;
+    }
     if (realBrowser === 'firefox' && surface === 'sleight-turbo') return 'Firefox has no turbo surface; use sleight on the engine computer surface';
     if (realBrowser !== 'firefox' && surface === 'sleight') return 'Use sleight-turbo for Chrome/Helium real-browser gates';
     if (realBrowser === 'firefox' && task.viewport) return 'Firefox computer arms have no qualified device viewport and restoration path';
