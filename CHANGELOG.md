@@ -66,6 +66,17 @@ TODO: full release pass result.
 - `hover` refuses a window that spans two displays, since its capture could include another app.
 - Replay and demonstration recording no longer report unconfirmed cleanup when their processes have
   exited but macOS still answers EPERM for the group. A group with a live member still reports it.
+- `open_file` returns the opened window and a handle in the same result. A final top-level `return`
+  in a call works as its value. A Save with no earlier read of the document reads its file URL in
+  the same call, so the file's modification time can confirm the save. File contents are never read.
+- A read call that prints a filtered string or array gets the value and the window header, without
+  the whole tree again. Element numbers Claude wasn't shown stay unknown, so a click on one is refused.
+- Non-text drags check only their two endpoints and the elements above them, instead of scanning the
+  whole window. Finder drags hit the scan limit in the 2026-10-16 runs. A timed-out drag suggests
+  Copy or Cut and Paste.
+- The skill tells Claude to acquire an app the task names directly, and to use the changed lines an
+  action returns instead of reading again to confirm them.
+  TODO: these four entries' A/B result.
 
 ### Browsers
 

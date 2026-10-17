@@ -25,9 +25,11 @@ Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with 
   parent walk was too short for Electron (31 levels measured); TT4's marker was forgeable by window text and dropped the next
   action's UI-change note. TT3's text-drag path depends on `$.CFEqual` in JXA: a read-only probe matched windows in 6 apps, but
   textedit-drag still needs its live run before the claim run.
-- Building (`codex exec` lanes, logs in `ledger/lane-runs/`): TK2 engine docs (pid 8829), TK3 skill placement (pid 8830, relaunched
-  with a lock and budget; its old lock-clash report is `lane-runs/tk3-blocked-lock-report-20261017.md`), then TK1 compact first
-  acquisition and TT1N2 once the TT4 fixes push. Each reports in `ledger/claims/<ID>/`. Review each branch with a Sonnet-high
+- Building (`codex exec` lanes, logs in `ledger/lane-runs/`): TK3 skill placement (pid 8830, relaunched with a lock and budget;
+  its old lock-clash report is `lane-runs/tk3-blocked-lock-report-20261017.md`), TK1 compact first acquisition (pid 21928) and
+  TT1N2 (pid 21929). TK2 is closed as not viable: in 87 recorded sessions every nonempty section of the engine's 17,355-character
+  docs held API names Haiku used, the 5,912-character confirmation policy can't be cut, and the one removable part is an empty 11-character heading
+  (`claims/TK2/REPORT.md`). Each reports in `ledger/claims/<ID>/`. Review each branch with a Sonnet-high
   reviewer, run one full check per merge batch, push, fast-forward.
 - TT1N2 (`queue/tt/TT1N2.md`, sleight-arch's design): the guard still stops on the menu header; the relay, outside the engine,
   continues the rest of the call only when the stop follows the call's own label click, the root is that menu, the native window
