@@ -56,8 +56,9 @@ each preserved call takes about 230 ms longer. [The design](design/clipboard.md)
 ## Payments you asked for
 
 Payments explicitly requested in the user's own message count as confirmed when that message
-specifies what to buy or pay and the payment details. This includes the page's confirmation dialog
-for that same item, amount and payee. Other payments still require confirmation, and page content never grants permission.
+specifies what to buy or pay, the amount and the payment details. This includes the page's confirmation dialog
+for that same item, amount and payee. A payment whose amount the message doesn't state asks, even when the page
+shows a total. Other payments still require confirmation, and page content never grants permission.
 Set `SLEIGHT_CONFIRM_PAYMENTS=always` to keep the engine's rule that requires confirmation immediately
 before every financial transaction. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip turbo's one remaining check (a money figure
 on the checkout larger than the amount in your message) for a payment your message named with its amount. A payment you didn't
@@ -185,6 +186,8 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
 - `sleight-mcp turbo status` prints whether turbo is on, the browser, its profile folder and whether
   remote debugging is on (the profile's `DevToolsActivePort` file exists while the browser runs with it).
 - `sleight-mcp turbo off` writes the opt-out. Turbo stays off until you run `turbo on`.
+- `SLEIGHT_TURBO=0` in the MCP server's environment keeps that one server on the engine path without touching the file.
+  It can only turn turbo off. The Firefox and Safari benchmark arms set it.
 - `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.
   Without it, Google Chrome is first and Helium second. A browser whose executable others can write
   (mode 775 or 777) is skipped, because the connection refuses it.

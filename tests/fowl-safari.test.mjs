@@ -77,7 +77,9 @@ test('Safari dry plans support all five arms with plain sleight, explicit limits
     if (!surface || surface === 'sleight') {
       assert.equal(plan.surface, 'sleight');
       assert.deepEqual(Object.keys(plan.arms[0].mcpConfig.mcpServers), ['plugin:sleight:computer']);
-      assert.equal(plan.arms[0].settingsOverrides.hooks.PreToolUse, undefined);
+      assert.deepEqual(plan.arms[0].settingsOverrides.hooks.PreToolUse.map(h => h.matcher), ['mcp__plugin_sleight_computer__select_window']);
+      assert.equal(plan.arms[0].mcpConfig.mcpServers['plugin:sleight:computer'].env.SLEIGHT_TURBO, '0');
+      assert.deepEqual(JSON.parse(plan.arms[0].env.FOWL_GATE_WINDOW).apps, ['Safari', 'com.apple.Safari', '/Applications/Safari.app']);
     }
   }
   assert.equal(existsSync(join(dir, 'never')), false);

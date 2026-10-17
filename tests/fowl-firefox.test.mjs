@@ -11,7 +11,7 @@ import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowse
 import { realGatePlan, runRealGate } from '../bench/fowl/real-gate.mjs';
 import { gradeGateTask } from '../bench/fowl/real-gate-grade.mjs';
 import { taskSupport } from '../bench/fowl/support.mjs';
-import { answer } from '../bench/fowl/origin-hook.mjs';
+import { answer, gateWindowCheck } from '../bench/fowl/origin-hook.mjs';
 import { swiftModuleCache } from '../bench/swift-cache.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -230,8 +230,14 @@ test('Firefox dry plans choose plain sleight and explicitly exclude mobile and t
       assert.equal(plan.surface, 'sleight');
       assert.deepEqual(Object.keys(arm.mcpConfig.mcpServers), ['plugin:sleight:computer']);
       assert.equal(arm.mcpConfig.mcpServers['plugin:sleight:computer'].env.SLEIGHT_SURFACES, 'computer');
+      assert.equal(arm.mcpConfig.mcpServers['plugin:sleight:computer'].env.SLEIGHT_TURBO, '0');
+      assert.equal(arm.env.SLEIGHT_TURBO, '0');
       assert.ok(arm.args.includes('--plugin-dir'));
-      assert.equal(arm.settingsOverrides.hooks.PreToolUse, undefined);
+      const pre = arm.settingsOverrides.hooks.PreToolUse;
+      assert.deepEqual(pre.map(h => h.matcher), ['mcp__plugin_sleight_computer__select_window']);
+      assert.match(pre[0].hooks[0].command, /origin-hook/);
+      const gate = JSON.parse(arm.env.FOWL_GATE_WINDOW);
+      assert.deepEqual(gate, { apps: ['Firefox', 'org.mozilla.firefox', '/Applications/Firefox.app'], title: 'Sleight Gate fixture-plan' });
       assert.match(arm.settingsOverrides.hooks.Elicitation[0].hooks[0].command, /origin-hook/);
       assert.equal(arm.metadata.connectionMode, 'engine-computer');
     }
@@ -241,6 +247,38 @@ test('Firefox dry plans choose plain sleight and explicitly exclude mobile and t
   assert.equal(taskSupport(task, 'sleight', { realBrowser: 'firefox' }), null);
   assert.match(taskSupport(tasks[1], 'sleight', { realBrowser: 'firefox' }), /viewport/i);
   assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: 'Allow Computer Use to use "Firefox"?' }), 'accept');
+});
+
+// Real round 2026-10-17: five tasks stopped on "The user didn't allow window selection in Firefox".
+test('window selection is accepted only for the gate browser and only with the exact marker title', () => {
+  const env = { FOWL_GATE_WINDOW: JSON.stringify({ apps: ['Firefox', 'org.mozilla.firefox', '/Applications/Firefox.app'], title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }) };
+  const ask = app => ({ mcp_server_name: 'plugin:sleight:computer', message: `Allow Claude to select a window in ${app}? It changes the app's main window without activating the app.` });
+  for (const app of ['Firefox', 'org.mozilla.firefox', '/Applications/Firefox.app']) assert.equal(answer(ask(app), env), 'accept');
+  for (const app of ['Safari', 'Google Chrome', 'Finder']) assert.equal(answer(ask(app), env), 'decline');
+  assert.equal(answer(ask('Firefox'), {}), 'decline', 'other rounds keep declining');
+  assert.equal(answer({ ...ask('Firefox'), mcp_server_name: 'other' }, env), 'decline');
+  assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: "Allow Claude to drag in Firefox? Background comes first; foreground fallback can move your pointer for a few seconds." }, env), 'decline');
+  const call = input => gateWindowCheck({ hook_event_name: 'PreToolUse', tool_name: 'mcp__plugin_sleight_computer__select_window', tool_input: input }, env);
+  assert.equal(call({ app: 'Firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
+  assert.equal(call({ app: 'org.mozilla.firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
+  for (const input of [{ app: 'Firefox', title: 'Mozilla Firefox' }, { app: 'Firefox', title: 'Sleight Gate c1c0b0b2' },
+    { app: 'Safari', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' },
+    { app: 'Firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971', windowNumber: 7 },
+    { app: 'Firefox', url: 'file:///tmp/x' }]) assert.match(call(input), /only for the gate's own window/);
+  assert.match(gateWindowCheck({ tool_name: 'mcp__plugin_sleight_computer__select_window', tool_input: { app: 'Firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' } }, {}), /only for the gate's own window/);
+  assert.equal(gateWindowCheck({ tool_name: 'mcp__plugin_sleight_computer__js', tool_input: {} }, env), null);
+  for (const bad of ['not json', JSON.stringify({ apps: [], title: 'Sleight Gate abcdefgh' }), JSON.stringify({ apps: ['Firefox'], title: 'Mozilla Firefox' })])
+    assert.equal(answer(ask('Firefox'), { FOWL_GATE_WINDOW: bad }), 'decline');
+});
+
+test('the select_window guard runs as a hook process and denies with PreToolUse output', () => {
+  const run = (input, env) => spawnSync(process.execPath, [join(repo, 'bench/fowl/origin-hook.mjs')], { input: JSON.stringify(input), encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+  const env = { FOWL_GATE_WINDOW: JSON.stringify({ apps: ['Firefox'], title: 'Sleight Gate fixture-plan' }) };
+  const base = { hook_event_name: 'PreToolUse', tool_name: 'mcp__plugin_sleight_computer__select_window' };
+  const allowed = run({ ...base, tool_input: { app: 'Firefox', title: 'Sleight Gate fixture-plan' } }, env);
+  assert.equal(allowed.status, 0); assert.equal(allowed.stdout, '');
+  const denied = run({ ...base, tool_input: { app: 'Firefox', title: 'Other' } }, env);
+  assert.equal(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision, 'deny');
 });
 
 test('Firefox CLI dry plans enumerate all pinned tasks for all five arms without runtime side effects', t => {

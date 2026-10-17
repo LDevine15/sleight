@@ -14,7 +14,27 @@ const ORIGINS = ['https://en.wikipedia.org', 'https://developer.mozilla.org'];
 // FowlBrowser's demo serves each site on its port and the next (the DemoID pop-up on 5421, the card frame on 5414).
 const LOCAL_PORTS = ['5411', '5412', '5413', '5414', '5420', '5421', '5431', '5432'];
 
-export function answer(e) {
+// The real-window gate (real-gate-setup.mjs) sets FOWL_GATE_WINDOW to {"apps": [...], "title": marker} for the Firefox and
+// Safari sleight arms. Window selection in that browser is then accepted, and gateWindowCheck (the PreToolUse half) lets
+// select_window through only for the gate's exact marker title. The marker carries the round's UUID, so only the owned
+// process has it, and select_window itself refuses when two processes share the app. Unset, nothing changes.
+export function gateWindow(env = process.env) {
+  try {
+    const gate = JSON.parse(env.FOWL_GATE_WINDOW ?? 'null');
+    return gate && Array.isArray(gate.apps) && gate.apps.length && gate.apps.every(a => typeof a === 'string' && a) &&
+      typeof gate.title === 'string' && /^Sleight Gate [\w-]{8,}$/.test(gate.title) ? gate : null;
+  } catch { return null; }
+}
+export function gateWindowCheck(e, env = process.env) {
+  if (!/(^|__)select_window$/.test(e.tool_name ?? '')) return null;
+  const gate = gateWindow(env), input = e.tool_input ?? {};
+  const keys = Object.keys(input).filter(k => input[k] !== undefined);
+  if (gate && gate.apps.includes(input.app) && input.title === gate.title && keys.every(k => ['app', 'title'].includes(k))) return null;
+  return `Benchmark: select_window is allowed only for the gate's own window, app ${gate ? gate.apps[0] : '(none)'} with the exact title ` +
+    `"${gate ? gate.title : '(none)'}". Its title changes once a page loads; cua.getApp on the browser then addresses the same window.`;
+}
+
+export function answer(e, env = process.env) {
   const message = e.message ?? '';
   const origin = /^Allow Browser use to access (\S+)\?$/.exec(message)?.[1];
   const site = origin && origin.replace(/:\d+$/, '');
@@ -28,6 +48,8 @@ export function answer(e) {
   } catch {}
   if (/\bCDP\b|devtools/i.test(message)) return 'decline';
   if (e.mcp_server_name === 'plugin:sleight:computer' && local) return 'accept';
+  const selecting = /^Allow Claude to select a window in (.+)\? It changes the app's main window without activating the app\.$/.exec(message)?.[1];
+  if (selecting) return e.mcp_server_name === 'plugin:sleight:computer' && gateWindow(env)?.apps.includes(selecting) ? 'accept' : 'decline';
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1];
   return e.mcp_server_name === 'plugin:sleight:computer' && (ORIGINS.includes(site) || APPS.includes(app)) ? 'accept' : 'decline';
 }
@@ -36,8 +58,13 @@ if (import.meta.main) {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const e = JSON.parse(input);
-  // Every declined prompt is logged next to the run, so a new prompt shows up in the report.
-  if (answer(e) === 'decline') (await import('node:fs')).appendFileSync('/tmp/fb-rounds/declined-prompts.jsonl', JSON.stringify({ t: new Date().toISOString(), message: e.message, server: e.mcp_server_name }) + '\n');
-  if (process.env.FOWL_HOOK_LOG) (await import('node:fs')).appendFileSync(process.env.FOWL_HOOK_LOG, JSON.stringify({ message: e.message, server: e.mcp_server_name, action: answer(e) }) + '\n');
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Elicitation', action: answer(e), content: {} } }));
+  if (e.hook_event_name === 'PreToolUse') {
+    const reason = gateWindowCheck(e);
+    if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
+  } else {
+    // Every declined prompt is logged next to the run, so a new prompt shows up in the report.
+    if (answer(e) === 'decline') (await import('node:fs')).appendFileSync('/tmp/fb-rounds/declined-prompts.jsonl', JSON.stringify({ t: new Date().toISOString(), message: e.message, server: e.mcp_server_name }) + '\n');
+    if (process.env.FOWL_HOOK_LOG) (await import('node:fs')).appendFileSync(process.env.FOWL_HOOK_LOG, JSON.stringify({ message: e.message, server: e.mcp_server_name, action: answer(e) }) + '\n');
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Elicitation', action: answer(e), content: {} } }));
+  }
 }

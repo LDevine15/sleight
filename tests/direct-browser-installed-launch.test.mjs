@@ -20,6 +20,18 @@ test('turbo discovery exposes only operator enablement and never receipt or prof
   assert.deepEqual(turboState(() => ({ receipt: 'private', profileRoot: 'private', enabled: true })), { enabled: true });
   assert.deepEqual(turboState(() => { throw Error('unsafe'); }), { enabled: false });
 });
+test('SLEIGHT_TURBO=0 skips setup and the bridge and reports turbo off; other values change nothing', async () => {
+  let ensured = 0, built = 0;
+  const off = await prepareInstalledStartup(() => { built++; return null; }, () => {}, { ensure: () => { ensured++; }, env: { SLEIGHT_TURBO: '0' } });
+  assert.deepEqual(off, { directBrowser: undefined, directHost: undefined });
+  assert.equal(ensured, 0); assert.equal(built, 0);
+  assert.deepEqual(turboState(() => ({ enabled: true }), { SLEIGHT_TURBO: '0' }), { enabled: false });
+  for (const value of ['1', 'off', 'false', '', ' 0']) {
+    await prepareInstalledStartup(() => { built++; return null; }, () => {}, { ensure: () => { ensured++; }, env: { SLEIGHT_TURBO: value } });
+    assert.deepEqual(turboState(() => ({ enabled: true }), { SLEIGHT_TURBO: value }), { enabled: true });
+  }
+  assert.equal(ensured, 5); assert.equal(built, 5);
+});
 test('unavailable selected connection keeps the ordinary engine route with a typed notice', async () => {
   const notices = [];
   const value = await prepareInstalledStartup(() => { throw Error('SELECTED_ENDPOINT_UNPROVED'); }, code => notices.push(code));

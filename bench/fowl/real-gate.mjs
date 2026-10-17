@@ -150,7 +150,8 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       ...(profileFolder ? { profileFolder } : {}), preflight: profileSourceProblems(plan.browser) },
       arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
       environment: { ...(env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {}),
-        ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}) } })) };
+        ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}),
+        ...Object.fromEntries(['SLEIGHT_TURBO', 'FOWL_GATE_WINDOW'].filter(key => env[key] !== undefined).map(key => [key, env[key]])) } })) };
     (runtime.print || console.log)(JSON.stringify(printable, null, 2)); return printable;
   }
   if (!plan.arms.length) throw Error('No runnable gate tasks: ' + plan.unsupported.map(row => row.reason).join('; '));

@@ -737,7 +737,11 @@ export async function ensureInstalledTurbo(log = text => process.stderr.write(te
   } catch { return undefined; }
 }
 
-export async function prepareInstalledStartup(factory, unavailable = installedUnavailable, { ensure, log = text => process.stderr.write(text) } = {}) {
+// SLEIGHT_TURBO=0 keeps this server on the engine path: no turbo.json write, no bridge and no browser_* tools. It can only
+// turn turbo off, so an environment that sets it never gains anything (the Firefox and Safari benchmark arms set it).
+export const turboOff = (env = process.env) => env.SLEIGHT_TURBO === '0';
+export async function prepareInstalledStartup(factory, unavailable = installedUnavailable, { ensure, log = text => process.stderr.write(text), env = process.env } = {}) {
+  if (turboOff(env)) return { directBrowser: undefined, directHost: undefined };
   try { await ensure?.(log); } catch { /* Setup never blocks startup. */ }
   try {
     const bridge = await (factory ?? (() => createInstalledBrowserBridge()))();
@@ -750,7 +754,8 @@ export async function prepareInstalledStartup(factory, unavailable = installedUn
   }
 }
 
-export function turboState(readConfig) {
+export function turboState(readConfig, env = process.env) {
+  if (turboOff(env)) return { enabled: false };
   try { return { enabled: !!readConfig() }; } catch { return { enabled: false }; }
 }
 

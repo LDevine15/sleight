@@ -57,6 +57,13 @@ export function codexBrowserSetup({ dir, prompt, realBrowser }) {
       configDir: codexHome(), browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
       profileMode: realBrowser.profileMode || 'fresh', browserVersion: realBrowser.version ?? null, headless: false, focus: 'not measured' } };
 }
+// The names select_window may use for the round's own browser (origin-hook.mjs gateWindow), and its marker title.
+export function gateWindowApps(realBrowser) {
+  const names = { firefox: ['Firefox', 'org.mozilla.firefox'], safari: ['Safari', 'com.apple.Safari'] }[realBrowser.browser];
+  if (!names || !realBrowser.marker) throw Error('Gate window selection needs Firefox or Safari with a marker');
+  const app = /^(\/.+?\.app)\//.exec(realBrowser.executable ?? '')?.[1];
+  return { apps: [...names, ...(app ? [app] : [])], title: realBrowser.marker };
+}
 export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRun = false, repo = repoRoot,
   model = 'haiku', effort = 'high', settings = join(dir, 'settings.json'), mcpRoot, armRoot, chromeFiles }) {
   if (!REAL_SURFACES.includes(surface)) throw Error(`Unknown real-browser arm: ${surface}`);
@@ -75,7 +82,10 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     ...(armRoot ? { armRoot } : {}), ...(chromeFiles ? { chromeFiles } : {}) })
     : engine ? { ...common,
     settings: { ...common.settings, ...genericSettings({ servers: ['plugin:sleight:computer'] }, repo) },
-    mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer' } } },
+    // Turbo off: the round's Firefox or Safari is reachable only on the engine path, and a turbo.json in HOME would add
+    // browser_* tools that point at the owner's Chrome or Helium (real round 2026-10-17: 5 of 12 tasks stopped on them).
+    mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0' } } },
+    env: { ...common.env, SLEIGHT_TURBO: '0', FOWL_GATE_WINDOW: JSON.stringify(gateWindowApps(realBrowser)) },
     allowed: 'mcp__plugin_sleight_computer__js,mcp__plugin_sleight_computer__js_reset,mcp__plugin_sleight_computer__open_file',
     metadata: { ...common.metadata, surface, connectionMode: 'engine-computer' } }
     : surface === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
@@ -88,7 +98,9 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
   return { command: arm.command, args, prompt: fullPrompt, mcpConfig: { mcpServers: arm.mcpServers },
     settingsOverrides: engine || surface === 'sleight-turbo' ? { ...arm.settings, hooks: { ...arm.settings.hooks,
       Elicitation: [{ matcher: 'plugin:sleight:computer', hooks: [{ type: 'command', timeout: 5,
-        command: `node "${join(repo, 'bench/fowl/origin-hook.mjs')}"` }] }] } } : arm.settings, env: { ...arm.env, ANTHROPIC_SMALL_FAST_MODEL: modelId(model) }, allowed: arm.allowed,
+        command: `node "${join(repo, 'bench/fowl/origin-hook.mjs')}"` }] }],
+      ...(engine ? { PreToolUse: [{ matcher: 'mcp__plugin_sleight_computer__select_window', hooks: [{ type: 'command', timeout: 5,
+        command: `node "${join(repo, 'bench/fowl/origin-hook.mjs')}"` }] }] } : {}) } } : arm.settings, env: { ...arm.env, ANTHROPIC_SMALL_FAST_MODEL: modelId(model) }, allowed: arm.allowed,
     ...(arm.chrome ? { chrome: arm.chrome } : {}),
     metadata: { ...arm.metadata, browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
       profileMode: realBrowser.profileMode || 'fresh', ...(realBrowser.profileFolder ? { profileFolder: realBrowser.profileFolder } : {}),
