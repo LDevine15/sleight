@@ -668,6 +668,7 @@ export function createRelay({
       clipboard = newClipboard();
       if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
+      if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
       helperStates.clear();
       screenshots.clear();
@@ -816,7 +817,7 @@ export function createRelay({
   const callStarts = new Map(); // call id -> when it arrived, so a read's duration is known
   const callSeqs = new Map();
   let docsShown = false;
-  let deferredEngineDocs = [];
+  let deferredEngineDocs = [], clientJsDelivered = false;
   // Once per session: Claude keeps them in context across engine restarts.
   let rulesShown = false;
   let browserRulesShown = false;
@@ -1550,25 +1551,23 @@ export function createRelay({
       if (msg.error) msg.error.message += '\n' + saveNote;
       else msg.result = { ...msg.result, content: [...(msg.result?.content ?? []), { type: 'text', text: saveNote }] };
     }
-    if (msg.method === undefined && Array.isArray(msg.result?.content)) {
-      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
-        { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
-      browserStale.observe(msg.result.content);
-    }
     // Internal acquisitions consume first-call docs too. Keep the skill and tree in their
     // result, then deliver the reference with Claude's first JS result (including errors).
-    if (clientTool && !['js', 'js_reset'].includes(clientTool) && Array.isArray(msg.result?.content) && !msg.result.isError) {
+    const modelVisible = clientTool && clientTool !== TURN_END_TOOL && !HIDDEN_TOOLS.has(clientTool);
+    if (modelVisible && clientTool === 'js') clientJsDelivered = true;
+    if (modelVisible && !['js', 'js_reset'].includes(clientTool) && Array.isArray(msg.result?.content) && !msg.result.isError) {
       msg.result.content = msg.result.content.flatMap(item => {
         if (item.type !== 'text') return [item];
         if (!item.text.trim()) return [];
-        if (!/^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/.test(item.text)) return [item];
+        if (clientJsDelivered || !/^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/.test(item.text)) return [item];
         const at = item.text.search(/^Window: /m);
         const docs = { ...item, text: at < 0 ? item.text : item.text.slice(0, at) };
         if (!deferredEngineDocs.some(c => c.text === docs.text)) deferredEngineDocs.push(docs);
         return at < 0 ? [] : [{ ...item, text: item.text.slice(at) }];
       });
-    } else if (clientTool && deferredEngineDocs.length &&
-        (clientTool === 'js' || msg.error || msg.result?.isError)) {
+    }
+    if (modelVisible && deferredEngineDocs.length &&
+        (clientJsDelivered || msg.error || msg.result?.isError)) {
       if (msg.error) msg = { jsonrpc: msg.jsonrpc, id: msg.id, result: { isError: true,
         content: [{ type: 'text', text: msg.error.message }] } };
       if (Array.isArray(msg.result?.content)) {
@@ -1576,6 +1575,11 @@ export function createRelay({
         msg.result.content = [...deferredEngineDocs.filter(item => !texts.some(text => text.startsWith(item.text.trimEnd()))), ...msg.result.content];
         deferredEngineDocs = [];
       }
+    }
+    if (modelVisible && Array.isArray(msg.result?.content)) {
+      msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
+        { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
+      browserStale.observe(msg.result.content);
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
     journal?.reply(msg);
@@ -1824,7 +1828,8 @@ export function createRelay({
         splitCalls.set(id, reply => {
           if (generation !== stopGeneration || closing || disposed) return;
           const state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
-          const combined = { ...state, content: [...(result.content ?? []), ...(state.content ?? [])] };
+          const combined = { ...state, content: [...(result.content ?? []), ...(state.content ?? []),
+            ...(!state.isError ? [{ type: 'text', text: `Window handle: \`${handle}\`.` }] : [])] };
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
         });
@@ -1879,15 +1884,15 @@ export function createRelay({
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_stop === true) startup?.cancel();
     if (!startupReady && startup?.request(msg)) return;
-    if (tabCleanupPending && msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name)) {
-      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text',
-        text: promptNotice('Wait for turn_ended, tab cleanup is pending.', prompt) }] } });
-      return;
-    }
     // When each tool call arrived, so a trace can time the relay's own work on it.
     if (msg.method === 'tools/call' && msg.id !== undefined) {
       callGenerations.set(msg.id, stopGeneration);
       pendingClients.set(msg.id, msg.params?.name + (msg.params?.arguments?.title ? ': ' + msg.params.arguments.title : ''));
+    }
+    if (tabCleanupPending && msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name)) {
+      toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text',
+        text: promptNotice('Wait for turn_ended, tab cleanup is pending.', prompt) }] } });
+      return;
     }
     // SLEIGHT_TRACE_CODE=1 also keeps Claude's code, for benchmark diagnosis on this Mac only.
     if (msg.method === 'tools/call') { trace('call-received', { id: msg.id, method: msg.method, params: { name: msg.params?.name,
