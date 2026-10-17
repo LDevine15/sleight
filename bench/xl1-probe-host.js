@@ -209,7 +209,7 @@ function run(argv) {
     if (request.op === 'balance') {
       var location = $.CGEventGetLocation($.CGEventCreate(null));
       var up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, location, $.kCGMouseButtonLeft);
-      if (!up || up.isNil()) throw new Error('Cannot create balancing leftMouseUp');
+      if (!up) throw new Error('Cannot create balancing leftMouseUp'); // a JXA CGEventRef has no isNil (18:31Z)
       $.CGEventPostToPid(pid, up);
       return JSON.stringify({ ok: true });
     }

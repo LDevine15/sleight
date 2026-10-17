@@ -79,7 +79,7 @@ export async function cleanupFixture({ client, owned, pointer, host, persist }) 
 
 export async function runTrials({ prepare, sample, balance, park, act, read, cleanup, record, sleep: pause = sleep }) {
   const rows = [];
-  for (const arm of ['A', 'B', 'C', 'D', 'E']) for (let index = 1; index <= 3; index++) {
+  for (const arm of process.env.XL1_ARMS?.split(',') ?? ['A', 'B', 'C', 'D', 'E']) for (let index = 1; index <= 3; index++) {
     const row = { arm, index };
     try {
       row.before = await prepare(arm, index);
