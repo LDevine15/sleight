@@ -197,10 +197,12 @@ async function main(argv) {
         assert.ok(fresh, 'New sheet is not selected');
         await call(`await app.click(${fresh.number}, { clickCount: 2 })`);
         const rename = await call('await app.getAXState({ disableDiffing: true })', true);
-        // Do not type unless the double click exposed the rename editor.
-        assert.match(rename, /text (?:field|entry area).*\(.*settable.*\).*Value: (?:Sheet\d+|Worksheet\d+)/i, 'Rename editor unavailable');
+        // At 17:20Z the double click opened an editor the tree didn't show (the claim runs saw the same). Type into the
+        // fixture regardless; the tab-name check below catches a name that went into a cell instead.
+        const editor = /text (?:field|entry area).*\(.*settable.*\).*Value: (?:Sheet\d+|Worksheet\d+)/i.test(rename);
+        await persist({ phase: 'rename-editor', arm, index, visible: editor });
         const name = `Review-${arm}-${index}`;
-        await call(`await app.pressKey("super+a"); await app.typeText(${JSON.stringify(name)}); await app.pressKey("Return")`, true);
+        await call(`${editor ? 'await app.pressKey("super+a"); ' : ''}await app.typeText(${JSON.stringify(name)}); await app.pressKey("Return")`, true);
         const tabs = await read();
         assert.deepEqual(tabs.map(tab => tab.name), ['Fixture', name], 'Rename changed initial tab order');
         assert.equal(tabs.find(tab => tab.selected)?.name, name);
