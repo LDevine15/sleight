@@ -1,5 +1,5 @@
 diff --git a/tools/rounds.mjs b/tools/rounds.mjs
-index e7f1db8..fabe81c 100644
+index e7f1db8..5056686 100644
 --- a/tools/rounds.mjs
 +++ b/tools/rounds.mjs
 @@ -1,6 +1,7 @@
@@ -445,7 +445,7 @@ index e7f1db8..fabe81c 100644
      args[a] = flags.has(a) ? true : process.argv[++i];
    }
 +  if (args['real-browser']) return (await import(pathToFileURL(path.join(SLEIGHT_REPO, 'bench/fowl/real-gate.mjs')).href)).runRealGate({
-+    args, repo: SLEIGHT_REPO, mcpRoot: ROOT, runner: { agentSetup, gradeOutcome, gradeSite, gradeViewport } });
++    args, repo: SLEIGHT_REPO, mcpRoot: ROOT, runner: { agentSetup, gradeOutcome, gradeSite, gradeViewport, gradeHandoff } });
    if (args.remote) args.gui = true; // the round holds the remote Mac's GUI lock
    // Stopped by hand: still run the exit handlers (agents, the remote connection and its lock, the site).
    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(130));

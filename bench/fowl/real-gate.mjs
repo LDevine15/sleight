@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { realBrowserPlan, launchRealBrowser } from './real-browser.mjs';
+import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser } from './real-browser.mjs';
 import { REAL_SURFACES, realAgentSetup } from './real-gate-setup.mjs';
 import { runCodex, codexConfigServers } from '../codex-arm.mjs';
 import { runOwned } from '../preapproved-process.mjs';
@@ -62,11 +62,16 @@ const getJson = async url => {
 export async function runGateAgent(plan, { signal, runClaude = runOwned, runNativeCodex = runCodex } = {}) {
   mkdirSync(plan.dir, { mode: 0o700 });
   let result;
+  const collect = async operation => {
+    try { return await operation(); }
+    catch (error) { error.collectionError = true; throw error; }
+  };
   const started = Date.now(), events = join(plan.dir, 'events.jsonl');
   if (plan.surface === 'codex') {
-    const run = await runNativeCodex(plan.prompt, { cwd: plan.dir, model: 'gpt-6-luna', effort: 'high', home: codexHome(),
+    const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: 'gpt-6-luna', effort: 'high', home: codexHome(),
       signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
-      onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') });
+      onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') }));
+    if (!run.groupClean) throw Object.assign(Error('BENCH_AGENT_CLEANUP_UNPROVED'), { groupClean: false });
     result = { exitCode: run.code, result: run.out, timedOut: run.timedOut, groupClean: run.groupClean,
       forbidden: run.forbidden, toolCalls: run.toolCalls, engineMs: run.engineMs };
     if (run.forbidden.length) result.result = { ...run.out, is_error: true };
@@ -74,8 +79,9 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
   } else {
     writeFileSync(join(plan.dir, 'mcp.json'), JSON.stringify(plan.mcpConfig, null, 2), { mode: 0o600 });
     writeFileSync(join(plan.dir, 'settings.json'), JSON.stringify(plan.settingsOverrides, null, 2), { mode: 0o600 });
-    const run = await runClaude(plan.command, plan.args, { cwd: plan.dir, env: plan.env, signal,
-      timeoutMs: (plan.task.budgetSeconds || 600) * 4000 });
+    const run = await collect(() => runClaude(plan.command, plan.args, { cwd: plan.dir, env: plan.env, signal,
+      timeoutMs: (plan.task.budgetSeconds || 600) * 4000 }));
+    if (!run.groupClean) throw Object.assign(Error('BENCH_AGENT_CLEANUP_UNPROVED'), { groupClean: false });
     writeFileSync(events, run.stdout); writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
     const messages = run.stdout.split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
     result = { exitCode: run.exit.code, result: messages.findLast(event => event.type === 'result'),
@@ -125,23 +131,31 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     sites = await (runtime.startSites || startGateSites)(mcpRoot);
     browser = await (runtime.launchBrowser || launchRealBrowser)(plan.browser).catch(error => {
       if (error.message === 'BENCH_BROWSER_CLEANUP_UNPROVED') cleanupProven = false;
+      if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...plan.browser, ownerCheck: error.ownerCheck }, null, 2));
       throw error;
     });
     const { stop, ...identity } = browser;
     plan = realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: identity, dryRun: false });
-    for (const arm of plan.arms) if (arm.surface !== 'codex') arm.metadata.versionVerified = true;
     writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity, null, 2));
     if (plan.surface === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
     for (const arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
+      const start = await (runtime.resetBrowser || resetRealBrowser)(browser);
+      const startKeys = new Set(Object.keys(start));
+      if (controller.signal.aborted) throw Error('Gate interrupted');
       const run = await (runtime.runAgent || runGateAgent)(arm, { signal: controller.signal }).catch(error => {
-        cleanupProven = false; throw error;
+        if (error.groupClean === false || error.collectionError) cleanupProven = false;
+        throw error;
       });
       if (!run.groupClean) { cleanupProven = false; throw Error('BENCH_AGENT_CLEANUP_UNPROVED'); }
+      const after = await (runtime.observeBrowser || observeRealBrowser)(browser);
+      run.afterExit = after;
+      run.tabs = new Set(Object.keys(after));
       const grade = await getJson(arm.task.grade);
       const site = await getJson(arm.task.name === 'form-checkout' ? 'http://127.0.0.1:5413/gate-log/p04' : arm.task.site?.log);
-      const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner });
-      const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors, run, agentConfig: arm.metadata, grade, site, outcome };
+      const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner, after, startKeys });
+      const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
+        run: { ...run, tabs: [...run.tabs] }, start, agentConfig: arm.metadata, grade, site, outcome };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));

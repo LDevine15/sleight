@@ -167,7 +167,7 @@ test('owned browser cleanup waits for child close before deleting its exact prof
   const child = new EventEmitter(); child.pid = 1234;
   const signals = [];
   child.kill = signal => { signals.push(signal); assert.equal(existsSync(plan.profileRoot), true); setImmediate(() => child.emit('close', 0)); };
-  const browser = await launchRealBrowser(plan, { spawnBrowser: (command, args) => {
+  const browser = await launchRealBrowser(plan, { listProcesses: async () => [], spawnBrowser: (command, args) => {
     assert.equal(command, plan.command); assert.deepEqual(args, plan.args);
     writeFileSync(join(plan.profileRoot, 'DevToolsActivePort'), '12345\n/devtools/browser/fixture\n');
     return child;
@@ -186,7 +186,7 @@ test('a browser that never confirms exit retains its profile instead of certifyi
   const plan = realBrowserPlan({ browser: 'helium', round: 'test-' + randomUUID() });
   const child = new EventEmitter(); child.pid = 1234; child.kill = () => {};
   t.after(() => { child.emit('close', 0); rmSync(join(plan.profileRoot, '..'), { recursive: true, force: true }); });
-  const browser = await launchRealBrowser(plan, { stopMs: 1, spawnBrowser: () => {
+  const browser = await launchRealBrowser(plan, { listProcesses: async () => [], stopMs: 1, spawnBrowser: () => {
     writeFileSync(join(plan.profileRoot, 'DevToolsActivePort'), '12345\n/devtools/browser/fixture\n'); return child;
   } });
   await assert.rejects(browser.stop(), /CLEANUP_UNPROVED/);
@@ -213,11 +213,12 @@ for (const failed of [false, true]) test(`mock-only gate lifecycle ${failed ? 'r
   const promise = runRealGate({ args, tasks: [{ ...task, name: 'fixture', grade: null }],
     runner: { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) },
     runtime: { lockPath, admit: async () => {},
+      resetBrowser: async () => ({}), observeBrowser: async () => ({}),
       startSites: async () => ({ close: async () => { events.push('sites closed'); assert.ok(existsSync(lockPath)); } }),
       launchBrowser: async plan => ({ ...plan, pid: 1234, stop: async () => {
         events.push('browser closed'); assert.ok(existsSync(lockPath)); return { browserClosed: true, profileDeleted: true };
       } }),
-      runAgent: async arm => { mkdirSync(arm.dir); if (failed) throw Error('fixture collection unknown');
+      runAgent: async arm => { mkdirSync(arm.dir); if (failed) throw Object.assign(Error('fixture collection unknown'), { groupClean: false });
         return { groupClean: true, exitCode: 0, result: { result: 'RESULT: fixture' } }; },
     } });
   if (failed) {
