@@ -673,9 +673,107 @@ function textlessDocument(observation) {
   });
 }
 
+const toolbarGroup = key => /^toolbar\b/.test(key) ||
+  /^(?:tab group|group) (?:Description: )?ribbon(?:,|$)/i.test(key);
+const control = key => /^(?:[a-z ]*button|text field|text entry area|search field|combo box|check box|checkbox|link|slider|stepper|switch|tab|disclosure triangle|scroll bar)\b/.test(key) ||
+  /\bSecondary Actions:|\([^)]*\b(?:settable|selectable|checkable)\b/.test(key);
+
+function toolbarGroups(lines) {
+  const groups = [];
+  for (let i = 0; i < lines.length; i++) {
+    const row = ELEMENT.exec(lines[i]);
+    if (!row || !toolbarGroup(row[3])) continue;
+    let end = i + 1;
+    while (end < lines.length) {
+      const child = ELEMENT.exec(lines[end]);
+      if (!child || child[1].length <= row[1].length) break;
+      end++;
+    }
+    groups.push({ start: i, end, key: parse(lines[i]).key.trim() });
+  }
+  return groups;
+}
+
+// Uncertain or non-element input keeps every group. Match targets in the earlier
+// observation too: a click can remove its control or renumber the whole ribbon.
+function actedToolbars(code, action, lines, window) {
+  if (!action) return new Set();
+  if (action.overlap || !action.before || documentKey(action.before.window) !== documentKey(window) || typeof code !== 'string') return;
+  const masked = maskCode(code), calls = [...masked.matchAll(/\.\s*(click|setValue|selectText|performSecondaryAction|scroll|drag|pressKey|typeText|paste)\s*\(/g)];
+  if (!calls.length) return;
+  const kept = new Set(), before = action.before.lines;
+  for (const call of calls) {
+    if (!['click', 'setValue', 'selectText', 'performSecondaryAction', 'scroll'].includes(call[1])) return;
+    const args = code.slice(call.index + call[0].length);
+    const number = /^\s*(\d+)\s*(?:,|\))/.exec(args);
+    const named = /^\s*\{\s*(id|label|line)\s*:\s*(["'])([^"'\\]*)\2\s*\}\s*(?:,|\))/.exec(args);
+    const label = /^\s*(["'])([^"'\\]*)\1\s*(?:,|\))/.exec(args);
+    if (!number && !named && !label) return;
+    let found = false;
+    for (const source of [before, lines]) {
+      const groups = toolbarGroups(source);
+      for (let i = 0; i < source.length; i++) {
+        const row = parse(source[i]);
+        if (row.num === undefined) continue;
+        const matches = number ? row.num === Number(number[1]) : named?.[1] === 'id' ? hasIdentifier(row.key, named[3])
+          : named?.[1] === 'line' ? row.key.trim() === named[3] : hasLabel(row.key, named?.[3] ?? label[2]);
+        if (!matches) continue;
+        found = true;
+        for (const group of groups) if (i >= group.start && i < group.end) kept.add(group.key);
+      }
+    }
+    if (!found) return;
+  }
+  const current = new Set(toolbarGroups(lines).map(group => group.key));
+  if ([...kept].some(key => !current.has(key))) return;
+  return kept;
+}
+
+function trimToolbars(text, code, action) {
+  const window = windowFromText(text);
+  if (!window || !hasFullTree(text) || /…\(\d+\)/.test(text)) return;
+  const lines = text.split('\n'), at = lines.findIndex(line => /^Window: /.test(line));
+  if (!/^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(parse(lines[at + 1] ?? '').key)) return;
+  // Allow the engine's focus footer, but don't guess around multiline values or diffs.
+  let end = at + 1;
+  while (end < lines.length && ELEMENT.test(lines[end])) end++;
+  if (lines.slice(end).some(line => line.trim() && !/^The focused UI element (?:is|was) \d+ /.test(line))) return;
+  const kept = actedToolbars(code, action, lines, window);
+  if (!kept) return;
+  const groups = toolbarGroups(lines), hidden = new Set(), out = [];
+  for (let i = 0; i < lines.length;) {
+    const group = groups.find(group => group.start === i);
+    const children = group && lines.slice(i + 1, group.end);
+    const count = children?.filter(line => control(parse(line).key.trim())).length ?? 0;
+    if (!group || count <= 20 || kept.has(group.key)) { out.push(lines[i++]); continue; }
+    out.push(lines[i] + ` — sleight: ${count} controls omitted; expand with a filtered getAXState() read or getAXState({ disableDiffing: true }).`);
+    for (const line of children) hidden.add(parse(line).num);
+    i = group.end;
+  }
+  return hidden.size ? { text: out.join('\n'), hidden } : undefined;
+}
+
+// Only identical full numbered blocks, within this one result. Notices, docs,
+// focus footers, images and differing snapshots retain their original order.
+function dedupeTrees(content) {
+  const shown = new Set();
+  return content.flatMap(item => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+    const text = item.text.replace(/^Window: [^\n]*\n(?:(?:\t*\d+ [^\n]*)(?:\n|$))+/gm, (block, at) => {
+      if (!hasFullTree(block) || /^sleight: (?:lines changed|no change since)/.test(item.text.slice(at + block.length))) return block;
+      const tree = block.replace(/\n+$/, '');
+      if (shown.has(tree)) return '';
+      shown.add(tree);
+      return block;
+    });
+    return text === item.text ? [item] : text ? [{ ...item, text }] : [];
+  });
+}
+
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
-  screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot' } = {}) {
+  screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
+  compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map();
@@ -873,11 +971,11 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         const plain = item.text.replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '');
         if (hasFullTree(plain)) shownTrees.add(plain.slice(plain.lastIndexOf('Window: ')).replace(/\n+$/, ''));
       }
-      const out = content.flatMap(item => {
+      let out = content.flatMap(item => {
         if (item?.type === 'text' && /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? '')) failed = true;
         if (item?.type !== 'text' || typeof item.text !== 'string' || (!item.text.includes(GUARD_MARK) && !item.text.includes(GUARD_OMIT_MARK))) {
           if (item?.type === 'text' && typeof item.text === 'string') remember(item.text, forceFull ? undefined : action);
-          if (action && hasFullTree(item.text)) {
+          if ((action || compactToolbars) && hasFullTree(item.text)) {
             const at = item.text.lastIndexOf('Window: ');
             shownTrees.add(item.text.slice(at).replace(/\n+$/, ''));
           }
@@ -891,7 +989,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           const at = omitted ? omittedAt : visibleAt;
           const plain = item.text.slice(pos, at < 0 ? undefined : at);
           remember(plain, forceFull ? undefined : action); seenText += plain; add(plain);
-          if (action && hasFullTree(plain)) shownTrees.add(plain.slice(plain.lastIndexOf('Window: ')).replace(/\n+$/, ''));
+          if ((action || compactToolbars) && hasFullTree(plain)) shownTrees.add(plain.slice(plain.lastIndexOf('Window: ')).replace(/\n+$/, ''));
           if (at < 0) break;
           const start = at + (omitted ? GUARD_OMIT_MARK : GUARD_MARK).length, end = item.text.indexOf(GUARD_END, start);
           const tree = item.text.slice(start, end < 0 ? undefined : end);
@@ -901,8 +999,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             pos = end + GUARD_END.length;
             continue;
           }
-          if (end >= 0 && action && full && !forceFull && !failed && !stopped && !action.overlap && shownTrees.has(tree.replace(/\n+$/, ''))) {
-            remember(tree, action);
+          if (end >= 0 && (compactToolbars || action && full && !forceFull) && !failed && !stopped && !action?.overlap && shownTrees.has(tree.replace(/\n+$/, ''))) {
+            if (compactToolbars) {
+              if (observedInResult?.lines?.join('\n') !== tree.replace(/\n+$/, '')) compact(tree, seenText, action, refreshNumbers);
+            } else remember(tree, action);
             pos = end + GUARD_END.length;
             continue;
           }
@@ -926,7 +1026,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             const entry = seen.get(documentKey(windowFromText(tree) ?? {}));
             if (entry?.valid) for (const [num, key] of numbered(tree.replace(/\n+$/, '').split('\n'))) { entry.valid.add(num); entry.believed?.set(num, key); }
           }
-          if (sent === tree) shownTrees.add(tree.replace(/\n+$/, ''));
+          if (compactToolbars || sent === tree) shownTrees.add(tree.replace(/\n+$/, ''));
           if (end < 0 && observedInResult && !observedInResult.invalid) observedInResult.incomplete = true;
           add(sent); seenText += '\n' + sent;
           if (end < 0) break;
@@ -966,12 +1066,17 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
       }
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
-      if ((resultTrim || firstAcquisition) && !full) for (let i = 0; i < out.length; i++) {
+      if (compactToolbars) out = dedupeTrees(out);
+      if ((resultTrim || firstAcquisition || compactToolbars) && !full) for (let i = 0; i < out.length; i++) {
         const item = out[i];
         if (item?.type !== 'text' || typeof item.text !== 'string') continue;
         const key = documentKey(windowFromText(item.text));
-        const trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text)
+        let trimmed = firstAcquisition && key && !priorWindows.has(key) ? trimAcquisition(item.text)
           : resultTrim ? trimSiblingRows(item.text) : undefined;
+        if (compactToolbars && !failed && !stopped) {
+          const toolbar = trimToolbars(trimmed?.text ?? item.text, code ?? action?.code, action);
+          if (toolbar) trimmed = { text: toolbar.text, hidden: new Set([...(trimmed?.hidden ?? []), ...toolbar.hidden]) };
+        }
         if (!trimmed) continue;
         const entry = seen.get(key);
         if (entry) {
@@ -989,7 +1094,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     beginAction(code) {
       const kind = actionKind(code, latest);
       if (kind?.save && latest?.window.url?.startsWith('file://')) kind.fileTime = fileTime(latest.window.url);
-      return kind && { ...kind, before: latest };
+      return kind && { ...kind, code, before: latest };
     },
     // What Claude takes these element numbers to be in this window, from what it was last shown:
     // number -> line text without its number, for the guard to check before the call's first action.
