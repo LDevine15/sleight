@@ -55,7 +55,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).
 - Native apps stay on the ChatGPT engine. After the engine approves an app, sleight may read that app's accessibility metadata itself,
-  though never its document content.
+  though never its document content. One exception for input (owner, 2026-10-17): a plain single click on an element in a group of
+  sibling buttons or tabs that advertises AXPress may be pressed by sleight through Accessibility instead of a posted pointer click,
+  in the background and after the same lease and identity checks, because Excel treated posted tab clicks as drags (6 of 8 runs).
 - Browsers get turbo, sleight's own direct path, with no extension install. The user turns it on once through Chrome's built-in
   remote-debugging consent. Its benchmark proved it, so turbo is the default from 1.3.0 (owner, 2026-10-16).
   Turbo includes `playwright-core` 1.64.0, pinned, with its notices, and compiles two native helpers from source on the user's Mac
