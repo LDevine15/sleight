@@ -506,9 +506,10 @@ export function createRelay({
   resultTrim = false,
   leanCalls = process.env.SLEIGHT_LEAN_CALLS === '1',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
-  // On unless SLEIGHT_COMPACT_REACQUIRE=0 (the A/B baseline): a re-acquisition of a window Claude saw
-  // whole gets "no change" or the changed lines, as a read does.
-  compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE !== '0',
+  // Opt-in (SLEIGHT_COMPACT_REACQUIRE=1): a re-acquisition of a window Claude saw whole gets "no change" or the
+  // changed lines, as a read does. It cut prompt tokens 9% but lost the 2026-10-17 A/B (excel-edit and word-edit, 5 rounds:
+  // 156.3 s and 9/10 against 149.4 s and 10/10), with more Excel turns.
+  compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   firstCallRules,
   confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,

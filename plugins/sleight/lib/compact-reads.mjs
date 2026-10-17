@@ -937,7 +937,7 @@ function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = f
 
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
-  compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE !== '0',
+  compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
   compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {} } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the

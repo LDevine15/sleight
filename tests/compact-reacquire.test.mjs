@@ -24,7 +24,7 @@ const acquire = (c, value = tree(), options = {}) => output(c.process([text(valu
 const NO_CHANGE = 'sleight: no change since the last full tree you saw for this window.';
 
 test('an unchanged re-acquisition is the window line and "no change", and every number stays known', () => {
-  const c = createReadCompactor();
+  const c = createReadCompactor({ compactReacquire: true });
   assert.equal(acquire(c), tree(), 'a first acquisition is whole');
   const out = acquire(c, 'Engine docs\n' + tree());
   assert.equal(out, 'Engine docs\n' + tree().split('\n').slice(0, 2).join('\n') + '\n' + NO_CHANGE);
@@ -32,7 +32,7 @@ test('an unchanged re-acquisition is the window line and "no change", and every 
 });
 
 test('a changed re-acquisition is a diff whose + lines carry the current numbers', () => {
-  const c = createReadCompactor();
+  const c = createReadCompactor({ compactReacquire: true });
   acquire(c);
   const out = acquire(c, tree({ status: 'Saved' }));
   assert.match(out, /sleight: lines changed since the last full tree you saw/);
@@ -44,7 +44,7 @@ test('a changed re-acquisition is a diff whose + lines carry the current numbers
 });
 
 test('a renumbered re-acquisition shows known lines with their new numbers, as a getAXState read does', () => {
-  const c = createReadCompactor();
+  const c = createReadCompactor({ compactReacquire: true });
   acquire(c);
   const out = acquire(c, tree({ tail: ['\t\t0 button New'] }));
   assert.match(out, /^\+ \t\t20 button New$/m);
@@ -57,12 +57,12 @@ test('a renumbered re-acquisition shows known lines with their new numbers, as a
 });
 
 test('a new window, a degraded or incomplete tree and an ambiguous read stay whole', () => {
-  const c = createReadCompactor();
+  const c = createReadCompactor({ compactReacquire: true });
   acquire(c);
   assert.equal(acquire(c, tree({ title: 'Other' })), tree({ title: 'Other' }), 'a window Claude never saw');
   for (const value of [tree() + '\n…(2000)', tree().replace('0 standard window', '0 menu'),
     tree() + '\n' + tree({ title: 'Other' }), tree().replace(', URL: file:///tmp/report.pdf', '')]) {
-    const fresh = createReadCompactor();
+    const fresh = createReadCompactor({ compactReacquire: true });
     acquire(fresh);
     assert.equal(acquire(fresh, value), value);
   }
@@ -71,13 +71,13 @@ test('a new window, a degraded or incomplete tree and an ambiguous read stay who
 test('failed, stopped and restarted calls keep the acquisition whole, and so does the next one', () => {
   for (const [options, notice] of [[{ failed: true }, ''], [{}, '\nInput lease stopped this action: window or URL changed.'],
     [{}, "\nsleight: the engine's JavaScript session restarted before this call."], [{}, '\nsleight: the user switched windows.']]) {
-    const c = createReadCompactor();
+    const c = createReadCompactor({ compactReacquire: true });
     acquire(c);
     assert.equal(acquire(c, tree() + notice, options), tree() + notice, 'the call itself');
     assert.equal(acquire(c), tree(), 'the next acquisition after it');
     assert.match(acquire(c), /no change since/, 'and then compacted again');
   }
-  const c = createReadCompactor();
+  const c = createReadCompactor({ compactReacquire: true });
   acquire(c);
   const action = c.beginAction('await app.click(3)');
   c.process([text(GUARD_MARK + tree() + GUARD_END)], { action, failed: true });
@@ -88,7 +88,7 @@ test('failed, stopped and restarted calls keep the acquisition whole, and so doe
 });
 
 test('"this call acted on" is no reason for the next acquisition to be whole', () => {
-  const c = createReadCompactor();
+  const c = createReadCompactor({ compactReacquire: true });
   acquire(c);
   c.process([text('sleight: this call acted on "Report" in Fixture Reader. The window it shows now is "Other".')]);
   assert.match(acquire(c), /no change since/);
@@ -96,19 +96,19 @@ test('"this call acted on" is no reason for the next acquisition to be whole', (
 
 test('disableDiffing and a forced full read keep the acquisition whole', () => {
   for (const options of [{ explicitFull: true }, { forceFull: true }]) {
-    const c = createReadCompactor();
+    const c = createReadCompactor({ compactReacquire: true });
     acquire(c);
     assert.equal(acquire(c, tree(), options), tree());
   }
 });
 
-test('SLEIGHT_COMPACT_REACQUIRE=0 keeps re-acquisitions whole; it is on otherwise', () => {
+test('SLEIGHT_COMPACT_REACQUIRE=1 compacts re-acquisitions; they stay whole otherwise', () => {
   const off = createReadCompactor({ compactReacquire: false });
   acquire(off);
   assert.equal(acquire(off), tree());
   const prior = process.env.SLEIGHT_COMPACT_REACQUIRE;
   try {
-    for (const [value, on] of [[undefined, true], ['1', true], ['0', false]]) {
+    for (const [value, on] of [[undefined, false], ['1', true], ['0', false]]) {
       if (value === undefined) delete process.env.SLEIGHT_COMPACT_REACQUIRE;
       else process.env.SLEIGHT_COMPACT_REACQUIRE = value;
       const c = createReadCompactor();
