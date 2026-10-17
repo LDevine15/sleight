@@ -3,17 +3,20 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 12:20 UTC, after the boot)
+## Banner (2026-10-17 12:22 UTC, after the boot)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b. The owner is back and wants normal answers.
 
-**Nothing is running.** sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed. The watcher
-closed its Finder fixture windows, scored it to `~/Projects/sleight-wt/sitting-1017/claim-score-final.txt` and released Puddle's
-window w-flagab-1017 at 12:13:06Z. No lanes, agents or monitors.
-Harness bugs from it: run.mjs crashed at its very end (`ENOENT` on `/tmp/sleight-live.lock` in the unlock, so something else
-removed the lock mid-run; the rows were already saved), and claim.sh logs `exit $?` after a `$(date)` substitution, so every
-"exit 0" in claim.log is date's status, not the arm's.
+**Running.** Codex lanes (gpt-6.1-sol high, `nohup`, logs in `ledger/lane-runs/<id>.log`) on CU1, IT1, SK1, RB1, RF1, DG1 and
+CP1, each claimed at 12:18Z. Each needs a Sonnet-high review before its merge, and CU1, SK1, RB1, CP1
+and IT1's Excel half need a live run or A/B. No live run is going: the next ones wait for the owner to say they're away and a
+Puddle window.
+sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed, scored to
+`~/Projects/sleight-wt/sitting-1017/claim-score-final.txt`, and Puddle's window w-flagab-1017 was released at 12:13:06Z.
+Its harness bugs: run.mjs crashed in the unlock because something else removed `/tmp/sleight-live.lock` mid-run (fixed in
+`250708da`, which reports it and exits 1; the culprit is unknown), and claim.sh logged `$(date)`'s status as the arm's exit
+(fixed in place in `sitting-1017/claim.sh`).
 
 **The native claim** (9 tasks in bench/claim-tasks.txt; `node bench/claim-score.mjs`, exclusions in bench/claim-exclusions.json).
 Competitor rows are from 2026-10-17 04:03 to 06:54Z. sleight on the newest build is fastest on 6 of 9, expected seconds against
