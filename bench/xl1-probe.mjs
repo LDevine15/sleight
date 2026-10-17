@@ -177,10 +177,13 @@ async function main(argv) {
           if (bound.pid) { owned = { ...owned, pid: bound.pid, birth: bound.birth }; break; }
           assert.ok(Date.now() < deadline, 'Launch identity unavailable'); await sleep(100);
         }
-        // A just-launched Excel answers AXWindows with -25204 (cannot complete) for a while (17:17Z run).
+        // A just-launched Excel answers AXWindows with -25204 (cannot complete), then with no windows, for a while
+        // (17:17Z and 17:19Z runs). Wait for its window before any input.
         for (const deadline = Date.now() + 30000; ;) {
           try { await host('verify'); break; } catch (error) {
-            if (!/AX error -25204/.test(error.message) || Date.now() >= deadline) throw error;
+            const starting = /AX error -25204/.test(error.message) ||
+              (/Owned workbook window not found/.test(error.message) && error.details?.windows?.length === 0);
+            if (!starting || Date.now() >= deadline) throw error;
             await sleep(250);
           }
         }
