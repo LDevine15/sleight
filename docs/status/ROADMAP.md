@@ -58,6 +58,11 @@ Post-release work builds on branches now and merges after the tag (owner, 2026-1
    for the browser. IN1 to IN4 proceed on sleight-arch's calls (owner, 2026-10-15): IN1 narrowed to default browser snapshots,
    IN3's design reviewed by sleight-arch, and IN2 and IN4 measured headless or in an away window.
    The skill (94 lines, up from 86 in 1.2.0) gets pruned with an A/B after the tag, not before the gate (owner, 2026-10-15).
+   Tracked items (owner, 2026-10-17: don't let these be forgotten like the 2026-10-11 turn study), in
+   `~/Projects/sleight-wt/ledger/queue/speed/`: TK1 to TK3 cut tokens per turn (a compact first acquisition, the engine docs sent
+   once and shorter, the skill's placement), and TS1 to TS5 fix one turn-study class each. TT1N to TT4 (lease, relay, drag, compact reads) are building now. Each is done
+   only when merged and measured by a Haiku A/B on held-out native tasks plus the claim tasks. Model time is about 85% of a run,
+   and sleight's first result is about 25,000 characters against Peekaboo's 4,600.
 5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
 6. The AM1 speed map of app classes, parked until after 1.3.0. Its VS Code and Word fixtures still fail setup.
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in
