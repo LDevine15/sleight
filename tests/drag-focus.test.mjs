@@ -29,6 +29,14 @@ test('the launcher restores focus after a timed-out drag child', async () => {
   assert.deepEqual(calls.map(c => [c.script, c.args.op]), [['drag-focus.js', 'capture'], ['drag.js', undefined], ['drag-focus.js', 'release'], ['drag-focus.js', 'restore']]);
   assert.equal(calls[3].args.previousPid, 99);
 });
+test('a focus restore that times out after a completed drag gets no Copy and Paste advice', async () => {
+  const result = await callLocalTool('drag', { app: 'Chess', from: [20, 40], to: [20, 80] }, async () => true, async (script, args) => {
+    if (script === 'drag-focus.js') return args.op === 'capture' ? { ok: true, previousPid: 99, targetPid: 7 } : { ok: false, error: 'drag-focus.js timed out after 3 s' };
+    return { ok: true, path: 'foreground' };
+  });
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /Focus restoration failed: drag-focus\.js timed out/);
+  assert.doesNotMatch(result.content[0].text, /Copy or Cut and Paste/);
+});
 test('a drag child killed mid-press gets its posted button released and says so', async () => {
   const result = await callLocalTool('drag', { app: 'Chess', from: [20, 40], to: [20, 80] }, async () => true, async (script, args) => {
     if (script === 'drag-focus.js') return args.op === 'capture' ? { ok: true, previousPid: 99, targetPid: 7 } : args.op === 'release' ? { ok: true, released: true } : { ok: true };

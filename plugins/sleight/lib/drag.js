@@ -173,7 +173,8 @@ function dragContent(pid, win, bounds, from, to) {
     if (error) throw axFailure('endpoint hit test', error);
     let el = axElement(ObjC.castRefToObject(hit[0])), matched = false;
     const path = [];
-    for (let depth = 0; depth < 32; depth++) {
+    // Electron windows put web text about 31 parents below the window (2026-10-17).
+    for (let depth = 0; depth < 64; depth++) {
       if ($.CFEqual(el.reference, win.reference)) { matched = true; break; }
       const role = el.role(), subrole = attempt(() => el.subrole(), '');
       if (role === 'AXWindow' || role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(subrole)) {

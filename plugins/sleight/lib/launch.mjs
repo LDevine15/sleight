@@ -551,12 +551,14 @@ const text = (value, isError) => ({ content: [{ type: 'text', text: typeof value
 async function performDrag(args, runLocal) {
   const focus = await runLocal('drag-focus.js', { op: 'capture', app: args.app });
   if (!focus.ok) return text(focus.error, true);
-  let result;
+  let result, dragTimedOut = false;
   try {
     result = await runLocal('drag.js', args);
   }
   catch (e) { result = { ok: false, error: String(e.message || e) }; }
   finally {
+    // Copy-and-Paste advice follows the drag's own timeout, not a focus restore timing out after a drag that worked.
+    dragTimedOut = !result?.ok && (!!result?.timedOut || /timed out/i.test(result?.error ?? ''));
     // A completed background or Accessibility attempt never owned focus, including lost text.
     // Unknown child termination retains the existing guarded timeout cleanup.
     if (!['background', 'accessibility', 'none'].includes(result?.path)) {
@@ -575,7 +577,7 @@ async function performDrag(args, runLocal) {
       }
     }
   }
-  if (!result.ok && (result.timedOut || /timed out/i.test(result.error ?? ''))) {
+  if (!result.ok && dragTimedOut) {
     result = { ...result, error: `${result.error}; for files or list items, use Copy or Cut and Paste, or the app's Move command` };
   }
   const { ok, ...rest } = result;
