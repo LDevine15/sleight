@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
@@ -297,6 +298,30 @@ const edited = title => /(?: — | - )Edited$/.test(title);
 // A file:// document's modification time, null when it has none or can't be read.
 function fileTime(url) {
   try { return url?.startsWith('file://') ? statSync(fileURLToPath(url)).mtimeMs : null; } catch { return null; }
+}
+// A confirmed save's file from metadata only, never its content: size from stat, kind from the system's type
+// identifier (Spotlight's, about 40 ms), else the extension. After a confirmed save, 3 of 20 textedit-save runs
+// opened the Format menu to check for plain text (4-17 s each) and 3 tried `require('fs')` (Fable study, 2026-10-17).
+const EXTENSION_TYPES = { txt: 'public.plain-text', text: 'public.plain-text', md: 'public.plain-text', csv: 'public.plain-text',
+  rtf: 'public.rtf', rtfd: 'com.apple.rtfd', pdf: 'com.adobe.pdf' };
+// The file's type identifier first, then the types it conforms to; undefined when Spotlight has none.
+export function spotlightTypes(path) {
+  const run = spawnSync('/usr/bin/mdls', ['-raw', '-name', 'kMDItemContentType', '-name', 'kMDItemContentTypeTree', path],
+    { encoding: 'utf8', timeout: 1000 });
+  const [type, tree = ''] = run.status === 0 ? run.stdout.split('\0') : [];
+  if (!type || type === '(null)') return;
+  return [type, ...[...tree.matchAll(/"([^"]+)"/g)].map(m => m[1])];
+}
+export function fileReceipt(url, typesOf = spotlightTypes) {
+  try {
+    const path = fileURLToPath(url), info = statSync(path);
+    const extension = /\.([^./]+)$/.exec(path)?.[1].toLowerCase();
+    const types = typesOf(path) ?? (EXTENSION_TYPES[extension] ? [EXTENSION_TYPES[extension]] : []);
+    const kind = types.includes('com.apple.rtfd') ? 'rich text with attachments' : types.includes('public.rtf') ? 'rich text (RTF)'
+      : types.includes('com.adobe.pdf') ? 'PDF' : types.some(type => /^public\.(?:utf8-)?plain-text$/.test(type)) ? 'plain text'
+      : types[0] ? types[0].split('.').at(-1) : extension ? `.${extension} file` : 'unknown type';
+    return info.isDirectory() ? `on disk: a package folder, ${kind}` : `on disk: ${info.size} bytes, ${kind}`;
+  } catch { return; }
 }
 const withoutValue = line => line.replace(/(?:, )?Value: ?.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '')
   .replace(/, (?=(?:Secondary Actions|ID|Help|Description):)/g, ' ').replace(/ +/g, ' ').trimEnd();
@@ -649,7 +674,8 @@ function resultNote(action, after, failed, failure) {
   const selectedTabs = !reason && !incomplete && !degraded && after?.delta?.baseline === before.id
     ? after.delta.selectedTabs : [];
   const fields = [failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
-    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && 'saved: ' + saved].filter(Boolean);
+    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && 'saved: ' + saved,
+    saved?.startsWith('observed') && after.window.url?.startsWith('file://') && fileReceipt(after.window.url)].filter(Boolean);
   const finish = saveFinishLine(after, before, failed, action.overlap);
   if (!fields.length) return finish;
   const note = fields.join('; ');
