@@ -72,7 +72,7 @@ import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, menuIdentity,
-  unchangedMenuWindow } from './menu-continuation.mjs';
+  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -512,6 +512,9 @@ export function createRelay({
   keyboardTaps,
   windowIdentity,
   menuContinuationTimeoutMs = 600,
+  // A tab the call's own Cmd/Ctrl shortcut opened in the leased window carries the call on (menu-continuation.mjs
+  // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
+  tabContinuation = process.env.SLEIGHT_TAB_CONTINUATION !== '0',
   // Milliseconds for the dialog continuation's HID-idle windows; tests inject one.
   clock = () => performance.now(),
   beginStop = () => {}, stopEngine, restartEngine, prepareEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
@@ -1259,6 +1262,7 @@ export function createRelay({
   }
   let leaseWindow;
   let recoveryTarget, recoveryKnown = false; // recoveryKnown: the target is a bundle ID the engine confirmed
+  let stateRead = false; // a getState read went to the engine this session, so its app ids are Claude's to use
   let lastConfirmedWindow; // the lease's last window with a confirmed bundle ID, kept when the lease drops
   let selectedWindow;
   let selectionVerified = false;
@@ -1410,6 +1414,7 @@ export function createRelay({
     }
     const read = name === 'js' ? typeof code === 'string' && isLeaseRead(code)
       : (name === 'menu_bar' && args.op === 'apps') || (name === 'notifications' && args.op === 'list');
+    if (read && name === 'js' && /\bcua\.getState\(/.test(code)) stateRead = true;
     const acquisition = read && withoutEcho(code ?? '').match(/^(?:(?:(let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*)?await\s+cua\.getApp\(\s*(.*?)\s*\)\s*;?$/s);
     const handle = acquisition ? acquisition[2] ?? (constApp ? undefined : 'app')
       : read && code?.match(/([A-Za-z_$][\w$]*)\.(?:getAXState|getAXStateAndScreenshot|getScreenshot)\(/)?.[1];
@@ -1431,12 +1436,20 @@ export function createRelay({
         // `let`: a failed `let app = …` leaves no binding, so a bare `app = …` would fail, and the
         // engine accepts `let` again for a name it already has (both checked 2026-10-07).
         // With no app read yet, an app named in this call beats getState, which acquires nothing.
-        const named = code.match(/cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/)?.[1];
+        // An app id the code compares against (`a.id === "org.example.app"`) names the app as well as getApp does.
+        // Without either, a session that already read getState is sent to getApp: sending getState again
+        // acquired nothing in the Firefox race round (form-travel, 2026-10-17).
+        const named = code.match(/cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/)?.[1] ??
+          code.match(/\.id\s*===?\s*("[A-Za-z][\w-]*(?:\.[\w-]+)+"|'[A-Za-z][\w-]*(?:\.[\w-]+)+')/)?.[1];
         const target = recoveryTarget ?? (named && `cua.getApp(${named})`);
-        const recovery = target ? `${constApp ? '' : 'let app = '}await ${target}` : 'await cua.getState()';
+        const recovery = target ? `Send exactly \u0060${constApp ? '' : 'let app = '}await ${target}\u0060 in js.`
+          : stateRead ? `Send \u0060${constApp ? '' : 'let app = '}await cua.getApp("<id>")\u0060 in js, with the app's id from getState.`
+          : 'Send exactly \u0060await cua.getState()\u0060 in js.';
+        // Template literals, statements and other calls make a lookup an action (form-settings-helium, 2026-10-17:
+        // one listWindows expression with a template literal was refused with this same advice).
         const inventory = /\bcua\.(?:listApps|listWindows|getState)\(/.test(code)
-          ? ' To look up apps or windows, send one expression, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
-        leaseStop(msg, `a bundle ID and full window header are required. Send exactly \u0060${recovery}\u0060 in js.${inventory} Use the handle returned by cua.getApp directly.`, true);
+          ? ' To look up apps or windows, send one expression with plain quotes, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
+        leaseStop(msg, `a bundle ID and full window header are required. ${recovery}${inventory} Use the handle returned by cua.getApp directly.`, true);
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }
@@ -1542,10 +1555,12 @@ export function createRelay({
       // including startup retries, against the original call's forwarding time.
       if (continuation.checking) return;
       continuation.checking = true;
-      const { call, expected, baseline, lease, original, head, current } = continuation;
+      const { call, expected, baseline, lease, original, head, current, tab } = continuation;
       menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
         if (!current() || leaseWindow !== lease ||
-            !unchangedMenuWindow(expected, baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt), clock())) {
+            !unchangedMenuWindow(expected, baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt), clock()) ||
+            tab && tabFocusRefusal(observed)) {
+          if (tab) trace('tab-continuation-refused', { id: msg.id, reason: 'final-check' });
           menuForwards.delete(msg.id);
           menuCalls.delete(msg.id);
           if (head) splitHeads.set(msg.id, head); else splitHeads.delete(msg.id);
@@ -2404,17 +2419,28 @@ export function createRelay({
       const reason = ineligible ?? dialogRefusal(call.plan, taken.receipt, covered, taken.content);
       if (reason && reason !== 'palette-needs-close-check') refuse(reason);
     }
-    const remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
+    let remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
       menuRemainder(call.plan, taken.receipt, call.target, taken.content));
+    // Every window stop no other continuation took says why no tab continuation ran either.
+    const refuseTab = reason => trace('tab-continuation-refused', { id: msg.id, reason });
+    if (stopped && taken.receipt?.windowStop && !remainder) {
+      const reason = ineligible ?? (!tabContinuation ? 'off' : tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before));
+      if (reason) refuseTab(reason);
+      else remainder = tabRemainder(call.plan, taken.receipt, call.target, taken.content, call.before);
+    }
     if (remainder?.dialog && !call.baseline) refuse('no-baseline');
+    if (remainder?.tab && !call.baseline) refuseTab('no-baseline');
     if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
+    // A tab continuation also asks the helper for the window's sheets and focused element.
     const expected = remainder.dialog ? { appId: covered.appId, title: covered.title, app: covered.app, url: covered.url }
-      : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
+      : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline,
+        ...(remainder.tab ? { focus: true } : {}) } : call.target;
     // A palette the lease held must be gone, not just behind the document, unless Escape closed it.
     const gone = remainder.closeCheck ? windowGone(windowIdentity, { appId: covered.appId, title: call.target.title, url: call.target.url }, menuContinuationTimeoutMs)
       : Promise.resolve(true);
-    gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`) : undefined)
+    gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`)
+      : remainder.tab ? error => refuseTab(`identity: ${error}`) : undefined)
       : (refuse('palette-still-open'), undefined)).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
       if (remainder.dialog) noteProcess(observed);
@@ -2423,9 +2449,12 @@ export function createRelay({
       // The covered window must have been seen standard in the process the dialog's baseline has.
       const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && (covered.seen?.process !== processKey(call.baseline)
         ? 'covered-process-changed' : returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at, covered.seenAt), clock()))
-        : !unchangedMenuWindow(expected, call.baseline, observed, since) && 'menu-window-changed';
+        : !unchangedMenuWindow(expected, call.baseline, observed, since) ? 'menu-window-changed'
+        : remainder.tab && tabFocusRefusal(observed);
       if (refusal || !observed) {
         if (remainder.dialog && refusal) refuse(refusal);
+        // Without an observation, menuIdentity already traced why.
+        if (remainder.tab && refusal && observed) refuseTab(refusal);
         observeServerMessage(msg); return;
       }
       // The rest goes to the covered window under its own lease, pinned to the native window just observed.
@@ -2437,13 +2466,13 @@ export function createRelay({
       msg.result = { ...msg.result, isError: false, content: [...taken.head,
         { type: 'text', text: GUARD_MARK + remainder.tree + GUARD_END }] };
       menuContinued.set(msg.id, taken.receipt.index);
-      trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind: remainder.dialog ? 'dialog' : remainder.navigation ? 'navigation' : 'menu' });
+      trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind: remainder.dialog ? 'dialog' : remainder.tab ? 'tab' : remainder.navigation ? 'navigation' : 'menu' });
       splitCalls.set(msg.id, reply => {
         if (!current()) { toClient({ ...reply, result: { ...reply.result, isError: true } }); return; }
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
         leaseWindow = lease;
         menuBaselines.set(msg.id, remainder.window);
-        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current });
+        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab });
         nativeChecked.add(msg.id); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
@@ -2576,7 +2605,8 @@ export function createRelay({
         ? handleBundles.get(name)?.appId === leaseWindow.appId : /^__sleightOpenedApp\d+$/.test(name) });
       if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
         const target = leaseWindow, generation = stopGeneration;
-        const admission = { plan, target, generation };
+        // The window's lines as Claude last saw them, for the tab continuation to count its tabs against.
+        const admission = { plan, target, generation, before: compactor.seenLines(target) };
         menuAdmissions.set(msg.id, admission);
         running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
         // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.

@@ -92,6 +92,9 @@ function trailingRead(ts, handle, names) {
   if (ts[0]?.v === 'nodeRepl' && ts[1]?.v === '.' && ts[2]?.v === 'write' && ts[3]?.v === '(' && ts.at(-1)?.v === ')' &&
       !ts.slice(0, 4).some(t => t.string)) return writeArgument(ts.slice(4, -1), handle, names) ? '' : undefined;
   if (writeArgument(ts, handle, names)) return '';
+  // `await app.getAXState()` as the call's value: 3 of the 8 Firefox new-tab calls ended this way (2026-10-17).
+  if (ts[0]?.v === 'await' && !ts[0].string && ts[1]?.v === handle && !ts[1].string && punct(ts[2], '.') && ts[3]?.v === 'getAXState' &&
+      !ts[3].string && punct(ts[4], '(') && punct(ts.at(-1), ')') && literalArgs(ts.slice(5, -1))) return '';
   const i = declared(ts);
   return isName(ts[i]) && ts[i].v !== handle && !forbidden.has(ts[i].v) && ts[i + 1]?.v === '=' && ts[i + 2]?.v === 'await' && ts[i + 3]?.v === handle &&
     ts[i + 4]?.v === '.' && READS.has(ts[i + 5]?.v) && !ts[i + 5].string && ts[i + 6]?.v === '(' && ts.at(-1)?.v === ')' &&
@@ -189,7 +192,9 @@ export function menuRemainder(plan, receipt, expected, content) {
     if (window.title === expected.title || /^\s*\d+ (?:sheet|dialog)\b/m.test(tree)) return;
     // Only windows without editable document content: nothing proves this call's key caused the retitle, and a
     // retitle into a document (Return opening a file, a tab switch) would put the rest of the call's input there.
-    if (/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/m.test(tree)) return;
+    // Any case: Firefox names its page "HTML Content" (342 of 342 reads in the 2026-10-17 race round), which the
+    // lowercase test let through as a navigation.
+    if (/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/im.test(tree)) return;
     return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree, navigation: true };
   }
   if (!['label', 'id'].includes(prev.kind)) return;
@@ -203,6 +208,69 @@ export function menuRemainder(plan, receipt, expected, content) {
     (!/^[a-z]+(?: [a-z]+)* /.test(prev.line) || /^(?:menu item|menu bar item|menu button|pop up button) /.test(prev.line));
   if (!named) return;
   return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree };
+}
+
+// A tab this call's own shortcut opened in the window it leased. In the Firefox race round (2026-10-17) Cmd+T
+// retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing. Only a Cmd or Ctrl shortcut on one letter, and only when the tree shows exactly one tab more
+// than the window Claude last saw, that tab selected, no sheet or dialog, and focus on an editable field outside
+// any page or document, where the rest's typing lands. `before` is the earlier tree's lines by element number.
+const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+[a-z]$/i;
+const tabsOf = lines => lines.flatMap(line => {
+  const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(line);
+  return tab ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) }] : [];
+});
+const DOCUMENT_ROLE = /^(?:web area|HTML content|text area|text entry area)(?: |,|$)/i;
+const APP_FIELD = /^(?:text field|combo box|search field|search text field)(?: |,|$)/i;
+export function tabRefusal(plan, receipt, expected, content, before) {
+  if (!receipt) return 'no-receipt';
+  if (receipt.windowStop !== true) return 'not-a-window-stop';
+  if (!plan) return 'unsplit-call';
+  const n = stoppedAfter(plan, receipt);
+  if (n === undefined) return 'receipt-mismatch';
+  if (receipt.prev.kind !== 'key' || !TAB_KEY.test(receipt.prev.value)) return 'not-a-tab-shortcut';
+  const stopped = stopTree(receipt, content);
+  if (!stopped) return 'tree-mismatch';
+  if (stopped.window.app !== expected?.app) return 'other-app';
+  if (!/^standard window(?: |,|$)/.test(stopped.line)) return 'root-not-standard';
+  if (stopped.window.title === expected.title && stopped.window.url === expected.url) return 'same-header';
+  if (/^\s*\d+ (?:sheet|dialog|system dialog)\b/m.test(stopped.tree)) return 'sheet';
+  if (!before || typeof before !== 'object') return 'no-earlier-tree';
+  const entries = [...stopped.tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  const was = tabsOf(Object.values(before).filter(line => typeof line === 'string')), now = tabsOf(entries.map(entry => entry.line));
+  const selected = now.filter(tab => tab.selected);
+  if (now.length !== was.length + 1 || selected.length !== 1) return 'no-new-tab';
+  const left = new Map();
+  for (const tab of now) left.set(tab.label, (left.get(tab.label) ?? 0) + 1);
+  for (const tab of was) {
+    if (!left.get(tab.label)) return 'no-new-tab';
+    left.set(tab.label, left.get(tab.label) - 1);
+  }
+  if ([...left].some(([label, count]) => count !== (label === selected[0].label ? 1 : 0))) return 'no-new-tab';
+  // The engine names focus after the tree; it must be an app field, and none of its ancestors a page or document.
+  const focused = Number(/^The focused UI element is (\d+) /m.exec(stopped.tree)?.[1]);
+  const at = entries.findIndex(entry => entry.number === focused);
+  if (at < 0 || !APP_FIELD.test(entries[at].line)) return 'focus-not-app-field';
+  for (let i = at - 1, depth = entries[at].depth; i >= 0 && depth > 0; i--) {
+    if (entries[i].depth >= depth) continue;
+    depth = entries[i].depth;
+    if (DOCUMENT_ROLE.test(entries[i].line)) return 'focus-in-document';
+  }
+}
+export function tabRemainder(plan, receipt, expected, content, before) {
+  if (tabRefusal(plan, receipt, expected, content, before)) return;
+  const stopped = stopTree(receipt, content);
+  return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree,
+    navigation: true, tab: true };
+}
+// The native side of the same check, from the helper's focus observation of the window: no sheet, and focus on a
+// text field or combo box in it that isn't a password field.
+export function tabFocusRefusal(observed) {
+  const focus = observed?.focus;
+  if (!focus || typeof focus !== 'object') return 'no-native-focus';
+  if (focus.sheets !== 0) return 'native-sheet';
+  if (focus.inWindow !== true) return 'focus-outside-window';
+  if (focus.subrole === 'AXSecureTextField') return 'secure-field';
+  if (!['AXTextField', 'AXComboBox'].includes(focus.role)) return 'focus-not-text-field';
 }
 
 // The lease held a dialog or sheet, the call's own action closed it, and the window in front is the one the lease
@@ -277,6 +345,9 @@ const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|b
 export function stopNote(receipt, plan, earlier = 0) {
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
   const count = n => `${n} action${n === 1 ? '' : 's'}`;
+  // The stop leased the window it shows, so the rest needs no re-read: in the Firefox race round (2026-10-17) Claude
+  // spent a call only reading again after 10 of 12 new-tab stops.
+  const recipe = ran => ran ? ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.' : '';
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
     const name = action => {
@@ -286,10 +357,10 @@ export function stopNote(receipt, plan, earlier = 0) {
     };
     const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
     const ran = plan.actions.slice(0, n);
-    return `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.`;
+    return `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.${recipe(n)}`;
   }
   const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
-  return `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.`;
+  return `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.${recipe(ran)}`;
 }
 
 export async function menuIdentity(identity, expected, timeoutMs = 600, refused) {
