@@ -191,8 +191,10 @@ TODO: full release pass result.
 - `blocked_app` is gone. When the engine refuses a terminal or OpenAI's app, the result gives the
   setting that lifts the refusal (`ComputerUseAllowForbiddenTargets`), which only you turn on. With
   it on, those apps get the usual approval card with one line saying the app could be dangerous.
-- When your own message names what to pay and with what, that payment counts as confirmed, including
-  the page's confirm dialog for the same item, amount and payee. Any other payment asks.
+- When your own message names what to pay, the amount and what to pay with, that payment counts as
+  confirmed, including the page's confirm dialog for the same item, amount and payee. Any other payment
+  asks, on the engine's browser path as on turbo: in the first real-window Firefox round (2026-10-17) the
+  engine path paid $268.00 on a test checkout whose prompt named the item and card but no amount.
   `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` also skips turbo's
   check of a money figure larger than your amount, for a payment your message named with its amount.
   An unrequested payment, a second payment in the same request and a different amount still ask.

@@ -257,7 +257,7 @@ test('window selection is accepted only for the gate browser and only with the e
   for (const app of ['Safari', 'Google Chrome', 'Finder']) assert.equal(answer(ask(app), env), 'decline');
   assert.equal(answer(ask('Firefox'), {}), 'decline', 'other rounds keep declining');
   assert.equal(answer({ ...ask('Firefox'), mcp_server_name: 'other' }, env), 'decline');
-  assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: "Allow Claude to drag in Firefox? Background comes first; foreground fallback can move your pointer for a few seconds." }, env), 'decline');
+  assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: "Allow Claude to drag in Firefox? Background comes first; foreground fallback can move your pointer for a few seconds." }, env), 'accept', 'the owner allowed drag in away gate rounds');
   const call = input => gateWindowCheck({ hook_event_name: 'PreToolUse', tool_name: 'mcp__plugin_sleight_computer__select_window', tool_input: input }, env);
   assert.equal(call({ app: 'Firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
   assert.equal(call({ app: 'org.mozilla.firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
@@ -634,4 +634,13 @@ for (const startTab of [true, false]) test(`retention ${startTab ? 'excludes nav
         initialUrl: startTab ? browser.args.at(-1) : 'https://example.test/task', title: 'Task' } } }) } });
   assert.equal(rows[0].outcome.ok, !startTab);
   process.exitCode = 0;
+});
+
+test('the gate hook accepts sleight drag only in the gate browser during a gate round', async () => {
+  const { answer } = await import('../bench/fowl/origin-hook.mjs');
+  const env = { FOWL_GATE_WINDOW: JSON.stringify({ apps: ['Firefox'], title: 'Sleight Gate 12345678-aaaa' }) };
+  const drag = app => ({ mcp_server_name: 'plugin:sleight:computer', message: `Allow Claude to drag in ${app}? Background comes first; foreground fallback can move your pointer for a few seconds.` });
+  assert.equal(answer(drag('Firefox'), env), 'accept');
+  assert.equal(answer(drag('Finder'), env), 'decline');
+  assert.equal(answer(drag('Firefox'), {}), 'decline');
 });

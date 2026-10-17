@@ -50,6 +50,9 @@ export function answer(e, env = process.env) {
   if (e.mcp_server_name === 'plugin:sleight:computer' && local) return 'accept';
   const selecting = /^Allow Claude to select a window in (.+)\? It changes the app's main window without activating the app\.$/.exec(message)?.[1];
   if (selecting) return e.mcp_server_name === 'plugin:sleight:computer' && gateWindow(env)?.apps.includes(selecting) ? 'accept' : 'decline';
+  // The owner allowed sleight's drag in the gate's own browser during away rounds, as the native claim runs allow it (2026-10-17).
+  const dragging = /^Allow Claude to drag in (.+?)\?/.exec(message)?.[1];
+  if (dragging) return e.mcp_server_name === 'plugin:sleight:computer' && gateWindow(env)?.apps.includes(dragging) ? 'accept' : 'decline';
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1];
   return e.mcp_server_name === 'plugin:sleight:computer' && (ORIGINS.includes(site) || APPS.includes(app)) ? 'accept' : 'decline';
 }
