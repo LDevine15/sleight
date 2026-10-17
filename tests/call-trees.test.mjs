@@ -9,12 +9,12 @@ const LOOP = 'let found = "none"; for (let i = 0; i < 40 && found === "none"; i+
   'const hit = s.split("\\n").filter(l => /Norcrest/.test(l)); if (hit.length) { found = hit.join("\\n"); break; } await ff.scroll(49, "down", 3); } nodeRepl.write(found);';
 
 // The travel page: browser chrome, a 16-row airport list starting at `first`, and the menu bar.
-function travel(first, title = 'Book a trip · Skyway') {
+function travel(first, title = 'Book a trip · Skyway', root = `standard window ${title}, Secondary Actions: Raise`, selected = -1) {
   const rows = Array.from({ length: 16 }, (_, i) => {
     const n = first + i, name = `Airport ${String(n).padStart(4, '0')} International`, code = `A${String(n).padStart(3, '0')}`;
-    return `\t\t\t\t\t\t\t${50 + i} text (selectable) ${name} ${code}\n${name}\n${code}`;
+    return `\t\t\t\t\t\t\t${50 + i} text (${n === selected ? 'selected' : 'selectable'}) ${name} ${code}\n${name}\n${code}`;
   });
-  return [`Window: "${title}", App: Firefox.`, `0 standard window ${title}, Secondary Actions: Raise`,
+  return [`Window: "${title}", App: Firefox.`, `0 ${root}`,
     '\t1 container Book a trip · Skyway', '\t\t2 toolbar Browser tabs', '\t\t\t3 tab group',
     ...Array.from({ length: 22 }, (_, i) => `\t\t\t\t${4 + i} button Toolbar control ${i}`),
     '\t\t26 HTML Content Description: Book a trip · Skyway, URL: 127.0.0.1:5413/travel',
@@ -119,24 +119,101 @@ test('the recorded travel result drops from 140,731 characters to one tree', { s
   assert.ok(output.length < 4000, String(output.length));
 });
 
-test('the third call in a row scrolling one list gets the loop note, once', () => {
+test('the third call in a row scrolling one list the same way gets the loop note, once', () => {
   const c = createReadCompactor({ scrollNote: true });
   c.process([text(travel(0))]);
   const scroll = (code, first, title) => join_(c.process([text(GUARD_MARK + travel(first, title) + GUARD_END)],
     { code, action: c.beginAction(code) }));
-  assert.doesNotMatch(scroll('await ff.scroll(49, "down", 3);', 9), /3 calls in a row/);
-  assert.doesNotMatch(scroll('await ff.scroll(49, "down", 3);', 18), /3 calls in a row/);
-  assert.ok(scroll('for (let i = 0; i < 6; i++) await ff.scroll(49, "down", 3);', 72).includes(SCROLL_LOOP_NOTE));
-  assert.doesNotMatch(scroll('await ff.scroll(49, "down", 3);', 81), /3 calls in a row/, 'once per run of calls');
-  // A click on the window starts over; another window's scrolls don't count toward this one.
-  scroll('await ff.click(58);', 81);
-  scroll('await ff.scroll(49, "down", 3);', 90);
-  scroll('await other.scroll(49, "down", 3);', 0, 'Other page');
-  scroll('await ff.scroll(49, "down", 3);', 99);
-  assert.ok(scroll('await ff.scroll(49, "up", 1);', 98).includes(SCROLL_LOOP_NOTE));
-  // A different list starts its own count.
-  scroll('await ff.scroll(12, "down", 3);', 98);
-  assert.doesNotMatch(scroll('await ff.scroll(49, "down", 3);', 107), /3 calls in a row/);
+  const noted = output => output.includes(SCROLL_LOOP_NOTE);
+  assert.ok(!noted(scroll('await ff.scroll(49, "down", 3);', 9)));
+  assert.ok(!noted(scroll('await ff.scroll(49, "down", 3);', 18)));
+  assert.ok(noted(scroll('await ff.scroll(49, "down", 3);', 27)));
+  assert.ok(!noted(scroll('await ff.scroll(49, "down", 3);', 36)), 'once per run of calls');
+  // A call that loops already searches in one call, and ends the run.
+  scroll('await ff.scroll(49, "down", 3);', 45);
+  assert.ok(!noted(scroll('for (let i = 0; i < 6; i++) await ff.scroll(49, "down", 3);', 99)));
+  assert.ok(!noted(scroll('await ff.scroll(49, "down", 3);', 108)));
+  assert.ok(!noted(scroll('let n = 0; while (n++ < 3) await ff.scroll(49, "down", 3);', 135)));
+  // Only the same direction counts: down, down, up starts over at the up.
+  scroll('await ff.scroll(49, "down", 3);', 144);
+  scroll('await ff.scroll(49, "down", 3);', 153);
+  assert.ok(!noted(scroll('await ff.scroll(49, "up", 1);', 152)));
+  scroll('await ff.scroll(49, "up", 1);', 151);
+  assert.ok(noted(scroll('await ff.scroll(49, "up", 1);', 150)), 'up three times');
+  // A click, another window's call, a call with no tree, or another list ends the run.
+  for (const interrupt of [() => scroll('await ff.click(58);', 150), () => scroll('await other.scroll(49, "down", 3);', 0, 'Other page'),
+    () => c.process([text('done')], { code: 'await ff.scroll(49, "down", 3);', action: c.beginAction('await ff.scroll(49, "down", 3);') }),
+    () => scroll('await ff.scroll(12, "down", 3);', 150)]) {
+    scroll('await ff.scroll(49, "down", 3);', 159);
+    interrupt();
+    scroll('await ff.scroll(49, "down", 3);', 168);
+    assert.ok(!noted(scroll('await ff.scroll(49, "down", 3);', 177)));
+  }
+});
+
+test('a sheet or dialog read is never hidden behind the document\'s last read', () => {
+  const sheet = first => travel(first, 'Book a trip · Skyway', 'sheet Description: Save, ID: save-panel');
+  const sheets = output => [...output.matchAll(/^0 sheet /gm)].length;
+  // doc, sheet, sheet, doc: two of each, nothing left out.
+  let c = createReadCompactor({ callTrees: true });
+  let output = loopCall(c, [travel(0), sheet(1), sheet(2), travel(9)]);
+  assert.equal(roots(output), 2);
+  assert.equal(sheets(output), 2);
+  // doc, sheet, doc, doc, doc: the earlier documents go, the sheet stays.
+  c = createReadCompactor({ callTrees: true });
+  output = loopCall(c, [travel(0), sheet(1), travel(9), travel(18), travel(27)]);
+  assert.equal(roots(output), 1);
+  assert.equal(sheets(output), 1);
+  assert.match(output, /3 earlier reads/);
+  // A menu read under the same header stays too.
+  c = createReadCompactor({ callTrees: true });
+  output = loopCall(c, [travel(0), travel(9), travel(18), travel(27, 'Book a trip · Skyway', 'menu'), travel(36)]);
+  assert.match(output, /^0 menu$/m);
+  assert.match(output, /3 earlier reads/);
+});
+
+test('two same-titled windows read through two handles are not merged', () => {
+  const untitled = first => travel(first, 'Untitled', 'standard window Untitled');
+  const code = 'for (let i = 0; i < 3; i++) { await a.getAXState(); await b.getAXState(); }';
+  const reads = [0, 100, 9, 109, 18, 118].map(untitled);
+  let c = createReadCompactor({ callTrees: true });
+  const output = join_(c.process([text(marked(reads))], { code, explicitFull: true }));
+  assert.equal(roots(output), 6);
+  for (const tree of reads) assert.ok(output.includes(tree));
+  // Through one handle, the same reads are one window's.
+  c = createReadCompactor({ callTrees: true });
+  assert.equal(roots(join_(c.process([text(marked(reads))], { code: 'for (let i = 0; i < 6; i++) await a.getAXState();', explicitFull: true }))), 1);
+});
+
+test('after an omission the next call acts on numbers from the last tree', () => {
+  const c = createReadCompactor({ callTrees: true });
+  c.process([text(travel(0))]);
+  const trees = Array.from({ length: 5 }, (_, i) => travel(i * 9));
+  const output = loopCall(c, trees);
+  assert.match(output, /Element numbers refer to the last tree\./);
+  const window = { title: 'Book a trip · Skyway', app: 'Firefox', url: null };
+  assert.equal(c.staleIndex(window, 'await ff.click(60);'), undefined, 'number 60 is current');
+  assert.match(c.seenLines(window, [60])[60], /^text \(selectable\) Airport 0046 International A046/);
+  const click = 'await ff.click(60);';
+  const after = join_(c.process([text(GUARD_MARK + travel(36, undefined, undefined, 46) + GUARD_END)],
+    { code: click, action: c.beginAction(click) }));
+  assert.match(after, /lines changed since the last full tree/, 'the diff is against the last tree');
+  assert.match(after, /\+ \t+60 text \(selected\) Airport 0046 International A046/);
+  assert.match(after, /sleight: UI changed \(value\)\./);
+});
+
+test('a failed or forceFull call is never compacted', () => {
+  const trees = Array.from({ length: 5 }, (_, i) => travel(i * 9));
+  for (const flags of [{ failed: true }, { forceFull: true }]) {
+    const c = createReadCompactor({ callTrees: true });
+    c.process([text(travel(0))]);
+    const output = join_(c.process([text(marked(trees))], { code: LOOP, explicitFull: true, action: c.beginAction(LOOP), ...flags }));
+    assert.equal(roots(output), 5, JSON.stringify(flags));
+    assert.doesNotMatch(output, /earlier reads/);
+  }
+  const c = createReadCompactor({ callTrees: true });
+  const output = join_(c.process([text(marked(trees) + 'sleight: an action in this call failed: elementHasNoFrame')], { code: LOOP, explicitFull: true }));
+  assert.equal(roots(output), 5, 'a failure notice in the result');
 });
 
 test('SLEIGHT_SCROLL_NOTE=0 leaves the note out', () => {

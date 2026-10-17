@@ -15,7 +15,7 @@
 // stale, so the relay tracks which numbers Claude has seen since its last full
 // read and refuses actions on any other (staleIndex).
 
-import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, documentKey, windowFromText, hasIdentifier, hasLabel } from './document-scope.mjs';
+import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, documentKey, windowFromText, hasIdentifier, hasLabel, menuRoot } from './document-scope.mjs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -1015,8 +1015,18 @@ function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = f
 // to a file Claude couldn't open (Firefox, 2026-10-17); with only the last tree it is 3,620. The code
 // still gets every read, the earlier ones become omitted reads (as emit:false makes them), and errors,
 // notices, Claude's own output and other windows' trees stay. Incomplete reads are never left out.
+// The header names only title, app and URL, so a read is left out only when its root (window, sheet,
+// dialog or menu, and the root's ID where it has one) matches the window's last read. Without an ID,
+// two same-titled windows look alike, so a call using more than one handle keeps those reads.
 const CALL_TREES = 2;
-function omitEarlierReads(content, limit = CALL_TREES) {
+const rootRole = (tree, root) => menuRoot(tree) ? 'menu'
+  : /^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.exec(parse(root).key)?.[0] ?? 'other';
+function omitEarlierReads(content, code, limit = CALL_TREES) {
+  if (typeof code !== 'string') return { content, omitted: 0 };
+  const masked = maskCode(code);
+  const handles = new Set([...masked.matchAll(/([A-Za-z_$][\w$]*)\s*\.\s*(?:getAXState|getAXStateAndScreenshot|getScreenshot|waitFor|click|setValue|selectText|performSecondaryAction|scroll|drag|pressKey|typeText|paste)\s*\(/g)]
+    .map(match => match[1]));
+  const oneHandle = handles.size <= 1 && !/\bcua\s*\.\s*get[A-Z]\w*\s*\(/.test(masked);
   const reads = [];
   content.forEach((item, index) => {
     if (item?.type !== 'text' || typeof item.text !== 'string') return;
@@ -1025,15 +1035,19 @@ function omitEarlierReads(content, limit = CALL_TREES) {
       if (at < 0) break;
       const end = item.text.indexOf(GUARD_END, at + GUARD_MARK.length);
       if (end < 0) break;
-      const tree = item.text.slice(at + GUARD_MARK.length, end), window = windowFromText(tree);
-      if (window && ELEMENT.test(tree.split('\n')[1] ?? '') && !/…\(\d+\)/.test(tree)) reads.push({ index, at, key: documentKey(window) });
+      const tree = item.text.slice(at + GUARD_MARK.length, end), window = windowFromText(tree), root = tree.split('\n')[1] ?? '';
+      if (window && ELEMENT.test(root) && !/…\(\d+\)/.test(tree)) {
+        const key = documentKey(window), id = /\bID: ([^,]+)/.exec(root)?.[1]?.trim();
+        reads.push({ index, at, key, id, root: JSON.stringify([key, rootRole(tree, root), id ?? '']) });
+      }
       pos = end + GUARD_END.length;
     }
   });
   const counts = new Map();
-  for (const read of reads) counts.set(read.key, (counts.get(read.key) ?? 0) + 1);
+  for (const read of reads) counts.set(read.root, (counts.get(read.root) ?? 0) + 1);
   const last = new Map(reads.map(read => [read.key, read]));
-  const hidden = reads.filter(read => counts.get(read.key) > limit && last.get(read.key) !== read);
+  const hidden = reads.filter(read => counts.get(read.root) > limit && last.get(read.key) !== read &&
+    last.get(read.key).root === read.root && (read.id !== undefined || oneHandle));
   if (!hidden.length) return { content, omitted: 0 };
   return { omitted: hidden.length, content: content.map((item, index) => {
     const spans = hidden.filter(read => read.index === index).reverse();
@@ -1043,11 +1057,15 @@ function omitEarlierReads(content, limit = CALL_TREES) {
   }) };
 }
 
-// The first argument of each literal scroll call: an element number, locator or point.
-const scrollTargets = code => [...maskCode(code).matchAll(/\.\s*scroll\s*\(/g)]
-  .map(match => /^\s*(\[[^\]]*\]|\{[^}]*\}|[^,)]*)/.exec(code.slice(match.index + match[0].length))[1].trim());
+// Each literal scroll call's first argument (an element number, locator or point) and direction.
+const scrollTargets = code => [...maskCode(code).matchAll(/\.\s*scroll\s*\(/g)].map(match => {
+  const args = /^\s*(\[[^\]]*\]|\{[^}]*\}|[^,)]*)(?:,\s*(['"])([^'"]*)\2)?/.exec(code.slice(match.index + match[0].length));
+  return `${args[1].trim()} ${args[3] ?? ''}`;
+});
 // Travel's airport search took 15 calls and 88.7 s, 45.7 s of it between calls; one call that scrolled
 // and read in a loop found and selected the airport in 33 s (Firefox, 2026-10-17).
+// This note and the omitted-reads line are not in bench/prompt-budget.mjs's count, like resultNote,
+// clickMoveNote and siblingSwapNote (ledger item PB1), and have no lean wording.
 export const SCROLL_LOOP_NOTE = 'sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, ' +
   'scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.';
 
@@ -1060,7 +1078,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
-  // window key -> { target, calls }: consecutive calls on that window that scrolled the same target.
+  // window key -> { target, calls }: the current run of calls that scrolled one target in that window.
   const scrolls = new Map();
   const omissionHints = readHints.omissionHints ??= new Set();
   const screenshotHints = readHints.screenshotHints ??= new Set();
@@ -1261,7 +1279,11 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       });
       if (filtered?.full) explicitFull = true;
       let omittedReads = 0;
-      if (callTrees) ({ content, omitted: omittedReads } = omitEarlierReads(content));
+      // A failed call or a recovery read (forceFull) keeps every tree.
+      if (callTrees && !failed && !forceFull && !content.some(item => item?.type === 'text' &&
+          /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? ''))) {
+        ({ content, omitted: omittedReads } = omitEarlierReads(content, code));
+      }
       const stopped = content.some(item => item?.type === 'text' &&
         /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
       if (compactAcquisition && acquisition && (failed || stopped)) forceFull = true;
@@ -1355,15 +1377,17 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const note = action && resultNote(action, observedInResult, failed,
         failure ?? { message: failureReason(content) });
       if (note) out.push({ type: 'text', text: note });
-      const omittedNote = `sleight: ${omittedReads} earlier reads of the same window in this call left out; the last is shown.`;
+      const omittedNote = `sleight: ${omittedReads} earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.`;
       if (omittedReads) out.push({ type: 'text', text: omittedNote });
-      const scrolledWindow = observedInResult && !observedInResult.invalid && documentKey(observedInResult.window);
-      if (scrollNote && scrolledWindow && typeof code === 'string') {
-        const targets = new Set(scrollTargets(code)), target = [...targets][0], last = scrolls.get(scrolledWindow);
-        if (targets.size !== 1) scrolls.delete(scrolledWindow);
-        else {
-          const calls = last?.target === target ? last.calls + 1 : 1;
-          scrolls.set(scrolledWindow, { target, calls });
+      // Calls in a row that each return the window's tree and scroll one target the same way. A call that
+      // loops already searches in one call, and any other call, or one with no tree of that window, ends the run.
+      if (scrollNote) {
+        const key = observedInResult && !observedInResult.invalid && documentKey(observedInResult.window), last = key && scrolls.get(key);
+        scrolls.clear();
+        const targets = key && typeof code === 'string' && !/\b(?:for|while|do)\b/.test(maskCode(code)) ? new Set(scrollTargets(code)) : new Set();
+        if (targets.size === 1) {
+          const [target] = targets, calls = last?.target === target ? last.calls + 1 : 1;
+          scrolls.set(key, { target, calls });
           if (calls === 3) out.push({ type: 'text', text: SCROLL_LOOP_NOTE });
         }
       }

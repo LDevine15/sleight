@@ -288,7 +288,8 @@ A call that reads one window more than twice shows only its last read of that wi
 saying how many were left out. The code still gets every read, and errors, notices and other windows'
 trees stay. Travel's 40-read airport search in Firefox (2026-10-17) returned 140,778 characters and
 spilled to a file; replayed, it is 3,620. `SLEIGHT_CALL_TREES=all` (A/B baseline) shows every read.
-After three calls in a row scroll the same list, a note suggests searching it in one call with a capped
+A sheet, dialog or menu read under the same title stays. After three calls in a row, none of them a
+loop, scroll the same list the same way, a note suggests searching it in one call with a capped
 loop that checks for progress and verifies the selection. In a live probe without a model, one such call
 found and selected the airport in 33 s, against 88.7 s over 15 calls. `SLEIGHT_SCROLL_NOTE=0` (A/B baseline) leaves the note out. Neither
 is measured end to end yet.
