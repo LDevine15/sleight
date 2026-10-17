@@ -44,6 +44,9 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   ctx.cleanupSignal?.throwIfAborted();
   const startedAtMs = Date.now();
   ctx.windowLeases ??= [];
+  const launchedProcesses = ctx.windowLeases.filter(lease => lease.launched && lease.running === false &&
+    lease.setupCase === 'cold-launch' && lease.bundle === request.bundle && lease.pid > 0 && lease.processStartedAtMs > 0)
+    .map(({ pid, bundle, processStartedAtMs }) => ({ pid, bundle, processStartedAtMs }));
   const control = join(ctx.dir, `window-${ctx.windowLeases.length}-control.json`);
   const signal = ctx.signal;
   const controller = new AbortController();
@@ -128,7 +131,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   try { command = await helper(request, signal); }
   catch (error) { if (error.noMutation === true) diagnostics.cleanup = 'nothing created'; throw error; }
   ctx.windowLeases.push(lease);
-  response = run(command.command, [...command.args, JSON.stringify({ ...request, control, startedAtMs })], {
+  response = run(command.command, [...command.args, JSON.stringify({ ...request, control, startedAtMs, launchedProcesses })], {
     signal: helperSignal, timeoutMs: 600000, graceMs: 1000,
     onStdout: data => {
       buffer += String(data);
@@ -139,6 +142,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         if (typeof event.running === 'boolean') { lease.running = event.running; diagnostics.running = event.running; }
         if (event.pid > 0) { lease.pid = event.pid; diagnostics.pid = event.pid; }
         if (event.bundle) { lease.bundle = event.bundle; diagnostics.observedBundle = event.bundle; }
+        if (event.processStartedAtMs > 0) { lease.processStartedAtMs = event.processStartedAtMs; diagnostics.processStartedAtMs = event.processStartedAtMs; }
+        if (event.setupCase) lease.setupCase = event.setupCase;
         if (event.pids) { lease.pids = event.pids; diagnostics.pids = event.pids; }
         if (event.processHandoff) diagnostics.processHandoff = event.processHandoff;
         if (event.appDialog) {

@@ -1490,6 +1490,132 @@ test('the app dialog scan skips a dialog that disappears while it is read', () =
   assert.equal(fixture.api.dialog(app, owned, { stopOnAppDialog: true, app: 'Microsoft Word', token: 'nonce', mode: 'document' }).length, 0);
 });
 
+test('a second document lease carries only an earlier cold-launch process receipt from this run', async t => {
+  const { openFixture } = await import('../bench/real-fixture.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'fixture-launch-owner-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ctx = { dir }, requests = [], pending = [];
+  const bundle = 'com.apple.TextEdit', processStartedAtMs = 1792220400123;
+  const options = {
+    helper: async () => ({ command: 'fake', args: [] }), open: async () => {},
+    run: (_command, args, options) => {
+      requests.push(JSON.parse(args.at(-1)));
+      const running = requests.length > 1, done = Promise.withResolvers();
+      pending.push(done);
+      options.onStdout(JSON.stringify({ stage: 'identified-process', pid: 29976, bundle, processStartedAtMs }) + '\n' +
+        JSON.stringify({ stage: 'identified', running, setupCase: running ? 'already-running' : 'cold-launch' }) + '\n' +
+        '{"stage":"armed"}\n{"stage":"ready"}\n');
+      return done.promise;
+    },
+  };
+  t.after(async () => {
+    pending.forEach(done => done.resolve({ groupClean: true, exit: { code: 0 }, stdout: '{"stage":"closed"}\n' }));
+    await Promise.all(ctx.windowLeases.map(lease => lease.dispose()));
+  });
+  const first = await openFixture(ctx, { app: 'TextEdit', bundle, mode: 'document' }, options);
+  const second = await openFixture(ctx, { app: 'TextEdit', bundle, mode: 'document' }, options);
+  assert.equal(first.launched, true);
+  assert.equal(first.running, false);
+  assert.equal(second.launched, true);
+  assert.equal(second.running, true);
+  assert.deepEqual(requests[1].launchedProcesses, [{ pid: 29976, bundle, processStartedAtMs }]);
+  assert.deepEqual(requests[0].launchedProcesses, []);
+  await openFixture({ dir, windowLeases: [{ ...first, launched: false }, { ...second }] },
+    { app: 'TextEdit', bundle, mode: 'document' }, options);
+  assert.deepEqual(requests[2].launchedProcesses, [], 'neither an unlaunched nor already-running lease grants process ownership');
+});
+
+function runningDocumentCleanup({ launchedProcesses = [], focusedSibling = true, siblingTitle = 'Source-nonce.txt', changedStart = false } = {}) {
+  const owned = {}, sibling = {}, button = {}, app = {}, bar = {}, file = {}, menu = {}, close = {}, actions = [], events = [];
+  let ready = false, exists = true, time = 0;
+  const processStartedAtMs = 1792220400123;
+  const target = { processIdentifier: 29976, bundleIdentifier: 'com.apple.TextEdit',
+    get launchDate() { return { isNil: () => false, timeIntervalSince1970: (processStartedAtMs + (ready && changedStart ? 1 : 0)) / 1000 }; } };
+  const fixture = cleanupNative((element, attribute) => {
+    const children = values => ({ count: values.length, objectAtIndex: index => values[index] });
+    if (attribute === 'AXMenuBar') return { value: bar };
+    if (attribute === 'AXChildren') return { value: children(element === bar ? [file] : element === file ? [menu] : element === menu ? [close] : []) };
+    if (element === file) return { value: attribute === 'AXTitle' ? 'File' : null };
+    if (element === menu) return { value: attribute === 'AXRole' ? 'AXMenu' : null };
+    if (element === close) return { value: attribute === 'AXTitle' ? 'Close' : attribute === 'AXEnabled' ? 1 : null };
+    if (attribute === 'AXFocusedWindow') return { value: ready && focusedSibling ? sibling : owned };
+    if (attribute === 'AXCloseButton') { assert.equal(element, owned); return { value: button }; }
+    if (attribute === 'AXTitle') return { value: element === sibling ? siblingTitle : 'Target-nonce.txt' };
+    return { value: attribute === 'AXRole' ? exists ? 'AXWindow' : '' : null };
+  });
+  const foundation = value => typeof value === 'string' && value.startsWith('{') ? { dataUsingEncoding: () => value } : value;
+  Object.assign(foundation, fixture.native, {
+    AXIsProcessTrusted: () => true,
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => ({ count: 1, objectAtIndex: () => target }) },
+    AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout() {}, AXUIElementSetAttributeValue() {},
+    AXUIElementPerformAction: (element, action) => {
+      actions.push(action);
+      if (action === 'AXPress') {
+        if (element === file) return 0;
+        assert.ok(element === button || element === close);
+        actions.push(element === button ? 'button' : 'menu-close'); exists = false;
+      }
+      else assert.equal(action, 'AXRaise');
+      return 0;
+    },
+    NSFileHandle: { fileHandleWithStandardOutput: { writeData: line => {
+      const event = JSON.parse(line); events.push(event); if (event.stage === 'ready') ready = true;
+    } } },
+    NSData: { dataWithContentsOfFile: () => ({ isNil: () => false }) },
+    NSString: { alloc: { initWithDataEncoding: () => JSON.stringify({ command: ready ? 'close' : 'opened', launched: true }) } },
+    NSThread: { sleepForTimeInterval: seconds => { time += seconds * 1000; } },
+  });
+  fixture.sandbox.$ = foundation;
+  fixture.sandbox.Date = { now: () => time };
+  return { actions, events, run: () => fixture.sandbox.run([JSON.stringify({ app: 'TextEdit', bundle: 'com.apple.TextEdit',
+    mode: 'document', token: 'nonce', control: 'fake', startedAtMs: processStartedAtMs - 1000, launchedProcesses })]) };
+}
+
+test('the already-running second fixture closes by its own button when this run launched that exact process', () => {
+  const fixture = runningDocumentCleanup({ launchedProcesses: [
+    { pid: 29976, bundle: 'com.apple.TextEdit', processStartedAtMs: 1792220400123 },
+  ] });
+  fixture.run();
+  assert.deepEqual(fixture.actions, ['AXRaise', 'AXPress', 'button']);
+  assert.equal(fixture.events.at(-1).stage, 'closed');
+  assert.equal(fixture.events.find(event => event.stage === 'ready').processStartedAtMs, 1792220400123);
+});
+
+test('an already-running app this run did not launch still closes through its File menu when focused', () => {
+  const fixture = runningDocumentCleanup({ focusedSibling: false });
+  fixture.run();
+  assert.deepEqual(fixture.actions, ['AXPress', 'AXPress', 'menu-close']);
+  assert.equal(fixture.events.at(-1).stage, 'closed');
+});
+
+test('inherited launch ownership still refuses an owner document gaining focus', () => {
+  const fixture = runningDocumentCleanup({ siblingTitle: 'Owner.txt', launchedProcesses: [
+    { pid: 29976, bundle: 'com.apple.TextEdit', processStartedAtMs: 1792220400123 },
+  ] });
+  assert.throws(fixture.run, /lost focus/);
+  assert.deepEqual(fixture.actions, []);
+});
+
+for (const [name, launchedProcesses] of [
+  ['no earlier launch receipt despite a fresh launchDate', []],
+  ['another PID', [{ pid: 29977, bundle: 'com.apple.TextEdit', processStartedAtMs: 1792220400123 }]],
+  ['another bundle', [{ pid: 29976, bundle: 'other.app', processStartedAtMs: 1792220400123 }]],
+  ['a recycled PID', [{ pid: 29976, bundle: 'com.apple.TextEdit', processStartedAtMs: 1792220400122 }]],
+  ['a missing start time', [{ pid: 29976, bundle: 'com.apple.TextEdit' }]],
+]) test(`an already-running app with ${name} still refuses cleanup after lost focus`, () => {
+  const fixture = runningDocumentCleanup({ launchedProcesses });
+  assert.throws(fixture.run, /lost focus/);
+  assert.deepEqual(fixture.actions, ['AXRaise']);
+});
+
+test('inherited launch ownership refuses a changed process start time before cleanup', () => {
+  const fixture = runningDocumentCleanup({ changedStart: true, launchedProcesses: [
+    { pid: 29976, bundle: 'com.apple.TextEdit', processStartedAtMs: 1792220400123 },
+  ] });
+  assert.throws(fixture.run, /process changed/i);
+  assert.deepEqual(fixture.actions, []);
+});
+
 test('document cleanup raises its own window only over a sibling fixture window of the same run', () => {
   for (const [label, siblingTitle, setupCase, followsRaise, expect] of [
     ['sibling follows', 'Source-nonce.txt', 'already-running', true, 'closed'],
@@ -1521,7 +1647,8 @@ test('document cleanup raises its own window only over a sibling fixture window 
   }
 });
 
-for (const change of ['document', 'focus', 'sibling identity', 'dialog']) test(`cold-launch sibling cleanup refuses a changed ${change} during close-button lookup`, () => {
+for (const setupCase of ['cold-launch', 'already-running'])
+for (const change of ['document', 'focus', 'sibling identity', 'dialog']) test(`${setupCase} run-launched sibling cleanup refuses a changed ${change} during close-button lookup`, () => {
   const owned = {}, sibling = {}, stranger = {}, button = {}, actions = [];
   let changed = false;
   const fixture = cleanupNative((element, attribute) => {
@@ -1530,7 +1657,7 @@ for (const change of ['document', 'focus', 'sibling identity', 'dialog']) test(`
     if (attribute === 'AXTitle') return { value: changed && (change === 'document' && element === owned ||
       change === 'sibling identity' && element === sibling) ? 'Unrelated.txt' : element === sibling ? 'Source-nonce.txt' : 'Target-nonce.txt' };
     return { value: attribute === 'AXRole' ? 'AXWindow' : null };
-  }, { setupCase: 'cold-launch' });
+  }, { setupCase, launchedByRun: true });
   fixture.native.AXUIElementPerformAction = (element, action) => {
     assert.equal(element, owned); assert.equal(action, 'AXRaise'); actions.push(action); return 0;
   };

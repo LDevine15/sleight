@@ -334,7 +334,7 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     var sibling = raiseOverSibling(window, request, app, api);
     var validate = function () {
       noDialog();
-      // A cold-launch button targets this window even when its sibling keeps focus. A menu still requires this window.
+      // A run-launched app's button targets this window even when its sibling keeps focus. A menu still requires this window.
       validateOwnedFixture(window, request, app, api, true,
         api.closesDocumentByButton && api.closesDocumentByButton() ? sibling : null);
     };
@@ -603,7 +603,7 @@ function nativeAX(state, clock) {
       if (validate) validate();
       press(button);
     },
-    closesDocumentByButton: function () { return !!(state && state.setupCase === 'cold-launch'); },
+    closesDocumentByButton: function () { return !!(state && (state.setupCase === 'cold-launch' || state.launchedByRun)); },
     closeDocument: function (app, validate, request, window) {
       var closeButton = this.closeButton;
       closeDocumentSafely(app, request, validate, {
@@ -689,7 +689,11 @@ function run(argv) {
     cleanupRequested: function () { return command() === 'close'; } };
   var api = nativeAX(state, clock);
   var target, running, pid, app, previous, owned, observedDialogs = [];
-  var pids = [], processHandoff, handoffPending = false, launchStarted = clock.now();
+  var pids = [], processHandoff, processStartedAtMs, handoffPending = false, launchStarted = clock.now();
+  function processStart(value) {
+    var date = value && value.launchDate;
+    return date && !date.isNil() ? Number(date.timeIntervalSince1970) * 1000 : null;
+  }
   function recordProcess(value) {
     var nextPid = runningPid(value);
     if (!(nextPid > 0) || pid === nextPid) return;
@@ -708,9 +712,17 @@ function run(argv) {
       previous = null;
     }
     pid = nextPid;
+    processStartedAtMs = processStart(value);
+    // A recent launchDate alone proves nothing: only an earlier cold-launch
+    // lease in this run can supply the exact process receipt.
+    state.launchedByRun = processStartedAtMs > 0 && (request.launchedProcesses || []).some(function (process) {
+      return process.pid === pid && process.bundle === request.bundle && runningBundle(value) === request.bundle &&
+        process.processStartedAtMs === processStartedAtMs;
+    });
     pids.push(pid);
     emit({ stage: processHandoff ? 'process-handoff' : 'identified-process', pid: pid,
-      bundle: runningBundle(value) || request.bundle, pids: pids.slice(), processHandoff: processHandoff });
+      bundle: runningBundle(value) || request.bundle, processStartedAtMs: processStartedAtMs,
+      pids: pids.slice(), processHandoff: processHandoff });
   }
   function checkOpening() {
     var control = controlData();
@@ -823,6 +835,7 @@ function run(argv) {
   if (!inherited && !owned) throw new Error('Fixture identity could not be established without a window inventory');
   if (!inherited && !api.matches(owned, request)) throw new Error('Fixture document identity unconfirmed');
   emit({ stage: 'ready', pid: pid, pids: pids.slice(), processHandoff: processHandoff,
+    processStartedAtMs: processStartedAtMs,
     inheritReady: state.inheritReady, bundle: runningBundle(target) || request.bundle,
     fresh: state.fresh, totalWaitMs: state.retryWaitMs, setupCase: state.setupCase });
   state.setup = false;
@@ -838,6 +851,7 @@ function run(argv) {
   checkAppDialog();
   target = application();
   if (target && runningPid(target) !== pid && runningPid(target) !== -1) throw new Error('Fixture process changed before cleanup');
+  if (target && state.launchedByRun && processStart(target) !== processStartedAtMs) throw new Error('Fixture process changed before cleanup');
   if (target && !inherited) closeOwnedWindow(owned, request, app, api);
   emit({ stage: 'closed' });
   } catch (error) {
