@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 21:10 UTC, flushed before the owner's clear)
+## Banner (2026-10-17 21:35 UTC, after the boot)
 
 Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
 no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. Build work runs as
@@ -24,12 +24,10 @@ last section; each committed on its own local branch `worktree-agent-<id>`, also
   `{ id, label }` locators. The lease change for URL-less menu headers was left out (it broke 43 lease tests). The safe route is
   letting splitMenuActions accept a read between actions, which needs a check of whether the engine's REPL keeps top-level variables
   across calls.
-- agent-a8f6b4dfe726ba8e4 (guard after Return): done, a69c1d55 on worktree-agent-a8f6b4dfe726ba8e4, unmerged pending a Sonnet-high
-  safety review. The engine has no cheap read. The relay instead observes natively (window identity, sheets, focused element) for 700 ms
-  after each press_key approval, and the guard skips the full read before typeText or paste when two observations at least 100 ms
-  after the key show the same window, no sheet and text-type focus (`plugins/sleight/lib/light-return.mjs`,
-  `SLEIGHT_GUARD_LIGHT_RETURN=0` baseline). Risk for the review: a 100 ms wait replaces the engine's ~400 ms settle, so a sheet that
-  appears after 100 ms would not be seen before typing. Estimate: excel-edit's entry batch from 7.4-9.2 s to about 4-6 s.
+- agent-a8f6b4dfe726ba8e4 (guard after Return): a69c1d55, Sonnet-high safety review 21:3xZ "merge after fixes": no age bound on
+  observations (an alert opened after a later read is missed), the 100 ms margin is too short, unmeasured but default on. An Opus
+  lane is fixing it on the same branch: 250 ms margin, age bound, secure-field refusal, a trace event, and default off
+  (`SLEIGHT_GUARD_LIGHT_RETURN=1`) until a live measurement of how late alerts appear after Return.
 - agent-a336b5cee71ace575 (relay, launch, skill): done, 044434df on worktree-agent-a336b5cee71ace575, unmerged pending a
   Sonnet-high review. Rules come before the tree (`SLEIGHT_RULES_FIRST=0` baseline). open_file skips `open -g` on a confirmed window,
   and its approval runs alongside the cold probe, so a prompt can be answered for nothing if the lookup then fails (known-problems).
