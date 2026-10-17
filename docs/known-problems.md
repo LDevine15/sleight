@@ -345,10 +345,10 @@ native reference, and oversized first results defer the browser reference while 
 
 ## Specific apps
 
-- In Excel, a click on another sheet's tab right after renaming a new sheet by double-click swapped the two tabs' order in 3
-  of 3 runs where Claude did it (2026-10-17, and one run before both A/B builds), and excel-edit failed on sheet order each
-  time. sleight sends a plain click there. We haven't found whether Excel or the engine turns it into a tab drag.
-
+- In Excel, the first click on another sheet's tab after renaming a sheet swapped the two tabs' order in 6 of 6 runs that did it
+  (2026-10-16 and 2026-10-17), whether the rename came from a double-click or the tab's context menu, and through lcu's raw engine
+  arm as well as sleight. excel-edit then fails on sheet order. A second tab click didn't swap. The engine's native click code is
+  stripped, so whether Excel or the engine arms the drag is unknown.
 - Slack, Firefox and WhatsApp expose thin engine trees (2026-10-10, one read each, no input):
   Slack 15 elements and 483 characters, Firefox 24 / 898, WhatsApp 19 / 940. None of the three had a
   text field, and Discord wasn't thin (251 elements). Whether a settings switch expands them is unverified.
