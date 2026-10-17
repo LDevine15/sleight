@@ -37,6 +37,99 @@ test('a newly selected row or a new sheet is observable', () => {
   assert.match(run(tree(rows), tree([...rows, '\t3 sheet Save']), 'await app.pressKey("super+s")'), /UI changed \(sheet or dialog\)/);
 });
 
+for (const [role, item, oldLabel, newLabel] of [
+  ['sheet tab strip', 'tab', 'Summary, Sheet 1 of 1', 'Review, Sheet 2 of 2'],
+  ['tab bar', 'radio button', 'First page', 'Second page'],
+  ['segmented control', 'button', 'Overview', 'Details'],
+  ['tab group', 'tab', 'Home', 'Insert'],
+  ['page selector', 'button', 'Page 1', 'Page 2'],
+]) {
+  test(`a ${role} selection names the old and new tabs and keeps the existing note`, () => {
+    const before = tree([`\t1 ${role} Navigation`, `\t\t2 ${item} (selected) ${oldLabel}`,
+      ...(role === 'sheet tab strip' ? [] : [`\t\t3 ${item} (selectable) ${newLabel}`])]);
+    const after = tree([`\t1 ${role} Navigation`, `\t\t2 ${item} (selectable) ${oldLabel}`,
+      `\t\t3 ${item} (selected) ${newLabel}`]);
+    const note = run(before, after, 'await app.click(3)');
+    assert.ok(note.includes(`UI changed (selected tab: ${oldLabel} to ${newLabel})`), note);
+    assert.match(note, role === 'sheet tab strip' ? /UI changed \(value\)/ : /UI changed \(element\)/);
+    assert.equal(run(after, after, 'await app.click(3)'), undefined);
+  });
+}
+
+test('a tab group Value change names its selection even without selected children', () => {
+  const before = tree(['\t1 tab group Navigation, Value: Summary, ID: tabs']);
+  const after = tree(['\t1 tab group Navigation, Value: Review, ID: tabs']);
+  const note = run(before, after, 'await app.click(1)');
+  assert.match(note, /UI changed \(selected tab: Summary to Review\)/);
+  assert.match(note, /UI changed \(value\)/);
+});
+
+test('selected flags use descriptions as labels and survive element renumbering', () => {
+  const before = tree(['\t1 tab bar', '\t\t2 radio button (selected) Description: One, ID: first',
+    '\t\t3 radio button (selectable) Description: Two, ID: second']);
+  const after = tree(['\t5 tab bar', '\t\t6 radio button (selectable) Description: One, ID: first',
+    '\t\t7 radio button (selected) Description: Two, ID: second']);
+  assert.match(run(before, after, 'await app.click(3)'), /UI changed \(selected tab: One to Two\)/);
+});
+
+test('list selections and tab labels in ordinary groups add no selected-tab note', () => {
+  for (const role of ['list', 'outline', 'group Tab bar']) {
+    const before = tree([`\t1 ${role}`, '\t\t2 row (selected) One', '\t\t3 row (selectable) Two']);
+    const after = before.replace('(selected) One', '(selectable) One').replace('(selectable) Two', '(selected) Two');
+    const note = run(before, after, 'await app.click(3)');
+    assert.match(note, /UI changed/);
+    assert.doesNotMatch(note, /selected tab:/);
+  }
+});
+
+test('an unchanged selection adds no selected-tab note when other content changes', () => {
+  const before = tree(['\t1 tab bar', '\t\t2 tab (selected) One', '\t3 text field Value: before']);
+  const note = run(before, before.replace('Value: before', 'Value: after'));
+  assert.match(note, /UI changed \(value\)/);
+  assert.doesNotMatch(note, /selected tab:/);
+});
+
+test('incomplete, failed, overlapping and different-app reads never name a tab change', () => {
+  const before = tree(['\t1 tab group Navigation, Value: One']);
+  const after = before.replace('Value: One', 'Value: Two');
+  for (const [result, options] of [[after + '\n…(20)', {}], [after, { failed: true }],
+    [after.replace('App: TextEdit.', 'App: Other.'), {}]]) {
+    assert.doesNotMatch(run(before, result, 'await app.click(1)', options), /selected tab:/);
+  }
+  const c = createReadCompactor(); c.process([text(before)]);
+  const action = c.beginAction('await app.click(1)'); action.overlap = true;
+  assert.doesNotMatch(c.process([text(GUARD_MARK + after + GUARD_END)], { action }).at(-1).text, /selected tab:/);
+});
+
+test('missing selections and flags in separate sibling groups do not imply a tab switch', () => {
+  for (const [before, after] of [
+    [['\t1 tab bar', '\t\t2 tab (selected) One'], ['\t1 tab bar', '\t\t2 tab (selectable) One']],
+    [['\t1 tab bar', '\t\t2 tab (selectable) One'], ['\t1 tab bar', '\t\t2 tab (selected) One']],
+    [['\t1 tab bar First', '\t\t2 tab (selected) One', '\t3 tab bar Second', '\t\t4 tab (selectable) Two'],
+      ['\t1 tab bar First', '\t\t2 tab (selectable) One', '\t3 tab bar Second', '\t\t4 tab (selected) Two']],
+  ]) assert.doesNotMatch(run(tree(before), tree(after), 'await app.click(2)') ?? '', /selected tab:/);
+});
+
+test('renaming a selected tab without moving selection adds no selected-tab note', () => {
+  const before = tree(['\t1 tab bar', '\t\t2 tab (selected) Draft', '\t\t3 tab (selectable) Other']);
+  const note = run(before, before.replace('Draft', 'Final'), 'await app.click(2)');
+  assert.match(note, /UI changed \(element\)/);
+  assert.doesNotMatch(note, /selected tab:/);
+});
+
+test('ambiguous groups, multiple selected children and nested lists cannot name a tab switch', () => {
+  for (const before of [
+    ['\t1 tab bar', '\t\t2 tab (selected) One', '\t\t3 tab (selectable) Two',
+      '\t4 tab bar', '\t\t5 tab (selected) One', '\t\t6 tab (selectable) Two'],
+    ['\t1 tab group Value: One', '\t\t2 tab (selected) One', '\t\t3 tab (selected) Extra'],
+    ['\t1 tab bar', '\t\t2 list', '\t\t\t3 row (selected) One', '\t\t\t4 row (selectable) Two'],
+  ]) {
+    const after = before.map(line => line.replace('(selected) One', '(selectable) One')
+      .replace('(selectable) Two', '(selected) Two').replace('Value: One', 'Value: Two'));
+    assert.doesNotMatch(run(tree(before), tree(after), 'await app.click(3)') ?? '', /selected tab:/);
+  }
+});
+
 test('lost button descriptions are degraded evidence, not a UI change', () => {
   assert.match(run(tree(['\t1 button Description: 2, ID: Two']), tree(['\t1 button Two']), 'await app.click(1)'), /UI unverified \(degraded read\)/);
 });

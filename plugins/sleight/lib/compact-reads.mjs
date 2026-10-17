@@ -246,6 +246,55 @@ function fileTime(url) {
 const withoutValue = line => line.replace(/(?:, )?Value: ?.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '')
   .replace(/, (?=(?:Secondary Actions|ID|Help|Description):)/g, ' ').replace(/ +/g, ' ').trimEnd();
 
+function tabSelections(lines) {
+  const groups = new Map(), stack = [];
+  for (const line of lines) {
+    const match = ELEMENT.exec(line);
+    if (!match) { stack.length = 0; continue; }
+    const depth = match[1].length, body = match[3];
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const parent = stack.at(-1);
+    const path = [...(parent?.path ?? []), withoutValue(body).replace(/\s*\([^)]*\)/g, '')];
+    const node = { depth, path };
+    if (/^(?:tab group|tab bar|sheet tab strip|segmented control|page selector)\b/.test(body)) {
+      const key = JSON.stringify(path);
+      node.selection = { value: /^tab group\b/.test(body) ? stateFields(body).find(field => field.startsWith('value:'))?.slice(6) : undefined,
+        children: [] };
+      const matches = groups.get(key) ?? [];
+      matches.push(node.selection); groups.set(key, matches);
+    }
+    if (parent?.selection && /^(?:radio button|tab|button|segment|page)\b/.test(body)) {
+      const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(body)?.[1] ??
+        body.replace(/^(?:radio button|tab|button|segment|page)\b\s*/, '').replace(/^\([^)]*\)\s*/, '')
+          .replace(/,? (?:Value|Secondary Actions|ID|Help):.*$/, '');
+      const key = /(?:^|, )ID: ([^,]+)/.exec(body)?.[1] ?? body.replace(/\s*\([^)]*\)/g, '');
+      parent.selection.children.push({ key, label: label.trim(), selected: /\([^)]*\bselected\b[^)]*\)/.test(body) });
+    }
+    stack.push(node);
+  }
+  return groups;
+}
+
+// Match the same selector and its selected siblings, ignoring element renumbering.
+function selectedTabChanges(before, after) {
+  const old = tabSelections(before), changes = [];
+  for (const [key, matches] of tabSelections(after)) {
+    const previous = old.get(key);
+    if (matches.length !== 1 || previous?.length !== 1) continue;
+    const was = previous[0], now = matches[0];
+    const oldSelected = was.children.filter(child => child.selected), newSelected = now.children.filter(child => child.selected);
+    let from, to;
+    if (!oldSelected.length && !newSelected.length) { from = was.value; to = now.value; }
+    else if (oldSelected.length === 1 && newSelected.length === 1 &&
+        (now.children.some(child => child.key === oldSelected[0].key && !child.selected) ||
+          was.children.some(child => child.key === newSelected[0].key && !child.selected))) {
+      from = oldSelected[0].label; to = newSelected[0].label;
+    }
+    if (from && to && from !== to) changes.push(`UI changed (selected tab: ${from} to ${to})`);
+  }
+  return changes;
+}
+
 // Capture the error before relay notices and trees can bury it. The engine puts its exception
 // after ordinary output; a guard exception carries its tree after the first line.
 export function failureReason(content) {
@@ -309,8 +358,10 @@ function resultNote(action, after, failed, failure) {
       : named ? `observed ${JSON.stringify(after.window.url)} (named file URL)`
       : fileWritten ? `observed ${JSON.stringify(after.window.url)} (its file on disk changed during this call)` : 'not confirmed (no document save state change seen)';
   }
+  const selectedTabs = !reason && !incomplete && !degraded && after?.delta?.baseline === before.id
+    ? after.delta.selectedTabs : [];
   const fields = [failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
-    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, saved && 'saved: ' + saved].filter(Boolean);
+    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && 'saved: ' + saved].filter(Boolean);
   const finish = saveFinishLine(after, before, failed, action.overlap);
   if (!fields.length) return finish;
   const note = fields.join('; ');
@@ -528,6 +579,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           !now.fields.some(field => field.startsWith('value:'))) clearedFields += was.fields.filter(field => field.startsWith('value:')).length;
     }
     observation.delta = { baseline: before.observation.id,
+      selectedTabs: selectedTabChanges(before.lines, lines),
       semantic: removedState.length > 0 && addedState.length > 0 && JSON.stringify(removedState.sort()) !== JSON.stringify(addedState.sort()),
       panel: changedPanel, renumbered, element,
       lostState: removedState.length > addedState.length,
