@@ -4,13 +4,18 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 export function realBrowserPlan({ browser, round, home = homedir() }) {
-  if (!['chrome', 'helium'].includes(browser)) throw Error('real browser must be chrome or helium');
+  if (!['chrome', 'helium', 'firefox'].includes(browser)) throw Error('real browser must be chrome, helium or firefox');
   if (typeof round !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/.test(round)) throw Error('invalid round identity');
   const profileRoot = join(home, 'Library/Caches/sleight-bench/real-browser', round, 'profile');
   const executable = browser === 'chrome' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    : '/Applications/Helium.app/Contents/MacOS/Helium';
+    : browser === 'helium' ? '/Applications/Helium.app/Contents/MacOS/Helium' : '/Applications/Firefox.app/Contents/MacOS/firefox';
   const marker = `Sleight Gate ${round}`;
   const url = 'data:text/html,' + encodeURIComponent(`<title>${marker}</title><h1>${marker}</h1>`);
+  if (browser === 'firefox') return { browser, executable, profileRoot, marker, command: executable,
+    args: ['-profile', profileRoot, '-no-remote', '-new-instance', url],
+    headless: false, connectionMode: 'engine-computer', version: '157', versionVerified: false,
+    resetMode: 'quit-and-fresh-profile-relaunch', inventoryMode: 'sessionstore-after-graceful-quit',
+    quitMode: 'normal-quit-by-owned-pid', unavailableGraders: ['completed downloads'] };
   return { browser, executable, profileRoot, marker, command: executable,
     args: ['--user-data-dir=' + profileRoot, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
       '--no-first-run', '--no-default-browser-check', '--disable-background-mode', '--use-mock-keychain',
@@ -68,11 +73,18 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000 } = {}) {
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitBrowser } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length) });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
-  try { return { ...await startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }), ownerCheck }; }
+  try {
+    if (plan.browser === 'firefox') {
+      ordinaryParents(plan.profileRoot);
+      const { launchFirefox } = await import('./firefox-browser.mjs');
+      return await launchFirefox(plan, { spawnBrowser, listProcesses, timeoutMs, stopMs, quitBrowser, ownerCheck });
+    }
+    return { ...await startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }), ownerCheck };
+  }
   catch (error) { error.ownerCheck = ownerCheck; throw error; }
 }
 
@@ -184,12 +196,14 @@ const inventory = (browser, targets) => Object.fromEntries(targets.filter(target
   .map(target => [`${browser.browser}:${target.targetId}`, { url: target.url, title: target.title }]));
 
 export async function observeRealBrowser(browser, { connect = realBrowserCommands } = {}) {
+  if (browser.browser === 'firefox') return browser.observe();
   const connection = await connect(browser);
   try { return inventory(browser, (await connection.send('Target.getTargets')).targetInfos); }
   finally { await connection.close(); }
 }
 
 export async function resetRealBrowser(browser, { connect = realBrowserCommands, timeoutMs = 5000 } = {}) {
+  if (browser.browser === 'firefox') return browser.reset();
   const connection = await connect(browser);
   try {
     const previous = (await connection.send('Target.getTargets')).targetInfos.filter(target => target.type === 'page');

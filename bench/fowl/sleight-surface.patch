@@ -7,7 +7,7 @@ index e7f1db8..5056686 100644
  //   node tools/rounds.mjs [--tasks tools/agents/example.json] [--swap] [--only a,b] [--model opus] [--effort medium]
 -//                         [--surface fowlbrowser|codex|codex-agent|devtools] [--codex-browsers chrome=<id>,helium=<id>|auto]
 +//                         [--surface fowlbrowser|codex|codex-agent|devtools|sleight|fowl+sleight|playwright-mcp|chrome-devtools-mcp|claude-in-chrome|claude-cu|browser-use] [--dry-run] [--world]
-+//                         [--real-browser chrome|helium --surface sleight-turbo|lcu|cua|peekaboo|codex]
++//                         [--real-browser chrome|helium|firefox --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex]
  //                         [--mcp repo|installed] [--out <dir>] [--keep-tabs] [--serve "<command>"] [--gui]
  //                         [--remote mac2 [--remote-owner fb-rounds | --remote-held]]
  // All agents start at once, each its own `claude -p` session. --surface picks its browser tools: FowlBrowser (its own

@@ -13,20 +13,29 @@ import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { gradeGateTask } from './real-gate-grade.mjs';
+import { taskSupport } from './support.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
 export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, round, realBrowser, dryRun = true }) {
   if (args.remote || args.gui || args.swap || args.serve || args['keep-tabs']) throw Error('real-browser gate owns its local window, browser order, sites and cleanup; omit remote/gui/swap/serve/keep-tabs');
   if (tasks.some(task => task.surface && task.surface !== args.surface)) throw Error('real-browser gate runs one surface per round');
-  const surface = args.surface || 'sleight-turbo';
+  const surface = args.surface || (args['real-browser'] === 'firefox' ? 'sleight' : 'sleight-turbo');
   if (!REAL_SURFACES.includes(surface)) throw Error(`real-browser surfaces: ${REAL_SURFACES.join(', ')}`);
   round ??= realBrowser?.marker?.slice('Sleight Gate '.length) ?? randomUUID();
   const browser = realBrowser ?? realBrowserPlan({ browser: args['real-browser'], round });
   const out = resolve(args.out || `/tmp/fb-rounds/real-${round}-${surface}`);
-  const selected = tasks.filter(task => !task.takeover && (!args.only || args.only.split(',').includes(task.name)));
-  if (!selected.length) throw Error('No gate tasks selected');
-  if (selected.some(task => !/^[a-zA-Z0-9_-]+$/.test(task.name) || !['chrome', 'helium'].includes(task.browser))) throw Error('Invalid browser task');
+  const candidates = tasks.filter(task => !args.only || args.only.split(',').includes(task.name));
+  if (!candidates.length) throw Error('No gate tasks selected');
+  if (browser.browser === 'firefox' && surface === 'sleight-turbo') throw Error('Firefox has no turbo surface; use sleight');
+  if (browser.browser !== 'firefox' && surface === 'sleight') throw Error('Chrome/Helium use sleight-turbo');
+  const unsupported = candidates.flatMap(task => {
+    const reason = task.takeover ? 'Takeover requires the separate user-takeover test protocol'
+      : taskSupport(task, surface, { realBrowser: browser.browser });
+    return reason ? [{ task, status: 'not-supported', reason }] : [];
+  });
+  const selected = candidates.filter(task => !unsupported.some(row => row.task === task));
+  if (selected.some(task => !/^[a-zA-Z0-9_-]+$/.test(task.name) || !['chrome', 'helium', 'firefox'].includes(task.browser))) throw Error('Invalid browser task');
   if (new Set(selected.map(task => task.name)).size !== selected.length) throw Error('Duplicate gate task names');
   const arms = selected.map(original => {
     const task = { ...original, browser: browser.browser };
@@ -36,7 +45,7 @@ export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, r
     return { ...setup, args: surface === 'codex' ? setup.args : [...setup.args, setup.prompt],
       task, surface, dir };
   });
-  return { mode: 'real-browser', out, browser, arms, mcpRoot, surface };
+  return { mode: 'real-browser', out, browser, arms, unsupported, mcpRoot, surface };
 }
 
 async function freePort(port) {
@@ -129,6 +138,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}) } })) };
     (runtime.print || console.log)(JSON.stringify(printable, null, 2)); return printable;
   }
+  if (!plan.arms.length) throw Error('No runnable gate tasks: ' + plan.unsupported.map(row => row.reason).join('; '));
   await (runtime.admit || admitRealGate)(plan);
   const lockPath = runtime.lockPath || '/tmp/sleight-live.lock';
   if (existsSync('/tmp/sleight-hold')) throw Error('Benchmark hold is active');
@@ -147,33 +157,42 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...plan.browser, ownerCheck: error.ownerCheck }, null, 2));
       throw error;
     });
-    const { stop, ...identity } = browser;
-    plan = realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: identity, dryRun: false });
-    writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity, null, 2));
+    const identity = () => { const { stop, reset, observe, ...value } = browser; return value; };
+    plan = realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: identity(), dryRun: false });
+    writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
+    writeFileSync(join(plan.out, 'unsupported.json'), JSON.stringify(plan.unsupported, null, 2));
     if (plan.surface === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
-    for (const arm of plan.arms) {
+    for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const ownerCheck = await (runtime.checkOwner || checkBrowserOwner)(browser, { ownedPid: browser.pid }).catch(error => {
-        if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity, ownerCheck: error.ownerCheck }, null, 2));
+        if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck: error.ownerCheck }, null, 2));
         throw error;
       });
-      writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity, ownerCheck }, null, 2));
+      writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck }, null, 2));
       const start = await (runtime.resetBrowser || resetRealBrowser)(browser);
-      const startKeys = new Set(Object.keys(start));
+      // Sessionstore positions identify a snapshot, not stable tab identities.
+      const startKeys = new Set(browser.browser === 'firefox' ? [] : Object.keys(start));
+      if (browser.browser === 'firefox') {
+        arm = realGatePlan({ args, tasks: [arm.task], repo, mcpRoot, realBrowser: identity(), dryRun: false }).arms[0];
+        writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
+      }
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const run = await (runtime.runAgent || runGateAgent)(arm, { signal: controller.signal }).catch(error => {
         if (error.groupClean === false || error.collectionError) cleanupProven = false;
         throw error;
       });
       if (!run.groupClean) { cleanupProven = false; throw Error('BENCH_AGENT_CLEANUP_UNPROVED'); }
-      const after = await (runtime.observeBrowser || observeRealBrowser)(browser);
+      const snapshot = await (runtime.observeBrowser || observeRealBrowser)(browser);
+      const observation = browser.browser === 'firefox' ? snapshot : { observed: true, tabs: snapshot };
+      const after = observation.tabs;
       run.afterExit = after;
       run.tabs = new Set(Object.keys(after));
       const grade = await getJson(arm.task.grade);
       const site = await getJson(arm.task.name === 'form-checkout' ? 'http://127.0.0.1:5413/gate-log/p04' : arm.task.site?.log);
-      const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner, after, startKeys });
+      const outcome = gradeGateTask({ task: arm.task, run, grade, site, runner, after, startKeys,
+        observed: observation.observed, observationReason: observation.reason });
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
-        run: { ...run, tabs: [...run.tabs] }, start, agentConfig: arm.metadata, grade, site, outcome };
+        run: { ...run, tabs: [...run.tabs] }, start, observation, agentConfig: arm.metadata, grade, site, outcome };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));

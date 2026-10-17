@@ -8,8 +8,9 @@ import { mergeArmHooks } from '../arm-hooks.mjs';
 
 export const NATIVE_SURFACES = ['lcu', 'cua', 'peekaboo'];
 export function windowPrompt(browser) {
-  if (!browser?.marker || !browser.profileRoot || !['chrome', 'helium'].includes(browser.browser)) throw Error('Isolated real browser required');
-  return `Use only the dedicated ${browser.browser === 'chrome' ? 'Chrome' : 'Helium'} window initially titled "${browser.marker}"` +
+  if (!browser?.marker || !browser.profileRoot || !['chrome', 'helium', 'firefox'].includes(browser.browser)) throw Error('Isolated real browser required');
+  const name = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox' }[browser.browser];
+  return `Use only the dedicated ${name} window initially titled "${browser.marker}"` +
     `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile. If it cannot be identified, stop. User activity still ends the input lease.\n\n`;
 }
 export function nativeBrowserSetup({ surface, repo, dir, realBrowser, dryRun = false,
