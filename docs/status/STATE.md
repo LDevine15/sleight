@@ -88,16 +88,10 @@ plus Safari and Firefox (BR2), before the launch post, not before the tag. Brave
 Firefox turbo impossible without a relaunch flag today, and Safari's only fit is a hybrid behind Develop > Allow JavaScript from
 Apple Events. Both are post-1.3.0 options.
 
-**Where the claim stands** (scored, 2026-10-16 runs; expected seconds to a correct result, passes/runs). sleight completed 9/9
-native tasks; lcu 6/9, codex 6/9, cua 7/9, peekaboo 3/9. After skill fix `14327dd4` (rerun 2026-10-17 00:05 UTC, load 4.5 at start)
-sleight leads textedit-drag 32 (3/3; nobody else ever passed it), textedit-calculator 45 (3/3, was 1/3) and word-edit 88 (3/3;
-lcu 122), and ties calculator-click 8 with lcu. It trails on 5 tasks: calculator-menu 19 vs lcu 12, textedit-save 21 vs lcu 11,
-preview-read 12 vs Peekaboo 5, finder-move 136 vs cua 97, excel-edit 184 vs cua 133 (one cua run). Trace studies found sleight's
-best runs tie lcu and Peekaboo turn for turn, and the losses are turns wasted by sleight's own tools (lease stops on same-call menu
-clicks, open_file on open documents, Finder drags inside sleight's guards) plus a 25,000-character first result against
-Peekaboo's 4,600. The claim wording follows the LAWS rule the owner set on 2026-10-17.
-Fable's review (2026-10-17) found the skill fix was tuned on the claim's own failures, so check it on held-out tasks and say so in
-the publication. Codex runs gpt-6-luna, not Haiku. Publish pass counts and median-of-passes beside expected time.
+**Where the claim stands.** Step 4's table (2026-10-17, release build) replaces the 2026-10-16 numbers. Fable's review
+(2026-10-17) found skill fix `14327dd4` was tuned on the claim's own failures: say so in the publication, with the A/B's 11 tasks
+outside the claim suite as the check (new 19/25 against old 19/23). Codex runs gpt-6-luna, not Haiku. Publish pass counts and
+median-of-passes beside expected time.
 
 **Release path.** Turbo live check with the owner (about 10 min; the release pass refuses the gate without it), then the slimmed
 release pass, then the tag. The CHANGELOG 1.3.0 drag entry carries its live measurement. Turbo in `claude -p` never activates,
