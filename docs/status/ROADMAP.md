@@ -43,6 +43,10 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    TK3, TS1 to TS5), merge and freeze, then one combined A/B (old vs new sleight, claim plus held-out tasks), then the all-arms
    claim run (5 runs where any arm fails, scored by `bench/claim-score.mjs`), then the release pass and the tag. The tag moves
    later so 1.3.0 includes the fixes and the claim measures the released build.
+   Before browser numbers are published, one gate round runs turbo on a real, isolated Helium or Chrome profile instead of the
+   headless Chromium, so the quoted number is the product path. Racing lcu, Cua and Peekaboo on turbo's browser tasks needs that
+   real window plus about 150 to 250 lines of gate harness and an estimated 2 to 8 hour away window: after the tag, or the claim
+   says it wasn't raced (owner, 2026-10-17: browser claims only for turbo, stated per browser).
 
 ## 2. After 1.3.0, in the owner's order
 

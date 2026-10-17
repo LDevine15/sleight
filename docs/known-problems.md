@@ -224,6 +224,10 @@ native reference, and oversized first results defer the browser reference while 
   [gate](benchmarks/2026-10-16-gate.md) passed on 13 FowlBrowser tasks (547 s against 720 s, 0 errors,
   Haiku 5.5, 5 rounds), but the installed approval flow is not qualified, and no native-app comparison has run.
   The earlier [prototype](benchmarks/2026-10-14-turbo-prototype.md) passed 4/9 with all four forms failing.
+- The gate measured turbo on the benchmark's own headless Chromium with a temporary profile, not on a user's Chrome or Helium
+  connected through remote-debugging consent. No gate round has run on a real browser window yet.
+- Turbo drives Chrome and Helium only. Safari and Firefox run on the engine's browser path, and neither has been raced. Turbo has
+  not been raced against lcu, Cua or Peekaboo on any browser task: they work from screenshots and need a real browser window.
 - The native helpers require Apple's command-line tools for their first build. A failed compiler
   leaves the engine path available. Minimum macOS version and Intel builds are unqualified.
 - Native consent, selected-profile setup, idle connection longevity, package updates and cleanup
