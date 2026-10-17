@@ -1,5 +1,6 @@
 {
-  "since": "2026-10-16T15-34",
+  "since": "2026-10-17T04-03",
+  "sinceReason": "overnight claim run on the release build (ef833641 plus the Chess drag fix 1933db78); earlier runs measured older builds",
   "arms": ["sleight", "lcu", "codex", "cua", "peekaboo", "claude-cu"],
   "tasks": ["calculator-click", "calculator-menu", "textedit-save", "textedit-drag", "finder-move", "preview-read", "textedit-calculator", "word-edit", "excel-edit"],
   "reasons": [
