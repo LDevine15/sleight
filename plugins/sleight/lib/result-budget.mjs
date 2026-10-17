@@ -5,6 +5,7 @@
 // the engine's Linux- and Windows-only paragraphs, and if the result is still too big it moves the browser
 // API reference to the start of the next result. Safety and confirmation sections never move.
 import { trimBrowserResults } from './browser-read-cap.mjs';
+import { compactConfirmationsPolicy } from './compact-confirmations.mjs';
 
 export const RESULT_LIMIT = 45000;
 
@@ -14,6 +15,7 @@ const POLICY = '\n# Computer Use Confirmations Policy';
 const REFERENCE = '\n# API Reference\n';
 const OTHER_PLATFORM = /\b(?:Linux|Windows)\b/;
 const NATIVE_REFERENCE = /\bsleight\.nativeDocumentation\s*\(/;
+const POLICY_REFERENCE = /\bcua\.rewriteDocumentation\s*\(/;
 const NATIVE_NOTICE = 'sleight: Read the native reference with `nodeRepl.write("Full native reference:\\n" + await sleight.nativeDocumentation())` when needed. It documents `cua.getTab`, `cua.listTabs`, `cua.getState`, `cua.getApp` and the rest.';
 
 function dropOtherPlatforms(text) {
@@ -94,14 +96,16 @@ function trimResultTrees(content, limit) {
 }
 
 export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT, fullDocs = process.env.SLEIGHT_ENGINE_DOCS === 'full',
-  leanDocs = process.env.SLEIGHT_ENGINE_DOCS === 'lean', minDocs = process.env.SLEIGHT_ENGINE_DOCS === 'min' } = {}) {
+  leanDocs = process.env.SLEIGHT_ENGINE_DOCS === 'lean', minDocs = process.env.SLEIGHT_ENGINE_DOCS === 'min',
+  // Owner wording review is required before this becomes the default (CP1).
+  compactConfirmations = process.env.SLEIGHT_COMPACT_CONFIRMATIONS === '1' } = {}) {
   let pending = null;
   let browserFirst, nativeDocs, nativeDelivered = false;
   const requests = new Map();
   return {
     request(id, { browser, code = '' }) {
       browserFirst ??= browser;
-      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code) });
+      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code), policyReference: POLICY_REFERENCE.test(code) });
     },
     finish(id) { requests.delete(id); },
     code(code) {
@@ -130,6 +134,15 @@ export function createResultBudget({ platform = process.platform, limit = RESULT
       }
       if (!fullDocs) out = out.map((c) => (c.type === 'text' && BROWSER_DOCS.test(c.text) && c.text.includes(REFERENCE)
         ? { ...c, text: minDocs || leanDocs ? leanReference(c.text, minDocs) : trimReference(c.text) } : c));
+      const request = requests.get(id);
+      if (compactConfirmations && !fullDocs && browserFirst === false && request && !request.browser &&
+          !request.reference && !request.policyReference && !out.some(c => c.type === 'text' && BROWSER_DOCS.test(c.text))) {
+        out = out.map(c => {
+          if (c.type !== 'text' || !GENERAL_DOCS.test(c.text)) return c;
+          const compact = compactConfirmationsPolicy(c.text);
+          return compact ? { ...c, text: compact } : c;
+        });
+      }
       if (pending) { out = [{ type: 'text', text: pending }, ...out]; pending = null; }
       // Spend the tree's rows before delaying reference text; policy and caller prose stay whole.
       out = trimResultTrees(trimBrowserResults(out, '', { limit, countDocs: true }), limit);

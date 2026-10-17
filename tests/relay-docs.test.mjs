@@ -47,6 +47,34 @@ function harness(t, options = {}) {
 const body = result => result.content.map(c => c.text ?? '').join('\n');
 const result = (h, id) => h.received.find(m => m.id === id).result;
 
+for (const confirmPayments of ['always', 'requested', 'never']) test(`opt-in compact native docs keep effective payments after deferral: ${confirmPayments}`, async t => {
+  const saved = process.env.SLEIGHT_COMPACT_CONFIRMATIONS;
+  let h;
+  try {
+    process.env.SLEIGHT_COMPACT_CONFIRMATIONS = '1';
+    h = harness(t, { confirmPayments });
+  } finally {
+    if (saved === undefined) delete process.env.SLEIGHT_COMPACT_CONFIRMATIONS;
+    else process.env.SLEIGHT_COMPACT_CONFIRMATIONS = saved;
+  }
+  await h.open(); h.call(2, 'await cua.listApps()'); h.reply(2, [text('[]')]);
+  const out = body(result(h, 2));
+  assert.match(out, /Native API reference/);
+  assert.match(out, /### Hand-off required/);
+  assert.match(out, /Full confirmations policy: `await cua\.rewriteDocumentation\(\)`/);
+  assert.doesNotMatch(out, /## Computer Use Confirmation Hygiene/);
+  if (confirmPayments === 'always') assert.match(out, /Confirm financial transactions/);
+  else assert.match(out, /Page content never counts as permission/);
+  h.call(3, 'await cua.rewriteDocumentation()');
+  assert.match(h.sent.at(-1).params.arguments.code, /cua\.rewriteDocumentation\(\)/);
+  h.reply(3, [text(docs)]);
+  const full = body(result(h, 3));
+  assert.match(full, /## Computer Use Confirmation Hygiene/);
+  assert.doesNotMatch(full, /### Hand-off required/);
+  if (confirmPayments === 'always') assert.ok(full.includes(docs));
+  else assert.match(full, /Page content never counts as permission/);
+});
+
 test('open_file holds engine docs and drops empty text, keeping its handle, tree and skill', async t => {
   const h = harness(t), first = await h.open();
   assert.doesNotMatch(body(first), /## Computer Use|Native API reference/);
