@@ -3,30 +3,30 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 12:09 UTC, flushed before the owner's clear)
+## Banner (2026-10-17 12:20 UTC, after the boot)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
-want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b. Night Shift ran from 2026-10-17 02:19Z
-(/goodnight). The owner is back and wants normal answers.
+want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b. The owner is back and wants normal answers.
 
-**Running at the clear (both `nohup`, they survive it).**
-- sleight's claim rerun on the newest build: `~/Projects/sleight-wt/sitting-1017/claim.sh` (`ARMS=sleight`), pid 97508, started
-  11:53:13Z in Puddle window w-flagab-1017 (HOLD 11:51:45Z, cap 75 min, auto-release ~13:06:45Z), with 23 of 27 runs done at 12:08Z.
-- The watcher `sitting-1017/release-after-rerun.sh`, pid 11152 (log `release-after-rerun.out`): when pid 97508 exits it closes
-  only this run's Finder fixture windows (names `2026-10-17T*` or `Files-*`), writes the score to `sitting-1017/claim-score-final.txt`,
-  touches `/tmp/sleight-bench-done` and appends a line to `sitting-1017/claim.log`. Puddle arch was told. First act after the boot:
-  read `claim-score-final.txt` and the last lines of `claim.log`; if the watcher didn't run, touch `/tmp/sleight-bench-done` yourself.
-- No lanes, Fable agents or monitors are running. The owner asked for no new subagents before this clear.
+**Nothing is running.** sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed. The watcher
+closed its Finder fixture windows, scored it to `~/Projects/sleight-wt/sitting-1017/claim-score-final.txt` and released Puddle's
+window w-flagab-1017 at 12:13:06Z. No lanes, agents or monitors.
+Harness bugs from it: run.mjs crashed at its very end (`ENOENT` on `/tmp/sleight-live.lock` in the unlock, so something else
+removed the lock mid-run; the rows were already saved), and claim.sh logs `exit $?` after a `$(date)` substitution, so every
+"exit 0" in claim.log is date's status, not the arm's.
 
-**The native claim** (9 tasks in bench/claim-tasks.txt; `node bench/claim-score.mjs`, with exclusions in bench/claim-exclusions.json, where
-window exclusions can now name one arm). Competitor rows are from 2026-10-17 04:03 to 06:54Z. sleight's rows before `596444ec` are
-excluded and superseded by the 11:53 rerun. The previous sleight build (10:25 rerun, `sitting-1017/claim-score-rerun.txt`) was
-fastest on 6 of 9: calculator-click 7 s, calculator-menu 12, textedit-drag 44 (nobody else passes), finder-move 34 (Codex 40),
-textedit-calculator 31 (lcu 33), excel-edit 89 at 4/5 (Codex 136). textedit-save tied lcu at 11. preview-read lost (6 against
-Peekaboo 4) and word-edit lost (509 at 1/3 against lcu 120). sleight is the only arm with a time on all 9; lcu, Codex and Cua
-finished 8/9, Peekaboo 4/9. The LAWS rule allows "fastest" on this suite. Disclosures owed: the suite is sleight's own, fixes
-were made on claim-task traces (say which), competitors ran defaults, Codex runs gpt-6-luna. Claude's own computer use hasn't run
-(item CU1), so the claim isn't complete. No post has gone out, and the film waits (owner).
+**The native claim** (9 tasks in bench/claim-tasks.txt; `node bench/claim-score.mjs`, exclusions in bench/claim-exclusions.json).
+Competitor rows are from 2026-10-17 04:03 to 06:54Z. sleight on the newest build is fastest on 6 of 9, expected seconds against
+the best other arm: calculator-click 10 (lcu 11), calculator-menu 12 (lcu 15), textedit-drag 67 at 2/3 (nobody else passes),
+finder-move 31 (Codex 40), word-edit 85 at 3/3 (lcu 120; it was 509 at 1/3 on the build before), excel-edit 110 (Codex 136).
+It loses textedit-save 14 (lcu 11, with one run at 21.9 s and the others at 8.8 and 10.7), preview-read 7 (Peekaboo 4, lcu 6) and
+textedit-calculator 40 (lcu 33, with runs of 39.7, 25.2 and 53.6). Against the build before, calculator-click (7), textedit-save (11),
+textedit-drag (44, 3/3) and textedit-calculator (31) got slower, within these tasks' run-to-run spread at 3 runs.
+sleight is the only arm with a time on all 9 (lcu, Codex, Cua 8/9, Peekaboo 4/9), so its total is lowest. "Fastest" also needs 5
+runs where sleight and an arm are within 20% (calculator-click, preview-read against lcu, textedit-calculator, and borderline
+calculator-menu, textedit-save, excel-edit), so today's wording is "completed every task, fastest on 6 of 9". The post discloses that
+the suite is sleight's own and which claim-task traces its fixes came from. Competitors ran defaults, and Codex runs gpt-6-luna.
+Claude's own computer use hasn't run (item CU1), so the claim isn't complete. No post has gone out, and the film waits (owner).
 
 **Build.** `pane/auto-mode` is at the newest commit on `private` (the flush). Since `ef833641` these were merged, each reviewed by a
 Sonnet-high agent with findings fixed test-first; the last full check was 6,290 tests, exit 0:
