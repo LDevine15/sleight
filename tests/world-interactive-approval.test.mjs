@@ -392,6 +392,14 @@ test('prepared permission hook allows only bound computer-use calls within the t
   assert.equal(invoke('mcp__computer-use__request_access', { apps: ['Fixture Editor'], reason: 'Edit the fixture' }), 'allow');
   assert.equal(invoke('mcp__computer-use__request_access', { apps: ['Fixture Editor'], reason: 5 }), 'deny');
   assert.equal(invoke('mcp__computer-use__screenshot', {}), 'allow');
+  // The pinned 2.1.289 tool and action names (live 15:40Z: every one was denied under guessed names).
+  for (const [tool, input] of [['left_click', { coordinate: [10, 20] }], ['double_click', { coordinate: [1, 2] }], ['type', { text: 'x' }],
+    ['key', { text: 'Return' }], ['zoom', { region: [0, 0, 10, 10] }], ['list_granted_applications', {}], ['mouse_move', { coordinate: [1, 2] }],
+    ['computer_batch', { actions: [{ action: 'left_click', coordinate: [1, 2] }, { action: 'type', text: '4' }, { action: 'key', text: 'Return' }] }],
+    ['app_ax_find', { app: 'Fixture Editor', query: 'x' }], ['app_list_windows', { app: 'Fixture Editor' }]])
+    assert.equal(invoke('mcp__computer-use__' + tool, input), 'allow', tool);
+  for (const tool of ['request_full_control', 'request_teach_access', 'teach_step', 'read_clipboard'])
+    assert.equal(invoke('mcp__computer-use__' + tool, {}), 'deny', tool);
   assert.equal(invoke('mcp__computer-use__open_application', { app: 'Fixture Editor' }), 'allow');
   for (const input of [{ apps: ['Other App'] }, { apps: ['Fixture Editor', 'Other App'] }, { apps: [] }, {}, { apps: 'Fixture Editor' }])
     assert.equal(invoke('mcp__computer-use__request_access', input), 'deny');

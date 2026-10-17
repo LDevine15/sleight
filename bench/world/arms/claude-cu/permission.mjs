@@ -13,8 +13,14 @@ export function validateAllowedGrants(values) {
   return [...new Set(values)];
 }
 
-const tools = new Set(['request_access', 'screenshot', 'click', 'type', 'key', 'scroll', 'move', 'drag', 'wait',
-  'open_application', 'computer_batch', 'app_screenshot', 'app_click', 'app_type', 'app_key', 'app_scroll', 'app_drag', 'app_batch']);
+// Claude Code 2.1.289's computer-use tools and batch actions (live 15:40Z). Screen-coordinate tools reach only apps the session
+// granted: the server hides every other app before acting. Full control, teaching and the clipboard (without its grant) stay out.
+const tools = new Set(['request_access', 'list_granted_applications', 'list_apps', 'open_application', 'screenshot', 'zoom',
+  'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'left_click_drag', 'left_mouse_down', 'left_mouse_up',
+  'mouse_move', 'cursor_position', 'type', 'key', 'hold_key', 'scroll', 'wait', 'switch_display', 'computer_batch', 'release_full_control',
+  'app_screenshot', 'app_zoom', 'app_click', 'app_type', 'app_key', 'app_scroll', 'app_drag', 'app_menu', 'app_ax_find',
+  'app_list_windows', 'app_focus', 'app_release', 'app_bring_to_current_space', 'app_batch',
+  'click', 'move', 'drag']);
 function allowedTargets(input, apps, allowedGrants, depth = 0) {
   if (depth > 16) return false;
   if (!input || typeof input !== 'object') return true;
@@ -28,6 +34,7 @@ function allowedTargets(input, apps, allowedGrants, depth = 0) {
   return true;
 }
 function allowedCall(name, input, apps, allowedGrants, depth = 0, app) {
+  if (name === 'read_clipboard' && allowedGrants.includes('clipboardRead') || name === 'write_clipboard' && allowedGrants.includes('clipboardWrite')) return true;
   if (depth > 8 || !tools.has(name) || !input || typeof input !== 'object' || Array.isArray(input) ||
     !allowedTargets(input, apps, allowedGrants)) return false;
   if (name === 'request_access' && (!Array.isArray(input.apps) || !input.apps.length ||
