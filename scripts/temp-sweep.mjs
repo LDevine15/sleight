@@ -6,7 +6,10 @@ import { defaultRoots, isHeld, listLeftovers, keepTemp, MAX_AGE_MS } from './tem
 
 const RETAIN = new Set(['sleight-live.lock', 'sleight-real-evidence']);
 const inClaim = path => /(?:^|\/)ledger\/claims(?:\/|$)/.test(path);
-const retained = item => RETAIN.has(item.name) || /^sleight-(?:.*-)?evidence/.test(item.name) || inClaim(item.path);
+// sleight-review-* holds change review's undo copies of the user's documents; probe banks are kept on purpose when
+// their cleanup is unproved (Fable red-team, 2026-10-17).
+const retained = item => RETAIN.has(item.name) || /^sleight-(?:.*-)?evidence/.test(item.name) ||
+  /^sleight-(?:review|xd1|xl1)-/.test(item.name) || inClaim(item.path);
 
 export function canonicalHolders(held) {
   return new Set([...held].map(path => { try { return realpathSync(path); } catch { return path; } }));

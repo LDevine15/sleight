@@ -737,7 +737,8 @@ pass: for (let run = 1; run <= runs; run++) {
           fixturePaths: fixtureContexts.flatMap(ctx => [ctx.dir, ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean)),
           fixtureNames: fixtureContexts.flatMap(ctx => [ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean).map(path => basename(path))),
           armPids, daemonPaths: armNames.filter(isNativeArm).flatMap(name => Object.values(nativeArmPlan(name, { armHome: ARM_HOME, dir: ARMS[name].cwd }).mcp.mcpServers).map(server => server.command)),
-          blocked: ownerPresent || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
+          // Closing and quitting are visible actions, so only a pass started with --owner-away takes them.
+          blocked: !ownerAway || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
           launched: realContexts.flatMap(ctx => (ctx.windowLeases ?? []).filter(lease => lease.launched && lease.running === false)
             .map(lease => ({ pid: lease.pid, start: lease.processStartedAtMs / 1000, bundle: lease.bundle }))),
           beforeAction: async () => {

@@ -43,13 +43,14 @@ test('the live lock and retained real evidence are never temp leftovers, even af
 });
 
 
-test('lane evidence names, ledger claim descendants and keep-temp opt-out are protected', t => {
+test('lane evidence, review undo copies, probe banks, ledger claim descendants and keep-temp opt-out are protected', t => {
   const { root, old } = fixture(t);
   const evidence = old('sleight-pw1r-evidence'), suffix = old('sleight-review-evidence-old');
+  const kept = ['sleight-review-AbC123', 'sleight-xl1-MMisj1', 'sleight-xd1-probe-XyZ987'].map(old);
   const claim = join(root, 'ledger', 'claims', 'HY1C'); mkdirSync(claim, { recursive: true });
   const owned = join(claim, 'sleight-fixture'); mkdirSync(owned); utimesSync(owned, new Date(0), new Date(0));
   sweepTemp({ roots: [root, claim], held: new Set(), log() {} });
-  for (const dir of [evidence, suffix, owned]) assert.equal(existsSync(dir), true, dir);
+  for (const dir of [evidence, suffix, owned, ...kept]) assert.equal(existsSync(dir), true, dir);
   const keep = old('sleight-opt-out'), previous = process.env.SLEIGHT_KEEP_TEMP;
   try { process.env.SLEIGHT_KEEP_TEMP = '1'; sweepTemp({ roots: [root], held: new Set(), log() {} }); }
   finally { if (previous === undefined) delete process.env.SLEIGHT_KEEP_TEMP; else process.env.SLEIGHT_KEEP_TEMP = previous; }
