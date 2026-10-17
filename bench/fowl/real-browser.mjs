@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 export function realBrowserPlan({ browser, round, home = homedir() }) {
   if (!['chrome', 'helium'].includes(browser)) throw Error('real browser must be chrome or helium');
@@ -19,23 +19,37 @@ export function realBrowserPlan({ browser, round, home = homedir() }) {
 }
 
 function browserProcesses() {
-  const output = execFileSync('/bin/ps', ['-axww', '-o', 'pid=,comm='], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
+  const output = execFileSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
   if (!output.trim()) throw Error('BENCH_PROCESS_LIST_UNAVAILABLE');
   return output.trim().split('\n').map(line => {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
     if (!match) throw Error('BENCH_PROCESS_LIST_INVALID');
-    return { pid: Number(match[1]), executable: match[2] };
+    return { pid: Number(match[1]), ppid: Number(match[2]), executable: match[3] };
   });
 }
 
-export async function checkBrowserOwner(plan, { listProcesses = browserProcesses } = {}) {
+export async function checkBrowserOwner(plan, { listProcesses = browserProcesses, ownedPid } = {}) {
   const ownerCheck = { executable: plan.executable, checkedAt: new Date().toISOString(), ok: false, otherPids: [] };
   try {
     const processes = await listProcesses();
     if (!Array.isArray(processes) || processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 ||
         typeof row.executable !== 'string' || !row.executable)) throw Error('BENCH_PROCESS_LIST_INVALID');
     const canonical = path => existsSync(path) ? realpathSync(path) : path;
-    ownerCheck.otherPids = processes.filter(row => canonical(row.executable) === canonical(plan.executable)).map(row => row.pid);
+    const matches = row => isAbsolute(row.executable) ? canonical(row.executable) === canonical(plan.executable)
+      : basename(row.executable) === basename(plan.executable);
+    const parents = new Map(processes.map(row => [row.pid, row.ppid]));
+    if (ownedPid !== undefined && (!Number.isSafeInteger(ownedPid) || ownedPid <= 0 || parents.size !== processes.length ||
+        !processes.some(row => row.pid === ownedPid && matches(row)) ||
+        processes.some(row => !Number.isSafeInteger(row.ppid) || row.ppid < 0))) throw Error('BENCH_PROCESS_LIST_INVALID');
+    const owned = pid => {
+      const seen = new Set();
+      while (pid && !seen.has(pid)) {
+        if (pid === ownedPid) return true;
+        seen.add(pid); pid = parents.get(pid);
+      }
+      return false;
+    };
+    ownerCheck.otherPids = processes.filter(row => matches(row) && !owned(row.pid)).map(row => row.pid);
     if (ownerCheck.otherPids.length) throw Error(`Quit ${plan.browser} before starting this round; another process uses the browser executable (PID ${ownerCheck.otherPids.join(', ')}).`);
     ownerCheck.ok = true;
     return ownerCheck;
@@ -191,6 +205,10 @@ export async function resetRealBrowser(browser, { connect = realBrowserCommands,
       const targets = (await connection.send('Target.getTargets')).targetInfos.filter(target => target.type === 'page');
       if (targets.length === 1 && targets[0].targetId === targetId && targets[0].title === browser.marker) return inventory(browser, targets);
       if (Date.now() >= deadline) throw Error('BENCH_BROWSER_RESET_FAILED');
+      for (const target of targets.filter(target => target.targetId !== targetId)) {
+        if (Date.now() >= deadline || typeof target.targetId !== 'string' || !target.targetId ||
+            !(await connection.send('Target.closeTarget', { targetId: target.targetId })).success) throw Error('BENCH_BROWSER_RESET_FAILED');
+      }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
   } finally { await connection.close(); }

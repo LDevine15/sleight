@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser } from './real-browser.mjs';
+import { realBrowserPlan, launchRealBrowser, resetRealBrowser, observeRealBrowser, checkBrowserOwner } from './real-browser.mjs';
 import { REAL_SURFACES, realAgentSetup } from './real-gate-setup.mjs';
 import { runCodex, codexConfigServers } from '../codex-arm.mjs';
 import { runOwned } from '../preapproved-process.mjs';
@@ -64,32 +64,45 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
   let result;
   const collect = async operation => {
     try { return await operation(); }
-    catch (error) { error.collectionError = true; throw error; }
+    catch (thrown) {
+      const error = thrown instanceof Error ? thrown : Error(String(thrown), { cause: thrown });
+      error.collectionError = true; throw error;
+    }
   };
   const started = Date.now(), events = join(plan.dir, 'events.jsonl');
-  if (plan.surface === 'codex') {
-    const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: 'gpt-6-luna', effort: 'high', home: codexHome(),
-      signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
-      onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') }));
-    if (!run.groupClean) throw Object.assign(Error('BENCH_AGENT_CLEANUP_UNPROVED'), { groupClean: false });
-    result = { exitCode: run.code, result: run.out, timedOut: run.timedOut, groupClean: run.groupClean,
-      forbidden: run.forbidden, toolCalls: run.toolCalls, engineMs: run.engineMs };
-    if (run.forbidden.length) result.result = { ...run.out, is_error: true };
-    writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
-  } else {
-    writeFileSync(join(plan.dir, 'mcp.json'), JSON.stringify(plan.mcpConfig, null, 2), { mode: 0o600 });
-    writeFileSync(join(plan.dir, 'settings.json'), JSON.stringify(plan.settingsOverrides, null, 2), { mode: 0o600 });
-    const run = await collect(() => runClaude(plan.command, plan.args, { cwd: plan.dir, env: plan.env, signal,
-      timeoutMs: (plan.task.budgetSeconds || 600) * 4000 }));
-    if (!run.groupClean) throw Object.assign(Error('BENCH_AGENT_CLEANUP_UNPROVED'), { groupClean: false });
-    writeFileSync(events, run.stdout); writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
-    const messages = run.stdout.split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
-    result = { exitCode: run.exit.code, result: messages.findLast(event => event.type === 'result'),
-      timedOut: run.timedOut, groupClean: run.groupClean,
-      toolCalls: messages.reduce((count, event) => count + (event.message?.content || []).filter(item => item.type === 'tool_use').length, 0),
-      toolErrors: messages.reduce((count, event) => count + (event.message?.content || []).filter(item => item.type === 'tool_result' && item.is_error).length, 0) };
+  writeFileSync(events, '');
+  let groupClean;
+  try {
+    if (plan.surface === 'codex') {
+      const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: 'gpt-6-luna', effort: 'high', home: codexHome(),
+        signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
+        onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') }));
+      groupClean = run.groupClean;
+      result = { exitCode: run.code, result: run.out, timedOut: run.timedOut, groupClean: run.groupClean,
+        forbidden: run.forbidden, toolCalls: run.toolCalls, engineMs: run.engineMs };
+      if (run.forbidden.length) result.result = { ...run.out, is_error: true };
+      writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
+    } else {
+      writeFileSync(join(plan.dir, 'mcp.json'), JSON.stringify(plan.mcpConfig, null, 2), { mode: 0o600 });
+      writeFileSync(join(plan.dir, 'settings.json'), JSON.stringify(plan.settingsOverrides, null, 2), { mode: 0o600 });
+      const run = await collect(() => runClaude(plan.command, plan.args, { cwd: plan.dir, env: plan.env, signal,
+        timeoutMs: (plan.task.budgetSeconds || 600) * 4000 }));
+      groupClean = run.groupClean;
+      writeFileSync(events, run.stdout); writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
+      const messages = run.stdout.split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+      result = { exitCode: run.exit.code, result: messages.findLast(event => event.type === 'result'),
+        timedOut: run.timedOut, groupClean: run.groupClean,
+        toolCalls: messages.reduce((count, event) => count + (event.message?.content || []).filter(item => item.type === 'tool_use').length, 0),
+        toolErrors: messages.reduce((count, event) => count + (event.message?.content || []).filter(item => item.type === 'tool_result' && item.is_error).length, 0) };
+    }
+    const receipt = { ...result, name: plan.task.name, started, finished: Date.now(), agentConfig: plan.metadata };
+    writeFileSync(join(plan.dir, 'run.json'), JSON.stringify(receipt, null, 2));
+    if (!groupClean) throw Object.assign(Error('BENCH_AGENT_CLEANUP_UNPROVED'), { groupClean: false });
+    return receipt;
+  } catch (error) {
+    if (groupClean === false) error.groupClean = false;
+    throw error;
   }
-  return { ...result, name: plan.task.name, started, finished: Date.now(), agentConfig: plan.metadata };
 }
 
 export async function admitRealGate(plan) {
@@ -140,6 +153,11 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (plan.surface === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
     for (const arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
+      const ownerCheck = await (runtime.checkOwner || checkBrowserOwner)(browser, { ownedPid: browser.pid }).catch(error => {
+        if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity, ownerCheck: error.ownerCheck }, null, 2));
+        throw error;
+      });
+      writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity, ownerCheck }, null, 2));
       const start = await (runtime.resetBrowser || resetRealBrowser)(browser);
       const startKeys = new Set(Object.keys(start));
       if (controller.signal.aborted) throw Error('Gate interrupted');

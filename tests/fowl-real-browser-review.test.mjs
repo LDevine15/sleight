@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -230,7 +232,7 @@ test('upstream handoff grader requires a page left open and no further sign-in a
   }
 });
 
-function lifecycle(t, { surface = 'codex', runAgent, launchBrowser } = {}) {
+function lifecycle(t, { surface = 'codex', runAgent, launchBrowser, checkOwner } = {}) {
   const dir = temporary(t), events = [], lockPath = join(dir, 'lock');
   const marker = { 'chrome:marker': { title: 'marker', url: 'data:text/html,marker' } };
   const after = { 'chrome:task': { title: 'task', url: 'https://example.test' } };
@@ -238,6 +240,7 @@ function lifecycle(t, { surface = 'codex', runAgent, launchBrowser } = {}) {
     runner: { gradeOutcome: input => { assert.equal(input.observed, true); assert.equal(input.after, after);
       assert.deepEqual([...input.startKeys], Object.keys(marker)); return { problems: [] }; }, gradeSite: () => ({ problems: [] }) },
     runtime: { lockPath, admit: async () => {},
+      checkOwner: checkOwner || (async () => ({ ok: true })),
       startSites: async () => ({ close: async () => { events.push('sites closed'); } }),
       launchBrowser: launchBrowser || (async plan => ({ ...plan, pid: 1234, ownerCheck: { ok: true, otherPids: [] }, stop: async () => {
         events.push('browser closed'); return { browserClosed: true, profileDeleted: true };
@@ -320,4 +323,153 @@ test('synchronous owned-process failures also retain collection uncertainty', as
 test('patched real-gate entry supplies the upstream handoff grader', () => {
   const patch = readFileSync(join(root, 'bench/fowl/sleight-surface.patch'), 'utf8');
   assert.match(patch, /runner: \{ agentSetup, gradeOutcome, gradeSite, gradeViewport, gradeHandoff \}/);
+});
+
+test('default census parser refuses absolute, basename-only and relative executable matches', async t => {
+  const plan = real.realBrowserPlan({ browser: 'chrome', round: 'parser' });
+  let output;
+  const mocked = t.mock.method(childProcess, 'execFileSync', (command, args) => {
+    assert.equal(command, '/bin/ps');
+    assert.deepEqual(args, ['-axww', '-o', 'pid=,ppid=,comm=']);
+    return output;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+  for (const executable of [plan.executable, 'Google Chrome', './Google Chrome', 'relative/Google Chrome']) {
+    output = `  100 1 ${executable}\n  101 1 /fixture/unrelated\n`;
+    await assert.rejects(real.checkBrowserOwner(plan), error => {
+      assert.deepEqual(error.ownerCheck?.otherPids, [100]); return true;
+    });
+  }
+  output = '';
+  await assert.rejects(real.checkBrowserOwner(plan), /PROCESS_LIST_UNAVAILABLE/);
+  output = 'not a process row\n';
+  await assert.rejects(real.checkBrowserOwner(plan), /PROCESS_LIST_INVALID/);
+  output = '  101 1 /fixture/unrelated\n';
+  assert.equal((await real.checkBrowserOwner(plan)).ok, true);
+});
+
+test('per-task census allows only the owned pid and descendants, even through helper executables', async () => {
+  const plan = real.realBrowserPlan({ browser: 'helium', round: 'descendants' });
+  const rows = [{ pid: 100, ppid: 1, executable: plan.executable },
+    { pid: 101, ppid: 100, executable: '/fixture/helper' }, { pid: 102, ppid: 101, executable: 'Helium' }];
+  const check = listProcesses => real.checkBrowserOwner(plan, { ownedPid: 100, listProcesses: async () => listProcesses });
+  assert.equal((await check(rows)).ok, true);
+  for (const extra of [{ pid: 200, ppid: 1, executable: plan.executable },
+    { pid: 200, ppid: 201, executable: './Helium' }, { pid: 201, ppid: 200, executable: 'Helium' }]) {
+    await assert.rejects(check([...rows, extra]), error => {
+      assert.deepEqual(error.ownerCheck.otherPids, [extra.pid]); return true;
+    });
+  }
+  await assert.rejects(check(rows.map(({ ppid, ...row }) => row)), /PROCESS_LIST_INVALID/);
+  await assert.rejects(check(rows.slice(1)), /PROCESS_LIST_INVALID/);
+  await assert.rejects(check([...rows, { pid: 200, ppid: 201, executable: plan.executable },
+    { pid: 201, ppid: 200, executable: '/fixture/helper' }]), error => {
+    assert.deepEqual(error.ownerCheck.otherPids, [200]); return true;
+  });
+});
+
+test('reset closes pages that arrive after its initial snapshot through the same owned endpoint', async () => {
+  const browser = real.realBrowserPlan({ browser: 'chrome', round: 'late-page' });
+  let pages = [], disconnected = false, closes = 0;
+  const start = await real.resetRealBrowser(browser, { timeoutMs: 50, connect: async owned => {
+    assert.equal(owned, browser);
+    return { close: async () => { disconnected = true; }, send: async (method, params) => {
+      if (method === 'Target.getTargets') return { targetInfos: pages };
+      if (method === 'Target.createTarget') {
+        pages = [{ targetId: 'marker', type: 'page', title: browser.marker },
+          { targetId: 'late', type: 'page' }, { targetId: 'worker', type: 'worker' }];
+        return { targetId: 'marker' };
+      }
+      if (method === 'Target.activateTarget') return {};
+      if (method === 'Target.closeTarget') {
+        assert.equal(params.targetId, 'late'); closes++;
+        pages = pages.filter(page => page.targetId !== 'late'); return { success: true };
+      }
+      assert.fail(method);
+    } };
+  } });
+  assert.deepEqual(Object.keys(start), ['chrome:marker']);
+  assert.equal(closes, 1); assert.equal(disconnected, true);
+});
+
+test('reset remains bounded when new stray pages keep appearing', async () => {
+  const browser = real.realBrowserPlan({ browser: 'helium', round: 'endless-pages' });
+  let reads = 0, disconnected = false;
+  await assert.rejects(real.resetRealBrowser(browser, { timeoutMs: 30, connect: async () => ({
+    close: async () => { disconnected = true; }, send: async method => {
+      if (method === 'Target.getTargets') return { targetInfos: ++reads === 1 ? [] :
+        [{ targetId: 'marker', type: 'page', title: browser.marker }, { targetId: 'late-' + reads, type: 'page' }] };
+      if (method === 'Target.createTarget') return { targetId: 'marker' };
+      if (method === 'Target.activateTarget') return {};
+      if (method === 'Target.closeTarget') return { success: true };
+      assert.fail(method);
+    },
+  }) }), /RESET_FAILED/);
+  assert.equal(disconnected, true);
+});
+
+for (const surface of ['codex', 'sleight-turbo']) test(`${surface} saves evidence before refusing unproved cleanup`, async t => {
+  const dir = join(temporary(t), 'agent');
+  const plan = { surface, dir, task, prompt: 'fixture', command: 'fake', args: [], env: {}, mcpConfig: {}, settingsOverrides: {} };
+  const event = { type: 'result', result: 'partial answer' };
+  await assert.rejects(runGateAgent(plan, {
+    runClaude: async () => ({ groupClean: false, exit: { code: 1 }, stdout: JSON.stringify(event) + '\n', stderr: 'cleanup detail' }),
+    runNativeCodex: async (_prompt, options) => {
+      options.onEvent(event);
+      return { groupClean: false, code: 1, out: event, stderr: 'cleanup detail', forbidden: [], toolCalls: 0 };
+    },
+  }), error => {
+    assert.equal(error.groupClean, false);
+    assert.match(error.message, /CLEANUP_UNPROVED/); return true;
+  });
+  assert.match(readFileSync(join(dir, 'events.jsonl'), 'utf8'), /partial answer/);
+  assert.equal(readFileSync(join(dir, 'stderr.txt'), 'utf8'), 'cleanup detail');
+  const run = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
+  assert.equal(run.groupClean, false); assert.equal(run.name, task.name);
+});
+
+for (const surface of ['codex', 'sleight-turbo']) test(`${surface} evidence-write failures still retain browser and lock after unproved cleanup`, async t => {
+  const fixture = lifecycle(t, { surface, runAgent: async arm => {
+    rmSync(arm.dir, { recursive: true });
+    const unclean = () => {
+      mkdirSync(join(arm.dir, 'run.json'));
+      return { groupClean: false, exit: { code: 1 }, code: 1, out: {}, forbidden: [], stdout: '', stderr: '' };
+    };
+    return runGateAgent(arm, { runClaude: unclean, runNativeCodex: unclean });
+  } });
+  await assert.rejects(fixture.promise, error => {
+    assert.match(error.message, /EISDIR/); assert.equal(error.groupClean, false); return true;
+  });
+  assert.equal(existsSync(fixture.lockPath), true);
+  assert.equal(fixture.events.includes('browser closed'), false);
+  const agentDir = join(fixture.dir, 'out', task.name);
+  assert.equal(readFileSync(join(agentDir, 'events.jsonl'), 'utf8'), '');
+  assert.equal(readFileSync(join(agentDir, 'stderr.txt'), 'utf8'), '');
+});
+
+for (const thrown of [null, undefined, 'collection failed', 17]) test(`non-object process throw ${String(thrown)} retains the collection flag and lock`, async t => {
+  const fixture = lifecycle(t, { runAgent: async arm => {
+    rmSync(arm.dir, { recursive: true });
+    return runGateAgent(arm, { runNativeCodex: () => { throw thrown; } });
+  } });
+  await assert.rejects(fixture.promise, error => {
+    assert.equal(error.collectionError, true); assert.ok(error instanceof Error); return true;
+  });
+  assert.equal(existsSync(fixture.lockPath), true);
+  assert.equal(fixture.events.includes('browser closed'), false);
+});
+
+test('each task census refuses a newly arrived owner before reset, saves refusal, and collects only the owned browser', async t => {
+  let checks = 0;
+  const fixture = lifecycle(t, { checkOwner: async (browser, options) => {
+    assert.equal(options.ownedPid, browser.pid);
+    if (++checks === 1) return { ok: true, otherPids: [] };
+    throw Object.assign(Error('Quit owner browser'), { ownerCheck: { ok: false, otherPids: [200] } });
+  } });
+  await assert.rejects(fixture.promise, /Quit owner/);
+  assert.equal(checks, 2);
+  assert.deepEqual(fixture.events, ['reset', 'agent', 'observe', 'sites closed', 'browser closed']);
+  assert.deepEqual(JSON.parse(readFileSync(join(fixture.dir, 'out/browser.json'))).ownerCheck.otherPids, [200]);
+  assert.equal(existsSync(fixture.lockPath), false);
 });

@@ -213,6 +213,7 @@ for (const failed of [false, true]) test(`mock-only gate lifecycle ${failed ? 'r
   const promise = runRealGate({ args, tasks: [{ ...task, name: 'fixture', grade: null }],
     runner: { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) },
     runtime: { lockPath, admit: async () => {},
+      checkOwner: async () => ({ ok: true }),
       resetBrowser: async () => ({}), observeBrowser: async () => ({}),
       startSites: async () => ({ close: async () => { events.push('sites closed'); assert.ok(existsSync(lockPath)); } }),
       launchBrowser: async plan => ({ ...plan, pid: 1234, stop: async () => {
