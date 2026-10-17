@@ -147,6 +147,7 @@ function actionKind(code, before) {
   if (!calls.length) return undefined;
   const receiver = call => /([A-Za-z_$][\w$]*)\s*$/.exec(masked.slice(0, call.index))?.[1];
   const literal = args => /^\s*['"]([^'"\\]*)['"]\s*(?:,|$)/.exec(args)?.[1];
+  const argsOf = call => code.slice(call.index + call[0].length).split(')')[0];
   const savePanel = /\b(?:sheet|dialog)\b.*\b(?:save-panel|save)\b/i.test(before?.root ?? '');
   let save = false, opens = false, navigates = false, deletes = false, saveCall, saveHandle;
   const editableClicks = new Set();
@@ -154,7 +155,7 @@ function actionKind(code, before) {
   // file it opened, and its URL would have read as a save.
   let folderHandle, folder, fileName, nameHandle, folderReady, saveOpened = savePanel;
   for (const call of calls) {
-    const args = code.slice(call.index + call[0].length).split(')')[0];
+    const args = argsOf(call);
     let isSave = false, gotoReturn = false;
     if (call[1] === 'pressKey') {
       const key = literal(args) ?? '';
@@ -178,7 +179,11 @@ function actionKind(code, before) {
       const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
       const line = number && before?.lines.find(line => parse(line).num === Number(number));
       const target = line && parse(line).key.trim();
-      const editable = target && (/^text (?:entry area|area|field)\b/.test(target) ||
+      // ID and first-call clicks have no numbered line. A following edit on the same handle
+      // supplies context; only the existing save-state or file-time evidence can prove a save.
+      const followsEdit = calls.slice(calls.indexOf(call) + 1).some(next => receiver(call) && receiver(next) === receiver(call) &&
+        (['paste', 'typeText'].includes(next[1]) || next[1] === 'pressKey' && /^(?:super|cmd|command)\+a$/i.test(literal(argsOf(next)) ?? '')));
+      const editable = !before || followsEdit || target && (/^text (?:entry area|area|field)\b/.test(target) ||
         (!/^(?:[^(:]*button|menu item|row|link)\b/.test(target) && /^[^(,:]+\([^)]*\bsettable\b[^)]*\).*\bValue:/.test(target)));
       if (editable) editableClicks.add(call);
       isSave = (!!target && hasLabel(target, 'Save')) ||
@@ -206,7 +211,9 @@ function actionKind(code, before) {
   const namedURL = save && folderHandle === saveHandle && nameHandle === saveHandle && baseName(fileName) &&
     namedPath && isAbsolute(namedPath) ? pathToFileURL(join(namedPath, fileName)).href : undefined;
   const otherTarget = navigates || otherRead || acquisitionAfterSave || calls.some(call => receiver(call) !== saveHandle);
-  return { save, opens, deletes, clickOnly: calls.every(call => call[1] === 'click'), namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
+  const clickAndTyping = calls.some(call => call[1] === 'click') && calls.every(call =>
+    ['click', 'typeText', 'paste'].includes(call[1]) || call[1] === 'pressKey' && /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''));
+  return { save, opens, deletes, clickAndTyping, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
 
@@ -310,7 +317,40 @@ function selectedTabChanges(before, after) {
   return changes;
 }
 
-// Compare direct children of the same unique parent, without element numbers or selection state.
+// Match a unique parent's role and child multiset: an active tab can change every ancestor's
+// description without changing its siblings. Repeated groups stay ambiguous.
+function siblingGroups(lines) {
+  const found = new Map(), nodes = [], stack = [];
+  for (const line of lines) {
+    const match = ELEMENT.exec(line);
+    if (!match) { stack.length = 0; continue; }
+    const depth = match[1].length;
+    const key = match[3].replace(/\s*\((?:selected|selectable|focused)(?:, (?:selected|selectable|focused))*\)/g, '')
+      .replace(/^([a-z][a-z ]*?) Selected, /, '$1 ')
+      .replace(/,? Value:.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '');
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const node = { key, depth, body: match[3], role: /^[a-z]+(?: [a-z]+)*/.exec(key)?.[0], children: [] };
+    stack.at(-1)?.children.push(node);
+    nodes.push(node); stack.push(node);
+  }
+  for (const node of nodes) {
+    if (node.children.length < 2) continue;
+    const id = JSON.stringify([node.role, node.depth, node.children.map(child => child.key).sort()]);
+    const matches = found.get(id) ?? [];
+    matches.push(node); found.set(id, matches);
+  }
+  return found;
+}
+
+function describeSibling(node) {
+  const match = /^([a-z][a-z ]*?)(?= \(| Description:| [^a-z ])\s+(.*)$/.exec(node.body) ??
+    /^([a-z]+) (.+)$/.exec(node.body);
+  if (!match) return;
+  const body = match[2].replace(/^\([^)]*\)\s*/, '').replace(/^Selected, /, '');
+  const label = /^(?:Description: )?(.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(body)?.[1];
+  return label && { role: match[1], label };
+}
+
 // Two changed positions must exchange the same lines; inserts and rotations cannot count as swaps.
 function swappedSiblings(before, after) {
   const sortish = line => {
@@ -318,52 +358,30 @@ function swappedSiblings(before, after) {
     return /^column header\b/.test(body) || /\b(?:Sort|Ascending|Descending)\b/i.test(body);
   };
   if (before.some(sortish) || after.some(sortish)) return;
-  const groups = lines => {
-    const found = new Map(), stack = [];
-    for (const line of lines) {
-      const match = ELEMENT.exec(line);
-      if (!match) { stack.length = 0; continue; }
-      const depth = match[1].length;
-      const key = match[3].replace(/\s*\((?:selected|selectable|focused)(?:, (?:selected|selectable|focused))*\)/g, '')
-        .replace(/^([a-z][a-z ]*?) Selected, /, '$1 ')
-        .replace(/,? Value:.*?(?=, (?:Secondary Actions|ID|Help|Description):|$)/, '');
-      while (stack.length && stack.at(-1).depth >= depth) stack.pop();
-      const parent = stack.at(-1), path = [...(parent?.path ?? []), key];
-      if (parent) parent.children.push({ key, depth, body: match[3] });
-      const node = { depth, path, children: [] }, id = JSON.stringify(path);
-      const matches = found.get(id) ?? [];
-      matches.push(node.children); found.set(id, matches); stack.push(node);
-    }
-    return found;
-  };
-  const old = groups(before), swaps = [];
-  for (const [path, matches] of groups(after)) {
-    const previous = old.get(path);
+  const old = siblingGroups(before), swaps = [];
+  for (const [key, matches] of siblingGroups(after)) {
+    const previous = old.get(key);
     if (matches.length !== 1 || previous?.length !== 1) continue;
-    const was = previous[0], now = matches[0];
-    if (was.length !== now.length) continue;
+    const was = previous[0].children, parent = matches[0], now = parent.children;
     const changed = was.map((node, i) => node.key !== now[i].key ? i : -1).filter(i => i >= 0);
     if (changed.length !== 2) continue;
     const [i, j] = changed, a = was[i], b = was[j];
     if (a.depth !== b.depth || a.depth !== now[i].depth || b.depth !== now[j].depth ||
         a.key !== now[j].key || b.key !== now[i].key ||
         [a, b].some(node => was.filter(other => other.key === node.key).length !== 1)) continue;
-    const describe = node => {
-      const match = /^([a-z][a-z ]*?)(?= \(| Description:| [^a-z ])\s+(.*)$/.exec(node.body) ??
-        /^([a-z]+) (.+)$/.exec(node.body);
-      if (!match) return;
-      const body = match[2].replace(/^\([^)]*\)\s*/, '').replace(/^Selected, /, '');
-      const label = /^(?:Description: )?(.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(body)?.[1];
-      return label && { role: match[1], label };
-    };
-    const left = describe(a), right = describe(b);
-    if (left && right && left.role === right.role && left.label !== right.label) swaps.push([left.label, right.label]);
+    const left = describeSibling(a), right = describeSibling(b), order = now.map(describeSibling);
+    if (left && right && left.role === right.role && left.label !== right.label && order.every(Boolean)) {
+      const kind = /^(?:tab group|tab bar|sheet tab strip|layout area|segmented control|page selector)$/.test(parent.role) ||
+        order.every(node => /^(?:tab|radio button|segment|page)$/.test(node.role)) ? 'tabs' : 'siblings';
+      swaps.push({ key, pair: [left.label, right.label], order: now.map(node => node.key),
+        summary: `${kind} now: ${order.map(node => node.label).join(', ')}` });
+    }
   }
   return swaps.length === 1 ? swaps[0] : undefined;
 }
 
-function siblingSwapNote(labels) {
-  return `sleight: clicking also swapped ${labels[0]} and ${labels[1]}; if that wasn't intended, fix the order with the app's undo or move command.`;
+function siblingSwapNote(swap) {
+  return `sleight: clicking also swapped ${swap.pair[0]} and ${swap.pair[1]}; ${swap.summary}; if that wasn't intended, fix the order with the app's move command.`;
 }
 
 // Capture the error before relay notices and trees can bury it. The engine puts its exception
@@ -571,7 +589,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
-  const seen = new Map();
+  const seen = new Map(), pendingSwaps = new Map();
   let latest, observedInResult, observationId = 0;
   function observe(tree, window, lines) {
     const root = parse(lines[1] ?? '').key;
@@ -825,13 +843,30 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const note = action && resultNote(action, observedInResult, failed,
         failure ?? { message: failureReason(content) });
       if (note) out.push({ type: 'text', text: note });
-      if (action?.clickOnly && !failed && !stopped && !action.overlap &&
+      // Keep the reminder only while complete observations still show that order in this document.
+      const observation = observedInResult;
+      if (failed || stopped || action?.overlap || action && (!observation || observation.invalid)) pendingSwaps.clear();
+      if (observation && !observation.invalid) {
+        const key = documentKey(observation.window), pending = pendingSwaps.get(key);
+        if (pending) {
+          const matches = siblingGroups(observation.lines).get(pending.key);
+          if (observation.incomplete || observation.degraded || observation.delta?.degraded || matches?.length !== 1 ||
+              JSON.stringify(matches[0].children.map(node => node.key)) !== JSON.stringify(pending.order)) pendingSwaps.delete(key);
+          else if (action?.save && action.before && documentKey(action.before.window) === key && !failed && !stopped && !action.overlap) {
+            out.push({ type: 'text', text: `sleight: ${pending.summary}.` });
+          }
+        }
+      }
+      if (action?.clickAndTyping && !failed && !stopped && !action.overlap &&
           action.before && !action.before.incomplete && !action.before.degraded &&
           observedInResult && !observedInResult.invalid && !observedInResult.incomplete && !observedInResult.degraded &&
           !observedInResult.delta?.degraded && observedInResult.delta?.baseline === action.before.id &&
           documentKey(action.before.window) === documentKey(observedInResult.window)) {
         const swap = swappedSiblings(action.before.lines, observedInResult.lines);
-        if (swap) out.push({ type: 'text', text: siblingSwapNote(swap) });
+        if (swap) {
+          pendingSwaps.set(documentKey(observedInResult.window), swap);
+          out.push({ type: 'text', text: siblingSwapNote(swap) });
+        }
       }
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
       if ((resultTrim || firstAcquisition) && !full) for (let i = 0; i < out.length; i++) {
