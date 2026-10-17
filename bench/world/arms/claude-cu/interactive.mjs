@@ -157,7 +157,9 @@ export class SessionTranscript {
 }
 
 function terminalText(raw, prompt) {
-  let text = raw.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r/g, '\n');
+  // Claude Code draws spaces as cursor-forward moves, so they become spaces before other control sequences go.
+  let text = raw.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Math.min(Number(n || 1), 200)))
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r/g, '\n');
   if (prompt) {
     const pending = text.trim().replace(/^❯\s*/, '').replace(/\s+/g, ' ');
     const task = prompt.trim().replace(/\s+/g, ' ');
@@ -178,16 +180,19 @@ function sessionCard(text, allowedApps, allowedGrants = []) {
   if (index < 0) return;
   if (!/^[\s│]*$/.test(text.slice(text.lastIndexOf('\n', index) + 1, index)) ||
     !/^[\s│]*(?:\n|$)/.test(text.slice(index + title.length))) return { pending: true };
-  const card = text.slice(index + title.length), lines = card.split('\n').map(line => line.replace(/^[\s│]+|[\s│]+$/g, ''))
-    .filter(line => line && !/^[─╭╮╰╯]+$/.test(line));
+  // A boxed line before the apps is the request's own reason text, which grants nothing; any other line there refuses.
+  const card = text.slice(index + title.length), rows = card.split('\n')
+    .map(raw => ({ line: raw.replace(/^[\s│]+|[\s│]+$/g, ''), boxed: /^\s*│/.test(raw) }))
+    .filter(row => row.line && !/^[─╭╮╰╯]+$/.test(row.line)), lines = rows.map(row => row.line);
   const allow = lines.findIndex(line => /^(?:❯\s*)?Allow for this session \(\d+ apps?\)$/.test(line));
   if (allow < 0 || !card.endsWith('\n')) return { pending: true };
   const deny = lines.findIndex(line => /^(?:❯\s*)?Deny, and tell Claude what to do differently \(esc\)$/.test(line));
   const names = [], selected = [];
   let appSection = false, flags = false;
-  for (const line of lines.slice(0, deny < 0 ? allow : deny)) {
-    const app = /^([●○✔✓])\s+(.+?)(?: \((already granted|not installed)\))?$/.exec(line);
-    if (app && !flags) { appSection = true; names.push(app[2]); if (app[1] === '●') selected.push(app[2]); }
+  for (const [i, line] of lines.slice(0, deny < 0 ? allow : deny).entries()) {
+    const app = /^([●◉○✔✓])\s*(.+?)(?: \((already granted|not installed)\))?$/.exec(line);
+    if (!appSection && rows[i].boxed) continue;
+    if (app && !flags) { appSection = true; names.push(app[2]); if (app[1] === '●' || app[1] === '◉') selected.push(app[2]); }
     else if (appSection && line === 'Also requested:' && !flags) flags = true;
     else if (flags && /^· (?:clipboardRead|clipboardWrite|systemKeyCombos)$/.test(line)) {
       if (!allowedGrants.includes(line.slice(2))) return { blocked: 'computer-use approval grant is outside the task allowlist' };

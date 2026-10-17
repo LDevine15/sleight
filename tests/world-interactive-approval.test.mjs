@@ -21,6 +21,15 @@ const card = (apps = ['Fixture Editor'], selected = 'deny') => '\nComputer Use w
   `${selected === 'deny' ? '❯' : ' '} Deny, and tell Claude what to do differently (esc)\n` +
   `${selected === 'allow' ? '❯' : ' '} Allow for this session (${apps.length} ${apps.length === 1 ? 'app' : 'apps'})\n`;
 
+// The pinned card as the 14:39Z live run rendered it: words joined by cursor-forward codes, the request's reason in a box,
+// a ◉ marker and the hidden-apps notice (2026-10-17).
+const live = (selected = 'deny', app = 'Fixture Editor') => ['', 'Computer Use wants to control these apps', '', '',
+  '   │ To edit the fixture by clicking its controls, then leave the result on screen.', '', '',
+  '◉' + app.replaceAll(' ', '\x1b[1C').replace(/^/, '\x1b[1C'), '', '7\x1b[1Cother\x1b[1Capps\x1b[1Cwill\x1b[1Cbe\x1b[1Chidden\x1b[1Cwhile\x1b[1CClaude\x1b[1Cworks.', '', '',
+  (selected === 'deny' ? '❯' : ' ') + 'Deny,\x1b[1Cand\x1b[1Ctell\x1b[1CClaude\x1b[1Cwhat\x1b[1Cto\x1b[1Cdo\x1b[1Cdifferently\x1b[1C(esc)', '',
+  (selected === 'allow' ? '❯' : ' ') + 'Allow\x1b[1Cfor\x1b[1Cthis\x1b[1Csession\x1b[1C(1\x1b[1Capp)', '', '',
+  'Enter\x1b[1Cto\x1b[1Cconfirm\x1b[1C·\x1b[1CEsc\x1b[1Cto\x1b[1Ccancel', ''].join('\n');
+
 test('telemetry opt-out still loads the owner cached computer-use entitlement', () => {
   const p = interactivePlan({ armDir: '/private/tmp/cu-env-fixture', prompt: 'RESULT ok',
     hostEnv: { CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '0', ANTHROPIC_API_KEY: 'fixture' } });
@@ -130,6 +139,19 @@ for (const [name, screen] of [['foreign app', card(['Fixture Editor', 'Other App
     assert.equal(writes.length, 1);
   });
 }
+
+test('the live-rendered card (cursor-forward spacing, reason box, ◉ marker) is accepted for an allowlisted app', async t => {
+  const { result, writes } = await session(fixture(t), { screens: [live()], afterDown: live('allow') });
+  assert.equal(result.is_error, false, result.reason);
+  assert.deepEqual(writes.slice(1, 3), ['\x1b[B', '\r']);
+});
+test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
+  const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });
+  assertBlock(foreign.result, foreign.events, 'computer-use approval is outside the task allowlist or unsupported');
+  const unboxed = live().replace('◉', '  Terminal\n◉');
+  const above = await session(fixture(t), { screens: [unboxed] });
+  assertBlock(above.result, above.events, 'unsupported computer-use approval card');
+});
 
 for (const line of ['  Terminal', '  Also: Terminal']) {
   test(`unrecognized pre-app row refuses unconditionally: ${line.trim()}`, async t => {
