@@ -311,3 +311,16 @@ test('a flow refusal in the save tail stops the entire call before the write', t
   assert.equal(h.sent.length, 0);
   assert.match(JSON.stringify(h.received.at(-1)), /secret/);
 });
+
+test('the write prefix\'s private input receipt never reaches Claude', async t => {
+  const h = fixture(t);
+  h.call(1, 'await app.setValue(2, "updated"); await app.pressKey("super+s");');
+  const first = h.sent.at(-1);
+  const mark = /"guardStopMark":"(\[sleight:guard-stop:[^\]"]+\])"/.exec(first.params.arguments.code)?.[1];
+  assert.ok(mark, 'the write prefix carries its own guard mark');
+  h.reply(first.id, mark + JSON.stringify({ input: true }) + '\nwrite completed\n' + header); await tick();
+  h.reply(1, 'save completed\n' + header); await tick();
+  const output = JSON.stringify(h.received.filter(m => m.id === 1));
+  assert.match(output, /write completed/);
+  assert.doesNotMatch(output, /sleight:guard-stop:/);
+});
