@@ -53,7 +53,9 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    (157) can't meet that today. Its CDP support ended in 141, and WebDriver BiDi needs a launch flag and has no consent page.
    Safari's one fit is a hybrid behind Develop > Allow JavaScript from Apple Events (page script for reads and fills, the engine
    for real input), about 600 to 1,000 lines by estimate, an option for after 1.3.0. Other Chromium browsers likely inherit the
-   consent page: BR3 builds the browser table unqualified, and each is qualified by a live check with the owner after 1.3.0. A half that loses is published with scoped wording instead (browser claims only
+   consent page: BR3 builds the browser table unqualified, and each is qualified by a live check with the owner after 1.3.0
+   (Brave, Edge, Vivaldi and Chrome Beta installed by Homebrew cask on the owner's OK, 2026-10-17). After the fixes, sleight
+   races its competitors in Firefox and Safari (BR2), and the published claim wording follows that result (owner, 2026-10-17). A half that loses is published with scoped wording instead (browser claims only
    for turbo, stated per browser).
 
 ## 2. After 1.3.0, in the owner's order
