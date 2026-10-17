@@ -3,16 +3,26 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 19:10 UTC, owner away since 17:16Z, on their phone)
+## Banner (2026-10-17 19:45 UTC, owner away since 17:16Z, on their phone)
 
 Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim; the owner is "focused on winning
 everything we can" (2026-10-17). Puddle is shut down, and sleight has the Mac. Build agents are Claude subagents (Opus high builds,
 Sonnet high reviews, Fable studies).
 
-**Running:** sleight's final claim run (`~/Projects/sleight-wt/sitting-1017c/claim-final.sh`, ARMS=sleight RUNS=5, all 9 tasks,
-started 19:07Z) on bb6f99f6 from the `ab-old` worktree. Results go to `~/Projects/sleight-wt/ab-old/bench/results`; copy them to the
-main checkout's results, then add the 11:53Z sleight file to the exact-name exclusions and score. Then one top-up round for the arms
-within 20% (LAWS), then the wording.
+**Native claim: the scorer says "fastest"** (19:35Z, `~/Projects/sleight-wt/sitting-1017c/claim-score-final.{txt,json}`). sleight's
+final claim run (bb6f99f6, 19:07-19:32Z) passed 44 of 45, and the one failure is the Excel tab swap. After the one top-up round (claude-cu
+finder-move, Peekaboo preview-read) every pair within 20% has 5 runs. sleight has the lowest expected time on 6 of 9 and a total of
+282 s against claude-cu's 460 s. It loses textedit-save (LCU 11 against 14), preview-read (Peekaboo 4 against 5) and excel-edit
+(claude-cu 54 against 74). LAWS ties the headline's wording to the browser race, which comes next.
+
+**Browser race (real windows), in progress.** The harness is `bench/fowl/rounds.sh --world --real-browser <browser> --surface <arm>`,
+with arms sleight-turbo (Chrome, Helium) or sleight (Safari, Firefox), lcu, cua, peekaboo and codex. Dry runs pass for all four
+browsers, and all arm logins read as logged in. The first live tries found two harness bugs, now with a build agent. Firefox spawned
+as our child shows "Profile Missing" (TCC attributes it to us); launched through LaunchServices (`open -n -a Firefox --args ...`) the
+same profile works. Safari's owner check counted a WebKit content process owned by textunderstandingd as Safari. The owner allowed
+quitting their Chrome and Helium for tonight's race only (not answering any prompt they raise). The race uses the main checkout, at
+d734b73b plus docs (the claim build plus LW1's first commit). Then the real-window FowlBrowser gate (turbo, FowlBrowser and Claude in
+Chrome, owner's request). A build agent is adding the FowlBrowser and Claude in Chrome arms to the real-window harness.
 
 **In the claim build (bb6f99f6), all pushed:** WE1 warm-up fix with warm-up on by default; GS1 getState rewrite; SN1 save note;
 LS1 (a split call whose acquisition shows renumbering at or below its literal numbers stops before input); RA1 re-acquire
