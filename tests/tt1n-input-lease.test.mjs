@@ -734,3 +734,11 @@ test('AB1: a tab the remainder opens again stops before its next action', async 
   assert.deepEqual(h.keys, ['super+t', 'super+t']);
   assert.deepEqual(h.typed, []);
 });
+
+test('AB1: a sheet the helper sees only at the final check stops the remainder', async t => {
+  const h = await tabFixture(t, { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
+    pid: 123, processStart: 1, ...(count === 3 ? { focus: { ...fieldFocus, sheets: 1 } } : {}) }) });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.equal(h.identityChecks(), 3);
+  assert.deepEqual(h.refusals, ['final-check']);
+});
