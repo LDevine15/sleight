@@ -74,6 +74,9 @@ export function menuRemainder(plan, receipt, expected, content) {
   const line = root[1];
   if (/^standard window(?: |,|$)/.test(line)) {
     if (window.title === expected.title || /^\s*\d+ (?:sheet|dialog)\b/m.test(tree)) return;
+    // Only windows without editable document content: nothing proves this call's key caused the retitle, and a
+    // retitle into a document (Return opening a file, a tab switch) would put the rest of the call's input there.
+    if (/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/m.test(tree)) return;
     return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree, navigation: true };
   }
   if (!['label', 'id'].includes(prev.kind)) return;

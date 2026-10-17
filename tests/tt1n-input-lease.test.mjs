@@ -107,6 +107,8 @@ for (const [name, options] of [
   ['nested sheet', { after: child + '\n\t4 sheet Confirm' }],
   ['another app', { after: child.replace('App: Fixture Editor.', 'App: Other Editor.') }],
   ['careful mode', { guardMode: 'careful' }],
+  ['a document opened into the window', { after: child + '\n\t4 text area (settable) Value: draft' }],
+  ['a page opened into the window', { after: child + '\n\t4 web area Child page' }],
 ]) test(`TW2: navigation stops on ${name}`, async t => {
   const h = await fixture(t, { base: navigation, after: child, ...options });
   const result = await h.call('await app.pressKey("Return"); await app.click("Other");');

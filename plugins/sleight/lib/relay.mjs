@@ -1383,7 +1383,7 @@ export function createRelay({
       const { call, expected, original, head, current } = continuation;
       menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
         if (!current() || leaseWindow !== call.target ||
-            !unchangedMenuWindow(expected, call.baseline, observed, call.forwardedAt)) {
+            !unchangedMenuWindow(expected, call.baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt))) {
           menuForwards.delete(msg.id);
           menuCalls.delete(msg.id);
           if (head) splitHeads.set(msg.id, head); else splitHeads.delete(msg.id);
@@ -2051,7 +2051,7 @@ export function createRelay({
       windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
     menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
-      if (leaseWindow !== call.target || !unchangedMenuWindow(expected, call.baseline, observed, call.forwardedAt)) {
+      if (leaseWindow !== call.target || !unchangedMenuWindow(expected, call.baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt))) {
         observeServerMessage(msg); return;
       }
       const original = structuredClone(msg), head = splitHeads.get(msg.id);
@@ -2199,6 +2199,8 @@ export function createRelay({
         const admission = { plan, target, generation };
         menuAdmissions.set(msg.id, admission);
         running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
+        // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
+        admission.sampledAt = performance.now();
         admission.identity = Promise.resolve().then(() => windowIdentity(target));
         menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
           if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
