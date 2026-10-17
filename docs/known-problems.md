@@ -226,6 +226,13 @@ native reference, and oversized first results defer the browser reference while 
   The earlier [prototype](benchmarks/2026-10-14-turbo-prototype.md) passed 4/9 with all four forms failing.
 - The gate measured turbo on the benchmark's own headless Chromium with a temporary profile, not on a user's Chrome or Helium
   connected through remote-debugging consent. No gate round has run on a real browser window yet.
+- Chrome Beta, Dev and Canary, Chromium, Brave, Edge and Vivaldi are in turbo's browser table but unqualified, and turbo stays
+  off for them. The operator qualifies one at a time with the owner present. Turn on that browser's remote debugging at its own
+  inspect address (`brave://inspect/#remote-debugging`, `edge://…`, `vivaldi://…`, `chrome://…` for the rest), then run
+  `SLEIGHT_TURBO_UNQUALIFIED=1 sleight-mcp turbo on --browser <key>` in the operator's shell for that check only. Turbo connects
+  to the browser only in a session started with that variable. The check covers DevToolsActivePort in the browser's profile, all
+  five tools in an owned background tab, and the input lease stopping on the user's app, tab and focus changes. It also covers
+  cleanup of owned tabs. Afterwards, turn turbo off and remove the variable.
 - Turbo drives Chrome and Helium only. Safari and Firefox run on the engine's browser path, and neither has been raced. Turbo has
   not been raced against lcu, Cua or Peekaboo on any browser task: they work from screenshots and need a real browser window.
 - The native helpers require Apple's command-line tools for their first build. A failed compiler
