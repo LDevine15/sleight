@@ -575,6 +575,9 @@ async function performDrag(args, runLocal) {
       }
     }
   }
+  if (!result.ok && (result.timedOut || /timed out/i.test(result.error ?? ''))) {
+    result = { ...result, error: `${result.error}; for files or list items, use Copy or Cut and Paste, or the app's Move command` };
+  }
   const { ok, ...rest } = result;
   return text(rest, !ok);
 }

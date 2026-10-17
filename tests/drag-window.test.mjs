@@ -8,7 +8,7 @@ const test = (name, fn) => nodeTest(`${defaultAppId}: ${name}`, fn);
 
 // Only the native AX/CG boundary is replaced. run() does the real selection,
 // validation, coordinate conversion, mouse sequence and post-drop check.
-function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null } = {}) {
+function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null } = {}) {
   const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [], textWrites = [];
   let visited = 0, inputChecks = 0, readbacks = 0;
   let mainId = 22;
@@ -83,6 +83,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     CGEventGetType: e => e.type, CGEventSetLocation: (e, p) => { e.point = p; }, CGEventSetTimestamp() {},
     CGEventPostToPid: (pid, e) => {
       assert.equal(pid, 7); pidEvents.push(e);
+      if (failBeforePress && e.type === 5) throw new Error('posting unavailable before press');
       if (releaseFails && e.type === 2) throw new Error('release failed');
       if (e.type === 2 || postFails) values.set(11, backgroundAfter);
       if (postFails && e.type === 6) throw new Error('posting interrupted');
@@ -94,9 +95,20 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
   // Adapt the same fixture elements at the native AX boundary. Guard assertions
   // below still exercise run(), including all text and foreground fallbacks.
   const list = items => ({ count: items.length, objectAtIndex: i => items[i] });
+  let nativeWindows;
+  const parents = new Map();
   const native = Object.assign(value => value, $, {
     AXUIElementCreateApplication: () => proc,
     AXUIElementSetMessagingTimeout: () => 0,
+    CFEqual: (a, b) => a === b,
+    AXUIElementCopyElementAtPosition: (_app, x, y, out) => {
+      const win = nativeWindows.find(w => { const [wx, wy] = w.position(), [width, height] = w.size(); return x >= wx && x < wx + width && y >= wy && y < wy + height; });
+      if (!win) return -25212;
+      const children = win.uiElements();
+      const hit = children.slice(0, 2).find(el => { const [ex, ey] = el.position(), [width, height] = el.size(); return x >= ex && x < ex + width && y >= ey && y < ey + height; }) ?? win;
+      if (hit !== win) parents.set(hit, win);
+      out[0] = hit; return 0;
+    },
     AXUIElementCopyAttributeValue: (el, name, out) => {
       if (nativeFailure?.name === name) {
         const pressed = [...pidEvents, ...events].some(event => event.type === 1);
@@ -104,7 +116,9 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
       }
       const methods = { AXWindows: 'windows', AXChildren: 'uiElements', AXRole: 'role', AXSubrole: 'subrole', AXTitle: 'name', AXValue: 'value' };
       try {
-        if (name === 'AXPosition') { const [x, y] = el.position(); out[0] = { x, y }; }
+        if (name === 'AXWindows') { nativeWindows ??= proc.windows(); out[0] = list(nativeWindows); }
+        else if (name === 'AXParent') { if (!parents.has(el)) return -25212; out[0] = parents.get(el); }
+        else if (name === 'AXPosition') { const [x, y] = el.position(); out[0] = { x, y }; }
         else if (name === 'AXSize') { const [width, height] = el.size(); out[0] = { width, height }; }
         else if (methods[name]) { const value = el[methods[name]](); out[0] = Array.isArray(value) ? list(value) : value; }
         else out[0] = el.attributes.byName(name).value();
@@ -615,5 +629,33 @@ test('a covered drag with no selected text presses nothing and points to the eng
   const h = harness({ background: true, appId: 'com.apple.Chess', areaRole: 'AXImage', selection: '', coveredEnd: true, coveredPid: 9 }); const r = h.run({ windowId: 11 });
   assert.equal(r.ok, false); assert.match(r.error, /Use the engine's app\.drag.*nothing was pressed/);
   assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+});
+test('a large non-text window posts without scanning unrelated elements', () => {
+  const h = harness({ background: true, areaRole: 'AXOutline', selection: '', extraElements: 301 });
+  const r = h.run({ windowId: 11 });
+  assert.equal(r.ok, true, r.error); assert.equal(r.path, 'background');
+  assert.equal(r.deliveryVerified, false); assert.equal(h.visits(), 0); assert.equal(h.pidEvents.length, 28);
+});
+test('non-text posting failure before mouse-down reaches guarded foreground fallback', () => {
+  const h = harness({ background: true, areaRole: 'AXOutline', selection: '', failBeforePress: true, busyChecks: 2 });
+  const r = h.run({ windowId: 11 });
+  assert.equal(r.ok, true, r.error); assert.equal(r.path, 'foreground');
+  assert.match(r.fallbackReason, /posting unavailable before press/);
+  assert.equal(h.pidEvents.some(e => e.type === 1), false); assert.equal(h.events.length, 28);
+  assert.equal(h.delays.filter(s => s === 1.9).length, 2);
+});
+test('non-text foreground fallback still stops for owner input', () => {
+  for (const options of [{ busyChecks: Infinity }, { typesAt: 'focused' }]) {
+    const h = harness({ background: true, areaRole: 'AXOutline', selection: '', failBeforePress: true, ...options });
+    const r = h.run({ windowId: 11 });
+    assert.equal(r.ok, false); assert.equal(h.events.some(e => e.type === 1), false);
+    assert.match(r.error, /kept typing|typed while/);
+  }
+});
+test('non-text posting failure after mouse-down never repeats an uncertain drag', () => {
+  const h = harness({ background: true, areaRole: 'AXOutline', selection: '', postFails: true });
+  const r = h.run({ windowId: 11 });
+  assert.equal(r.ok, false); assert.match(r.error, /posting interrupted/);
+  assert.equal(r.path, 'background'); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
 });
 }
