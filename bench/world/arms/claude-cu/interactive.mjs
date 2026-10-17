@@ -8,6 +8,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { outsideGit, CLAUDE_VERSION, defaultArmRoot } from '../browser.mjs';
 import { PRICES, runCost } from '../../../api-auth.mjs';
 import { validateAllowedApps, validateAllowedGrants } from './permission.mjs';
+import { VirtualTerminal } from './terminal.mjs';
 
 const wait = ms => new Promise(done => setTimeout(done, ms));
 export function interactivePlan({ armDir = join(defaultArmRoot(), 'claude-cu'), workDir, prompt = '', model = 'claude-haiku-5-5',
@@ -156,10 +157,11 @@ export class SessionTranscript {
   }
 }
 
-function terminalText(raw, prompt) {
-  // Claude Code draws spaces as cursor-forward moves, so they become spaces before other control sequences go.
-  let text = raw.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Math.min(Number(n || 1), 200)))
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r/g, '\n');
+// The screen as the terminal shows it: a raw string is drawn on a fresh virtual terminal, the live session's terminal is read.
+function terminalText(screen, prompt) {
+  let text;
+  if (typeof screen === 'string') { const term = new VirtualTerminal(); term.write(screen); text = term.render(); }
+  else text = screen.render();
   if (prompt) {
     const pending = text.trim().replace(/^❯\s*/, '').replace(/\s+/g, ' ');
     const task = prompt.trim().replace(/\s+/g, ' ');
@@ -218,8 +220,8 @@ function sessionCard(text, allowedApps, allowedGrants = []) {
   return { blocked: 'computer-use approval selection is ambiguous' };
 }
 
-export function terminalGate(raw, prompt) {
-  const text = terminalText(raw, prompt);
+export function terminalGate(raw, prompt) { return textGate(terminalText(raw, prompt)); }
+function textGate(text) {
   const blocked = /Allow for this session|Allow computer use|Allow .*to (?:use|control)|permission.*(?:allow|approve)|Grant Accessibility|Screen Recording|Try again|Enter to (?:confirm|select)|Do you want to (?:allow|proceed|use)/i.test(text) ? 'approval required'
     : /Do you trust|Trust this folder|trust the files/i.test(text) ? 'workspace trust required'
     : /(?:^|\n)\s*(?:Sign in to Claude|Log in to Claude|(?:Select |Choose (?:a |your )?)?login method|Pro or Max plan)\s*(?:$|\n|[.:])/i.test(text) ? 'direct-plan login required' : undefined;
@@ -278,7 +280,8 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
   const start = Date.now(); prepare(plan); verify(plan);
   if (signal?.aborted) return { type: 'result', is_error: true, result: '', reason: 'cancelled', duration_ms: Date.now() - start, groupClean: true };
   if (onEvent) transcript.onEvent = onEvent;
-  let screen = '', closed, sent = false, exiting = false, reason, timedOut = false, gateBlocked, approvalBlock, pendingAt, keyRender;
+  const screen = new VirtualTerminal();
+  let tail = '', closed, sent = false, exiting = false, reason, timedOut = false, gateBlocked, approvalBlock, pendingAt, keyRender;
   const approvalWaitMs = Math.min(1000, plan.timeoutMs / 2);
   const block = (why, text) => {
     gateBlocked = true; reason = why;
@@ -287,15 +290,16 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
     const shown = at >= 0 ? text.slice(at) : text.split('\n').slice(-20).join('\n');
     const scrubbed = value => value.replaceAll(homedir(), '~').replace(/\/(?:Users|home)\/[^/\s]+/g, '~');
     // The raw tail (escapes kept) shows how the terminal redrew the card, for parser fixes.
-    approvalBlock = { reason: why, cardText: scrubbed(shown), rawTail: JSON.stringify(scrubbed(screen.slice(-4000))) };
+    approvalBlock = { reason: why, cardText: scrubbed(shown), rawTail: JSON.stringify(scrubbed(tail)) };
     onEvent?.({ type: 'approval_block', ...approvalBlock });
   };
-  const pty = launch(plan, data => { screen = (screen + data).slice(-65536); }, { onSpawn });
+  // Output is drawn as it arrives, so a redraw overwrites the card in place and the parser sees the whole updated card.
+  const pty = launch(plan, data => { screen.write(data); tail = (tail + data).slice(-4000); }, { onSpawn });
   pty.closed.then(result => { closed = result; });
   try {
     for (;;) {
       transcript.update?.(plan);
-      const state = transcript.summary(), text = terminalText(screen, sent ? plan.prompt : undefined), gate = terminalGate(text);
+      const state = transcript.summary(), text = terminalText(screen, sent ? plan.prompt : undefined), gate = textGate(text);
       if (state.foreignTool) { reason = 'foreign tool observed'; break; }
       if (signal?.aborted) { reason = 'cancelled'; break; }
       if (closed) { if (!exiting) reason = 'session exited before confirmed RESULT and idle prompt'; break; }
@@ -312,16 +316,16 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
         if (keyRender !== undefined && (!render || render === keyRender)) { await wait(pollMs); continue; }
         const card = sessionCard(text, plan.allowedApps, plan.allowedGrants);
         if (card?.blocked) { block(card.blocked, text); break; }
-        if (card?.answer) { pendingAt = Date.now(); keyRender = render; screen = ''; pty.write(card.answer); await wait(pollMs); continue; }
+        if (card?.answer) { pendingAt = Date.now(); keyRender = render; pty.write(card.answer); await wait(pollMs); continue; }
         if (card?.pending) { pendingAt ??= Date.now(); await wait(pollMs); continue; }
         pendingAt = undefined; keyRender = undefined;
       }
       if (gate.blocked) { block(gate.blocked, text); break; }
       if (!sent && gate.ready && !serverReady(plan)) {
         if (Date.now() - start > connectMs) { reason = 'computer-use server did not connect'; break; }
-      } else if (!sent && gate.ready) { sent = true; screen = ''; pty.write('\x1b[200~' + plan.prompt + '\x1b[201~\r'); }
+      } else if (!sent && gate.ready) { sent = true; pty.write('\x1b[200~' + plan.prompt + '\x1b[201~\r'); }
       else if (sent && (state.answer ?? state.lastText) !== undefined && gate.ready && turnEnded(plan) && !exiting) {
-        exiting = true; screen = ''; pty.write('\x04'); await wait(50);
+        exiting = true; pty.write('\x04'); await wait(50);
         if (!closed) pty.write('\x04');
       }
       await wait(pollMs);
