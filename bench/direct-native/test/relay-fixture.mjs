@@ -21,13 +21,13 @@ export async function relayTrial(combined, { mode = 'default', fault, advance = 
   const clientIn = new PassThrough(), clientOut = new PassThrough();
   const serverIn = new PassThrough(), serverOut = new PassThrough();
   let value = 'before', title = 'Fixture', reads = 0, actions = 0, identityChecks = 0;
-  let shifted = false, acquisitions = 0;
+  let shifted = false, focused = false, acquisitions = 0;
   let active = false, lastOperation, pendingApproval, engineQueue = Promise.resolve();
   let readGate = () => Promise.resolve();
   const received = [], approvals = [], sent = [];
   const tree = () => `Window: ${JSON.stringify(title)}, App: ${appName}.\n0 ${title === '' ? 'sheet' : 'standard window'} Fixture${mode === 'changeReview' ? `, URL: ${url}` : ''}\n` +
     (active && ['missing-id', 'hidden-target'].includes(fault) ? '\t2 button Other' :
-      (shifted ? '\t1 button Focus\n' : '') + `\t${shifted ? 2 : 1} text field (settable) Value: ${value}, ID: entry` +
+      (shifted ? '\t1 button Focus\n' : '') + `\t${shifted ? 2 : 1} text field (${focused ? 'settable, focused' : 'settable'}) Value: ${value}, ID: entry` +
       (active && fault === 'ambiguous-id' ? '\n\t2 text field (settable), ID: entry' : '') +
       (fault === 'computed-index' ? Array.from({ length: 60 }, (_, i) => `\n\t${i + (shifted ? 3 : 2)} button Choice ${i}`).join('') : ''));
   let output = [];
@@ -52,7 +52,7 @@ export async function relayTrial(combined, { mode = 'default', fault, advance = 
     async click(index) {
       if (index !== (shifted ? 2 : 1)) throw new Error('fixture has no control at that index');
       if (fault === 'user-takeover') throw new Error('fixture user takeover; input refused');
-      actions++; title = ''; lastOperation = 'click';
+      actions++; title = ''; focused = true; lastOperation = 'click';
     },
     async pressKey(key) { if (key !== 'Tab') throw new Error('unexpected fixture key'); shifted = true; },
     async typeText(next) { actions++; value = next; lastOperation = 'write'; writeFileSync(file, next); },
