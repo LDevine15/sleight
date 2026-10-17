@@ -286,10 +286,10 @@ export function stopNote(receipt, plan, earlier = 0) {
     };
     const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
     const ran = plan.actions.slice(0, n);
-    return `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.`;
+    return /* lean notice */ `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.`;
   }
   const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
-  return `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.`;
+  return /* lean notice */ `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.`;
 }
 
 export async function menuIdentity(identity, expected, timeoutMs = 600, refused) {

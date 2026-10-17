@@ -77,6 +77,8 @@ import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason, TEXTLESS_NOTE } from './compact-reads.mjs';
+import { promptNotice } from './prompt-notice.mjs';
+export { promptNotice };
 import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
@@ -284,50 +286,10 @@ export function batchingDescription(description, variant = true, prompt) {
     '. sleight waits for the sheet a shortcut opens.') : text;
   return typeof description === 'string' && description.includes(FIRST_CALL_RULE) ? description.replace(FIRST_CALL_RULE, replacement) : description;
 }
+// Both browser-guard sites refuse native access with this text.
+const NATIVE_DENIED = /* lean notice */ 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.';
 const TURN_END_DESCRIPTION = 'Internal to sleight: its hooks call this when a Claude turn ends. Never call it yourself.';
 
-// Applied only at sleight-authored notice sites, never to engine text or user data.
-export function promptNotice(text, prompt) {
-  if (prompt !== 'lean') return text;
-  return text
-    .replace('send numbered actions on one handle per call. Read that window before acting.', 'numbered actions need one handle. Read it first.')
-    .replace('REPL preparation was stopped before this call ran.', 'REPL setup stopped. Call skipped.')
-    .replace('the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', 'window changed first; actions not sent. Use the numbers above, { id } or { label }.')
-    .replace('For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.', 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.')
-    .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
-    .replace('Escape doesn\'t always close a menu in a background app; ', 'Close it with ')
-    .replace('a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number', 'Menu may trap input. Escape once, then click menu-bar item')
-    .replace('; if it still stays, tell the user.', '; if still stuck, tell the user.')
-    .replace(', and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.', '; keys may be lost. Check typing landed, then use a toolbar control or shortcut, not more Escape or clicks.')
-    .replace('` does.', '`.')
-    .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
-    .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
-    .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')
-    .replace(', already acquired (`let app = ', ', acquired (`let app = ')
-    .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')
-    .replace('Change review: an action is still pending, so this read cannot take a later copy. ', 'Change review: pending action. ')
-    .replace(/Numbers in this window changed since your last full read, and .*? isn't one you've seen since\. /, '')
-    .replace(/this call computes an element number \(.*?\), and numbers in this window changed since your last full read\. /, 'Computed stale number. ')
-    .replace(/The SkyComputerUseService read path appears stuck: .*?answer Accessibility, but the control app's engine read also timed out\. /, 'Helper read path appears stuck. ')
-    .replace(/Reads of .*? timed out twice\. The app and helper cause was not determined; sleight could not distinguish them with its independent checks\. /, 'Read timeout; cause unknown. ')
-    .replace(/, while a fresh engine read of .*? responds\. /, '. ')
-    .replace('The helper answered the control read.', '')
-    .replace(/sleight: .*? has no Accessibility document windows, but macOS still lists "Save Panel Accessory View", a possible orphan Save panel\. /, 'sleight: possible orphan Save panel. ')
-    .replace(/sleight: the user is in a full-screen or Split View Space, and none of .*?'s windows are on it\. /, 'sleight: off-Space windows. ')
-    .replace('The engine and the drag tool read coordinates in these screenshot pixels. Claude Code shows this image smaller, at ', 'Shown at ')
-    .replace(', engine screenshot ', ', ')
-    .replace('Computer use recovered for ', 'Recovered: ')
-    .replace('Change review could not take a later copy: ', 'Change review unavailable: ')
-    .replace('Use the documented arguments; waitFor polls the window for an element or text.', 'Use API signatures.')
-    .replace(/(Native API names: [^\n]+)\. Use API signatures\./, (_, names) => names.replaceAll(', ', ',') + '. Use API signatures.')
-    .replace("sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.", 'sleight: last window closed; nothing more to read.')
-    .replace("sleight: noWindowsAvailable means the engine found no window of this app on the current desktop. If the app has a window, it's on another Space (the user may be in full screen or Split View), minimized or hidden. Clicks may still reach it, but drags and some reads won't. ", 'sleight: noWindowsAvailable. ')
-    .replace("sleight: the engine's JavaScript session restarted before this call, so handles from earlier calls (such as `app`) are gone. An action that fails without `await` can end the session. ", 'sleight: JS restarted. ')
-    .replace("sleight: the engine couldn't reach its helper (SkyComputerUseService), so this call never reached an app. The helper quits after about 20 seconds idle and restarts on the next call, which can race. sleight already sent this call again once. ", 'sleight: helper failed; retry sent. ')
-    .replace("sleight: the engine's helper (SkyComputerUseService) crashed during this call; that is the engine's bug, and macOS restarts the helper within seconds. ", 'sleight: helper crashed. ')
-    .replace('sleight reconnected after a ChatGPT engine update.', 'sleight: engine reconnected.')
-    .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.');
-}
 const SHUTDOWN_GRACE_MS = 3000;
 
 // Splits a stream into newline-delimited JSON-RPC messages.
@@ -639,7 +601,7 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
-  let compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints });
+  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -777,7 +739,7 @@ export function createRelay({
     const isCurrent = () => generation === stopGeneration && !closing && !disposed;
     try {
       const engine = await restartEngine(isCurrent, preparedServer);
-      if (!isCurrent()) throw new Error('Engine restart was stopped.');
+      if (!isCurrent()) throw new Error(/* notice */ 'Engine restart was stopped.');
       detachServer();
       serverIn = engine.serverIn; serverOut = engine.serverOut;
       engineEpoch++;
@@ -786,16 +748,16 @@ export function createRelay({
       if (initialization) {
         const id = `sleight-initialize-${nextInternalId++}`;
         const reply = await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { internalRequests.delete(id); reject(new Error('Engine initialization timed out.')); }, restartTimeoutMs);
+          const timer = setTimeout(() => { internalRequests.delete(id); reject(new Error(/* notice */ 'Engine initialization timed out.')); }, restartTimeoutMs);
           internalRequests.set(id, msg => { clearTimeout(timer); resolve(msg); });
           toServer({ ...initialization, id });
         });
         if (reply.error || reply.result?.isError) throw new Error(reply.error?.message ?? 'Engine initialization failed.');
         toServer({ jsonrpc: '2.0', method: 'notifications/initialized' });
       }
-      if (!isCurrent()) throw new Error('Engine restart was stopped.');
+      if (!isCurrent()) throw new Error(/* notice */ 'Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
@@ -842,17 +804,17 @@ export function createRelay({
     clearTimeout(idleTimer);
     attempt.promise = (async () => {
       const preparedServer = await prepareEngine?.();
-      if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+      if (generation !== stopGeneration || closing || disposed) throw new Error(/* notice */ 'Engine restart was stopped.');
       // End the open turn on the engine being replaced, as a normal turn end does, so it releases what it
       // holds. A hung or dead engine costs one grace period, never the reconnect.
       let graceTimer;
       await Promise.race([Promise.resolve().then(() => endOpenTurn(false, id)).catch(() => {}),
         new Promise(resolve => { graceTimer = setTimeout(resolve, stopGraceMs); })]);
       clearTimeout(graceTimer);
-      if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+      if (generation !== stopGeneration || closing || disposed) throw new Error(/* notice */ 'Engine restart was stopped.');
       collecting = true; updatePending = true; beginStop();
       const receipt = await stopEngine();
-      if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+      if (generation !== stopGeneration || closing || disposed) throw new Error(/* notice */ 'Engine restart was stopped.');
       stopCollected = receipt?.collected === true;
       if (!stopCollected) throw new Error('Engine collection is unconfirmed. Run /sleight stop before retrying.');
       // This cache is bound to the launch identity of the collected engine.
@@ -1251,7 +1213,7 @@ export function createRelay({
         trace('review-decision', { path: entry.path, decision });
         try {
           if (['keep', 'undo'].includes(decision)) {
-            if (closing || leaseFault) throw new Error('Input lease: this session is closing.');
+            if (closing || leaseFault) throw new Error(/* notice */ 'Input lease: this session is closing.');
             const key = leaseCalls.get(msg.id)?.key;
             if (key) inputLease.renew([key]);
             results.push(changes.decide(entry, decision));
@@ -1418,7 +1380,7 @@ export function createRelay({
     if (name === 'js' && browser) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return false; }
       // Tabs are isolated by the extension. Never reserve the previous native app for a tab call.
-      const nativeDenied = 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.';
+      const nativeDenied = promptNotice(NATIVE_DENIED, prompt);
       leaseCalls.set(msg.id, { nativeDenied, observe: false });
       return true;
     }
@@ -1596,7 +1558,7 @@ export function createRelay({
           const timer = setTimeout(() => { drained.delete(done); resolve(false); }, stopGraceMs);
           drained.add(done);
         });
-        if (!ready) return 'sleight: kept tabs because a call did not finish before the cleanup deadline.';
+        if (!ready) return /* notice */ 'sleight: kept tabs because a call did not finish before the cleanup deadline.';
       }
       if (stopCollected || disposed) return;
       return await new Promise(resolve => {
@@ -1974,8 +1936,8 @@ export function createRelay({
   async function callLocal(msg, plan) {
     const generation = stopGeneration;
     const current = () => {
-      if (closing || disposed) throw new Error('Input lease: this session is closing.');
-      if (generation !== stopGeneration) throw new Error('Input lease: this call was stopped.');
+      if (closing || disposed) throw new Error(/* notice */ 'Input lease: this session is closing.');
+      if (generation !== stopGeneration) throw new Error(/* notice */ 'Input lease: this call was stopped.');
     };
     localRunning.add(msg.id);
     let result;
@@ -2052,13 +2014,13 @@ export function createRelay({
             const known = compactor.seenLines(window);
             const matches = Object.keys(endpoint).length === 1 && typeof endpoint.line === 'string'
               ? Object.entries(known ?? {}).filter(([, line]) => line === endpoint.line) : [];
-            if (matches.length !== 1) throw new Error('drag line identity needs one observed element in this app window; read it again');
+            if (matches.length !== 1) throw new Error(/* notice */ 'drag line identity needs one observed element in this app window; read it again');
             endpoints[name] = Number(matches[0][0]);
           }
           const numbers = names.map(name => endpoints[name]).filter(Number.isInteger);
           const lines = compactor.seenLines(window, numbers);
           if (numbers.length && (!window || numbers.some(n => !lines?.[n] || !compactor.uniqueSeen(window, numbers).includes(n)))) {
-            throw new Error('drag element numbers need unique identities from a read of this app window; read it again');
+            throw new Error(/* notice */ 'drag element numbers need unique identities from a read of this app window; read it again');
           }
           evidence[prefix ? 'toElementLines' : 'elementLines'] = lines;
           evidence[prefix ? 'toElementWindow' : 'elementWindow'] = window ? { title: window.title,
@@ -2082,7 +2044,7 @@ export function createRelay({
       if (msg.params.name === 'select_window' && !result.isError) {
         const value = JSON.parse(result.content.find(c => c.type === 'text')?.text ?? '{}');
         if (!value.ok || !value.target?.appId || typeof value.target?.title !== 'string' ||
-            (resolved && value.target.appId !== resolved.appId)) throw new Error('Window selection returned no matching target');
+            (resolved && value.target.appId !== resolved.appId)) throw new Error(/* notice */ 'Window selection returned no matching target');
         selectedWindow = { ...value.target, ...(Number.isSafeInteger(value.identity?.windowNumber) && value.identity.windowNumber > 0
           ? { windowNumber: value.identity.windowNumber } : {}) };
         leaseWindow = undefined;
@@ -2287,14 +2249,14 @@ export function createRelay({
       const content = reply.result?.content ?? [];
       const stop = error => toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...content,
         { type: 'text', text: `Text save stopped after the write: ${error.message}. The save was not sent. Read the intended window before continuing.` }] } });
-      if (!current()) { stop(new Error('window changed or call stopped')); return; }
+      if (!current()) { stop(new Error(/* notice */ 'window changed or call stopped')); return; }
       let key;
       try { key = inputLease.acquire(expected); }
       catch (error) { stop(error); return; }
       running.add(msg.id); callDetails.set(msg.id, 'text-write settle');
       leaseCalls.set(msg.id, { key }); refreshHeartbeat();
       Promise.resolve().then(() => {
-        if (!current()) throw new Error('call stopped');
+        if (!current()) throw new Error(/* notice */ 'call stopped');
         inputLease.renew([key]);
         return Promise.resolve().then(() => settleTextWrite(leaseWindow, current, inputLease.grant(key)))
           .catch(error => {
@@ -2303,7 +2265,7 @@ export function createRelay({
             skippedSettle(msg.id, error.message);
           });
       }).then(() => {
-        if (!current()) throw new Error('window changed or call stopped');
+        if (!current()) throw new Error(/* notice */ 'window changed or call stopped');
         inputLease.renew([key]);
         finishedCall(msg.id);
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...content]);
@@ -2555,7 +2517,7 @@ export function createRelay({
       beginStop();
       attempt.promise = (async () => {
         const receipt = await stopEngine();
-        if (generation !== stopGeneration || closing || disposed) throw new Error('Engine restart was stopped.');
+        if (generation !== stopGeneration || closing || disposed) throw new Error(/* notice */ 'Engine restart was stopped.');
         stopCollected = receipt?.collected === true;
         if (!stopCollected) { stopUnconfirmed = true; throw new Error('Engine collection is unconfirmed. Run /sleight stop before retrying.'); }
         invalidateDiagnostics(); forgetHandles(); browserRecovery.reset();
@@ -2599,7 +2561,7 @@ export function createRelay({
         menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
           if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
             menuAdmissions.delete(msg.id); finishedCall(msg.id);
-            const error = new Error('Input lease: window changed while checking. Read again.');
+            const error = new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
             if (!disposed && !stopCollected) leaseStop(msg, error.message);
             return;
           }
@@ -2626,7 +2588,7 @@ export function createRelay({
       Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
         const identity = nativeIdentity(expected, observed);
         noteProcess(identity);
-        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error('Input lease: window changed while checking. Read again.');
+        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
         else focusedChecked.add(msg.id);
         trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
@@ -2707,7 +2669,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined) jsCalls.set(msg.id, originalCode ?? '');
     let flowPlan, clipboardAction;
     if (clipboard && msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name) && clipboard.pending) {
-      clipboardStop(msg, 'Clipboard: wait for the pending clipboard action, then retry.'); return;
+      clipboardStop(msg, /* notice */ 'Clipboard: wait for the pending clipboard action, then retry.'); return;
     }
     if (clipboard && msg.method === 'tools/call' && msg.params?.name === 'js' && typeof originalCode === 'string') {
       try { clipboardAction = clipboardPlan(originalCode); }
@@ -2828,14 +2790,14 @@ export function createRelay({
         const safe = read || (typeof originalCode === 'string' && isChangeCancel(originalCode, lastWindowText));
         let entry, nativeDenied = leaseCalls.get(msg.id)?.nativeDenied;
         try {
-          if (changeReview && !safe && lastWindow && changeCalls.size) throw new Error('another engine call is pending, wait for its result');
+          if (changeReview && !safe && lastWindow && changeCalls.size) throw new Error(/* notice */ 'another engine call is pending, wait for its result');
           if (changeReview && !safe && lastWindow?.url?.startsWith('file://')) {
             entry = changes.before(lastWindow);
             trace('snapshot-before-call', { id: msg.id, path: entry.path, directory: changes.directory, snapshot: entry.snapshot });
           }
         } catch (err) {
           if (browser) {
-            nativeDenied = `Native access stopped: send a standalone native app read before acting. Cannot snapshot before acting: ${err.message}`;
+            nativeDenied = /* notice */ promptNotice(`Native access stopped: send a standalone native app read before acting. Cannot snapshot before acting: ${err.message}`, prompt);
           } else { documentCalls.delete(msg.id); finishedCall(msg.id); changeStop(msg, `cannot snapshot before acting: ${err.message}`); return; }
         }
         if (healthPlan?.read && msg.id !== undefined) {
@@ -2858,18 +2820,18 @@ export function createRelay({
         changeCalls.set(msg.id, { read, safe, entry, window: lastWindow, expected: documentKey(lastWindow), target: leaseWindow ?? lastWindow,
           observe: !browser && (!read || (!isInventoryRead(originalCode) && /cua\.getApp\(|\.(?:getAXState|getAXStateAndScreenshot)\(/.test(originalCode))) });
         if (typeof originalCode === 'string') {
-          const setup = { reuseSetup: guardReady, acknowledge: true };
+          const setup = { reuseSetup: guardReady, acknowledge: true, prompt };
           const modes = guardMode?.split(',').map(mode => mode.trim()) ?? [], careful = modes.includes('careful');
           const target = documentMode ? observedDocument : inputLease ? leaseWindow : lastWindow;
-          const reason = documentMode ? undefined : selectedWindow ? `Selected window changed. ${selectionRecovery()}` : inputLease
+          const reason = /* notice */ documentMode ? undefined : selectedWindow ? `Selected window changed. ${selectionRecovery()}` : inputLease
             ? 'Input lease stopped this action: window or URL changed. Read the intended window again before acting.'
-            : 'Change review stopped this action: window or URL changed. Read the intended window with one standalone cua.getApp call before editing.';
+            : promptNotice('Change review stopped this action: window or URL changed. Read the intended window with one standalone cua.getApp call before editing.', prompt);
           if (browser) {
             msg.params.arguments.code = guardedCode(selectedBrowserCode(browserRecovery.code(originalCode), browserChoice, `${sessionId}:${turnId}`), target, reason,
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
               { ...setup, timing: guardTiming, careful, fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
-                nativeDenied: nativeDenied ?? 'Native access stopped: use the handle returned by cua.getApp directly, after a standalone native app read. No native lease for this browser call.' });
+                nativeDenied: nativeDenied ?? promptNotice(NATIVE_DENIED, prompt) });
           } else if (read) {
             let code = originalCode;
             if (healthPlan && !helperProbes.has(msg.id) && helperFullReads.has(healthPlan.key)) {
@@ -2920,7 +2882,7 @@ export function createRelay({
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);
-          if (restore) msg.params.arguments.code = readCode(restore) + '\n' + msg.params.arguments.code;
+          if (restore) msg.params.arguments.code = readCode(restore, { prompt }) + '\n' + msg.params.arguments.code;
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
@@ -2963,10 +2925,10 @@ export function createRelay({
       const generation = stopGeneration;
       let response;
       clipboard.run(clipboardAction, () => new Promise((resolve, reject) => {
-        if (generation !== stopGeneration || closing || disposed) { reject(new Error('Clipboard guard: session closed before input.')); return; }
+        if (generation !== stopGeneration || closing || disposed) { reject(new Error(/* notice */ 'Clipboard guard: session closed before input.')); return; }
         clipboardReplies.set(msg.id, { reject, receive: reply => {
           response = reply;
-          if (reply.error || reply.result?.isError) reject(new Error('Clipboard guard: engine action failed; Copy/Cut ownership cannot be attributed.'));
+          if (reply.error || reply.result?.isError) reject(new Error(/* notice */ 'Clipboard guard: engine action failed; Copy/Cut ownership cannot be attributed.'));
           else resolve(reply);
         } });
         toServer(msg);
@@ -3329,8 +3291,8 @@ export function createRelay({
     const cut = nativeCopies.get(msg.id);
     if (msg.method === undefined && nativeCopies.delete(msg.id) && !msg.error && !msg.result?.isError) {
       // Finder ignores Cmd+X on a file, and the old line read as a cut that worked (finder-move-2, 2026-10-17).
-      clipboardNotices(msg, ['Copy/Cut used the native clipboard. Its contents were not restored by sleight; a successful copy remains available to menu Paste, pbpaste and browser pastes.' +
-        (cut ? ' sleight can\'t see whether Cut took effect: an app that disables Cut for the selection ignores the key, and its Edit menu shows Cut disabled. Copy works there.' : '')]);
+      clipboardNotices(msg, [/* notice */ promptNotice('Copy/Cut used the native clipboard. Its contents were not restored by sleight; a successful copy remains available to menu Paste, pbpaste and browser pastes.' +
+        (cut ? ' sleight can\'t see whether Cut took effect: an app that disables Cut for the selection ignores the key, and its Edit menu shows Cut disabled. Copy works there.' : ''), prompt)]);
     }
     if (msg.method === undefined && msg.id !== undefined && internalRequests.has(msg.id)) {
       internalRequests.get(msg.id)(msg);
@@ -3942,7 +3904,7 @@ export function createRelay({
       },
       release: async () => {
         // Collection makes late results impossible. Resolve pending caller requests explicitly.
-        for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
+        for (const pending of clipboardReplies.values()) pending.reject(new Error(/* notice */ 'Stopped: engine collected.'));
         clipboardReplies.clear();
         menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); splitInputs.clear();
         filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); openReads.clear(); textlessOpens.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
@@ -4026,7 +3988,7 @@ export function createRelay({
   }
   function close() {
     closing = true;
-    for (const pending of clipboardReplies.values()) pending.reject(new Error('Clipboard guard: engine connection closed.'));
+    for (const pending of clipboardReplies.values()) pending.reject(new Error(/* notice */ 'Clipboard guard: engine connection closed.'));
     clipboardReplies.clear();
     clearTimeout(idleTimer);
     try { dispose(); } finally { releaseLeases(); }
