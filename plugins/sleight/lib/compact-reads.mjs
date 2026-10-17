@@ -415,7 +415,7 @@ function trimAcquisition(text) {
     else hidden.add(Number(match[2]));
   }
   if (!hidden.size) return;
-  out.push('sleight: getAXState({ disableDiffing: true }) gives the full tree.');
+  out.push(`sleight: ${hidden.size} hidden; getAXState({ disableDiffing: true }) gives the full tree.`);
   const compacted = text.slice(0, at) + out.join('\n');
   return compacted.length < text.length ? { text: compacted, hidden } : undefined;
 }
@@ -582,7 +582,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (filtered?.full) forceFull = true;
       const stopped = content.some(item => item?.type === 'text' &&
         /sleight: an action in this call failed|engine's JavaScript session restarted|(?:user.*(?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed|this call acted on)/i.test(item.text));
-      if (compactAcquisition && (failed || stopped)) forceFull = true;
+      if (compactAcquisition && acquisition && (failed || stopped)) forceFull = true;
       const firstAcquisition = compactAcquisition && acquisition && !forceFull && !action &&
         windowFromText(content.filter(item => item?.type === 'text').map(item => item.text).join('\n'));
       const priorWindows = firstAcquisition && new Set(seen.keys());
@@ -622,7 +622,13 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           // A call that acted and ended on exactly the tree Claude saw before it gets that tree whole:
           // "no change" read as if the actions hadn't run, and Claude read again in 2 of 9 traced
           // calculator-click runs (2026-10-10). Claude's own full read earlier in this result is enough.
-          if (!leanCalls && action && !forceFull && sent !== tree && /sleight: no change since/.test(sent) && !/^Window: /m.test(seenText)) sent = tree;
+          // The whole tree is now what Claude saw, so its numbers become known (a compact acquisition hid some).
+          // Only numbers in this tree: one Claude never saw anywhere still stops.
+          if (!leanCalls && action && !forceFull && sent !== tree && /sleight: no change since/.test(sent) && !/^Window: /m.test(seenText)) {
+            sent = tree;
+            const entry = seen.get(documentKey(windowFromText(tree) ?? {}));
+            if (entry?.valid) for (const [num, key] of numbered(tree.replace(/\n+$/, '').split('\n'))) { entry.valid.add(num); entry.believed?.set(num, key); }
+          }
           if (forceFull) remember(tree);
           if (end < 0 && observedInResult && !observedInResult.invalid) observedInResult.incomplete = true;
           add(sent); seenText += '\n' + sent;

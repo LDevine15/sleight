@@ -188,3 +188,23 @@ test('relay keeps failed acquisitions whole and handles a new window header', as
   assert.match(out, /^Window: "Other".*\n0 standard window Other/);
   assert.doesNotMatch(out, /full document readback/);
 });
+
+test('an unchanged action that shows the whole tree makes its rows known again', () => {
+  const c = createReadCompactor({ compactAcquisition: true });
+  compact(c);
+  assert.ok(c.staleIndex(window, 'app.click(8)'));
+  const action = c.beginAction('await app.click(2)');
+  const out = output(c.process([text(GUARD_MARK + tree() + GUARD_END)], { action }));
+  assert.match(out, /full document readback/);
+  assert.equal(c.staleIndex(window, 'app.click(8)'), undefined);
+});
+
+test('the flag forces full trees only for acquisitions, not every failed call', () => {
+  const c = createReadCompactor({ compactAcquisition: true }), plain = createReadCompactor();
+  for (const r of [c, plain]) r.process([text(tree())]);
+  const action = () => ({ ...c.beginAction('await app.click(2)') });
+  const changed = tree().replace('Ready', 'Done');
+  const a = output(c.process([text(GUARD_MARK + changed + GUARD_END)], { action: action(), failed: true }));
+  const b = output(plain.process([text(GUARD_MARK + changed + GUARD_END)], { action: plain.beginAction('await app.click(2)'), failed: true }));
+  assert.equal(a, b);
+});
