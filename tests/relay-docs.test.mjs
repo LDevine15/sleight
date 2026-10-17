@@ -143,7 +143,7 @@ for (const confirmPayments of ['always', 'requested', 'never']) test(`opt-in com
 test('open_file holds engine docs and drops empty text, keeping its handle, tree and skill', async t => {
   const h = harness(t), first = await h.open();
   assert.doesNotMatch(body(first), /## Computer Use|Native API reference/);
-  assert.match(body(first), /Window handle: `__sleightOpenedApp\d+`\./);
+  assert.match(body(first), /Window handle: `__sleightOpenedApp\d+`, already acquired/);
   assert.ok(first.content.some(c => c.text === tree));
   assert.match(body(first), new RegExp(rules));
   assert.ok(first.content.every(c => c.type !== 'text' || c.text.trim()));
@@ -179,8 +179,9 @@ for (const rulesFirst of [undefined, false]) test(`open_file puts the skill ${ru
   assert.match(String(split?.detail.acquisition), /^sleight-open-file-/);
 });
 
+// With the open_file screenshot off; open-shot.test.mjs covers it on.
 for (const textlessHint of [undefined, false]) test(`a textless document gets one screenshot note after its tree, textlessHint=${textlessHint}`, async t => {
-  const h = harness(t, textlessHint === false ? { textlessHint } : {}), first = await h.open(1, [text(docs), text(textless)]);
+  const h = harness(t, { openAutoShot: false, ...(textlessHint === false ? { textlessHint } : {}) }), first = await h.open(1, [text(docs), text(textless)]);
   const texts = first.content.map(c => c.text);
   const note = texts.findIndex(value => textlessNote.test(value));
   if (textlessHint === false) { assert.equal(note, -1); return; }

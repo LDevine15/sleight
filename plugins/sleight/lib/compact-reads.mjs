@@ -826,6 +826,8 @@ function trimAcquisition(text, fullRead = '', hinted = new Set()) {
   return { text: compacted, hidden };
 }
 
+export const TEXTLESS_NOTE = 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
+
 // Inspect each document subtree, not toolbar values or the compacted diff (which may hide text).
 // With openedFiles (path -> size), an empty text area counts only for a file open_file found non-empty on
 // disk: a blank new document is an empty text area too, and the hint cost it a screenshot turn.
@@ -1378,7 +1380,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (screenshotReads && !failed && !stopped && !action && !hasScreenshot && !screenshotHints.has(screenshotKey) &&
           !screenshotWindows.has(screenshotKey) && !screenshotWindows.has(documentKey(observedInResult?.window)) && textlessDocument(observedInResult, openedFiles)) {
         screenshotHints.add(screenshotKey);
-        out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
+        out.push({ type: 'text', text: TEXTLESS_NOTE });
       }
       // After a failure, a stop or a user change, the next acquisition of any window is whole again.
       // Only the notices themselves: the rules shown with the engine docs also say "the user changed
@@ -1488,5 +1490,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     noteOpenedFile(path, real, size) {
       for (const name of new Set([path, real])) if (typeof name === 'string') openedFiles.set(name, Number(size) || 0);
     },
+    // Whether the window the last process() call read is a document whose tree holds none of its text
+    // or cells, by the same test as the textless-document note. open_file then adds a screenshot.
+    lastReadTextless() { return textlessDocument(observedInResult, openedFiles); },
   };
 }
