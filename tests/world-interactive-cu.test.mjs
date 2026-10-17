@@ -82,6 +82,10 @@ test('terminal gates reject approval, trust and login prompts even beside a read
     const gate = terminalGate(`❯\n${text}`);
     assert.equal(gate.ready, false); assert.ok(gate.blocked);
   }
+  // Live 15:55Z: Claude's own closing text ("try again", "Enter to confirm" in prose) sat above the idle input box and stopped the pass.
+  const idle = '⏺ I tried three times. Options: Try again with a different drag, or Enter to confirm the change yourself.\n' +
+    '────────\n❯ \n────────\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\n';
+  assert.deepEqual(terminalGate(idle), { blocked: undefined, ready: true });
   for (const title of ['Sign in to Claude', 'Allow for this session', 'Trust this folder']) {
     assert.ok(terminalGate(`Do not sign in.\n${title}\n❯\n`, 'Do not sign in.').blocked);
   }

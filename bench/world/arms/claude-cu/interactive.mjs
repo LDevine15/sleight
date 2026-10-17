@@ -231,9 +231,13 @@ function sessionCard(text, allowedApps, allowedGrants = [], reason) {
 
 export function terminalGate(raw, prompt) { return textGate(terminalText(raw, prompt)); }
 function textGate(text) {
-  const blocked = /Allow for this session|Allow computer use|Allow .*to (?:use|control)|permission.*(?:allow|approve)|Grant Accessibility|Screen Recording|Try again|Enter to (?:confirm|select)|Do you want to (?:allow|proceed|use)/i.test(text) ? 'approval required'
-    : /Do you trust|Trust this folder|trust the files/i.test(text) ? 'workspace trust required'
-    : /(?:^|\n)\s*(?:Sign in to Claude|Log in to Claude|(?:Select |Choose (?:a |your )?)?login method|Pro or Max plan)\s*(?:$|\n|[.:])/i.test(text) ? 'direct-plan login required' : undefined;
+  // A dialog draws instead of Claude Code's idle input box (a bare ❯ line with a rule under it), so text above the last such box
+  // is Claude's own prose, which can say "try again" or "Enter to confirm" (live 15:55Z).
+  const box = [...text.matchAll(/(?:^|\n)[^\S\n]*❯[^\S\n]*(?:Try[^\S\n]*"[^"\n]*"[^\S\n]*)?\n[^\S\n]*─{4,}[^\n]*(?=\n|$)/g)].at(-1);
+  const tail = box ? text.slice(box.index + box[0].length) : text;
+  const blocked = /Allow for this session|Allow computer use|Allow .*to (?:use|control)|permission.*(?:allow|approve)|Grant Accessibility|Screen Recording|Try again|Enter to (?:confirm|select)|Do you want to (?:allow|proceed|use)/i.test(tail) ? 'approval required'
+    : /Do you trust|Trust this folder|trust the files/i.test(tail) ? 'workspace trust required'
+    : /(?:^|\n)\s*(?:Sign in to Claude|Log in to Claude|(?:Select |Choose (?:a |your )?)?login method|Pro or Max plan)\s*(?:$|\n|[.:])/i.test(tail) ? 'direct-plan login required' : undefined;
   return { blocked, ready: !blocked && /(?:^|\n)[^\S\n]*❯[^\S\n]*(?:Try[^\S\n]*"[^"\n]*"[^\S\n]*)?(?:\n|$)/.test(text) };
 }
 
