@@ -213,6 +213,24 @@ test('replay: the first 4 results of excel-edit run 1 lose at least 40% of their
   assert.ok(after <= before * 0.6, `${before} -> ${after} characters`);
 });
 
+test('numbersMoved compares depth, role and identity, not values, flags, Help or a titled line\'s Description', () => {
+  const excel = (range, formula, help, chat = 'Copilot Chat') => tree({ extra: [
+    `\t\t0 layout area Content Area, Description: Workbook area, Used range: ${range}, Help: The content area of the window`,
+    `\t\t0 text entry area Description: Formula Bar. ${formula}, ID: XLFormulaEditor`,
+    `\t\t0 button (disabled) Description: enter formula, Help: ${help}, ID: EnterButton`,
+    `\t\t0 button Description: ${chat}, Help: Copilot Chat (⌃⌘I), Secondary Actions: Expand`] });
+  const moved = (before, after, upTo) => {
+    const c = createReadCompactor();
+    acquire(c, before);
+    const trees = c.trees();
+    return c.numbersMoved(trees, [text(acquire(c, after))], upTo);
+  };
+  assert.equal(moved(excel('A1 to B4', 'A,1 Item', 'Enter'), excel('A1 to C9', 'B,2 7', 'Press Enter'), 20), false);
+  assert.equal(moved(excel('A1 to B4', 'A,1 Item', 'Enter'), excel('A1 to B4', 'A,1 Item', 'Enter', 'Other'), 20), true, 'an untitled line\'s Description is its identity');
+  assert.equal(moved(excel('A1 to B4', 'A,1 Item', 'Enter'), excel('A1 to B4', 'A,1 Item', 'Enter', 'Other'), 5), false, 'above the largest number');
+  assert.equal(moved(tree(), tree({ title: 'Other' }), 20), false, 'another window has no earlier tree');
+});
+
 test('relay: a head that changed the window stops the rest when it has literal numbers (LS1)', async t => {
   // 60 items after row 16 take numbers 20 to 79; a popup inserted before item 38 takes 58 and moves item 38 to 59.
   const items = Array.from({ length: 60 }, (_, i) => `\t\t0 button Item ${i}`);
@@ -230,16 +248,25 @@ test('relay: a head that changed the window stops the rest when it has literal n
     assert.match(output(stopped.content), /^(?:\+ )?\t\t58 button POPUP$/m, 'the head shows the new numbers');
     assert.match(output(stopped.content), /^(?:\+ )?\t\t59 button Item 38$/m);
     assert.match(output(stopped.content), /window changed before this call's actions ran, so nothing after the acquisition was sent/);
-    h.call(3, 'let app = await cua.getApp("example.fixture"); await app.click(59)'); await tick();
-    h.reply(prefixId(h), popup); await tick();
-    assert.ok(h.sent.some(m => m.id === 3), 'an unchanged head lets the rest run');
-    h.reply(3, GUARD_MARK + popup + GUARD_END); await tick();
-    for (const [id, code, head] of [[4, 'await app.click({ label: "Item 38" })', plain], [5, 'await app.click({ id: "item-38" })', popup],
-      [6, 'nodeRepl.write("done")', plain]]) {
+    const valued = items.with(38, '\t\t0 button Item 38, Value: 5'), rows = Array(60).fill('\t\t0 button Row');
+    for (const [id, code, head, runs, why] of [
+      [3, 'await app.click(59)', popup, true, 'an unchanged head'],
+      [4, 'await app.click({ label: "Item 38" })', plain, true, 'a changed head with a label'],
+      [5, 'await app.click({ id: "item-38" })', popup, true, 'a changed head with an ID'],
+      [6, 'nodeRepl.write("done")', plain, true, 'a changed head with no element numbers'],
+      [7, 'await app.click(58)', tree({ tail: valued }), true, 'a Value change at the clicked number'],
+      [8, 'await app.click(58)', tree({ status: 'Saved', tail: valued }), true, 'a Value change below it'],
+      [9, 'await app.click(58)', tree({ status: 'Saved', tail: valued.with(38, '\t\t0 button (selected) Item 38, Value: 5') }), true, 'a selected flag'],
+      [10, 'await app.click(58)', tree({ status: 'Saved', tail: valued.with(50, '\t\t0 button Item 50 renamed').slice(0, -1) }), true, 'changes only above it'],
+      [11, 'nodeRepl.write("done")', tree({ tail: rows }), true, 'a new baseline of identical rows'],
+      [12, 'await app.click(58)', tree({ tail: rows.toSpliced(10, 0, '\t\t0 button Row') }), false, 'an identical row inserted before it'],
+      [13, 'await app.click(58)', tree({ tail: items.toSpliced(38, 0, '\t\t0 button POPUP') }), false, 'the popup inserted before it again'],
+    ]) {
       h.call(id, `let app = await cua.getApp("example.fixture"); ${code}`); await tick();
       h.reply(prefixId(h), head); await tick();
-      assert.ok(h.sent.some(m => m.id === id), `a changed head lets ${code} run`);
-      h.reply(id, 'done'); await tick();
+      assert.equal(h.sent.some(m => m.id === id), runs, `${why}: ${code} ${runs ? 'runs' : 'stops'} (compactReacquire ${compactReacquire})`);
+      if (runs) { h.reply(id, 'done'); await tick(); }
+      else assert.match(output(h.replies.find(m => m.id === id).result.content), /nothing after the acquisition was sent/);
     }
   }
 });

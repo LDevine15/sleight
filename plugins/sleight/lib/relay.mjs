@@ -2165,7 +2165,7 @@ export function createRelay({
     // Split even for the app the lease holds: the guard's setup refers to `app` before a `let app`
     // in the same script, which throws (2/3 simulator-form runs, 2026-10-08).
     const prefixId = `sleight-acquire-${nextInternalId++}`;
-    const generation = stopGeneration, trees = literalNumbers(rest).length > 0 && compactor.trees();
+    const numbers = literalNumbers(rest), generation = stopGeneration, trees = numbers.length > 0 && compactor.trees();
     callGenerations.set(prefixId, generation);
     splitCalls.set(prefixId, reply => {
       const raw = rawHeads.get(prefixId); rawHeads.delete(prefixId);
@@ -2189,9 +2189,9 @@ export function createRelay({
         if (handleBundles.has(saveHandle)) handleBundles.set(saveHandle, expected);
       }
       // The rest's literal numbers name lines in the tree Claude had before this call. When the head shows
-      // another tree, an inserted line may have shifted them, and the head's own read makes every number
+      // a line inserted or removed at or below them, they shifted, and the head's own read makes every number
       // look current to the stale check: click(58) meant for a row would land on a popup above it (LS1).
-      if (trees && compactor.treeChanged(trees, reply.result?.content)) {
+      if (trees && compactor.numbersMoved(trees, reply.result?.content, Math.max(...numbers))) {
         trace('acquisition-changed', { id: msg.id });
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
           { type: 'text', text: promptNotice('sleight: the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', prompt) }] } });

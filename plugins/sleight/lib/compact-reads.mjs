@@ -241,6 +241,15 @@ function stateFields(line) {
   if (/\b(?:checked|checkable)\b/.test(flags)) fields.push('checked:' + /\bchecked\b/.test(flags));
   return fields;
 }
+// A line's depth, role and identity without what changes between reads (Value, flags such as selected,
+// Help): its ID, else the role and title, plus the Description when there is no title.
+function structuralKey(key) {
+  const plain = key.replace(/ \((?:[a-z]+(?:, )?)+\)/, '');
+  const at = plain.search(/,|\b(?:Value|Help|Description|Details|ID|Secondary Actions|URL|Selected text):/);
+  const head = (at < 0 ? plain : plain.slice(0, at)).trimEnd(), id = /(?:^|, )ID: ([^,]*)/.exec(plain)?.[1];
+  const description = id === undefined && /^[^,]*?\bDescription: (.*?)(?=, (?:ID|Help|Value|Details|Secondary Actions|URL):|$)/.exec(plain)?.[1];
+  return `${head}|${id ?? description ?? ''}`;
+}
 const attributes = line => (line.match(/\b(?:Help|Description|ID):/g) ?? []).length;
 const panel = line => /(?:^|\t)(?:sheet|dialog)\b/.test(line);
 const saveSheet = root => /\bsave-panel\b/.test(root ?? '') && !/\bopen-panel\b/.test(root ?? '');
@@ -1336,16 +1345,25 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       for (const n of numbers ?? believed.keys()) if (believed.has(n)) out[n] = believed.get(n).replace(/^\t*/, '');
       return Object.keys(out).length ? out : undefined;
     },
-    // Each window's last full tree, for treeChanged to compare a later read against.
+    // Each window's last full tree, for numbersMoved to compare a later read against.
     trees() { return new Map([...seen].map(([key, entry]) => [key, entry.lines])); },
-    // Whether the last window read in `content` is a tree other than that window's in `trees`,
-    // numbering included. False for a window with no earlier tree, which leaves nothing to compare.
-    treeChanged(trees, content) {
+    // Whether an element number up to `upTo` may name another element in the last window read in
+    // `content` than in that window's tree in `trees`: a structural difference at or below it, which an
+    // insertion or deletion before it causes. Values, states and Help change between Office and
+    // Calculator reads without moving anything. A run of identical lines through `upTo` is compared to
+    // its end, since a row inserted anywhere in it looks the same. False for a window with no earlier tree.
+    numbersMoved(trees, content, upTo) {
       const text = (Array.isArray(content) ? content : []).filter(item => item?.type === 'text' && typeof item.text === 'string')
         .map(item => item.text).join('\n');
       const at = text.lastIndexOf('Window: '), window = at >= 0 && windowFromText(text.slice(at));
       const before = window && trees.get(documentKey(window)), now = window && seen.get(documentKey(window))?.lines;
-      return !!before && !!now && before.join('\n') !== now.join('\n');
+      if (!before || !now) return false;
+      const keys = lines => numbered(lines).reduce((out, [num, key]) => { out[num] = structuralKey(key); return out; }, []);
+      const a = keys(before), b = keys(now);
+      let last = upTo;
+      while ((a[last] !== undefined && a[last + 1] === a[last]) || (b[last] !== undefined && b[last + 1] === b[last])) last++;
+      for (let n = 0; n <= last; n++) if (a[n] !== b[n]) return true;
+      return false;
     },
     // The numbers whose line was on no other element in the tree Claude saw, so the same line
     // elsewhere later can only be that element.
