@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 04:00 UTC: every fix lane merged, pushed at `64585875`, 5,808 tests; asking the owner for the away window)
+## Banner (2026-10-17 05:15 UTC: build frozen at `ef833641`, 5,872 tests; overnight sitting approved by the owner, waiting for their start)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
@@ -30,6 +30,13 @@ Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with 
   was sent; a label in both the menu bar and the window goes to the window's element), BR3 (Chromium browser table, unqualified;
   an unqualified browser connects only with SLEIGHT_TURBO_UNQUALIFIED=1 in the server's environment). Still building: BR1 (pid
   77797, the real-window gate race harness). Queued: BR2 (Safari and Firefox in that harness, after BR1). Review each branch with a Sonnet-high reviewer, one full check per merge batch, push, fast-forward.
+- Round two merged at `ef833641` (each reviewed, findings fixed with tests that failed first): TW2 (navigation continuation only
+  into windows without editable document content; HID idle from the baseline sample), TW3 plus a focused-description note (the
+  excel-edit-1 sheet switch), TW4 (no numbered close-button clicks), duplicate acquisition trees dropped by default for the same
+  window, and the skill's re-acquire-when-switching-apps line.
+- Overnight sitting (owner, 2026-10-17: "do overnight but let's not start it yet"): when they say go, message "puddle arch" for the
+  quiet window, then (1) live checks: textedit-drag on TT3's path and engine background clicks vs HID idle, (2) the combined A/B
+  below, (3) keep measured wins on by default and revert measured losses, one full check, (4) the all-arms native claim run.
 - Combined A/B, ready once the lanes merge: `OLD=d8e52789 NEW=private/pane/auto-mode NEW_ENV=SLEIGHT_COMPACT_ACQUISITION=1
   ROUNDS=3 bench/ab-sleight.sh`, scored by `bench/ab-score.mjs`. 9 claim plus 11 held-out native tasks, about 1.7 to 2 hours, owner
   away. Live checks owed then too: textedit-drag on TT3's path, and engine background clicks leaving HID idle untouched (TT1N2).
