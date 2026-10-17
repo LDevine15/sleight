@@ -244,7 +244,8 @@ native reference, and oversized first results defer the browser reference while 
   benchmark" profile and on Helium with `--load-extension`, and turbo passed on Helium. Claude in Chrome connects from the copy
   only with Chrome's real keychain key (with the mock keychain it was signed out), and then every page action waited on its
   site permission prompt until it timed out (wikipedia and mdn, 2 of 2). The owner grants those sites once in the benchmark
-  profile. Turbo can't run on this Mac's Chrome, whose binary is mode 775 (see below), so the gate refuses that round.
+  profile. Turbo refused this Mac's Chrome, whose binary is mode 775, until the signature check below. No gate round
+  has run on that Chrome since.
 - Chrome Beta, Dev and Canary, Chromium, Brave, Edge and Vivaldi are in turbo's browser table but unqualified, and turbo stays
   off for them. The operator qualifies one at a time with the owner present. Turn on that browser's remote debugging at its own
   inspect address (`brave://inspect/#remote-debugging`, `edge://…`, `vivaldi://…`, `chrome://…` for the rest), then run
@@ -262,9 +263,15 @@ native reference, and oversized first results defer the browser reference while 
   (`.in_use/<pid>` and `.claude-plugin/types/`, seen in other plugins' cache folders on 2026-10-16) make the
   receipt stale until the next session start rewrites it. Whether they appear in sleight's installed folder
   mid-session, and so turn turbo off for a running session, hasn't been measured.
-- Turbo refuses a browser executable that others can write. On the Mac we tested, Google Chrome's is mode 775,
-  so setup picks Helium (755) or skips Chrome, and `--doctor` says why. Whether `chmod go-w` on Chrome's
-  binary stays after Chrome updates is unmeasured.
+- A drag install into /Applications by an admin leaves Chrome's executable mode 775, group admin, and macOS App
+  Management blocks `chmod` on another app's bundle. Turbo accepts such a group-writable executable only for Chrome
+  (Google's Team ID EQHXZ8M8AV) or Helium (imput's, S4Q33XPHB4) at its place in /Applications or ~/Applications. The
+  running browser process must pass `codesign --verify` against that browser's Developer ID requirement and carry the
+  kill, library-validation and runtime flags. A world-writable executable, or a group-writable one of any other browser,
+  is still refused. Setup checks the bundle on disk (54 ms on this Mac's Chrome, then cached). The connection checks
+  the process once per browser launch (two codesign reads, 34 ms and 20 ms on another running app). The process check
+  hasn't run against a live Chrome with remote debugging yet. Brave, Edge and Vivaldi have no Team ID in the table, so
+  they still need mode 755.
 - Turbo has no mobile viewport control. Use the engine's separate browser path for that task.
   Tabs and refs cannot cross paths. Never retry a safety refusal or an uncertain action through
   the other path. Embedded frame hosts are refused for input, while their page reads remain available.

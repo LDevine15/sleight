@@ -189,8 +189,10 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
 - `SLEIGHT_TURBO=0` in the MCP server's environment keeps that one server on the engine path without touching the file.
   It can only turn turbo off. The Firefox and Safari benchmark arms set it.
 - `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.
-  Without it, Google Chrome is first and Helium second. A browser whose executable others can write
-  (mode 775 or 777) is skipped, because the connection refuses it.
+  Without it, Google Chrome is first and Helium second. A browser whose executable others can write is
+  skipped, because the connection refuses it. The exception is Chrome or Helium with a group-writable
+  executable (mode 775, the result of a drag install), which turbo accepts when its code signature
+  checks out as Google's or imput's. Mode 777 is always refused.
 - Without a supported browser the launcher doesn't write the file and prints one line with the reason.
 - Remote debugging stays your step: turn it on at `chrome://inspect/#remote-debugging`. The browser
   asks you to allow each connection.

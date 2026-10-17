@@ -128,8 +128,9 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
 // What would stop a live round before it starts, read without launching anything.
 export function gatePreflight(plan, { executable = executableProblem } = {}) {
   const problems = profileSourceProblems(plan.browser);
-  // The product refuses a browser binary others can write (selected-connection.mjs). Chrome ships mode 775 on this
-  // Mac, so a turbo round there would answer from memory (live smoke 2026-10-17: every call "Turbo bench unavailable").
+  // The product refuses a browser binary others can write unless it is a signed browser whose signature checks
+  // (executable-trust.mjs). Before that relaxation a turbo round on this Mac's mode-775 Chrome answered from memory
+  // (live smoke 2026-10-17: every call "Turbo bench unavailable").
   const reason = plan.surface === 'sleight-turbo' && executable(plan.browser.executable);
   if (reason) problems.push(`Turbo refuses ${plan.browser.executable} (${reason}); the owner can run: chmod go-w "${plan.browser.executable}"`);
   return problems;

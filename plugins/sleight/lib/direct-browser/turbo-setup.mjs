@@ -12,21 +12,32 @@ import { INSTALLED_ENTRIES, INSTALLED_PLUGIN_ROOT, acceptedInstalledPackage, ins
 import { packageFiles } from './session-host.mjs';
 import { nativeHelpersBuilt } from './host.mjs';
 import { browserChoices, browserDefinitions, qualifiedBrowserNames } from './browsers.mjs';
+import { signedBrowserAt, verifiedOnDisk, writeClass } from './executable-trust.mjs';
 
 const fail = (code, detail) => Object.assign(Error(code), detail === undefined ? {} : { detail });
 const unqualifiedMessage = browser => `${browser.name} isn't qualified yet. Live check needed: turn on remote debugging at ${browser.inspectURL}, ` +
   'verify DevToolsActivePort in its profile and prove owned-tab read, input and cleanup, plus a stop when the user changes app, document or focus. ' +
   'The qualification steps are in docs/known-problems.md, and the operator runs them.';
 
-// Mirrors what the connection requires of the browser executable (selected-connection.mjs securePath), so a browser
-// turbo would refuse at connect time is never written into the file.
-export function executableProblem(path, uid = process.getuid()) {
+const appRootsFor = (home, apps) => [apps ?? '/Applications', join(home, 'Applications')];
+
+// Mirrors what the connection requires of the browser executable (selected-connection.mjs securePath and
+// executable-trust.mjs), so a browser turbo would refuse at connect time is never written into the file. A
+// group-writable signed browser passes here on its bundle's signature on disk; the connection then proves the
+// running process.
+export function executableProblem(path, uid = process.getuid(), { appRoots, verify = verifiedOnDisk } = {}) {
   let stat;
   try { stat = lstatSync(path); } catch { return 'missing'; }
   try {
     if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path) return 'not a plain file';
     if (stat.uid !== uid && stat.uid !== 0) return 'owned by another user';
-    if (stat.mode & 0o022) return 'writable by others (mode ' + (stat.mode & 0o777).toString(8) + ')';
+    const writers = writeClass(stat.mode), mode = 'writable by others (mode ' + (stat.mode & 0o777).toString(8) + ')';
+    if (!writers) return mode;
+    if (writers === 'signature') {
+      const signed = signedBrowserAt(path, appRoots ? { appRoots } : {});
+      if (!signed) return mode;
+      if (!verify(path, signed.requirement, stat)) return `${mode}, and its signature is not ${signed.name}'s from team ${signed.team}`;
+    }
     if (!(stat.mode & 0o100)) return 'not executable';
     return undefined;
   } catch { return 'unreadable'; }
@@ -34,7 +45,8 @@ export function executableProblem(path, uid = process.getuid()) {
 
 /** First installed qualified browser in table order, or the one named by `browser`.
  *  Returns { ok: true, id, name, executable, profileRoot } or { ok: false, code, message }. */
-export function detectBrowser({ home = userInfo().homedir, apps, browser, uid = process.getuid(), problem = path => executableProblem(path, uid) } = {}) {
+export function detectBrowser({ home = userInfo().homedir, apps, browser, uid = process.getuid(),
+  problem = path => executableProblem(path, uid, { appRoots: appRootsFor(home, apps) }) } = {}) {
   const all = browserDefinitions(home, apps), selected = all.find(b => b.id === browser);
   if (browser !== undefined && !selected) return { ok: false, code: 'BROWSER_UNKNOWN', message: `--browser takes ${browserChoices()}, not ${JSON.stringify(browser)}.` };
   const wanted = selected ? [selected] : all.filter(b => b.qualified), problems = [];
@@ -140,7 +152,7 @@ export function ensureTurboConfig({ configPath = installedConfigPath(), pluginRo
     if (seen.state === 'opted-out') return done({ action: 'skipped', state: 'opted-out' });
     if (seen.state === 'unsafe') return done({ action: 'skipped', state: 'unsafe',
       message: 'turbo.json is not safe to read (a link, or another owner or mode), so turbo stays off. Delete it and run sleight-mcp turbo on.' });
-    const problem = path => executableProblem(path, uid);
+    const problem = path => executableProblem(path, uid, { appRoots: appRootsFor(home, apps) });
     const chosen = browser ? detectBrowser({ home, apps, browser, uid }) : reuseBrowser(seen.data, home, apps, problem) ?? detectBrowser({ home, apps, uid });
     if (!chosen.ok) return done({ action: 'skipped', state: seen.state, reason: chosen.code, message: `turbo stays off: ${chosen.message}` });
     if (!chosen.qualified) return done({ action: 'skipped', state: seen.state, reason: 'BROWSER_UNQUALIFIED', message: `turbo stays off: ${unqualifiedMessage(chosen)}` });
@@ -158,7 +170,7 @@ export function turboDiagnosis({ configPath = installedConfigPath(), pluginRoot 
   helperCache, exists = existsSync } = {}) {
   const seen = inspectConfig({ configPath, pluginRoot });
   const browsers = browserDefinitions(home, apps).map(b => {
-    const problem = executableProblem(b.executable);
+    const problem = executableProblem(b.executable, undefined, { appRoots: appRootsFor(home, apps) });
     return { ...b, installed: problem !== 'missing', executableProblem: problem };
   });
   const known = browsers.find(b => b.executable === seen.data?.executable);
@@ -199,6 +211,7 @@ export function doctorLines(d) {
   row(!d.executableProblem, 'browser', `${d.browser.name}, ${d.browser.executable}${d.executableProblem ? ` (${d.executableProblem})` : ''}`);
   if (d.browser.qualified === false) lines.push(fix(unqualifiedMessage(d.browser)));
   if (d.executableProblem) lines.push(fix(d.executableProblem === 'missing' ? `reinstall the browser, or run sleight-mcp turbo on --browser ${browserChoices()}`
+    : /signature/.test(d.executableProblem) ? `reinstall ${d.browser.name} from its maker, or choose a qualified browser with sleight-mcp turbo on --browser`
     : `make the executable writable only by you (chmod go-w '${d.browser.executable}'), or choose a qualified browser with sleight-mcp turbo on --browser`));
   if (d.state === 'current') {
     row(d.helpers === true, 'native helpers', d.helpers ? 'compiled' : 'not compiled yet');

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { acceptedInstalledPackage, INSTALLED_ENTRIES, readInstalledConfig } from '../plugins/sleight/lib/direct-browser/installed-config.mjs';
 import { packageFiles } from '../plugins/sleight/lib/direct-browser/session-host.mjs';
-import { detectBrowser, doctorLines, ensureTurboConfig, inspectConfig, statusLines, turboCommand, turboDiagnosis, writeConfigFile }
+import { detectBrowser, doctorLines, ensureTurboConfig, executableProblem, inspectConfig, statusLines, turboCommand, turboDiagnosis, writeConfigFile }
   from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
 import { ensureInstalledTurbo, prepareInstalledStartup, doctor } from '../plugins/sleight/lib/launch.mjs';
 import { applicationName } from '../plugins/sleight/lib/direct-browser/worker.mjs';
@@ -272,6 +272,24 @@ test('a browser executable the connection would refuse is skipped, with the reas
   const refused = detectBrowser({ home: only.home, apps: only.apps });
   assert.equal(refused.code, 'BROWSER_EXECUTABLE_UNSAFE'); assert.match(refused.message, /writable by others \(mode 775\)/);
   assert.equal(ensureTurboConfig(only.base).action, 'skipped'); assert.equal(existsSync(only.configPath), false);
+});
+
+test('a group-writable signed browser passes setup only when its bundle signature checks; world-writable never', t => {
+  const w = world(t, { chrome: true, helium: true, chromeMode: 0o775 }), calls = [];
+  const chrome = join(w.apps, 'Google Chrome.app/Contents/MacOS/Google Chrome');
+  const check = (path, ok) => executableProblem(path, undefined, { appRoots: [w.apps], verify: (...args) => { calls.push(args); return ok; } });
+  assert.equal(check(chrome, true), undefined);
+  assert.match(calls[0][1], /^identifier "com\.google\.Chrome" and anchor apple generic .*"EQHXZ8M8AV"$/);
+  assert.match(check(chrome, false), /writable by others \(mode 775\), and its signature is not Google Chrome's from team EQHXZ8M8AV/);
+  calls.length = 0; chmodSync(chrome, 0o777);
+  assert.match(check(chrome, true), /^writable by others \(mode 777\)$/); assert.equal(calls.length, 0);
+  w.install('Brave Browser', 'Brave Browser', 0o775);
+  assert.match(check(join(w.apps, 'Brave Browser.app/Contents/MacOS/Brave Browser'), true), /^writable by others \(mode 775\)$/, 'no Team ID, no relaxation');
+  assert.equal(calls.length, 0);
+  chmodSync(chrome, 0o775);
+  assert.match(executableProblem(chrome, undefined, { appRoots: ['/Applications'], verify: () => true }), /^writable by others/, 'outside the app roots');
+  assert.match(doctorLines({ state: 'current', browsers: [], browser: { name: 'Google Chrome', executable: chrome, qualified: true }, executableProblem: check(chrome, false), helpers: true, port: true }).join('\n'),
+    /fix: reinstall Google Chrome from its maker/);
 });
 
 test('writes are atomic: no partial file, no temp leftovers, the old file survives a failed write', t => {
