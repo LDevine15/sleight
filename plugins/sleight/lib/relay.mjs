@@ -1363,7 +1363,7 @@ export function createRelay({
   }
   let nextElicitId = 0;
 
-  const toServer = msg => {
+  const toServer = (msg, continuationChecked = false) => {
     if (msg.method === undefined && msg.id !== undefined) {
       const request = engineRequests.get(msg.id);
       if (request) {
@@ -1374,6 +1374,29 @@ export function createRelay({
     }
     if (stopCollected || (closing && msg.method === 'tools/call' && msg.params?.name !== TURN_END_TOOL &&
         !(internalRequests.has(msg.id) && String(msg.id).startsWith('sleight-tab-cleanup-')))) return;
+    const continuation = msg.method === 'tools/call' && menuForwards.get(msg.id);
+    if (continuation && !continuationChecked) {
+      // Admission may wait on another guard. Sample again at the final engine boundary,
+      // including startup retries, against the original call's forwarding time.
+      if (continuation.checking) return;
+      continuation.checking = true;
+      const { call, expected, original, head, current } = continuation;
+      menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
+        if (!current() || leaseWindow !== call.target ||
+            !unchangedMenuWindow(expected, call.baseline, observed, call.forwardedAt)) {
+          menuForwards.delete(msg.id);
+          menuCalls.delete(msg.id);
+          if (head) splitHeads.set(msg.id, head); else splitHeads.delete(msg.id);
+          const clipboardReply = clipboardReplies.get(msg.id);
+          if (clipboardReply) { clipboardReplies.delete(msg.id); clipboardReply.receive(original); }
+          else observeServerMessage(original);
+          return;
+        }
+        continuation.checking = false;
+        toServer(msg, true);
+      });
+      return;
+    }
     if (msg.method === 'tools/call' && callGenerations.has(msg.id) && callGenerations.get(msg.id) !== stopGeneration) {
       observeServerMessage({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }); return;
     }
@@ -1383,7 +1406,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && msg.id !== undefined && msg.params.name !== TURN_END_TOOL) {
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
     }
-    if (msg.method === 'tools/call' && menuCalls.has(msg.id)) menuCalls.get(msg.id).forwardedAt = performance.now();
+    if (msg.method === 'tools/call' && menuCalls.has(msg.id)) menuCalls.get(msg.id).forwardedAt ??= performance.now();
     serverIn.write(JSON.stringify(msg) + '\n');
     replWarmup.sent(msg);
   };
@@ -1489,7 +1512,7 @@ export function createRelay({
     if (msg.method === undefined && splitCalls.has(msg.id)) {
       const next = splitCalls.get(msg.id); splitCalls.delete(msg.id); callGenerations.delete(msg.id); next(msg); return;
     }
-    if (msg.method === undefined) { menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); splitInputs.delete(msg.id); }
+    if (msg.method === undefined) { menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); menuForwards.delete(msg.id); splitInputs.delete(msg.id); }
     if (msg.method === undefined && splitHeads.has(msg.id)) {
       let head = splitHeads.get(msg.id); splitHeads.delete(msg.id);
       if (resultTrim && msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content);
@@ -1874,7 +1897,7 @@ export function createRelay({
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
-  const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Set();
+  const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Set(), menuForwards = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
     if (!inputLease || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
@@ -2018,14 +2041,18 @@ export function createRelay({
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
     const remainder = !msg.error && msg.result.isError && !documentMode && !changeReview && !menuContinued.has(msg.id) &&
+      !guardMode?.split(',').some(mode => mode.trim() === 'careful') &&
       call.target && menuRemainder(call.plan, taken.receipt, call.target, taken.content);
     if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
-    menuIdentity(windowIdentity, call.target, menuContinuationTimeoutMs).then(observed => {
+    const expected = remainder.navigation ? { ...call.target, ...remainder.window,
+      windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline } : call.target;
+    menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
       if (!current()) { observeServerMessage(msg); return; }
-      if (leaseWindow !== call.target || !unchangedMenuWindow(call.target, call.baseline, observed, call.forwardedAt)) {
+      if (leaseWindow !== call.target || !unchangedMenuWindow(expected, call.baseline, observed, call.forwardedAt)) {
         observeServerMessage(msg); return;
       }
+      const original = structuredClone(msg), head = splitHeads.get(msg.id);
       // Keep output from before the refused action, drop its exception, then let the normal
       // result path record the menu tree. The remainder goes through the ordinary admission gates.
       msg.result = { ...msg.result, isError: false, content: [...taken.head,
@@ -2036,6 +2063,7 @@ export function createRelay({
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
         leaseWindow = call.target;
         menuBaselines.set(msg.id, remainder.window);
+        menuForwards.set(msg.id, { call, expected, original, head, current });
         nativeChecked.add(msg.id); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
@@ -2169,7 +2197,8 @@ export function createRelay({
         const admission = { plan, target, generation };
         menuAdmissions.set(msg.id, admission);
         running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
-        menuIdentity(windowIdentity, target, menuContinuationTimeoutMs).then(baseline => {
+        admission.identity = Promise.resolve().then(() => windowIdentity(target));
+        menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
           if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
             menuAdmissions.delete(msg.id); finishedCall(msg.id);
             const error = new Error('Input lease: window changed while checking. Read again.');
@@ -2193,7 +2222,7 @@ export function createRelay({
       running.add(msg.id);
       callDetails.set(msg.id, 'native window admission');
       const started = performance.now();
-      Promise.resolve().then(() => windowIdentity(expected)).then(observed => {
+      Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
         const identity = nativeIdentity(expected, observed);
         if (generation !== stopGeneration || leaseWindow !== expected || closing || disposed) throw new Error('Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
@@ -3383,7 +3412,7 @@ export function createRelay({
         // Collection makes late results impossible. Resolve pending caller requests explicitly.
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
-        menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); splitInputs.clear();
+        menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); splitInputs.clear();
         filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');

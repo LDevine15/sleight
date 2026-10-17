@@ -30,7 +30,11 @@ export function splitMenuActions(code) {
       if (args.length === 1 && args[0].string) selector = { kind: 'label', value: args[0].v };
       else if (args.length === 5 && args[0].v === '{' && ['label', 'id'].includes(args[1].v) &&
           args[2].v === ':' && args[3].string && args[4].v === '}') selector = { kind: args[1].v, value: args[3].v };
+      else if (args.length === 1 && !args[0].string && /^\d+$/.test(args[0].v)) selector = { kind: 'number', value: Number(args[0].v) };
+      else if (args.length === 5 && args[0].v === '[' && args[2].v === ',' && args[4].v === ']' &&
+          [args[1], args[3]].every(t => !t.string && /^\d+$/.test(t.v))) selector = { kind: 'point', value: [Number(args[1].v), Number(args[3].v)] };
     }
+    if (ts[3].v === 'pressKey' && args.length === 1 && args[0].string) selector = { kind: 'key', value: args[0].v };
     actions.push({ start, end, handle, selector });
   }
   return actions.length > 1 ? { code, actions } : undefined;
@@ -58,8 +62,9 @@ export function menuRemainder(plan, receipt, expected, content) {
   const n = receipt?.index, prev = receipt?.prev;
   if (!plan || receipt?.windowStop === false || !Number.isSafeInteger(n) || n < 1 || n >= plan.actions.length || !prev) return;
   const selector = plan.actions[n - 1].selector;
-  if (!selector || selector.value !== prev.value || !['label', 'id'].includes(prev.kind) ||
-      (selector.kind === 'id' && prev.kind !== 'id')) return;
+  if (!selector || JSON.stringify(selector.value) !== JSON.stringify(prev.value) ||
+      !['label', 'id', 'key', 'number', 'point'].includes(prev.kind) ||
+      (selector.kind === 'label' ? !['label', 'id'].includes(prev.kind) : selector.kind !== prev.kind)) return;
   const text = content.filter(item => item.type === 'text').map(item => item.text).join('\n');
   const window = windowFromText(text);
   if (!window || window.app !== expected.app) return;
@@ -67,6 +72,11 @@ export function menuRemainder(plan, receipt, expected, content) {
   const root = /^\d+ (.*)$/m.exec(tree);
   if (!root || receipt.root !== root[0]) return;
   const line = root[1];
+  if (/^standard window(?: |,|$)/.test(line)) {
+    if (window.title === expected.title || /^\s*\d+ (?:sheet|dialog)\b/m.test(tree)) return;
+    return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree, navigation: true };
+  }
+  if (!['label', 'id'].includes(prev.kind)) return;
   // Some engine menus have a named parent at the root and an unnamed menu below it.
   const role = /^menu(?: |,|$)/.test(line), secondary = /(?:^|, )Secondary Actions: Cancel(?:,|$)/.test(line);
   if (!role && !(secondary && /^\t+\d+ menu(?: |$)/m.test(tree))) return;

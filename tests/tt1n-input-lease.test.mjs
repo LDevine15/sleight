@@ -16,9 +16,10 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 
 // TT1N's string-read VM fixture, now joined to the real relay. Native truth stays outside
 // the engine realm: only the relay's injected read-only identity helper can observe it.
-async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false, ...options } = {}) {
+async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
+  retryFirst, beforeRetry, ...options } = {}) {
   let text = base, writes = [];
-  const clicks = [], sent = [], received = [];
+  const clicks = [], keys = [], sent = [], received = [];
   let identityChecks = 0;
   const native = { windowNumber: 22, hidIdleSeconds: 1000, status: 'ok' };
   const raw = { getAXState: async () => text, click: async number => {
@@ -27,7 +28,12 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
     if (nativeChange === 'window') native.windowNumber = 23;
     if (nativeChange === 'focus') native.hidIdleSeconds = 0;
     if (nativeChange === 'unfocused') native.status = 'mismatch';
-  }, pressKey: async () => {} };
+  }, pressKey: async key => {
+    keys.push(key); text = keys.length + clicks.length === 1 ? after : afterItem;
+    if (nativeChange === 'window') native.windowNumber = 23;
+    if (nativeChange === 'focus') native.hidIdleSeconds = 0;
+    if (nativeChange === 'unfocused') native.status = 'mismatch';
+  } };
   const context = createContext({ cua: { getApp: async () => raw, listApps: async () => [
     { id: 'org.test.editor', windows: [{ title: 'report.txt' }] }
   ] }, nodeRepl: { write: value => writes.push(String(value)) } });
@@ -41,14 +47,20 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); });
   clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
   serverIn.on('data', data => sent.push(...data.toString().trim().split('\n').map(JSON.parse)));
-  let next = 0, cursor = 0;
+  let next = 0, cursor = 0, retried = false;
   const call = async (code, name = 'js') => {
     const id = ++next;
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { code } } }) + '\n');
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (retryFirst ? 1500 : 100); i++) {
       await tick();
       while (cursor < sent.length) {
         const request = sent[cursor++]; writes = [];
+        if (retryFirst && next > 1 && !retried) {
+          retried = true; beforeRetry(native);
+          serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { isError: true,
+            content: [{ type: 'text', text: 'Sky Computer Use native pipe startup failed' }] } }) + '\n');
+          continue;
+        }
         let error;
         try { await runInContext(`(async () => { ${request.params.arguments.code} })()`, context,
           { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }); }
@@ -67,8 +79,150 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
   };
   await call('await cua.getApp("Fixture Editor");');
   sent.length = received.length = 0; cursor = 0; text = initial ?? base;
-  return { clicks, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
+  return { clicks, keys, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
 }
+
+const navigation = 'Window: "Parent", App: Fixture Editor.\n0 standard window Parent, URL: file:///tmp/Parent\n\t2 row Child, ID: child\n\t3 button Other';
+const child = navigation.replaceAll('Parent', 'Child');
+for (const action of ['pressKey("Super+Down")', 'pressKey("Super+Up")', 'pressKey("Return")',
+  'click("Child")', 'click({ id: "child" })', 'click(2)', 'click([20, 40])']) {
+  test(`TW2: own ${action} retitles the same window and continues once`, async t => {
+    const h = await fixture(t, { base: navigation, after: child });
+    const result = await h.call(`await app.${action}; await app.pressKey("Tab");`);
+    assert.notEqual(result.isError, true);
+    assert.equal(h.sent.length, 2);
+    assert.equal(h.received.length, 1);
+    assert.equal(h.identityChecks(), 3, 'shared admission baseline, post-stop, and immediately before forwarding');
+    assert.equal(h.keys.at(-1), 'Tab');
+    assert.doesNotMatch(JSON.stringify(result), /guard-stop|window or URL changed/);
+  });
+}
+
+for (const [name, options] of [
+  ['another window number', { nativeChange: 'window' }],
+  ['user HID input', { nativeChange: 'focus' }],
+  ['lost focus', { nativeChange: 'unfocused' }],
+  ['sheet root', { after: child.replace('standard window', 'sheet') }],
+  ['dialog root', { after: child.replace('standard window', 'dialog') }],
+  ['nested sheet', { after: child + '\n\t4 sheet Confirm' }],
+  ['another app', { after: child.replace('App: Fixture Editor.', 'App: Other Editor.') }],
+  ['careful mode', { guardMode: 'careful' }],
+]) test(`TW2: navigation stops on ${name}`, async t => {
+  const h = await fixture(t, { base: navigation, after: child, ...options });
+  const result = await h.call('await app.pressKey("Return"); await app.click("Other");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, ['Return']);
+  assert.deepEqual(h.clicks, []);
+  assert.equal(h.sent.length, 1);
+});
+
+test('TW2: a second navigation in the remainder stops the following action', async t => {
+  const h = await fixture(t, { base: navigation, after: child, afterItem: navigation });
+  const result = await h.call('await app.pressKey("Return"); await app.pressKey("Return"); await app.click("Other");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, ['Return', 'Return']);
+  assert.deepEqual(h.clicks, []);
+  assert.equal(h.sent.length, 2);
+});
+
+for (const shape of ['menu', 'navigation']) for (const failure of ['hid', 'window', 'focus', 'error', 'missing', 'timeout']) {
+  test(`TW2: ${shape} returns its original stop when final evidence fails (${failure})`, async t => {
+    const h = await fixture(t, { ...(shape === 'navigation' ? { base: navigation, after: child } : {}),
+      menuContinuationTimeoutMs: 5, identity: async (expected, native, count) => {
+        const observed = { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+        if (count !== 3) return observed;
+        if (failure === 'error') throw Error('final check unavailable');
+        if (failure === 'missing') return {};
+        if (failure === 'timeout') return new Promise(() => {});
+        return { ...observed, ...(failure === 'hid' ? { hidIdleSeconds: 0 } :
+          failure === 'window' ? { windowNumber: 23 } : { status: 'mismatch' }) };
+      } });
+    const result = await h.call(shape === 'navigation' ? 'await app.pressKey("Return"); await app.click("Other");' :
+      'await app.click("File"); await app.click("Save");');
+    assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result), /window or URL changed/);
+    assert.doesNotMatch(JSON.stringify(result), /guard-stop/);
+    assert.equal(h.sent.length, 1);
+    assert.equal(h.identityChecks(), 3);
+    assert.equal(h.received.length, 1);
+    assert.deepEqual(h.clicks, shape === 'menu' ? [2] : []);
+  });
+}
+
+test('TW2: final refusal releases a pending clipboard transaction and returns the original stop', async t => {
+  let held = false;
+  const h = await fixture(t, { clipboardMode: 'preserve', clipboardIO: async request => {
+    if (request.op === 'acquire') { assert.equal(held, false); held = true; }
+    if (request.op === 'release') held = false;
+    if (request.op === 'read') return { count: 1, items: [] };
+  }, identity: async (expected, native, count) => ({ ...expected, ...native, matches: 1,
+    epoch: 'helper', window: 1, pid: 123, processStart: 1, ...(count === 3 ? { hidIdleSeconds: 0 } : {}) }) });
+  const result = await h.call('await app.click("File"); await app.pressKey("Super+C");');
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result), /window or URL changed/);
+  assert.equal(held, false);
+  assert.deepEqual(h.clicks, [2]);
+  assert.deepEqual(h.keys, []);
+  assert.equal(h.sent.length, 1);
+});
+
+test('TW2: input during remainder clipboard preparation is caught by the final check', async t => {
+  let h, acquisitions = 0, held = false;
+  h = await fixture(t, { clipboardMode: 'preserve', clipboardIO: async request => {
+    if (request.op === 'acquire') { acquisitions++; held = true; }
+    if (request.op === 'release') held = false;
+    if (request.op === 'read') {
+      if (acquisitions === 2) h.native.hidIdleSeconds = 0;
+      return { count: 1, items: [] };
+    }
+  } });
+  const result = await h.call('await app.click("File"); await app.pressKey("Super+C");');
+  assert.equal(result.isError, true);
+  assert.equal(acquisitions, 2);
+  assert.equal(h.identityChecks(), 3);
+  assert.equal(held, false);
+  assert.equal(h.sent.length, 1);
+  assert.deepEqual(h.keys, []);
+});
+
+test('TW2: a late final helper result cannot forward after the deadline', async t => {
+  let finish;
+  const h = await fixture(t, { menuContinuationTimeoutMs: 5, identity: async (expected, native, count) => {
+    const observed = { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+    return count === 3 ? new Promise(resolve => { finish = () => resolve(observed); }) : observed;
+  } });
+  const result = await h.call('await app.click("File"); await app.click("Save");');
+  assert.equal(result.isError, true);
+  finish(); await tick();
+  assert.equal(h.received.length, 1);
+  assert.equal(h.sent.length, 1);
+  assert.deepEqual(h.clicks, [2]);
+});
+
+test('TW2: disposal during final evidence collection never forwards the remainder', async t => {
+  let h;
+  h = await fixture(t, { identity: async (expected, native, count) => {
+    if (count === 3) h.relay.dispose();
+    return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+  } });
+  const result = await h.call('await app.click("File"); await app.click("Save");');
+  assert.equal(result.isError, true);
+  assert.equal(h.sent.length, 1);
+  assert.deepEqual(h.clicks, [2]);
+});
+
+test('TW2: helper startup retry cannot reset the original call forwarding time', async t => {
+  let now = 1000;
+  t.mock.method(performance, 'now', () => now);
+  const h = await fixture(t, { retryFirst: true, beforeRetry: native => {
+    now = 2100; native.hidIdleSeconds = 0.15;
+  } });
+  const result = await h.call('await app.click("File"); await app.click("Save");');
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result), /window or URL changed/);
+  assert.equal(h.sent.length, 2, 'only the original call and its startup retry');
+  assert.deepEqual(h.clicks, [2]);
+});
 
 for (const [kind, first, second] of [['label', '{ label: "File" }', '{ label: "Save" }'],
   ['ID', '{ id: "file-menu" }', '{ id: "save-item" }']]) {

@@ -641,7 +641,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           input();
           const result = await value.apply(raw, args);
           state.lastAction = name === 'click' && byId && kind !== 'line'
-            ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line } : null;
+            ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }
+            : name === 'pressKey' && typeof args[0] === 'string' ? { kind: 'key', value: args[0] }
+            : name === 'click' && typeof args[0] === 'number' ? { kind: 'number', value: literal ?? args[0] }
+            : name === 'click' && Array.isArray(args[0]) ? { kind: 'point', value: args[0] } : null;
           return result;
         };
         // An action Claude didn't await that fails would reject with no handler, and that ends the
