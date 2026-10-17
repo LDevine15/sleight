@@ -47,12 +47,15 @@ for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }])
     assert.match(first, /Top-level `await`, no `return`/);
     assert.match(first, /Write text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(first, /sleight\.fillForm|sleight\.dragTo|downloadMedia|tab\.getJsDialog/);
+    // A native-first session can act in a browser before its first browser result: the submit rule and
+    // tab-handle routing ride in the first rules, not with the deferred browser how-to.
+    assert.match(first, /stop before the final click/);
+    assert.match(first, /tab handle, never `getApp`/);
     h.call(2, 'nodeRepl.write(2 + 2)');
     assert.doesNotMatch(h.reply(2, '4'), /sleight\.fillForm/);
     h.call(3, 'let tab = await cua.getTab("1")');
     const browser = h.reply(3, 'Browser result', true);
     assert.match(browser, /sleight\.fillForm/);
-    assert.match(browser, /confirmation policy/);
     assert.match(browser, /stop if the user declines a browser approval/);
     assert.match(browser, /downloadMedia/);
     assert.match(browser, /tab\.getJsDialog/);

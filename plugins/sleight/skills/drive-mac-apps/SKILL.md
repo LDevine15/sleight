@@ -54,9 +54,13 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that
   refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
+With a connected ChatGPT extension, web pages use the tab handle, never `getApp`.
+The engine masks protected field reads as `<redacted>`. This does not mean input was replaced. Use validation or submission results. Never try to unmask it.
+Submit in that call only when the user asked for that submit and the engine's confirmation policy
+doesn't require confirming it. Otherwise stop before the final click.
+
 ## Browsers
 
-With a connected ChatGPT extension, web pages use the tab handle, never `getApp`.
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from
 `await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
@@ -65,10 +69,7 @@ Fill every field you already see in one call.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.
-The engine masks protected field reads as `<redacted>`. This does not mean input was replaced. Use validation or submission results. Never try to unmask it.
 Use locators when validation or autocomplete can add or move fields, indices on static forms.
-Submit in that call only when the user asked for that submit and the engine's confirmation policy
-doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, and stop if the user declines a browser approval.
 `nodeRepl.write(await sleight.dragTo(tab, from, to))`: selectors, locators or page coordinates, reads back indices. `nodeRepl.write(await sleight.reorder(tab,list,order))`: row names, verified.
 Downloads: `locator.downloadMedia({})`, never `tab.click` (stalls later downloads).

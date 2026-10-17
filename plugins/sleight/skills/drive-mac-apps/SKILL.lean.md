@@ -10,16 +10,17 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that
   refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
+Web pages: tab handle, never `getApp`.
+Submit in that call only when the user asked and the engine's confirmation policy doesn't require confirming it. Otherwise stop before the final click.
+
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 
 ## Browsers
 
-Web pages: tab handle, never `getApp`.
 Tab input: first argument, element index or `null`.
 Fill every visible field in one call. Read once at the end.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 Use locators when validation/autocomplete moves fields, indices on static forms.
-Submit in that call only when the user asked and the engine's confirmation policy doesn't require confirming it. Otherwise stop before the final click.
 Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.
 `nodeRepl.write(await sleight.dragTo(tab, from, to))`: selectors, locators or page coordinates, reads back indices.
 Downloads: `locator.downloadMedia({})`, never `tab.click` (stalls later downloads).
