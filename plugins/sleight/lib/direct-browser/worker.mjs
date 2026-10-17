@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readInstalledConfig, acceptedInstalledPackage } from './installed-config.mjs';
 import { browserTools, validateToolCall, createToolDispatcher } from './tools.mjs';
 import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
+import { browserApplicationName } from './browsers.mjs';
 
 const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
@@ -17,12 +18,7 @@ const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconf
   : 'Turbo is unavailable for this turn. Use the engine browser path.', isError: !unknown });
 // The model sees which application turbo selected, so a task naming it needs no engine search.
 // The name comes only from the operator-owned config's executable path and a fixed list, never a page.
-const applications = new Set(['Google Chrome', 'Google Chrome Beta', 'Google Chrome Dev', 'Google Chrome Canary', 'Google Chrome for Testing',
-  'Chromium', 'Helium', 'Brave Browser', 'Microsoft Edge', 'Vivaldi', 'Arc', 'Opera']);
-export const applicationName = executable => {
-  const name = typeof executable === 'string' ? /\/([^/]+)\.app\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1] : undefined;
-  return applications.has(name) ? name : undefined;
-};
+export const applicationName = browserApplicationName;
 const unsafeStartup = new Set(['HOST_PACKAGE_MISMATCH', 'HOST_SOURCE_MISMATCH', 'HOST_CACHE_UNSAFE', 'INSTALLED_CONFIG_UNSAFE']);
 
 export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31000 } = {}, dependencies = {}) {

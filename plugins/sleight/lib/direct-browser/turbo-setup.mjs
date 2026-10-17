@@ -11,17 +11,12 @@ import { INSTALLED_ENTRIES, INSTALLED_PLUGIN_ROOT, acceptedInstalledPackage, ins
   readInstalledConfigFile, sha256Hex, validateEnabledConfig } from './installed-config.mjs';
 import { packageFiles } from './session-host.mjs';
 import { nativeHelpersBuilt } from './host.mjs';
+import { browserChoices, browserDefinitions, qualifiedBrowserNames } from './browsers.mjs';
 
-export const DEBUGGING_STEP = 'chrome://inspect/#remote-debugging';
-// Fixed locations. Tests pass a temp home and applications folder.
-const definitions = (home, apps = '/Applications') => ({
-  chrome: { id: 'chrome', name: 'Google Chrome', executable: join(apps, 'Google Chrome.app/Contents/MacOS/Google Chrome'),
-    profileRoot: join(home, 'Library/Application Support/Google/Chrome') },
-  helium: { id: 'helium', name: 'Helium', executable: join(apps, 'Helium.app/Contents/MacOS/Helium'),
-    profileRoot: join(home, 'Library/Application Support/net.imput.helium') },
-});
-const ORDER = ['chrome', 'helium'];
 const fail = (code, detail) => Object.assign(Error(code), detail === undefined ? {} : { detail });
+const unqualifiedMessage = browser => `${browser.name} isn't qualified yet. Live check needed: turn on remote debugging at ${browser.inspectURL}, ` +
+  'verify DevToolsActivePort in its profile and prove owned-tab read, input and cleanup, plus a stop when the user changes app, document or focus. ' +
+  `For qualification checks only, run SLEIGHT_TURBO_UNQUALIFIED=1 sleight-mcp turbo on --browser ${browser.id}.`;
 
 // Mirrors what the connection requires of the browser executable (selected-connection.mjs securePath), so a browser
 // turbo would refuse at connect time is never written into the file.
@@ -37,20 +32,20 @@ export function executableProblem(path, uid = process.getuid()) {
   } catch { return 'unreadable'; }
 }
 
-/** First installed browser in order (Google Chrome, then Helium), or the one named by `browser`.
+/** First installed qualified browser in table order, or the one named by `browser`.
  *  Returns { ok: true, id, name, executable, profileRoot } or { ok: false, code, message }. */
 export function detectBrowser({ home = userInfo().homedir, apps, browser, uid = process.getuid(), problem = path => executableProblem(path, uid) } = {}) {
-  const all = definitions(home, apps);
-  if (browser !== undefined && !ORDER.includes(browser)) return { ok: false, code: 'BROWSER_UNKNOWN', message: `--browser takes chrome or helium, not ${JSON.stringify(browser)}.` };
-  const wanted = browser ? [browser] : ORDER, problems = [];
-  for (const id of wanted) {
-    const found = all[id], reason = problem(found.executable);
+  const all = browserDefinitions(home, apps), selected = all.find(b => b.id === browser);
+  if (browser !== undefined && !selected) return { ok: false, code: 'BROWSER_UNKNOWN', message: `--browser takes ${browserChoices()}, not ${JSON.stringify(browser)}.` };
+  const wanted = selected ? [selected] : all.filter(b => b.qualified), problems = [];
+  for (const found of wanted) {
+    const reason = problem(found.executable);
     if (reason === undefined) return { ok: true, ...found };
     if (reason !== 'missing') problems.push(`${found.name} is installed but turbo refuses its executable (${reason}).`);
   }
   if (problems.length) return { ok: false, code: 'BROWSER_EXECUTABLE_UNSAFE', message: problems.join(' ') + ' Fix that, or pick another browser with --browser.' };
-  return { ok: false, code: 'BROWSER_NOT_FOUND', message: browser ? `${all[browser].name} is not installed in /Applications.`
-    : 'No supported browser found (Google Chrome or Helium in /Applications).' };
+  return { ok: false, code: 'BROWSER_NOT_FOUND', message: selected ? `${selected.name} is not installed in /Applications.`
+    : `No supported browser found (${qualifiedBrowserNames()} in /Applications).` };
 }
 
 /** The receipt and entry hashes for the package at pluginRoot, in the shape readInstalledConfig and
@@ -128,7 +123,7 @@ function store(configPath, pluginRoot, browser, uid) {
 
 const reuseBrowser = (data, home, apps, problem) => {
   if (!data) return undefined;
-  const known = Object.values(definitions(home, apps)).find(b => b.executable === data.executable && b.profileRoot === data.profileRoot);
+  const known = browserDefinitions(home, apps).find(b => b.executable === data.executable && b.profileRoot === data.profileRoot);
   return known && problem(known.executable) === undefined ? { ok: true, ...known } : undefined;
 };
 
@@ -147,9 +142,10 @@ export function ensureTurboConfig({ configPath = installedConfigPath(), pluginRo
     const problem = path => executableProblem(path, uid);
     const chosen = browser ? detectBrowser({ home, apps, browser, uid }) : reuseBrowser(seen.data, home, apps, problem) ?? detectBrowser({ home, apps, uid });
     if (!chosen.ok) return done({ action: 'skipped', state: seen.state, reason: chosen.code, message: `turbo stays off: ${chosen.message}` });
+    if (!chosen.qualified) return done({ action: 'skipped', state: seen.state, reason: 'BROWSER_UNQUALIFIED', message: `turbo stays off: ${unqualifiedMessage(chosen)}` });
     store(configPath, pluginRoot, chosen, uid);
     return done({ action: 'wrote', state: seen.state, reason: seen.reason, browser: chosen.name,
-      message: `turbo is on with ${chosen.name}. Turn on remote debugging in it once (${DEBUGGING_STEP}); sleight-mcp turbo off turns turbo off.` });
+      message: `turbo is on with ${chosen.name}. Turn on remote debugging in it once (${chosen.inspectURL}); sleight-mcp turbo off turns turbo off.` });
   } catch (error) {
     return done({ action: 'failed', state: 'failed', reason: /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_SETUP_FAILED',
       message: `turbo stays off: could not write turbo.json (${/^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : error?.code ?? 'TURBO_SETUP_FAILED'}). The engine path is used.` });
@@ -160,14 +156,19 @@ export function ensureTurboConfig({ configPath = installedConfigPath(), pluginRo
 export function turboDiagnosis({ configPath = installedConfigPath(), pluginRoot = INSTALLED_PLUGIN_ROOT, home = userInfo().homedir, apps,
   helperCache, exists = existsSync } = {}) {
   const seen = inspectConfig({ configPath, pluginRoot });
-  const known = Object.values(definitions(home, apps)).find(b => b.executable === seen.data?.executable);
-  const browser = seen.data ? { name: known?.name ?? seen.data.executable.split('/').at(-1), executable: seen.data.executable, profileRoot: seen.data.profileRoot } : undefined;
+  const browsers = browserDefinitions(home, apps).map(b => {
+    const problem = executableProblem(b.executable);
+    return { ...b, installed: problem !== 'missing', executableProblem: problem };
+  });
+  const known = browsers.find(b => b.executable === seen.data?.executable);
+  const browser = seen.data ? { id: known?.id, name: known?.name ?? seen.data.executable.split('/').at(-1), inspectURL: known?.inspectURL,
+    qualified: known?.qualified, executable: seen.data.executable, profileRoot: seen.data.profileRoot } : undefined;
   let port;
   if (browser) { try { port = exists(join(browser.profileRoot, 'DevToolsActivePort')); } catch { port = undefined; } }
   const helpers = seen.state === 'current' ? nativeHelpersBuilt({ inventory: seen.data.receipt, ...(helperCache ? { cacheRoot: helperCache } : {}) }) : undefined;
   const problem = browser ? executableProblem(browser.executable) : undefined;
   const found = browser ? undefined : detectBrowser({ home, apps });
-  return { state: seen.state, reason: seen.reason, enabled: seen.state === 'current', browser, executableProblem: problem, port, helpers, detected: found };
+  return { state: seen.state, reason: seen.reason, enabled: seen.state === 'current', browser, browsers, executableProblem: problem, port, helpers, detected: found };
 }
 
 export function statusLines(d) {
@@ -183,33 +184,35 @@ export function statusLines(d) {
 export function doctorLines(d) {
   const fix = action => `          fix: ${action}`;
   const lines = ['turbo (direct browser path)'];
+  for (const browser of d.browsers ?? []) lines.push(`known     ${browser.name}: ${browser.installed ? 'installed' : 'not installed'}, ${browser.qualified ? 'qualified' : 'unqualified'}`);
   const row = (ok, label, text) => lines.push(`${ok ? 'ok     ' : 'PROBLEM'}   ${label}: ${text}`);
   if (d.state === 'opted-out') { row(false, 'config', 'off, you turned turbo off'); lines.push(fix('sleight-mcp turbo on')); return lines; }
   if (d.state === 'unsafe') { row(false, 'config', 'turbo.json is a link or has another owner or mode, so turbo stays off'); lines.push(fix('delete ~/Library/Application Support/sleight/turbo.json, then run sleight-mcp turbo on')); return lines; }
   if (d.state === 'absent') {
     row(false, 'config', 'not set up yet (sleight writes it when a session starts)');
-    lines.push(fix(d.detected?.ok ? 'start a new Claude Code session, or run sleight-mcp turbo on' : d.detected?.message ?? 'install Google Chrome or Helium'));
+    lines.push(fix(d.detected?.ok ? 'start a new Claude Code session, or run sleight-mcp turbo on' : d.detected?.message ?? `install ${qualifiedBrowserNames()}`));
     return lines;
   }
   row(d.state === 'current', 'config', d.state === 'current' ? 'on' : `receipt stale (${d.reason === 'node-changed' ? 'node version changed' : d.reason === 'package-changed' ? 'plugin files changed' : 'malformed'})`);
   if (d.state === 'stale') lines.push(fix('start a new Claude Code session (sleight rewrites it), or run sleight-mcp turbo on'));
   row(!d.executableProblem, 'browser', `${d.browser.name}, ${d.browser.executable}${d.executableProblem ? ` (${d.executableProblem})` : ''}`);
-  if (d.executableProblem) lines.push(fix(d.executableProblem === 'missing' ? 'reinstall the browser, or run sleight-mcp turbo on --browser chrome|helium'
-    : `make the executable writable only by you (chmod go-w '${d.browser.executable}'), or run sleight-mcp turbo on --browser helium`));
+  if (d.browser.qualified === false) lines.push(fix(unqualifiedMessage(d.browser)));
+  if (d.executableProblem) lines.push(fix(d.executableProblem === 'missing' ? `reinstall the browser, or run sleight-mcp turbo on --browser ${browserChoices()}`
+    : `make the executable writable only by you (chmod go-w '${d.browser.executable}'), or choose a qualified browser with sleight-mcp turbo on --browser`));
   if (d.state === 'current') {
     row(d.helpers === true, 'native helpers', d.helpers ? 'compiled' : 'not compiled yet');
     if (!d.helpers) lines.push(fix('they compile on the first turbo use and need Apple\'s command-line tools (xcode-select --install)'));
   }
   row(d.port === true, 'remote debugging', d.port === true ? 'on (DevToolsActivePort present)' : d.port === false ? 'off (no DevToolsActivePort)' : 'unknown');
-  if (d.port !== true) lines.push(fix(`turn on remote debugging in ${d.browser.name}: ${DEBUGGING_STEP}`));
+  if (d.port !== true) lines.push(fix(d.browser.inspectURL ? `turn on remote debugging in ${d.browser.name}: ${d.browser.inspectURL}` : 'check the selected browser documentation for its remote debugging address'));
   return lines;
 }
 
 /** `sleight-mcp turbo on|off|status`. Exit code 0 on success, 1 on failure, 2 on usage. */
 export function turboCommand(args, { out = text => process.stdout.write(text), configPath = installedConfigPath(), pluginRoot = INSTALLED_PLUGIN_ROOT,
-  home = userInfo().homedir, apps, uid = process.getuid(), diagnose = turboDiagnosis } = {}) {
+  home = userInfo().homedir, apps, uid = process.getuid(), diagnose = turboDiagnosis, env = process.env } = {}) {
   const [op, ...rest] = args;
-  const usage = () => { out('usage: sleight-mcp turbo on [--browser chrome|helium]\n       sleight-mcp turbo off\n       sleight-mcp turbo status\n'); return 2; };
+  const usage = () => { out(`usage: sleight-mcp turbo on [--browser ${browserChoices()}]\n       sleight-mcp turbo off\n       sleight-mcp turbo status\n`); return 2; };
   let browser;
   if (rest.length) {
     if (op !== 'on' || rest.length !== 2 || rest[0] !== '--browser') return usage();
@@ -221,12 +224,14 @@ export function turboCommand(args, { out = text => process.stdout.write(text), c
     out('turbo is off. sleight-mcp turbo on turns it back on.\n'); return 0;
   }
   if (op === 'on') {
+    const requested = browserDefinitions(home, apps).find(b => b.id === browser);
+    if (requested && !requested.qualified && env.SLEIGHT_TURBO_UNQUALIFIED !== '1') { out(`turbo stays off: ${unqualifiedMessage(requested)}\n`); return 1; }
     const chosen = detectBrowser({ home, apps, browser, uid });
     if (!chosen.ok) { out(`turbo stays off: ${chosen.message}\n`); return 1; }
     try { store(configPath, pluginRoot, chosen, uid); } catch (error) { out(`turbo on failed: ${/^[A-Z][A-Z0-9_]+$/.test(error?.message) ? error.message : error?.code ?? 'TURBO_SETUP_FAILED'}\n`); return 1; }
     const d = diagnose({ configPath, pluginRoot, home, apps });
     out(`turbo is on with ${chosen.name}.\n` + (d.port === true ? 'Remote debugging is on. Start a new Claude Code session.\n'
-      : `Next: turn on remote debugging in ${chosen.name} once (${DEBUGGING_STEP}), then start a new Claude Code session.\n`));
+      : `Next: turn on remote debugging in ${chosen.name} once (${chosen.inspectURL}), then start a new Claude Code session.\n`));
     return 0;
   }
   return usage();

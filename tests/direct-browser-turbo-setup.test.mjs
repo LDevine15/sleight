@@ -10,6 +10,7 @@ import { packageFiles } from '../plugins/sleight/lib/direct-browser/session-host
 import { detectBrowser, doctorLines, ensureTurboConfig, inspectConfig, statusLines, turboCommand, turboDiagnosis, writeConfigFile }
   from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
 import { ensureInstalledTurbo, prepareInstalledStartup, doctor } from '../plugins/sleight/lib/launch.mjs';
+import { applicationName } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 
 const realPlugin = fileURLToPath(new URL('../plugins/sleight', import.meta.url));
 // A temp home with Library/Application Support/sleight/turbo.json, a fake /Applications, and optional browsers.
@@ -31,6 +32,107 @@ function pluginCopy(t, root) {
   const copy = join(root, 'plugin'); cpSync(realPlugin, copy, { recursive: true });
   return copy;
 }
+
+const browsers = [
+  ['chrome', 'Google Chrome', 'com.google.Chrome', 'Google/Chrome', 'chrome', true],
+  ['helium', 'Helium', 'net.imput.helium', 'net.imput.helium', 'chrome', true],
+  ['chrome-beta', 'Google Chrome Beta', 'com.google.Chrome.beta', 'Google/Chrome Beta', 'chrome', false],
+  ['chrome-dev', 'Google Chrome Dev', 'com.google.Chrome.dev', 'Google/Chrome Dev', 'chrome', false],
+  ['chrome-canary', 'Google Chrome Canary', 'com.google.Chrome.canary', 'Google/Chrome Canary', 'chrome', false],
+  ['chromium', 'Chromium', 'org.chromium.Chromium', 'Chromium', 'chrome', false],
+  ['brave', 'Brave Browser', 'com.brave.Browser', 'BraveSoftware/Brave-Browser', 'brave', false],
+  ['edge', 'Microsoft Edge', 'com.microsoft.edgemac', 'Microsoft Edge', 'edge', false],
+  ['vivaldi', 'Vivaldi', 'com.vivaldi.Vivaldi', 'Vivaldi', 'vivaldi', false],
+];
+
+for (const [id, name, bundleId, profile, scheme, qualified] of browsers) {
+  test(`browser table resolves ${id} without probing a real installation`, t => {
+    const w = world(t), probed = [];
+    const found = detectBrowser({ home: w.home, apps: w.apps, browser: id, problem: path => { probed.push(path); } });
+    assert.equal(found.ok, true);
+    assert.equal(found.id, id); assert.equal(found.name, name); assert.equal(found.bundleId, bundleId);
+    assert.equal(found.executable, join(w.apps, `${name}.app/Contents/MacOS/${name}`));
+    assert.equal(found.profileRoot, join(w.home, 'Library/Application Support', profile));
+    assert.equal(found.inspectURL, `${scheme}://inspect/#remote-debugging`); assert.equal(found.qualified, qualified);
+    assert.deepEqual(probed, [found.executable]);
+    assert.equal(applicationName(found.executable), name);
+  });
+  if (qualified) continue;
+  test(`${id} requires the exact qualification override and uses its own inspect address`, t => {
+    const w = world(t), url = `${scheme}://inspect/#remote-debugging`;
+    w.install(name, name);
+    const run = env => {
+      const out = [], code = turboCommand(['on', '--browser', id], { ...w.base, env, out: text => out.push(text) });
+      return { code, text: out.join('') };
+    };
+    for (const env of [{}, { SLEIGHT_TURBO_UNQUALIFIED: '0' }, { SLEIGHT_TURBO_UNQUALIFIED: 'true' }]) {
+      const refused = run(env);
+      assert.equal(refused.code, 1); assert.match(refused.text, /isn't qualified yet/);
+      assert.ok(refused.text.includes(name) && refused.text.includes(url));
+      assert.match(refused.text, /DevToolsActivePort/); assert.match(refused.text, /user.*(?:app|document|focus)/i);
+      assert.equal(existsSync(w.configPath), false);
+    }
+    assert.equal(ensureTurboConfig(w.base).reason, 'BROWSER_NOT_FOUND');
+    assert.equal(ensureTurboConfig({ ...w.base, browser: id }).reason, 'BROWSER_UNQUALIFIED');
+    assert.equal(existsSync(w.configPath), false);
+    const allowed = run({ SLEIGHT_TURBO_UNQUALIFIED: '1' });
+    assert.equal(allowed.code, 0); assert.ok(allowed.text.includes(url));
+    const config = readInstalledConfig(w.configPath);
+    assert.equal(config.executable, join(w.apps, `${name}.app/Contents/MacOS/${name}`));
+    assert.equal(config.profileRoot, join(w.home, 'Library/Application Support', profile));
+    const diagnosis = turboDiagnosis({ ...w.base, helperCache: join(w.root, 'cache') });
+    assert.equal(diagnosis.browser.qualified, false);
+    assert.ok(doctorLines(diagnosis).join('\n').includes(url));
+    assert.equal(existsSync(diagnosis.browser.profileRoot), false);
+    chmodSync(config.executable, 0o775);
+    const unsafe = run({ SLEIGHT_TURBO_UNQUALIFIED: '1' });
+    assert.equal(unsafe.code, 1); assert.match(unsafe.text, /writable by others/);
+  });
+}
+
+test('doctor lists every known browser, installation and qualification, even when opted out', t => {
+  const w = world(t, { chrome: true, helium: true }); w.install('Brave Browser', 'Brave Browser');
+  for (const off of [false, true]) {
+    if (off) turboCommand(['off'], { ...w.base, out() {} });
+    const diagnosis = turboDiagnosis(w.base), text = doctorLines(diagnosis).join('\n');
+    assert.equal(diagnosis.browsers.length, browsers.length);
+    for (const [id, name, , , , qualified] of browsers) {
+      const entry = diagnosis.browsers.find(b => b.id === id);
+      assert.equal(entry.installed, ['chrome', 'helium', 'brave'].includes(id));
+      assert.equal(entry.qualified, qualified);
+      assert.ok(text.includes(`${name}: ${entry.installed ? 'installed' : 'not installed'}, ${qualified ? 'qualified' : 'unqualified'}`), text);
+    }
+  }
+});
+
+test('unqualified refusal preserves an explicit opt-out and usage lists all browser keys', t => {
+  const w = world(t), out = [];
+  turboCommand(['off'], { ...w.base, out() {} });
+  const before = readFileSync(w.configPath, 'utf8');
+  assert.equal(turboCommand(['on', '--browser', 'brave'], { ...w.base, env: {}, out() {} }), 1);
+  assert.equal(readFileSync(w.configPath, 'utf8'), before);
+  assert.equal(turboCommand([], { ...w.base, out: text => out.push(text) }), 2);
+  for (const [id] of browsers) assert.ok(out.join('').includes(id));
+  for (const browser of ['', '__proto__', 'constructor']) {
+    assert.equal(detectBrowser({ home: w.home, apps: w.apps, browser }).code, 'BROWSER_UNKNOWN');
+  }
+});
+
+test('qualification override never adds an automatic candidate or rewrites an unqualified selection', t => {
+  const beforeEnv = process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  t.after(() => { if (beforeEnv === undefined) delete process.env.SLEIGHT_TURBO_UNQUALIFIED; else process.env.SLEIGHT_TURBO_UNQUALIFIED = beforeEnv; });
+  process.env.SLEIGHT_TURBO_UNQUALIFIED = '1';
+  const w = world(t); w.install('Brave Browser', 'Brave Browser');
+  assert.equal(detectBrowser({ home: w.home, apps: w.apps }).code, 'BROWSER_NOT_FOUND');
+  assert.equal(ensureTurboConfig(w.base).reason, 'BROWSER_NOT_FOUND');
+  const copy = pluginCopy(t, w.root), base = { ...w.base, pluginRoot: copy };
+  assert.equal(turboCommand(['on', '--browser', 'brave'], { ...base, out() {} }), 0);
+  const before = readFileSync(w.configPath, 'utf8'); w.install('Google Chrome', 'Google Chrome');
+  writeFileSync(join(copy, 'lib/relay.mjs'), '// changed package\n');
+  const result = ensureTurboConfig(base);
+  assert.equal(result.action, 'skipped'); assert.equal(result.reason, 'BROWSER_UNQUALIFIED');
+  assert.equal(readFileSync(w.configPath, 'utf8'), before);
+});
 
 test('a written file is accepted by the real reader and package check', t => {
   const w = world(t, { chrome: true });
