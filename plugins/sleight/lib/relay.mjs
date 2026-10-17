@@ -189,6 +189,9 @@ export function firstCallBatchSetting(value) {
 export function literalNumbers(code) {
   return [...new Set([...String(code ?? '').matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))];
 }
+function numberedHandles(code) {
+  return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
+}
 export function batchingDescription(description, variant = true, prompt) {
   const text = prompt === 'lean' ? (variant === 'merge' ?
     'start with `let app = await cua.getApp("<app>")`; batch known actions: sleight acquires the app and checks its window before they run. Do not end a call only to read the window before an action you already know: sleight waits for the app after each click, shortcut or Return, follows a Save or Open panel, a new window or a document saved under a name the call typed, and stops the rest of the call if any other window appears.' :
@@ -205,6 +208,7 @@ const TURN_END_DESCRIPTION = 'Internal to sleight: its hooks call this when a Cl
 export function promptNotice(text, prompt) {
   if (prompt !== 'lean') return text;
   return text
+    .replace('send numbered actions on one handle per call. Read that window before acting.', 'numbered actions need one handle. Read it first.')
     .replace('REPL preparation was stopped before this call ran.', 'REPL setup stopped. Call skipped.')
     .replace('For browser work, use cua.getBrowser(...) and its tab handle, or cua.listTabs() for inventory. cua.getApp(...) acquires a native app.', 'Browser work: use cua.getBrowser(...) and its tab, or cua.listTabs() for inventory.')
     .replace('of the same image. getScreenshot() already shows its picture, so don\'t pass it to nodeRepl.emitImage too.', 'of an image; getScreenshot() already displays it. Omit emitImage.')
@@ -1119,6 +1123,13 @@ export function createRelay({
     clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
   }
   const handleBundles = new Map();
+  function numberWindow(code, fallback) {
+    const handles = numberedHandles(code);
+    const window = handles.length === 1 && handleBundles.get(handles[0]);
+    const numbers = literalNumbers(code), lines = compactor.seenLines(window, numbers);
+    // An unknown handle or a window whose numbers Claude never saw retains the old check.
+    return window && numbers.every(n => lines?.[n] !== undefined) ? window : fallback;
+  }
   const handleOrigins = new Map(); // handle -> the getApp argument that acquired it
   const handleSelectors = new Map();
   const selectorWindows = new Map();
@@ -1246,7 +1257,7 @@ export function createRelay({
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }
-      const stale = name === 'js' ? compactor.staleIndex(leaseWindow, code) : undefined;
+      const stale = name === 'js' ? compactor.staleIndex(numberWindow(code, leaseWindow), code) : undefined;
       if (stale) {
         leaseStop(msg, promptNotice(stale.number !== undefined
           ? `element ${stale.number} may be stale. Numbers in this window changed since your last full read, and ${stale.number} isn't one you've seen since. Use a number from a + line in the latest result, or read the window again with getAXState({ disableDiffing: true }) first.`
@@ -2122,7 +2133,10 @@ export function createRelay({
       if (reviewing) { changeStop(msg, 'the user is reviewing changes, wait for their decision'); return; }
     }
     if (inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string' && !browserPlan(msg.params.arguments.code)) {
-      const stale = compactor.remapStale(leaseWindow, msg.params.arguments.code);
+      if (numberedHandles(msg.params.arguments.code).length > 1) {
+        leaseStop(msg, promptNotice('send numbered actions on one handle per call. Read that window before acting.', prompt)); return;
+      }
+      const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
       if (stale) {
         msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
         remapNotes.set(msg.id, 'sleight: numbers in this window changed since you saw them, so ' +
@@ -2352,6 +2366,7 @@ export function createRelay({
             msg.params.arguments.code = readCode(code, setup);
           }
           else if (documentMode || inputLease || (changeReview && target)) {
+            const seenWindow = numberWindow(originalCode, target), numbers = literalNumbers(originalCode);
             // The acquisition just before this call, if it read this same app less than 10 s ago.
             // Reuse is for the default mode, and only when reads are slow: a settled read before an action
             // takes about 50 ms, but 17 to 57 s on a loaded Mac (2026-10-09), and without it a window
@@ -2361,7 +2376,7 @@ export function createRelay({
             // (owner, 2026-10-10, for about 0.35 s a run): a window switch between calls isn't caught
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
             const prior = !documentMode && !changeReview && !careful && (!treeFreeFirstAction(originalCode) || focusedChecked.has(msg.id)) && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
-              target?.app === priorRead.app ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
+              target?.app === priorRead.app && sameWindow(seenWindow, target) ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
             if (filteredCode !== swipeCode) filterMarks.set(msg.id, filterMark);
             msg.params.arguments.code = guardedCode(filteredCode, target, reason,
@@ -2374,8 +2389,8 @@ export function createRelay({
                 adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
-                seenLines: compactor.seenLines(target, literalNumbers(originalCode)), literals: literalNumbers(originalCode),
-                uniqueSeen: compactor.uniqueSeen(target, literalNumbers(originalCode)) });
+                seenLines: compactor.seenLines(seenWindow, numbers), literals: numbers,
+                uniqueSeen: compactor.uniqueSeen(seenWindow, numbers) });
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);
