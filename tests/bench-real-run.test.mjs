@@ -430,3 +430,55 @@ test('an owner-away run releases a held mouse button before setup, and after the
     assert.deepEqual(calls, ownerAway ? ['release', 'drive', 'release', 'check', 'cleanup'] : ['drive', 'check', 'cleanup'], String(ownerAway));
   }
 });
+
+for (const recovered of [true, false]) test(`recorded task gets one final owned-fixture recovery, ${recovered ? 'confirmed' : 'still refused'}`, async t => {
+  const execute = await runner(), ctx = fixture(t), calls = [];
+  const diagnostic = { launched: true, appQuit: false, helperCollectionConfirmed: true, cleanup: 'unconfirmed' };
+  ctx.fixtureDiagnostics = [diagnostic];
+  ctx.windowLeases = [{ running: false, launched: true,
+    recover: async () => {
+      calls.push('recover');
+      assert.ok(existsSync(ctx.lockPath));
+      if (!recovered) throw new Error('Owner window present');
+      diagnostic.appQuit = true; diagnostic.cleanup = 'closed retained fixture';
+    },
+    dispose: async () => { calls.push('dispose'); return true; },
+  }];
+  const result = await execute({ setup() {}, prompt: () => 'task', check: () => true,
+    cleanup() { calls.push('cleanup'); throw new Error('Owned Editor fixture window cleanup unconfirmed: Ambiguous fixture process'); },
+  }, ctx, { drive: async () => ({ code: 0, groupClean: true }) });
+  assert.deepEqual(calls, ['cleanup', 'recover', 'dispose']);
+  assert.equal(result.taskPassed, true);
+  assert.equal(result.passed, recovered);
+  assert.equal(result.cleanupRecovered, recovered);
+  assert.equal(existsSync(ctx.dir), !recovered);
+  if (!recovered) assert.match(result.cleanupError, /Owner window present/);
+});
+
+for (const stop of ['permissionPrompt', 'permissionRefusal', 'observerError', 'appDialog', 'approvalStop', 'groupClean', 'no verdict']) {
+  test(`final fixture retry preserves the ${stop} stop`, async t => {
+    const execute = await runner(), ctx = fixture(t);
+    ctx.windowLeases = [{ running: false, launched: true, recover: () => assert.fail('no recovery during a safety stop'), dispose: async () => true }];
+    const result = await execute({
+      setup() { if (stop === 'no verdict') throw new Error('setup failed'); },
+      prompt: () => 'task', check: () => true,
+      cleanup() { throw new Error('Owned Editor fixture window cleanup unconfirmed'); },
+    }, ctx, { drive: async () => ({ code: 0, groupClean: stop !== 'groupClean', ...(stop !== 'no verdict' && stop !== 'groupClean' ? { [stop]: true } : {}) }) });
+    assert.equal(result.passed, false);
+    assert.equal(result.cleanupRecovered, undefined);
+  });
+}
+
+test('recovery failure cannot use a prior single-pid quit receipt to continue past another owned process', async t => {
+  const { cleanupContained } = await import('../bench/real-run.mjs');
+  const execute = await runner(), ctx = fixture(t);
+  const diagnostic = { launched: true, appQuit: true, helperCollectionConfirmed: true };
+  ctx.fixtureDiagnostics = [diagnostic];
+  ctx.windowLeases = [{ launched: true, running: false,
+    recover: async () => { diagnostic.appQuit = false; throw new Error('Owner window present'); }, dispose: async () => true,
+  }];
+  const result = await execute({ setup() {}, prompt: () => 'task', check: () => true,
+    cleanup() { throw new Error('Owned Editor fixture window cleanup unconfirmed'); },
+  }, ctx, { drive: async () => ({ code: 0, groupClean: true }) });
+  assert.equal(cleanupContained(result), false);
+});

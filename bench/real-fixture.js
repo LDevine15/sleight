@@ -322,6 +322,7 @@ function closeOwnedWindow(window, request, app, api) {
 }
 
 function closeOwnedWindowSteps(window, request, app, api, step) {
+  if (request.mode === 'document' && request.stopOnAppDialog) request = Object.assign({}, request, { refuseDialogs: true });
   if (!window || !api.exists(window) || closedUnderUs(window, app, api)) return;
   step('identity');
   if (!api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
@@ -329,8 +330,21 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     if (request.refuseDialogs && api.dialog(app, window, request).length) throw new Error('Application dialog present; fixture cleanup refused');
   };
   var identity = function () { noDialog(); validateOwnedFixture(window, request, app, api, false); };
+  var discardIdentity = function () {
+    var epoch;
+    do {
+      epoch = api.readEpoch ? api.readEpoch() : 0;
+      identity();
+      if (request.mode === 'document') {
+        var focused = api.focused(app), sheet = api.discardable(window, request);
+        if (!api.equal(focused, window) && !api.equal(focused, sheet)) throw new Error('Owned document lost focus; cleanup refused');
+      }
+    } while (api.readEpoch && api.readEpoch() !== epoch);
+  };
   step('close');
-  if (request.mode === 'document') {
+  if (request.refuseDialogs && api.discardable && api.discardable(window, request)) {
+    api.discard(window, discardIdentity, request);
+  } else if (request.mode === 'document') {
     var sibling = raiseOverSibling(window, request, app, api);
     var validate = function () {
       noDialog();
@@ -346,7 +360,10 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     api.wait();
     if (!api.exists(window) || closedUnderUs(window, app, api)) return;
     if (request.mode === 'document' && !api.matches(window, request, true)) return;
-    if (!request.refuseDialogs) api.discard(window, identity);
+    noDialog();
+    if (!request.refuseDialogs || (api.discardable && api.discardable(window, request))) {
+      api.discard(window, request.refuseDialogs ? discardIdentity : identity, request);
+    }
   }
   throw new Error('Owned fixture window is still open');
 }
@@ -423,6 +440,80 @@ function dialogContents(element, api) {
   return result;
 }
 
+// Only an attached save sheet on the exact nonce-bearing file can bypass a dialog refusal.
+function fixtureDiscardSheet(window, request, api) {
+  var token = request.runToken || request.token;
+  if (!window || !token || !request.target || request.target[0] !== '/') return null;
+  var document = api.path(api.text(window, 'AXDocument')), expected = api.path(request.target);
+  if (!document || document !== expected || api.text(window, 'AXTitle').indexOf(token) === -1) return null;
+  var sheets = api.children(window, 'AXSheets');
+  if (sheets.length !== 1 || api.text(sheets[0], 'AXRole') !== 'AXSheet') return null;
+  var content = dialogContents(sheets[0], api), buttons = content.buttons;
+  if (buttons.length !== 3 || buttons.filter(function (title) { return title === 'Save'; }).length !== 1 ||
+      buttons.filter(function (title) { return title === 'Cancel'; }).length !== 1 ||
+      buttons.filter(function (title) { return title === "Don't Save" || title === 'Don’t Save'; }).length !== 1 ||
+      appDialogCategory({ subrole: 'AXDialog', title: api.text(sheets[0], 'AXTitle'), text: content.text, buttons: buttons }) !== 'application-result') return null;
+  return sheets[0];
+}
+
+function recoverFixtureApplications(request, api, clock) {
+  var root = api.path(request.fixtureDir);
+  if (request.fixtureMode !== 'document' || request.running !== false || request.launched !== true || !(request.startedAtMs > 0) || !request.runToken || !root || root === '/') {
+    throw new Error('Owned fixture recovery identity unconfirmed');
+  }
+  var original;
+  function inventory() {
+    if (clock.check) clock.check();
+    var plans = api.applications().map(function (target) {
+      var pid = runningPid(target), date = target.launchDate;
+      if (!(pid > 0) || runningBundle(target) !== request.bundle || !date || date.isNil() ||
+          !(Number(date.timeIntervalSince1970) * 1000 >= request.startedAtMs)) throw new Error('Fixture process ownership unconfirmed');
+      if (original && original.indexOf(pid) === -1) throw new Error('Fixture process identity changed during recovery');
+      var app = api.app(target), windows = api.windows(app).map(function (window) {
+        var path = api.path(api.text(window, 'AXDocument'));
+        if (!path || path.indexOf(root + '/') !== 0 || api.text(window, 'AXTitle').indexOf(request.runToken) === -1) {
+          throw new Error('Fixture window outside owned run directory');
+        }
+        var closeRequest = Object.assign({}, request, { mode: 'window', target: path, token: request.runToken, refuseDialogs: true });
+        if (api.dialog(app, window, closeRequest).length) throw new Error('Application dialog present; fixture recovery refused');
+        return { window: window, request: closeRequest };
+      });
+      if (!windows.length && (!request.pids || request.pids.indexOf(pid) === -1)) throw new Error('Empty fixture process ownership unconfirmed; recorded pid required');
+      if (!windows.length && api.dialog(app, null, Object.assign({}, request, { refuseDialogs: true })).length) throw new Error('Application dialog present; fixture recovery refused');
+      if (api.cgWindowCount(pid) > windows.length) throw new Error('Extra window in fixture process inventory; recovery refused');
+      return { pid: pid, app: app, windows: windows };
+    });
+    return plans;
+  }
+  var plans = inventory();
+  original = plans.map(function (plan) { return plan.pid; });
+  plans.forEach(function (plan) {
+    plan.windows.forEach(function (item) {
+      inventory();
+      // Every action rechecks the whole app set as well as the retained window.
+      var guarded = Object.create(api);
+      guarded.closeButton = function (window, validate) {
+        api.closeButton(window, function () { inventory(); validate(); });
+      };
+      guarded.discard = function (window, validate, closeRequest) {
+        api.discard(window, function () { inventory(); validate(); }, closeRequest);
+      };
+      closeOwnedWindow(item.window, item.request, plan.app, guarded);
+    });
+  });
+  inventory().forEach(function (plan) {
+    quitFixtureApplication(plan.pid, request.bundle, function () { return api.application(plan.pid); }, {
+      now: clock.now, wait: clock.wait, emit: clock.emit,
+      check: function () {
+        var remaining = inventory();
+        if (remaining.some(function (item) { return item.windows.length; })) throw new Error('Owned fixture windows remain; quit refused');
+      },
+    });
+  });
+  if (inventory().length) throw new Error('Owned fixture processes still running');
+  return original;
+}
+
 function nativeAX(state, clock) {
   function read(element, attribute) {
     var operation = function () {
@@ -489,8 +580,12 @@ function nativeAX(state, clock) {
       else if (!text(focused, 'AXDocument')) candidates.push(focused);
     }
     var found = [];
+    var safeSheet;
+    try { safeSheet = state.cleanup && owned && fixtureDiscardSheet(owned, request, { text: text, children: children, path: path }); }
+    catch (error) { if (error.code !== -25202) throw error; }
     for (var index = 0; index < candidates.length; index++) {
       var candidate = candidates[index];
+      if (safeSheet && $.CFEqual(candidate, safeSheet)) continue;
       // A dialog dismissed while it is read becomes an invalid element (-25202, Word's "All done" alert at cleanup,
       // 2026-10-16). It no longer exists, so it can't block cleanup.
       try {
@@ -533,6 +628,7 @@ function nativeAX(state, clock) {
     } });
   }
   function path(value) {
+    if (value && value[0] === '/') value = String(ObjC.unwrap($.NSURL.fileURLWithPath(value).absoluteString));
     if (!value || value.indexOf('file://') !== 0) return null;
     var url = $.NSURL.URLWithString(value);
     return url.isNil() || !url.isFileURL ? null : ObjC.unwrap(url.URLByResolvingSymlinksInPath.path);
@@ -560,7 +656,35 @@ function nativeAX(state, clock) {
       (retained === true && request.mode === 'folder' && title === 'Archive');
   }
   return {
-    read: read, text: text, press: press, fileMenu: fileMenu,
+    read: read, text: text, press: press, fileMenu: fileMenu, path: path,
+    applications: function () {
+      var values = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(state.bundle), result = [];
+      for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
+      return result;
+    },
+    application: function (pid) {
+      var value = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+      return value.isNil() || value.isTerminated ? null : value;
+    },
+    app: function (target) {
+      var app = $.AXUIElementCreateApplication(runningPid(target));
+      $.AXUIElementSetMessagingTimeout(app, 0.5);
+      return app;
+    },
+    windows: function (app) {
+      var values = read(app, 'AXWindows');
+      if (!values) throw new Error('Fixture window inventory unavailable');
+      var result = [];
+      for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
+      return result;
+    },
+    cgWindowCount: function (pid) {
+      if (clock && clock.check) clock.check();
+      var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
+      if (!raw || raw.isNil && raw.isNil()) throw new Error('Fixture CG window inventory unavailable');
+      var windows = ObjC.deepUnwrap(ObjC.castRefToObject(raw));
+      return windows.filter(function (window) { return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0; }).length;
+    },
     readEpoch: function () { return state && state.readEpoch || 0; },
     wait: function () { $.NSThread.sleepForTimeInterval(0.1); },
     equal: function (a, b) { return !!a && !!b && !!$.CFEqual(a, b); },
@@ -620,13 +744,19 @@ function nativeAX(state, clock) {
         },
       });
     },
-    discard: function (window, validate) {
+    discardable: function (window, request) { return fixtureDiscardSheet(window, request, { text: text, children: children, path: path }); },
+    discard: function (window, validate, request) {
       var sheets = children(window, 'AXSheets');
       if (!sheets.length) return;
       if (sheets.length !== 1) throw new Error('Unexpected owned fixture sheets');
+      if (request && request.refuseDialogs && !this.discardable(window, request)) throw new Error('Unexpected owned fixture sheet; cleanup refused');
       var discardButtons = buttons(sheets[0], ["Don't Save", 'Don’t Save'], 6);
       if (discardButtons.length !== 1) throw new Error('Unexpected owned fixture sheet; cleanup refused');
       if (validate) validate();
+      if (request && request.refuseDialogs) {
+        var current = this.discardable(window, request);
+        if (!current || !$.CFEqual(sheets[0], current)) throw new Error('Owned fixture sheet identity changed');
+      }
       press(discardButtons[0]);
     },
   };
@@ -648,6 +778,13 @@ function run(argv) {
     'com.apple.TextEdit', 'com.apple.calculator', 'com.apple.Chess', 'com.apple.dt.Devices', 'com.apple.iphonesimulator', 'net.imput.helium',
     'com.microsoft.Word', 'com.microsoft.Excel', 'com.microsoft.Powerpoint', 'com.apple.mail'];
   var webFixture = request.fixtureKind === 'web-page' && /^http:\/\/127\.0\.0\.1:[1-9]\d*\/[A-Za-z0-9_-]{1,80}\/$/.test(request.target || '');
+  if (request.mode === 'recover') {
+    if (allowed.indexOf(request.bundle) === -1 || request.bundle === 'com.apple.finder' || !$.AXIsProcessTrusted()) throw new Error('Invalid fixture recovery request');
+    var recoveryClock = { check: free, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit };
+    var recovered = recoverFixtureApplications(request, nativeAX({ cleanup: true, bundle: request.bundle }, recoveryClock), recoveryClock);
+    emit({ stage: 'recovered', pids: recovered });
+    return true;
+  }
   if (request.mode === 'quit') {
     if ((allowed.indexOf(request.bundle) === -1 && !webFixture) || request.bundle === 'com.apple.finder' || !(request.pid > 0)) throw new Error('Invalid launched app quit request');
     return quitFixtureApplication(request.pid, request.bundle, function () {
