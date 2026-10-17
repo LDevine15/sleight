@@ -122,29 +122,54 @@ function answerDontSave(request, element) {
   buttons[0].click();
   return true;
 }
+function gone(request) {
+  var running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(request.pid);
+  return !running || running.isNil() || running.isTerminated;
+}
+function edited(w) { return scalar(attribute(w.element, 'AXEdited', true)) === true; }
+// With closeOwn (TextEdit): close the probe's own document windows by their close buttons first, answering only
+// their own Don't Save, and confirm they are gone. Quit only if no remaining window is edited: an edited untitled
+// document autosaves into the owner's iCloud folder when TextEdit quits, so it is left for a person.
 function quit(request) {
-  var running = process(request), answered = false, terminated = false;
-  if (!running) return { ok: true, exited: true };
-  var deadline = Date.now() + 30000;
-  while (Date.now() < deadline) {
-    running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(request.pid);
-    if (!running || running.isNil() || running.isTerminated) return { ok: true, exited: true, answered: answered };
-    var all;
-    try { all = windows(request); } catch (error) { delay(0.1); continue; }
-    // An edited untitled TextEdit document autosaves into the owner's iCloud folder on quit. Leave it for a person.
-    if (!terminated && all.some(function (w) { return w.owned && w.doc === null && scalar(attribute(w.element, 'AXEdited', true)) === true; })) {
-      return { ok: false, exited: false, error: 'An owned untitled window was edited; quit refused, fixture app left running' };
+  if (!process(request)) return { ok: true, exited: true };
+  var answered = false, terminated = false, closed = 0, others = 0, pressedAt = 0, deadline = Date.now() + 30000;
+  if (request.closeOwn) {
+    for (;;) {
+      if (Date.now() > deadline) return { ok: false, exited: false, closed: closed, error: 'Owned document close unconfirmed' };
+      var mine;
+      try { mine = windows(request).filter(function (w) { return w.owned; }); } catch (error) { delay(0.1); continue; }
+      if (!mine.length) break;
+      try {
+        var w = mine[0];
+        if (sheetCount(w.element)) {
+          if (!answered && !(answered = answerDontSave(request, w.element))) return { ok: false, exited: false, error: 'A sheet other than Don\'t Save is on the owned document; close refused' };
+        } else if (Date.now() - pressedAt > 2000) {
+          pressedAt = Date.now();
+          if (Number($.AXUIElementPerformAction(attribute(w.element, 'AXCloseButton'), $('AXPress'))) !== 0) throw new Error('Owned close failed');
+          closed++;
+        }
+      } catch (error) { if (/Owned|ambiguous/.test(error.message)) return { ok: false, exited: false, error: error.message }; }
+      delay(0.2);
     }
+    var rest;
+    try { rest = windows(request); } catch (error) { return { ok: false, exited: false, closed: closed, error: 'Remaining windows unreadable; quit refused' }; }
+    others = rest.length;
+    if (rest.some(edited)) return { ok: false, exited: false, closed: closed, others: others, error: 'Another window is edited; quit refused, app left running' };
+  }
+  while (Date.now() < deadline) {
+    if (gone(request)) return { ok: true, exited: true, answered: answered, closed: closed, others: others };
+    var running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(request.pid);
     if (!terminated) terminated = !!running.terminate;
     var front = frontPid();
-    if (!answered && (front === request.front || front === request.pid)) {
-      all.forEach(function (w) {
-        if (answered) return;
-        var dialog = !w.owned && w.subrole === 'AXDialog' && w.doc === null;
-        if (w.owned && sheetCount(w.element)) answered = answerDontSave(request, w.element);
-        else if (dialog) answered = answerDontSave(request, w.element);
-      });
-    }
+    // A quitting app can fail AX reads (Excel answered -25204 on 2026-10-17); keep waiting for exit.
+    try {
+      if (!answered && (front === request.front || front === request.pid)) {
+        windows(request).forEach(function (w) {
+          if (answered) return;
+          if ((w.owned && sheetCount(w.element)) || (!w.owned && w.subrole === 'AXDialog' && w.doc === null)) answered = answerDontSave(request, w.element);
+        });
+      }
+    } catch (error) { if (/ambiguous/.test(error.message)) return { ok: false, exited: false, error: error.message }; }
     delay(0.1);
   }
   return { ok: false, exited: false, answered: answered, error: 'Fixture app exit unconfirmed' };
