@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 04:03 UTC, overnight sitting: A/B done, claim run started 04:03)
+## Banner (2026-10-17 04:22 UTC, overnight sitting: A/B done, claim run running since 04:03)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -32,7 +32,9 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
 4. Running since 04:03: the all-arms claim run, `sitting-1017/claim.sh` (sleight, lcu, codex, cua; Word and Excel quit between
    arms, with an Escape posted to a stuck app), then peekaboo from a Terminal window with `ARMS=peekaboo`. `since` is
    `2026-10-17T04-03` in bench/claim-exclusions.json. Then 5 runs where sleight and an arm are within 20%. Score with
-   `bench/claim-score.mjs` and word the claim by the LAWS rule.
+   `bench/claim-score.mjs` and word the claim by the LAWS rule. sleight's arm finished at 04:20: 9/9 tasks completed, 25/27 runs,
+   expected seconds calculator-click 8, calculator-menu 11, textedit-save 10, textedit-drag 38, finder-move 41, preview-read 6,
+   textedit-calculator 47, word-edit 82, excel-edit 171 (1/3: the Excel tab reorder after a double-click rename, twice).
 
 **The build is frozen** at `1933db78`: `ef833641` (every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each
 reviewed by a Sonnet-high agent) plus the Chess drag fix, FC1's bench fixture change and docs. The full check exited 0 on 5,879
@@ -44,10 +46,12 @@ tests. The CHANGELOG 1.3.0 section lists the fixes, and the A/B above is their f
   aborting the reset, evidence lost on unproved cleanup, and no census after launch. BR1G fixed those four test-first (62 tests;
   sleight-arch read the diff). The review also confirmed BR1's `codex-arm.mjs` change leaves native Codex runs as they were. Merge
   br1g (it contains both) after the overnight sitting. The marker tab in `startKeys` is latent (no task uses keepMin).
-- BR2 (Safari and Firefox in that harness) went STALE for two reasons. The LAWS line on its base read as turbo-only for every browser.
-  Safari's WebDriver automation windows block native input, which the other four arms need. LAWS now says the turbo-only
-  rule covers the browsers turbo drives, as ROADMAP 1b records. BR2A (Firefox only, fresh temporary profile, relaunch per task, no
-  CDP) was drafted on `codex/br2a` (`2dd27d16`) but BLOCKED: its tests waited 30 minutes on the sitting's live lock. Run its tests after the sitting. Safari needs a design decision first (see owner items).
+- BR2 (Safari and Firefox) went STALE: the LAWS line on its base read as turbo-only for every browser, and Safari's WebDriver
+  automation windows block the native input the other four arms need. LAWS now says the turbo-only rule covers the browsers turbo
+  drives, as ROADMAP 1b records. The Firefox gate is built (BR2A's draft, with BR2B's test run at 259 passing). A Sonnet-high review
+  found an owned Firefox never census-checked while alive, a quit helper that didn't check the parent pid, thin `ps` matching, an
+  inflated keep grade and a 5 s quit timeout, and BR2C fixed those (`private/codex/br2c` `61324606`, 128 tests). Not merged and
+  not run live. Safari needs a design decision first (owner items).
 - Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
   --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
