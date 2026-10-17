@@ -65,7 +65,8 @@ test('unchanged second-window number passes the number check while the window le
 
 test('a changed second-window element stops against its own seen line', async t => {
   const { update } = fixture(t).act('await second.click(2)');
-  await assert.rejects(runNumberCheck(update, a.replaceAll('First', 'Second')), /changed since you read the window \(was "button Target, ID: target"/);
+  // LW2: the guard reports the window change (the lease holds First) ahead of the element check; both stop before input.
+  await assert.rejects(runNumberCheck(update, a.replaceAll('First', 'Second')), /Input lease stopped this action: app changed\. 0 earlier actions/);
 });
 
 test('an unknown numbered handle keeps the existing seen-line check', t => {

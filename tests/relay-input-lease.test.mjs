@@ -353,7 +353,8 @@ test('single native windows and the recorded TextEdit Save sheet fall back when 
     assert.equal(h.forwarded.at(-1).id, 'act'); h.reply(result('act', tree));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(h.received.at(-1).result.isError, undefined);
-    assert.equal(checks, 1);
+    // A standard window's read also asks once for the app's process (LW4 review 1).
+    assert.equal(checks, tree === save ? 1 : 2);
   }
 });
 test('untrusted helper falls back for duplicate candidates and warns once per session', async t => {

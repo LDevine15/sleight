@@ -581,6 +581,54 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // can retry with current numbers. With only the header, each stop cost Claude a turn to
           // read again (2 of safari-form's 13, 2026-10-09). The relay's compactor shows it as a diff.
           const stop = message => new Error(message + (text === undefined ? '' : '\\n' + text.slice(Math.max(0, text.indexOf('Window: ')))));
+          // A window change is the stop to report, ahead of element checks against the window the call left: Word's OK
+          // closed its alert and the next numbered click stopped as a renumbering no continuation reads (word-edit,
+          // 2026-10-17). Change review keeps the late check alone: its Cancel test needs the resolved element.
+          const checkWindow = cancel => {
+            const dialog = state.fileOnly && observed?.app === state.expected?.app && !observed.url?.startsWith('file://');
+            // An untitled document that autosave gives a URL mid-call is the same
+            // window. Document scope and change review stay strict about URLs.
+            if (state.adoptUrl && observed && state.expected && state.expected.url == null && observed.url &&
+              observed.app === state.expected.app && observed.title === state.expected.title) state.expected = observed;
+            // A sheet or panel this call opened in the same app has no title (Go to Folder
+            // in a Save panel: 18 stopped calls in two benchmark passes, 2026-10-07). It
+            // isn't another document, so the lease alone lets it through.
+            const panel = state.adoptUrl && observed?.app === state.expected?.app && observed.title === '' && !observed.url && !hasModal(text);
+            // A window this call's own shortcut, Return or click just opened or renamed in the same app
+            // becomes the expected one (owner's call, 2026-10-09): the Save or Open panel, a new untitled
+            // window, or a document titled or saved with a name this call typed. Stopping there cost
+            // TextEdit save and edit about three calls a run. A window the user opens in that app at that
+            // moment would pass too. Document scope and change review stay strict.
+            const shortcut = before?.name === 'pressKey' && typeof before.key === 'string' &&
+              (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key));
+            const opener = before?.name === 'click' || shortcut;
+            const modal = observed && !observed.url && hasModal(text) && (shortcut || modalOpened);
+            const named = observed && state.typed.some(typed => {
+              const base = typed.trim().split('/').pop();
+              if (base.length < 3) return false;
+              let file;
+              try { file = observed.url?.startsWith('file://') ? decodeURIComponent(new URL(observed.url).pathname).split('/').pop() : undefined; } catch {}
+              return observed.title === base || file === base;
+            });
+            if (state.adoptUrl && opener && observed && state.expected && observed.app === state.expected.app &&
+              (hasModal(text) ? modal : /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text ?? '') || (!observed.url && /^Untitled(?: \\d+)?$/.test(observed.title)) || named)) {
+              state.expected = observed;
+            }
+            // A relay without a lease, document scope or change review forwards actions
+            // unguarded, yet handles a read acquired are still proxies. No guarded call
+            // has configured the guard then, so there is nothing to compare. A guarded
+            // call with no expected window still stops.
+            if (state.guarded && !cancel && !dialog && !panel && (!observed || ['title', 'app', 'url'].some(key => observed[key] !== state.expected?.[key]))) {
+              // Without document scope or change review, the stop carries the window it saw, so the
+              // relay can lease that window for Claude's retry (Chess retitles itself on each move).
+              attempt.windowStop = true;
+              const reason = state.adoptUrl && observed && state.expected && observed.app !== state.expected.app
+                ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran; nothing was sent to the new app. The next action will lease the observed window. Resend only the remaining actions without select_window.'
+                : state.reason;
+              throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
+            }
+          };
+          if (!state.fileOnly) checkWindow(false);
           // app.click({ id: "Seven" }) or ({ label: "Multiply" }): the one element with
           // that AX identifier or label in this read, so numbers an earlier action in
           // the call shifted don't matter.
@@ -667,48 +715,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           }
           const cancel = state.fileOnly && isCancel(name, args, text ?? '');
           if (state.cancelOnly && !cancel) throw new Error('Change review: Cancel target changed. Read the current window before retrying.');
-          const dialog = state.fileOnly && observed?.app === state.expected?.app && !observed.url?.startsWith('file://');
-          // An untitled document that autosave gives a URL mid-call is the same
-          // window. Document scope and change review stay strict about URLs.
-          if (state.adoptUrl && observed && state.expected && state.expected.url == null && observed.url &&
-            observed.app === state.expected.app && observed.title === state.expected.title) state.expected = observed;
-          // A sheet or panel this call opened in the same app has no title (Go to Folder
-          // in a Save panel: 18 stopped calls in two benchmark passes, 2026-10-07). It
-          // isn't another document, so the lease alone lets it through.
-          const panel = state.adoptUrl && observed?.app === state.expected?.app && observed.title === '' && !observed.url && !hasModal(text);
-          // A window this call's own shortcut, Return or click just opened or renamed in the same app
-          // becomes the expected one (owner's call, 2026-10-09): the Save or Open panel, a new untitled
-          // window, or a document titled or saved with a name this call typed. Stopping there cost
-          // TextEdit save and edit about three calls a run. A window the user opens in that app at that
-          // moment would pass too. Document scope and change review stay strict.
-          const shortcut = before?.name === 'pressKey' && typeof before.key === 'string' &&
-            (before.key.includes('+') || /^(?:return|enter)$/i.test(before.key));
-          const opener = before?.name === 'click' || shortcut;
-          const modal = observed && !observed.url && hasModal(text) && (shortcut || modalOpened);
-          const named = observed && state.typed.some(typed => {
-            const base = typed.trim().split('/').pop();
-            if (base.length < 3) return false;
-            let file;
-            try { file = observed.url?.startsWith('file://') ? decodeURIComponent(new URL(observed.url).pathname).split('/').pop() : undefined; } catch {}
-            return observed.title === base || file === base;
-          });
-          if (state.adoptUrl && opener && observed && state.expected && observed.app === state.expected.app &&
-            (hasModal(text) ? modal : /^0 [^\\n]*\\bID: (?:save|open)-panel\\b/m.test(text ?? '') || (!observed.url && /^Untitled(?: \\d+)?$/.test(observed.title)) || named)) {
-            state.expected = observed;
-          }
-          // A relay without a lease, document scope or change review forwards actions
-          // unguarded, yet handles a read acquired are still proxies. No guarded call
-          // has configured the guard then, so there is nothing to compare. A guarded
-          // call with no expected window still stops.
-          if (state.guarded && !cancel && !dialog && !panel && (!observed || ['title', 'app', 'url'].some(key => observed[key] !== state.expected?.[key]))) {
-            // Without document scope or change review, the stop carries the window it saw, so the
-            // relay can lease that window for Claude's retry (Chess retitles itself on each move).
-            attempt.windowStop = true;
-            const reason = state.adoptUrl && observed && state.expected && observed.app !== state.expected.app
-              ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran; nothing was sent to the new app. The next action will lease the observed window. Resend only the remaining actions without select_window.'
-              : state.reason;
-            throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
-          }
+          checkWindow(cancel);
           // The engine names focus after the tree. Reuse the guard's fresh read; a field's inner
           // node can hold focus too. Only positive evidence of focus elsewhere stops the text.
           if (checkFocus) {

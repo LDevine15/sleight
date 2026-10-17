@@ -17,23 +17,24 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 // TT1N's string-read VM fixture, now joined to the real relay. Native truth stays outside
 // the engine realm: only the relay's injected read-only identity helper can observe it.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, ...options } = {}) {
+  retryFirst, beforeRetry, onAction, ...options } = {}) {
   let text = base, writes = [];
-  const clicks = [], keys = [], sent = [], received = [];
+  const clicks = [], keys = [], values = [], sent = [], received = [];
   let identityChecks = 0;
   const native = { windowNumber: 22, hidIdleSeconds: 1000, status: 'ok' };
+  // onAction(name, argument, text) returns the window an action leaves, for a scripted sequence.
   const raw = { getAXState: async () => text, click: async number => {
-    clicks.push(number); text = clicks.length === 1 ? after : afterItem;
+    clicks.push(number); text = onAction ? onAction('click', number, text) : clicks.length === 1 ? after : afterItem;
     if (actionOutput) writes.push('clicked:' + number);
     if (nativeChange === 'window') native.windowNumber = 23;
     if (nativeChange === 'focus') native.hidIdleSeconds = 0;
     if (nativeChange === 'unfocused') native.status = 'mismatch';
   }, pressKey: async key => {
-    keys.push(key); text = keys.length + clicks.length === 1 ? after : afterItem;
+    keys.push(key); text = onAction ? onAction('pressKey', key, text) : keys.length + clicks.length === 1 ? after : afterItem;
     if (nativeChange === 'window') native.windowNumber = 23;
     if (nativeChange === 'focus') native.hidIdleSeconds = 0;
     if (nativeChange === 'unfocused') native.status = 'mismatch';
-  } };
+  }, setValue: async (number, value) => { values.push([number, value]); if (onAction) text = onAction('setValue', number, text); } };
   const context = createContext({ cua: { getApp: async () => raw, listApps: async () => [
     { id: 'org.test.editor', windows: [{ title: 'report.txt' }] }
   ] }, nodeRepl: { write: value => writes.push(String(value)) } });
@@ -78,8 +79,9 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
     throw new Error('Fixture did not receive a client result');
   };
   await call('await cua.getApp("Fixture Editor");');
-  sent.length = received.length = 0; cursor = 0; text = initial ?? base;
-  return { clicks, keys, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
+  // The setup read's process probe doesn't count.
+  sent.length = received.length = 0; cursor = 0; text = initial ?? base; identityChecks = 0;
+  return { clicks, keys, values, native, sent, received, relay, call, identityChecks: () => identityChecks, setText: value => { text = value; } };
 }
 
 const navigation = 'Window: "Parent", App: Fixture Editor.\n0 standard window Parent, URL: file:///tmp/Parent\n\t2 row Child, ID: child\n\t3 button Other';
@@ -354,13 +356,19 @@ const alert = 'Window: "", App: Fixture Editor.\n0 dialog Description: alert\n\t
 const dialogIdentity = (expected, native) => ({ ...expected, ...native, matches: 1, headerMatches: 1, epoch: 'helper', pid: 123, processStart: 1,
   ...(expected.title === '' ? { windowNumber: 31, window: 2 } : { window: 1 }) });
 async function dialogFixture(t, { bare, ...options } = {}) {
-  const h = await fixture(t, bare ? { base: alert, after: page, identity: dialogIdentity } :
+  const h = await fixture(t, bare ? { base: alert, after: page, identity: dialogIdentity, ...options } :
     { base: page, after: alert, afterItem: options.base ?? page, identity: dialogIdentity, ...options });
-  if (!bare) assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  if (!bare) assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /\\n0 dialog /);
   const start = h.sent.length;
   return { ...h, sentSince: () => h.sent.length - start };
 }
 const dismiss = 'await app.click({ id: "ok" }); await app.pressKey("super+End");';
+// The document loses focus once the alert is up (the alert's own probe has an empty title).
+const lostFocus = () => {
+  let alerted = false;
+  return (expected, native) => expected.title === '' ? (alerted = true, dialogIdentity(expected, native))
+    : alerted ? { status: 'mismatch', error: 'Focused window differs' } : dialogIdentity(expected, native);
+};
 
 test('DR1: OK on an alert the lease moved to continues on the document it covered', async t => {
   const h = await dialogFixture(t);
@@ -384,7 +392,7 @@ for (const [name, options] of [
   ['another app', { afterItem: page.replace('App: Fixture Editor.', 'App: Other Editor.') }],
   ['another window of the app', { afterItem: 'Window: "Styles", App: Fixture Editor.\n0 standard window Styles\n\t1 button Apply' }],
   ['user input during the call', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { hidIdleSeconds: 0 } : {}) }) }],
-  ['a lost focus', { identity: (expected, native) => expected.title === '' ? dialogIdentity(expected, native) : { status: 'mismatch', error: 'Focused window differs' } }],
+  ['a lost focus', { identity: lostFocus() }],
   ['a dialog read without the window it covered', { bare: true }],
   // LW1 review: window-identity narrows two same-title windows to the focused one.
   ['a second window with the same title and URL', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { headerMatches: 2 } : {}) }) }],
@@ -405,11 +413,208 @@ test('DR1: a re-acquire of the same alert keeps the covered window and continues
   assert.deepEqual(h.keys, ['super+End']);
 });
 
+// LW2: word-edit 2026-10-17T19-02-45-300Z. open_file's handle renamed, the document shown as a dialog root while the
+// Find sidebar is open, Replace All's alert, then OK and the rest in one call.
+const sheetRoot = page.replace('0 standard window report.txt', '0 dialog report.txt');
+test('LW2: OK on the alert continues after the document showed a dialog root, through a renamed open_file handle', async t => {
+  const events = [];
+  const h = await fixture(t, { base: page, after: alert, afterItem: page, identity: dialogIdentity,
+    trace: (direction, msg) => { if (process.env.LW2_DEBUG) events.push(direction + ' ' + JSON.stringify(msg).slice(0, 300)); } });
+  await h.call('globalThis.__sleightOpenedApp3 = await cua.getApp("Fixture Editor");');
+  h.setText(sheetRoot);
+  assert.match(JSON.stringify(await h.call('let app = __sleightOpenedApp3; let s = await app.getAXState(); s')), /0 dialog report/);
+  const replaced = await h.call('let app = __sleightOpenedApp3; await app.click({ label: "Replace All" }); let s = await app.getAXState({ disableDiffing: true }); nodeRepl.write(s.split("\\n").filter(l => /MATCHES|Report/.test(l)).slice(0, 10).join("\\n"));');
+  assert.match(JSON.stringify(replaced), /All done/, JSON.stringify(replaced));
+  const result = await h.call('let app = __sleightOpenedApp3; await app.click({ label: "OK" }); await app.pressKey("super+End"); await app.pressKey("Return"); let s = await app.getAXState({ disableDiffing: true }); nodeRepl.write(s.split("\\n").filter(l => /Table|Insert|menu|Window:/i.test(l)).slice(0, 40).join("\\n"));');
+  if (process.env.LW2_DEBUG) console.log(events.join('\n'), JSON.stringify(result).slice(0, 1500));
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(h.keys, ['super+End', 'Return']);
+});
+
+// LW2: the whole of that run from the Styles gallery on, with Word's window shapes (paths shortened).
+const wordTitle = 'Report-2001a6ad  -  Compatibility Mode';
+const wordDoc = `Window: "${wordTitle}", App: Microsoft Word.\n0 standard window ${wordTitle}, Secondary Actions: Raise, URL: file:///tmp/Report-2001a6ad.docx\n\t1 split group\n\t\t2 tab Description: Find and Replace, Value: 0, ID: sidebar_tab_findAndReplace\n\t3 text entry area (disabled, settable) Description: Page 1 content, Value: Report\n\t4 button Styles\n\t5 combo box (settable) Description: Search Document\n\t6 combo box (settable) Description: Replace With\n\t7 button Replace All`;
+const wordSheet = wordDoc.replace(`0 standard window ${wordTitle}`, `0 dialog ${wordTitle}`);
+const wordStyles = 'Window: "Styles", App: Microsoft Word.\n0 window Styles, Secondary Actions: Raise\n\t1 container';
+const wordAlert = 'Window: "", App: Microsoft Word.\n0 dialog Description: alert, Secondary Actions: Raise\n\t1 image Word alert\n\t2 text Microsoft Word All done. We made 1 replacement.\n\t3 button OK, ID: action-button--998\n4 menu bar';
+const wordActions = (name, argument, text) => name === 'click' && argument === 4 ? wordStyles : argument === 'Escape' ? wordDoc
+  : argument === 'super+h' ? wordSheet : name === 'click' && argument === 7 ? wordAlert : text === wordAlert ? wordDoc : text;
+const filtered = pattern => ` let s = await app.getAXState({ disableDiffing: true }); nodeRepl.write(s.split("\\n").filter(l => /${pattern}/i.test(l)).slice(0, 40).join("\\n"));`;
+test('LW2: the 19-02-45 word-edit sequence continues past Escape on Styles and OK on the alert', async t => {
+  const events = [];
+  const h = await fixture(t, { base: wordDoc, onAction: wordActions, identity: dialogIdentity,
+    trace: (direction, msg) => { if (process.env.LW2_DEBUG && !/^(?:to-server|to-client|from-server|call-received)$/.test(direction)) events.push(direction + ' ' + JSON.stringify(msg).slice(0, 300)); } });
+  const step = async code => { const result = await h.call('let app = __sleightOpenedApp3; ' + code); if (process.env.LW2_DEBUG) console.log('STEP', code.slice(0, 60), '=>', JSON.stringify(result).slice(0, 700), '\n', events.splice(0).join('\n')); return result; };
+  await h.call('globalThis.__sleightOpenedApp3 = await cua.getApp("Microsoft Word");');
+  await step('let s = await app.getAXState(); s');
+  assert.match(JSON.stringify(await step('await app.click({ label: "Styles" });' + filtered('Heading|Normal'))), /Styles/);
+  const escape = await step('await app.pressKey("Escape"); await app.pressKey("super+h");' + filtered('Find|Replace|Window|dialog|sheet|Description'));
+  assert.notEqual(escape.isError, true);
+  assert.deepEqual(h.keys, ['Escape', 'super+h']);
+  // The run's "degraded read": a second header without the URL, so the lease lost its window and the relay re-acquired
+  // the document, now a dialog root, before the next two calls (acquisition-split for ids 13 and 14).
+  await step(`await app.click({ id: "sidebar_tab_findAndReplace" }); nodeRepl.write('Window: "${wordTitle}", App: Microsoft Word.\\n');`);
+  await step('await app.setValue(5, "amber"); await app.setValue(6, "violet");' + filtered('Search Document|Replace With'));
+  assert.match(JSON.stringify(await step('await app.click({ label: "Replace All" });' + filtered('MATCHES|Report'))), /All done/);
+  const ok = await step('await app.click({ label: "OK" }); await app.pressKey("super+End"); await app.pressKey("Return");' + filtered('Table|Insert|menu|Window:'));
+  assert.notEqual(ok.isError, true);
+  assert.deepEqual(h.keys, ['Escape', 'super+h', 'super+End', 'Return']);
+});
+
+// LW2: word-edit 2026-10-17T19-00-39-523Z. Replace All's result still showed the document; the next call's re-acquire
+// showed the alert, and its numbered click after OK stopped as "an earlier action in this call changed what element 28
+// is", a stop that no continuation reads. The window change now wins over that element check.
+test('LW2: the 19-00-39 shape continues to a numbered click after OK on an alert its re-acquire showed', async t => {
+  const events = [];
+  const h = await fixture(t, { base: wordDoc, identity: dialogIdentity, onAction: (name, argument, text) => text === wordAlert ? wordDoc : text,
+    trace: direction => events.push(direction) });
+  assert.doesNotMatch(JSON.stringify(await h.call('let app = await cua.getApp("Microsoft Word"); await app.setValue(5, "amber"); await app.setValue(6, "violet"); await app.click(7);' + filtered('amber|violet|MATCHES'))), /isError":true/);
+  h.setText(wordAlert);
+  const result = await h.call('let app = await cua.getApp("Microsoft Word"); await app.click({ id: "action-button--998" }); await app.click(3); await app.pressKey("super+End"); await app.pressKey("Return");' + filtered('Table|menu|Insert'));
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.ok(events.includes('menu-continuation'));
+  assert.deepEqual(h.clicks.slice(-2), [3, 3], 'OK in the alert, then the document\'s element 3');
+  assert.deepEqual(h.keys, ['super+End', 'Return']);
+});
+
+test('LW2: a window change outranks a stale number, and the stop is a window stop the relay can read', async t => {
+  const h = await fixture(t, { base: wordDoc, identity: dialogIdentity, onAction: (name, argument, text) => text === wordAlert ? wordDoc.replaceAll('Report-2001a6ad', 'Other') : text });
+  h.setText(wordAlert);
+  await h.call('let s = await app.getAXState(); s');
+  const result = await h.call('await app.click({ id: "action-button--998" }); await app.click(3);');
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result), /window or URL changed/);
+  assert.doesNotMatch(JSON.stringify(result), /changed what element/);
+  assert.deepEqual(h.clicks, [3]);
+});
+
+for (const [name, options, reason] of [
+  ['no covered window', { bare: true }, 'no-covered-window'],
+  ['another document', { afterItem: page.replaceAll('report.txt', 'other.txt') }, 'other-title'],
+  ['a second same-title window', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { headerMatches: 2 } : {}) }) }, 'header-matches-2'],
+  ['HID input', { identity: (expected, native) => ({ ...dialogIdentity(expected, native), ...(expected.title ? { hidIdleSeconds: 0 } : {}) }) }, 'hid-input'],
+  ['lost focus', { identity: lostFocus() }, 'identity: Input lease: Focused window differs'],
+]) test(`LW2: the trace names why a dialog stop did not continue (${name})`, async t => {
+  const events = [];
+  const h = await dialogFixture(t, { ...options, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.ok(events.some(event => event.startsWith(reason)), JSON.stringify(events));
+});
+
+// LW3 review 1: the bundle ID comes from the handle's metadata, so another app's dialog looked like the document's own.
+test('LW3: another app\'s dialog over the document never continues onto it', async t => {
+  const security = 'Window: "", App: SecurityAgent.\n0 dialog Description: authenticate\n\t1 text Word wants to make changes.\n\t2 button OK, ID: ok';
+  const events = [];
+  const h = await dialogFixture(t, { after: security, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  const result = await h.call(dismiss);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.ok(events.includes('no-covered-window'), JSON.stringify(events));
+});
+
+test('LW3: no baseline for the dialog, no continuation', async t => {
+  const events = [];
+  const h = await dialogFixture(t, { identity: (expected, native) => expected.title === '' ? { status: 'ok', matches: 2 } : dialogIdentity(expected, native),
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.ok(events.includes('no-baseline'), JSON.stringify(events));
+});
+
+// LW3 review 2: a palette that stays open hands focus back without closing.
+const palette = 'Window: "Formatting Palette", App: Fixture Editor.\n0 floating window Formatting Palette\n\t1 button Bold, ID: bold\n\t2 button Close, ID: close';
+for (const [name, open, code, continues] of [
+  ['a palette button that leaves it open stops', true, 'await app.click({ id: "bold" }); await app.pressKey("super+End");', false],
+  ['a palette button that closes it continues', false, 'await app.click({ id: "close" }); await app.pressKey("super+End");', true],
+  ['Escape on an open palette continues', true, 'await app.pressKey("Escape"); await app.pressKey("super+End");', true],
+]) test(`LW3: ${name}`, async t => {
+  let clicked = false;
+  const h = await fixture(t, { base: page, onAction: (action, argument, text) => text === page && argument === 2 ? palette : text === palette ? (clicked = true, page) : text,
+    identity: (expected, native) => expected.title !== 'Formatting Palette' || !clicked ? dialogIdentity(expected, native)
+      : open ? { status: 'mismatch', error: 'Focused window differs' } : { status: 'ok', matches: 0, headerMatches: 0 } });
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /Formatting Palette/);
+  const result = await h.call(code);
+  assert.equal(result.isError === true, !continues, JSON.stringify(result).slice(0, 400));
+  assert.deepEqual(h.keys.filter(key => key === 'super+End'), continues ? ['super+End'] : []);
+});
+
+// LW3 review 3: a dialog closing onto another dialog under the document's title and URL is not the document.
+test('LW3: the alert closing onto a dialog root under the document\'s title stops', async t => {
+  const events = [];
+  const h = await dialogFixture(t, { afterItem: sheetRoot, trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.ok(events.includes('returned-root-not-standard'), JSON.stringify(events));
+});
+
+// LW3 review 4: HID idle runs from when the covered window was last seen standard, and a new process forgets it.
+// The relay's clock is injected: the document is seen standard at 1 s, the alert opens and closes at 11 s, and the
+// helper reports the last input 5 s ago (at 6 s, after the document was seen). With 20 s idle the same calls continue.
+for (const [idleSeconds, continues] of [[5, false], [20, true]]) test(`LW3: ${continues ? 'no input' : 'input'} since the document was last seen standard ${continues ? 'continues' : 'stops'}`, async t => {
+  let ms = 1000;
+  const events = [];
+  const h = await fixture(t, { base: page, after: alert, afterItem: page, clock: () => ms,
+    identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: idleSeconds }),
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  ms = 11000;
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError === true, !continues);
+  assert.deepEqual(h.keys, continues ? ['super+End'] : []);
+  assert.deepEqual(events, continues ? [] : ['hid-input']);
+});
+
+test('LW3: a relaunched app forgets the standard windows it showed before', async t => {
+  let pid = 123;
+  const events = [];
+  const h = await fixture(t, { base: page, identity: (expected, native) => ({ ...dialogIdentity(expected, native), pid }),
+    onAction: (action, argument, text) => text === page && argument === 2 ? alert : text === alert ? page : text,
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.notEqual((await h.call('await app.click(1); await app.pressKey("a");')).isError, true);
+  pid = 456;
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, ['a']);
+  assert.ok(events.includes('no-covered-window'), JSON.stringify(events));
+});
+
+// LW4 review 1: nothing noted a process before the alert, so a relaunch between the document's read and the alert left
+// the old process's window looking current. The read now asks for the process, and a note drops windows it can't place.
+for (const [name, unknownAtRead] of [['the read learned', false], ['the read could not learn', true]]) test(`LW4: a relaunch after the document's read, before any other process note, never continues (${name} the process)`, async t => {
+  let pid = 123, alerted = false;
+  const events = [];
+  const h = await fixture(t, { base: page, after: alert, afterItem: page,
+    identity: (expected, native) => {
+      if (expected.title === '') alerted = true;
+      return unknownAtRead && !alerted ? { status: 'unknown', error: 'probe unavailable' } : { ...dialogIdentity(expected, native), pid };
+    },
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  pid = 456;
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(events, ['no-covered-window']);
+});
+
+// LW4 review 2: "Don't Save" on a never-saved document's alert closes the document, and focus can land on another
+// window with its title. Without a URL, a dialog needs the covered window's certified native identity. (A title of
+// Untitled or Untitled n doesn't reach this: the guard adopts it as a window the click opened.)
+test('LW4: a document without a URL or a certified window never continues after its dialog closes', async t => {
+  const untitled = page.replace(', URL: file:///tmp/report.txt', '').replaceAll('report.txt', 'Document1');
+  const events = [];
+  const h = await fixture(t, { base: untitled, after: alert, afterItem: untitled, identity: dialogIdentity,
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  assert.equal((await h.call(dismiss)).isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(events, ['untitled-needs-certified-window']);
+});
+
 // LW1 review: two untitled dialogs compare equal, so a later one could inherit an earlier one's parent. Continuing
 // needs HID idle since the parent was recorded.
 test('LW1: input after the dialog appeared, though none during the call, stops', async t => {
-  const h = await dialogFixture(t, { identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: 0.2 }) });
-  await new Promise(resolve => setTimeout(resolve, 300));
+  let ms = 1000;
+  const h = await dialogFixture(t, { clock: () => ms, identity: (expected, native) => ({ ...dialogIdentity(expected, native), hidIdleSeconds: 5 }) });
+  ms = 11000;
   const result = await h.call(dismiss);
   assert.equal(result.isError, true);
   assert.deepEqual(h.keys, []);

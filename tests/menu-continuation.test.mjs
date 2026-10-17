@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, returnedWindow, stopNote, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
   unchangedMenuWindow } from '../plugins/sleight/lib/menu-continuation.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -185,6 +185,52 @@ test('DR1: callbacks that do more than test one regex, and renames of non-names,
     'const a = b; await b.click("OK"); await b.pressKey("x");']) assert.equal(splitMenuActions(code), undefined, code);
 });
 
+test('LW2: refusal reasons name the first failing condition', () => {
+  const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End");');
+  const covered = { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report', appId: 'org.test' };
+  const content = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 standard window report, URL: file:///tmp/report' }];
+  const receipt = { index: 1, prev: { kind: 'id', value: 'ok' }, root: '0 standard window report, URL: file:///tmp/report', windowStop: true };
+  for (const [args, reason] of [[[plan, undefined, covered, content], 'no-receipt'], [[plan, { ...receipt, windowStop: false }, covered, content], 'not-a-window-stop'],
+    [[plan, receipt, undefined, content], 'no-covered-window'], [[undefined, receipt, covered, content], 'unsplit-call'],
+    [[plan, { ...receipt, prev: { kind: 'id', value: 'no' } }, covered, content], 'receipt-mismatch'], [[plan, { ...receipt, root: '0 x' }, covered, content], 'tree-mismatch'],
+    [[plan, receipt, { ...covered, url: null }, content], 'other-url'], [[plan, receipt, covered, content], undefined]]) assert.equal(dialogRefusal(...args), reason);
+  // LW4 review 2: a dialog or sheet over a window without a URL needs its certified native identity.
+  const bare = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 standard window report' }];
+  const bareReceipt = { ...receipt, root: '0 standard window report' };
+  for (const over of ['dialog', 'sheet', 'system dialog']) {
+    assert.equal(dialogRefusal(plan, bareReceipt, { ...covered, url: null, over }, bare), 'untitled-needs-certified-window', over);
+    assert.equal(dialogRefusal(plan, bareReceipt, { ...covered, url: null, over, nativeIdentity: { windowNumber: 22, epoch: 'e', pid: 1 } }, bare), undefined, over);
+    assert.equal(dialogRefusal(plan, bareReceipt, { ...covered, url: null, over, nativeIdentity: { windowNumber: 22, epoch: 'e' } }, bare), 'untitled-needs-certified-window', over);
+  }
+  const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'e', window: 1, windowNumber: 22, pid: 1, processStart: 1, hidIdleSeconds: 1000 };
+  const since = performance.now() - 10;
+  const b = { ...observed, title: '', window: 2, windowNumber: 31 };
+  for (const [args, reason] of [[[covered, b, undefined, since], 'identity-unavailable'], [[covered, undefined, observed, since], 'no-baseline'],
+    [[covered, b, { ...observed, windowNumber: 0 }, since], 'no-window-number'],
+    [[covered, b, { ...observed, hidIdleSeconds: 0 }, since], 'hid-input'], [[covered, { ...b, pid: 2 }, observed, since], 'process-changed'],
+    [[covered, b, { ...observed, headerMatches: undefined }, since], 'header-matches-missing'], [[covered, b, { ...observed, title: 'x' }, since], 'identity-mismatch'],
+    [[covered, b, observed, since], undefined]]) assert.equal(returnRefusal(...args), reason);
+});
+
+// LW3 review: the window returned to must be a standard window, and a palette needs Escape or a check that it closed.
+test('LW3: a dialog root under the document\'s title, or a palette without Escape, is no plain dialog remainder', () => {
+  const covered = { title: 'report', app: 'Fixture Editor', url: 'file:///tmp/report', appId: 'org.test' };
+  const sheet = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 dialog report, URL: file:///tmp/report' }];
+  const plan = splitMenuActions('await app.click({ id: "ok" }); await app.pressKey("super+End");');
+  const receipt = { index: 1, prev: { kind: 'id', value: 'ok' }, root: '0 dialog report, URL: file:///tmp/report', windowStop: true };
+  assert.equal(dialogRefusal(plan, receipt, covered, sheet), 'returned-root-not-standard');
+  assert.equal(dialogRemainder(plan, receipt, covered, sheet), undefined);
+  const page = [{ type: 'text', text: 'Window: "report", App: Fixture Editor.\n0 standard window report, URL: file:///tmp/report' }];
+  const standard = { ...receipt, root: '0 standard window report, URL: file:///tmp/report' };
+  for (const over of ['window', 'floating window']) {
+    assert.equal(dialogRefusal(plan, standard, { ...covered, over }, page), 'palette-needs-close-check');
+    assert.equal(dialogRemainder(plan, standard, { ...covered, over }, page).closeCheck, true);
+  }
+  const escape = splitMenuActions('await app.pressKey("Escape"); await app.pressKey("super+h");');
+  assert.equal(dialogRefusal(escape, { ...standard, prev: { kind: 'key', value: 'Escape' } }, { ...covered, over: 'window' }, page), undefined);
+  for (const over of ['dialog', 'sheet', 'system dialog']) assert.equal(dialogRemainder(plan, standard, { ...covered, over }, page).closeCheck, false);
+});
+
 // LW1 review: a rename counts only for open_file's handles or a name the relay binds to the leased app.
 test('LW1: only vouched-for handles may be renamed', () => {
   const code = name => `const a = ${name}; await a.click({ id: "ok" }); await a.pressKey("Return");`;
@@ -215,7 +261,7 @@ test('DR1: the returned window needs one focused match, the same process, its ce
   const observed = { ...covered, status: 'ok', matches: 1, headerMatches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
   const baseline = { ...observed, title: '', window: 2, windowNumber: 31 }, since = performance.now() - 100;
   assert.equal(returnedWindow(covered, baseline, observed, since), true);
-  assert.equal(returnedWindow(covered, undefined, observed, since), true);
+  assert.equal(returnedWindow(covered, undefined, observed, since), false, 'LW3 review: the dialog\'s baseline is required');
   for (const changed of [{ hidIdleSeconds: 0.01 }, { hidIdleSeconds: null }, { matches: 2 }, { status: 'mismatch' }, { pid: 9 },
     { processStart: 2 }, { epoch: 'other' }, { title: 'other' }, { url: 'file:///x' }, { appId: 'other' }, { windowNumber: null }]) {
     assert.equal(returnedWindow(covered, baseline, { ...observed, ...changed }, since), false, JSON.stringify(changed));
