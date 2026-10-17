@@ -81,7 +81,9 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     : surface === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
     : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
   const fullPrompt = arm.promptPrefix + (engine || surface === 'sleight-turbo' ? windowPrompt(realBrowser) : '') + prompt;
-  const args = ['-p', '--model', modelId(model), '--effort', effort, '--output-format', 'stream-json', '--verbose',
+  // Pinned: the same login reported "default" at 17:03 and "auto" from 20:05 on 2026-10-17, and under auto Claude in
+  // Chrome sent every page action to a prompt in Chrome that nobody answers. allowedTools still lists each arm's tools.
+  const args = ['-p', '--model', modelId(model), '--effort', effort, '--permission-mode', 'default', '--output-format', 'stream-json', '--verbose',
     '--strict-mcp-config', '--mcp-config', join(dir, 'mcp.json'), '--settings', settings,
     '--allowedTools', arm.allowed, '--tools', '', ...(surface === 'claude-in-chrome' ? [] : ['--no-chrome']), ...arm.args,
     ...(engine || surface === 'sleight-turbo' ? ['--plugin-dir', join(repo, 'plugins/sleight')] : [])];
@@ -92,5 +94,5 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     ...(arm.chrome ? { chrome: arm.chrome } : {}),
     metadata: { ...arm.metadata, browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
       profileMode: realBrowser.profileMode || 'fresh', ...(realBrowser.profileFolder ? { profileFolder: realBrowser.profileFolder } : {}),
-      browserVersion: realBrowser.version ?? null, headless: false, focus: surface === 'sleight-turbo' ? 'host monitor' : 'not measured' } };
+      browserVersion: realBrowser.version ?? null, permissionMode: 'default', headless: false, focus: surface === 'sleight-turbo' ? 'host monitor' : 'not measured' } };
 }

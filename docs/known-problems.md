@@ -237,10 +237,11 @@ native reference, and oversized first results defer the browser reference while 
 - The gate measured turbo on the benchmark's own headless Chromium with a temporary profile, not on a user's Chrome or Helium
   connected through remote-debugging consent. No gate round has run on a real browser window yet.
 - Real-window gate smoke rounds, wikipedia only (2026-10-17): FowlBrowser passed on Chrome's per-round copy of the "sleight
-  benchmark" profile and on Helium with `--load-extension`, and turbo passed on Helium. Claude in Chrome connects from the copy
-  only with Chrome's real keychain key (with the mock keychain it was signed out), and then every page action waited on its
-  site permission prompt until it timed out (wikipedia and mdn, 2 of 2). The owner grants those sites once in the benchmark
-  profile. Turbo can't run on this Mac's Chrome, whose binary is mode 775 (see below), so the gate refuses that round.
+  benchmark" profile and on Helium with `--load-extension`, turbo passed on Helium, and Claude in Chrome passed wikipedia and
+  mdn on the copy. Claude in Chrome connects from the copy only with Chrome's real keychain key (with the mock keychain it was
+  signed out). The gate's Claude Code arms run with `--permission-mode default`: the same login started in auto mode later that day, and
+  under auto Claude in Chrome sent each page action to a prompt in Chrome that timed out (3 of 3). Turbo can't run on this
+  Mac's Chrome, whose binary is mode 775 (see below), so the gate refuses that round.
 - Chrome Beta, Dev and Canary, Chromium, Brave, Edge and Vivaldi are in turbo's browser table but unqualified, and turbo stays
   off for them. The operator qualifies one at a time with the owner present. Turn on that browser's remote debugging at its own
   inspect address (`brave://inspect/#remote-debugging`, `edge://…`, `vivaldi://…`, `chrome://…` for the rest), then run
