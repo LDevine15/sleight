@@ -20,8 +20,8 @@ function pointerState() {
   var point = $.CGEventGetLocation($.CGEventCreate(null));
   return { pointer: { x: Number(point.x), y: Number(point.y) },
     leftDown: !!$.CGEventSourceButtonState($.kCGEventSourceStateCombinedSessionState, $.kCGMouseButtonLeft),
-    hidLeftDown: !!$.CGEventSourceButtonState($.kCGEventSourceStateHIDSystemState, $.kCGMouseButtonLeft),
-    privateLeftDown: !!$.CGEventSourceButtonState($.kCGEventSourceStatePrivate, $.kCGMouseButtonLeft) };
+    hidLeftDown: !!$.CGEventSourceButtonState($.kCGEventSourceStateHIDSystemState, $.kCGMouseButtonLeft) };
+  // kCGEventSourceStatePrivate never returns from JXA (2026-10-17 live preflight hung); the session and HID states suffice.
 }
 function cleanupSheetStep(sheets, answeredSheet, same) {
   if (!sheets.length) return 'none';
