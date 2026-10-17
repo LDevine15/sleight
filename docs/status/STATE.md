@@ -27,8 +27,11 @@ under `.claude/worktrees/agent-<id>`):
 - agent-a336b5cee71ace575 (relay, launch, skill): first-call rules before the tree (`SLEIGHT_RULES_FIRST`), open_file skipping
   `open -g` on a confirmed window, a default textless-document screenshot hint, a skill line that a save writes the whole document, so there is no need to go back and re-check,
   open_file in bench/timing.mjs.
-- agent-aa3c3758d99912080 (turbo): accept a drag-installed Chrome (mode 775, group admin) by code signature; turbo refuses this
-  Mac's Chrome with SELECTED_PATH_UNSAFE, and the owner's chmod failed under macOS App Management. Needs a safety review.
+- agent-aa3c3758d99912080 (turbo): done, bf60a6a2 on worktree-agent-aa3c3758d99912080, unmerged. A group-writable Chrome is
+  accepted only after the running process proves its code signature (Team IDs Chrome EQHXZ8M8AV and Helium S4Q33XPHB4, plus the kill,
+  library-validation and runtime flags, with pid and start time checked before and after). Security-sensitive: needs a Sonnet-high
+  review (the lane's reviewer checklist is in its report in this session's transcript: pid binding, flags parsing, test-only
+  overrides, Team IDs, an older Google-signed framework swap) before merge, then a live turbo-on-Chrome check.
 - agent-a031a24d54f178c6e (race harness): why LCU (1/12) and Cua (0/12, zero tool calls) fail in the real-window Firefox round, and
   Codex (1/12, `/tmp/fb-rounds/real-29077030-2b63-4bb2-ad77-0c63a48b4921-codex`).
 - agent-ad5cfb3df41d7b6dc (real-window gate arms): done and merged (d2cb8a5b). The Claude in Chrome stall was Claude Code's
@@ -38,11 +41,13 @@ Next session: check each branch for commits (`git log 369bc9a2..worktree-agent-<
 A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
 sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
 
-**Queued for the next session (owner asked, 2026-10-17), after the loss-fix A/Bs.** Astra-style live measurement probes (headless
-Codex investigator, `~/Projects/sleight-wt/ledger/astra-*.md` for the brief format) on what the Fable studies couldn't determine:
-why Haiku thinks on turn 2 in preview-read (vary result order and content), the 625 ms boot and exit split against Peekaboo's 511 ms,
-the cost of a cheap guard check against a 470 ms full Excel read, generic engine-only ways around the Excel tab swap, and a
-clean-room teardown of Peekaboo's `see`.
+**Astra lanes running (separate processes, kept across the clear).** Three headless `codex exec -m gpt-6-astra -c model_reasoning_effort=xhigh` lanes
+started 2026-10-17 21:20Z with open-ended briefs (`~/Projects/sleight-wt/ledger/astra-1017-<name>-prompt.md`, logs
+`astra-1017-<name>.log`, reports `astra-1017-<name>-report.md`, branches `codex/astra-1017-<name>`): native (fastest on all 9),
+office (Word and Excel in the background), browser (the engine path in Safari and Firefox). They take the live lock
+(`/tmp/sleight-live.lock`) for live work and honor `/tmp/sleight-hold`, so sleight-arch's own live runs wait on them or vice versa.
+Check with `pgrep -f 'codex exec'`. The owner corrected that Astra is gpt-6-astra (Fable-class, deep perf, open-ended prompts) and
+gpt-6.1-sol is the builder model.
 
 **Browser race (real windows), started.** Harness `bench/fowl/rounds.sh --world --real-browser <chrome|helium|firefox|safari>
 --surface <arm> --model haiku --effort high`; arms sleight-turbo (Chrome, Helium), sleight (Safari, Firefox: engine path, now with
