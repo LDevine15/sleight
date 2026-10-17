@@ -307,7 +307,7 @@ export function dialogRefusal(plan, receipt, covered, content) {
   if (PALETTE_ROLES.includes(covered.over) && !(receipt.prev?.kind === 'key' && /^(?:escape|esc)$/i.test(receipt.prev.value))) return 'palette-needs-close-check';
 }
 // Roots that cover a standard window without being a dialog: a palette, Word's Styles gallery or Table grid (plain
-// `window`), Excel's Sort panel (`floating window`), and an AXPopover. SLEIGHT_POPOVER_CONTINUATION=0 records none of them.
+// `window`), Excel's Sort panel (`floating window`), and an AXPopover. SLEIGHT_POPOVER_CONTINUATION=0 leaves out popover only.
 export const PALETTE_ROLES = ['window', 'floating window', 'popover'];
 export const COVER_ROLES = ['sheet', 'dialog', 'system dialog', ...PALETTE_ROLES];
 
@@ -337,7 +337,7 @@ export function shownStandardWindows(text) {
 // Which relay states never take the parent lease: the flag off, a stale window that isn't the recovery re-acquisition's,
 // an active select_window selection, document scope, change review, no helper, element numbers in the rest (they may be
 // the dialog's), or a read showing anything but the covered window with its bundle.
-export function parentLeaseGate({ enabled, recovered, selected, documentMode, changeReview, helper, numbers = [], stale, window }) {
+export function parentLeaseGate({ enabled, recovered, selected, documentMode, changeReview, helper, numbers = [], browser, stale, window }) {
   if (!enabled) return 'off';
   if (!recovered) return 'not-recovered';
   if (selected) return 'selected-window';
@@ -348,6 +348,8 @@ export function parentLeaseGate({ enabled, recovered, selected, documentMode, ch
   if (!parent) return 'no-parent';
   if (!window || window.appId !== parent.appId || ['title', 'app', 'url'].some(key => window[key] !== parent[key])) return 'not-the-covered-window';
   if (numbers.length) return 'element-numbers';
+  // A browser plan skips the native admission that checks the pin.
+  if (browser) return 'browser-plan';
 }
 export function parentLeaseRefusal({ stale, shown, reply, gone, observed, now = performance.now() }) {
   const parent = stale?.parent;

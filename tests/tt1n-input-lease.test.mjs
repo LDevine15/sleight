@@ -1047,6 +1047,32 @@ for (const [name, answer] of [
   assert.deepEqual(h.events, ['accepted']);
 });
 
+// Re-review 1: a text write split from the pinned call (its head goes out as an internal call) is held to the pin too.
+const pageWithBody = page.replace('1 text area (settable) Value: draft', '1 text area (settable) Value: draft, ID: body');
+for (const [name, answer] of [
+  ['unavailable', { status: 'unknown', error: 'probe unavailable' }],
+  ['ambiguous', { status: 'ok', matches: 2, headerMatches: 2, epoch: 'helper', window: 0, pid: 123, processStart: 1 }],
+]) test(`OT2: an ${name} identity stops a text write and save split from the parent-leased call before the write`, async t => {
+  const settled = [];
+  const h = await parentFixture(t, { base: pageWithBody, afterItem: pageWithBody, settleTextWrite: async target => { settled.push(target); },
+    parent: (expected, native) => expected.nativeIdentity ? answer : parentOf(expected, native) });
+  const result = await h.call('await app.setValue({ id: "body" }, "x"); await app.pressKey("super+s");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.values, []);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(settled, []);
+  assert.deepEqual(h.events, ['accepted']);
+});
+test('OT2: with the pin satisfied, the split text write and save go on', async t => {
+  const settled = [];
+  const h = await parentFixture(t, { base: pageWithBody, afterItem: pageWithBody, settleTextWrite: async target => { settled.push(target); } });
+  const result = await h.call('await app.setValue({ id: "body" }, "x"); await app.pressKey("super+s");');
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 400));
+  assert.deepEqual(h.values, [[1, 'x']]);
+  assert.deepEqual(h.keys, ['super+s']);
+  assert.equal(settled.length, 1);
+});
+
 // Review C: labels and IDs resolve in the window the guard reads, so they go on.
 test('OT2: a labelled click in the rest goes on after the parent lease', async t => {
   const h = await parentFixture(t);

@@ -436,7 +436,7 @@ test('OT2 review: the parent lease gate excludes every mode it must', () => {
     [{ documentMode: true }, 'document-scope'], [{ changeReview: true }, 'change-review'], [{ helper: false }, 'no-helper'],
     [{ stale: {} }, 'no-parent'], [{ window: undefined }, 'not-the-covered-window'], [{ window: { ...parent, appId: 'com.example.other' } }, 'not-the-covered-window'],
     [{ window: { ...parent, title: 'Other' } }, 'not-the-covered-window'], [{ window: { ...parent, url: null } }, 'not-the-covered-window'],
-    [{ numbers: [3] }, 'element-numbers'],
+    [{ numbers: [3] }, 'element-numbers'], [{ browser: true }, 'browser-plan'],
   ]) assert.equal(parentLeaseGate({ ...ok, ...change }), reason, JSON.stringify(change));
 });
 

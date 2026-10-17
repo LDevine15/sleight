@@ -537,7 +537,8 @@ export function createRelay({
   // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
   tabContinuation = process.env.SLEIGHT_TAB_CONTINUATION !== '0',
   // A palette, gallery, floating window or popover covers the standard window under it the way a dialog does
-  // (menu-continuation.mjs PALETTE_ROLES). SLEIGHT_POPOVER_CONTINUATION=0 records only dialogs and sheets, for the A/B.
+  // (menu-continuation.mjs PALETTE_ROLES). SLEIGHT_POPOVER_CONTINUATION=0 is the behavior before it, for the A/B: plain
+  // and floating windows still cover, popovers don't, and an untitled palette closed by a button isn't refused.
   popoverContinuation = process.env.SLEIGHT_POPOVER_CONTINUATION !== '0',
   // The next call takes the covered window as its lease after the dialog closed between calls (parentLeaseRefusal).
   // SLEIGHT_PARENT_LEASE=0 keeps the stale-lease refusal, for the A/B.
@@ -2444,7 +2445,7 @@ export function createRelay({
         };
         const parent = expected.parent;
         const gate = parentLeaseGate({ enabled: parentLease, recovered, selected: !!selectedWindow, documentMode, changeReview,
-          helper: !!windowIdentity, numbers, stale: expected, window: leaseWindow });
+          helper: !!windowIdentity, numbers, browser: !!browserPlan(rest), stale: expected, window: leaseWindow });
         if (gate) {
           if (parent && !['off', 'not-recovered'].includes(gate)) trace('parent-lease-refused', { id: msg.id, reason: gate });
           stale(); return;
@@ -2760,8 +2761,9 @@ export function createRelay({
       callDetails.set(msg.id, 'native window admission');
       const started = performance.now();
       Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
-        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin.
-        const identity = target.parentPin?.id === msg.id ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
+        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin. It
+        // holds until the pinned call's reply, so it covers the calls split from it (a text write's head) too.
+        const identity = target.parentPin ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
         noteProcess(identity);
         if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }

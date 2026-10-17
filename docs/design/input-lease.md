@@ -143,7 +143,8 @@ clicks. It hasn't run live.
 
 A dialog, sheet, palette, gallery, floating window or popover (`0 window`, `0 floating window`, `0 popover`) the lease moved to
 remembers the standard window it covered. A call whose own action closes it goes on there (`dialogRemainder`).
-`SLEIGHT_POPOVER_CONTINUATION=0` remembers only dialogs and sheets.
+`SLEIGHT_POPOVER_CONTINUATION=0` restores the earlier behavior: popovers aren't remembered, and an untitled palette closed
+by a button isn't refused.
 
 When such a window closed between calls and a degraded read dropped the lease, the next call's recovery re-acquisition used
 to refuse it as stale ("it was Insert Table": 7 calls in the 2026-10-17 office runs). The covered window becomes the lease

@@ -269,8 +269,9 @@ default and hasn't run live: we haven't measured how late alerts and sheets appe
 `SLEIGHT_TAB_CONTINUATION=0` (A/B baseline) stops a call at a tab its own Cmd+T opened as before, instead of typing the
 rest there ([input leases](design/input-lease.md#windows-a-call-opens-itself)).
 
-`SLEIGHT_POPOVER_CONTINUATION=0` (A/B baseline) lets only a dialog or sheet the call closed carry the call on into the window
-under it, not a palette, gallery, floating window or popover. `SLEIGHT_PARENT_LEASE=0` (A/B baseline) keeps the "window changed
+`SLEIGHT_POPOVER_CONTINUATION=0` (A/B baseline) restores the earlier behavior. When the call closes a dialog, sheet, palette,
+gallery or floating window, the rest of the call still goes to the window under it. A popover stops it, and an untitled
+palette closed by a button isn't refused. `SLEIGHT_PARENT_LEASE=0` (A/B baseline) keeps the "window changed
 since the last call" refusal when a dialog closed between calls ([input leases](design/input-lease.md#dialogs-and-palettes)).
 
 ## First-call batching
