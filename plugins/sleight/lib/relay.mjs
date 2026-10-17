@@ -60,7 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, menuRoot } from './document-scope.mjs';
+import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -289,6 +289,105 @@ export function dropStaleMenuNotes(head, rest) {
     return kept.trim() ? [{ ...item, text: kept.replace(/\n+$/, '') }] : [];
   });
   return changed ? out : head;
+}
+
+// Each tree in a result: its item, its span (with the guard mark that wraps it, if any) and its text.
+function resultTrees(content) {
+  const trees = [];
+  (content ?? []).forEach((item, index) => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return;
+    for (const match of item.text.matchAll(/^Window: /gm)) {
+      const next = /^(?:Window: |\[\/?sleight:|sleight: )/gm;
+      next.lastIndex = match.index + 1;
+      const end = next.exec(item.text)?.index ?? item.text.length;
+      const guarded = item.text.slice(0, match.index).endsWith(GUARD_MARK);
+      trees.push({ index, start: guarded ? match.index - GUARD_MARK.length : match.index, end, guarded, text: item.text.slice(match.index, end) });
+    }
+  });
+  return trees;
+}
+const isMenuTree = tree => menuRoot(tree) || OPEN_MENU.test(tree);
+const WINDOW_ROOT = /^0 (?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/m;
+export const menuWindowKey = window => window && JSON.stringify([window.title, window.app]);
+const commentless = code => String(code ?? '').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ' ');
+
+// textedit-save (2026-10-17, transcript lines 22-36): the Cancel the menu note advised closed the menu, but the
+// result printed the acquisition's menu tree above the window's, and Claude doubted it and sent Escape and a
+// re-read. A call that cancels a menu (its Cancel action or Escape) and ends on that window with no menu says
+// so, and its earlier menu trees of that window go. `wasOpen` answers for a window whose last result was a menu.
+// `head` is a split call's acquisition result, which the relay puts before the rest's `content`.
+const MENU_CLOSED_NOTE = /* lean notice */ 'sleight: the menu closed.';
+const CLOSES_MENU = /\.\s*performSecondaryAction\s*\([^)]*,\s*(['"`])Cancel\1\s*\)|\.\s*pressKey\s*\(\s*(['"`])esc(?:ape)?\2/i;
+export function closedMenuContent(content, code, wasOpen = () => false, prompt, head = []) {
+  if (!Array.isArray(content) || !CLOSES_MENU.test(commentless(code))) return;
+  const trees = resultTrees([...head, ...content]), last = trees.at(-1);
+  if (!last || last.index < head.length || isMenuTree(last.text) || !WINDOW_ROOT.test(last.text) || selectedMenuItem(last.text) || /…\(\d+\)/.test(last.text)) return;
+  const window = windowFromText(last.text), key = menuWindowKey(window);
+  if (!key) return;
+  const menus = trees.slice(0, -1).filter(tree => isMenuTree(tree.text) && menuWindowKey(windowFromText(tree.text)) === key);
+  if (!menus.length && !wasOpen(window)) return;
+  // Menu notes before the last tree that follow this window's header go too.
+  let before = '';
+  const strip = (item, index) => {
+    if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+    // A guarded read becomes an omitted one, which the read compactor leaves out.
+    const edits = menus.filter(tree => tree.index === index).map(tree => tree.guarded
+      ? { start: tree.start, end: tree.start + GUARD_MARK.length, text: GUARD_OMIT_MARK } : { start: tree.start, end: tree.end, text: '' });
+    if (index < last.index) for (const note of item.text.matchAll(MENU_NOTE_LINE)) {
+      const preceding = before + item.text.slice(0, note.index), from = preceding.lastIndexOf('Window: ');
+      if (from >= 0 && menuWindowKey(windowFromText(preceding.slice(from))) === key) edits.push({ start: note.index, end: note.index + note[0].length, text: '' });
+    }
+    before += item.text + '\n';
+    if (!edits.length) return [item];
+    let text = item.text;
+    for (const edit of edits.sort((a, b) => b.start - a.start)) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
+    return text.trim() ? [{ ...item, text: text.replace(/\n{3,}/g, '\n\n') }] : [];
+  };
+  return { head: head.flatMap((item, i) => strip(item, i)),
+    content: [...content.flatMap((item, i) => strip(item, head.length + i)), { type: 'text', text: promptNotice(MENU_CLOSED_NOTE, prompt) }] };
+}
+
+// finder-move (2026-10-17): Claude copied a file, selected the destination folder's row and chose Move Item Here
+// (and Paste) four times. Nothing moved, since those commands act on the folder the window shows. The note
+// needs a call that clicks a menu item titled Paste, Paste Item or one with "Here" (or presses Cmd+V or
+// Cmd+Option+V), and a last tree of a file browser (a list of rows with file URLs) with a folder row selected,
+// no text field focused, and the same window listing the same files as before the call.
+const PASTE_HERE_NOTE = /* lean notice */ 'sleight: Paste and Move act on the folder the window shows, not a selected row. Open the destination first.';
+const pasteTitle = title => /\bHere\b/.test(title) || /^Paste(?: Item)?$/i.test(title);
+const MODIFIERS = new Set(['super', 'cmd', 'command', 'meta', 'alt', 'option', 'opt']);
+const pasteKey = key => {
+  const parts = key.toLowerCase().split('+').map(part => part.trim()), mods = parts.slice(0, -1);
+  return parts.at(-1) === 'v' && mods.some(mod => ['super', 'cmd', 'command', 'meta'].includes(mod)) && mods.every(mod => MODIFIERS.has(mod));
+};
+const menuTitle = (tree, number) => {
+  const line = new RegExp(`^\\t*${number} (.*)$`, 'm').exec(tree)?.[1];
+  return line?.replace(/^(?:\([^)]*\)\s*)+/, '').replace(/^menu item /, '').replace(/, (?:ID|Help|Description|Secondary Actions|Value):.*$/, '').trim();
+};
+const fileUrls = tree => [...tree.matchAll(/^\t+\d+ [^\n]*\bURL: (file:\/\/[^\s,]+)/gm)].map(match => match[1]).sort().join('\n');
+const fileBrowser = tree => /^\t+\d+ (?:outline|list|table|browser)\b/m.test(tree) && /^\t+\d+ row\b/m.test(tree) && !!fileUrls(tree);
+export const fileListing = tree => (typeof tree === 'string' && WINDOW_ROOT.test(tree) && !isMenuTree(tree) && fileBrowser(tree) ? fileUrls(tree) : undefined);
+export function pasteHereNote(content, code, { menu, files = () => undefined } = {}, prompt) {
+  if (!Array.isArray(content) || typeof code !== 'string') return;
+  const source = commentless(code), trees = resultTrees(content), last = trees.at(-1);
+  if (!last) return;
+  const menus = [...trees.slice(0, -1).map(tree => tree.text).filter(isMenuTree), ...(typeof menu === 'string' && isMenuTree(menu) ? [menu] : [])];
+  const clicked = [...source.matchAll(/\.\s*click\s*\(([^)]*)\)/g)].some(([, args]) => {
+    const label = /^\s*(?:\{[^}]*?\blabel\s*:\s*)?(['"`])((?:(?!\1).)*)\1/.exec(args)?.[2];
+    if (label !== undefined) return pasteTitle(label.trim());
+    const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
+    return number !== undefined && menus.some(tree => { const title = menuTitle(tree, number); return !!title && pasteTitle(title); });
+  });
+  const pressed = [...source.matchAll(/\.\s*pressKey\s*\(\s*(['"`])((?:(?!\1).)*)\1/g)].some(([, , key]) => pasteKey(key));
+  if (!clicked && !pressed) return;
+  const listed = fileListing(last.text), window = windowFromText(last.text);
+  if (!listed || !window || /^The focused UI element is \d+ (?:text entry area|text field|text area|text view|search field|combo box|web area)\b/m.test(last.text)) return;
+  if (!/^\t+\d+ row \([^)]*\bselected\b/m.test(last.text) ||
+      !/^\t+\d+ [^\n]*\([^)]*\bselected\b[^)]*\)[^\n]*\bURL: file:\/\/[^\s,]*\/(?:,|\s|$)/m.test(last.text)) return;
+  const key = documentKey(window);
+  const earlier = trees.slice(0, -1).filter(tree => documentKey(windowFromText(tree.text) ?? {}) === key).map(tree => fileListing(tree.text)).filter(Boolean);
+  // The last read before the call; else this call's first read of the window (its acquisition).
+  const before = files(key) ?? earlier[0];
+  return before === listed ? promptNotice(PASTE_HERE_NOTE, prompt) : undefined;
 }
 
 // SLEIGHT_FIRST_CALL_BATCH=merge, under A/B. Since 668b462 a call continues into a window its own
@@ -993,6 +1092,9 @@ export function createRelay({
   const screenshots = new Map(); // lowercased app name -> { latest, byTitle } pixel sizes of its engine screenshots
   const framesNoted = new Set(); // [app, title, size] keys whose coordinate frame note Claude has seen
   const stuckMenus = new Map(); // window key -> { title, shown } of its selected menu-bar item
+  const openMenus = new Set(); // menuWindowKey of windows whose last result was an open menu
+  const fileLists = new Map(); // window key -> file URLs its last file-browser tree listed
+  let lastMenuTree; // the last result's tree, when it was a menu
   // Every tools/call gets the next number. An acquisition's read can stand in for the guard's
   // first read only in the call right after it (priorRead.seq + 1).
   let callSeq = 0, priorRead;
@@ -3961,8 +4063,20 @@ export function createRelay({
         }
       }
       if (!automatic && jsCode !== undefined) {
+        if (!msg.result.isError) {
+          // A split call's acquisition result joins this one in toClient, after these notes.
+          const head = splitHeads.get(msg.id) ?? [];
+          const closed = closedMenuContent(msg.result.content, jsCode, window => openMenus.has(menuWindowKey(window)), prompt, head);
+          if (closed) { msg.result.content = closed.content; if (splitHeads.has(msg.id)) splitHeads.set(msg.id, closed.head); }
+          const paste = pasteHereNote([...(splitHeads.get(msg.id) ?? []), ...msg.result.content], jsCode, { menu: lastMenuTree, files: key => fileLists.get(key) }, prompt);
+          if (paste) msg.result.content.push({ type: 'text', text: paste });
+        }
         const text = msg.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
         const tree = text.slice(Math.max(0, text.lastIndexOf('Window: ')));
+        const treeWindow = windowFromText(tree), listing = fileListing(tree);
+        if (treeWindow && isMenuTree(tree)) { openMenus.add(menuWindowKey(treeWindow)); lastMenuTree = tree; }
+        else if (treeWindow && WINDOW_ROOT.test(tree)) { openMenus.delete(menuWindowKey(treeWindow)); lastMenuTree = undefined; }
+        if (treeWindow && listing) fileLists.set(documentKey(treeWindow), listing);
         const key = documentKey(windowFromText(tree));
         // A different selected title in the same episode starts its count at the short note.
         const entry = selectedMenuEntry(tree), prior = key ? stuckMenus.get(key) : undefined;

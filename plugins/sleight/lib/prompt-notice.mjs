@@ -14,6 +14,8 @@ export function promptNotice(text, prompt) {
     .replace('; if it still stays, tell the user.', '; if still stuck, tell the user.')
     .replace(', and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.', '; keys may be lost. Check typing landed, then use a toolbar control or shortcut, not more Escape or clicks.')
     .replace('` does.', '`.')
+    .replace('sleight: the menu closed.', 'sleight: menu closed.')
+    .replace('sleight: Paste and Move act on the folder the window shows, not a selected row. Open the destination first.', 'sleight: Paste/Move use the shown folder, not a selected row; open the destination.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
     .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')

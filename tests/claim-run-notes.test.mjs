@@ -7,9 +7,9 @@ import { mkdtempSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
+import { createReadCompactor, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK } from '../plugins/sleight/lib/compact-reads.mjs';
 import { guardedCode, menuRoot, readCode } from '../plugins/sleight/lib/document-scope.mjs';
-import { createRelay, dropStaleMenuNotes } from '../plugins/sleight/lib/relay.mjs';
+import { createRelay, dropStaleMenuNotes, closedMenuContent, pasteHereNote, fileListing } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
@@ -219,4 +219,130 @@ test('relay: a split call whose click consumed the menu ends without the acquisi
     assert.equal(/a menu may (?:still )?be stuck open/.test(out), last === stuck, out);
     replies.length = 0; sent.length = 0;
   }
+});
+
+// textedit-save, 2026-10-17T22-55 transcript lines 22-36: the Cancel the menu note advised closed the menu, but the
+// result showed the acquisition's menu tree above the window's, and Claude sent Escape and a re-read.
+const CANCEL = 'let app = await cua.getApp("TextEdit"); await app.performSecondaryAction(1, "Cancel"); await app.getAXState()';
+test('a call that cancels a menu and ends on its window says the menu closed and drops the menu tree', () => {
+  const doc = document('a.txt', 'file:///tmp/a.txt');
+  for (const code of [CANCEL, 'await app.click({ label: "Format" }); await app.getAXState(); await app.pressKey("Escape"); await app.getAXState()']) {
+    // The acquisition's result (head) and the rest's.
+    const head = [text(formatMenu('a.txt')), text('')], rest = [text(GUARD_MARK + doc + GUARD_END), text('sleight: UI unverified (no earlier read).')];
+    for (const [h, c] of [[head, rest], [[], [...head, ...rest]]]) {
+      const out = closedMenuContent(c, code, undefined, undefined, h);
+      const joined = [...out.head, ...out.content].map(item => item.text).join('\n');
+      assert.doesNotMatch(joined, /Make Rich Text/, code);
+      assert.match(joined, /0 standard window a\.txt/);
+      assert.equal(out.content.at(-1).text, 'sleight: the menu closed.');
+      assert.equal(closedMenuContent(c, code, () => false, 'lean', h).content.at(-1).text, 'sleight: menu closed.');
+    }
+  }
+  // A guarded menu read becomes an omitted read, which the compactor leaves out.
+  const guarded = [text(GUARD_MARK + formatMenu('a.txt') + GUARD_END + GUARD_MARK + doc + GUARD_END)];
+  const kept = closedMenuContent(guarded, 'await app.click({ label: "Format" }); await app.getAXState(); await app.performSecondaryAction(1, "Cancel"); await app.getAXState()').content;
+  assert.ok(kept[0].text.startsWith(GUARD_OMIT_MARK + 'Window: "a.txt"'));
+  assert.equal(createReadCompactor().process(kept).map(item => item.text).join('\n').includes('Make Rich Text'), false);
+  // Handle reuse: no menu tree in the call, but the window's last result was the menu.
+  const alone = closedMenuContent([text(doc)], 'await app.performSecondaryAction(1, "Cancel"); await app.getAXState()', window => window.title === 'a.txt');
+  assert.equal(alone.content.at(-1).text, 'sleight: the menu closed.');
+  // The last tree has to come from the rest, not the head.
+  assert.equal(closedMenuContent([text('done')], CANCEL, () => true, undefined, [text(doc)]), undefined);
+});
+
+test('no menu-closed note while the menu stays, without a cancel, or for another window', () => {
+  const doc = document('a.txt', 'file:///tmp/a.txt');
+  const head = [text(formatMenu('a.txt'))];
+  assert.equal(closedMenuContent([...head, text(formatMenu('a.txt'))], CANCEL), undefined, 'still open');
+  assert.equal(closedMenuContent([...head, text(doc.replace('\t3 File', '\t3 File (selected)'))], CANCEL), undefined, 'menu-bar item still selected');
+  assert.equal(closedMenuContent([...head, text(doc)], 'let app = await cua.getApp("TextEdit"); await app.click(3); await app.getAXState()'), undefined, 'no cancel');
+  assert.equal(closedMenuContent([text(formatMenu('b.txt')), text(doc)], CANCEL), undefined, 'another window\'s menu');
+  assert.equal(closedMenuContent([text(doc)], 'await app.pressKey("Escape"); await app.getAXState()'), undefined, 'no menu was open');
+});
+
+test('relay: a split Cancel call shows the window once and says the menu closed', async t => {
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-menuclosed-')));
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams, sent = [], replies = [];
+  const record = into => data => into.push(...data.toString().trim().split('\n').map(JSON.parse));
+  serverIn.on('data', record(sent)); clientOut.on('data', record(replies));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, inputLease: new InputLease({ directory, holder: 'fixture' }) });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); rmSync(directory, { recursive: true, force: true }); });
+  const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+  const reply = (id, value) => serverOut.write(JSON.stringify({ id, result: { isError: false, content: [text(value)],
+    _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.TextEdit' } } } } }) + '\n');
+  const prefix = () => sent.filter(m => String(m.id).startsWith('sleight-acquire-')).at(-1)?.id;
+  const doc = document('a.txt', 'file:///tmp/a.txt');
+  call(1, 'let app = await cua.getApp("TextEdit")'); await tick();
+  reply(1, formatMenu('a.txt')); await tick();
+  assert.match(replies.find(m => m.id === 1).result.content.at(-1).text, /a menu is open/);
+  call(2, CANCEL); await tick();
+  reply(prefix(), formatMenu('a.txt')); await tick();
+  reply(2, GUARD_MARK + doc + GUARD_END); await tick();
+  const out = replies.find(m => m.id === 2).result.content.map(item => item.text ?? '').join('\n');
+  assert.doesNotMatch(out, /Make Rich Text|a menu is open/, out);
+  assert.match(out, /0 standard window a\.txt/);
+  assert.match(out, /^sleight: the menu closed\.$/m);
+});
+
+// finder-move, 2026-10-17T22-55: Move Item Here and Paste with the destination folder's row selected moved nothing,
+// four times, since both act on the folder the window shows.
+const finder = ({ selected = true, files = ['alpha.txt'], focus } = {}) => ['Window: "Files", App: Finder.',
+  '0 standard window Files, ID: FinderWindow, Secondary Actions: Raise', '\t1 split group', '\t\t2 scroll area', '\t\t\t3 outline Description: list view, ID: ListView',
+  ...files.flatMap((name, i) => [`\t\t\t\t${4 + i * 2} row (selectable)`, `\t\t\t\t\t${5 + i * 2} text field (settable) Value: ${name}, URL: file:///tmp/Files/${name}`]),
+  `\t\t\t\t20 row (${selected ? 'selected' : 'selectable'}, collapsed) Secondary Actions: Expand`,
+  `\t\t\t\t\t21 text field (${selected ? 'selected, ' : ''}settable) Value: Archive, URL: file:///tmp/Files/Archive/`,
+  '22 menu bar', '\t23 Edit', ...(focus ? ['', `The focused UI element is ${focus}`] : [])].join('\n');
+const editMenu = ['Window: "Files", App: Finder.', '0 Edit, Secondary Actions: Cancel, Pick', '\t1 menu Secondary Actions: Cancel',
+  '\t\t2 (disabled) Cut', '\t\t8 Paste Item', '\t\t9 Move Item Here', '\t\t10 Select All'].join('\n');
+const PASTE_NOTE = /^sleight: Paste and Move act on the folder the window shows, not a selected row\. Open the destination first\.$/;
+test('a paste or move-here into a file browser that changed no files says it acts on the shown folder', () => {
+  const before = { files: () => fileListing(finder()) };
+  for (const code of ['await app.click({ label: "Move Item Here" }); await app.getAXState()', 'await app.click({ label: "Paste Item" }); await app.getAXState()',
+    'await app.pressKey("super+alt+v"); await app.getAXState()', 'await app.click(9); await app.getAXState()']) {
+    assert.match(pasteHereNote([text(finder())], code, { ...before, menu: editMenu }) ?? '', PASTE_NOTE, code);
+  }
+  // The baseline can be the call's own acquisition, and a menu read earlier in the call names the clicked number.
+  assert.match(pasteHereNote([text(finder()), text(GUARD_MARK + editMenu + GUARD_END), text(GUARD_MARK + finder() + GUARD_END)],
+    'let app = await cua.getApp("Finder"); await app.click({ label: "Edit" }); await app.getAXState(); await app.click(8); await app.getAXState()') ?? '', PASTE_NOTE);
+  assert.equal(pasteHereNote([text(finder())], 'await app.click({ label: "Move Item Here" })'), undefined, 'no baseline');
+  assert.ok(pasteHereNote([text(finder())], 'await app.click({ label: "Move Item Here" })', before, 'lean').length < 90);
+});
+
+test('no paste note when files changed, no folder row is selected, a field has focus, or the window is a text editor', () => {
+  const before = { files: () => fileListing(finder()) };
+  const code = 'await app.click({ label: "Move Item Here" }); await app.getAXState()';
+  assert.equal(pasteHereNote([text(finder({ files: [] }))], code, before), undefined, 'the file moved');
+  assert.equal(pasteHereNote([text(finder({ selected: false }))], code, before), undefined, 'no selected row');
+  assert.equal(pasteHereNote([text(finder({ focus: '5 text field (settable) Value: alpha.txt' }))], 'await app.pressKey("super+v"); await app.getAXState()', before), undefined, 'renaming');
+  assert.equal(pasteHereNote([text(finder())], 'await app.click({ label: "Edit" }); await app.getAXState()', before), undefined, 'not paste');
+  assert.equal(pasteHereNote([text(finder())], 'await app.click(9); await app.getAXState()', before), undefined, 'a number with no menu');
+  // A text editor: Paste from its Edit menu, with a selected row, lists no files.
+  const editor = document('a.txt', 'file:///tmp/a.txt', ['\t1 text entry area (settable) Value: fixture, ID: First Text View', '\t2 row (selected) Value: line']);
+  for (const paste of ['await app.click({ label: "Paste" }); await app.getAXState()', 'await app.pressKey("super+v"); await app.getAXState()']) {
+    assert.equal(pasteHereNote([text(editor)], paste, { files: () => '' }), undefined, paste);
+  }
+});
+
+test('relay: a Move Item Here after the destination row was selected gets the shown-folder note', async t => {
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-pastehere-')));
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams, replies = [];
+  clientOut.on('data', data => replies.push(...data.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, inputLease: new InputLease({ directory, holder: 'fixture' }) });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); rmSync(directory, { recursive: true, force: true }); });
+  const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+  const reply = (id, value) => serverOut.write(JSON.stringify({ id, result: { isError: false, content: [text(value)],
+    _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.finder' } } } } }) + '\n');
+  const out = id => replies.find(m => m.id === id).result.content.map(item => item.text ?? '').join('\n');
+  call(1, 'let app = await cua.getApp("Finder")'); await tick();
+  reply(1, finder()); await tick();
+  assert.doesNotMatch(out(1), /Paste and Move/);
+  call(2, 'await app.click({ label: "Edit" }); await app.getAXState()'); await tick();
+  reply(2, GUARD_MARK + editMenu + GUARD_END); await tick();
+  call(3, 'await app.click(9); await app.getAXState()'); await tick();
+  reply(3, GUARD_MARK + finder() + GUARD_END); await tick();
+  assert.match(out(3), new RegExp(PASTE_NOTE.source, 'm'));
 });
