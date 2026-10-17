@@ -810,6 +810,21 @@ export function createRelay({
   let docsShown = false;
   // Once per session: Claude keeps them in context across engine restarts.
   let rulesShown = false;
+  let browserRulesShown = false;
+  const browserRules = firstCallRules?.match(/## Browsers\n[\s\S]*?(?=\n## |$)/)?.[0];
+  const nativeRules = browserRules ? firstCallRules.replace(browserRules, '').trim() : firstCallRules;
+  function rulesFor(browser) {
+    if (!firstCallRules) return;
+    if (!rulesShown) {
+      rulesShown = true;
+      if (browser) browserRulesShown = true;
+      return browser ? firstCallRules : nativeRules;
+    }
+    if (browser && !browserRulesShown && browserRules) {
+      browserRulesShown = true;
+      return browserRules;
+    }
+  }
   const helperAliases = new Map();
   const helperReads = new Map();
   const helperProbes = new Map();
@@ -1986,7 +2001,8 @@ export function createRelay({
         finishedCall(msg.id);
         const rendered = result.text;
         const content = [{ type: 'text', text: rendered }];
-        if (firstCallRules && !rulesShown) { rulesShown = true; content.push({ type: 'text', text: firstCallRules }); }
+        const rules = rulesFor(true);
+        if (rules) content.push({ type: 'text', text: rules });
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: result.isError,
           content } }, delivered => {
           // Baselines and submit fences advance only after the exact projection
@@ -2831,11 +2847,13 @@ export function createRelay({
         trace('engine-session-restarted', { id: msg.id });
         msg.result.content.push({ type: 'text', text: promptNotice("sleight: the engine's JavaScript session restarted before this call, so handles from earlier calls (such as `app`) are gone. An action that fails without `await` can end the session. Acquire the app again with `let app = await cua.getApp(…)`, and await every action.", prompt) });
       }
-      // The engine's first call returns its docs and nothing else Claude can act on, so sleight's
-      // own rules ride along here instead of costing Claude a skill turn (one per benchmark run).
-      if (docs && firstCallRules && !rulesShown) {
-        rulesShown = true;
-        msg.result.content.push({ type: 'text', text: firstCallRules + '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' });
+      // Native calls get common rules with the engine docs. Browser rules wait for a browser
+      // result, including an acquisition refusal, and remain in context across engine restarts.
+      const browserResult = pendingBrowser && (confirmedBrowser || !msg.result._meta?.['codex/toolSurface']?.app?.appId &&
+        /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
+      const rules = (docs || browserResult) && rulesFor(browserResult);
+      if (rules) {
+        msg.result.content.push({ type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') });
       }
       if (docs) docsShown = true;
     }

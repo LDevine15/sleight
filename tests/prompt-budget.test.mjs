@@ -20,6 +20,72 @@ const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json',
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
+function placement(t, env = {}) {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const replies = [];
+  clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
+    firstCallRules: skillRules(skillPath, env) });
+  t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
+  return {
+    call(id, code, name = 'js') { clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: { code } } }) + '\n'); },
+    reply(id, text, browser = false, isError = false) {
+      serverOut.write(JSON.stringify({ id, result: { isError, content: [{ type: 'text', text }],
+        ...(browser ? { _meta: { 'codex/toolSurface': { kind: 'browserUse' } } } : {}) } }) + '\n');
+      return replies.find(row => row.id === id).result.content.map(item => item.text ?? '').join('\n');
+    },
+  };
+}
+
+for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }]) {
+  const variant = JSON.stringify(env);
+  test(`native acquisition keeps every pinned safety passage and defers browser rules: ${variant}`, t => {
+    const h = placement(t, env);
+    h.call(1, 'let app = await cua.getApp("Editor")');
+    const first = h.reply(1, '## Computer Use\nNative reference.\nWindow: "Draft", App: Editor');
+    for (const passage of baseline.skillSafety) assert.ok(first.includes(passage), passage);
+    assert.match(first, /Top-level `await`, no `return`/);
+    assert.match(first, /Write text with `nodeRepl\.write\(\.\.\.\)`/);
+    assert.doesNotMatch(first, /sleight\.fillForm|sleight\.dragTo|downloadMedia|tab\.getJsDialog/);
+    h.call(2, 'nodeRepl.write(2 + 2)');
+    assert.doesNotMatch(h.reply(2, '4'), /sleight\.fillForm/);
+    h.call(3, 'let tab = await cua.getTab("1")');
+    const browser = h.reply(3, 'Browser result', true);
+    assert.match(browser, /sleight\.fillForm/);
+    assert.match(browser, /confirmation policy/);
+    assert.match(browser, /stop if the user declines a browser approval/);
+    assert.match(browser, /downloadMedia/);
+    assert.match(browser, /tab\.getJsDialog/);
+    assert.doesNotMatch(browser, /Never create or edit/);
+    h.call(4, 'await tab.getAXState()');
+    assert.doesNotMatch(h.reply(4, 'Browser state', true), /sleight\.fillForm/);
+  });
+
+  for (const reset of [false, true]) test(`deferred rules survive ${reset ? 'js_reset' : 'engine restart'} and reach a failed browser result: ${variant}`, t => {
+    const h = placement(t, env);
+    h.call(1, 'let app = await cua.getApp("Editor")');
+    h.reply(1, '## Computer Use\nNative reference.');
+    h.call(2, reset ? '' : 'await cua.listApps()', reset ? 'js_reset' : 'js');
+    assert.doesNotMatch(h.reply(2, reset ? 'reset' : '## Computer Use\nNative reference.'), /sleight\.fillForm/);
+    h.call(3, 'let b = await cua.getBrowser({})');
+    assert.match(h.reply(3, 'Browser approval declined', false, true), /sleight\.fillForm/);
+    h.call(4, 'await cua.listBrowsers()');
+    assert.doesNotMatch(h.reply(4, '[]', true), /sleight\.fillForm/);
+  });
+
+  for (const docs of ['## Computer Use\nNative reference.', '# Other Browser APIs\nBrowser reference.']) {
+    test(`browser-first receives common and browser safety with ${docs.split('\n')[0]}: ${variant}`, t => {
+      const h = placement(t, env);
+      h.call(1, 'let b = await cua.getBrowser({})');
+      const first = h.reply(1, docs, true);
+      for (const passage of baseline.skillSafety) assert.ok(first.includes(passage), passage);
+      assert.match(first, /sleight\.fillForm/);
+      h.call(2, 'await cua.listTabs()');
+      assert.doesNotMatch(h.reply(2, '[]', true), /sleight\.fillForm|Never create or edit/);
+    });
+  }
+}
+
 test('lean calls teach persistent handles and action endings only under the experiment flag', () => {
   for (const prompt of [undefined, 'lean']) {
     const normal = skillRules(skillPath, { SLEIGHT_PROMPT: prompt });

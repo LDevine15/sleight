@@ -9,6 +9,7 @@ description: Use when a task needs a web page or native macOS app operated throu
 `mcp__plugin_sleight_computer__js` runs persistent JavaScript with `cua`. `js_reset` restarts it.
 Follow engine docs and app instructions. Prefer a CLI, API or dedicated tool when one covers
 the task.
+Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 
 Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes
 it. If an app isn't approved, ask the user, or stop when a headless run refuses it.
@@ -59,7 +60,6 @@ With a connected ChatGPT extension, web pages use the tab handle, never `getApp`
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from
 `await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
-Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 Tab input's first argument is an element index or `null`.
 Fill every field you already see in one call.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).

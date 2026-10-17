@@ -10,8 +10,11 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - The engine refuses terminals and OpenAI's apps (ChatGPT, Codex, Atlas) unless the user turned that
   refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
-Web pages: tab handle, never `getApp`.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
+
+## Browsers
+
+Web pages: tab handle, never `getApp`.
 Tab input: first argument, element index or `null`.
 Fill every visible field in one call. Read once at the end.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
@@ -20,8 +23,10 @@ Submit in that call only when the user asked and the engine's confirmation polic
 Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.
 `nodeRepl.write(await sleight.dragTo(tab, from, to))`: selectors, locators or page coordinates, reads back indices.
 Downloads: `locator.downloadMedia({})`, never `tab.click` (stalls later downloads).
-Click a button that may open a page dialog (pay, delete, leave) with
+Open page dialogs with
 `tab.click(index)`, not a locator, then answer it: `(await tab.getJsDialog()).accept()` or `.dismiss()`.
+
+## Tools
 
 Selected text: select in `js`, then `drag` (`app`, `windowId`, `from`, `to`) in its content, from
 the latest screenshot of that window. Lost text: press Cmd+Z in that window.
