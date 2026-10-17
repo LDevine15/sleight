@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 01:45 UTC: TT2, TT3, TT4 and TS13 merged with review fixes; TK1, TK2, TK3 and TT1N2 building)
+## Banner (2026-10-17 03:30 UTC: 11 fixes merged and pushed at `2ea5ee12`; TV4, TV5, BR1, BR3 building; A/B next)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b and 2.4.
@@ -18,23 +18,27 @@ the owner's call. Score only with `node bench/claim-score.mjs --results ~/Projec
 
 **Build lanes in flight.** They run as headless `codex exec` (gpt-6.1-sol high) under launchd, so the clear doesn't stop them.
 Briefs are in `~/Projects/sleight-wt/ledger/queue/tt/` and `queue/speed/`, with the prompt `queue/tt/lane-prompt-tt.md`. Logs go to `ledger/lane-runs/`.
-- Merged 2026-10-17 01:30 UTC (pushed `f4fd763f`, full check exit 0, 5,605 tests, 0 fail): TT2 (open_file returns the window,
-  top-level `return`, save confirmed by mtime), TT3 (non-text drags hit-test their endpoints), TT4 (no full tree after a filtered
-  return), TS13 (skill: getApp on a named app, and action results stand as confirmation). Sonnet-high reviews found real bugs, fixed here: TT2's final
-  `return (x)` joined an unterminated previous line; TT3's Copy-and-Paste advice fired after a successful drag, and its 32-level
-  parent walk was too short for Electron (31 levels measured); TT4's marker was forgeable by window text and dropped the next
-  action's UI-change note. TT3's text-drag path depends on `$.CFEqual` in JXA: a read-only probe matched windows in 6 apps, but
-  textedit-drag still needs its live run before the claim run.
-- Building (`codex exec` lanes, logs in `ledger/lane-runs/`): TK3 skill placement (pid 8830, relaunched with a lock and budget;
-  its old lock-clash report is `lane-runs/tk3-blocked-lock-report-20261017.md`), TK1 compact first acquisition (pid 21928) and
-  TT1N2 (pid 21929). TK2 is closed as not viable: in 87 recorded sessions every nonempty section of the engine's 17,355-character
-  docs held API names Haiku used, the 5,912-character confirmation policy can't be cut, and the one removable part is an empty 11-character heading
-  (`claims/TK2/REPORT.md`). Each reports in `ledger/claims/<ID>/`. Review each branch with a Sonnet-high
-  reviewer, run one full check per merge batch, push, fast-forward.
-- TT1N2 (`queue/tt/TT1N2.md`, sleight-arch's design): the guard still stops on the menu header; the relay, outside the engine,
-  continues the rest of the call only when the stop follows the call's own label click, the root is that menu, the native window
-  number and focus are unchanged, and there was no hardware input since the call was sent (HID idle). Needs a live check that
-  engine background clicks leave HID idle untouched.
+- Merged and pushed (`2ea5ee12`, full check exit 0, 5,751 tests, 0 fail), each after a Sonnet-high review whose findings were
+  fixed here with tests that failed first: TT2 (open_file returns the window, top-level `return`, save by mtime), TT3 (endpoint-only
+  non-text drags; its text path relies on `$.CFEqual`, probed read-only in 6 apps), TT4 and TV2R (filtered reads, now also bare
+  final values and console.log, which the engine never printed, so 58 of 78 recorded filtered reads lost their value). Also TS13 and the
+  Copy-then-Move skill line, TK3 (browser how-to deferred, safety lines kept first), TK1 (compact first acquisition behind
+  `SLEIGHT_COMPACT_ACQUISITION=1`), TT1N2 (same-call menu continuation on window identity and HID idle; its admission costs a
+  33 ms median helper call, p90 147, over 160 recorded calls), TV1 (a focus click before Cmd+S no longer hides an observed save),
+  TV3 (numbers checked against the acting app's window). TK2 and TV2 closed STALE with evidence in their claims.
+- Building (`codex exec`, logs in `ledger/lane-runs/`, briefs in `queue/tt/`): TV4 (pid 5301, `disableDiffing: true` stops
+  defeating compaction; 105 of 108 Office calls passed it), TV5 (pid 82048, guard stops say whether input was sent, and resolve a
+  label that is both a menu-bar item and in the window), BR1 (pid 77797, real-window gate race: turbo on a real profile plus lcu,
+  Cua, Peekaboo and Codex arms), BR3 (pid 91698, Chromium browser table, unqualified). Queued: BR2 (Safari and Firefox in the race
+  harness, after BR1). Review each branch with a Sonnet-high reviewer, one full check per merge batch, push, fast-forward.
+- Combined A/B, ready once the lanes merge: `OLD=d8e52789 NEW=private/pane/auto-mode NEW_ENV=SLEIGHT_COMPACT_ACQUISITION=1
+  ROUNDS=3 bench/ab-sleight.sh`, scored by `bench/ab-score.mjs`. 9 claim plus 11 held-out native tasks, about 1.7 to 2 hours, owner
+  away. Live checks owed then too: textedit-drag on TT3's path, and engine background clicks leaving HID idle untouched (TT1N2).
+- Owner decisions today (in LAWS and ROADMAP): browser tasks race only turbo, so the native claim suite is 9 tasks; the headline
+  "fastest plugin on macOS" needs the real-window browser race (BR1, BR2) before the launch post, not before the tag; Chromium
+  browsers installed for qualification (Brave 155.1.97.56, Edge 155.0.4283.45, Vivaldi 8.2.4133.84, Chrome Beta 157.0.8103.6, by
+  Homebrew cask, never launched). The studies found Firefox turbo isn't possible without a relaunch flag today; Safari's only fit is a
+  hybrid behind Develop > Allow JavaScript from Apple Events.
 - Not ours: PID 41395, a read-only `codex exec` started 2026-10-16 01:46 local. Leave it.
 
 **Where the claim stands** (scored, 2026-10-16 runs; expected seconds to a correct result, passes/runs). sleight completed 9/9
