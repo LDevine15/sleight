@@ -6,7 +6,7 @@ const tree = (order = ['Alpha', 'Beta', 'Gamma'], selected = 'Beta', title = 'Dr
   `Window: "${title}", App: Editor.\n0 standard window ${title}\n\t1 group Pages\n` +
   order.map((name, i) => `\t\t${i + 2} button ${name === selected ? 'Selected, ' : ''}${name}`).join('\n');
 const text = value => ({ type: 'text', text: value });
-const moved = /this click moved Alpha from position 1 to 3; restore the order before saving/;
+const moved = /this click moved Alpha from position 1 to 3; if that wasn't intended, restore the order before saving/;
 function session() {
   const c = createReadCompactor();
   c.process([text(tree())]);
@@ -82,11 +82,32 @@ test('a subsequent input or an unchanged next read expires delayed attribution',
 });
 
 test('full attribute-rich sibling lines report the label rather than help or range metadata', () => {
-  const before = tree(['Alpha', 'Beta']).replace('button Alpha', 'button Alpha, , Used range: A1 to D4, Description: Alpha, Help: Press to select')
-    .replace('button Selected, Beta', 'button Selected, Beta, , Blank sheet, Description: Beta, Help: Press to select');
-  const after = before.replace('2 button Alpha', '3 button Selected, Alpha').replace('3 button Selected, Beta', '2 button Beta')
-    .split('\n');
-  [after[3], after[4]] = [after[4], after[3]];
-  const { c, read } = session(); c.process([text(before)]);
-  assert.match(read(after.join('\n'), 'await app.click(2)'), /this click moved Alpha from position 1 to 2; restore/);
+  const rich = (order, selected) => tree(order, selected)
+    .replace(/button (Selected, )?Alpha$/m, 'button $1Alpha, , Used range: A1 to D4, Description: Alpha, Help: Press to select')
+    .replace(/button (Selected, )?Beta$/m, 'button $1Beta, , Blank sheet, Description: Beta, Help: Press to select');
+  const { c, read } = session(); c.process([text(rich(['Alpha', 'Beta', 'Gamma']))]);
+  assert.match(read(rich(['Beta', 'Gamma', 'Alpha'], 'Alpha'), 'await app.click(2)'), moved);
+});
+
+test('another sibling moving across the clicked one does not blame the click', () => {
+  const { read } = session();
+  const out = read(tree(['Gamma', 'Alpha', 'Beta']), 'await app.click(2)');
+  assert.doesNotMatch(out, /this click moved/);
+  assert.doesNotMatch(read(tree(['Gamma', 'Alpha', 'Beta'])), /this click moved/);
+});
+
+test('a two-way swap carries only the swap line', () => {
+  const { read } = session();
+  const out = read(tree(['Beta', 'Alpha', 'Gamma'], 'Alpha'), 'await app.click(2)');
+  assert.match(out, /clicking also swapped Alpha and Beta/);
+  assert.doesNotMatch(out, /this click moved/);
+});
+
+test('a move that adds an Edited marker to the title is still reported', () => {
+  for (const delayed of [false, true]) {
+    const { read } = session();
+    const edited = tree(['Beta', 'Gamma', 'Alpha'], 'Alpha', 'Draft — Edited');
+    const out = delayed ? (read(tree(), 'await app.click(2)'), read(edited)) : read(edited, 'await app.click(2)');
+    assert.match(out, moved);
+  }
 });

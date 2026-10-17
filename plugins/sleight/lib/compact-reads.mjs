@@ -489,17 +489,20 @@ function clickedSibling(action) {
     if (index >= 0) {
       const target = matches[0][index];
       const label = /(?:^|, )Description: (.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(target.body)?.[1] ?? target.description.label;
-      return { key, target: target.key, label, position: index + 1, window: documentKey(action.before.window) };
+      return { key, target: target.key, label, position: index + 1, order: matches[0].map(child => child.key),
+        window: swapDocumentKey(action.before.window) };
     }
   }
 }
 
+// Only the clicked item may have moved: another sibling jumping across it is not the click's doing.
 function clickMoveNote(click, observation) {
   const matches = clickLists(observation.lines).get(click.key);
   if (matches?.length !== 1) return;
-  const position = matches[0].findIndex(child => child.key === click.target) + 1;
-  if (position && position !== click.position)
-    return `sleight: this click moved ${click.label} from position ${click.position} to ${position}; restore the order before saving`;
+  const order = matches[0].map(child => child.key), position = order.indexOf(click.target) + 1;
+  const others = keys => JSON.stringify(keys.filter(key => key !== click.target));
+  if (position && position !== click.position && others(order) === others(click.order))
+    return `sleight: this click moved ${click.label} from position ${click.position} to ${position}; if that wasn't intended, restore the order before saving`;
 }
 
 // Reminders survive an edited title marker; input guards and document grants still use exact identity.
@@ -1167,16 +1170,16 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const safeClickRead = !failed && !stopped && !forceFull && !action?.overlap && observation &&
         !observation.invalid && !observation.incomplete && !observation.degraded && !observation.delta?.degraded;
       if (!safeClickRead && (action || observation || failed || stopped)) pendingClicks.clear();
+      let moved;
       if (safeClickRead) {
-        const key = documentKey(observation.window), pending = pendingClicks.get(key);
+        const key = swapDocumentKey(observation.window), pending = pendingClicks.get(key);
         // A save may expose a delayed move; other new input ends attribution to the earlier click.
         const click = action ? clickedSibling(action) ?? (action.save ? pending : undefined) : pending;
         if (action) pendingClicks.clear();
         else pendingClicks.delete(key);
         if (click?.window === key) {
-          const moved = clickMoveNote(click, observation);
-          if (moved) out.push({ type: 'text', text: moved });
-          else if (action && click !== pending) pendingClicks.set(key, click);
+          moved = clickMoveNote(click, observation);
+          if (!moved && action && click !== pending) pendingClicks.set(key, click);
         }
       }
       if (failed || stopped || action?.overlap || action && (!observation || observation.invalid)) pendingSwaps.clear();
@@ -1203,8 +1206,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         if (swap) {
           pendingSwaps.set(swapDocumentKey(observedInResult.window), swap);
           out.push({ type: 'text', text: siblingSwapNote(swap) });
+          moved = undefined; // the swap line already names the clicked item
         }
       }
+      if (moved) out.push({ type: 'text', text: moved });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;
       if (compactToolbars) out = dedupeTrees(out, false, !action && !failed && !stopped, sliced, !full && !failed && !stopped);
       if ((resultTrim || firstAcquisition || compactToolbars) && !full) for (let i = 0; i < out.length; i++) {
