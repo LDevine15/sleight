@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 06:56 UTC, overnight sitting: A/B and native claim run done)
+## Banner (2026-10-17 07:05 UTC, overnight sitting done, window released 07:03)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -56,27 +56,25 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    closed by itself once Excel quit. Office now quits through NSRunningApplication, then Escape and Cmd+Q posted to its pid, then
    its own Don't Save sheet or dialog.
 5. FC1's live check failed (07:00, textedit-two-windows): the second fixture's lease is "already-running" in the TextEdit the
-   first lease launched, so it took the File-menu path and refused on lost focus. FC1R is in a lane, and the live check reruns after it.
+   first lease launched, so it took the File-menu path and refused on lost focus. FC1R carries the run's launch receipt (pid,
+   bundle, process start) to later leases, and the live recheck passed 3/3 with no cleanup stop (merged, full check 5,893 exit 0).
+6. Firefox gate: the dry run plans 12 tasks (mobile and takeover not supported). The live round stopped before launch because the
+   world sleight arm isn't logged in (owner items). Checkout `~/Projects/sleight-wt/br2c-live`.
+7. Released the Puddle window at 07:03:52Z (fresh `/tmp/sleight-bench-done`), 2.5 hours early. The Terminal windows opened for
+   the Peekaboo arm are still open, with their commands finished.
 
-**The build is frozen** at `1933db78`: `ef833641` (every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each
-reviewed by a Sonnet-high agent) plus the Chess drag fix, FC1's bench fixture change and docs. The full check exited 0 on 5,879
+**The build is frozen** at `1933db78` for plugin code: `ef833641` plus the Chess drag fix. Since then only bench and docs
+changed: FC1, FC1R, the browser gate (BR1 to BR2C) and FC2/FC2R, all merged at `047fd344` with the full check exit 0 on 6,056
 tests. The CHANGELOG 1.3.0 section lists the fixes, and the A/B above is their first live measurement.
 
 **In flight.**
-- BR1 (`a069a845`), BR1F (`b838ec52`) and BR1G (`private/codex/br1g` `2dae81fb`) are done, reviewed and NOT merged: the harness that
-  races browsers in a real window. A Sonnet-high review of BR1F found a census that failed open on short `ps` names, a stray tab
-  aborting the reset, evidence lost on unproved cleanup, and no census after launch. BR1G fixed those four test-first (62 tests;
-  sleight-arch read the diff). The review also confirmed BR1's `codex-arm.mjs` change leaves native Codex runs as they were. Merge
-  br1g (it contains both) after the overnight sitting. The marker tab in `startKeys` is latent (no task uses keepMin).
-- BR2 (Safari and Firefox) went STALE: the LAWS line on its base read as turbo-only for every browser, and Safari's WebDriver
-  automation windows block the native input the other four arms need. LAWS now says the turbo-only rule covers the browsers turbo
-  drives, as ROADMAP 1b records. The Firefox gate is built (BR2A's draft, with BR2B's test run at 259 passing). A Sonnet-high review
-  found an owned Firefox never census-checked while alive, a quit helper that didn't check the parent pid, thin `ps` matching, an
-  inflated keep grade and a 5 s quit timeout, and BR2C fixed those (`private/codex/br2c` `61324606`, 128 tests). Not merged and
-  not run live. Safari needs a design decision first (owner items).
+- Merged after the sitting: the real-window browser gate (BR1, BR1F, BR1G for Chrome and Helium; BR2A, BR2B, BR2C for Firefox),
+  each round reviewed by a Sonnet-high agent with its findings fixed test-first, and FC2/FC2R (fixture cleanup that discards only
+  the run's own fixture document and quits only processes the run recorded). None is run live yet. BR2 went STALE for Safari, because
+  Safari's WebDriver automation windows block the native input the other arms need (owner items).
 - RW1 tells Claude when a click swapped two siblings (the Excel tab case). A review found it missed the engine's `Selected, `
-  prefix and fired on deliberate sorts. RW1R fixed both (`private/codex/rw1r` `a7d292d4`, 767 tests). Not merged; after the tag
-  unless the owner pulls it in, then an A/B on excel-edit.
+  prefix and fired on deliberate sorts. RW1R fixed both (`private/codex/rw1r` `a7d292d4`, 767 tests). Plugin code, so not
+  merged: after the tag unless the owner pulls it in, then an A/B on excel-edit.
 - Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
   --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
@@ -113,9 +111,12 @@ design request queued), the speed items in ROADMAP 2.4.
 **Video.** No film work until the claim is measured (owner). Storyboard `docs/design/video-storyboard.md`; LoC's draft paint round
 waits on LoC trunk. Message "loc arch" when the claim run is scored.
 
-**Owner items.** Safari isolation for its race is the owner's call. The one option found so far that native arms can drive
-is a dedicated Safari profile the owner makes once (Safari > Settings > Profiles), with Safari quit before each round as for Chrome. With the owner present: the turbo live check, claude-cu runs, EPV3-1's consent run,
-and each Chromium browser's qualification. Then the tag.
+**Owner items.** Read the claim table in step 4 and decide on publishing; Claude's own computer-use arm still has to run with you
+present. Log in the world sleight arm once (opens a browser login), so the real-window browser race can run:
+`env -i HOME="$HOME" USER="$USER" PATH="/opt/homebrew/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$HOME/.config/sleight-bench/world/arms/sleight/claude-config" "$HOME/.config/sleight-bench/world/arms/sleight/node_modules/.bin/claude" auth login`.
+Pick Safari's isolation for its race. The one option found so far that native arms can drive is a Safari profile you make
+once (Safari > Settings > Profiles), with Safari quit before each round as for Chrome. Then the turbo live check, EPV3-1's
+consent run, each Chromium browser's qualification, and the tag.
 
 **Machine notes from 2026-10-16.** Office was cleared by hand three times: arms leave Word or Excel behind dialogs (Find and Replace)
 and a force-quit leaves a "Recovered" fixture. Before an Office window, check that Word and Excel aren't running, and close any
