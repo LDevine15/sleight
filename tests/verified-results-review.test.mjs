@@ -151,6 +151,6 @@ test('unchanged and numbering-only reads add no redundant action line', () => {
 
 test('a failed action still warns about partial input without a routine acceptance claim', () => {
   const result = last(run(fixtures.edit.before, undefined, 'await app.pressKey("Delete")', { failed: true }));
-  assert.match(result, /^sleight: call failed \(partial input possible\)\.$/);
+  assert.match(result, /^sleight: call failed \(partial input possible\): engine returned no error text\.$/);
   assert.doesNotMatch(result, /sent|accepted|saved:/);
 });

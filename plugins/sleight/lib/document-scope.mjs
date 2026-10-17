@@ -35,6 +35,23 @@ export function elementLines(text) {
   return new Map(text.split('\n').map(line => /^(\t*)(\d+) (.*)$/.exec(line)).filter(Boolean).map(m => [Number(m[2]), m[3]]));
 }
 
+// Parent and ancestry come from indentation, never words in a control's label.
+function elementContexts(text) {
+  const stack = [], contexts = new Map();
+  for (const line of text.split('\n')) {
+    const m = /^(\t*)(\d+) (.*)$/.exec(line);
+    if (!m) { stack.length = 0; continue; }
+    const depth = m[1].length;
+    while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+    const parent = stack.at(-1), menu = /^menu bar(?:$|,| (?!item\b))/.test(m[3]) || !!parent?.menu;
+    const content = !menu && !!(parent?.content || parent?.window);
+    contexts.set(Number(m[2]), { parent: parent?.line ?? 'unknown (root)', menu, content });
+    const label = m[3].split(/(?:, | )(?=(?:Value|ID|Help|Secondary Actions):)/)[0];
+    stack.push({ depth, line: label, menu, content, window: /^(?:standard window|sheet|dialog)(?: |,|$)/.test(m[3]) });
+  }
+  return contexts;
+}
+
 // Whether an element line carries exactly this AX identifier, as `ID: Seven`
 // ending the line or followed by a comma. Identifiers can hold colons and
 // semicolons ("Mode: scientific; unitConversion: false").
@@ -183,6 +200,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.inputSent = false;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
     // What Claude was last shown for the numbers this call acts on (number -> line).
@@ -231,11 +249,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     // Element lines at this call's first action, which Claude's numbers refer to.
     state.callElements = new WeakMap();
     const elements = ${elementLines.toString()};
+    const contexts = ${elementContexts.toString()};
     const hasIdentifier = ${hasIdentifier.toString()};
     const hasLabel = ${hasLabel.toString()};
     const sameElement = ${sameElement.toString()};
     const wait = ${elementWait.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
+    const input = () => {
+      if (!state.inputSent && state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ input: true }) + '\\n');
+      state.inputSent = true;
+    };
     const checkLease = async () => {
       if (!state.lease) return;
       const fs = await import('node:fs/promises');
@@ -367,9 +390,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         };
         if (!['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction',
           'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
-        const act = async (...args) => {
+        const act = async (attempt, ...args) => {
           checkNative();
-          const actionIndex = state.actionIndex++;
           const firstAction = !state.acted;
           state.acted = true;
           state.actionVersion++;
@@ -377,7 +399,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (state.fileOnly && name === 'pressKey' && isCancel(name, args)) {
             state.activeApp = proxy;
             state.reads = new WeakMap();
-            return value.apply(raw, args);
+            input();
+            return await value.apply(raw, args);
           }
           const cached = state.reads.get(proxy);
           let text = cached?.text, modalOpened = cached?.modalOpened ?? false;
@@ -454,6 +477,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             observed = parse(text);
           }
           if (observed) state.callHeaders.set(proxy, observed);
+          attempt.text = text;
           // A stop carries this fresh read, header and tree, so the relay keeps the lease and Claude
           // can retry with current numbers. With only the header, each stop cost Claude a turn to
           // read again (2 of safari-form's 13, 2026-10-09). The relay's compactor shows it as a diff.
@@ -469,8 +493,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (byId) {
             // A read on a busy Mac can drop attributes: "button One" for "button Description: 1,
             // ID: One" (2026-10-09). With no match at all, one bare line named exactly that is it.
-            const found = findTarget(elements(text));
-            if (found.length !== 1) throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window. Use an element number or another ID from the window below.');
+            let found = findTarget(elements(text));
+            const ancestry = found.length > 1 ? contexts(text) : undefined;
+            if (found.length > 1 && (kind === 'label' || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
+              const content = found.filter(([number]) => ancestry.get(number)?.content);
+              if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
+            }
+            if (found.length !== 1) {
+              const candidates = found.map(([number]) => 'candidate ' + number + ': parent ' + ancestry.get(number).parent).join('; ');
+              throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ' Use an element number or another ID from the window below.');
+            }
             args = [found[0][0], ...args.slice(1)];
           }
           // An earlier action in this call can renumber the window (Calculator closes
@@ -570,8 +602,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           if (state.guarded && !cancel && !dialog && !panel && (!observed || ['title', 'app', 'url'].some(key => observed[key] !== state.expected?.[key]))) {
             // Without document scope or change review, the stop carries the window it saw, so the
             // relay can lease that window for Claude's retry (Chess retitles itself on each move).
-            if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: actionIndex,
-              prev: state.lastAction, root: /^\\d+ .*$/m.exec(text ?? '')?.[0] ?? null }) + '\\n');
+            attempt.windowStop = true;
             throw (state.adoptUrl ? stop : message => new Error(message))(state.reason + ' Observed ' + JSON.stringify(observed));
           }
           await checkLease();
@@ -607,6 +638,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           state.reads = new WeakMap();
           // No Shift settle after setValue here, as drag.js does after its own text writes: the
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
+          input();
           const result = await value.apply(raw, args);
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line } : null;
@@ -616,8 +648,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
         // engine's JavaScript session with every handle (3/3, 2026-10-07). Handle every action's
         // promise here, still returning it, so an await sees the error and nothing is unhandled.
         return (...args) => {
-          const pending = act(...args);
-          pending.catch(error => state.failures.push(name + ': ' + (error?.message ?? error)));
+          const attempt = { index: state.actionIndex++ };
+          const pending = act(attempt, ...args);
+          pending.catch(error => {
+            if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
+              prev: state.lastAction, root: /^\\d+ .*$/m.exec(attempt.text ?? '')?.[0] ?? null,
+              attempts: state.actionIndex, windowStop: !!attempt.windowStop,
+              error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
+            state.failures.push(name + ': ' + (error?.message ?? error));
+          });
           return pending;
         };
       } });

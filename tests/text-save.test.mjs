@@ -113,6 +113,21 @@ test('a failed write never posts Shift or sends the save', async t => {
   assert.equal(h.received.at(-1).id, 1); assert.equal(h.received.at(-1).result.isError, true);
 });
 
+test('a save-tail guard stop still reports possible input from the completed write prefix', async t => {
+  const h = fixture(t);
+  h.call(1, 'await app.setValue(2, "updated"); await app.pressKey("super+s");');
+  h.reply(h.sent.at(-1).id); await tick();
+  const tail = h.sent.at(-1);
+  assert.equal(tail.id, 1);
+  const update = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(tail.params.arguments.code)[1]);
+  const cause = 'Input lease stopped this action: the window changed.';
+  h.reply(1, update.guardStopMark + JSON.stringify({ index: 0, attempts: 1, error: cause, windowStop: false }) + '\n' + cause, true);
+  const output = JSON.stringify(h.received.at(-1));
+  assert.match(output, /call failed \(partial input possible\)/);
+  assert.doesNotMatch(output, /no input was sent|sleight:guard-stop:/);
+  assert.match(output, /window changed/);
+});
+
 test('a changed window after the write stops before Shift and save', async t => {
   const h = fixture(t);
   h.call(1, 'await app.setValue(2, "updated"); await app.pressKey("super+s");');
