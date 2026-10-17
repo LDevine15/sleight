@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 02:46 UTC, overnight sitting running: the A/B started 02:41)
+## Banner (2026-10-17 03:21 UTC, overnight sitting running: the A/B started 02:41)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -22,6 +22,12 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    claim tasks plus 11 tasks outside the claim suite, Office last, about 2 hours. Score with `bench/ab-score.mjs --old
    ~/Projects/sleight-wt/ab-old/bench/results --new ~/Projects/sleight-wt/ab-new/bench/results --since 2026-10-17T02-41`, reading
    only paired round totals and pass counts.
+   So far: round 1 old 18/20, new 16/20. Round 2 new ran 15 of 20 (12 passed) and stopped on "Owned document lost focus;
+   cleanup refused" after textedit-two-windows. A Sonnet-high trace triage of round 1 found one sleight regression: TT3's
+   endpoint check clipped by ancestor frames, and Chess's board reports frames that cut off its right half, so every drag there was
+   refused. Fixed uncommitted in this worktree (drag.js, 2 tests that failed first; a review found a text-field widening hole, fixed
+   with its own failing test). It commits after the A/B with a full check, before the claim run starts. excel-edit (a sheet tab
+   reordered after a double-click rename) and finder-rename (setValue on the name field, then over-claimed) read as model variance.
 3. Then a 15-minute triage gate: the new side's traces for lease stops, continuation receipts and open_file acquisitions. Go on only
    if new passes aren't below old and no new stop class appears.
 4. Then the all-arms claim run: `sitting-1017/claim.sh` (sleight, lcu, codex, cua; Word and Excel quit between arms), then peekaboo
@@ -42,7 +48,7 @@ is measured live yet. Fable's final review said "lock in the code as is; change 
 - BR2 (Safari and Firefox in that harness) went STALE for two reasons. The LAWS line on its base read as turbo-only for every browser.
   Safari's WebDriver automation windows block native input, which the other four arms need. LAWS now says the turbo-only
   rule covers the browsers turbo drives, as ROADMAP 1b records. BR2A (Firefox only, fresh temporary profile, relaunch per task, no
-  CDP) is running as a `codex exec` lane on `codex/br2a` from br1g. Safari needs a design decision first (see owner items).
+  CDP) was drafted on `codex/br2a` (`2dd27d16`) but BLOCKED: its tests waited 30 minutes on the sitting's live lock. Run its tests after the sitting. Safari needs a design decision first (see owner items).
 - Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
   --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
