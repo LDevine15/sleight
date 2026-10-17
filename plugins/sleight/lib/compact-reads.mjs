@@ -143,6 +143,7 @@ function actionKind(code, before) {
   const literal = args => /^\s*['"]([^'"\\]*)['"]\s*(?:,|$)/.exec(args)?.[1];
   const savePanel = /\b(?:sheet|dialog)\b.*\b(?:save-panel|save)\b/i.test(before?.root ?? '');
   let save = false, opens = false, navigates = false, deletes = false, saveCall, saveHandle;
+  const editableClicks = new Set();
   // A folder and name count only on the way to a save: an Open panel reached the same way named the
   // file it opened, and its URL would have read as a save.
   let folderHandle, folder, fileName, nameHandle, folderReady, saveOpened = savePanel;
@@ -170,9 +171,13 @@ function actionKind(code, before) {
       opens = true;
       const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1];
       const line = number && before?.lines.find(line => parse(line).num === Number(number));
-      isSave = (!!line && hasLabel(parse(line).key.trim(), 'Save')) ||
+      const target = line && parse(line).key.trim();
+      const editable = target && (/^text (?:entry area|area|field)\b/.test(target) ||
+        (!/^(?:[^(:]*button|menu item|row|link)\b/.test(target) && /^[^(,:]+\([^)]*\bsettable\b[^)]*\).*\bValue:/.test(target)));
+      if (editable) editableClicks.add(call);
+      isSave = (!!target && hasLabel(target, 'Save')) ||
         /^\s*(?:\{\s*(?:label|id|line)\s*:\s*)?['"](?:Save|button Save)['"]\s*\}?\s*$/.test(args);
-      navigates ||= !isSave;
+      navigates ||= !isSave && !editable;
     }
     if (call[1] === 'typeText' && folderHandle && receiver(call) === folderHandle) {
       const value = literal(args);
@@ -194,8 +199,9 @@ function actionKind(code, before) {
   const namedPath = folder?.startsWith('~/') ? join(homedir(), folder.slice(2)) : folder;
   const namedURL = save && folderHandle === saveHandle && nameHandle === saveHandle && baseName(fileName) &&
     namedPath && isAbsolute(namedPath) ? pathToFileURL(join(namedPath, fileName)).href : undefined;
-  return { save, opens, deletes, namedURL, mixedSave: save && (navigates || calls.at(-1) !== saveCall || otherRead || acquisitionAfterSave ||
-    calls.some(call => receiver(call) !== saveHandle)) };
+  const otherTarget = navigates || otherRead || acquisitionAfterSave || calls.some(call => receiver(call) !== saveHandle);
+  return { save, opens, deletes, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
+    fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
 
 // Compare state itself, so losing Help or renaming an unselected row cannot become a value change.
@@ -263,17 +269,17 @@ function resultNote(action, after, failed) {
   }
   let saved;
   if (action.save) {
-    const unavailable = failed ? 'call failed' : action.overlap ? 'overlapping calls' : action.mixedSave ? 'mixed save targets' : !after ? invalidRead ?? 'no read after input'
+    const fileWritten = sameDocument && before.window.app === after.window.app && before.window.title === after.window.title &&
+      action.fileTime !== undefined && (fileTime(after.window.url) ?? -Infinity) > (action.fileTime ?? -Infinity);
+    const unavailable = failed ? 'call failed' : action.overlap ? 'overlapping calls' : action.mixedSave && !(fileWritten && action.fileSaveSafe) ? 'mixed save targets' : !after ? invalidRead ?? 'no read after input'
       : !before ? 'no earlier read' : before.window.app !== after.window.app ? 'another app'
         : degradedRead ? 'degraded read' : incomplete ? 'incomplete read' : degraded ? 'degraded read' : undefined;
     const document = after && /^standard window\b/.test(after.root) && !/\b(?:save|open)-panel\b/.test(after.root);
     const editedTitleCleared = sameDocument && edited(before.window.title) && !edited(after.window.title) &&
       before.window.title.replace(/(?: — | - )Edited$/, '') === after.window.title && before.window.url === after.window.url;
     const named = action.namedURL && action.namedURL === after?.window.url;
-    // TextEdit in the background shows no edited state, so every Cmd+S on an open file read "not
-    // confirmed" in 7 of 7 textedit-edit runs, and 4 of them spent a turn checking. The relay is on
-    // the same Mac: the document's file changing during the call is the save (A/B win, 2026-10-11).
-    const fileWritten = sameDocument && action.fileTime !== undefined && (fileTime(after.window.url) ?? -Infinity) > (action.fileTime ?? -Infinity);
+    // A same-window file write can confirm a save around editable clicks, but never around
+    // navigation, another target, or input that edits again after saving.
     // The two ordinary steps of a Save panel get no saved field: the panel opening, and the panel
     // closing on a document with a file URL when the call named no path it could check. The header
     // shows both, and "not confirmed" there sent Claude to check again (h2h-3, 2026-10-10). A named

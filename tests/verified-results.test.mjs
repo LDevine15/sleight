@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { createReadCompactor, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
@@ -193,3 +196,59 @@ test('a save is observed when the document\'s file on disk changes during the ca
     assert.match(save(false), /saved: not confirmed \(no document save state change seen\)/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+function saveAfterClick(t, { role = 'text entry area (settable)', prefix = '', suffix = '', write = true,
+  after = doc => doc, failed = false, overlap = false, target = '1' } = {}) {
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-clicksave-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'a.txt'); writeFileSync(file, 'before'); utimesSync(file, 1000, 1000);
+  const doc = tree([`\t1 ${role} Editor, Value: before`, '\t2 button Save'], 'a.txt', pathToFileURL(file).href, 'Editor');
+  const c = createReadCompactor(); c.process([text(doc)]);
+  const action = c.beginAction(`${prefix}await app.click(${target}); await app.pressKey("super+a"); await app.paste("after"); await app.pressKey("super+s");${suffix}`);
+  action.overlap = overlap;
+  if (write) { writeFileSync(file, 'after'); utimesSync(file, 2000, 2000); }
+  return c.process([text(GUARD_MARK + after(doc).replace('Value: before', 'Value: after') + GUARD_END)], { action, failed })
+    .find(item => /^sleight: (?:UI|call failed|saved:)/.test(item.text))?.text;
+}
+
+for (const role of ['text entry area (settable)', 'text area', 'text field', 'static text (settable)']) {
+  test(`clicking ${role} before select-all, paste and save observes the same file's write`, t => {
+    assert.match(saveAfterClick(t, { role }), /saved: observed ".*a\.txt" \(its file on disk changed during this call\)/);
+  });
+}
+
+test('an editable click after save can retain mixedSave while the same file write is observed', t => {
+  assert.match(saveAfterClick(t, { suffix: 'await app.click(1)' }), /saved: observed .* \(its file on disk changed during this call\)/);
+});
+
+test('an editable click also permits existing modified-state evidence without a disk write', t => {
+  assert.match(run(tree(rows).replace('standard window a.txt,', 'standard window a.txt, Modified: true,'),
+    tree(rows).replace('standard window a.txt,', 'standard window a.txt, Modified: false,'),
+    'await app.click(1); await app.pressKey("super+s")'), /saved: observed .* \(modified state cleared; cause unknown\)/);
+});
+
+for (const [name, options] of [
+  ['a different URL', { after: doc => doc.replace(/, URL: .*/, ', URL: file:///tmp/other.txt') }],
+  ['a missing URL', { after: doc => doc.replace(/, URL: .*/, '') }],
+  ['a different title', { after: doc => doc.replace('Window: "a.txt"', 'Window: "b.txt"').replace('standard window a.txt,', 'standard window b.txt,') }],
+  ['a different app', { after: doc => doc.replace('App: Editor.', 'App: Other.') }],
+  ['no disk write', { write: false }],
+  ...['button', 'menu item', 'row', 'link', 'button (settable)', 'button Description: text area'].map(role => [role, { role }]),
+  ['an unknown click target', { target: '99' }],
+  ['a coordinate click', { target: '{ x: 10, y: 20 }' }],
+  ...['super+o', 'super+n', 'super+w', 'Return', 'Escape'].map(key => [key, { prefix: `await app.pressKey("${key}");` }]),
+  ['another handle read after save', { suffix: 'await other.getAXState()' }],
+  ['another acquisition after save', { suffix: 'await cua.getApp("Other")' }],
+  ['another handle input', { prefix: 'await other.click(1);' }],
+  ['typing after save', { suffix: 'await app.typeText("unsaved")' }],
+  ['a failed call', { failed: true }],
+  ['overlap', { overlap: true }],
+  ['an incomplete read', { after: doc => doc + '\n…(20)' }],
+  ['a degraded read', { after: doc => doc.replace(', Value: before', '') }],
+]) {
+  test(`click then save stays unconfirmed with ${name}`, t => {
+    const note = saveAfterClick(t, options);
+    assert.match(note, /saved: not confirmed/);
+    assert.doesNotMatch(note, /saved: observed/);
+  });
+}
