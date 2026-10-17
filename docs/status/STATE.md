@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 04:22 UTC, overnight sitting: A/B done, claim run running since 04:03)
+## Banner (2026-10-17 04:44 UTC, overnight sitting: A/B done, claim run running since 04:03)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -34,7 +34,11 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    `2026-10-17T04-03` in bench/claim-exclusions.json. Then 5 runs where sleight and an arm are within 20%. Score with
    `bench/claim-score.mjs` and word the claim by the LAWS rule. sleight's arm finished at 04:20: 9/9 tasks completed, 25/27 runs,
    expected seconds calculator-click 8, calculator-menu 11, textedit-save 10, textedit-drag 38, finder-move 41, preview-read 6,
-   textedit-calculator 47, word-edit 82, excel-edit 171 (1/3: the Excel tab reorder after a double-click rename, twice).
+   textedit-calculator 47, word-edit 82, excel-edit 171 (1/3: the Excel tab swap, twice). lcu finished at 04:41 with 8/9 tasks
+   (textedit-drag 0/3). At 04:42 the script's Apple-event quit of Excel raised a macOS prompt ("claude wants access to control
+   Microsoft Excel"). It was left unanswered and closed by itself once Excel quit (asked through `NSRunningApplication`, with
+   its own Don't Save sheet answered). The script now quits Office only that way. codex and cua restarted at 04:43, then peekaboo through
+   `open -a Terminal sitting-1017/peekaboo.command`.
 
 **The build is frozen** at `1933db78`: `ef833641` (every fix from 2026-10-16's studies and the 2026-10-17 trace studies, each
 reviewed by a Sonnet-high agent) plus the Chess drag fix, FC1's bench fixture change and docs. The full check exited 0 on 5,879
@@ -52,6 +56,9 @@ tests. The CHANGELOG 1.3.0 section lists the fixes, and the A/B above is their f
   found an owned Firefox never census-checked while alive, a quit helper that didn't check the parent pid, thin `ps` matching, an
   inflated keep grade and a 5 s quit timeout, and BR2C fixed those (`private/codex/br2c` `61324606`, 128 tests). Not merged and
   not run live. Safari needs a design decision first (owner items).
+- RW1 tells Claude when a click swapped two siblings (the Excel tab case). A review found it missed the engine's `Selected, `
+  prefix and fired on deliberate sorts. RW1R fixed both (`private/codex/rw1r` `a7d292d4`, 767 tests). Not merged; after the tag
+  unless the owner pulls it in, then an A/B on excel-edit.
 - Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
   --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
