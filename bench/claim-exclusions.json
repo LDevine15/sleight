@@ -1,31 +1,171 @@
 {
   "since": "2026-10-17T04-03",
   "sinceReason": "overnight claim run on the release build (ef833641 plus the Chess drag fix 1933db78); earlier runs measured older builds",
-  "arms": ["sleight", "lcu", "codex", "cua", "peekaboo", "claude-cu"],
-  "tasks": ["calculator-click", "calculator-menu", "textedit-save", "textedit-drag", "finder-move", "preview-read", "textedit-calculator", "word-edit", "excel-edit"],
+  "arms": [
+    "sleight",
+    "lcu",
+    "codex",
+    "cua",
+    "peekaboo",
+    "claude-cu"
+  ],
+  "tasks": [
+    "calculator-click",
+    "calculator-menu",
+    "textedit-save",
+    "textedit-drag",
+    "finder-move",
+    "preview-read",
+    "textedit-calculator",
+    "word-edit",
+    "excel-edit"
+  ],
   "reasons": [
-    { "match": "setup failed|readiness unconfirmed|AX fixture read failed", "why": "fixture setup failed before the model ran (harness or a stuck app from an earlier run)" },
-    { "match": "permission prompt", "why": "a macOS permission prompt was on screen" }
+    {
+      "match": "setup failed|readiness unconfirmed|AX fixture read failed",
+      "why": "fixture setup failed before the model ran (harness or a stuck app from an earlier run)"
+    },
+    {
+      "match": "permission prompt",
+      "why": "a macOS permission prompt was on screen"
+    },
+    {
+      "match": "unsupported computer-use approval card|computer-use approval grant is outside the task allowlist|run interrupted",
+      "why": "claude-cu harness stopped before or during the approval card (its parser and hooks were fixed during the 2026-10-17 run); not a result of Claude's computer use"
+    }
   ],
   "files": [
-    { "prefix": "2026-10-16T16-02", "why": "codex window loaded by Puddle tests and stopped on a TextEdit hang" },
-    { "prefix": "2026-10-16T16-14", "why": "codex retry under four of Puddle's spinning processes" },
-    { "prefix": "2026-10-16T17-43", "arm": "lcu", "why": "lcu arm before its PreToolUse hooks were loaded (c37d3fcf)" },
-    { "prefix": "2026-10-17T05-07", "arm": "cua", "why": "cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full" },
-    { "prefix": "2026-10-17T04-03", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
-    { "prefix": "2026-10-17T06-41", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
-    { "prefix": "2026-10-17T06-42", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
-    { "prefix": "2026-10-17T06-45", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
-    { "prefix": "2026-10-17T06-46", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
-    { "prefix": "2026-10-17T10-25", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
-    { "prefix": "2026-10-17T10-44", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
-    { "prefix": "2026-10-17T10-48", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
-    { "prefix": "2026-10-17T10-49", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
-    { "prefix": "2026-10-17T10-51", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" }
+    {
+      "prefix": "2026-10-16T16-02",
+      "why": "codex window loaded by Puddle tests and stopped on a TextEdit hang"
+    },
+    {
+      "prefix": "2026-10-16T16-14",
+      "why": "codex retry under four of Puddle's spinning processes"
+    },
+    {
+      "prefix": "2026-10-16T17-43",
+      "arm": "lcu",
+      "why": "lcu arm before its PreToolUse hooks were loaded (c37d3fcf)"
+    },
+    {
+      "prefix": "2026-10-17T05-07",
+      "arm": "cua",
+      "why": "cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full"
+    },
+    {
+      "prefix": "2026-10-17T04-03",
+      "arm": "sleight",
+      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
+    },
+    {
+      "prefix": "2026-10-17T06-41",
+      "arm": "sleight",
+      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
+    },
+    {
+      "prefix": "2026-10-17T06-42",
+      "arm": "sleight",
+      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
+    },
+    {
+      "prefix": "2026-10-17T06-45",
+      "arm": "sleight",
+      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
+    },
+    {
+      "prefix": "2026-10-17T06-46",
+      "arm": "sleight",
+      "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)"
+    },
+    {
+      "prefix": "2026-10-17T10-25",
+      "arm": "sleight",
+      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
+    },
+    {
+      "prefix": "2026-10-17T10-44",
+      "arm": "sleight",
+      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
+    },
+    {
+      "prefix": "2026-10-17T10-48",
+      "arm": "sleight",
+      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
+    },
+    {
+      "prefix": "2026-10-17T10-49",
+      "arm": "sleight",
+      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
+    },
+    {
+      "prefix": "2026-10-17T10-51",
+      "arm": "sleight",
+      "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build"
+    },
+    {
+      "prefix": "2026-10-17T14",
+      "arm": "sleight",
+      "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
+    },
+    {
+      "prefix": "2026-10-17T15",
+      "arm": "sleight",
+      "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
+    },
+    {
+      "prefix": "2026-10-17T16",
+      "arm": "sleight",
+      "why": "sleight experiment runs on 2026-10-17 afternoon (per-flag Office runs, window-drag on the WD1 grader), not claim passes; the claim's sleight rows are the 11:53 rerun until the final claim run"
+    }
   ],
   "windows": [
-    { "tasks": ["textedit-drag"], "before": "2026-10-16T20-12", "why": "a stale full-screen screencaptureui overlay covered every drag target" },
-    { "tasks": ["word-edit", "excel-edit"], "before": "2026-10-16T21-40", "why": "Excel's recovery prompt and Word's recovered fixture, before Office was cleared" },
-    { "tasks": ["excel-edit"], "arm": "sleight", "before": "2026-10-17T10-51", "why": "sleight build whose swap note a ribbon 'Sort & Filter' suppressed (fixed in 5a6ba6c0); excel-edit rerun 5 times on the fixed build" }
+    {
+      "tasks": [
+        "textedit-drag"
+      ],
+      "before": "2026-10-16T20-12",
+      "why": "a stale full-screen screencaptureui overlay covered every drag target"
+    },
+    {
+      "tasks": [
+        "word-edit",
+        "excel-edit"
+      ],
+      "before": "2026-10-16T21-40",
+      "why": "Excel's recovery prompt and Word's recovered fixture, before Office was cleared"
+    },
+    {
+      "tasks": [
+        "excel-edit"
+      ],
+      "arm": "sleight",
+      "before": "2026-10-17T10-51",
+      "why": "sleight build whose swap note a ribbon 'Sort & Filter' suppressed (fixed in 5a6ba6c0); excel-edit rerun 5 times on the fixed build"
+    },
+    {
+      "tasks": [
+        "calculator-click",
+        "calculator-menu",
+        "textedit-save",
+        "textedit-drag",
+        "finder-move",
+        "preview-read",
+        "textedit-calculator",
+        "word-edit",
+        "excel-edit"
+      ],
+      "arm": "claude-cu",
+      "before": "2026-10-17T15-51-43",
+      "why": "claude-cu harness development runs before its first full claim pass (tool search, card parser, hooks)"
+    },
+    {
+      "tasks": [
+        "textedit-calculator"
+      ],
+      "arm": "claude-cu",
+      "before": "2026-10-17T16-01-55",
+      "why": "the task gave the claude-cu arm no clipboard grant, so the hook denied its request_access (fixed in a4692c75)"
+    }
   ]
 }
