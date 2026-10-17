@@ -342,6 +342,10 @@ native reference, and oversized first results defer the browser reference while 
 - The engine keeps two keyboard event taps ("ChatGPT Computer Use") from its first key action until
   its process exits. Measured 2026-10-10 on engine 26.1007.21159 with Calculator: a turn end didn't
   remove them within 30 s, with or without `js_reset`.
+- A tree Claude prints with `.slice` becomes the window's baseline, so the next re-acquisition
+  lists the cut-off lines as added: 2,800 characters in the third call of the 2026-10-17 Excel replay.
+  A re-acquisition with changes keeps its diff beside the call's own diff, two views of one window.
+  Whether Haiku reads again after "no change" in an acquisition is unmeasured.
 
 ## Specific apps
 

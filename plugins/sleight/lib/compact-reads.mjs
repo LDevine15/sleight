@@ -601,17 +601,53 @@ export function hasFullTree(text) {
 // A split acquisition's tree, left out when the rest of its call returns a full tree of the same app:
 // that later tree is newer, and in 74 of 150 results (2026-10-11) the acquisition's tree came first,
 // 370,328 of 1,620,273 characters Claude read. Text before the tree (the engine's docs) stays.
-export function dropAcquisitionTree(head, rest) {
+// With SLEIGHT_COMPACT_REACQUIRE=0 (reacquire false) this is the rule as it was before compacted
+// re-acquisitions, for the A/B baseline. Otherwise a whole tree is numbered 0, 1, 2… without a gap,
+// which a filtered or folded print is not. Code that slices its output can print a whole tree's first
+// part, so there a tree counts only when the engine's "The focused UI element" or "Selected:" footer
+// follows it. A compacted re-acquisition that found no change also goes when the call's own diff or
+// "no change" for that window follows: that diff was taken against the same lines. A full head stays
+// then (the diff is against it), and so does a head diff (its changes are in no later view).
+export function dropAcquisitionTree(head, rest, code, reacquire = true) {
   const later = (rest ?? []).filter(c => c?.type === 'text').map(c => c.text).join('\n');
-  const laterWindow = hasFullTree(later) && windowFromText(later.slice(later.search(/^Window: /m)));
-  if (!laterWindow) return head;
-  return head.flatMap(item => {
+  if (!reacquire) {
+    const laterWindow = hasFullTree(later) && windowFromText(later.slice(later.search(/^Window: /m)));
+    if (!laterWindow) return head;
+    return head.flatMap(item => {
+      if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+      const at = item.text.search(/^Window: /m);
+      if (at < 0 || documentKey(windowFromText(item.text.slice(at)) ?? {}) !== documentKey(laterWindow)) return [item];
+      const kept = item.text.slice(0, at).replace(/\n+$/, '');
+      return kept ? [{ ...item, text: kept }] : [];
+    });
+  }
+  const sliced = typeof code === 'string' && /\.\s*(?:slice|substring|substr)\s*\(/.test(maskCode(code));
+  const views = windowViews(later);
+  if (!views.length) return head;
+  const out = head.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
     const at = item.text.search(/^Window: /m);
-    // Only the same window's tree: an acquisition of another window is the only view Claude has of it.
-    if (at < 0 || documentKey(windowFromText(item.text.slice(at)) ?? {}) !== documentKey(laterWindow)) return [item];
+    const window = at >= 0 && windowFromText(item.text.slice(at));
+    if (!window) return [item];
+    // Only the same window's view: an acquisition of another window is the only view Claude has of it.
+    const same = views.filter(view => documentKey(view.window) === documentKey(window));
+    const unchanged = /^Window: [^\n]*\n0 [^\n]*\nsleight: no change since the last full tree you saw for this window\.\s*$/.test(item.text.slice(at));
+    if (!same.some(view => view.full && (view.footer || !sliced)) && !(unchanged && same.some(view => view.compact))) return [item];
     const kept = item.text.slice(0, at).replace(/\n+$/, '');
     return kept ? [{ ...item, text: kept }] : [];
+  });
+  return out.length === head.length && out.every((item, i) => item === head[i]) ? head : out;
+}
+
+function windowViews(text) {
+  return [...text.matchAll(/^Window: [^\n]*\n/gm)].flatMap(match => {
+    const body = text.slice(match.index + match[0].length).split('\n');
+    const window = /^0 /.test(body[0] ?? '') && windowFromText(match[0] + body[0]);
+    if (!window) return [];
+    const end = body.findIndex((line, i) => i > 0 && /^(?:Window: |Selected:|The focused UI element )/.test(line));
+    const numbers = (end < 0 ? body : body.slice(0, end)).map(line => ELEMENT.exec(line)?.[2]).filter(n => n !== undefined);
+    return [{ window, compact: /^sleight: (?:lines changed|no change since)/.test(body[1] ?? ''),
+      full: numbers.length > 1 && numbers.every((n, i) => n === String(i)), footer: end >= 0 && !/^Window: /.test(body[end]) }];
   });
 }
 
@@ -901,6 +937,7 @@ function dedupeTrees(content, copiesOnly = false, allowCopies = true, sliced = f
 
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false,
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
+  compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE !== '0',
   screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
   compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {} } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
@@ -1016,6 +1053,24 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     return text;
   }
 
+  // A re-acquisition of a window Claude already saw whole, compacted as a getAXState read would be.
+  // Haiku starts nearly every call with getApp, and each returned the same 6K-character tree again
+  // (excel-edit, 2026-10-17). Returns undefined to keep the tree whole: more than one header, an
+  // incomplete or degraded tree, a new window, or a window whose last tree came before a failure or
+  // an engine restart (entry.stale).
+  function compactReacquired(text) {
+    const starts = [...text.matchAll(/^Window: /gm)];
+    if (starts.length !== 1) return;
+    const at = starts[0].index, tree = text.slice(at).replace(/\n+$/, ''), window = windowFromText(tree);
+    const entry = window && seen.get(documentKey(window)), lines = tree.split('\n');
+    if (!entry || entry.stale || !entry.observation || entry.observation.incomplete || entry.observation.degraded) return;
+    if (ELEMENT.exec(lines[1] ?? '')?.[2] !== '0' || !/^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(parse(lines[1]).key) ||
+        /…\(\d+\)|sleight: (?:lines changed|no change since)/.test(tree)) return;
+    if (latest?.window.app === window.app && latest.window.title === window.title && latest.window.url && !window.url) return;
+    const sent = compact(tree, text.slice(0, at), undefined, true);
+    return sent === tree ? text : text.slice(0, at) + sent;
+  }
+
   // Remembers the last full tree in a stretch of output Claude sees: from the
   // last line that starts with a Window header to the end.
   function remember(text, action) {
@@ -1087,6 +1142,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const firstAcquisition = compactAcquisition && acquisition && !forceFull && !explicitFull && !action &&
         windowFromText(content.filter(item => item?.type === 'text').map(item => item.text).join('\n'));
       const priorWindows = firstAcquisition && new Set(seen.keys());
+      const reacquire = compactReacquire && acquisition && !forceFull && !explicitFull && !failed && !stopped && !action && !filtered;
       if (filtered && (failed || stopped || action?.overlap)) forceFull = true;
       const visible = filtered?.visible;
       // Only a call that took no input: an action's result needs its tree diff and UI-change note.
@@ -1108,7 +1164,9 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       let out = content.flatMap(item => {
         if (item?.type === 'text' && /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? '')) failed = true;
         if (item?.type !== 'text' || typeof item.text !== 'string' || (!item.text.includes(GUARD_MARK) && !item.text.includes(GUARD_OMIT_MARK))) {
-          if (item?.type === 'text' && typeof item.text === 'string') remember(item.text, forceFull ? undefined : action);
+          const reacquired = reacquire && item?.type === 'text' && typeof item.text === 'string' ? compactReacquired(item.text) : undefined;
+          if (reacquired !== undefined && reacquired !== item.text) return { ...item, text: reacquired };
+          if (reacquired === undefined && item?.type === 'text' && typeof item.text === 'string') remember(item.text, forceFull ? undefined : action);
           if ((action || compactToolbars) && hasFullTree(item.text)) {
             const at = item.text.lastIndexOf('Window: ');
             shownTrees.add(item.text.slice(at).replace(/\n+$/, ''));
@@ -1254,6 +1312,13 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         screenshotHints.add(screenshotKey);
         out.push({ type: 'text', text: 'sleight: the document area exposes no text values. Read the window with `nodeRepl.emitImage(await app.getScreenshot())`.' });
       }
+      // After a failure, a stop or a user change, the next acquisition of any window is whole again.
+      // Only the notices themselves: the rules shown with the engine docs also say "the user changed
+      // the app", and "this call acted on" names a window an action opened.
+      if (failed || content.some(item => item?.type === 'text' && typeof item.text === 'string' &&
+          /an action in this call failed|JavaScript session restarted|JS restarted|sleight: the user (?:changed|switched)|(?:Input lease|Document scope|Change review)\b[^\n]*?\bstopped|Selected window changed|outcome (?:is )?unconfirmed/.test(item.text))) {
+        for (const entry of seen.values()) entry.stale = true;
+      }
       return trimBrowserResults(out, code);
     },
     beginAction(code) {
@@ -1323,6 +1388,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       return !missing && remapped.length ? { code: out, remapped } : undefined;
     },
     // Result attribution resets independently of the element history used by the guard.
-    reset() { latest = observedInResult = undefined; },
+    // An engine restart or js_reset also makes each window's next acquisition whole.
+    reset() { latest = observedInResult = undefined; for (const entry of seen.values()) entry.stale = true; },
   };
 }
