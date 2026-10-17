@@ -92,6 +92,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Anything that shows windows, takes focus or moves the pointer runs only after the owner says they're away, or headless.
 - Lanes and benchmark arms run with a throwaway Claude config, so they never put a keychain prompt on the owner's screen, and
   sleight-arch never answers macOS permission prompts for the owner.
+- Scripts never send Apple events to an app this Mac hasn't granted Automation for (Excel raised a prompt on 2026-10-17). Fixture
+  apps quit through NSRunningApplication and their own Don't Save sheet, answered through System Events.
 - Apps are approved without the owner only through the benchmark's own allowlist.
   For the claude-cu arm, the harness may press Claude Code's "Allow for this session" card in its own terminal only when every
   app the card names is on that allowlist (owner, 2026-10-17).
