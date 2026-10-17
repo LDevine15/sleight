@@ -9,7 +9,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Claude's own computer use, FowlBrowser, Codex, LCU and other reputable plugins. Haiku 5.5 at high effort drives the benchmark,
   with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort. Benchmark runs publish every
   result, failures included, with the model ids each arm actually ran.
-  Claim results run a fixed claim suite of 12 tasks, one per skill, 3 runs per arm, with 5 runs where sleight and an arm are
+  Browser tasks are tested only against turbo, never sleight's engine browser path (owner, 2026-10-17), so the native claim
+  suite is the 9 native tasks in bench/claim-tasks.txt.
+  Claim results run a fixed claim suite, one task per skill, 3 runs per arm, with 5 runs where sleight and an arm are
   within 20%. They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
   check. An arm's results stand until that arm, the engine or the model changes, so a new competitor or a sleight fix round
   reruns only that arm. A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
