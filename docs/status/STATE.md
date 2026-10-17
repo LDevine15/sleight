@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 21:50 UTC)
+## Banner (2026-10-17 21:50 UTC, five branches merged)
 
 Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
 no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. Build work runs as
@@ -16,29 +16,25 @@ runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 46
 10.5 against 10.4), preview-read (Peekaboo 4.4 against 4.6 median) and excel-edit (claude-cu 54 against 74). LAWS ties the
 headline's wording to the browser race, which isn't done.
 
-**Loss fixes and pending branches: all five reviewed (Sonnet high, 21:3x-21:45Z), each "merge after fixes" or "merge" with
-follow-ups, and an Opus fix lane runs on each branch now** (items in `~/Projects/sleight-wt/ledger/LEDGER.md`, last section;
-branches `worktree-agent-<id>`, backed up on `private` as `arch/lane-<id>`). Trial merges onto 56117980 conflict only in
-docs/known-problems.md.
-- agent-aa17fa2300d3ec00c (compact-reads, cb88e02b): "merge". Fixing: a `{ id, label }` locator could fall back to a bare
-  label-only line; actionKind and clickedSiblings didn't parse combined locators; the save-baseline URL test didn't discriminate;
-  the menu note was dropped on a different window's last tree. The menu-header lease change stays out (it broke 43 lease tests).
-- agent-a8f6b4dfe726ba8e4 (guard after Return, a69c1d55): "merge after fixes". Fixing: no age bound on observations, 100 ms
-  margin to 250 ms, secure-field refusal, a trace event, and default off (`SLEIGHT_GUARD_LIGHT_RETURN=1`) until a live
-  measurement of how late alerts appear after Return.
-- agent-a336b5cee71ace575 (rules-first, open_file, textless note, save skill line, 044434df): "merge after fixes". Fixing: the
-  open skip could hand Claude another window of the app (the match must be the main window); the skill line over-claimed
-  (now "as of the save", later edits need another save); the textless note fired on blank new documents; a failed lookup left
-  its approval prompt blocking later ones; the tree-header match was loose.
-- agent-aa3c3758d99912080 (turbo group-writable Chrome, bf60a6a2): "merge after fixes". Fixing: the proof read the file on disk,
-  not the running code (now `csops` status and the running cdhash against the verified file); the group wasn't checked (admin or
-  the user's own only); Beta, Dev and Canary got the relaxation; helpers and downgrades undocumented. Then a live turbo-on-Chrome
-  check.
-- agent-ac2392d909bf6200b (LW2 and LW3 dialog continuation, f3c15d05 and fd834163): "merge after one small fix". Fixing: an app
-  restart before the first process note kept the old process's windows; dialogs over URL-less windows need a certified identity;
-  a timing-dependent test; docs. The reviewer confirms the staleness bound blocks the Escape/super+h Word shape (speed, not
-  safety).
-Next: merge each branch after its fix lane reports (read the diff), one full check, then
+**Loss fixes and pending branches: all five reviewed (Sonnet high), fixed by Opus lanes and merged in this worktree
+(4254b08a, 2026-10-17 21:45Z)**. Full check 6513 pass, 0 fail, 353 skipped, prose lint clean:
+- compact-reads (cb88e02b, fixes 754927aa): save confirmed after a menu read, stale menu notes dropped only on the same
+  window's full tree, `{ id, label }` locators everywhere with no label-only fallback.
+- guard after Return (a69c1d55, fixes ba6f3c0c): the light check is off by default (`SLEIGHT_GUARD_LIGHT_RETURN=1`), with a
+  250 ms margin, an age bound, a secure-field refusal and a trace event. It stays off until a live measurement of how late
+  alerts appear after Return.
+- rules-first, open_file, textless note, save skill line (044434df, fixes 33c11a4f): the open skip needs the app's main
+  window, the result says so when the header shows another file, the textless note needs a non-empty file, and a failed
+  lookup withdraws its approval.
+- turbo group-writable Chrome (bf60a6a2, fixes 5d0182ea): `csops` live status and the running cdhash verified against the
+  Team ID requirement, admin or own group only, qualified browsers only. The live turbo-on-Chrome check is still to run.
+- dialog continuation LW2 to LW4 (f3c15d05, fd834163, LW4 fixes): a remembered window belongs to one process, and a dialog over a
+  URL-less window needs a certified identity. The staleness bound blocks the Escape and Cmd+H Word shape (speed, not safety).
+
+**Astra native finished (21:38Z)**: report `~/Projects/sleight-wt/ledger/astra-1017-native-report.md`, items AN1 to AN7 in
+the ledger. Excel needs reliability plus about 16 s per attempt for a 20% lead. The office lane measured background sheet
+switches by Option+Left/Right at 586 to 656 ms. Office and browser lanes are still running.
+Next: full check, then
 A/B the loss fixes on textedit-save, preview-read and excel-edit (5 rounds, old 369bc9a2 against new), and if they win, rerun
 sleight's whole claim arm (LAWS: a sleight fix round reruns all of sleight's tasks) plus the one top-up round.
 

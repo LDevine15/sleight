@@ -29,7 +29,7 @@ test('named native tasks acquire directly and action results avoid a confirming 
   const rules = skillRules();
   assert.match(rules, /When the task specifies an app, start with `let app = await cua\.getApp/);
   assert.match(rules, /`cua\.getState\(\)` only to find an app you can't name/);
-  assert.match(rules, /End on the action\. Its result already includes changed lines/);
+  assert.match(rules, /End on the action\. Its result includes changed lines/);
   assert.match(rules, /Don't read just to confirm them/);
   assert.match(rules, /For missing information, use `await app\.getAXState\(\)`/);
   assert.match(rules, /empty tree[\s\S]*user changed the app[\s\S]*header\s+changed, read again before retrying/);
