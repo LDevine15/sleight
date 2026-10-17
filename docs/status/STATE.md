@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 02:50 UTC, overnight sitting running: the A/B started 02:41)
+## Banner (2026-10-17 02:46 UTC, overnight sitting running: the A/B started 02:41)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -39,7 +39,11 @@ is measured live yet. Fable's final review said "lock in the code as is; change 
   aborting the reset, evidence lost on unproved cleanup, and no census after launch. BR1G fixed those four test-first (62 tests;
   sleight-arch read the diff). The review also confirmed BR1's `codex-arm.mjs` change leaves native Codex runs as they were. Merge
   br1g (it contains both) after the overnight sitting. The marker tab in `startKeys` is latent (no task uses keepMin).
-- Queued after BR1 merges: BR2, which adds Safari and Firefox to that harness (`queue/tt/BR2.md`). Lane launch command: `nohup codex exec -m
+- BR2 (Safari and Firefox in that harness) went STALE for two reasons. The LAWS line on its base read as turbo-only for every browser.
+  Safari's WebDriver automation windows block native input, which the other four arms need. LAWS now says the turbo-only
+  rule covers the browsers turbo drives, as ROADMAP 1b records. BR2A (Firefox only, fresh temporary profile, relaunch per task, no
+  CDP) is running as a `codex exec` lane on `codex/br2a` from br1g. Safari needs a design decision first (see owner items).
+- Lane launch command: `nohup codex exec -m
   gpt-6.1-sol -c model_reasoning_effort=high -c sandbox_workspace_write.network_access=true -C ~/Projects/sleight-wt
   --skip-git-repo-check --add-dir ~/Projects/sleight --add-dir ~/Library/Caches --add-dir /private/tmp --add-dir /tmp - <
   ledger/lane-runs/prompt-<id>.md`, with the prompt made from `prompt-tt4.md` by replacing TT4 and tt4.
@@ -75,7 +79,8 @@ design request queued), the speed items in ROADMAP 2.4.
 **Video.** No film work until the claim is measured (owner). Storyboard `docs/design/video-storyboard.md`; LoC's draft paint round
 waits on LoC trunk. Message "loc arch" when the claim run is scored.
 
-**Owner items.** Say go for the overnight sitting. With the owner present: the turbo live check, claude-cu runs, EPV3-1's consent run,
+**Owner items.** Safari isolation for its race is the owner's call. The one option found so far that native arms can drive
+is a dedicated Safari profile the owner makes once (Safari > Settings > Profiles), with Safari quit before each round as for Chrome. With the owner present: the turbo live check, claude-cu runs, EPV3-1's consent run,
 and each Chromium browser's qualification. Then the tag.
 
 **Machine notes from 2026-10-16.** Office was cleared by hand three times: arms leave Word or Excel behind dialogs (Find and Replace)

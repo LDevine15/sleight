@@ -10,7 +10,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort. Benchmark runs publish every
   result, failures included, with the model ids each arm actually ran.
   Browser tasks are tested only against turbo, never sleight's engine browser path (owner, 2026-10-17), so the native claim
-  suite is the 9 native tasks in bench/claim-tasks.txt.
+  suite is the 9 native tasks in bench/claim-tasks.txt. That covers the browsers turbo drives. In Safari and Firefox, which
+  turbo can't drive yet, sleight races on the engine path, and the headline's wording follows that race (owner, 2026-10-17,
+  ROADMAP 1b).
   The word "fastest" is used only if sleight has the lowest expected time on a majority of the 9 native tasks and the lowest total,
   with 5 runs on every task within 20%. Otherwise the wording is "completed every task, fastest on N of 9". The post says the suite
   is sleight's own, which tasks the skill was tuned on, and that competitors ran their defaults (owner, 2026-10-17, set before the
