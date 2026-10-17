@@ -155,6 +155,41 @@ test('open_file holds engine docs and drops empty text, keeping its handle, tree
   assert.ok(!h.traces.some(row => row.kind === 'engine-session-restarted'));
 });
 
+const textless = ['Window: "Book", App: Example.', '0 standard window Book, URL: file:///tmp/book.xlsx',
+  '\t1 layout area Content Area, Description: Workbook area', '\t\t2 button Insert sheet', '\t3 text field (settable) Value: A1'].join('\n');
+const textlessNote = /the document area exposes no text values\. Read the window with `nodeRepl\.emitImage\(await app\.getScreenshot\(\)\)`/;
+
+for (const rulesFirst of [undefined, false]) test(`open_file puts the skill ${rulesFirst === false ? 'after' : 'before'} the tree, rulesFirst=${rulesFirst}`, async t => {
+  const h = harness(t, rulesFirst === false ? { rulesFirst } : {}), first = await h.open(1, [text(docs + tree)]);
+  const texts = first.content.map(c => c.text);
+  const skill = texts.findIndex(value => value.includes(rules)), window = texts.findIndex(value => value.startsWith('Window: '));
+  assert.ok(skill >= 0 && window >= 0);
+  assert.equal(texts.filter(value => value.includes(rules)).length, 1);
+  if (rulesFirst === false) assert.ok(window < skill);
+  else {
+    assert.ok(skill < window);
+    // The tree is the last thing Claude reads, apart from the handle line.
+    assert.match(texts.at(-1), /^Window handle: /);
+    assert.equal(window, texts.length - 2);
+  }
+  assert.doesNotMatch(body(first), /Native API reference/);
+  // bench/timing.mjs pairs the window read with this call by the trace line.
+  const split = h.traces.find(row => row.kind === 'acquisition-split');
+  assert.equal(split?.detail.id, 1);
+  assert.match(String(split?.detail.acquisition), /^sleight-open-file-/);
+});
+
+for (const textlessHint of [undefined, false]) test(`a textless document gets one screenshot note after its tree, textlessHint=${textlessHint}`, async t => {
+  const h = harness(t, textlessHint === false ? { textlessHint } : {}), first = await h.open(1, [text(docs), text(textless)]);
+  const texts = first.content.map(c => c.text);
+  const note = texts.findIndex(value => textlessNote.test(value));
+  if (textlessHint === false) { assert.equal(note, -1); return; }
+  assert.ok(note > texts.findIndex(value => value.startsWith('Window: ')));
+  assert.ok(note > texts.findIndex(value => value.includes(rules)));
+  h.call(2, 'await app.getAXState()'); h.reply(2, [text(textless)]);
+  assert.doesNotMatch(body(result(h, 2)), textlessNote, 'once per window');
+});
+
 test('js first still gets engine docs and the skill immediately', t => {
   const h = harness(t); h.call(1, 'await cua.listApps()'); h.reply(1, [text(docs), text('4')]);
   assert.match(body(result(h, 1)), /Native API reference/);

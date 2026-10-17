@@ -409,6 +409,16 @@ function replaceLastImage(content, data) {
   return next;
 }
 
+// Inserts item before the first window tree, splitting engine docs off a text item that carries both.
+// Content without a tree gets it last.
+export function beforeFirstTree(content, item) {
+  const index = content.findIndex(c => c.type === 'text' && /^Window: /m.test(c.text ?? ''));
+  if (index < 0) return [...content, item];
+  const tree = content[index], at = tree.text.search(/^Window: /m);
+  const split = at > 0 ? [{ ...tree, text: tree.text.slice(0, at) }, item, { ...tree, text: tree.text.slice(at) }] : [item, tree];
+  return [...content.slice(0, index), ...split, ...content.slice(index + 1)];
+}
+
 function lines(stream, onLine) {
   let buffer = '';
   stream.setEncoding('utf8');
@@ -513,6 +523,16 @@ export function createRelay({
   // 156.3 s and 9/10 against 149.4 s and 10/10), with more Excel turns.
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   firstCallRules,
+  // The first-call rules go before the result's first window tree, so the last thing Claude reads is the
+  // answer-bearing tree. With 5 KB of rules after preview-read's 2.3 KB tree, Haiku thought on turn 2 in 5/5
+  // sleight runs against 2/5 for Peekaboo (2026-10-17). SLEIGHT_RULES_FIRST=0 keeps them last, for the A/B.
+  rulesFirst = process.env.SLEIGHT_RULES_FIRST !== '0',
+  // A read whose document area exposes no text values gets one note to screenshot it. Claude's first Excel
+  // read returned no cell values and a screenshot followed in 5/5 excel-edit runs, about 3 s a run (2026-10-17).
+  // The note costs about 30 tokens and no engine call; attaching a screenshot would cost an image and a
+  // serial capture on every such read.
+  // SLEIGHT_TEXTLESS_HINT=0 leaves the note out, for the A/B; SLEIGHT_SKILL=screenshot keeps it on.
+  textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0' || process.env.SLEIGHT_SKILL === 'screenshot',
   confirmPayments = 'requested',
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
@@ -563,7 +583,7 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
-  let compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, readHints });
+  let compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -716,7 +736,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error('Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       for (const state of helperStates.values()) clearTimeout(state.timer);
@@ -1851,6 +1871,11 @@ export function createRelay({
           return allowed;
         });
         prepared.current = current;
+        // The approval runs alongside the target probe (118 to 138 ms cold, 2026-10-17) instead of after it.
+        // That probe only finds the running app for the lease, and open_file proceeds when the app isn't
+        // running, so the approval is needed whatever it finds. A Stop still refuses before any open,
+        // and remembers no grant.
+        Promise.resolve(prepared.approval).catch(() => {});
       }
       // These tools reserve the whole app for their actions.
       const appTool = ['drag', 'hover', 'select_window', 'open_file'].includes(name);
@@ -1963,6 +1988,8 @@ export function createRelay({
           reportPreapprovals(response); toClient(response);
         });
         if (openShot) openShots.set(id, handle);
+        // bench/timing.mjs counts this read as the open_file call's engine time.
+        trace('acquisition-split', { id: msg.id, acquisition: id });
         callSeqs.set(id, callSeqs.get(msg.id));
         handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
           arguments: { code: `var ${handle} = await cua.getApp(${JSON.stringify(openedApp)})` } } });
@@ -3219,7 +3246,8 @@ export function createRelay({
         /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
       const rules = (docs || browserResult) && rulesFor(browserResult);
       if (rules) {
-        msg.result.content.push({ type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') });
+        const item = { type: 'text', text: rules + (docs ? '\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.' : '') };
+        msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;
     }

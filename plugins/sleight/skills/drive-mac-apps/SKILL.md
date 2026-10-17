@@ -7,8 +7,7 @@ description: Use when a task needs a web page or native macOS app operated throu
 # Driving Mac apps with sleight
 
 `mcp__plugin_sleight_computer__js` runs persistent JavaScript with `cua`. `js_reset` restarts it.
-Follow engine docs and app instructions. Prefer a CLI, API or dedicated tool when one covers
-the task.
+Follow engine docs and app instructions.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 
 Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes
@@ -44,6 +43,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
+- A confirmed save covers other sheets and pages. Don't recheck them.
 - If scrolling fails, use search or keyboard navigation.
 
 ## When to stop

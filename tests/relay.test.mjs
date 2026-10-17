@@ -1921,7 +1921,7 @@ test('noWindowsAvailable after a close shortcut is reported as the closed last w
 });
 
 test('sleight\'s rules follow the engine\'s first-call docs once per session, so Claude needs no skill turn', async () => {
-  const h = harness({ changeReview: false, firstCallRules: '# Driving Mac apps with sleight\nRULES' });
+  const h = harness({ changeReview: false, rulesFirst: false, firstCallRules: '# Driving Mac apps with sleight\nRULES' });
   const docs = '## Computer Use\n\nControl native apps.\n';
   const call = (id, code) => h.fromClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } });
   const reply = (id, text) => h.fromServer({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } });
@@ -1942,6 +1942,25 @@ test('sleight\'s rules follow the engine\'s first-call docs once per session, so
   call(5, 'let app = await cua.getApp("Calculator")'); await tick();
   reply(5, docs + 'Window: "Calculator", App: Calculator'); await tick();
   assert.doesNotMatch(JSON.stringify(h.toClient.find(m => m.id === 5)), /RULES/, 'Claude already has them');
+});
+
+test('by default the rules sit between the engine docs and the tree, so the tree comes last', async () => {
+  const h = harness({ changeReview: false, firstCallRules: '# Driving Mac apps with sleight\nRULES' });
+  const call = (id, code) => h.fromClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } });
+  const reply = (id, content) => h.fromServer({ jsonrpc: '2.0', id, result: { content } });
+  call(1, 'let app = await cua.getApp("Calculator")'); await tick();
+  reply(1, [{ type: 'text', text: '## Computer Use\n\nControl native apps.\nWindow: "Calculator", App: Calculator' }]); await tick();
+  const first = h.toClient.find(m => m.id === 1).result.content.map(c => c.text);
+  assert.equal(first.length, 3);
+  assert.match(first[0], /^## Computer Use\n/);
+  assert.doesNotMatch(first[0], /Window: /);
+  assert.match(first[1], /RULES[\s\S]*Action results include changed lines/);
+  assert.match(first[2], /^Window: "Calculator", App: Calculator/);
+  // A result with no tree gets them last, as before.
+  const h2 = harness({ changeReview: false, firstCallRules: 'RULES' });
+  h2.fromClient({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await cua.listApps()' } } }); await tick();
+  h2.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: '## Computer Use\n\nx' }, { type: 'text', text: '[]' }] } }); await tick();
+  assert.match(h2.toClient.find(m => m.id === 1).result.content.at(-1).text, /^RULES/);
 });
 
 test('without rules configured, the first-call docs pass unchanged', async () => {

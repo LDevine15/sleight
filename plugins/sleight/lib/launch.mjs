@@ -522,8 +522,12 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
         Promise.resolve().then(() => hasDocument(bundleId, path)),
         new Promise(resolve => { timer = setTimeout(() => resolve(false), 1000); }),
       ]) === true;
+      // A visible window for this exact file URL needs no `open -g` (150 to 200 ms, 2026-10-17), as the skill
+      // has Claude acquire an already-open document. The open still runs when the file changed during this
+      // call or since this session last opened it.
       const lastOpened = openedFiles?.get(key), latest = lstatSync(path);
-      present = present && Number.isFinite(lastOpened) && latest.isFile() && latest.mtimeMs <= lastOpened;
+      present = present && latest.isFile() && latest.mtimeMs === info.mtimeMs &&
+        (lastOpened === undefined || latest.mtimeMs <= lastOpened);
     } catch { present = false; }
     finally { clearTimeout(timer); }
   }
