@@ -177,6 +177,13 @@ async function main(argv) {
           if (bound.pid) { owned = { ...owned, pid: bound.pid, birth: bound.birth }; break; }
           assert.ok(Date.now() < deadline, 'Launch identity unavailable'); await sleep(100);
         }
+        // A just-launched Excel answers AXWindows with -25204 (cannot complete) for a while (17:17Z run).
+        for (const deadline = Date.now() + 30000; ;) {
+          try { await host('verify'); break; } catch (error) {
+            if (!/AX error -25204/.test(error.message) || Date.now() >= deadline) throw error;
+            await sleep(250);
+          }
+        }
         client = await probeClient(server, { relay: true, label: 'xl1', approve: probeApproval, record: () => {}, timeoutMs: 90000 });
         await call('var app = await cua.getApp("com.microsoft.Excel")');
         assert.deepEqual((await read()).map(tab => tab.name), ['Fixture']);
