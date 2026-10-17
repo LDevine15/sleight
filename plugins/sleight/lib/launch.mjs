@@ -238,7 +238,9 @@ export function paymentConfirmationSetting(env = process.env) {
 export function skillRules(path = join(LIB, '..', 'skills', 'drive-mac-apps', 'SKILL.md'), env = process.env) {
   if (env.SLEIGHT_PROMPT === 'lean') path = join(dirname(path instanceof URL ? fileURLToPath(path) : path), 'SKILL.lean.md');
   try {
-    const text = readFileSync(path, 'utf8').replace(/^---\n[\s\S]*?\n---\n+/, '').trim() || undefined;
+    let text = readFileSync(path, 'utf8').replace(/^---\n[\s\S]*?\n---\n+/, '').trim() || undefined;
+    if (env.SLEIGHT_SKILL === 'screenshot') text = text?.replace('## Browsers',
+      'When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.\n\n## Browsers');
     return env.SLEIGHT_LEAN_CALLS === '1' ? leanCallRules(text) : text;
   }
   catch { return undefined; }

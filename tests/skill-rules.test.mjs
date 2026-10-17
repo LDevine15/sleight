@@ -35,3 +35,16 @@ test('named native tasks acquire directly and action results avoid a confirming 
   assert.match(rules, /empty tree[\s\S]*user changed the app[\s\S]*header\s+changed, read again before retrying/);
   assert.ok(rules.split(/\s+/).length <= 930);
 });
+
+test('the screenshot skill variant adds a read for textless document panes and tables only when selected', () => {
+  for (const prompt of [undefined, 'lean']) {
+    const normal = skillRules(undefined, { SLEIGHT_PROMPT: prompt });
+    const selected = skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: 'screenshot' });
+    const guidance = 'When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
+    assert.ok(selected.includes(guidance));
+    assert.equal(selected.replace(guidance + '\n\n', ''), normal, 'all other guidance and safety stay identical');
+    for (const value of [undefined, 'none', 'default', 'SCREENSHOT']) {
+      assert.equal(skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: value }), normal);
+    }
+  }
+});
