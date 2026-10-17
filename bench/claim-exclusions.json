@@ -16,7 +16,12 @@
     { "prefix": "2026-10-17T06-41", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
     { "prefix": "2026-10-17T06-42", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
     { "prefix": "2026-10-17T06-45", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
-    { "prefix": "2026-10-17T06-46", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" }
+    { "prefix": "2026-10-17T06-46", "arm": "sleight", "why": "sleight build before the 2026-10-17 trace-study fixes (f45ac7e8); sleight's arm was rerun on the fixed build (owner, 2026-10-17)" },
+    { "prefix": "2026-10-17T10-25", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
+    { "prefix": "2026-10-17T10-44", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
+    { "prefix": "2026-10-17T10-48", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
+    { "prefix": "2026-10-17T10-49", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" },
+    { "prefix": "2026-10-17T10-51", "arm": "sleight", "why": "sleight build before the WM1, PW1, SH1 and JD1 fixes (596444ec); sleight's arm was rerun on the newer build" }
   ],
   "windows": [
     { "tasks": ["textedit-drag"], "before": "2026-10-16T20-12", "why": "a stale full-screen screencaptureui overlay covered every drag target" },

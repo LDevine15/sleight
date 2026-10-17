@@ -90,6 +90,10 @@ TODO: full release pass result.
 - When text typed after a click shows up in a different existing field than the one clicked, the result says where it went.
 - `SLEIGHT_WARM_ENGINE=1` (opt-in until an A/B) pays the engine's first-call start
   (about 0.73 s measured) before Claude's first call. `SLEIGHT_OPEN_FAST=1` (also opt-in) overlaps `open_file`'s setup steps.
+- The engine's `js` tool description reaches Claude whole. Claude Code cut it at 2,048 of its 3,511 characters, dropping the
+  app example and output rules. sleight now sends a 1,536-character version with the safety guidance first.
+- `SLEIGHT_OPEN_SHOT=1` (opt-in until an A/B) adds the window's screenshot to `open_file`'s first read. In replays Haiku stopped
+  re-checking a text-only result: second-turn thinking was 0 in 5 of 6 runs, and output fell from 478 to 312 tokens.
 - The skill tells Claude to acquire an app the task names directly, and to use the changed lines an
   action returns instead of reading again to confirm them. It moves files with Copy and then the
   menu's Move item, since Cut is often disabled for files.
