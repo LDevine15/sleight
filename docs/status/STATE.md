@@ -20,22 +20,19 @@ want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especi
   every real `request_access` (the schema's required `reason`) and the block record kept the account banner, both fixed. Needs its
   live check.
 
-**Running.** Puddle window w-live-1017 (HOLD 12:54:00Z, cap 100 min, auto-release ~14:34Z): `~/Projects/sleight-wt/sitting-1017b/run.sh`
-(`nohup`, pid in `run.pid`, log `run.log`). Its claude-cu live check ran first and failed (calculator-click, 300.7 s): the model saw no
-tools, because the task went out 0.61 s after start and the in-process computer-use server connects at ~1.1 s, and the harness
-waited for a RESULT line, which the world task prompts don't contain. Both fixed in `716a6109` (send after the debug log shows the server
-connected; end on the turn's last text), unit-tested only, needs a short window for the recheck. Then the A/B: OLD `2c687b2a` (the
-claim build) against NEW `e8467903` with every opt-in flag (WARM_ENGINE, OPEN_FAST, OPEN_SHOT, SKILL=screenshot, COMPACT_TOOLBARS,
-COMPACT_CONFIRMATIONS), 20 native tasks, 3 rounds, logs `ab.log` and `ab-<side>-r<n>.log`; the script closes this run's Finder
-fixture windows and touches `/tmp/sleight-bench-done` at the end. Score: `node bench/ab-score.mjs --old ~/Projects/sleight-wt/ab-old/bench/results
---new ~/Projects/sleight-wt/ab-new/bench/results --since 2026-10-17T12-59`.
-**Right after the window** (owner): trace textedit-window-drag's grader (item WD1, 0/7 since 2026-10-16, its method audit never
-`complete`); stop `cua-driver serve`; check `after-release.sh` quit Mail and Terminal (owner OK, and it never answers a prompt).
-Temp folders older than 6 h were removed on the owner's OK (304 folders, 14.9 GB, list in `~/Library/Logs/sleight/temp-removed-20261017.txt`).
-HY1 lane building pass-end window hygiene, a temp sweep at pass start and 7-day screenshot retention (owner: don't over-prune,
-don't leave a mess).
-**Unpushed on this branch** until a full check runs after the window: DG1 with DG1R and `29db25d5` (merge `f3d999a6`; drag by element
-number or selection; after a second review, replaying a selection or line-end drag requires `--allow-positions`), and `716a6109`.
+**Window w-live-1017 (12:54 to 14:20:25Z, released).** Results in `~/Projects/sleight-wt/sitting-1017b/`:
+- A/B (`ab-score.txt`): OLD `2c687b2a` against NEW `e8467903` with every opt-in flag, medians of passes. Claim tasks: total 265 s
+  old (24/25) against 298 s new (26/26). New is faster on calculator-click 8.7 to 6.7, preview-read 5.5 to 3.9, textedit-save 10.4 to
+  8.1, textedit-drag 37 to 33, and slower on word-edit 73 to 101 (19 to 23 turns), excel-edit 59 to 68 (prompt tokens 588k to
+  739k) and textedit-calculator 33 to 37. Held-out: 431 s old (19/25) against 368 s new (23/30). So the flags don't become defaults as one
+  bundle. Next: per-flag Office runs (SK1, RB1, CP1 alone on word-edit and excel-edit) to find the turn cost.
+- claude-cu recheck (`cu-live2.log`): the server connected at +0.74 s and the prompt went out after it, yet the request still had no
+  computer-use tools (the system prompt names none) and the model wrote a fake Bash call after 5 minutes. Item CU2 (study, then fix).
+- Afterwards, on the owner's OK, Mail and Terminal quit cleanly (no prompts) and `cua-driver serve` was stopped.
+**Running.** HY1B lane (hygiene). HY1 was blocked on a stale 2026-10-14 `claims/_lock-bench`, now removed. Puddle's quiet pairs
+run 14:45 to ~16:10Z under `/tmp/sleight-hold`, and its next window for sleight starts around 16:10 to 16:20Z with a cap of 75 min.
+In that window the full check runs first, then textedit-window-drag runs 3 times on the WD1 grader fix, and word-edit and
+excel-edit run with one flag at a time.
 sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed, scored to
 `~/Projects/sleight-wt/sitting-1017/claim-score-final.txt`, and Puddle's window w-flagab-1017 was released at 12:13:06Z.
 Its harness bugs: run.mjs crashed in the unlock because something else removed `/tmp/sleight-live.lock` mid-run (fixed in
