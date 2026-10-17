@@ -87,6 +87,36 @@ export function hasLabel(line, label) {
   return false;
 }
 
+// A label that only a disabled element carries: which element, and the enabled elements beside it.
+// "no element with label" for Finder's disabled Cut and Move Item Here cost four calls before Copy
+// (finder-move-2, 2026-10-17). A role-less menu item reads "(disabled) Cut".
+export function disabledLabelNote(text, label) {
+  const rows = [];
+  for (const line of String(text ?? '').split('\n')) {
+    const m = /^(\t*)(\d+) (.*)$/.exec(line);
+    rows.push(m ? { depth: m[1].length, number: Number(m[2]), body: m[3] } : undefined);
+  }
+  const disabled = body => /^(?:[a-z][a-z ]* )?\([^()]*\bdisabled\b[^()]*\)/.test(body);
+  const named = body => hasLabel(body, label) || hasLabel(body.replace(/^\([^()]*\) /, ''), label);
+  const hits = rows.map((row, at) => [row, at]).filter(([row]) => row && disabled(row.body) && named(row.body));
+  if (hits.length !== 1) return undefined;
+  const [hit, at] = hits[0], beside = [];
+  const name = body => body.replace(/^(?:[a-z][a-z ]* )?(?:\([^()]*\) )*/, '')
+    .split(/(?:^|, )(?:Value|ID|Help|Secondary Actions|URL):/)[0].replace(/^Description: /, '');
+  for (const step of [-1, 1]) {
+    for (let i = at + step; rows[i] && rows[i].depth >= hit.depth; i += step) {
+      if (rows[i].depth === hit.depth && !disabled(rows[i].body) && name(rows[i].body)) beside.push({ ...rows[i], distance: Math.abs(i - at) });
+    }
+  }
+  // The eight nearest, in tree order, each name cut to 40 characters.
+  const near = [...beside].sort((a, b) => a.distance - b.distance).slice(0, 8).sort((a, b) => a.number - b.number);
+  const cut = value => value.length > 40 ? value.slice(0, 37) + '...' : value;
+  const shown = near.map(row => row.number + ' ' + cut(name(row.body))).join(', ');
+  return JSON.stringify(label) + ' is element ' + hit.number + ', and it is disabled.' +
+    (shown ? ' Enabled beside it: ' + shown + (beside.length > near.length ? ' and ' + (beside.length - near.length) + ' more' : '') + '.' : '') +
+    ' A disabled item needs a selection or an earlier step, such as Copy before Paste or Move.';
+}
+
 // Whether two lines for one element number are the same element. A read on a busy Mac can drop an
 // element's attributes and keep only its role and a name: "button Two" for "button Description: 2,
 // ID: Two" (5 of 5 batched calls under load, 2026-10-09). A bare line matches a fuller one when the
@@ -198,6 +228,11 @@ export function guardedCode(code, window, reason = 'Document scope stopped this 
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
   // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed, and the call went on without it: ' + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
+  // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
+  if (guard.getAppFailures?.length) {
+    const caught = guard.getAppFailures.join('; ');
+    nodeRepl.write('sleight: ' + caught + (caught.endsWith('.') ? '' : '.') + '\\n');
+  }
   if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
     const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
@@ -239,7 +274,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     // such reads cost 27 s across the benchmark runs of 2026-10-09.
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
-    state.actionIndex = 0; state.completedActions = 0; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
     state.inputSent = false;
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
@@ -286,13 +321,14 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
       if (before.name === 'click' && before.modal === false && hasModal(text)) before.opened = current;
       return !!before.opened;
     };
-    state.failures = [];
+    state.failures = []; state.getAppFailures = [];
     // Element lines at this call's first action, which Claude's numbers refer to.
     state.callElements = new WeakMap();
     const elements = ${elementLines.toString()};
     const contexts = ${elementContexts.toString()};
     const hasIdentifier = ${hasIdentifier.toString()};
     const hasLabel = ${hasLabel.toString()};
+    const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const wait = ${elementWait.toString()};
@@ -478,6 +514,24 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (attempt, ...args) => {
           checkNative();
+          // The action as Claude wrote it, for a stop that lists what ran.
+          // Typed, pasted, set or selected text shows as its length only.
+          const textAt = ['typeText', 'paste'].includes(name) ? 0 : ['setValue', 'selectText'].includes(name) ? 1 : -1;
+          const shown = name + '(' + args.slice(0, 2).map((arg, at) => {
+            if (at === textAt && typeof arg === 'string') return '<' + arg.length + ' characters>';
+            let text; try { text = JSON.stringify(arg); } catch {}
+            text ??= String(arg);
+            return text.length > 40 ? text.slice(0, 37) + '...' : text;
+          }).join(', ') + ')';
+          // click({ ref: 45 }) reached the engine as "elementIndex must be an integer" (finder-move-2, 2026-10-17).
+          const locator = args[0];
+          if (['click', 'scroll', 'selectText', 'setValue', 'performSecondaryAction'].includes(name) && locator && typeof locator === 'object' &&
+              !Array.isArray(locator) && !['id', 'label', 'line'].some(key => typeof locator[key] === 'string')) {
+            const number = Object.values(locator).find(value => Number.isInteger(value));
+            throw new Error('sleight stopped before ' + shown + ': that object names no element. Pass an element number' +
+              (number === undefined ? '' : ', as in ' + name + '(' + number + ')') + ', an [x, y] point, a label or ID string, or { id: "<ID>" }, ' +
+              '{ label: "<label>" }, both together, or { line: "<whole line after the number>" }.');
+          }
           const firstAction = !state.acted;
           state.acted = true;
           state.actionVersion++;
@@ -486,8 +540,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             state.activeApp = proxy;
             state.reads = new WeakMap();
             input();
-            const result = await value.apply(raw, args);
+            let result;
+            try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
             state.completedActions++;
+            state.ran.push(shown);
             return result;
           }
           const cached = state.reads.get(proxy);
@@ -623,7 +679,14 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               // relay can lease that window for Claude's retry (Chess retitles itself on each move).
               attempt.windowStop = true;
               const reason = state.adoptUrl && observed && state.expected && observed.app !== state.expected.app
-                ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran; nothing was sent to the new app. The next action will lease the observed window. Resend only the remaining actions without select_window.'
+                // Which actions ran and which didn't, by name, and the call that switches without a stop:
+                // two app-switch stops cost textedit-calculator-2 two calls (2026-10-17).
+                ? 'Input lease stopped this action: app changed. ' + state.completedActions + ' earlier action' + (state.completedActions === 1 ? '' : 's') + ' in this call ran' +
+                  (state.ran.length ? ', in ' + state.expected.app + ': ' + state.ran.slice(0, 10).join(', ') + (state.ran.length > 10 ? ' and ' + (state.ran.length - 10) + ' more' : '') : '') +
+                  (state.unknown.length ? '; sent to ' + state.expected.app + ' with the result unknown: ' + state.unknown.slice(0, 10).join(', ') : '') +
+                  '. Not run: this ' + shown + ' and every action after it; nothing was sent to ' + observed.app + '. The lease moves to ' + observed.app +
+                  '. Send the actions that didn\\'t run in a new call that starts with let <handle> = await cua.getApp(' + JSON.stringify(observed.app) + ') and acts through that handle, without select_window.' +
+                  ' One call acts in one app: to switch apps, end the call and start the next with that app\\'s getApp.'
                 : state.reason;
               throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
             }
@@ -648,6 +711,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               const content = found.filter(([number]) => ancestry.get(number)?.content);
               if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
             }
+            const disabledNote = !found.length && (kind === 'label' || kind === 'label or ID') ? disabledLabelNote(text, target) : undefined;
+            if (disabledNote) throw stop('sleight stopped before ' + name + ': ' + disabledNote);
             if (found.length !== 1) {
               const candidates = found.map(([number]) => 'candidate ' + number + ': parent ' + ancestry.get(number).parent).join('; ');
               throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ' Use an element number or another ID from the window below.');
@@ -763,10 +828,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // No Shift settle after setValue here, as drag.js does after its own text writes: the
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
-          const result = await value.apply(raw, args);
+          // Input went out before the engine answered, so a rejected action may have acted.
+          let result;
+          try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
           previous.done = Date.now();
           if (editable) previous.completed = true;
           state.completedActions++;
+          state.ran.push(shown);
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }
             : name === 'pressKey' && typeof args[0] === 'string' ? { kind: 'key', value: args[0] }
@@ -793,7 +861,25 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
       state.proxies.add(proxy); state.wrapped.set(target, proxy); state.raws.set(proxy, target);
       return proxy;
     };
-    if (state.getApp) cua.getApp = async (...args) => { checkNative(); state.touches = (state.touches ?? 0) + 1; return state.activeApp = wrap(await state.getApp(...args)); };
+    // A failed acquisition the code caught itself still shows in the result: getApp({ windowId: 0 })
+    // inside .catch(() => null) left Claude reading the wrong window (finder-move-2, 2026-10-17).
+    if (state.getApp) cua.getApp = async (...args) => {
+      checkNative(); state.touches = (state.touches ?? 0) + 1;
+      const windowId = args[0] && typeof args[0] === 'object' ? args[0].windowId : undefined;
+      try {
+        if (windowId !== undefined && !(Number.isSafeInteger(windowId) && windowId > 0)) {
+          throw new Error('cua.getApp({ windowId: ' + JSON.stringify(windowId) + ' }) names no window: a window ID is a positive number. ' +
+            'For one window of an app, call select_window with the app and its exact title or file URL, then let <handle> = await cua.getApp("<app>").');
+        }
+        const handle = wrap(await state.getApp(...args));
+        state.getAppFailures = [];
+        return state.activeApp = handle;
+      } catch (error) {
+        let shown; try { shown = JSON.stringify(args[0]); } catch {}
+        state.getAppFailures?.push('getApp(' + (shown ?? String(args[0])) + ') failed (your code caught it): ' + (error?.message ?? error));
+        throw error;
+      }
+    };
     state.wrap = wrap;
   };`;
   return install + `

@@ -180,9 +180,11 @@ for (const selected of [false, true]) for (const earlier of [0, 1, 2]) {
     const output = JSON.stringify(result);
     assert.match(output, new RegExp(`${earlier} earlier action${earlier === 1 ? '' : 's'} in this call ran`));
     assert.match(output, /nothing was sent to (?:the new app|Other Editor)/i);
-    assert.match(output, /the next action will lease the observed window/i);
+    assert.match(output, /The lease moves to Other Editor\./);
     assert.doesNotMatch(output, /lease is now on the observed window/i);
-    assert.match(output, /resend only the remaining actions without select_window/i);
+    assert.match(output, /Not run: this click\(\\"Next\\"\) and every action after it/);
+    if (earlier) assert.match(output, new RegExp(`ran, in Fixture Editor: ${Array(earlier).fill('pressKey\\(\\\\"Super\\+C\\\\"\\)').join(', ')}\\.`));
+    assert.match(output, /Send the actions that didn't run in a new call that starts with let <handle> = await cua\.getApp\(\\"Other Editor\\"\) and acts through that handle, without select_window\./);
     const remaining = await h.call('await other.click("Next");');
     assert.notEqual(remaining.isError, true, JSON.stringify(remaining));
     assert.deepEqual(h.inputs.at(-1), { app: 'org.test.other', kind: 'click', value: 1 });

@@ -679,7 +679,8 @@ export function createRelay({
   let clipboard = newClipboard();
   const clipboardReplies = new Map();
   const clipboardResets = new Set();
-  const nativeCopies = new Set();
+  // Call ID -> whether its native copy included Cut.
+  const nativeCopies = new Map();
   const listRequests = new Set();
   const internalRequests = new Map();
   let tabsMayNeedCleanup = false;
@@ -2805,7 +2806,8 @@ export function createRelay({
         return;
       }
       if (name === 'js') {
-        if (!clipboard && typeof originalCode === 'string' && clipboardActions(originalCode).some(action => ['c', 'x'].includes(action))) nativeCopies.add(msg.id);
+        const copies = !clipboard && typeof originalCode === 'string' ? clipboardActions(originalCode) : [];
+        if (copies.includes('c') || copies.includes('x')) nativeCopies.set(msg.id, copies.includes('x'));
         const read = typeof originalCode === 'string' && isLeaseRead(originalCode);
         const key = lastWindow && (helperAliases.get(lastWindow.app.toLowerCase()) ?? lastWindow.app.toLowerCase());
         const swipeCode = !browser && !read ? chromeScrollCode(originalCode, lastWindowText,
@@ -3312,8 +3314,11 @@ export function createRelay({
       });
       return;
     }
+    const cut = nativeCopies.get(msg.id);
     if (msg.method === undefined && nativeCopies.delete(msg.id) && !msg.error && !msg.result?.isError) {
-      clipboardNotices(msg, ['Copy/Cut used the native clipboard. Its contents were not restored by sleight; a successful copy remains available to menu Paste, pbpaste and browser pastes.']);
+      // Finder ignores Cmd+X on a file, and the old line read as a cut that worked (finder-move-2, 2026-10-17).
+      clipboardNotices(msg, ['Copy/Cut used the native clipboard. Its contents were not restored by sleight; a successful copy remains available to menu Paste, pbpaste and browser pastes.' +
+        (cut ? ' sleight can\'t see whether Cut took effect: an app that disables Cut for the selection ignores the key, and its Edit menu shows Cut disabled. Copy works there.' : '')]);
     }
     if (msg.method === undefined && msg.id !== undefined && internalRequests.has(msg.id)) {
       internalRequests.get(msg.id)(msg);
