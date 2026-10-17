@@ -37,7 +37,15 @@ our own runs. Dates and engine versions are given where they matter.
   sleight counts the approval as declined and asks Claude Code to cancel its prompt (we haven't checked that Claude Code
   closes it). sleight's own panel stays up until answered, the answer grants nothing, and later approvals can show beside it.
 - A plain `window` root (a palette, Word's Styles) that its own button closes continues into the standard window it covered
-  once the native check shows it gone. That's intended.
+  once the native check shows it gone. That's intended. A popover root does the same; one without a title stops, since the
+  helper skips untitled windows and can't show it gone.
+- Of the 7 popover stops in the 2026-10-17 office study, 6 ran on the build without palette continuation and 1 (Escape, then
+  Cmd+H) was refused for HID input: the engine's own Escape after a click resets HID idle, so an Escape close rarely continues.
+  A click close doesn't need a key, so it should continue. Neither has run live.
+- The parent lease (the window under a dialog that closed between calls) hasn't run live, and fires only on the relay's
+  recovery re-acquisition after the lease dropped. A call whose first action finds the document while the lease still holds
+  the dialog stops as before. An untitled alert whose AXTitle is missing looks gone to the helper; then only the focus check
+  on the document and the tree's missing dialog stop input going in while it is still open.
 - Since `typeText` and `pressKey` can reset HID idle, a dialog-close continuation won't fire after keys sent after the
   document's last standard read. The Word Replace All run sent Escape and Cmd+H after that read.
 - Over a window without a URL, a dialog or sheet continues only when that window's native identity was certified at its

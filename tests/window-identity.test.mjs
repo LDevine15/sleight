@@ -74,6 +74,11 @@ test('a window without a title (Finder\'s desktop) is skipped instead of failing
   assert.equal(inspect({ ...target, title: null }, [11], 0, false, [], (app, windows) => { windows[0].missing = ['AXTitle']; }).matches, 0);
 });
 
+test('OT2: native identity reports the matched window\'s subrole for the parent lease', () => {
+  assert.equal(inspect(target, [11, 22], 1, false, [], (app, windows) => { windows[1].AXSubrole = 'AXStandardWindow'; }).windowSubrole, 'AXStandardWindow');
+  assert.equal(inspect(target, [11, 22]).windowSubrole, null);
+});
+
 test('native identity includes the HID system idle duration without requesting trust', () => {
   assert.equal(inspect(target, [11, 22]).hidIdleSeconds, 12.5);
 });

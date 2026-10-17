@@ -72,7 +72,7 @@ import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal } from './menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -527,6 +527,12 @@ export function createRelay({
   // A tab the call's own Cmd+T or Ctrl+T opened in the leased window carries the call on (menu-continuation.mjs
   // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
   tabContinuation = process.env.SLEIGHT_TAB_CONTINUATION !== '0',
+  // A palette, gallery, floating window or popover covers the standard window under it the way a dialog does
+  // (menu-continuation.mjs PALETTE_ROLES). SLEIGHT_POPOVER_CONTINUATION=0 records only dialogs and sheets, for the A/B.
+  popoverContinuation = process.env.SLEIGHT_POPOVER_CONTINUATION !== '0',
+  // The next call takes the covered window as its lease after the dialog closed between calls (parentLeaseRefusal).
+  // SLEIGHT_PARENT_LEASE=0 keeps the stale-lease refusal, for the A/B.
+  parentLease = process.env.SLEIGHT_PARENT_LEASE !== '0',
   // Milliseconds for the dialog continuation's HID-idle windows; tests inject one.
   clock = () => performance.now(),
   beginStop = () => {}, stopEngine, restartEngine, prepareEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
@@ -1278,6 +1284,7 @@ export function createRelay({
   let recoveryTarget, recoveryKnown = false; // recoveryKnown: the target is a bundle ID the engine confirmed
   let stateRead = false; // a getState read went to the engine this session, so its app ids are Claude's to use
   let lastConfirmedWindow; // the lease's last window with a confirmed bundle ID, kept when the lease drops
+  let lastShown = new Set(); // the standard windows the last observed result showed (shownStandardWindows), for the parent lease
   let selectedWindow;
   let selectionVerified = false;
   function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
@@ -1304,7 +1311,7 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
     standardWindows.clear(); appProcesses.clear(); processProbes.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
@@ -2360,8 +2367,12 @@ export function createRelay({
         saveBaseline = true; saveHandle = handle;
       }
     }
+    // The recovery re-acquisition after the lease dropped. When its window was a dialog or palette that has since closed,
+    // the window it covered may become the lease (parentLeaseRefusal), judged against what the last result showed.
+    let recovered = false;
+    const shown = lastShown;
     if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code)) {
-      acquire = `${constApp ? '' : 'let app = '}await ${recoveryTarget}`; rest = code; expected = lastConfirmedWindow;
+      acquire = `${constApp ? '' : 'let app = '}await ${recoveryTarget}`; rest = code; expected = lastConfirmedWindow; recovered = true;
     }
     if (!rest) return false;
     // Split even for the app the lease holds: the guard's setup refers to `app` before a `let app`
@@ -2378,30 +2389,62 @@ export function createRelay({
       const acquiredNumber = acquire.match(/cua\.getApp\(\s*\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}\s*\)/)?.[1];
       if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
           (!selectedWindow || !acquiredNumber || Number(acquiredNumber) === expected.windowNumber))) {
-        // The window changed: Claude acts on the tree above, so a compacted re-acquisition goes out whole.
-        if (raw) reply = { ...reply, result: { ...reply.result, content: compactor.process(raw, { forceFull: true }) } };
-        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
-          { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
+        const stale = () => {
+          // The window changed: Claude acts on the tree above, so a compacted re-acquisition goes out whole.
+          if (raw) reply = { ...reply, result: { ...reply.result, content: compactor.process(raw, { forceFull: true }) } };
+          toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
+            { type: 'text', text: `sleight: nothing from this call ran. ${expected.app}'s window changed since the last call (it was ${documentLabel(expected)}). Act on the window above.` }] } });
+        };
+        const parent = expected.parent;
+        if (!parentLease || !recovered || selectedWindow || !parent || !windowIdentity || documentMode || changeReview ||
+            !(leaseWindow?.appId === parent.appId && sameWindow(leaseWindow, parent))) {
+          if (parentLease && recovered && parent) trace('parent-lease-refused', { id: msg.id, reason: 'not-the-covered-window' });
+          stale(); return;
+        }
+        const target = leaseWindow, text = (raw ?? reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n');
+        const certified = parent.nativeIdentity?.windowNumber > 0 ? { windowNumber: parent.nativeIdentity.windowNumber, nativeIdentity: parent.nativeIdentity } : {};
+        const look = request => { let timer; return Promise.race([Promise.resolve().then(() => windowIdentity(request)),
+          new Promise(resolve => { timer = setTimeout(resolve, menuContinuationTimeoutMs); })]).catch(() => undefined).finally(() => clearTimeout(timer)); };
+        running.add(msg.id); callDetails.set(msg.id, 'parent lease check');
+        windowGone(windowIdentity, { appId: expected.appId, title: expected.title, url: expected.url }, menuContinuationTimeoutMs)
+          .then(async gone => ({ gone, observed: gone ? await look({ appId: parent.appId, title: parent.title, url: parent.url, ...certified, focus: true }) : undefined }))
+          .then(({ gone, observed }) => {
+            running.delete(msg.id); callDetails.delete(msg.id);
+            if (generation !== stopGeneration || closing || disposed) { leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return; }
+            const reason = leaseWindow !== target ? 'lease-moved'
+              : parentLeaseRefusal({ stale: expected, shown, reply: text, gone, observed, now: clock() });
+            if (reason) { trace('parent-lease-refused', { id: msg.id, reason }); stale(); return; }
+            noteProcess(observed);
+            // Pinned to the native window just observed: the rest's admission checks it again before anything is sent.
+            // The pin ends with this call (parentPin), so a later helper epoch doesn't refuse the document.
+            target.parentPin = { id: msg.id, nativeIdentity: target.nativeIdentity, identityRequired: target.identityRequired };
+            target.nativeIdentity = observed; target.identityRequired = true;
+            trace('parent-lease', { id: msg.id, over: parent.over });
+            proceed();
+          });
         return;
       }
-      // A metadata read must not replace the lease's native identity with the newly observed one.
-      // The action still checks the window and focus against the target from before this read.
-      if (saveBaseline && expected) {
-        leaseWindow = lastConfirmedWindow = expected;
-        if (handleBundles.has(saveHandle)) handleBundles.set(saveHandle, expected);
+      proceed();
+      function proceed() {
+        // A metadata read must not replace the lease's native identity with the newly observed one.
+        // The action still checks the window and focus against the target from before this read.
+        if (saveBaseline && expected) {
+          leaseWindow = lastConfirmedWindow = expected;
+          if (handleBundles.has(saveHandle)) handleBundles.set(saveHandle, expected);
+        }
+        // The rest's literal numbers name lines in the tree Claude had before this call. When the head shows
+        // a line inserted or removed at or below them, they shifted, and the head's own read makes every number
+        // look current to the stale check: click(58) meant for a row would land on a popup above it (LS1).
+        if (trees && compactor.numbersMoved(trees, reply.result?.content, Math.max(...numbers))) {
+          trace('acquisition-changed', { id: msg.id });
+          toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
+            { type: 'text', text: promptNotice('sleight: the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', prompt) }] } });
+          return;
+        }
+        splitHeads.set(msg.id, reply.result?.content ?? []); splitCodes.set(msg.id, rest);
+        const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };
+        if (!splitSave(next)) handleClient(next);
       }
-      // The rest's literal numbers name lines in the tree Claude had before this call. When the head shows
-      // a line inserted or removed at or below them, they shifted, and the head's own read makes every number
-      // look current to the stale check: click(58) meant for a row would land on a popup above it (LS1).
-      if (trees && compactor.numbersMoved(trees, reply.result?.content, Math.max(...numbers))) {
-        trace('acquisition-changed', { id: msg.id });
-        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...(reply.result?.content ?? []),
-          { type: 'text', text: promptNotice('sleight: the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', prompt) }] } });
-        return;
-      }
-      splitHeads.set(msg.id, reply.result?.content ?? []); splitCodes.set(msg.id, rest);
-      const next = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: rest } } };
-      if (!splitSave(next)) handleClient(next);
     });
     trace('acquisition-split', { id: msg.id, acquisition: prefixId });
     // The acquisition takes this call's place in the sequence and the actions the next, so the
@@ -2443,6 +2486,8 @@ export function createRelay({
       else remainder = tabRemainder(call.plan, taken.receipt, call.target, taken.content, call.before);
     }
     if (remainder?.dialog && !call.baseline) refuse('no-baseline');
+    // The helper skips windows without a title, so an untitled popover would look gone while still open.
+    if (remainder?.closeCheck && !call.target.title) { refuse('palette-untitled'); return false; }
     if (remainder?.tab && !call.baseline) refuseTab('no-baseline');
     // The tab's native check pins the window by its number, so a baseline without one can't continue.
     if (remainder?.tab && call.baseline && !(Number.isSafeInteger(call.baseline.windowNumber) && call.baseline.windowNumber > 0)) {
@@ -3580,6 +3625,7 @@ export function createRelay({
     if (inputLease && !automatic && !confirmedBrowser && msg.method === undefined && leaseCalls.get(msg.id)?.observe) {
       const call = leaseCalls.get(msg.id);
       const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+      lastShown = msg.error ? new Set() : shownStandardWindows(text);
       // A guard stop happens before its action and carries the header it just read.
       // A window-change stop carries the window it saw, and the lease moves to it. Leasing that
       // window still refuses if another session holds it.
@@ -3598,8 +3644,11 @@ export function createRelay({
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
       if (leaseWindow?.appId) lastConfirmedWindow = leaseWindow;
       if (leaseWindow && !call.read && sameWindow(previous, window)) {
+        // The parent lease's pin lasts one call; what the window had before it carries on.
+        const kept = previous.parentPin?.id === msg.id ? { ...previous, nativeIdentity: previous.parentPin.nativeIdentity,
+          identityRequired: previous.parentPin.identityRequired } : previous;
         for (const key of ['nativeCandidates', 'nativeIdentity', 'identityRequired', 'identityError']) {
-          if (previous[key] !== undefined) leaseWindow[key] = previous[key];
+          if (kept[key] !== undefined) leaseWindow[key] = kept[key];
         }
       }
       if (leaseWindow && call.nativeCandidates !== undefined) leaseWindow.nativeCandidates = call.nativeCandidates;
@@ -3630,7 +3679,8 @@ export function createRelay({
       // A gallery or panel with a plain window root (Word's Styles, which Escape closed in 19-02-45) covers it the same way.
       // The bundle ID comes from the handle, so the header's app must match too: another app's dialog (SecurityAgent)
       // over the document is not the document's.
-      const over = /^Window: .*\r?\n0 (sheet|dialog|window|floating window|system dialog)\b/m.exec(text)?.[1];
+      const over = (popoverContinuation ? /^Window: .*\r?\n0 (sheet|dialog|window|floating window|popover|system dialog)\b/m
+        : /^Window: .*\r?\n0 (sheet|dialog|system dialog)\b/m).exec(text)?.[1];
       if (over && leaseWindow?.appId && previous?.appId === leaseWindow.appId && window.app === previous.app) {
         const key = documentKey({ title: previous.title, app: previous.app, url: previous.url });
         if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }

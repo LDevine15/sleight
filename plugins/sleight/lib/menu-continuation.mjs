@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tokens } from './flow-rules.mjs';
 import { statementSpans } from './text-save.mjs';
-import { GUARD_END, GUARD_MARK, elementLines, hasIdentifier, hasLabel, sameElement, windowFromText } from './document-scope.mjs';
+import { GUARD_END, GUARD_MARK, documentKey, elementLines, hasIdentifier, hasLabel, sameElement, windowFromText } from './document-scope.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 
 export const guardStopMark = () => `[sleight:guard-stop:${randomUUID()}]`;
@@ -304,7 +304,67 @@ export function dialogRefusal(plan, receipt, covered, content) {
   // with its title. Without a URL, only the native window certified when it was read tells them apart.
   if (!covered.url && ['dialog', 'sheet', 'system dialog'].includes(covered.over) && !certifiedWindow(covered.nativeIdentity)) return 'untitled-needs-certified-window';
   // A palette that stays open hands focus back without closing; only Escape or a native check that it is gone counts.
-  if (['window', 'floating window'].includes(covered.over) && !(receipt.prev?.kind === 'key' && /^(?:escape|esc)$/i.test(receipt.prev.value))) return 'palette-needs-close-check';
+  if (PALETTE_ROLES.includes(covered.over) && !(receipt.prev?.kind === 'key' && /^(?:escape|esc)$/i.test(receipt.prev.value))) return 'palette-needs-close-check';
+}
+// Roots that cover a standard window without being a dialog: a palette, Word's Styles gallery or Table grid (plain
+// `window`), Excel's Sort panel (`floating window`), and an AXPopover. SLEIGHT_POPOVER_CONTINUATION=0 records none of them.
+export const PALETTE_ROLES = ['window', 'floating window', 'popover'];
+export const COVER_ROLES = ['sheet', 'dialog', 'system dialog', ...PALETTE_ROLES];
+
+// The standard windows a result showed, by documentKey: each header whose own section has a standard-window root.
+// A filtered write's extra header (no root line) adds nothing.
+export function shownStandardWindows(text) {
+  const keys = new Set();
+  if (typeof text !== 'string') return keys;
+  const headers = [...text.matchAll(/^Window: .*$/gm)];
+  headers.forEach((header, i) => {
+    const section = text.slice(header.index, headers[i + 1]?.index);
+    if (!/^0 standard window(?: |,|$)/.test(/^0 .*$/m.exec(section)?.[0] ?? '')) return;
+    const window = windowFromText(section);
+    if (window) keys.add(documentKey({ title: window.title, app: window.app, url: window.url }));
+  });
+  return keys;
+}
+
+// SLEIGHT_PARENT_LEASE: the dialog or palette the lease last held closed between calls, the lease dropped on a degraded
+// read, and the next call's re-acquisition shows the standard window it covered. That stopped 7 calls as stale in the
+// 2026-10-17 office runs ("it was Insert Table", Word's alert, Styles). The covered window becomes the lease only when
+// every check holds; LA1's in-call adoption failed review for typing into a window it hadn't verified, so this one needs
+// Claude's last result to show that window, this call's read to show it standard with no dialog, and the helper to see
+// the dialog gone and that exact window focused, standard, in the process it was seen in, with no HID input since.
+// `stale` is the dialog lease (with .parent), `shown` the last result's shownStandardWindows, `reply` this call's read,
+// `gone` whether the helper found no window with the dialog's title and URL, `observed` the helper's look at the parent.
+export function parentLeaseRefusal({ stale, shown, reply, gone, observed, now = performance.now() }) {
+  const parent = stale?.parent;
+  if (!parent) return 'no-parent';
+  if (!COVER_ROLES.includes(parent.over)) return 'not-over-a-dialog';
+  if (!parent.appId || stale.appId !== parent.appId) return 'other-bundle';
+  const key = documentKey({ title: parent.title, app: parent.app, url: parent.url });
+  if (!shown?.has(key)) return 'not-shown';
+  const window = typeof reply === 'string' ? windowFromText(reply) : undefined;
+  if (!window) return 'no-header';
+  const differs = ['app', 'title', 'url'].find(name => window[name] !== parent[name]);
+  if (differs) return `other-${differs}`;
+  const roots = [...reply.matchAll(/^0 .*$/gm)];
+  if (!roots.length || roots.some(root => !/^0 standard window(?: |,|$)/.test(root[0]))) return 'returned-root-not-standard';
+  if (/^\s*\d+ (?:sheet|dialog|system dialog)\b/m.test(reply)) return 'dialog-present';
+  if (gone !== true) return 'dialog-still-open';
+  const certified = certifiedWindow(parent.nativeIdentity) ? parent.nativeIdentity : undefined;
+  if (!parent.url && !certified) return 'untitled-needs-certified-window';
+  // The helper answers mismatch when the window with this header isn't the app's focused one.
+  if (observed?.status === 'mismatch') return 'identity-mismatch';
+  if (!observed || observed.status !== 'ok') return 'identity-unavailable';
+  if (!Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0) return 'no-window-number';
+  if (observed.windowSubrole !== 'AXStandardWindow') return 'not-standard-native';
+  if (observed.focus?.sheets !== 0) return 'native-sheet';
+  // HID idle since the parent was last seen standard and since the dialog was leased, as in the in-call path.
+  if (!idle(observed, Math.min(parent.at, parent.seenAt), now)) return 'hid-input';
+  if (typeof parent.seen?.process !== 'string' || parent.seen.process !== `${observed.pid}:${observed.processStart}`) return 'covered-process-changed';
+  if (!certified && observed.headerMatches !== 1) return `header-matches-${observed.headerMatches ?? 'missing'}`;
+  try {
+    verifyWindowIdentity({ appId: parent.appId, title: parent.title, url: parent.url,
+      ...(certified ? { windowNumber: certified.windowNumber, nativeIdentity: certified } : {}) }, observed);
+  } catch { return 'identity-mismatch'; }
 }
 // The palette the lease held is gone: no window of the app has its title and URL any more.
 export async function windowGone(identity, window, timeoutMs = 600) {

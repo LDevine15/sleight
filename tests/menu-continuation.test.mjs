@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -424,4 +424,58 @@ test('TW2: a navigation into a page names it in any case', () => {
   const page = role => [{ type: 'text', text: `Window: "Child", App: Fixture Editor.\n0 standard window Child\n\t1 ${role} Child` }];
   assert.equal(menuRemainder(plan, receipt, expected, page('group')).navigation, true);
   for (const role of ['HTML Content', 'HTML content', 'Web Area']) assert.equal(menuRemainder(plan, receipt, expected, page(role)), undefined, role);
+});
+
+test('OT2: a result shows a standard window only under a header whose own section has a standard root', () => {
+  const doc = 'Window: "Report", App: Word.\n0 standard window Report, URL: file:///tmp/r.docx\n\t1 button OK';
+  const key = JSON.stringify({ title: 'Report', app: 'Word', url: 'file:///tmp/r.docx' });
+  assert.deepEqual([...shownStandardWindows(doc + '\nWindow: "Report", App: Word.\n\t5 table Table')], [key]);
+  assert.equal(shownStandardWindows(doc.replace('standard window', 'dialog')).size, 0);
+  assert.equal(shownStandardWindows('Window: "Report", App: Word.\n\t1 button OK').size, 0);
+  assert.equal(shownStandardWindows(undefined).size, 0);
+});
+
+test('OT2: the parent lease takes the covered window only when every condition holds', () => {
+  const url = 'file:///tmp/r.docx';
+  const parent = { title: 'Report', app: 'Word', url, appId: 'com.example.word', at: 900, seenAt: 800, seen: { process: '123:1' }, over: 'dialog' };
+  const stale = { title: 'Insert Table', app: 'Word', url: null, appId: 'com.example.word', parent };
+  const reply = `Window: "Report", App: Word.\n0 standard window Report, URL: ${url}\n\t1 text area Value: x`;
+  const observed = { status: 'ok', matches: 1, headerMatches: 1, appId: 'com.example.word', title: 'Report', url, epoch: 'e', window: 1,
+    windowNumber: 40, pid: 123, processStart: 1, hidIdleSeconds: 10, windowSubrole: 'AXStandardWindow', focus: { sheets: 0 } };
+  const base = { stale, shown: new Set([JSON.stringify({ title: 'Report', app: 'Word', url })]), reply, gone: true, observed, now: 1000 };
+  assert.equal(parentLeaseRefusal(base), undefined);
+  for (const over of ['sheet', 'system dialog', 'window', 'floating window', 'popover']) {
+    assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, parent: { ...parent, over } } }), undefined, over);
+  }
+  const certified = { windowNumber: 40, epoch: 'e', window: 1, pid: 123, processStart: 1 };
+  for (const [name, change, reason] of [
+    ['no parent', { stale: { ...stale, parent: undefined } }, 'no-parent'],
+    ['a standard window over it', { stale: { ...stale, parent: { ...parent, over: 'standard window' } } }, 'not-over-a-dialog'],
+    ['another bundle', { stale: { ...stale, appId: 'com.example.other' } }, 'other-bundle'],
+    ['a last result that did not show it', { shown: new Set() }, 'not-shown'],
+    ['a read with two disagreeing headers', { reply: reply + '\nWindow: "Other", App: Word.' }, 'no-header'],
+    ['another app', { reply: reply.replace('App: Word.', 'App: Pages.') }, 'other-app'],
+    ['another title', { reply: reply.replaceAll('Report', 'Other') }, 'other-title'],
+    ['another URL', { reply: reply.replace(url, 'file:///tmp/copy.docx') }, 'other-url'],
+    ['a dialog root', { reply: reply.replace('standard window', 'dialog') }, 'returned-root-not-standard'],
+    ['a sheet in the tree', { reply: reply + '\n\t2 sheet Save' }, 'dialog-present'],
+    ['the dialog still open', { gone: false }, 'dialog-still-open'],
+    ['an uncertified window without a URL', { stale: { ...stale, parent: { ...parent, url: null } }, reply: reply.replace(`, URL: ${url}`, ''),
+      shown: new Set([JSON.stringify({ title: 'Report', app: 'Word', url: null })]) }, 'untitled-needs-certified-window'],
+    ['a focus mismatch', { observed: { status: 'mismatch', error: 'Focused window differs' } }, 'identity-mismatch'],
+    ['no observation', { observed: undefined }, 'identity-unavailable'],
+    ['no window number', { observed: { ...observed, windowNumber: null } }, 'no-window-number'],
+    ['a floating window natively', { observed: { ...observed, windowSubrole: 'AXFloatingWindow' } }, 'not-standard-native'],
+    ['a native sheet', { observed: { ...observed, focus: { sheets: 1 } } }, 'native-sheet'],
+    ['no native sheet count', { observed: { ...observed, focus: undefined } }, 'native-sheet'],
+    ['input since the document was seen', { observed: { ...observed, hidIdleSeconds: 0.1 } }, 'hid-input'],
+    ['a relaunched process', { observed: { ...observed, pid: 456 } }, 'covered-process-changed'],
+    ['no process for the covered window', { stale: { ...stale, parent: { ...parent, seen: {} } } }, 'covered-process-changed'],
+    ['two windows with the header', { observed: { ...observed, headerMatches: 2 } }, 'header-matches-2'],
+    ['two focused matches', { observed: { ...observed, matches: 2 } }, 'identity-mismatch'],
+    ['another certified window', { stale: { ...stale, parent: { ...parent, nativeIdentity: { ...certified, windowNumber: 41 } } } }, 'identity-mismatch'],
+    ['another helper epoch for a certified window', { stale: { ...stale, parent: { ...parent, nativeIdentity: { ...certified, epoch: 'old' } } } }, 'identity-mismatch'],
+  ]) assert.equal(parentLeaseRefusal({ ...base, ...change }), reason, name);
+  // A certified window narrows same-title windows by its number.
+  assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, parent: { ...parent, nativeIdentity: certified } }, observed: { ...observed, headerMatches: 2 } }), undefined);
 });

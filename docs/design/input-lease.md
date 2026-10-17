@@ -138,3 +138,24 @@ the call began. A click on a new-tab button still stops, since its
 focus stayed off the address field (4 of 4). `SLEIGHT_TAB_CONTINUATION=0` stops at the tab as before.
 Replaying the round's 12 stops through the tree checks continues the 8 Cmd+T calls and refuses the 4
 clicks. It hasn't run live.
+
+## Dialogs and palettes
+
+A dialog, sheet, palette, gallery, floating window or popover (`0 window`, `0 floating window`, `0 popover`) the lease moved to
+remembers the standard window it covered. A call whose own action closes it goes on there (`dialogRemainder`).
+`SLEIGHT_POPOVER_CONTINUATION=0` remembers only dialogs and sheets.
+
+When such a window closed between calls and a degraded read dropped the lease, the next call's recovery re-acquisition used
+to refuse it as stale ("it was Insert Table": 7 calls in the 2026-10-17 office runs). The covered window becomes the lease
+instead (`parentLeaseRefusal`) only if all of these hold:
+
+- Claude's last result showed it as a standard window, and this call's read shows it with that app, title and URL, a
+  standard-window root and no sheet or dialog.
+- The helper doesn't find a window with the dialog's title and URL, and finds the covered window focused, AXStandardWindow, without
+  sheets, in the process it was seen in, with no HID input since it was last seen standard.
+- It is the one window with that header, or the native window certified when it was read. A window without a URL needs that
+  certification.
+
+The rest is then admitted pinned to the native window just observed, for that call only. `SLEIGHT_PARENT_LEASE=0` keeps the
+refusal. LA1 adopted a window inside a call and failed two reviews for typing into a window it hadn't verified, so this applies
+only between calls and only to the window the relay recorded under the dialog.

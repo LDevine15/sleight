@@ -120,6 +120,8 @@ function run(argv) {
     }
     return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title,
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,
+      // The parent lease takes only a standard window (SLEIGHT_PARENT_LEASE), read before HID idle is sampled.
+      windowSubrole: scalar(attr(window, 'AXSubrole', true)) ?? null,
       processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds(), ...(focus ? { focus } : {}) });
   } catch (error) { return JSON.stringify({ status: 'unknown', error: String(error.message || error) }); }
 }

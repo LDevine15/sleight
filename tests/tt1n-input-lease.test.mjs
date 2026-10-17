@@ -835,3 +835,107 @@ test('AB1 review: a numbered click in the remainder after a tab continuation sto
   assert.deepEqual(h.clicks, []);
   assert.match(JSON.stringify(result), /element 5 changed since you read the window/);
 });
+
+// OT2 (SLEIGHT_POPOVER_CONTINUATION): a popover root covers the window under it like the palette path's plain window and
+// floating window; =0 records only dialogs and sheets. An untitled palette can't be shown gone (the helper skips windows
+// without a title), so its button close stops.
+const closeButton = 'await app.click({ id: "close" }); await app.pressKey("super+End");';
+for (const [name, root, title, { open = false, ...options }, continues, reason, code = closeButton] of [
+  ['a popover its own button closed continues', 'popover', 'Format', {}, true],
+  ['Escape on a popover continues', 'popover', 'Format', {}, true, undefined, 'await app.pressKey("Escape"); await app.pressKey("super+End");'],
+  ['a popover with the flag off stops', 'popover', 'Format', { popoverContinuation: false }, false, 'no-covered-window'],
+  ['a floating window with the flag off stops', 'floating window', 'Format', { popoverContinuation: false }, false, 'no-covered-window'],
+  ['an untitled popover its button closed stops', 'popover', '', {}, false, 'palette-untitled'],
+  ['a popover still open after its button stops', 'popover', 'Format', { open: true }, false, 'palette-still-open'],
+]) test(`OT2: ${name}`, async t => {
+  const popover = `Window: ${JSON.stringify(title)}, App: Fixture Editor.\n0 ${root} ${title}\n\t1 button Bold, ID: bold\n\t2 button Close, ID: close`;
+  let clicked = false;
+  const events = [];
+  const h = await fixture(t, { base: page, ...options,
+    onAction: (action, argument, text) => text === page && argument === 2 ? popover : text === popover ? (clicked = true, page) : text,
+    identity: (expected, native) => expected.title !== title || expected.url || !clicked ? dialogIdentity(expected, native)
+      : open ? { status: 'ok', matches: 1, headerMatches: 1 } : { status: 'ok', matches: 0, headerMatches: 0 },
+    trace: (direction, msg) => { if (direction === 'dialog-continuation-refused') events.push(msg.reason); } });
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), new RegExp(`0 ${root}`));
+  const result = await h.call(code);
+  assert.equal(result.isError === true, !continues, JSON.stringify(result).slice(0, 400));
+  assert.deepEqual(h.keys.filter(key => key === 'super+End'), continues ? ['super+End'] : []);
+  if (reason) assert.ok(events.includes(reason), JSON.stringify(events));
+});
+
+// OT2 (SLEIGHT_PARENT_LEASE): Insert Table and Word's alert (2026-10-17 office runs, 7 stale-lease refusals). The call's
+// own OK closed the dialog, its result showed the document under a second header without a URL (a filtered write),
+// so the lease dropped; the next call's recovery re-acquisition showed the document and stopped as stale.
+const parentOf = (expected, native, extra = {}) => ({ ...dialogIdentity(expected, native), windowSubrole: 'AXStandardWindow',
+  ...extra, focus: { sheets: 0, role: null, subrole: null, inWindow: false, inPage: false, ...extra.focus } });
+async function parentFixture(t, { parent = {}, gone = true, reply, ...options } = {}) {
+  const state = { closed: false };
+  const events = [];
+  const h = await fixture(t, { base: page, after: alert, afterItem: page, ...options,
+    identity: (expected, native) => !state.closed ? dialogIdentity(expected, native)
+      : expected.title === '' ? (gone ? { status: 'ok', matches: 0, headerMatches: 0 } : dialogIdentity(expected, native))
+      : typeof parent === 'function' ? parent(expected, native) : parentOf(expected, native, parent),
+    trace: (direction, msg) => { if (/^parent-lease/.test(direction)) events.push(direction === 'parent-lease' ? 'accepted' : msg.reason); } });
+  assert.match(JSON.stringify(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  const closed = await h.call('await app.click({ id: "ok" }); nodeRepl.write(\'Window: "report.txt", App: Fixture Editor.\\n\');');
+  assert.match(JSON.stringify(closed), /0 standard window report\.txt/);
+  state.closed = true;
+  if (reply) h.setText(reply);
+  return { ...h, events };
+}
+const nextCall = 'await app.pressKey("super+End");';
+
+test('OT2: the next call after OK closed the alert leases the document it covered and runs', async t => {
+  const h = await parentFixture(t);
+  const result = await h.call(nextCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 600));
+  assert.deepEqual(h.keys, ['super+End']);
+  assert.deepEqual(h.events, ['accepted']);
+  assert.doesNotMatch(JSON.stringify(result), /nothing from this call ran/);
+});
+
+test('OT2: the parent lease pins the native window for that call only', async t => {
+  let epoch = 'helper';
+  const h = await parentFixture(t, { parent: (expected, native) => parentOf(expected, native, { epoch }) });
+  assert.notEqual((await h.call(nextCall)).isError, true);
+  // A new helper epoch (it quits after about 20 s idle) refuses a pinned identity; the next call's keys still go.
+  epoch = 'helper-2';
+  const later = await h.call('await app.pressKey("Return");');
+  assert.notEqual(later.isError, true, JSON.stringify(later).slice(0, 400));
+  assert.deepEqual(h.keys, ['super+End', 'Return']);
+});
+
+test('OT2: the pinned native window must still match when the rest is admitted', async t => {
+  // The real helper narrows by the pinned number and answers mismatch once that window is gone.
+  const pinned = [];
+  const h = await parentFixture(t, { parent: (expected, native) => {
+    if (expected.nativeIdentity) { pinned.push(expected.nativeIdentity.windowNumber); return { status: 'mismatch', error: 'Known window number disappeared' }; }
+    return parentOf(expected, native);
+  } });
+  const result = await h.call(nextCall);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.deepEqual(h.events, ['accepted']);
+  assert.deepEqual(pinned, [22], 'the admission asked for the window number the parent check observed');
+});
+
+for (const [name, options, reason] of [
+  ['the flag off', { parentLease: false }, undefined],
+  ['user input since the document was seen', { parent: { hidIdleSeconds: 0 } }, 'hid-input'],
+  ['another window with the same title and URL', { parent: { headerMatches: 2 } }, 'header-matches-2'],
+  ['a new process', { parent: { pid: 456 } }, 'covered-process-changed'],
+  ['the dialog still present natively', { gone: false }, 'dialog-still-open'],
+  ['a sheet in the returned tree', { reply: page + '\n\t5 sheet Confirm' }, 'dialog-present'],
+  ['a sheet on the window natively', { parent: { focus: { sheets: 1 } } }, 'native-sheet'],
+  ['a different window focused', { parent: () => ({ status: 'mismatch', error: 'Focused window differs' }) }, 'identity-mismatch'],
+  ['a window that is not standard natively', { parent: { windowSubrole: 'AXFloatingWindow' } }, 'not-standard-native'],
+  ['no native answer', { parent: () => ({ status: 'unknown', error: 'probe unavailable' }) }, 'identity-unavailable'],
+  ['another document in front', { reply: page.replaceAll('report.txt', 'other.txt') }, 'not-the-covered-window'],
+]) test(`OT2: the parent lease refuses ${name}`, async t => {
+  const h = await parentFixture(t, options);
+  const result = await h.call(nextCall);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.match(JSON.stringify(result), /nothing from this call ran/);
+  assert.deepEqual(h.events, reason ? [reason] : []);
+});
