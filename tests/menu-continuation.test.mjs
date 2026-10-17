@@ -72,3 +72,21 @@ test('native evidence requires every identity field, the same number, and HID id
   assert.equal(await menuIdentity(async () => { throw Error('unavailable'); }, expected), undefined);
   assert.equal(await menuIdentity(() => new Promise(() => {}), expected, 1), undefined);
 });
+
+test('navigation receipts bind the exact preceding key or click to a retitled standard window', () => {
+  const expected = { title: 'Parent', app: 'Fixture Editor', url: null };
+  const content = [{ type: 'text', text: 'Window: "Child", App: Fixture Editor.\n0 standard window Child\n\t1 button Other' }];
+  for (const [action, prev] of [['pressKey("Return")', { kind: 'key', value: 'Return' }],
+    ['click(2)', { kind: 'number', value: 2 }], ['click([20,40])', { kind: 'point', value: [20, 40] }],
+    ['click("Child")', { kind: 'label', value: 'Child' }]]) {
+    const plan = splitMenuActions(`await app.${action}; await app.click("Other");`);
+    const receipt = { index: 1, prev, root: '0 standard window Child', windowStop: true };
+    assert.equal(menuRemainder(plan, receipt, expected, content).navigation, true);
+    for (const invalid of [{ ...receipt, prev: { ...prev, value: 'wrong' } },
+      { ...receipt, prev: { ...prev, kind: prev.kind === 'key' ? 'label' : 'key' } },
+      { ...receipt, root: '0 standard window Other' }, { ...receipt, windowStop: false }]) {
+      assert.equal(menuRemainder(plan, invalid, expected, content), undefined);
+    }
+    assert.equal(menuRemainder(plan, receipt, { ...expected, title: 'Child' }, content), undefined);
+  }
+});
