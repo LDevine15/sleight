@@ -510,6 +510,7 @@ export function createRelay({
   warmRepl = false,
   warmEngine = false,
   openFast = false,
+  openShot = process.env.SLEIGHT_OPEN_SHOT === '1',
   onClientReply = () => {},
 }) {
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
@@ -1871,6 +1872,7 @@ export function createRelay({
         const id = `sleight-open-file-${nextInternalId++}`, handle = `__sleightOpenedApp${nextInternalId++}`;
         callGenerations.set(id, generation);
         splitCalls.set(id, reply => {
+          openShots.delete(id);
           if (generation !== stopGeneration || closing || disposed) return;
           const state = reply.result ?? { isError: true, content: [{ type: 'text', text: reply.error?.message ?? 'Window read failed.' }] };
           const combined = { ...state, content: [...(result.content ?? []), ...(state.content ?? []),
@@ -1878,6 +1880,7 @@ export function createRelay({
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
         });
+        if (openShot) openShots.set(id, handle);
         callSeqs.set(id, callSeqs.get(msg.id));
         handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
           arguments: { code: `var ${handle} = await cua.getApp(${JSON.stringify(openedApp)})` } } });
@@ -1972,6 +1975,7 @@ export function createRelay({
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
+  const openShots = new Map();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Set(), menuForwards = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
@@ -2617,6 +2621,10 @@ export function createRelay({
       }
       if (browser) browserCalls.set(msg.id, browser);
       if (name === 'js' && msg.id !== undefined) {
+        // Only this relay-owned acquisition gets pixels. Classify and guard the original read
+        // first, so the optional screenshot adds no action lease or approval (SH1, 2026-10-17).
+        const shotHandle = openShots.get(msg.id);
+        if (shotHandle) msg.params.arguments.code += `;\ntry { await ${shotHandle}.getScreenshot(); } catch {}`;
         resultBudget.request(msg.id, { browser: !!browser, code: originalCode });
         if (typeof msg.params.arguments?.code === 'string') msg.params.arguments.code = resultBudget.code(msg.params.arguments.code);
       }
@@ -3511,7 +3519,7 @@ export function createRelay({
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
         menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); splitInputs.clear();
-        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
+        filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); openShots.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');
           stoppedClients.add(id);
