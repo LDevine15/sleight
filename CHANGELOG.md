@@ -76,6 +76,15 @@ TODO: full release pass result.
   Copy or Cut and Paste. An endpoint the hit test finds in the window isn't refused because a parent
   element's frame misses it. Chess's board reported such frames, and every drag on its right half was
   refused in the 2026-10-17 A/B.
+- A first result from `open_file` leaves out the engine's API reference, about 17,000 of its 24,849 characters in the
+  2026-10-17 preview-read runs, and the reference arrives with Claude's first `js` result instead.
+- A call stopped because it reached another app says how many of its actions ran and that the next action will lease the
+  observed window. After `select_window`, any call that starts by acquiring the selected app counts as the confirmation. A
+  menu Cancel in the selected window is no longer refused, which deadlocked a textedit-calculator run for 15 calls.
+- A save after a click by ID followed by typing in the same element is confirmed from the file's modification time. It was
+  reported as "not confirmed (mixed save targets)" and Claude saved again.
+- When a click also swaps two sibling elements, such as Excel's sheet tabs after a rename, the result says so with the new
+  order, and the next save repeats it once. All three excel-edit failures in the 2026-10-17 claim run were this swap.
 - The skill tells Claude to acquire an app the task names directly, and to use the changed lines an
   action returns instead of reading again to confirm them. It moves files with Copy and then the
   menu's Move item, since Cut is often disabled for files.
