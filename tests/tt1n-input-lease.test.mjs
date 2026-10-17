@@ -16,14 +16,15 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 
 // TT1N's string-read VM fixture, now joined to the real relay. Native truth stays outside
 // the engine realm: only the relay's injected read-only identity helper can observe it.
+// errorFirst: the real engine's order, the exception as the first content item ahead of what the call wrote.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, onAction, onRead, ...options } = {}) {
+  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, ...options } = {}) {
   let text = base, writes = [];
   const clicks = [], keys = [], values = [], typed = [], sent = [], received = [];
   let identityChecks = 0;
   const native = { windowNumber: 22, hidIdleSeconds: 1000, status: 'ok' };
   // onAction(name, argument, text) returns the window an action leaves, for a scripted sequence.
-  const raw = { getAXState: async () => { onRead?.(); return text; }, click: async number => {
+  const raw = { getAXState: async () => { onRead?.(); return text; }, getAXStateAndScreenshot: async () => { onRead?.(); return { state: text }; }, click: async number => {
     clicks.push(number); text = onAction ? onAction('click', number, text) : clicks.length === 1 ? after : afterItem;
     if (actionOutput) writes.push('clicked:' + number);
     if (nativeChange === 'window') native.windowNumber = 23;
@@ -69,9 +70,9 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
         catch (e) { error = e; }
         // Acquisitions print their header in the real engine even without an explicit read.
         if (/cua\.getApp\(/.test(request.params.arguments.code) && !error) writes.push(text);
-        if (error) writes.push(String(error));
+        if (error && !errorFirst) writes.push(String(error));
         serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { isError: !!error,
-          content: [{ type: 'text', text: writes.join('\n') }],
+          content: [...(error && errorFirst ? [{ type: 'text', text: String(error?.message ?? error) }] : []), { type: 'text', text: writes.join('\n') }],
           _meta: { 'codex/toolSurface': { app: { appId: 'org.test.editor' } } } } }) + '\n');
       }
       const reply = received.find(msg => msg.id === id);
@@ -632,6 +633,114 @@ test('DR1: a lease stop says which actions ran and which were not sent', async t
   assert.match(plain, /sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent\./);
 });
 
+// OF1: the real engine puts the exception first, so a call that went on past its own OK still opened with "Input lease
+// stopped" in 6 of 6 Office runs (2026-10-17), and 4 cost a turn redoing an action that had run. The calls are those runs'
+// (transcript lines in ledger/fable-1017-office-turns.md), on Word's shapes.
+const allText = result => result.content.map(c => c.text ?? '').join('\n');
+const wordMenus = wordDoc + '\n8 menu bar\n\t9 Table';
+const replaceAll = (name, argument, text) => name === 'click' && argument === 7 && text !== wordAlert ? wordAlert : text === wordAlert ? wordMenus : text;
+const continued = `then pressKey "super+End"`, inDoc = ` in "${wordTitle}".`;
+for (const [run, code, lead] of [
+  ['21-55 L92', 'await __sleightOpenedApp3.click({ id: "action-button--998" }); await __sleightOpenedApp3.pressKey("super+End"); const s = await __sleightOpenedApp3.getAXState(); nodeRepl.write(s.split("\\n").filter(l => /MATCHES|Page 1 content|dialog|Window|focused/i.test(l)).join("\\n"));',
+    `sleight: all 2 actions ran: click id "action-button--998" closed the dialog, ${continued}${inDoc}`],
+  ['22-00 L75', 'await app.click({ label: "OK" });\nawait app.pressKey("super+End");\nawait app.pressKey("Return");\nnodeRepl.write("ok");',
+    `sleight: all 3 actions ran: click closed the dialog, ${continued}, pressKey "Return"${inDoc}`],
+  ['22-03 L56', 'let app = await cua.getApp("Microsoft Word"); await app.click({ id: "action-button--998" }); await app.click([600, 390]); await app.pressKey("super+End"); nodeRepl.write("ready");',
+    `sleight: all 3 actions ran: click id "action-button--998" closed the dialog, then click, pressKey "super+End"${inDoc}`],
+  ['22-18 L61', 'await app.click({ label: "OK" });\nawait app.click([700, 402]);\nawait app.pressKey("super+End");\nawait app.click({ label: "Table" });\nconst s = await app.getAXState();\nnodeRepl.write(s.slice(0, 3000));',
+    `sleight: all 4 actions ran: click closed the dialog, then click, pressKey "super+End", click${inDoc}`],
+  ['22-20 L79', 'await app.click({ id: "action-button--998" });\nawait app.pressKey("super+End");\nawait app.pressKey("Return");\nlet r = await app.getAXStateAndScreenshot({ disableDiffing: true });\nnodeRepl.write(r.state.split("\\n").filter(l => /Window:|alert|dialog|Page 1 content|violet|shipment|Keep this|Undo/i.test(l)).join("\\n"));',
+    `sleight: all 3 actions ran: click id "action-button--998" closed the dialog, ${continued}, pressKey "Return"${inDoc}`],
+]) test(`OF1: the ${run} continued call leads with what ran, not the stop`, async t => {
+  const h = await fixture(t, { base: wordDoc, identity: dialogIdentity, onAction: replaceAll, errorFirst: true });
+  await h.call('globalThis.__sleightOpenedApp3 = await cua.getApp("Microsoft Word");');
+  assert.match(allText(await h.call('await app.click(7);')), /All done/);
+  const result = await h.call(code);
+  assert.notEqual(result.isError, true, allText(result).slice(0, 600));
+  assert.equal(result.content[0].text, lead);
+  assert.doesNotMatch(allText(result), /Input lease stopped/);
+});
+
+// Excel 22-10 L125: Close on Name Manager, then twelve more actions into the workbook.
+test('OF1: the excel 22-10 L125 continued call names the first four and counts the rest', async t => {
+  const book = 'Window: "Inventory-4a8bd91b", App: Microsoft Excel.\n0 standard window Inventory-4a8bd91b, URL: file:///tmp/Inventory-4a8bd91b.xlsx\n\t1 text field Name Box, ID: NameBox\n\t2 table Sheet1\n\t3 button Name Manager';
+  const names = 'Window: "Name Manager", App: Microsoft Excel.\n0 dialog Name Manager\n\t1 button Close\n\t2 button New…';
+  const h = await fixture(t, { base: book, identity: dialogIdentity, errorFirst: true,
+    onAction: (name, argument, text) => name === 'click' && argument === 3 && text === book ? names : text === names ? book : text });
+  assert.match(allText(await h.call('await app.click({ label: "Name Manager" });')), /0 dialog Name Manager/);
+  const result = await h.call('await app.click({ label: "Close" }); await app.click({ id: "NameBox" }); await app.typeText("D1"); await app.pressKey("Return"); await app.typeText("Budget"); await app.pressKey("Return"); await app.typeText("11"); await app.pressKey("Return"); await app.typeText("4"); await app.pressKey("Return"); await app.typeText("=SUM(D2:D3)"); await app.pressKey("Return");');
+  assert.notEqual(result.isError, true, allText(result).slice(0, 600));
+  assert.equal(result.content[0].text, 'sleight: all 12 actions ran: click closed the dialog, then click id "NameBox", typeText, pressKey "Return", typeText and 7 more in "Inventory-4a8bd91b".');
+  assert.doesNotMatch(result.content[0].text, /Budget|SUM/, 'no typed text');
+  assert.doesNotMatch(allText(result), /Input lease stopped/);
+});
+
+test('OF1: when the rest stops, the lead says the call went on and the rest\'s ran/not-sent line follows it', async t => {
+  const other = page.replaceAll('report.txt', 'other.txt');
+  const h = await fixture(t, { base: page, identity: dialogIdentity, errorFirst: true,
+    onAction: (name, argument, text) => text === alert ? page : name === 'pressKey' ? other : name === 'click' && argument === 2 ? alert : text });
+  assert.match(allText(await h.call('await app.click({ label: "Replace All" });')), /All done/);
+  const result = await h.call('await app.click({ id: "ok" }); await app.pressKey("super+End"); await app.typeText("secret words");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, ['super+End']);
+  assert.deepEqual(h.typed, []);
+  assert.equal(result.content[0].text, 'sleight: click id "ok" closed the dialog, and the call went on in "report.txt" with pressKey "super+End", typeText until an error stopped it.');
+  assert.match(result.content[1].text, /^sleight: this call ran 2 actions; the stopped typeText and everything after it were not sent\./);
+  assert.doesNotMatch(allText(result), /secret words/);
+});
+
+test('OF1: a remainder the final check refuses returns the original stop, with no continued lead', async t => {
+  // Admission, the check after the stop, then the final check just before the rest goes to the engine.
+  let checks;
+  const h = await dialogFixture(t, { errorFirst: true, identity: (expected, native) => checks !== undefined && ++checks === 3
+    ? { ...dialogIdentity(expected, native), hidIdleSeconds: 0 } : dialogIdentity(expected, native) });
+  checks = 0;
+  const result = await h.call(dismiss);
+  assert.equal(checks, 3);
+  assert.equal(result.isError, true, allText(result).slice(0, 400));
+  assert.deepEqual(h.keys, []);
+  assert.match(result.content[0].text, /^sleight: this call ran 1 action \(click id "ok"\); not sent: pressKey "super\+End"\./);
+  assert.doesNotMatch(allText(result), /sleight: all |went on/);
+});
+
+test('OF1 lean: the continued lead is shorter', async t => {
+  const h = await fixture(t, { base: wordDoc, identity: dialogIdentity, onAction: replaceAll, errorFirst: true, prompt: 'lean' });
+  assert.match(allText(await h.call('await app.click(7);')), /All done/);
+  const result = await h.call('await app.click({ id: "action-button--998" }); await app.pressKey("super+End");');
+  assert.equal(result.content[0].text, `sleight: 2 actions ran: click id "action-button--998" closed the dialog, ${continued}${inDoc}`);
+});
+
+// OF2: OK, then a click in the page, then keys: 6 of the 15 Office mid-call stops (2026-10-17), each followed by a retry.
+test('OF2: a stop after the call\'s own OK closed the dialog says so first, and that the next call can send the rest', async t => {
+  const h = await dialogFixture(t, { afterItem: page.replaceAll('report.txt', 'other.txt'), errorFirst: true });
+  const result = await h.call('await app.click({ id: "ok" }); await app.click(1); await app.pressKey("super+End");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.keys, []);
+  assert.equal(result.content[0].text, 'sleight: this call ran 1 action (click id "ok"); not sent: click 1, pressKey "super+End". ' +
+    'Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.');
+});
+
+// 21-53 L61's call: its awaited write keeps it unsplit, so no continuation; the note rises above the acquisition's tree.
+test('OF2: the 21-53 L61 unsplit call after OK leads with the stop note and the dialog sentence', async t => {
+  for (const prompt of [undefined, 'lean']) {
+    const h = await dialogFixture(t, { errorFirst: true, prompt });
+    const result = await h.call('let app = await cua.getApp("Fixture Editor");\nawait app.click({ id: "ok" });\nawait app.click([600, 402]);\nawait app.pressKey("super+End");\nawait app.click({ label: "Replace All" });\nawait nodeRepl.write(await app.getAXState());');
+    assert.equal(result.isError, true);
+    assert.deepEqual(h.keys, []);
+    assert.equal(result.content[0].text, (prompt ? 'sleight: this call ran 1 action; not sent: the stopped click onward.' : 'sleight: this call ran 1 action; the stopped click and everything after it were not sent.') + (prompt
+      ? ' Dialog closed: rest not sent; send it next call, no new read.'
+      : ' Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.'));
+  }
+});
+
+test('OF2: a stop that closed no dialog keeps the tab and page advice', async t => {
+  const h = await fixture(t, { base: navigation, after: child, guardMode: 'careful', errorFirst: true });
+  const result = await h.call('await app.pressKey("Return"); await app.click("Other");');
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /^sleight: this call ran 1 action \(pressKey "Return"\); not sent: click\. After an action that opens a tab or page/);
+  assert.doesNotMatch(allText(result), /Closing the dialog/);
+});
+
 // AB3: a date picker re-rendered its days after the first date's click, so the engine refused the next date's number
 // from the call's bound capture (Firefox travel, 2026-10-17). A diff read, a full read and a lone click followed (9.4 s).
 const picker = rendered => 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n' +
@@ -661,7 +770,8 @@ test('AB3: a refused element says what ran, what was not sent, and where the res
   assert.match(text, /In this result's window, the refused action and the rest are now click 4, click 5, click 6\. /);
   assert.match(text, /sleight now reads this window before each numbered or named action, so the rest can go in one call\./);
   assert.match(text, /Dates, Value: Dec 14/, 'the fresh tree is in the result');
-  assert.doesNotMatch(text.slice(text.indexOf('sleight: this call ran')), /December 19|Add adult/, 'the note names no label text');
+  assert.ok(result.content[0].text.startsWith('sleight: this call ran'), 'the note comes before the tree');
+  assert.doesNotMatch(result.content[0].text, /December 19|Add adult/, 'the note names no label text');
 });
 
 test('AB3 review: when the read after a refusal fails, the note claims no current window', async t => {

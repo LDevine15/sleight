@@ -531,6 +531,10 @@ native reference, and oversized first results defer the browser reference while 
 - A full-screen `screencaptureui` window (layer 24, the whole display) stayed up from a screenshot session on 2026-10-15 and made
   every drag target read as covered, so `drag` refused text drops in TextEdit. Quitting it on the owner's OK cleared it. Runs of
   drag tasks after about 17:45 UTC that day are rerun.
+- The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
+  fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
+  someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,
+  `$16.00` or `16.00`. Other spellings fail.
 
 ## Turbo in unattended runs
 

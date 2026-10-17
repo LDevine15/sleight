@@ -7,13 +7,16 @@ import { spawnSync } from 'node:child_process';
 import { skillRules, localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
 import { batchingDescription, createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { compactJsDescription } from '../plugins/sleight/lib/tool-description.mjs';
+import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
+import { SCROLL_LOOP_NOTE, TEXTLESS_NOTE } from '../plugins/sleight/lib/compact-reads.mjs';
 // The budget script parses relay.mjs with the typescript dev dependency, which CI doesn't install.
 const budget = await import('../bench/prompt-budget.mjs').catch(error => {
   if (error.code === 'ERR_MODULE_NOT_FOUND') return null;
   throw error;
 });
 const skip = !budget && 'needs the typescript dev dependency (npm install)';
-const { noticeInventory, sharedNoticeInventory } = budget ?? {};
+const { noticeInventory, sharedNoticeInventory, taggedNoticeInventory } = budget ?? {};
+const ts = budget && (await import('typescript')).default;
 
 const firstRule = 'execute exactly one of the API calls shown below, optionally assigning its result to a variable. Do not add other API calls, waits, or snapshots to that invocation.';
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -289,4 +292,52 @@ test('the delivered default js prompt stays pinned within Claude Code’s descri
   const description = compactJsDescription(engine, true, false);
   assert.equal(hash(description), baseline.js);
   assert.ok(description.length <= 2048);
+});
+
+// PB1 (2026-10-17): the compactor's notes, the document guard's stops and the stop notes were outside the count.
+test('the budget counts compactor, guard and stop notes marked as notices', { skip }, () => {
+  const texts = taggedNoticeInventory().map(entry => entry.text).join('\n');
+  for (const text of [SCROLL_LOOP_NOTE, TEXTLESS_NOTE, 'UI changed (window)', 'sleight: <value> earlier reads of the same window in this call left out',
+    'sleight: the click on <value> moved it from position', 'sleight: clicking also swapped', 'sleight: typed text landed in',
+    'sleight: lines changed since the last full tree', 'sleight: this call ran <value>', 'Native access stopped: use the handle',
+    'that object names no element', 'Input lease stopped this action: app changed.', 'Copy/Cut used the native clipboard.']) assert.ok(texts.includes(text), text);
+  const others = [...noticeInventory(), ...sharedNoticeInventory()].map(entry => entry.text);
+  for (const entry of taggedNoticeInventory()) assert.ok(!others.includes(entry.text), `counted twice: ${entry.path}`);
+});
+
+// Log lines (ending in a newline, written to stderr) and internal [sleight:…] marks are not model-visible.
+test('every sleight-prefixed literal in the relay, compactor, guard and stop notes is counted', { skip }, () => {
+  const counted = [...noticeInventory(), ...sharedNoticeInventory(), ...taggedNoticeInventory()].map(entry => entry.text).join('\n');
+  for (const file of ['relay.mjs', 'compact-reads.mjs', 'document-scope.mjs', 'menu-continuation.mjs']) {
+    const source = readFileSync(new URL(`../plugins/sleight/lib/${file}`, import.meta.url), 'utf8');
+    const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    (function visit(node) {
+      const text = ts.isStringLiteralLike(node) ? node.text : ts.isTemplateExpression(node) ? node.head.text + node.templateSpans.map(span => '\0' + span.literal.text).join('') : undefined;
+      if (text !== undefined && /^sleight(?::| stopped)/.test(text) && !text.endsWith('\n')) {
+        const pieces = text.split('\0').filter(piece => piece.trim().length > 3);
+        assert.ok(pieces.every(piece => counted.includes(piece)), `${file}:${ast.getLineAndCharacterOfPosition(node.getStart()).line + 1}: ${text}`);
+      }
+      ts.forEachChild(node, visit);
+    })(ast);
+  }
+});
+
+test('lean keeps the safety sentences of marked notices verbatim', { skip }, () => {
+  const lean = taggedNoticeInventory('lean').map(entry => entry.text).join('\n');
+  for (const entry of taggedNoticeInventory()) {
+    for (const sentence of entry.text.split(/(?<=[.!?])\s+/)) {
+      if (/^(?:Stop|Ask|Tell|Never|Before|The user|Only the user)\b/.test(sentence)) assert.ok(lean.includes(sentence), sentence);
+    }
+  }
+});
+
+test('the guard carries lean stop wording only under SLEIGHT_PROMPT=lean, and both forms compile', () => {
+  const AsyncFunction = (async () => {}).constructor;
+  const window = { app: 'Editor', title: 'Draft', url: undefined };
+  const normal = guardedCode('await app.click(1);', window), lean = guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' });
+  assert.match(normal, /One call acts in one app: to switch apps/);
+  assert.doesNotMatch(lean, /One call acts in one app: to switch apps/);
+  assert.match(lean, /Send the rest in a new call/);
+  assert.ok(lean.length < normal.length);
+  for (const code of [normal, lean]) assert.doesNotThrow(() => new AsyncFunction(code));
 });
