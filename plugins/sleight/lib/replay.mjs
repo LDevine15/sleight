@@ -81,7 +81,7 @@ const textOf = content => Array.isArray(content)
 
 // Steps from a transcript's parsed lines, in order: the sleight calls that succeeded.
 export function recordSteps(entries) {
-  const calls = new Map(), texts = [], steps = [], skipped = [];
+  const calls = new Map(), texts = [], steps = [], skipped = [], appNames = new Map();
   let window;
   for (const entry of entries) {
     const content = entry?.message?.content;
@@ -97,9 +97,40 @@ export function recordSteps(entries) {
         texts.push(text);
         if (!window) window = windowFromText(text);
         if (block.is_error) continue;
+        if (call.tool === 'js') {
+          const selector = /\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*")\s*\)/.exec(call.input.code ?? '')?.[1];
+          const acquired = windowFromText(text);
+          if (selector && acquired) {
+            try { appNames.set(JSON.parse(selector), acquired.app); }
+            catch { /* JavaScript-only string escapes cannot certify a selector binding. */ }
+          }
+        }
         if (!REPLAYED.has(call.tool)) { skipped.push(call.tool); continue; }
         if (call.tool === 'drag') {
-          steps.push({ tool: 'drag', args: call.input, positions: ['drag points'] });
+          // A window id is bound to the recording session; the relay refuses it in a new one.
+          const { windowId, ...args } = call.input, positions = [];
+          for (const name of ['from', 'to']) {
+            const endpoint = args[name];
+            if (Number.isSafeInteger(endpoint) && endpoint >= 0) {
+              const current = priorTexts.map(windowFromText).findLast(Boolean);
+              let observed;
+              const scoped = priorTexts.filter(text => {
+                observed = windowFromText(text) ?? observed;
+                return current && documentKey(observed) === documentKey(current);
+              });
+              const found = elementLine(scoped, endpoint);
+              if (found && current?.app === (appNames.get(call.input.app) ?? call.input.app) &&
+                  lines(found.text).filter(line => line === found.line).length === 1) args[name] = { line: found.line };
+              else positions.push(`element ${endpoint} has no unique identity in the observed app window`);
+            } else if (Array.isArray(endpoint)) {
+              if (!positions.includes('drag points')) positions.push('drag points');
+            } else if (name === 'from' && endpoint === 'the current text selection' ||
+                name === 'to' && typeof endpoint === 'string' && /^end of line [1-9]\d*$/.test(endpoint)) {
+              // The selection is whatever is selected at replay time, and visual lines move with the window's width.
+              if (!positions.includes('text selection or line layout')) positions.push('text selection or line layout');
+            } else positions.push('unresolved drag endpoint');
+          }
+          steps.push({ tool: 'drag', args, positions });
           continue;
         }
         const code = String(call.input.code ?? '');
@@ -166,6 +197,12 @@ function retryPrefix(step) {
   return prefix && !inputs.slice(1).some(c => missingPrefix(c) === prefix) ? prefix : undefined;
 }
 
+function dragPositions(args) {
+  const line = value => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 &&
+    typeof value.line === 'string' && value.line.length > 0;
+  return line(args.from) && line(args.to) ? [] : ['drag points'];
+}
+
 function validateReplay(script, allowPositions, waitMs) {
   const steps = script?.steps;
   if (script?.sleightReplay !== 1 || !Array.isArray(steps)) throw new Error('not a sleight replay script');
@@ -173,7 +210,7 @@ function validateReplay(script, allowPositions, waitMs) {
   if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 60000) throw new Error('waitMs must be an integer from 0 to 60000');
   if (steps.some(s => !s || !REPLAYED.has(s.tool) || !s.args || (s.tool === 'js' && typeof s.args.code !== 'string'))) throw new Error('replay steps must be js or drag calls with arguments');
   const positional = steps.map((s, i) => [i + 1, { ...s, positions: [...new Set([
-    ...(s.positions ?? []), ...(s.tool === 'drag' ? ['drag points'] : portableCode(s.args.code, []).positions),
+    ...(s.positions ?? []), ...(s.tool === 'drag' ? dragPositions(s.args) : portableCode(s.args.code, []).positions),
   ])] }]).filter(([, s]) => s.positions.length);
   if (positional.length && !allowPositions) {
     throw new Error(`these steps depend on the window's layout, so replay could act in the wrong place: ${positional.map(([i, s]) => `step ${i} (${s.positions.join('; ')})`).join(', ')}. Run with --allow-positions only if the windows are where they were when you recorded it`);

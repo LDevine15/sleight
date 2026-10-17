@@ -80,3 +80,16 @@ test('short descriptions retain disabled, batching, merge and lean call semantic
   assert.match(lean, /End on the action/);
   assert.ok(lean.startsWith(normal));
 });
+
+
+test('drag endpoint schemas survive clients that drop schema alternatives', t => {
+  for (const prompt of [undefined, 'lean']) {
+    const drag = listed(t, { prompt }).find(tool => tool.name === 'drag');
+    for (const name of ['from', 'to']) {
+      const schema = drag.inputSchema.properties[name];
+      assert.equal(schema.oneOf, undefined); assert.equal(schema.anyOf, undefined);
+      assert.match(schema.description, /element|selection|line/);
+    }
+    assert.match(drag.description, /focused text area/);
+  }
+});

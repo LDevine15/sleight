@@ -402,3 +402,17 @@ test('regular expression contents cannot invent receipt actions', () => {
   const receipt = run('const pattern = /app.click(123)/; await app.getAXState()');
   assert.ok(receipt.calls[1].actions.every(action => action.action !== 'click'));
 });
+
+
+test('drag receipts preserve semantic endpoints while keeping arbitrary strings redacted', () => {
+  const journal = new TurnJournal();
+  for (const [id, from, to] of [[1, 71, 92], [2, 'the current text selection', 'end of line 2'], [3, 'private endpoint', 'private endpoint'], [4, { line: 'image private endpoint' }, 71]]) {
+    journal.request({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', from, to } } });
+    journal.reply(reply(id, '{"ok":true}'));
+  }
+  const result = journal.finish();
+  assert.deepEqual(result.calls[0].actions[0].target, { from: 71, to: 92 });
+  assert.deepEqual(result.calls[1].actions[0].target, { from: 'the current text selection', to: 'end of line 2' });
+  assert.deepEqual(result.calls[3].actions[0].target, { from: { line: { redacted: true, length: 22 } }, to: 71 });
+  assert.doesNotMatch(JSON.stringify(result), /private endpoint/);
+});

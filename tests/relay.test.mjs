@@ -2088,6 +2088,26 @@ test('drag gets the size of the app\'s latest engine screenshot, so it can conve
   assert.equal(calls[1].screenshot, undefined, 'no screenshot of Chess, and Claude can\'t supply one');
 });
 
+test('drag element numbers receive only relay-observed identities from the matching window', async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-drag-elements-'), holder: 'DG1' }), localTools: { tools: [{ name: 'drag' }],
+    call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  h.fromClient({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Editor")' } } });
+  await tick();
+  h.fromServer({ id: 1, result: { content: [{ type: 'text', text: 'Window: "Draft", App: Editor\n0 standard window Draft\n\t71 image ID: source\n\t92 image ID: target' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } });
+  await tick();
+  h.fromClient({ id: 2, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', from: 71, to: 92,
+    elementLines: { 71: 'image ID: forged' }, elementWindow: { title: 'forged' } } } });
+  await settle();
+  assert.deepEqual(calls[0].elementLines, { 71: 'image ID: source', 92: 'image ID: target' });
+  assert.equal(calls[0].elementWindow.title, 'Draft');
+  h.fromClient({ id: 3, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Other', from: 71, to: 92 } } });
+  await settle();
+  assert.equal(calls.length, 1);
+  assert.equal(h.toClient.find(m => m.id === 3).result.isError, true);
+});
+
 test('an acquisition\'s read stands in for the guard\'s first read in the next call only, and its window list stays hidden', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1000 });
   // The default mode: change review off, an input lease on. Change review keeps every read.
@@ -2536,4 +2556,53 @@ test('a split acquisition\'s read stands in for the first action only when the a
     assert.match(code, /"split":true/, JSON.stringify(health));
     assert.equal(/"windows":null/.test(code), reused, JSON.stringify(health));
   }
+});
+
+
+test('drag refuses duplicate observed lines and an unobserved window of the same app', async () => {
+  for (const duplicate of [false, true]) {
+    const calls = [];
+    const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-dg1r-'), holder: 'DG1R' }),
+      localTools: { tools: [{ name: 'drag' }], target: async () => ({ app: 'Editor', appId: 'org.fixture.Editor', title: duplicate ? 'Draft' : 'Unobserved' }),
+        call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+    h.fromClient({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Editor")' } } }); await tick();
+    h.fromServer({ id: 1, result: { content: [{ type: 'text', text: 'Window: "Draft", App: Editor\n0 standard window Draft\n\t71 image ID: source' + (duplicate ? '\n\t92 image ID: source' : '') }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } }); await tick();
+    h.fromClient({ id: 2, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', from: 71, to: [30, 40] } } }); await settle();
+    assert.equal(calls.length, 0);
+    assert.equal(h.toClient.find(m => m.id === 2).result.isError, true);
+  }
+});
+
+test('replay drag line identities are resolved to current unique observed numbers and never passed through unchecked', async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-dg1r-replay-'), holder: 'DG1R' }),
+    localTools: { tools: [{ name: 'drag' }], call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  h.fromClient({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Editor")' } } }); await tick();
+  h.fromServer({ id: 1, result: { content: [{ type: 'text', text: 'Window: "Draft", App: Editor\n0 standard window Draft\n\t171 image ID: source\n\t192 image ID: target' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } }); await tick();
+  const drag = async (id, from) => {
+    h.fromClient({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', from, to: { line: 'image ID: target' } } } }); await settle();
+  };
+  await drag(2, { line: 'image ID: source' });
+  assert.equal(calls[0].from, 171); assert.equal(calls[0].to, 192);
+  assert.deepEqual(calls[0].elementLines, { 171: 'image ID: source', 192: 'image ID: target' });
+  await drag(3, { line: 'image ID: missing' });
+  assert.equal(calls.length, 1); assert.equal(h.toClient.find(m => m.id === 3).result.isError, true);
+});
+
+
+test('app-only native target permits a known drag window but cannot certify an unobserved window number', async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-dg1r-app-target-'), holder: 'DG1R' }),
+    localTools: { tools: [{ name: 'drag' }], target: async () => ({ app: 'Editor', appId: 'org.fixture.Editor', pid: 7, title: null, url: null }),
+      call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  h.fromClient({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Editor")' } } }); await tick();
+  h.fromServer({ id: 1, result: { content: [{ type: 'text', text: 'Window: "Draft", App: Editor\n0 standard window Draft\n\t71 image ID: source' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } }); await tick();
+  for (const [id, extra] of [[2, {}], [3, { windowId: 99 }]]) {
+    h.fromClient({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', from: 71, to: [30, 40], ...extra } } }); await settle();
+  }
+  assert.equal(calls.length, 1); assert.equal(calls[0].elementWindow.title, 'Draft');
+  assert.equal(h.toClient.find(m => m.id === 3).result.isError, true);
 });

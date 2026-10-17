@@ -645,3 +645,95 @@ test('the guard finds an element by its whole line, and stops when none or sever
   await assert.rejects(run('await app.click({ line: "OK" })'), /2 elements with line "OK"/);
   await assert.rejects(run('await app.click({ line: "Basic" })'), /no element with line "Basic"/);
 });
+
+
+test('recorded semantic drags keep line identities instead of stale element numbers or positional gates', () => {
+  const { steps } = recordSteps([
+    use('read', 'js', { code: 'await app.getAXState()' }), result('read', TREE),
+    use('drag', 'drag', { app: 'Calculator', from: 13, to: 12 }), result('drag', 'ok'),
+    use('text', 'drag', { app: 'Calculator', from: 'the current text selection', to: 'end of line 2' }), result('text', 'ok'),
+    use('mixed', 'drag', { app: 'Calculator', from: 13, to: [30, 40] }), result('mixed', 'ok'),
+  ]);
+  assert.deepEqual(steps[0].args, { app: 'Calculator', from: { line: 'button Seven, ID: Seven' }, to: { line: 'button All Clear' } });
+  assert.deepEqual(steps[0].positions, []);
+  assert.deepEqual(steps[1].positions, ['text selection or line layout']);
+  assert.deepEqual(steps[2].positions, ['drag points']);
+  assert.deepEqual(steps[2].args.from, { line: 'button Seven, ID: Seven' });
+});
+
+test('recording refuses to retain a portable numeric drag with absent, duplicate or foreign-window identity', () => {
+  for (const text of [TREE, TREE + '\n99 button Seven, ID: Seven', TREE.replace('App: Calculator', 'App: Other')]) {
+    const from = text === TREE ? 999 : 13;
+    const { steps } = recordSteps([use('read', 'js', { code: 'await app.getAXState()' }), result('read', text),
+      use('drag', 'drag', { app: 'Calculator', from, to: 'end of line 2' }), result('drag', 'ok')]);
+    assert.ok(steps[0].positions.length, 'unresolved identity requires explicit positional opt-in');
+  }
+});
+
+
+test('recording does not carry a numbered identity from an older window of the same app', () => {
+  const other = 'Window: "Other", App: Calculator.\n0 standard window Other\n1 image ID: other';
+  const { steps } = recordSteps([use('read', 'js', { code: 'await app.getAXState()' }), result('read', TREE),
+    use('other', 'js', { code: 'await app.getAXState()' }), result('other', other),
+    use('drag', 'drag', { app: 'Calculator', from: 13, to: 'end of line 2' }), result('drag', 'ok')]);
+  assert.ok(steps[0].positions.length);
+});
+
+
+test('element-identity drag replay executes through the ordinary relay call without positional opt-in', async () => {
+  for (const [from, to] of [[{ line: 'image ID: source' }, { line: 'image ID: target' }]]) {
+    const calls = [], args = { app: 'Editor', from, to };
+    const outcome = await replayModule.replaySteps(scriptOf({ tool: 'drag', args, positions: [] }), {
+      call: async (name, input) => { calls.push([name, input]); return { result: { content: [] } }; },
+    });
+    assert.equal(outcome.ok, true); assert.deepEqual(calls, [['drag', args]]);
+  }
+});
+
+// The selection is whatever is selected at replay time, and visual lines move with window width (2026-10-17 review).
+test('a selection source or a line-end target needs the positional opt-in', async () => {
+  for (const [from, to] of [['the current text selection', { line: 'image ID: target' }], [{ line: 'image ID: source' }, 'end of line 2']]) {
+    await assert.rejects(replayModule.replaySteps(scriptOf({ tool: 'drag', args: { app: 'Editor', from, to }, positions: [] }), {
+      call: async () => assert.fail('layout-dependent drag reached relay without opt-in'),
+    }), /--allow-positions/);
+  }
+});
+
+test('recording drops a session-bound window id from a drag', () => {
+  const { steps } = recordSteps([use('read', 'js', { code: 'await app.getAXState()' }), result('read', TREE),
+    use('drag', 'drag', { app: 'Calculator', windowId: 4242, from: 13, to: 12 }), result('drag', 'ok')]);
+  assert.equal('windowId' in steps[0].args, false);
+});
+
+test('replay still treats numeric, coordinate and malformed drag endpoints as positional when metadata is empty', async () => {
+  for (const from of [71, [10, 20], {}, { line: 'image source', extra: true }, 'arbitrary text']) {
+    await assert.rejects(replayModule.replaySteps(scriptOf({ tool: 'drag', args: { app: 'Editor', from, to: 'end of line 2' }, positions: [] }), {
+      call: async () => assert.fail('positional drag reached relay without opt-in'),
+    }), /--allow-positions/);
+  }
+});
+
+test('recording returns to the prior window identity after another same-app window and a compact diff', () => {
+  const other = 'Window: "Other", App: Calculator.\n0 standard window Other\n13 image ID: other';
+  const returned = 'Window: "Calculator", App: Calculator.\nsleight: no lines changed';
+  const { steps } = recordSteps([use('a', 'js', { code: 'await app.getAXState()' }), result('a', TREE),
+    use('b', 'js', { code: 'await app.getAXState()' }), result('b', other),
+    use('again', 'js', { code: 'await app.getAXState()' }), result('again', returned),
+    use('drag', 'drag', { app: 'Calculator', from: 13, to: 12 }), result('drag', 'ok')]);
+  assert.deepEqual(steps[0].args.from, { line: 'button Seven, ID: Seven' }); assert.deepEqual(steps[0].positions, []);
+});
+
+test('recording binds bundle and path selectors to the display name from their successful acquisition', () => {
+  for (const app of ['org.fixture.Editor', '/Applications/Fixture Editor.app']) {
+    const { steps } = recordSteps([use('a', 'js', { code: `let app = await cua.getApp(${JSON.stringify(app)});` }), result('a', TREE),
+      use('drag', 'drag', { app, from: 13, to: 12 }), result('drag', 'ok')]);
+    assert.deepEqual(steps[1].args.from, { line: 'button Seven, ID: Seven' }); assert.deepEqual(steps[1].positions, []);
+  }
+});
+
+
+test('recording a successful acquisition with JavaScript-only string escapes cannot abort the transcript', () => {
+  const code = String.raw`let app = await cua.getApp("Calc\x75lator");`;
+  const recorded = recordSteps([use('read', 'js', { code }), result('read', TREE)]);
+  assert.equal(recorded.steps.length, 1); assert.equal(recorded.steps[0].args.code, code);
+});

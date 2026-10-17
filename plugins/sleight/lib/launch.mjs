@@ -360,7 +360,9 @@ const MENU_BAR_TOOLS = [
 const DRAG_TOOL = {
   name: 'drag',
   description: 'A drag that holds the mouse down and moves in steps, for what app.drag in the js tool can\'t do, such as ' +
-    'moving selected text (select it with js first). `from` and `to` are in the same frame as the app\'s engine ' +
+    'moving selected text (select it with js first). `from` accepts an element number from the last window read or "the current text selection"; ' +
+    '`to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. ' +
+    'Both also accept coordinate pairs, in the same frame as the app\'s engine ' +
     'screenshot, from that window\'s top-left corner. Pass `windowId` when several windows fit; an ambiguous target refuses. ' +
     'Both points must be in window content. A text drag requires a non-blank selection and both points in the same text area or field. ' +
     'A lost-text error tells you to press Cmd+Z in the target app and named window. ' +
@@ -375,8 +377,8 @@ const DRAG_TOOL = {
     properties: {
       app: { type: 'string', description: 'App name, bundle ID or path' },
       windowId: { type: 'integer', minimum: 1, description: 'Exact window ID from the engine inventory or app state' },
-      from: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
-      to: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+      from: { description: 'Element number, [x, y], or "the current text selection"' },
+      to: { description: 'Element number, [x, y], or "end of line N"' },
       holdMs: { type: 'integer', description: 'How long to hold before moving (default 500)' },
       steps: { type: 'integer', description: 'Moves between start and end (default 25)' },
     },
@@ -408,7 +410,8 @@ function leanToolDescription(tool) {
     ['`at` is relative to the selected window\'s top-left corner.', '`at`: window-relative.'],
     ['If that makes no change, it tries background PID posting with a 500 ms hold when the points are uncovered.', 'Then uncovered PID posting (500 ms hold) if unchanged.'],
     ['A drag that holds the mouse down and moves in steps, for what app.drag in the js tool can\'t do, such as moving selected text (select it with js first).', 'Stepped drag; select text with js first.'],
-    ['`from` and `to` are in the same frame as the app\'s engine screenshot, from that window\'s top-left corner.', '`from`/`to`: engine screenshot coordinates, window-relative.'],
+    ['`from` accepts an element number from the last window read or "the current text selection"; `to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. Both also accept coordinate pairs, in the same frame as the app\'s engine screenshot, from that window\'s top-left corner.',
+      '`from`/`to`: unique named element numbers from read, or window-relative engine screenshot coordinates. `from`: "the current text selection"; `to`: "end of line N" (1-based visual line in focused text area).'],
     ['The result names the path. ', ''],
     ['Reports takeoverMs. ', ''],
     ['`path` is absolute or starts with ~/.', 'Absolute or ~/ path.'],

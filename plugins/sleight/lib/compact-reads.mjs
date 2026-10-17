@@ -1103,7 +1103,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (!entry) return undefined;
       const believed = new Map(entry.believed ?? numbered(entry.lines));
       const out = {};
-      for (const n of numbers) if (believed.has(n)) out[n] = believed.get(n).replace(/^\t*/, '');
+      for (const n of numbers ?? believed.keys()) if (believed.has(n)) out[n] = believed.get(n).replace(/^\t*/, '');
       return Object.keys(out).length ? out : undefined;
     },
     // The numbers whose line was on no other element in the tree Claude saw, so the same line
