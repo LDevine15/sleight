@@ -72,7 +72,7 @@ test('browser adapter selects only its task browser from the benchmark allowlist
   assert.equal(setup.env.BENCH_CU_ALLOWED_APPS, '["Helium"]');
 });
 async function session(p, { screens = [card()], cancel = false, afterDown = card(['Fixture Editor'], 'allow') } = {}) {
-  const writes = [], events = []; let finish, output, answer, exitKeys = 0, timer;
+  const writes = [], events = []; let finish, output, answer, exitKeys = 0, timer, downs = 0;
   const closed = new Promise(resolve => { finish = resolve; });
   const controller = new AbortController();
   const result = await runInteractive(p, { prepare() {}, verify() {}, serverReady: () => true, pollMs: 1, signal: controller.signal, onEvent: event => events.push(event),
@@ -85,13 +85,13 @@ async function session(p, { screens = [card()], cancel = false, afterDown = card
           if (cancel) controller.abort();
           output(screens[0]);
           if (screens.length > 1) timer = setTimeout(() => output(screens[1]), 15);
-        } else if (value === '\x1b[B') { if (afterDown !== null) output(afterDown); }
+        } else if (value === '\x1b[B') { downs++; if (Array.isArray(afterDown)) { output(afterDown[0]); timer = setTimeout(() => output(afterDown[1]), 20); } else if (afterDown !== null) output(afterDown); }
         // Accepting erases the card, as Claude Code's redraw does; the harness no longer clears its own copy of the screen.
         else if (value === '\r') { answer = 'RESULT ok'; output('\x1b[2J\x1b[H❯ Try "write a test"\n'); }
         else if (value === '\x04' && ++exitKeys === 2) finish({ code: 0, clean: true });
       }, async stop() { clearTimeout(timer); finish({ code: 130, clean: true }); } };
     } });
-  return { result, writes, events };
+  return { result, writes, events, downs: () => downs };
 }
 function assertBlock(result, events, reason) {
   assert.equal(result.reason, reason);
@@ -212,6 +212,15 @@ for (const [name, afterDown] of [['app row rewritten in place', downTail + '\x1b
     assert.deepEqual(writes.slice(1), ['\x1b[B']);
   });
 }
+// Live 15:47Z: the spinner line under the card changed before the Down redraw arrived, the harness read Deny as still selected
+// and pressed Down again, which wrapped the selection back to Deny.
+test('a frame that changes only the spinner after Down never sends Down twice', async t => {
+  const spinner = card() + '⏺\n';
+  const { result, writes } = await session(fixture(t), { screens: [card()], afterDown: [spinner, card(['Fixture Editor'], 'allow')] });
+  assert.equal(result.is_error, false, result.reason);
+  assert.equal(writes.filter(value => value === '\x1b[B').length, 1);
+  assert.equal(writes.filter(value => value === '\r').length, 1);
+});
 test('the live-rendered card still refuses an app outside the allowlist, and an unboxed line above the apps', async t => {
   const foreign = await session(fixture(t), { screens: [live('deny', 'Other App')] });
   assertBlock(foreign.result, foreign.events, 'computer-use approval is outside the task allowlist or unsupported');

@@ -281,7 +281,7 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
   if (signal?.aborted) return { type: 'result', is_error: true, result: '', reason: 'cancelled', duration_ms: Date.now() - start, groupClean: true };
   if (onEvent) transcript.onEvent = onEvent;
   const screen = new VirtualTerminal();
-  let tail = '', closed, sent = false, exiting = false, reason, timedOut = false, gateBlocked, approvalBlock, pendingAt, keyRender;
+  let tail = '', closed, sent = false, exiting = false, reason, timedOut = false, gateBlocked, approvalBlock, pendingAt, keyRender, lastKey;
   const approvalWaitMs = Math.min(1000, plan.timeoutMs / 2);
   const block = (why, text) => {
     gateBlocked = true; reason = why;
@@ -316,9 +316,11 @@ export async function runInteractive(plan, { dryRun = false, prepare = prepareIn
         if (keyRender !== undefined && (!render || render === keyRender)) { await wait(pollMs); continue; }
         const card = sessionCard(text, plan.allowedApps, plan.allowedGrants);
         if (card?.blocked) { block(card.blocked, text); break; }
-        if (card?.answer) { pendingAt = Date.now(); keyRender = render; pty.write(card.answer); await wait(pollMs); continue; }
+        // A frame that changed elsewhere (the ⏺ line) can arrive before the redraw a key causes: never send one key twice in a row.
+        if (card?.answer && card.answer === lastKey) { await wait(pollMs); continue; }
+        if (card?.answer) { pendingAt = Date.now(); keyRender = render; lastKey = card.answer; pty.write(card.answer); await wait(pollMs); continue; }
         if (card?.pending) { pendingAt ??= Date.now(); await wait(pollMs); continue; }
-        pendingAt = undefined; keyRender = undefined;
+        pendingAt = undefined; keyRender = undefined; lastKey = undefined;
       }
       if (gate.blocked) { block(gate.blocked, text); break; }
       if (!sent && gate.ready && !serverReady(plan)) {
