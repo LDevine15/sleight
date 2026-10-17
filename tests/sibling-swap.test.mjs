@@ -22,6 +22,17 @@ test('a click that swaps two recorded sibling lines names both and gives recover
   assert.equal(out.match(/clicking also swapped/g)?.length, 1);
 });
 
+test('a tab swap adds the switch-by-key advice and a list swap does not', () => {
+  const advice = /a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\./;
+  assert.match(result(rows, swapped), advice);
+  const list = role => ['\t6 group Sheets', `\t\t7 ${role} Inventory`, `\t\t8 ${role} Review`];
+  const listSwapped = role => ['\t6 group Sheets', `\t\t7 ${role} Review`, `\t\t8 ${role} Inventory`];
+  const out = result(list('button'), listSwapped('button'), 'await app.click(7)');
+  assert.match(out, /swapped Inventory and Review; siblings now: Review, Inventory; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\.$/m);
+  assert.doesNotMatch(out, /next\/previous-tab/);
+  assert.match(result(list('radio button'), listSwapped('radio button'), 'await app.click(7)'), advice);
+});
+
 for (const code of ['await app.click(7)', 'await app.click({ label: "Inventory" })']) {
   test(`selected label prefixes do not hide swapped tabs: ${code}`, () => {
     const before = ['\t6 group Sheets', '\t\t7 button Inventory', '\t\t8 button Selected, Review 2a37d191'];

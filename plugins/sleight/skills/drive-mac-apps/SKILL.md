@@ -34,7 +34,6 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   and paste in one call.
 - Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
   call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
-  `menu_bar` is only for status icons.
 - Acquire a document that's already open. Don't reopen it.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
 - Transfer numbers as digits.
@@ -43,6 +42,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
+- Switch sheets or document tabs with the app's next/previous-tab key or go-to control (a click can drag
+  the tab), then check the tab order.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   later edits.
 - If scrolling fails, use search or keyboard navigation.
@@ -81,13 +82,12 @@ Click a button that may open a page dialog (pay, delete, leave) with
 
 - `app.drag` moves things that follow the pointer at once. Moving selected text needs the button
   held first: select it in `js`, then call `drag` with `app`, `windowId`, and `from` and `to` from the
-  latest screenshot of that window, both inside its visible content. If it reports lost text, press
-  Cmd+Z in that window and read it.
+  latest screenshot of that window. If it reports lost text, press Cmd+Z in that window and read it.
 - Engine events don't trigger hover. Use `Help:` fields, `Secondary Actions:`, a right-click
-  or a key first. Only then `hover` with `app` and `at`, after telling the user it moves their pointer
-  and brings the app forward for about two seconds.
-- `notifications` lists on-screen banners and presses their buttons. Banners leave in seconds, so act
-  at once. `menu_bar` reaches status icons. The user approves each once per session.
+  or a key first. Only then `hover`, after telling the user it moves their pointer and brings the app
+  forward for about two seconds.
+- `notifications` presses buttons on banners, which leave in seconds, so act at once. `menu_bar`
+  reaches status icons.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.
 - `SLEIGHT_CHANGE_REVIEW=1`: acquire before editing, save before `review_changes`, and never decide for
