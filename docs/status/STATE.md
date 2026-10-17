@@ -29,6 +29,11 @@ claim build) against NEW `e8467903` with every opt-in flag (WARM_ENGINE, OPEN_FA
 COMPACT_CONFIRMATIONS), 20 native tasks, 3 rounds, logs `ab.log` and `ab-<side>-r<n>.log`; the script closes this run's Finder
 fixture windows and touches `/tmp/sleight-bench-done` at the end. Score: `node bench/ab-score.mjs --old ~/Projects/sleight-wt/ab-old/bench/results
 --new ~/Projects/sleight-wt/ab-new/bench/results --since 2026-10-17T12-59`.
+**Right after the window** (owner): trace textedit-window-drag's grader (item WD1, 0/7 since 2026-10-16, its method audit never
+`complete`); stop `cua-driver serve`; check `after-release.sh` quit Mail and Terminal (owner OK, and it never answers a prompt).
+Temp folders older than 6 h were removed on the owner's OK (304 folders, 14.9 GB, list in `~/Library/Logs/sleight/temp-removed-20261017.txt`).
+HY1 lane building pass-end window hygiene, a temp sweep at pass start and 7-day screenshot retention (owner: don't over-prune,
+don't leave a mess).
 **Unpushed on this branch** until a full check runs after the window: DG1 with DG1R and `29db25d5` (merge `f3d999a6`; drag by element
 number or selection; after a second review, replaying a selection or line-end drag requires `--allow-positions`), and `716a6109`.
 sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed, scored to
