@@ -9,18 +9,22 @@ import { join } from 'node:path';
 // window natively after each key press the engine asks approval for, and writes the observations to a
 // file beside the lease. The guard skips the full read when two observations taken after the key show
 // the same window, no sheet, and focus on a text or cell element in it. Anything else reads as before.
-// SLEIGHT_GUARD_LIGHT_RETURN=0 turns it off, for the A/B baseline.
-export const lightReturnEnabled = (env = process.env) => env.SLEIGHT_GUARD_LIGHT_RETURN !== '0';
+// Off by default until we measure live how late alerts and sheets appear after Return:
+// SLEIGHT_GUARD_LIGHT_RETURN=1 turns it on.
+export const lightReturnEnabled = (env = process.env) => env.SLEIGHT_GUARD_LIGHT_RETURN === '1';
 
 const KEY = /\.pressKey\(\s*(['"`])(?:return|enter|tab|escape|esc|space)\1\s*\)/i;
 export const lightReturnCode = code => typeof code === 'string' && KEY.test(code) && /\.(?:typeText|paste)\(/.test(code);
 
-// waitMs: an observation counts only when it started this long after the key's pressKey returned.
-// deadlineMs: past this (from the same moment), the guard reads the whole tree.
-export const LIGHT_TIMING = { waitMs: 100, deadlineMs: 400, pollMs: 10 };
+// waitMs: an observation counts only when it started this long after the key's pressKey returned, and
+// two such observations must have started at least gapMs apart.
+// freshMs: the newest of them must have ended this recently.
+// windowMs: the observer runs this long after a key, so past it (from the key) the guard reads the whole tree.
+// deadlineMs: past this (from the key), the guard stops waiting and reads the whole tree.
+export const LIGHT_TIMING = { waitMs: 250, gapMs: 50, freshMs: 150, windowMs: 700, deadlineMs: 600, pollMs: 10 };
 
 export function createLightReturn({ directory, observe, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  delayMs = 80, intervalMs = 25, burstMs = 700, keep = 8, timing = LIGHT_TIMING } = {}) {
+  delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8 } = {}) {
   const calls = new Map();
   const write = call => {
     try {

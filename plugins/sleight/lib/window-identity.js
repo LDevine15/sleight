@@ -85,7 +85,8 @@ function run(argv) {
       index = windowReferences.push(window) - 1;
     }
     // The guard's light check after Return (SLEIGHT_GUARD_LIGHT_RETURN): sheets on this window, and the
-    // focused element's role and whether it sits in this window, by AXWindow or else its parents.
+    // focused element's role and subrole (AXSecureTextField refuses it) and whether it sits in this
+    // window, by AXWindow or else its parents.
     let focus;
     if (request.focus) {
       const children = attr(window, 'AXChildren', true);
@@ -103,7 +104,8 @@ function run(argv) {
           node = attr(node, 'AXParent', true);
         }
       }
-      focus = { sheets, role: element ? scalar(attr(element, 'AXRole', true)) : null, inWindow };
+      focus = { sheets, role: element ? scalar(attr(element, 'AXRole', true)) : null,
+        subrole: element ? scalar(attr(element, 'AXSubrole', true)) ?? null : null, inWindow };
     }
     return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title,
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,

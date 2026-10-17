@@ -285,32 +285,41 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
     // read (about 470 ms in Excel, 2026-10-17) when two native observations that began at least waitMs
-    // after the key show the expected title and URL in the app's focused window (and its certified
-    // number, which the relay asks for), no sheet on it, and focus on a text or cell element inside it.
-    // Any other observation, or none before deadlineMs, reads the whole tree as before. A call stops
-    // trying after a wait that got no observation at all, or after two refusals.
+    // after the key, and gapMs apart, show the expected title and URL in the app's focused window (and
+    // its certified number, which the relay asks for), no sheet on it, and focus on a text or cell
+    // element inside it that isn't a password field. The newest must have ended within freshMs, and the
+    // key must be less than windowMs old (the observer stops then), so a wait or a slow call between the
+    // key and the typing reads. So does any other call on an app handle in between. Any other
+    // observation, or none before deadlineMs, reads the whole tree as before. A call stops trying after
+    // a wait that got no observation at all, or after two refusals.
     const lightRole = /^AX(?:TextField|TextArea|ComboBox|SearchField|Cell|Table|Grid|LayoutArea)$/;
     const lightCheck = async before => {
       const light = state.light, start = clock(), entered = Date.now();
-      const since = before.done + (light.waitMs ?? 100), deadline = before.done + (light.deadlineMs ?? 400);
+      const windowMs = light.windowMs ?? 700, gap = light.gapMs ?? 50, freshMs = light.freshMs ?? 150;
+      const since = before.done + (light.waitMs ?? 250), deadline = before.done + Math.min(light.deadlineMs ?? 600, windowMs);
       const good = o => o?.status === 'ok' && o.matches === 1 && o.window > 0 && o.title === state.expected?.title &&
         (o.url ?? null) === (state.expected?.url ?? null) && o.focus?.sheets === 0 && o.focus.inWindow === true &&
-        lightRole.test(o.focus.role ?? '');
-      let passed = false, seen = false;
-      try {
+        lightRole.test(o.focus.role ?? '') && o.focus.subrole !== 'AXSecureTextField' && typeof o.end === 'number';
+      let passed = false, seen = false, polled = false;
+      // One touch since the key: this typeText or paste. A read, wait, screenshot or other handle in
+      // between is another.
+      if (state.touches === before.touches + 1) try {
         const fs = await import('node:fs/promises');
         for (;;) {
+          if (Date.now() - before.done >= windowMs) break;
+          polled = true;
           let observations = [];
           try { observations = JSON.parse(await fs.readFile(light.path, 'utf8')).observations ?? []; } catch {}
-          const fresh = observations.filter(o => typeof o?.start === 'number' && o.start >= since);
-          if (fresh.length) seen = true;
-          if (fresh.some(o => !good(o))) break;
-          if (fresh.length >= 2) { passed = true; break; }
-          if (Date.now() >= deadline) break;
+          const late = observations.filter(o => typeof o?.start === 'number' && o.start >= since);
+          if (late.length) seen = true;
+          if (observations.some(o => typeof o?.end === 'number' && o.end >= since && !good(o))) { seen = true; break; }
+          const newest = late.at(-1), now = Date.now();
+          if (late.length >= 2 && newest.start - late[0].start >= gap && now - newest.end <= freshMs && now - before.done < windowMs) { passed = true; break; }
+          if (now >= deadline) break;
           await new Promise(resolve => setTimeout(resolve, light.pollMs ?? 10));
         }
       } catch {}
-      if (!seen && entered < deadline) light.off = true;
+      if (polled && !seen && entered < deadline) light.off = true;
       if (!passed && (light.refusals = (light.refusals ?? 0) + 1) >= 2) light.off = true;
       if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: passed ? 'light' : 'light-refused',
         ms: clock() - start, chars: 0, failed: false }) + '\\n');
@@ -334,6 +343,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
       if (state.proxies.has(target)) return target;
       if (state.wrapped.has(target)) return state.wrapped.get(target);
       const proxy = new Proxy(target, { get(raw, name) {
+        // Every use of a handle, for the light check's "nothing between the key and the typing".
+        state.touches = (state.touches ?? 0) + 1;
         if (name === 'waitFor') return (() => {
           let pending;
           const checkCurrent = () => {
@@ -715,7 +726,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
           const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line,
-            textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text) };
+            textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text),
+            touches: state.touches };
           state.previous.set(proxy, previous);
           if (text !== undefined && !bind) state.binding = { proxy, text };
           else if (state.binding?.proxy !== proxy) state.binding = undefined;
@@ -757,7 +769,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
       state.proxies.add(proxy); state.wrapped.set(target, proxy); state.raws.set(proxy, target);
       return proxy;
     };
-    if (state.getApp) cua.getApp = async (...args) => { checkNative(); return state.activeApp = wrap(await state.getApp(...args)); };
+    if (state.getApp) cua.getApp = async (...args) => { checkNative(); state.touches = (state.touches ?? 0) + 1; return state.activeApp = wrap(await state.getApp(...args)); };
     state.wrap = wrap;
   };`;
   return install + `

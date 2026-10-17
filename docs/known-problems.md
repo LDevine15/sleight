@@ -21,8 +21,9 @@ our own runs. Dates and engine versions are given where they matter.
   alert and then stopped, 5 now split; the 2 with `.catch()` on an action still stop. None has run live yet. A dialog-close
   continuation also needs HID idle since the dialog was leased, so any mouse or key input after it appeared stops the
   rest, and it stops when the app has a second window with the same title and URL.
-- The light check before typing after Return (`SLEIGHT_GUARD_LIGHT_RETURN`, on by default) hasn't run live. It waits 100 ms
-  after the key where the engine's settled read waited about 400 ms, so a sheet that takes longer to appear can miss it. Its
+- The light check before typing after Return (`SLEIGHT_GUARD_LIGHT_RETURN=1`, off by default) hasn't run live. It waits 250 ms
+  after the key where the engine's settled read waited about 400 ms, and we don't know how late alerts and sheets appear after
+  Return, so one that takes longer can miss it. It stays off until we measure that. Its
   native observer starts on the engine's `press_key` approval, so an engine that stops asking per action leaves only full reads.
   We haven't measured how much the observer's AX polling (every 25 ms for 700 ms after a key) slows the app.
 

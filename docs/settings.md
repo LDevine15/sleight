@@ -260,8 +260,9 @@ element lookup, after actions that can open a panel, and at the end of an acting
 Set `SLEIGHT_GUARD=careful` to read before every action. Document scope (`SLEIGHT_APPROVAL_SCOPE=document`) and change review keep
 their reads.
 
-Typing right after Return, Enter, Tab, Escape or Space takes a native check of the leased window in place of the full read
-(see [guard reads](design/guard-reads.md#light-check-after-return-2026-10-17)). Set `SLEIGHT_GUARD_LIGHT_RETURN=0` for the old read.
+Set `SLEIGHT_GUARD_LIGHT_RETURN=1` to replace the full read before typing right after Return, Enter, Tab, Escape or Space with
+a native check of the leased window (see [guard reads](design/guard-reads.md#light-check-after-return-2026-10-17)). It is off by
+default and hasn't run live: we haven't measured how late alerts and sheets appear after Return.
 
 ## First-call batching
 

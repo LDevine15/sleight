@@ -34,11 +34,15 @@ test('timing is removed from mixed results and malformed metrics cannot enter a 
   const good = JSON.stringify({ phase: 'after-call', ms: 12.5, chars: 30, failed: false });
   // A skipped read is traced too: the parser dropped it until 2026-10-09, so no trace showed a skip.
   const skipped = JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false });
-  const content = [{ type: 'text', text: `before\n${mark}${good}\n${mark}${skipped}\nafter` },
+  // The light check after Return is traced, so an A/B shows how often it fired.
+  const light = JSON.stringify({ phase: 'light', ms: 310, chars: 0, failed: false });
+  const refused = JSON.stringify({ phase: 'light-refused', ms: 600, chars: 0, failed: false });
+  const content = [{ type: 'text', text: `before\n${mark}${good}\n${mark}${skipped}\n${mark}${light}\n${mark}${refused}\nafter` },
     { type: 'text', text: `${mark}{"phase":"secret","ms":-1}` }, { type: 'image', data: 'unchanged' }];
   assert.deepEqual(stripGuardTiming(content, metric => metrics.push(metric)),
     [{ type: 'text', text: 'before\nafter' }, { type: 'image', data: 'unchanged' }]);
-  assert.deepEqual(metrics, [{ phase: 'after-call', ms: 12.5, chars: 30, failed: false }, { phase: 'skipped', ms: 0, chars: 0, failed: false }]);
+  assert.deepEqual(metrics, [{ phase: 'after-call', ms: 12.5, chars: 30, failed: false }, { phase: 'skipped', ms: 0, chars: 0, failed: false },
+    JSON.parse(light), JSON.parse(refused)]);
 });
 
 test('the relay traces metrics by call ID before delivering a clean full header', t => {

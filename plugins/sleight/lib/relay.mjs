@@ -501,7 +501,7 @@ export function createRelay({
   // a call, which skip it by default (owner, 2026-10-09). Document scope is always careful.
   guardMode,
   // Native observations in place of the settled read before typing after Return (light-return.mjs).
-  // The launcher turns it on unless SLEIGHT_GUARD_LIGHT_RETURN=0; it needs windowIdentity and a lease.
+  // The launcher turns it on only with SLEIGHT_GUARD_LIGHT_RETURN=1; it needs windowIdentity and a lease.
   guardLightReturn = false,
   // Rewrites the engine's first-call rule in the js tool description. The launcher turns it on unless
   // SLEIGHT_FIRST_CALL_BATCH=0: in 24 runs a side it cut turns 208 to 168 (2026-10-09). 'merge' picks

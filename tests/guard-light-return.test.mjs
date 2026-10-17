@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
-import { createLightReturn, lightReturnCode, lightReturnEnabled } from '../plugins/sleight/lib/light-return.mjs';
+import { LIGHT_TIMING, createLightReturn, lightReturnCode, lightReturnEnabled } from '../plugins/sleight/lib/light-return.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -19,17 +19,23 @@ const window = { ...expected, appId: 'com.microsoft.Excel' };
 const tree = (rows = '\t1 layout area Content Area') =>
   `Window: ${JSON.stringify(expected.title)}, App: ${expected.app}.\n0 standard window, URL: ${expected.url}\n${rows}`;
 const sheetTree = () => `Window: "", App: ${expected.app}.\n0 sheet Save changes?\n\t1 button Cancel\n\t2 button Don't Save`;
-const timing = { waitMs: 15, deadlineMs: 600, pollMs: 2 };
-const ok = { status: 'ok', matches: 1, window: 1, title: expected.title, url: expected.url, focus: { sheets: 0, role: 'AXLayoutArea', inWindow: true } };
+const timing = { waitMs: 15, gapMs: 5, freshMs: 150, windowMs: 650, deadlineMs: 600, pollMs: 2 };
+const ok = { status: 'ok', matches: 1, window: 1, title: expected.title, url: expected.url, focus: { sheets: 0, role: 'AXLayoutArea', subrole: null, inWindow: true } };
 
 // The engine's handle with an observer standing in for the relay: each pressKey arms it, as the
-// engine's press_key approval does, and each observation reports the window as `native()` says.
-function fixture({ native = () => ok, current = () => tree(), onKey = () => {}, arm = true, burstMs = 400 } = {}) {
+// engine's press_key approval does, and each observation reports the window as `native(ms since the
+// key)` says. `realistic` uses the shipped timing and the relay's observer defaults (80 ms delay, an
+// observation every 25 ms for 700 ms).
+function fixture({ native = () => ok, current = () => tree(), onKey = () => {}, arm = true, burstMs = 400, realistic = false } = {}) {
   const calls = [], output = [], observed = [];
-  const light = createLightReturn({ directory: dir, delayMs: 0, intervalMs: 4, burstMs, timing,
-    observe: async request => { observed.push(request); return native(); } });
-  const raw = { async getAXState(options) { calls.push(['read', options]); return current(); } };
+  let keyAt = 0;
+  const since = () => Date.now() - keyAt;
+  const light = createLightReturn({ directory: dir, ...(realistic ? {} : { delayMs: 0, intervalMs: 4, burstMs, timing }),
+    observe: async request => { observed.push(request); return native(since()); } });
+  const raw = { async getAXState(options) { calls.push(['read', options]); return current(since()); },
+    async getScreenshot() { calls.push(['screenshot']); return {}; } };
   for (const name of ['click', 'pressKey', 'typeText', 'paste', 'setValue']) raw[name] = async (...args) => {
+    if (name === 'pressKey') keyAt = Date.now();
     if (name === 'pressKey' && arm) light.keyPressed(window.appId);
     calls.push([name, ...args]);
     if (name === 'pressKey') onKey(args[0]);
@@ -79,6 +85,7 @@ test('a Return that opens a sheet still stops typeText', async () => {
 test('a dialog window in front, a changed title or focus outside text refuses the light check', async () => {
   for (const reply of [{ status: 'mismatch', error: 'Focused window differs' }, { ...ok, title: 'Other' }, { ...ok, url: null },
     { ...ok, matches: 2 }, { ...ok, focus: { ...ok.focus, role: 'AXButton' } }, { ...ok, focus: { ...ok.focus, inWindow: false } },
+    { ...ok, focus: { ...ok.focus, role: 'AXTextField', subrole: 'AXSecureTextField' } },
     { status: 'unknown' }]) {
     let pressed = false;
     const f = fixture({ onKey: () => { pressed = true; }, native: () => pressed ? reply : ok });
@@ -112,6 +119,44 @@ test('after two refusals the call reads before each typeText without waiting', a
   await f.run('await app.pressKey("Return"); await app.typeText("a"); await app.pressKey("Return"); await app.typeText("b"); await app.pressKey("Return"); await app.typeText("c");');
   assert.deepEqual(f.phases(), ['before-action', 'light-refused', 'before-action', 'skipped', 'light-refused', 'before-action',
     'skipped', 'before-action', 'after-call']);
+});
+
+test('with the shipped timing a Return-then-type takes the light check, about 300 ms after the key', async () => {
+  const f = fixture({ realistic: true });
+  const start = Date.now();
+  await f.run('await app.pressKey("Return"); await app.typeText("x");');
+  assert.deepEqual(f.phases(), ['before-action', 'light', 'after-call']);
+  assert.ok(Date.now() - start >= LIGHT_TIMING.waitMs + LIGHT_TIMING.gapMs);
+});
+
+test('with the shipped timing a sheet or a focus change at +200 or +300 ms after the key forces the full read', async () => {
+  const sheet = { ...ok, focus: { ...ok.focus, sheets: 1 } }, button = { ...ok, focus: { ...ok.focus, role: 'AXButton' } };
+  for (const at of [200, 300]) {
+    const opened = ms => ms >= at && ms < 5000;
+    const f = fixture({ realistic: true, native: ms => opened(ms) ? sheet : ok, current: ms => opened(ms) ? sheetTree() : tree() });
+    await assert.rejects(f.run('await app.pressKey("Return"); await app.typeText("secret");'), /changed window/, `sheet at +${at} ms`);
+    assert.deepEqual(f.phases(), ['before-action', 'light-refused', 'before-action'], `sheet at +${at} ms`);
+    assert.ok(!f.calls.some(c => c[0] === 'typeText'));
+    const g = fixture({ realistic: true, native: ms => opened(ms) ? button : ok });
+    await g.run('await app.pressKey("Return"); await app.typeText("x");');
+    assert.deepEqual(g.phases(), ['before-action', 'light-refused', 'before-action', 'after-call'], `focus change at +${at} ms`);
+  }
+});
+
+test('a wait past the observer, a stale observation or another call between the key and the typing reads the whole tree', async () => {
+  // The observer covers 700 ms after the key; an alert in a longer gap would leave no observation.
+  const late = fixture({ realistic: true });
+  await late.run('await app.pressKey("Return"); await new Promise(r => setTimeout(r, 800)); await app.typeText("x");');
+  assert.deepEqual(late.phases(), ['before-action', 'light-refused', 'before-action', 'after-call']);
+  // Inside the window, but the newest observation ended more than 150 ms ago.
+  const stale = fixture({ burstMs: 60 });
+  await stale.run('await app.pressKey("Return"); await new Promise(r => setTimeout(r, 300)); await app.typeText("x");');
+  assert.deepEqual(stale.phases(), ['before-action', 'light-refused', 'before-action', 'after-call']);
+  // Another engine call on the handle between the key and the typing.
+  const between = fixture();
+  await between.run('await app.pressKey("Return"); await app.getScreenshot(); await app.typeText("x");');
+  assert.ok(between.calls.some(c => c[0] === 'screenshot'));
+  assert.deepEqual(between.phases(), ['before-action', 'light-refused', 'before-action', 'after-call']);
 });
 
 test('careful mode and shortcuts keep their reads', async () => {
@@ -148,8 +193,10 @@ test('the observer writes beside the lease, only after a key, and removes its fi
 });
 
 test('flag and code detection', () => {
-  assert.equal(lightReturnEnabled({}), true);
+  // Off by default until a live measurement of how late alerts and sheets appear after Return.
+  assert.equal(lightReturnEnabled({}), false);
   assert.equal(lightReturnEnabled({ SLEIGHT_GUARD_LIGHT_RETURN: '0' }), false);
+  assert.equal(lightReturnEnabled({ SLEIGHT_GUARD_LIGHT_RETURN: '1' }), true);
   assert.equal(lightReturnCode('await app.pressKey("Return"); await app.typeText("a");'), true);
   assert.equal(lightReturnCode("await app.pressKey('Tab'); await app.paste('a');"), true);
   assert.equal(lightReturnCode('await app.pressKey("cmd+s"); await app.typeText("a");'), false);
