@@ -3,65 +3,51 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 16:55 UTC, flushed before the owner's clear)
+## Banner (2026-10-17 17:35 UTC, owner away since 17:16Z, on their phone)
 
 Goal (owner): release 1.3.0, then the native claim and the video. No shortcuts on the claim (owner, 2026-10-17): every fix the
-live runs surface lands before sleight's final claim run, then the tag (ROADMAP 1b). The owner shut Puddle down at ~14:37Z and gave
-sleight the Mac (Puddle's leftover hold-setter, pid 92090, was stopped and noted in its window log). Build work today ran as Claude
-subagents, Opus high for builds and Sonnet high for reviews (owner, 2026-10-17). Nothing is running at the clear: no lanes,
-agents, monitors or live runs.
+live runs surface lands before sleight's final claim run, then the tag (ROADMAP 1b). Puddle is shut down, and sleight has the Mac.
+Build agents run as Claude subagents (Opus high builds, Sonnet high reviews, Fable studies).
 
-**Pushed:** `pane/auto-mode` on `private` is this branch's newest commit (see `git log -1`). Full check before the flush:
-see the commit message. Everything below is in it.
+**Since the 17:08Z boot** (all pushed to `pane/auto-mode` on `private` and fast-forwarded into the main checkout):
+- e2fd539a WE1: native warm-up no longer declines the user's first approval (an in-order engine queued the call's prompt behind the
+  private inventory cell, where the fail-closed rule declined it). Root cause of the stop-then-lazy-start test timeout, so
+  `SLEIGHT_WARM_ENGINE` is on by default. Full check 6,695 tests, 0 fail, exit 0.
+- 1e4c838b RT1 (Fable red-team of today's merges): the temp sweep keeps `sleight-review-*` (change review's undo copies) and probe
+  banks; pass hygiene closes windows only with `--owner-away`.
+- 4cc32214, 29eb0816, 725bd30d: xl1-probe startup waits and a probe-client crash fix. The Excel probe ran 4 times (17:17-17:20Z):
+  AX -25204 and empty windows at launch, then a crash that left Excel running (quit by NSRunningApplication), then "Rename editor
+  unavailable" after the tab double-click, and its cleanup couldn't answer Excel's save alert, which is an AXDialog window, so
+  sleight-arch answered the fixture's own Don't Save through System Events. XP1 in the ledger.
+- Uncommitted, reviewed: GS1 (relay rewrites `<handle>.getState(` to `getAXState(`, strings masked) and SN1 (a same-window file
+  write confirms a save despite a degraded read). Full check pending, after the top-ups finish.
 
-**Merged today** (each with Sonnet-high review rounds): WD1 (window-drag grader), DG1+DG1R (drag by element number or text
-selection; replays of selection or line-end drags need `--allow-positions`), IT2+IT2R (before typing after a field click, read the
-engine's focused-element line; a different focused element stops with a setValue hint), FL1+FL1R (repeated notices don't mention an API,
-folds only where the document exposes text; screenshot hint once per window), HY1B-HY1E (pass hygiene, which closes only windows that
-appeared in apps the pass touched and quits what it launched, never answering a prompt; snapshots only between tasks, temp sweep, 7-day
-screenshot retention), XD1+XD1R (`drag` with `toWindowId`: AX two-area move that confirms B before cutting A and rolls B back,
-then posted drag, then foreground), XL1B+XL1R (a note when a click moves the clicked sibling), the menu-continuation splitter half
-of LA1 (`20155db3`), and OPEN_FAST on by default (=0 for A/B baselines). WARM_ENGINE stays opt-in: as a default it timed out
-tests/lease-launcher.test.mjs's stop-then-lazy-start test (20 s), possibly a real hang after `/sleight stop`, so find why first. LA1's in-call lease adoption failed two
-safety reviews (it could type into a window it didn't verify) and was dropped; branches `arch/la1`, `arch/la1r` stay on `private`
-for reference only.
+**Running:** competitor top-ups (`~/Projects/sleight-wt/sitting-1017c/topup-1017.sh`): lcu calculator-click 2/2 pass,
+textedit-calculator 1/2 (one cross-file mismatch, 123 s); claude-cu textedit-drag, textedit-calculator, word-edit x2. Results are written to
+the worktree's `bench/results`. Copy them to the main checkout's before scoring. Agents: CS1/CS5/CS2 claim-score build (worktree),
+RA1 re-acquire compaction build (worktree, `SLEIGHT_COMPACT_REACQUIRE`, on by default), Fable excel-edit plan study.
 
-**claude-cu arm works** (first full claim pass 15:51-16:21Z, 9/9). Its harness fixes, in order: tool search left on and the task
-sent 2.5 s after the computer-use connect line; a virtual terminal (`bench/world/arms/claude-cu/terminal.mjs`); card matching
-whitespace-insensitive; Down and Enter in one write (Claude Code resets the select to Deny on re-render); the hook's real tool
-names; a false dialog stop on Claude's own prose fixed; the PreToolUse hook records the request_access reason and apps
-(`access-<session>.json`) so an unboxed reason line is admitted only when it matches and the card's apps must be the requested
-ones; textedit-calculator grants the clipboard, Finder tasks grant fileAccess. The claude-cu arm hides other apps while it works
-(Claude Code's default). The owner OK'd quitting a Continuity Camera onboarding overlay (`ContinuityCaptureOnboardingUI`) that sat
-over Calculator.
+**Studies (17:0xZ, reports in the session transcript; items in `~/Projects/sleight-wt/ledger/LEDGER.md`, last section):**
+claude-cu wins on excel-edit by retyping sorted rows in one Name Box batch; it loses big on textedit-save (104 s), calculator-menu,
+word-edit. Its preamble costs ~7.5 s and it works foreground. sleight's losses to LCU and Peekaboo come from extra turns: app.getState
+errors (8 of 27 runs), menu-open lease stops (5), "not confirmed (degraded read)" verification loops, cross-app handle rules. Every
+sleight call re-acquires its app, and each re-acquire returns the full unchanged tree again (excel-edit-1: 20+ extra ~6K-char trees).
+The claim audit: claim-score doesn't compute the 20%/majority/total rules (CS1), a `2026-10-17T16` sleight prefix exclusion would eat a
+final run in a 16:xxZ hour (CS5), claude-cu textedit-drag #1's label is a harness artifact though the run did fail (CS2), and sleight's
+final run should take 5 runs on all 9 tasks.
 
-**Claim score** (`node bench/claim-score.mjs --results ~/Projects/sleight/bench/results`, saved in
-`~/Projects/sleight-wt/sitting-1017c/claim-score-cu.txt`, exclusions committed with reasons). Expected s (passes/runs):
-sleight on the 11:53 build is fastest on 5 of 9: calculator-click 10, calculator-menu 12, textedit-drag 67 (claude-cu 71),
-finder-move 31 (claude-cu 39), word-edit 85 (claude-cu 102). It loses textedit-save 14 (lcu 11), preview-read 7 (Peekaboo 4),
-textedit-calculator 40 (lcu 33) and excel-edit 110 (claude-cu 54). Lowest total: sleight 376 against claude-cu 476; every other arm
-fails a task. Claude CU per task: 15, 30, 104, 71 (2/3), 39, 16, 45, 102, 54. The 5/9 is thin, and the final run's result sets the wording.
-
-**Next, in order (all live work needs the owner away):**
-1. sleight's final claim run on this build, 9 tasks with 5 runs where any arm is within 20%. After it come the competitor top-ups to 5 runs
-   (lcu on calculator-click, textedit-save, preview-read and textedit-calculator, and Codex on excel-edit). Run with `claim.sh`'s pattern
-   (`~/Projects/sleight-wt/sitting-1017c/claim-cu.sh` is the copy with the exit-code fix, with repo set to the main checkout).
-2. The Excel probe (`CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/xl1-probe.mjs --live --owner-away`): its
-   16:27Z run stopped on "Foreign or ambiguous app window"; `b1c4292b` adds a window diagnostic and path-tolerant cleanup, not yet
-   run. Its result picks how to prevent the tab swap (arm D, an AX press, is the likely categorical fix). Excel is the biggest gap.
-3. The cross-window drag probe (`node bench/xd1-probe.mjs /private/tmp/<results>.json`): its 16:48Z V1 trial moved nothing and its
-   cleanup went unconfirmed; results in `/private/tmp/sleight-xd1-results-1017.json`, fixtures kept in
-   `/private/tmp/sleight-xd1-probe-2C5gFp`. The stale live lock it kept was removed at 16:52:16Z (no process held it).
-4. On finder-move, Fable found sleight thinks 2.3-4.1K tokens per run against claude-cu's 0.4K. A/B the lean skill, 5 runs.
-5. The real-window browser race (Chrome, Helium, Firefox, Safari; about 2 h, harness never run live), the release pass, the
-   owner's turbo check, the tag.
+**Next, in order (owner away now):**
+1. Commit GS1/SN1 after a full check. Merge CS1/CS5/CS2 and RA1 after review. A/B RA1 live on excel-edit and word-edit (5 runs).
+2. sleight's final claim run: 9 tasks x 5 runs on the merged build, then `node bench/claim-score.mjs` with the CS1 rules.
+3. Remaining competitor top-ups the CS1 scorer lists. Then XP1 and the Excel probe, the cross-window drag probe (16:48Z V1 trial moved
+   nothing; results `/private/tmp/sleight-xd1-results-1017.json`), the browser race, release pass, turbo check, tag.
 
 **Fable studies today** (reports in this session's transcript): categorical flag rule (built as FL1); cross-window drag and Excel
 tabs (built as XD1, XL1; in 10/10 runs a tab click right after a rename dragged the clicked tab to the end, refuting the stale
 mouseDown theory); why claude-cu beat sleight (tool time equal; sleight loses on model thinking in finder-move, on lease and
 menu stops in textedit-calculator, and on the Excel tab swap).
 
-**Opt-in flags still opt-in:** `SLEIGHT_WARM_ENGINE=1`, `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
+**Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
 
