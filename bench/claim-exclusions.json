@@ -1,0 +1,18 @@
+{
+  "since": "2026-10-16T15-34",
+  "arms": ["sleight", "lcu", "codex", "cua", "peekaboo", "claude-cu"],
+  "tasks": ["calculator-click", "calculator-menu", "textedit-save", "textedit-drag", "finder-move", "preview-read", "textedit-calculator", "word-edit", "excel-edit"],
+  "reasons": [
+    { "match": "setup failed|readiness unconfirmed|AX fixture read failed", "why": "fixture setup failed before the model ran (harness or a stuck app from an earlier run)" },
+    { "match": "permission prompt", "why": "a macOS permission prompt was on screen" }
+  ],
+  "files": [
+    { "prefix": "2026-10-16T16-02", "why": "codex window loaded by Puddle tests and stopped on a TextEdit hang" },
+    { "prefix": "2026-10-16T16-14", "why": "codex retry under four of Puddle's spinning processes" },
+    { "prefix": "2026-10-16T17-43", "arm": "lcu", "why": "lcu arm before its PreToolUse hooks were loaded (c37d3fcf)" }
+  ],
+  "windows": [
+    { "tasks": ["textedit-drag"], "before": "2026-10-16T20-12", "why": "a stale full-screen screencaptureui overlay covered every drag target" },
+    { "tasks": ["word-edit", "excel-edit"], "before": "2026-10-16T21-40", "why": "Excel's recovery prompt and Word's recovered fixture, before Office was cleared" }
+  ]
+}
