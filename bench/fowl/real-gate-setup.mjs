@@ -1,0 +1,41 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { nativeBrowserSetup, windowPrompt } from './native-setup.mjs';
+import { turboSetup } from '../turbo/setup.mjs';
+import { codexExecPlan } from '../codex-arm.mjs';
+import { modelId } from './accounting.mjs';
+
+import { REAL_BROWSER_ARMS } from './support.mjs';
+export const REAL_SURFACES = REAL_BROWSER_ARMS;
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+const codexHome = () => join(homedir(), '.codex-bench');
+export function codexBrowserSetup({ dir, prompt, realBrowser }) {
+  prompt = windowPrompt(realBrowser) + prompt;
+  return { command: 'codex', args: codexExecPlan(prompt, { cwd: dir, model: 'gpt-6-luna', effort: 'high' }),
+    prompt, mcpConfig: null, mcpConfigFile: join(codexHome(), 'config.toml'), env: { CODEX_HOME: codexHome() }, metadata: { model: 'gpt-6-luna', effort: 'high',
+      configDir: codexHome(), browser: realBrowser.browser, profile: realBrowser.profileRoot, headless: false, focus: 'not measured' } };
+}
+export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRun = false, repo = repoRoot,
+  model = 'haiku', effort = 'high', settings = join(dir, 'settings.json') }) {
+  if (!REAL_SURFACES.includes(surface)) throw Error(`Unknown real-browser arm: ${surface}`);
+  const browserName = realBrowser.browser === 'chrome' ? 'Chrome' : 'Helium';
+  const prompt = task.prompt.replaceAll('{browser}', browserName).replaceAll('{repo}', repo).replaceAll('{out}', dir) +
+    `\n\nEnd your answer with one line starting with RESULT: that states ${task.result}.`;
+  if (surface === 'codex') return codexBrowserSetup({ dir, prompt, realBrowser });
+  const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(key =>
+    typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
+  const arm = surface === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
+    : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
+  const fullPrompt = arm.promptPrefix + (surface === 'sleight-turbo' ? windowPrompt(realBrowser) : '') + prompt;
+  const args = ['-p', '--model', modelId(model), '--effort', effort, '--output-format', 'stream-json', '--verbose',
+    '--strict-mcp-config', '--mcp-config', join(dir, 'mcp.json'), '--settings', settings,
+    '--allowedTools', arm.allowed, '--tools', '', '--no-chrome', ...arm.args,
+    ...(surface === 'sleight-turbo' ? ['--plugin-dir', join(repo, 'plugins/sleight')] : [])];
+  return { command: arm.command, args, prompt: fullPrompt, mcpConfig: { mcpServers: arm.mcpServers },
+    settingsOverrides: surface === 'sleight-turbo' ? { ...arm.settings, hooks: { ...arm.settings.hooks,
+      Elicitation: [{ matcher: 'plugin:sleight:computer', hooks: [{ type: 'command', timeout: 5,
+        command: `node "${join(repo, 'bench/fowl/origin-hook.mjs')}"` }] }] } } : arm.settings, env: { ...arm.env, ANTHROPIC_SMALL_FAST_MODEL: modelId(model) }, allowed: arm.allowed,
+    metadata: { ...arm.metadata, browser: realBrowser.browser, profile: realBrowser.profileRoot,
+      headless: false, focus: surface === 'sleight-turbo' ? 'host monitor' : 'not measured' } };
+}

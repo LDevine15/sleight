@@ -25,12 +25,11 @@ export function fixtureOrigins(task) {
       u.port && !u.username && !u.password ? [u.origin] : []; } catch { return []; }
   }))];
 }
-export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
+export function turboSetup({ task, repo, dir, prompt, env = process.env, realBrowser }) {
   const origins = fixtureOrigins(task); if (origins.length) fixturePolicy(origins);
-  // Like the installed surface, the arm shows an opaque browser id plus the application name. The arm drives its own headless
-  // Chromium, which stands in for the browser the task names (as the installed config names the user's Chrome), so the model
-  // matches "in Helium" to the tools it was given.
-  const browser = 'bbench', application = ' (' + (task.browser === 'helium' ? 'Helium' : 'Google Chrome') + ')';
+  // Like the installed surface, show an opaque browser id plus the application name.
+  // Legacy rounds launch headless Chromium; the real gate supplies its visible browser.
+  const browser = 'bbench', application = ' (' + ((realBrowser?.browser ?? task.browser) === 'helium' ? 'Helium' : 'Google Chrome') + ')';
   // Keep setup synchronous for the pinned runner's require(). launch.mjs has
   // top-level await, so read its same skill body without importing the launcher.
   const rules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/'
@@ -49,12 +48,13 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env }) {
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
       env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none' } },
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
-      env: { SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
+      env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}), SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
     allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',
     env: { ...common.env, CLAUDE_CONFIG_DIR: configDir },
     metadata: { ...common.metadata, configDir, surface: SURFACE, measurement: MEASUREMENT,
       path: 'model-selected', turboVersion: 3, standsInFor: application.slice(2, -1), runtime: 'V10 join required', playwright: '1.64.0', profile: 'owned-temporary', headless: true,
-      safety: 'turbo drives its own headless Chromium (public web reachable, the product guards on top); engine approvals and guards; engine browser calls refused by a bench hook', focus: 'host monitor' } };
+      safety: 'turbo drives its own headless Chromium (public web reachable, the product guards on top); engine approvals and guards; engine browser calls refused by a bench hook', focus: 'host monitor', ...(realBrowser ? { browser: realBrowser.browser, profile: realBrowser.profileRoot, headless: false,
+        connectionMode: 'product-remote-debugging', safety: 'isolated visible benchmark profile; product connection checks and guards; confirmation remains unconfirmed' } : {}) } };
 }

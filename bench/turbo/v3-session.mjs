@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createV3Bridge } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 import { fixturePolicy } from './setup.mjs';
 
-export async function createSession({ origins, taskMessage, forkWorker = fork } = {}) {
+export async function createSession({ origins, taskMessage, forkWorker = fork, realBrowser } = {}) {
   // Tasks on the public web name no local fixture; any origins that are named still have to be runner fixtures.
   if (!Array.isArray(origins)) throw Error('Runner fixture origins required');
   if (origins.length) fixturePolicy(origins);
@@ -18,6 +18,7 @@ export async function createSession({ origins, taskMessage, forkWorker = fork } 
       const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'DISPLAY', 'XDG_RUNTIME_DIR'].flatMap(key =>
         typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
       env.SLEIGHT_TURBO_ORIGINS = JSON.stringify(origins);
+      if (realBrowser) env.SLEIGHT_TURBO_REAL_BROWSER = JSON.stringify(realBrowser);
       return forkWorker(fileURLToPath(new URL('./v3-worker.mjs', import.meta.url)), [], { ...options, env });
     },
   });

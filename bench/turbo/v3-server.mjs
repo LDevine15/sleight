@@ -21,13 +21,15 @@ export function recordCleanup(file, receipt) {
 }
 async function main() {
   const protocol = createProtocol({ start: () => createSession({ origins: JSON.parse(process.env.SLEIGHT_TURBO_ORIGINS ?? '[]'),
-    taskMessage: process.env.SLEIGHT_TURBO_TASK ?? '' }) });
+    taskMessage: process.env.SLEIGHT_TURBO_TASK ?? '',
+    realBrowser: process.env.SLEIGHT_TURBO_REAL_BROWSER ? JSON.parse(process.env.SLEIGHT_TURBO_REAL_BROWSER) : undefined }) });
   const lines = createInterface({ input: process.stdin }); let stopping;
   const stop = () => stopping ??= protocol.close().then(receipt => {
     if (!receipt) return;
     const metric = recordCleanup(process.env.SLEIGHT_TURBO_METRICS, receipt);
     process.stderr.write(JSON.stringify({ turboBenchCleanup: metric }) + '\n');
-    if (!metric.browserClosed || !metric.profileDeleted || !metric.socketsClosed) process.exitCode = 1;
+    if (process.env.SLEIGHT_TURBO_REAL_BROWSER && (receipt.revoked !== true || !Array.isArray(receipt.cleanup) || receipt.cleanup.length)) process.exitCode = 1;
+    if (!process.env.SLEIGHT_TURBO_REAL_BROWSER && (!metric.browserClosed || !metric.profileDeleted || !metric.socketsClosed)) process.exitCode = 1;
   }).catch(() => { process.stderr.write('V3_BENCH_CLEANUP_UNPROVED\n'); process.exitCode = 1; })
     .finally(() => { lines.close(); process.stdin.destroy(); });
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, stop);

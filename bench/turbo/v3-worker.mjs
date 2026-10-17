@@ -93,7 +93,29 @@ export function serveBenchWorker({ channel, begin, close }) {
 // event: anything that needs the user's confirmation stays unconfirmed and the task fails.
 export const benchUi = Object.freeze({ present() {}, authenticate: () => false, revoke() {}, close() {} });
 
-export async function startBenchWorker({ channel = process, launch = launchOwnedBrowser } = {}) {
+export async function realBrowserDependencies(browser, dependencies = {}) {
+  const validate = dependencies.validate ?? (await import('../fowl/real-browser.mjs')).validateRealBrowser;
+  validate(browser);
+  const createConfig = dependencies.createConfig ?? (await import('../../plugins/sleight/lib/direct-browser/turbo-setup.mjs')).buildConfig;
+  const selectConnection = dependencies.selectConnection ?? (await import('../../plugins/sleight/lib/direct-browser/selected-connection.mjs')).createSelectedConnection;
+  const config = createConfig({ browser });
+  return {
+    readConfig: () => config,
+    // Keep the installed loader's source acceptance, helper receipts, process
+    // birth, selected profile and listener checks on the real-browser path.
+    selectConnection: async options => {
+      const selected = await selectConnection(options);
+      if (selected.identity.pid !== browser.pid) throw Error('BENCH_BROWSER_PROCESS_MISMATCH');
+      return { ...selected, selectedBrowser: 'bbench' };
+    },
+    createUi: () => benchUi,
+  };
+}
+
+export async function startBenchWorker({ channel = process, launch = launchOwnedBrowser,
+  realBrowser = process.env.SLEIGHT_TURBO_REAL_BROWSER ? JSON.parse(process.env.SLEIGHT_TURBO_REAL_BROWSER) : null,
+  startInstalled = startInstalledV3Worker, realOptions = realBrowserDependencies } = {}) {
+  if (realBrowser) return startInstalled({ channel }, await realOptions(realBrowser));
   const owned = await launch();
   const host = await startInstalledV3Worker({ channel }, {
     readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),

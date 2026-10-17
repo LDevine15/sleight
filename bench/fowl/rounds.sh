@@ -1,6 +1,7 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
 # (bench/fowl/sleight-surface.patch). Claude arms run on the owner's account login with no CLAUDE* variables from the host session.
+# Real gate: --real-browser chrome|helium --surface sleight-turbo|lcu|cua|peekaboo|codex [--dry-run]
 # Usage: bench/fowl/rounds.sh --surface sleight|fowlbrowser|fowl+sleight|browser-use [rounds.mjs options]
 set -eu
 PIN=8b68924
@@ -9,7 +10,10 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 for a in "$@"; do
   [ "$a" != --plan ] || exec node "$REPO/bench/fowl/accounting.mjs" "$@"
 done
+REAL=""; DRY=""
 MODEL=opus; SURFACE=""; TASKS=""; OUT=""; ONLY=""; GUI=""; REMOTE=""; prev=""; for a in "$@"; do
+  [ "$prev" = --real-browser ] && REAL="$a"
+  [ "$a" = --dry-run ] && DRY=1
   [ "$prev" = --model ] && MODEL="$a"
   [ "$prev" = --surface ] && SURFACE="$a"
   [ "$prev" = --tasks ] && TASKS="$a"
@@ -20,7 +24,8 @@ MODEL=opus; SURFACE=""; TASKS=""; OUT=""; ONLY=""; GUI=""; REMOTE=""; prev=""; f
   prev="$a"
 done
 MODEL=$(node "$REPO/bench/fowl/accounting.mjs" --model-id "$MODEL")
-node "$REPO/bench/fowl/preflight.mjs" "$@"
+[ -z "$REAL" ] || [ -z "$DRY" ] || exec node "$REPO/bench/fowl/real-gate.mjs" "$@"
+[ -n "$REAL" ] || node "$REPO/bench/fowl/preflight.mjs" "$@"
 [ -d "$DIR/.git" ] || git clone -q https://github.com/argofowl/FowlBrowser "$DIR"
 cd "$DIR"
 # The clone is this benchmark's own cache: when its tracked files differ from the current patch (an older
@@ -29,6 +34,10 @@ if ! git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
   git checkout -q -- . && git checkout -q "$PIN" && git apply "$REPO/bench/fowl/sleight-surface.patch"
 fi
 [ "$(git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
+if [ -n "$REAL" ]; then
+  exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
+    SLEIGHT_REPO="$REPO" node tools/rounds.mjs "$@" --model "$MODEL"
+fi
 # Every Claude arm runs on the owner's account login, never the API credit (owner, 2026-10-15, LAWS). Browser Use
 # needs an API key by design, so it runs only in a round of its own (computer use keeps its login beside it), and the
 # spend ledger still refuses it from $190.
