@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 07:05 UTC, overnight sitting done, window released 07:03)
+## Banner (2026-10-17 09:27 UTC, overnight sitting done; fixes for the lost claim tasks in lanes)
 
 OWNER ASLEEP since 2026-10-17T02:19:48Z (/goodnight). Night Shift on. Read "vaya con dios" after the boot report's "waiting for
 your go" as the go, and pinged the phone with that reading. At the owner's request (from bed), sleight-arch closed the two
@@ -60,6 +60,23 @@ earlier with one fresh touch of `/tmp/sleight-bench-done`). Scripts and logs in 
    bundle, process start) to later leases, and the live recheck passed 3/3 with no cleanup stop (merged, full check 5,893 exit 0).
 6. Firefox gate: the dry run plans 12 tasks (mobile and takeover not supported). The live round stopped before launch because the
    world sleight arm isn't logged in (owner items). Checkout `~/Projects/sleight-wt/br2c-live`.
+8. Owner (morning): make sleight win preview-read, textedit-calculator and excel-edit. Sonnet-high trace studies found:
+   - preview-read: sleight's first result is 24,849 chars, 17,355 of them the engine's own API docs passed through, against
+     Peekaboo's 4,628 plus an image. Turn 2 takes 1.96 s against 1.30 s. Holding the docs back estimates about 0.65 s.
+   - textedit-calculator: runs 1 and 3 lost about 8 and 19 turns to sleight's own results. A cross-app stop that didn't say the
+     Copy already ran, select_window's exact-line handshake, a deadlock where the relay refused the menu Cancel its own text
+     advised (open menu header has no URL), and a false "saved: not confirmed (mixed save targets)" that also cost textedit-save's
+     slow run.
+   - excel-edit: all 3 failures were the tab swap from clicking Inventory after the rename. RW1R's note would have fired on none
+     (a click-only gate, and the tabs' parent line changes with the active sheet). Codex and lcu passed by never clicking the old
+     tab or by repairing the order with Move or Copy.
+   Lanes PR1 (docs held back until the first js call), TC1 (stop message, select_window, menu Cancel, same-window menu) and SW1
+   (save classification, swap note on RW1R) are running. Then review, merge, full check, and a sleight-only claim rerun (LAWS:
+   a sleight fix round reruns only that arm).
+9. Claude computer-use hook test (owner away, 09:19 to 09:26 UTC): inconclusive. In the native claude-cu arm (Claude Code
+   2.1.289) Haiku 5.5 didn't call a tool in three tries, even when told to call ToolSearch first; the CLI also warns that
+   "claude-haiku-5-5" isn't in its model catalog. The PermissionRequest hook didn't run. The arm itself needs fixing before the
+   hook question can be answered.
 7. Released the Puddle window at 07:03:52Z (fresh `/tmp/sleight-bench-done`), 2.5 hours early. The Terminal windows opened for
    the Peekaboo arm are still open, with their commands finished.
 
