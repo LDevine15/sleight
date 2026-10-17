@@ -475,6 +475,35 @@ for (const target of ['{ id: "duplicate" }', '{ label: "Duplicate" }', '{ line: 
     assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
   });
 
+// AB3 (Firefox travel, 2026-10-17): a click re-rendered the elements the bound capture held, and the engine refused the next number.
+test('AB3: a bound element the engine refuses is not resent, the stop carries a fresh tree, and that window stops binding', async () => {
+  let stale = false;
+  const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, '\t1 button First\n\t2 button Second'); },
+    action: (name, [number]) => {
+      if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
+      stale = true;
+    } });
+  await assert.rejects(f.run('await app.click(1); await app.click({ label: "Second" }); await app.click(1);', { bind: true, guardStopMark: '[stop]' }),
+    /2 is an invalid element ID/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+  assert.ok(f.output.includes(GUARD_MARK + tree(expected, '\t1 button First\n\t2 button Second') + GUARD_END));
+  const receipt = JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
+  assert.equal(receipt.refused, true); assert.equal(receipt.bound, true);
+  f.calls.length = 0;
+  await f.run('await app.click(1); await app.click({ label: "Second" });', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+});
+
+test('AB3: a refusal on a fresh read leaves binding on', async () => {
+  let refuse = true;
+  const f = fixture({ strict: true, current: () => tree(expected, '\t1 button First\n\t2 button Second'),
+    action: (name, [number]) => { if (refuse) { refuse = false; throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`); } } });
+  await assert.rejects(f.run('await app.click(1);', { bind: true }), /1 is an invalid element ID/);
+  f.calls.length = 0;
+  await f.run('await app.click(1); await app.click(2);', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+});
+
 test('bind checks a computed number against the code read after another action', async () => {
   let acted = false;
   const f = fixture({ strict: true, current: () => tree(expected, acted ? '\t1 button First\n\t2 button Other' : '\t1 button First\n\t2 button Second'),

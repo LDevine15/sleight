@@ -300,6 +300,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
     };
     state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');
     state.raws ||= new WeakMap();
+    // Windows whose elements an action replaced under a bound capture, by app and URL or title. They read
+    // before each numbered or named action for the rest of the session (see the refusal below).
+    state.staleCaptures ||= new Set();
+    const captureKey = header => header ? JSON.stringify([header.app, header.url ?? header.title]) : undefined;
     // Full reads taken in this call since the handle's last action. A new call
     // always reads again, because the user may have changed the window between.
     state.reads = new WeakMap();
@@ -608,6 +612,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // selectors still read; unique selectors use the numbers of the last capture we took.
           const firstTree = state.callElements.get(proxy);
           const bind = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
+            !state.staleCaptures.has(captureKey(state.callHeaders.get(proxy))) &&
             (byId ? findTarget(firstTree).length === 1 : literal !== undefined && firstTree.has(literal));
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
@@ -615,7 +620,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             typeof before.key === 'string' && !before.key.includes('+') && !/^(?:return|enter|escape|esc|tab|space)$/i.test(before.key)) ||
             state.quietEdits && (before.editKey || before.editable && ['typeText', 'paste'].includes(name)));
           let observed;
-          if (text === undefined && bind) text = state.binding.text;
+          if (text === undefined && bind) { text = state.binding.text; attempt.bound = true; }
           const header = state.callHeaders.get(proxy);
           const light = text === undefined && !checkFocus && !skipFirst && state.light && !state.light.off && !state.careful && state.guarded &&
             ['typeText', 'paste'].includes(name) && before?.name === 'pressKey' && typeof before.key === 'string' &&
@@ -830,7 +835,27 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           input();
           // Input went out before the engine answered, so a rejected action may have acted.
           let result;
-          try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
+          try { result = await value.apply(raw, args); } catch (error) {
+            state.unknown.push(shown);
+            // "75 is an invalid element ID" (-10005): the engine's capture no longer holds that element. A date
+            // picker re-rendered its days after the first date's click, so the bound capture's next date was gone
+            // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). The stop stays
+            // and nothing is resent. It carries a fresh tree for the relay's note, and the window reads before each
+            // numbered or named action from then on, so the rest can go in one call.
+            if (/\\bis an invalid element ID\\b/.test(String(error?.message ?? error))) {
+              attempt.refused = true;
+              if (attempt.bound) state.staleCaptures.add(captureKey(observed));
+              state.binding = undefined;
+              try {
+                const fresh = await timedRead(raw, 'after-refusal');
+                if (typeof fresh === 'string') {
+                  nodeRepl.write(${JSON.stringify(GUARD_MARK)} + fresh + ${JSON.stringify(GUARD_END)});
+                  state.reads.set(proxy, { text: fresh, emitted: true, version: state.actionVersion });
+                }
+              } catch {}
+            }
+            throw error;
+          }
           previous.done = Date.now();
           if (editable) previous.completed = true;
           state.completedActions++;
@@ -852,6 +877,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
               prev: state.lastAction, root: /^\\d+ .*$/m.exec(attempt.text ?? '')?.[0] ?? null,
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
+              ...(attempt.refused ? { refused: true, bound: !!attempt.bound } : {}),
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));
           });

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tokens } from './flow-rules.mjs';
 import { statementSpans } from './text-save.mjs';
-import { hasIdentifier, hasLabel, windowFromText } from './document-scope.mjs';
+import { elementLines, hasIdentifier, hasLabel, sameElement, windowFromText } from './document-scope.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 
 export const guardStopMark = () => `[sleight:guard-stop:${randomUUID()}]`;
@@ -274,22 +274,62 @@ const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|b
 
 // What a lease stop sent and didn't, so Claude needn't take a screenshot to find out. Method names, IDs, element
 // numbers and non-typing keys only: typed or set text, single characters and label text stay out.
-export function stopNote(receipt, plan, earlier = 0) {
+export function stopNote(receipt, plan, earlier = 0, { content, seen } = {}) {
+  if (receipt?.refused === true) return refusalNote(receipt, plan, earlier, content, seen);
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
-  const count = n => `${n} action${n === 1 ? '' : 's'}`;
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
-    const name = action => {
-      const method = tokens(plan.code.slice(action.start, action.end))[3]?.v, { kind, value } = action.selector ?? {};
-      const shown = kind === 'number' || kind === 'id' && value.length <= 40 || kind === 'key' && NAMED_KEY.test(value);
-      return shown ? `${method} ${kind === 'id' ? `id ${JSON.stringify(value)}` : kind === 'key' ? JSON.stringify(value) : value}` : method;
-    };
+    const name = actionName(plan);
     const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
     const ran = plan.actions.slice(0, n);
     return `sleight: this call ran ${count(n)}${n ? ` (${list(ran)})` : ''}; not sent: ${list(plan.actions.slice(n))}.`;
   }
   const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
   return `sleight: this call ran ${count(ran)}; the stopped ${typeof receipt.name === 'string' ? receipt.name : 'action'} and everything after it were not sent.`;
+}
+const count = n => `${n} action${n === 1 ? '' : 's'}`;
+const actionName = plan => action => {
+  const method = tokens(plan.code.slice(action.start, action.end))[3]?.v, { kind, value } = action.selector ?? {};
+  const shown = kind === 'number' || kind === 'id' && value.length <= 40 || kind === 'key' && NAMED_KEY.test(value);
+  return shown ? `${method} ${kind === 'id' ? `id ${JSON.stringify(value)}` : kind === 'key' ? JSON.stringify(value) : value}` : method;
+};
+
+// The engine refused an element number its capture no longer held: a date picker re-rendered its days after the
+// first date's click (Firefox travel, 2026-10-17), and Claude spent a diff read, a full read and a lone click (9.4 s)
+// finding out what ran. The guard added a fresh tree, so this says what ran, what didn't, and where each remaining
+// target is now. Numbers only: label text stays out, as above. A number Claude wrote maps through the line it saw.
+function refusalNote(receipt, plan, earlier, content, seen) {
+  const n = receipt.index, element = /(\d+) is an invalid element ID/.exec(receipt.error ?? '')?.[1];
+  const refused = `the engine refused the next ${typeof receipt.name === 'string' ? receipt.name : 'action'}` +
+    (element ? ` (element ${element})` : '') + (receipt.bound
+    ? ': its number came from this call\'s first read, and an earlier action in the call replaced that element' : ': that element is gone');
+  const after = receipt.bound ? ' sleight now reads this window before each numbered or named action, so the rest can go in one call.' : '';
+  const aligned = plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length && receipt.completed === n;
+  if (!aligned) {
+    const ran = (Number.isSafeInteger(receipt.completed) ? receipt.completed : 0) + earlier;
+    return `sleight: this call ran ${count(ran)}; ${refused}. Nothing after it was sent, and this result's window is current.${after}`;
+  }
+  const name = actionName(plan);
+  const list = actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
+  const text = (content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
+  const at = text.lastIndexOf('Window: '), lines = at >= 0 ? [...elementLines(text.slice(at))] : [];
+  const only = found => found.length === 1 ? found[0][0] : '?';
+  const now = action => {
+    const { kind, value } = action.selector ?? {}, method = name(action).split(' ')[0];
+    if (kind === 'label') return `${method} ${only(lines.filter(([, line]) => hasLabel(line, value)))}`;
+    if (kind === 'id') return `${method} ${only(lines.filter(([, line]) => hasIdentifier(line, value)))}`;
+    if (kind === 'number') {
+      const was = seen?.[value];
+      return `${method} ${typeof was === 'string' ? only(lines.filter(([, line]) => sameElement(was, line))) : '?'}`;
+    }
+    return name(action);
+  };
+  const rest = plan.actions.slice(n), shown = rest.slice(0, 8).map(now);
+  const targets = lines.length && rest.some(action => ['label', 'id', 'number'].includes(action.selector?.kind))
+    ? ` In this result's window, the refused action and the rest are now ${shown.join(', ')}${rest.length > 8 ? ` and ${rest.length - 8} more` : ''}` +
+      (shown.some(action => action.endsWith(' ?')) ? ' (? where the target is ambiguous or missing).' : '.') : ' This result\'s window is current.';
+  return `sleight: this call ran ${count(n)}${n ? ` (${list(plan.actions.slice(0, n))})` : ''}; ` +
+    `${refused}. Not sent after it: ${rest.length > 1 ? list(rest.slice(1)) : 'nothing'}.${targets}${after}`;
 }
 
 export async function menuIdentity(identity, expected, timeoutMs = 600, refused) {

@@ -293,3 +293,18 @@ test('DR1: stop notes name methods, keys and selectors, never typed text', () =>
   assert.equal(stopNote({ ...stop, windowStop: false }, plan), undefined);
   assert.equal(stopNote({ ...stop, error: 'Input lease stopped this action: app changed. 1 earlier action in this call ran' }, plan), undefined);
 });
+
+test('AB3: a refusal note maps the rest by ID, label and seen line, with ? for an ambiguous one', () => {
+  const plan = splitMenuActions('await app.click(1); await app.click({ id: "go" }); await app.click({ label: "Twin" }); await app.click(4); await app.pressKey("Return");');
+  const content = [{ type: 'text', text: 'Window: "a", App: A.\n0 standard window a\n\t1 button First\n\t2 button Twin\n\t3 button Twin\n\t5 button Go, ID: go\n\t6 button Last, ID: last' }];
+  const refusal = { index: 1, completed: 1, name: 'click', refused: true, bound: true, error: 'Computer Use server error -10005: 2 is an invalid element ID' };
+  assert.equal(stopNote(refusal, plan, 0, { content, seen: { 4: 'button Last, ID: last' } }),
+    'sleight: this call ran 1 action (click 1); the engine refused the next click (element 2): its number came from this call\'s first read, and an earlier action in the call replaced that element. ' +
+    'Not sent after it: click, click 4, pressKey "Return". In this result\'s window, the refused action and the rest are now click 5, click ?, click 6, pressKey "Return" (? where the target is ambiguous or missing). ' +
+    'sleight now reads this window before each numbered or named action, so the rest can go in one call.');
+  // Unbound, or a call the plan can't follow: what ran, by count, and no claim about later reads.
+  assert.equal(stopNote({ ...refusal, bound: false, completed: 3 }, plan, 0, { content }),
+    'sleight: this call ran 3 actions; the engine refused the next click (element 2): that element is gone. Nothing after it was sent, and this result\'s window is current.');
+  assert.equal(stopNote({ ...refusal, windowStop: false }, undefined), 'sleight: this call ran 1 action; the engine refused the next click (element 2): its number came from this call\'s first read, ' +
+    'and an earlier action in the call replaced that element. Nothing after it was sent, and this result\'s window is current. sleight now reads this window before each numbered or named action, so the rest can go in one call.');
+});

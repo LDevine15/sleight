@@ -17,13 +17,13 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 // TT1N's string-read VM fixture, now joined to the real relay. Native truth stays outside
 // the engine realm: only the relay's injected read-only identity helper can observe it.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, onAction, ...options } = {}) {
+  retryFirst, beforeRetry, onAction, onRead, ...options } = {}) {
   let text = base, writes = [];
   const clicks = [], keys = [], values = [], sent = [], received = [];
   let identityChecks = 0;
   const native = { windowNumber: 22, hidIdleSeconds: 1000, status: 'ok' };
   // onAction(name, argument, text) returns the window an action leaves, for a scripted sequence.
-  const raw = { getAXState: async () => text, click: async number => {
+  const raw = { getAXState: async () => { onRead?.(); return text; }, click: async number => {
     clicks.push(number); text = onAction ? onAction('click', number, text) : clicks.length === 1 ? after : afterItem;
     if (actionOutput) writes.push('clicked:' + number);
     if (nativeChange === 'window') native.windowNumber = 23;
@@ -628,4 +628,45 @@ test('DR1: a lease stop says which actions ran and which were not sent', async t
   const unsplit = await dialogFixture(t, { afterItem: page.replaceAll('report.txt', 'other.txt') });
   const plain = (await unsplit.call('await app.click({ id: "ok" }); if (true) await app.pressKey("super+End");')).content.map(c => c.text ?? '').join('\n');
   assert.match(plain, /sleight: this call ran 1 action; the stopped pressKey and everything after it were not sent\./);
+});
+
+// AB3: a date picker re-rendered its days after the first date's click, so the engine refused the next date's number
+// from the call's bound capture (Firefox travel, 2026-10-17). A diff read, a full read and a lone click followed (9.4 s).
+const picker = rendered => 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n' +
+  '\t1 text field Dates' + (rendered ? ', Value: Dec 14\n\t2 text Check-in set' : '') + '\n' +
+  ['button Monday, December 14', 'button Saturday, December 19', 'button Add adult', 'button Add child']
+    .map((line, i) => `\t${i + (rendered ? 3 : 2)} ${line}`).join('\n');
+async function pickerFixture(t) {
+  // The engine's capture: a read takes a new one, and any click replaces the elements it holds.
+  let stale = false;
+  return fixture(t, { base: picker(false), onRead: () => { stale = false; },
+    onAction: (name, number) => {
+      if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
+      stale = true;
+      return picker(true);
+    } });
+}
+
+test('AB3: a refused element says what ran, what was not sent, and where the rest are now', async t => {
+  const h = await pickerFixture(t);
+  const result = await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" }); ' +
+    'await app.click({ label: "Add adult" }); await app.click(5);');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [2, 3], 'the refused click is not resent and nothing after it runs');
+  const text = result.content.map(c => c.text ?? '').join('\n');
+  assert.match(text, /sleight: this call ran 1 action \(click\); the engine refused the next click \(element 3\): its number came from this call's first read, and an earlier action in the call replaced that element\. Not sent after it: click, click 5\./);
+  // click(5) was Add child in the tree Claude saw; it is 6 now.
+  assert.match(text, /In this result's window, the refused action and the rest are now click 4, click 5, click 6\. /);
+  assert.match(text, /sleight now reads this window before each numbered or named action, so the rest can go in one call\./);
+  assert.match(text, /Dates, Value: Dec 14/, 'the fresh tree is in the result');
+  assert.doesNotMatch(text.slice(text.indexOf('sleight: this call ran')), /December 19|Add adult/, 'the note names no label text');
+});
+
+test('AB3: after a refusal, the rest goes in one call', async t => {
+  const h = await pickerFixture(t);
+  await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" });');
+  const result = await h.call('await app.click({ label: "Saturday, December 19" }); await app.click({ label: "Add adult" }); ' +
+    'await app.click({ label: "Add adult" }); await app.click({ label: "Add child" });');
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, [2, 3, 4, 5, 5, 6]);
 });
