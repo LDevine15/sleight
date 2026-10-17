@@ -406,6 +406,7 @@ native reference, and oversized first results defer the browser reference while 
   key or go-to control, and a moved-tab note adds the same advice after Undo. That note knows a tab strip only by role (tab,
   radio button, segment or page siblings, or a tab group, tab bar or layout area parent), so tabs shown as plain buttons in a plain
   group get Undo alone. Whether Haiku picks the right key from that wording is unmeasured.
+  A next/previous-tab chord sent during a cell or text field edit can move the text cursor by a word, so finish the edit first.
 - Slack, Firefox and WhatsApp expose thin engine trees (2026-10-10, one read each, no input):
   Slack 15 elements and 483 characters, Firefox 24 / 898, WhatsApp 19 / 940. None of the three had a
   text field, and Discord wasn't thin (251 elements). Whether a settings switch expands them is unverified.

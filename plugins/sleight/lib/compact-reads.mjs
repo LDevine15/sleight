@@ -512,7 +512,9 @@ function clickLists(lines) {
     for (const role of new Set(parent.children.map(child => child.description?.role))) {
       const siblings = parent.children.filter(child => role && child.description?.role === role);
       if (siblings.length < 2 || new Set(siblings.map(child => child.key)).size !== siblings.length) continue;
-      const key = JSON.stringify([parent.description?.role, parent.depth, role, siblings.map(child => child.key).sort()]);
+      // The parent's role as siblingGroups takes it: describeSibling reads a bare "tab group" as role "tab".
+      const parentRole = /^[a-z]+(?: [a-z]+)*/.exec(parent.key)?.[0];
+      const key = JSON.stringify([parentRole, parent.depth, role, siblings.map(child => child.key).sort()]);
       const matches = found.get(key) ?? [];
       matches.push(siblings); found.set(key, matches);
     }

@@ -18,7 +18,7 @@ function result(before, after, code = 'await app.click(78)', options = {}) {
 
 test('a click that swaps two recorded sibling lines names both and gives recovery advice', () => {
   const out = result(rows, swapped);
-  assert.match(out, /clicking also swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
+  assert.match(out, /clicking also swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\.$/m);
   assert.equal(out.match(/clicking also swapped/g)?.length, 1);
 });
 
@@ -46,7 +46,7 @@ for (const code of ['await app.click(7)', 'await app.click({ label: "Inventory" 
 test('swap advice allows intentional reorders, including a multi-click call', () => {
   for (const code of ['await app.click(78)', 'await app.click(77); await app.click(78)']) {
     const out = result(rows, swapped, code);
-    assert.match(out, /swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\./);
+    assert.match(out, /swapped Review and View; tabs now: View, Review; if that wasn't intended, Undo \(Cmd\+Z\) restores the order; a move dialog is the fallback\. To switch tabs, use the app's next\/previous-tab key or go-to control, not a click\.$/m);
     assert.doesNotMatch(out, /shouldn't reorder/);
     assert.equal(out.match(/swapped Review and View/g)?.length, 1);
   }

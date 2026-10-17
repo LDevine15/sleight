@@ -42,8 +42,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
-- Switch sheets or document tabs with the app's next/previous-tab key or go-to control (a click can drag
-  the tab), then check the tab order.
+- After finishing any edit, switch sheets or document tabs with the app's next/previous-tab key or
+  go-to control (clicks can drag tabs), then check the order.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   later edits.
 - If scrolling fails, use search or keyboard navigation.

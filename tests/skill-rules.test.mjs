@@ -39,7 +39,7 @@ test('named native tasks acquire directly and action results avoid a confirming 
 // AN1: posted clicks on sheet tabs dragged them in 6 of 8 runs; next/previous-sheet keys moved nothing (6/6).
 test('the skill switches document tabs by key or go-to control and checks the order, naming no app', () => {
   const rules = skillRules();
-  assert.match(rules, /Switch sheets or document tabs with the app's next\/previous-tab key or go-to control \(a click can drag\s+the tab\), then check the tab order\./);
+  assert.match(rules, /After finishing any edit, switch sheets or document tabs with the app's next\/previous-tab key or\s+go-to control \(clicks can drag tabs\), then check the order\./);
   assert.doesNotMatch(rules, /Excel|Numbers|Option\+(?:Left|Right)|Name Box/);
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 930);
 });

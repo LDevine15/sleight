@@ -126,6 +126,16 @@ test('a moved tab gets Undo plus the switch-by-key advice; a moved list button g
   }
 });
 
+test('an untitled tab group or layout area parent still marks a moved button as a tab', () => {
+  for (const parent of ['tab group', 'layout area']) {
+    const strip = (order, selected) => tree(order, selected).replace('group Pages', parent);
+    const { c, read } = session(); c.process([text(strip(['Alpha', 'Beta', 'Gamma'], 'Beta'))]);
+    const out = read(strip(['Beta', 'Gamma', 'Alpha'], 'Alpha'), 'await app.click(2)');
+    assert.match(out, moved, parent);
+    assert.ok(out.includes(`a move dialog is the fallback. ${KEY_ADVICE}`), parent);
+  }
+});
+
 test('a delayed tab move keeps the switch-by-key advice', () => {
   const strip = (order, selected) => tree(order, selected).replace('group Pages', 'tab group Sheets').replaceAll(' button ', ' tab ');
   const { c, read } = session(); c.process([text(strip())]);
