@@ -18,7 +18,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   is sleight's own, which tasks the skill was tuned on, and that competitors ran their defaults (owner, 2026-10-17, set before the
   claim run).
   Claim results run a fixed claim suite, one task per skill, 3 runs per arm, with 5 runs where sleight and an arm are
-  within 20%. They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
+  within 20%, measured as the difference over the slower arm's expected time. After sleight's final claim run, the arms that
+  land within 20% get one top-up round to 5 runs, and then the results stand; a later sleight change makes a new claim
+  (owner, 2026-10-17, so the rule can't loop). They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
   check. An arm's results stand until that arm, the engine or the model changes, so a new competitor or a sleight fix round
   reruns only that arm. A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
   other stop still ends the pass (owner, 2026-10-16). Claude's own computer use runs Haiku 5.5 on the owner's login.

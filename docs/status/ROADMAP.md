@@ -77,7 +77,7 @@ Post-release work builds on branches now and merges after the tag (owner, 2026-1
    qualification. EPV3-1 is building on `arch/epv3-1` since 2026-10-15, and the rest follow in the plan's order.
 2. The full claim suite comes before the parity battery (owner, 2026-10-15). It runs every arm on the same tasks (Claude in Chrome, Claude's own computer use on the newest Claude Desktop,
    FowlBrowser, Codex, LCU, Cua, Peekaboo), published with failures. Runs use the owner's Anthropic account login, not API
-   credits (owner, 2026-10-15). Since 2026-10-16 (owner) it is 12 tasks, 3 runs per arm (5 where within 20%), and arms are
+   credits (owner, 2026-10-15). Since 2026-10-16 (owner) it is 12 tasks, 3 runs per arm (5 where within 20% of the slower arm's time, one top-up round after sleight's final run; owner, 2026-10-17), and arms are
    rerun only when they change (LAWS). The first baseline is about 4 hours, in one away window. After that each new
    competitor or sleight refresh is about an hour. The browser comparison stays in the gate's harness (`bench/fowl/rounds.sh
    --world`) with a Codex arm added there, and the native claim is the native tasks (owner, 2026-10-16). Browser tasks run only against turbo (owner, 2026-10-17); racing lcu, Cua and Peekaboo on turbo's browser tasks is being scoped, and the claim states which browsers it covers (turbo covers Chrome and Helium, and Safari and Firefox use the engine path). The lcu arm gets lcu's
