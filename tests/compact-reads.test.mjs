@@ -327,3 +327,12 @@ test('a plain read after renumbering shows current numbers for previously visibl
   assert.equal(c.staleIndex(window, 'app.click(60)'), undefined);
   assert.equal(c.staleIndex(window, 'app.click(61)'), undefined);
 });
+
+test('a re-acquired window shown whole later in the call drops its duplicate acquisition tree, never another window\'s', async () => {
+  const { dropAcquisitionTree } = await import('../plugins/sleight/lib/compact-reads.mjs');
+  const tree = (title, row) => `Window: "${title}", App: Editor.\n0 standard window ${title}\n\t1 button ${row}`;
+  const head = [{ type: 'text', text: 'note before\n' + tree('Report', 'Open') }];
+  assert.deepEqual(dropAcquisitionTree(head, [{ type: 'text', text: tree('Report', 'Saved') }]), [{ type: 'text', text: 'note before' }]);
+  assert.deepEqual(dropAcquisitionTree(head, [{ type: 'text', text: tree('Other', 'Saved') }]), head);
+  assert.deepEqual(dropAcquisitionTree(head, [{ type: 'text', text: 'no tree here' }]), head);
+});

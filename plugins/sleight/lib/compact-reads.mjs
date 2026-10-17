@@ -332,11 +332,13 @@ export function hasFullTree(text) {
 // 370,328 of 1,620,273 characters Claude read. Text before the tree (the engine's docs) stays.
 export function dropAcquisitionTree(head, rest) {
   const later = (rest ?? []).filter(c => c?.type === 'text').map(c => c.text).join('\n');
-  if (!hasFullTree(later)) return head;
+  const laterWindow = hasFullTree(later) && windowFromText(later.slice(later.search(/^Window: /m)));
+  if (!laterWindow) return head;
   return head.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
     const at = item.text.search(/^Window: /m);
-    if (at < 0) return [item];
+    // Only the same window's tree: an acquisition of another window is the only view Claude has of it.
+    if (at < 0 || documentKey(windowFromText(item.text.slice(at)) ?? {}) !== documentKey(laterWindow)) return [item];
     const kept = item.text.slice(0, at).replace(/\n+$/, '');
     return kept ? [{ ...item, text: kept }] : [];
   });

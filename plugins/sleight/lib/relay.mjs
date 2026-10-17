@@ -1492,7 +1492,9 @@ export function createRelay({
     if (msg.method === undefined) { menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); splitInputs.delete(msg.id); }
     if (msg.method === undefined && splitHeads.has(msg.id)) {
       let head = splitHeads.get(msg.id); splitHeads.delete(msg.id);
-      if (resultTrim && msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content);
+      // The call re-acquired and then showed the same window whole: its acquisition tree is a duplicate. Word runs sent
+      // both in every call (about 110k of 211k characters a run, 2026-10-17).
+      if (msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content);
       msg = msg.result ? { ...msg, result: { ...msg.result, content: [...head, ...(msg.result.content ?? [])] } }
         : { jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...head, { type: 'text', text: msg.error?.message ?? 'error' }] } };
     }

@@ -17,8 +17,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 ## Calls
 
 - When the task specifies an app, start with `let app = await cua.getApp("<name or bundle ID>")`.
-  Use `cua.getState()` only to find an app you can't name. Batch known actions; sleight checks
-  the window before input. Keep the handle and `await` every action.
+  Use `cua.getState()` only to find an app you can't name. Batch known actions. Re-acquire in a call
+  switching apps. Keep the handle and `await` every action.
 - After renumbering, prefer stable IDs or labels to element numbers:
   `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
 - End on the action. Its result already includes changed lines. Don't read just to confirm them.
