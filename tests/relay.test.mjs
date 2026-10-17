@@ -2606,3 +2606,44 @@ test('app-only native target permits a known drag window but cannot certify an u
   assert.equal(calls.length, 1); assert.equal(calls[0].elementWindow.title, 'Draft');
   assert.equal(h.toClient.find(m => m.id === 3).result.isError, true);
 });
+
+for (const replay of [false, true]) test(`cross-window drag forwards each window's own observed identity (${replay ? 'replay line' : 'number'})`, async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-xd1-'), holder: 'XD1' }),
+    localTools: { tools: [{ name: 'drag' }], target: async () => ({ app: 'Editor', appId: 'org.fixture.Editor', title: null }),
+      call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  for (const [id, handle, windowId, title, line] of [[1, 'a', 11, 'Source', 'text entry area ID: source'], [2, 'b', 12, 'Destination', 'text entry area ID: target']]) {
+    h.fromClient({ id, method: 'tools/call', params: { name: 'js', arguments: { code: `let ${handle} = await cua.getApp({windowId:${windowId}})` } } }); await tick();
+    h.fromServer({ id, result: { content: [{ type: 'text', text: `Window: "${title}", App: Editor\n0 standard window ${title}\n\t71 ${line}` }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } }); await settle();
+  }
+  h.fromClient({ id: 3, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', windowId: 11, toWindowId: 12,
+    from: replay ? { line: 'text entry area ID: source' } : 71, to: replay ? { line: 'text entry area ID: target' } : 71,
+    elementLines: { 71: 'forged' }, toElementLines: { 71: 'forged' } } } }); await settle();
+  assert.equal(calls.length, 1, JSON.stringify(h.toClient.at(-1)));
+  assert.deepEqual(calls[0].elementLines, { 71: 'text entry area ID: source' });
+  assert.deepEqual(calls[0].toElementLines, { 71: 'text entry area ID: target' });
+  assert.deepEqual(calls[0].elementWindow, { title: 'Source', windowId: 11 });
+  assert.deepEqual(calls[0].toElementWindow, { title: 'Destination', windowId: 12 });
+  assert.equal(calls[0].from, 71); assert.equal(calls[0].to, 71);
+  for (const extra of [{ toWindowId: 99 }, { windowId: 99 }, { app: 'Other' }]) {
+    h.fromClient({ id: 4, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', windowId: 11, toWindowId: 12, from: 71, to: 71, ...extra } } }); await settle();
+    assert.equal(calls.length, 1, JSON.stringify(extra));
+  }
+});
+
+test('cross-window drag rejects source numbers from a read whose native identity check failed', async () => {
+  const calls = [];
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-xd1-identity-'), holder: 'XD1' }),
+    windowIdentity: async () => { throw new Error('native identity rejected'); },
+    localTools: { tools: [{ name: 'drag' }], target: async () => ({ app: 'Editor', appId: 'org.fixture.Editor', title: null }),
+      call: async (_name, args) => { calls.push(args); return { content: [] }; } } });
+  for (const [id, handle, windowId, title] of [[1, 'a', 11, 'Source'], [2, 'b', 12, 'Destination']]) {
+    h.fromClient({ id, method: 'tools/call', params: { name: 'js', arguments: { code: `let ${handle} = await cua.getApp({windowId:${windowId}})` } } }); await tick();
+    const inventory = id === 1 ? '[sleight:windows]' + JSON.stringify([{ id: 'org.fixture.Editor', windows: [{ id: 11, title: 'Source' }, { id: 99, title: 'Source' }] }]) + '\n' : '';
+    h.fromServer({ id, result: { content: [{ type: 'text', text: `${inventory}Window: "${title}", App: Editor\n0 standard window ${title}\n\t71 text entry area ID: ${title}` }],
+      _meta: { 'codex/toolSurface': { app: { appId: 'org.fixture.Editor' } } } } }); await settle();
+  }
+  h.fromClient({ id: 3, method: 'tools/call', params: { name: 'drag', arguments: { app: 'Editor', windowId: 11, toWindowId: 12, from: 71, to: 71 } } }); await settle();
+  assert.equal(calls.length, 0); assert.equal(h.toClient.find(row => row.id === 3).result.isError, true);
+});

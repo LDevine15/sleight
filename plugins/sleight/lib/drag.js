@@ -153,9 +153,9 @@ function requireAncestor(el, win, message = 'the focused text selection is outsi
 
 // Numbers name identities from the relay's observed tree, never a fresh traversal index.
 // Text points use a nonempty glyph range; a zero-length line-end range can be at (0, 0).
-function semanticPoints(request, pid, win, main, knownElements) {
+function semanticPoints(request, pid, win, main, knownElements, endpoint, windowText) {
   const references = [], state = [], bounds = main.bounds;
-  const numbers = [...new Set([request.from, request.to].filter(elementEndpoint))];
+  const numbers = [...new Set((endpoint ? [request[endpoint]] : [request.from, request.to]).filter(elementEndpoint))];
   if (numbers.length) {
     const observed = request.elementWindow;
     if (!observed || observed.title !== main.title || (observed.windowId !== undefined && observed.windowId !== main.id)) {
@@ -168,13 +168,16 @@ function semanticPoints(request, pid, win, main, knownElements) {
     if (textArea) return textArea;
     const app = $.AXUIElementCreateApplication(pid);
     if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
-    const focused = axElement(axAttribute(app, 'AXFocusedUIElement'));
+    const candidates = windowText && content(win, bounds).areas.filter(a => ['AXTextArea', 'AXTextField'].includes(a.role) &&
+      (windowText !== 'selection' || attempt(() => a.el.attributes.byName('AXSelectedText').value().trim(), '')));
+    if (candidates && candidates.length !== 1) throw new Error('need exactly one text area with the requested selection or line in this window; read again');
+    const focused = candidates ? candidates[0].el : axElement(axAttribute(app, 'AXFocusedUIElement'));
     requireAncestor(focused, win);
     if (!['AXTextArea', 'AXTextField'].includes(focused.role())) throw new Error('the current text selection is not in a text area or field');
     const area = axTextArea(pid, null, focused.reference), value = area.value(), selection = area.selection();
     const selected = focused.attributes.byName('AXSelectedText').value();
-    if (typeof value !== 'string' || typeof selected !== 'string' || !selected.trim() ||
-        !Number.isSafeInteger(selection.location) || !Number.isSafeInteger(selection.length) || selection.location < 0 || selection.length <= 0 ||
+    if (typeof value !== 'string' || typeof selected !== 'string' || (windowText !== 'area' && !selected.trim()) ||
+        !Number.isSafeInteger(selection.location) || !Number.isSafeInteger(selection.length) || selection.location < 0 || selection.length < (windowText === 'area' ? 0 : 1) ||
         selection.location + selection.length > value.length ||
         value.slice(selection.location, selection.location + selection.length) !== selected) throw new Error('text selection or range is unavailable or changed; read again');
     references.push(focused.reference); state.push({ value, selected, selection });
@@ -219,7 +222,7 @@ function semanticPoints(request, pid, win, main, knownElements) {
     if (!inside(bounds, point)) throw new Error('resolved drag point is outside the chosen window');
     return [point.x - bounds.X, point.y - bounds.Y];
   };
-  const from = resolve(request.from), to = resolve(request.to);
+  const from = endpoint === 'to' ? undefined : resolve(request.from), to = endpoint === 'from' ? undefined : resolve(request.to);
   return { from, to, references, elements, signature: JSON.stringify({ from, to, state, bounds: [bounds.X, bounds.Y, bounds.Width, bounds.Height] }) };
 }
 
@@ -302,7 +305,7 @@ function content(win, bounds) {
 }
 // Non-text drags need only the two hit elements and their ancestors. Walking
 // unrelated rows can exhaust the scan limit before reaching either point.
-function dragContent(pid, win, bounds, from, to) {
+function dragContent(pid, win, bounds, from, to, textDestination = false) {
   const app = $.AXUIElementCreateApplication(pid);
   if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
   const areas = [];
@@ -328,7 +331,7 @@ function dragContent(pid, win, bounds, from, to) {
     if (!matched) throw new Error('AX endpoint parent path exceeded its limit before the chosen window; nothing was pressed');
     if (textSource) {
       const selected = textSource.attributes.byName('AXSelectedText').value();
-      if (typeof selected !== 'string' || !selected.trim()) throw new Error('Select non-whitespace text in this window before dragging; nothing was pressed');
+      if (!textDestination && (typeof selected !== 'string' || !selected.trim())) throw new Error('Select non-whitespace text in this window before dragging; nothing was pressed');
       return content(win, bounds);
     }
     // The hit test already found this element at the point, inside the chosen window. Ancestor frames
@@ -662,16 +665,16 @@ function raiseWindow(win) {
   win.actions.byName('AXRaise').perform();
 }
 
-function exposedEndpoints(list, main, points, sameAppOnly) {
-  for (const [name, point] of [['from', points.start], ['to', points.end]]) {
+function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
+  for (const [name, point, target] of [['from', points.start, main], ['to', points.end, destination]]) {
     const top = list.find(w => inside(w.bounds, point) && !/Computer Use$/.test(w.owner) &&
-      (!sameAppOnly || w.pid === main.pid));
-    if (!top || top.id !== main.id || top.pid !== main.pid) {
+      (!sameAppOnly || w.pid === target.pid));
+    if (!top || top.id !== target.id || top.pid !== target.pid) {
       // A window of the same app with no title over the target is usually a dialog: Chess's New Game
       // dialog covered the board and stopped 9 drags in one run (2026-10-09).
-      const dialog = top && top.pid === main.pid && !top.title
+      const dialog = top && top.pid === target.pid && !top.title
         ? ` by another window of ${top.owner} with no title (windowId ${top.id}), likely a dialog or sheet: finish or close it, read the window again, then drag`
-        : top ? ` by ${top.pid === main.pid ? 'another window of ' + top.owner : top.owner} (windowId ${top.id}${top.title ? ', "' + top.title + '"' : ''})` : '';
+        : top ? ` by ${top.pid === target.pid ? 'another window of ' + top.owner : top.owner} (windowId ${top.id}${top.title ? ', "' + top.title + '"' : ''})` : '';
       throw new Error(`${name} is covered${dialog || ' by another window'}; nothing was pressed`);
     }
   }
@@ -684,6 +687,196 @@ function coveringApp(list, main, points) {
     if (top && top.pid !== main.pid) return top.owner || 'another app';
   }
   return null;
+}
+
+function finishCrossWindowDrop(source, destination, a, b) {
+  const left = source.el.value(), right = destination.el.value();
+  const names = `${source.app} window ${a.id} (${a.title}) and window ${b.id} (${b.title})`;
+  if (typeof left !== 'string' || typeof right !== 'string') throw new Error(`cannot verify the drop in ${names}; read both windows before continuing`);
+  if (left === source.text && right === destination.text) return { textChanged: false, error: `Text in ${names} is unchanged after dragging; read both windows before continuing.` };
+  const counts = text => {
+    const result = new Map();
+    for (const c of text) if (!/\s/u.test(c)) result.set(c, (result.get(c) || 0) + 1);
+    return result;
+  };
+  const matches = (before, after, direction) => {
+    const expected = counts(before), actual = counts(after);
+    for (const [c, n] of counts(source.selected)) expected.set(c, (expected.get(c) || 0) + direction * n);
+    return [...new Set([...expected.keys(), ...actual.keys()])].every(c => (expected.get(c) || 0) === (actual.get(c) || 0));
+  };
+  const gained = right.replace(/\s/gu, '').includes(source.selected.replace(/\s/gu, '')) && matches(destination.text, right, 1);
+  if (!matches(source.text, left, -1) || !gained) return { textChanged: true, lostText: left !== source.text && !gained,
+    error: `The text move between ${names} was not confirmed. Stop and read both windows; if text disappeared, press Cmd+Z in the source window, then check the destination before undoing there.` };
+  return { textChanged: true, deliveryVerified: true };
+}
+
+// Insert and verify B before deleting A. Any partial write stops all later paths.
+function accessibilityCrossWindowMove(sourceArea, destinationArea, source, destination, end, a, b) {
+  const before = sourceArea.value(), other = destinationArea.value(), sel = sourceArea.selection();
+  const destinationSelection = destinationArea.selection();
+  const sameRange = (left, right) => left.location === right.location && left.length === right.length;
+  if (before !== source.text || other !== destination.text || before.slice(sel.location, sel.location + sel.length) !== source.selected) {
+    throw new Error('text or selection changed before the move; read both windows again');
+  }
+  const baseline = Math.max(before.lastIndexOf('\n', sel.location - 1), before.lastIndexOf('\r', sel.location - 1)) + 1;
+  if (sourceArea.hasAttributes(sel.location, sel.length, baseline)) throw new Error('selected text carries formatting; use the guarded posted or foreground drag');
+  const dest = dropIndex(destinationArea, end, other), word = source.selected;
+  if (!Number.isSafeInteger(dest) || dest < 0 || dest > other.length) throw new Error('drop index is outside destination text');
+  let cutFrom = sel.location, cutTo = cutFrom + sel.length;
+  const isWord = /^[\p{L}\p{N}]/u.test(word) && /[\p{L}\p{N}]$/u.test(word);
+  const touches = c => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+  if (isWord) {
+    const left = before[cutFrom - 1], right = before[cutTo];
+    if (right === ' ' && (left === undefined || left === '\n' || left === ' ')) cutTo++;
+    else if (left === ' ' && (right === undefined || right === '\n' || right === ' ')) cutFrom--;
+  }
+  const insert = (isWord && touches(other[dest - 1]) ? ' ' : '') + word + (isWord && touches(other[dest]) ? ' ' : '');
+  const expected = other.slice(0, dest) + insert + other.slice(dest);
+  let attempted = false;
+  try {
+    attempted = true;
+    destinationArea.replace(dest, 0, insert);
+    if (destinationArea.value() === other && sourceArea.value() === before) throw new Error('the app ignored the Accessibility text writes');
+    if (destinationArea.value() === expected && sourceArea.value() === before &&
+        source.el.attributes.byName('AXSelectedText').value() === source.selected && sameRange(sourceArea.selection(), sel)) sourceArea.replace(cutFrom, cutTo - cutFrom, '');
+  } catch (error) {
+    // A failing setter may already have changed text. Only proven unchanged permits retry.
+    if (attempt(() => sourceArea.value(), null) === before && attempt(() => destinationArea.value(), null) === other) {
+      const current = destinationArea.selection();
+      if (!sameRange(sourceArea.selection(), sel) || (!sameRange(current, destinationSelection) && !sameRange(current, { location: dest, length: 0 }))) {
+        throw new Error('selection changed before the move; read both windows again');
+      }
+      // replace sets B's range before its text setter. Restore only that exact authored range,
+      // with both values unchanged; an unrelated selection must still stop the next path.
+      if (!sameRange(current, destinationSelection)) destinationArea.select(destinationSelection.location, destinationSelection.length);
+      throw error;
+    }
+  } finally { if (attempted) attempt(() => sourceArea.settle()); }
+  const outcome = finishCrossWindowDrop(source, destination, a, b);
+  if (sourceArea.value() !== before.slice(0, cutFrom) + before.slice(cutTo) || destinationArea.value() !== expected) {
+    outcome.error = `Partial Accessibility text move between ${source.app} window ${a.id} (${a.title}) and window ${b.id} (${b.title}). Read both windows before continuing; undo the destination insertion there if the source still has its text.`;
+    outcome.deliveryVerified = false;
+  }
+  return outcome;
+}
+
+function runCrossWindow(request) {
+  const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
+  let previous, saved, post, release, pressed = false, didPress = false, path = 'none', fallbackReason = null;
+  const started = Date.now();
+  try {
+    if (!Number.isInteger(request.toWindowId) || request.toWindowId <= 0 || request.windowId === undefined || request.toWindowId === request.windowId) {
+      throw new Error('toWindowId must name a different window of the same app and requires windowId');
+    }
+    const target = findApp(app);
+    if (!target) throw new Error(`${app} isn't running`);
+    const pid = target.processIdentifier, own = windows(true).filter(w => w.pid === pid && w.layer === 0);
+    const a = resolveWindow(own, request), b = resolveWindow(own, { ...request, windowId: request.toWindowId });
+    const aw = axWindow(pid, a), bw = axWindow(pid, b);
+    const aRequest = request, bRequest = { ...request, elementLines: request.toElementLines, elementWindow: request.toElementWindow };
+    for (const [endpoint, main, r] of [['from', a, aRequest], ['to', b, bRequest]]) {
+      if (elementEndpoint(request[endpoint]) && r.elementWindow?.windowId === undefined && own.filter(w => w.title === main.title).length !== 1) {
+        throw new Error('element window title is ambiguous; read the exact window again');
+      }
+    }
+    const resolve = (r, win, main, endpoint, known) => semanticPoints(r, pid, win, main, known, endpoint, endpoint === 'from' ? 'selection' : 'area');
+    const startState = resolve(aRequest, aw, a, 'from'), endState = resolve(bRequest, bw, b, 'to');
+    const verifySemantic = () => {
+      for (const [r, win, main, endpoint, state] of [[aRequest, aw, a, 'from', startState], [bRequest, bw, b, 'to', endState]]) {
+        const current = resolve(r, win, main, endpoint, state.elements);
+        if (state.signature !== current.signature || state.references.length !== current.references.length ||
+            state.references.some((el, i) => !$.CFEqual(el, current.references[i]))) throw new Error('drag element, text, selection or geometry changed before input; read both windows again');
+      }
+    };
+    previous = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+    raiseWindow(aw); delay(settleMs / 1000);
+    const checkBoth = () => { checkWindow(a, pid, aw); return checkWindow(b, pid, bw); };
+    checkBoth(); verifySemantic();
+    const points = { start: at(a.bounds, startState.from), end: at(b.bounds, endState.to) };
+    const exposed = (list, sameAppOnly) => {
+      try {
+        exposedEndpoints(list, a, points, sameAppOnly, b);
+      } catch (error) { throw new Error(`${error.message}; tile the windows with Window > Move & Resize, then read again`); }
+    };
+    exposed(checkBoth(), true);
+    const sourceInfo = dragContent(pid, aw, a.bounds, startState.from, startState.from);
+    const sourcePoints = validatePoints(sourceInfo, a.bounds, startState.from, startState.from, app);
+    if (!sourcePoints.text) throw new Error('cross-window drag requires selected text in the source window');
+    const destinationInfo = dragContent(pid, bw, b.bounds, endState.to, endState.to, true);
+    const end = at(b.bounds, endState.to);
+    const fields = destinationInfo.areas.filter(area => ['AXTextArea', 'AXTextField'].includes(area.role) && inside(area.bounds, end));
+    if (!inside(b.bounds, end) || destinationInfo.toolbars.some(bounds => inside(bounds, end)) || fields.length !== 1) throw new Error('to is outside one destination text content area; nothing was pressed');
+    const source = sourcePoints.text, destination = { el: fields[0].el, text: fields[0].el.value() };
+    if (typeof destination.text !== 'string') throw new Error('destination text is unavailable');
+    const unchanged = () => {
+      if (source.el.value() !== source.text || source.el.attributes.byName('AXSelectedText').value() !== source.selected || destination.el.value() !== destination.text) {
+        throw new Error('text or selection changed before input; read both windows again');
+      }
+    };
+    const validate = (foreground = false) => { const list = checkBoth(); verifySemantic(); unchanged(); exposed(list, !foreground); return list; };
+    const withinBudget = () => { if (Date.now() - started > PRESS_BUDGET_MS) throw new Error('reading both windows took too long to start a drag; read both windows again'); };
+    const list = validate();
+    const cover = coveringApp(list, a, points);
+    if (globalThis.SLEIGHT_ACCESSIBILITY_MOVE !== false) {
+      try {
+        withinBudget(); validate();
+        const outcome = accessibilityCrossWindowMove(axTextArea(pid, points.start, source.el.reference),
+          axTextArea(pid, points.end, destination.el.reference), source, destination, end, a, b);
+        return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path: 'accessibility', ...outcome });
+      } catch (error) { unchanged(); fallbackReason = `accessibility move unavailable: ${error.message || error}`; }
+    }
+    let sequence;
+    if (!cover) try {
+      const build = backgroundBuilder(), event = (type, p) => build(type, p, a);
+      sequence = [event(5, points.start), event(1, points.start), ...Array.from({ length: steps }, (_, i) => event(6, {
+        x: points.start.x + (points.end.x - points.start.x) * (i + 1) / steps,
+        y: points.start.y + (points.end.y - points.start.y) * (i + 1) / steps,
+      })), event(2, points.end)];
+    } catch (error) { fallbackReason = `background unavailable: ${error.message || error}`; }
+    if (sequence) {
+      path = 'background'; withinBudget(); validate();
+      post = item => { $.CGEventSetTimestamp(item.event, $.NSProcessInfo.processInfo.systemUptime * 1e9); $.CGEventPostToPid(pid, item.event); };
+      release = sequence.at(-1);
+      let postingError;
+      try {
+        post(sequence[0]); delay(0.05);
+        if (coveringApp(validate(), a, points)) throw new Error('another app now covers a drag endpoint; background mouse-down was skipped');
+        pressed = true; didPress = true; post(sequence[1]); delay(holdMs / 1000);
+        for (const item of sequence.slice(2, -1)) { post(item); delay(0.02); }
+      } catch (error) { postingError = String(error.message || error); }
+      finally { if (pressed) { try { post(release); pressed = false; } catch (error) { throw new Error(`background release failed: ${error.message}; read both windows before continuing`); } } }
+      delay(0.2);
+      const outcome = finishCrossWindowDrop(source, destination, a, b);
+      if (outcome.textChanged || (postingError && didPress)) return JSON.stringify({ ok: !outcome.error && !postingError, app, windowId: a.id, toWindowId: b.id,
+        path, ...outcome, ...(postingError ? { error: [outcome.error, postingError].filter(Boolean).join('; ') } : {}) });
+      fallbackReason = postingError ? `background unavailable before press: ${postingError}` : 'background text unchanged';
+    }
+    unchanged(); waitForIdle(); unchanged();
+    path = 'foreground'; saved = $.CGEventGetLocation($.CGEventCreate(null));
+    const focusedAt = Date.now();
+    target.activateWithOptions(0); raiseWindow(aw); delay(settleMs / 1000);
+    validate(true); withinBudget();
+    post = e => $.CGEventPost($.kCGHIDEventTap, e);
+    const event = (type, p) => { const e = $.CGEventCreateMouseEvent(null, type, $.CGPointMake(p.x, p.y), $.kCGMouseButtonLeft); $.CGEventSetIntegerValueField(e, 1, 1); return e; };
+    post(event(5, points.start)); delay(0.05);
+    if (typedSince(focusedAt)) throw new Error('the user typed while the app was in front; nothing was pressed. Read both windows again and tell the user');
+    validate(true); release = event(2, points.start); pressed = true; didPress = true; post(event(1, points.start)); delay(holdMs / 1000);
+    for (let i = 1; i <= steps; i++) {
+      const p = { x: points.start.x + (end.x - points.start.x) * i / steps, y: points.start.y + (end.y - points.start.y) * i / steps };
+      release = event(2, p); post(event(6, p)); delay(0.02);
+    }
+    post(release); pressed = false; delay(0.2);
+    const outcome = finishCrossWindowDrop(source, destination, a, b);
+    if (typedSince(focusedAt)) outcome.error = [outcome.error, 'the user typed during the drag; read both windows again and tell the user'].filter(Boolean).join('; ');
+    return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path, fallbackReason, ...outcome });
+  } catch (error) {
+    return JSON.stringify({ ok: false, path, fallbackReason, deliveryVerified: false,
+      error: String(error.message || error) + (didPress || String(error.message).includes('nothing was pressed') ? '' : '; nothing was pressed') });
+  } finally {
+    if (pressed && post) attempt(() => post(release));
+    if (saved) attempt(() => $.CGWarpMouseCursorPosition(saved));
+    if (previous && !previous.isNil() && (path === 'foreground' || attempt(() => $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier, null) !== previous.processIdentifier)) attempt(() => previous.activateWithOptions(0));
+  }
 }
 
 function run(argv) {
@@ -709,6 +902,7 @@ function run(argv) {
         (request.windowId !== undefined && (!Number.isInteger(request.windowId) || request.windowId <= 0)) ||
         !Number.isInteger(steps) || steps < 1 || steps > 100 || !Number.isInteger(holdMs) || holdMs < 0 || holdMs > 5000 ||
         !Number.isInteger(settleMs) || settleMs < 0 || settleMs > 5000) throw new Error('invalid drag points, windowId or timing');
+    if (request.toWindowId !== undefined) return runCrossWindow(request);
     const target = findApp(app);
     if (!target) throw new Error(`${app} isn't running`);
     pid = target.processIdentifier;

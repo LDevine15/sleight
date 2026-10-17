@@ -1182,8 +1182,9 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
   }
+  const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
   const handleBundles = new Map();
   function numberWindow(code, fallback) {
     const handles = numberedHandles(code);
@@ -1844,24 +1845,40 @@ export function createRelay({
           (!resolved || (resolved.appId === leaseWindow.appId &&
             (resolved.title == null || (resolved.title === leaseWindow.title && (resolved.url ?? null) === (leaseWindow.url ?? null))) &&
             (resolved.windowNumber === undefined || resolved.windowNumber === observedNumber))) ? leaseWindow : undefined;
-        const endpoints = { from: args.from, to: args.to };
-        for (const name of ['from', 'to']) {
-          const endpoint = endpoints[name];
-          if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) continue;
-          const known = compactor.seenLines(observed);
-          const matches = Object.keys(endpoint).length === 1 && typeof endpoint.line === 'string'
-            ? Object.entries(known ?? {}).filter(([, line]) => line === endpoint.line) : [];
-          if (matches.length !== 1) throw new Error('drag line identity needs one observed element in this app window; read it again');
-          endpoints[name] = Number(matches[0][0]);
-        }
-        const numbers = [endpoints.from, endpoints.to].filter(Number.isInteger);
-        const lines = compactor.seenLines(observed, numbers);
-        if (numbers.length && (!observed || numbers.some(n => !lines?.[n] || !compactor.uniqueSeen(observed, numbers).includes(n)))) {
-          throw new Error('drag element numbers need unique identities from a read of this app window; read it again');
+        const cross = args.toWindowId !== undefined;
+        const readWindow = number => {
+          const known = [...dragWindows.values()].filter(window => window.windowNumber === number &&
+            [window.app, window.appId].includes(args.app) && (!resolved || resolved.appId === window.appId));
+          const window = known.length === 1 && !known[0].identityError &&
+            (!known[0].identityRequired || known[0].nativeIdentity) && known[0];
+          // The compactor keys native trees by header. Equal titles cannot certify two number maps.
+          return window && ![...dragWindows.values()].some(other => other.appId === window.appId &&
+            other.title === window.title && other.windowNumber !== number) ? window : undefined;
+        };
+        const source = cross ? readWindow(args.windowId) : observed;
+        const destination = cross ? readWindow(args.toWindowId) : observed;
+        const endpoints = { from: args.from, to: args.to }, evidence = {};
+        for (const [names, window, prefix] of cross ? [[['from'], source, ''], [['to'], destination, 'to']] : [[['from', 'to'], source, '']]) {
+          for (const name of names) {
+            const endpoint = endpoints[name];
+            if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) continue;
+            const known = compactor.seenLines(window);
+            const matches = Object.keys(endpoint).length === 1 && typeof endpoint.line === 'string'
+              ? Object.entries(known ?? {}).filter(([, line]) => line === endpoint.line) : [];
+            if (matches.length !== 1) throw new Error('drag line identity needs one observed element in this app window; read it again');
+            endpoints[name] = Number(matches[0][0]);
+          }
+          const numbers = names.map(name => endpoints[name]).filter(Number.isInteger);
+          const lines = compactor.seenLines(window, numbers);
+          if (numbers.length && (!window || numbers.some(n => !lines?.[n] || !compactor.uniqueSeen(window, numbers).includes(n)))) {
+            throw new Error('drag element numbers need unique identities from a read of this app window; read it again');
+          }
+          evidence[prefix ? 'toElementLines' : 'elementLines'] = lines;
+          evidence[prefix ? 'toElementWindow' : 'elementWindow'] = window ? { title: window.title,
+            windowId: window.windowNumber ?? window.nativeIdentity?.windowNumber } : undefined;
         }
         callArgs = { ...args, ...endpoints, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
-          elementLines: lines, elementWindow: observed ? { title: observed.title,
-            windowId: observed.windowNumber ?? observed.nativeIdentity?.windowNumber } : undefined };
+          toElementLines: undefined, toElementWindow: undefined, ...evidence };
       }
       result = await localTools.call(name, callArgs, async (parts, message, options) => {
         const allowed = await (prepared?.approval ?? approve(parts, message, msg.id, options));
@@ -3261,6 +3278,18 @@ export function createRelay({
       if (leaseWindow && call.identityRequired) leaseWindow.identityRequired = true;
       if (leaseWindow && call.nativeIdentity) leaseWindow.nativeIdentity = call.nativeIdentity;
       if (leaseWindow && call.identityError) leaseWindow.identityError = call.identityError;
+      if (leaseWindow?.appId && call.read && !msg.result?.isError) {
+        const selector = call.selector ?? handleSelectors.get(call.handle);
+        const acquiredNumber = selector?.match(/^\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}$/)?.[1];
+        const number = leaseWindow.nativeIdentity?.windowNumber ?? (acquiredNumber ? Number(acquiredNumber) : undefined);
+        if (Number.isSafeInteger(number) && number > 0) {
+          const key = `${leaseWindow.appId}:${number}`;
+          dragWindows.delete(key);
+          if (!call.identityError && !leaseWindow.identityError && (!leaseWindow.identityRequired || leaseWindow.nativeIdentity)) {
+            dragWindows.set(key, { ...leaseWindow, windowNumber: number });
+          }
+        }
+      }
       if (window?.app) drivenApps.add(window.app);
       if (known) drivenApps.add(known);
       if (call.handle) {
