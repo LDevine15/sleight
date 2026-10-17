@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { createReadCompactor, fileReceipt, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
+import { createReadCompactor, fileReceipt, spotlightTypes, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/compact-reads.mjs';
 import { createRelay, usesRequire, requireOnly, openFileRules } from '../plugins/sleight/lib/relay.mjs';
 import { skillRules } from '../plugins/sleight/lib/launch.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -23,23 +23,31 @@ function tempDir(t) {
   return dir;
 }
 
-test('the receipt names the size on disk and the kind from the first bytes', t => {
+test('the receipt names the size from stat and the kind from the type identifier, never the content', t => {
   const dir = tempDir(t), url = name => pathToFileURL(join(dir, name)).href;
-  writeFileSync(join(dir, 'a.txt'), 'héllo\n');
-  writeFileSync(join(dir, 'a.rtf'), '{\\rtf1\\ansi hello}');
-  writeFileSync(join(dir, 'empty.txt'), '');
-  writeFileSync(join(dir, 'a.bin'), Buffer.from([0, 1, 2, 255]));
-  writeFileSync(join(dir, 'a.utf16'), Buffer.from([0xff, 0xfe, 0x68, 0]));
-  writeFileSync(join(dir, 'a.zip'), Buffer.from('PK\x03\x04rest', 'latin1'));
+  // The content says RTF; the identifier and extension decide.
+  for (const name of ['a.txt', 'a.rtf', 'a.pdf', 'a.docx', 'a.json', 'noext']) writeFileSync(join(dir, name), '{\\rtf1 x}');
   mkdirSync(join(dir, 'a.rtfd'));
-  assert.equal(fileReceipt(url('a.txt')), 'on disk: 7 bytes, plain text');
-  assert.equal(fileReceipt(url('a.rtf')), 'on disk: 18 bytes, rich text (RTF)');
-  assert.equal(fileReceipt(url('empty.txt')), 'on disk: 0 bytes, empty');
-  assert.equal(fileReceipt(url('a.bin')), 'on disk: 4 bytes, binary');
-  assert.equal(fileReceipt(url('a.utf16')), 'on disk: 4 bytes, plain text (UTF-16)');
-  assert.equal(fileReceipt(url('a.zip')), 'on disk: 8 bytes, zip archive');
-  assert.equal(fileReceipt(url('a.rtfd')), 'on disk: a package folder');
-  assert.equal(fileReceipt(url('missing.txt')), undefined);
+  const asked = [], types = map => path => { asked.push(path); return map[path.split('/').at(-1)]; };
+  const spotlight = types({ 'a.txt': ['public.utf8-plain-text', 'public.plain-text', 'public.text'],
+    'a.docx': ['org.openxmlformats.wordprocessingml.document', 'public.data'], 'a.rtfd': ['com.apple.rtfd', 'com.apple.package'] });
+  assert.equal(fileReceipt(url('a.txt'), spotlight), 'on disk: 9 bytes, plain text');
+  assert.equal(fileReceipt(url('a.docx'), spotlight), 'on disk: 9 bytes, document');
+  assert.equal(fileReceipt(url('a.rtfd'), spotlight), 'on disk: a package folder, rich text with attachments');
+  // Without a Spotlight identifier, the extension decides.
+  assert.equal(fileReceipt(url('a.rtf'), spotlight), 'on disk: 9 bytes, rich text (RTF)');
+  assert.equal(fileReceipt(url('a.pdf'), spotlight), 'on disk: 9 bytes, PDF');
+  assert.equal(fileReceipt(url('a.json'), spotlight), 'on disk: 9 bytes, .json file');
+  assert.equal(fileReceipt(url('noext'), spotlight), 'on disk: 9 bytes, unknown type');
+  assert.equal(fileReceipt(url('missing.txt'), spotlight), undefined);
+  assert.ok(asked.every(path => path.startsWith(dir)));
+});
+
+test('Spotlight gives a checked-in Markdown file its identifier and conformance', { skip: process.platform !== 'darwin' && 'macOS only' }, () => {
+  const types = spotlightTypes(new URL('../README.md', import.meta.url).pathname);
+  if (types === undefined) return; // an unindexed checkout falls back to the extension
+  assert.ok(types.includes('public.plain-text'), JSON.stringify(types));
+  assert.match(fileReceipt(new URL('../README.md', import.meta.url).href), /^on disk: \d+ bytes, plain text$/);
 });
 
 test('a confirmed save carries the receipt and an unconfirmed one does not', t => {
