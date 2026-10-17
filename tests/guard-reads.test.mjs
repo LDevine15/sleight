@@ -54,7 +54,7 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
     if (key in object || typeof key === 'symbol' || key === 'then') return object[key];
     throw Error('unsupported engine method ' + key);
   } }) : raw;
-  const context = { app: engine, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
+  const context = { app: engine, setTimeout, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
   const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context);
   return { run, raw, calls, output, context };
 }

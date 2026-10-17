@@ -1,4 +1,5 @@
 import { elementWait } from './element-wait.mjs';
+const EDITABLE_CLICK_SETTLE_MS = 250;
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -612,6 +613,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
               : state.reason;
             throw (state.adoptUrl ? stop : message => new Error(message))(reason + ' Observed ' + JSON.stringify(observed));
           }
+          // Background field clicks can return before the field takes first responder. Count
+          // guard reads toward the settling interval, then check the lease again before input.
+          if (['typeText', 'paste'].includes(name) && before?.name === 'click' && before.editable && before.completedAt !== undefined) {
+            const remaining = ${EDITABLE_CLICK_SETTLE_MS} - (clock() - before.completedAt);
+            if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.ceil(remaining)));
+          }
           await checkLease();
           state.activeApp = proxy;
           // Only the resolved target's role makes a field click quiet; coordinates and words in a
@@ -637,8 +644,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
             /(?:…|\\.\\.\\.)$/.test(label ?? '') || /^(?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(label ?? '')) ||
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
-          state.previous.set(proxy, { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey,
-            textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text) });
+          const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey,
+            textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text) };
+          state.previous.set(proxy, previous);
           if (text !== undefined && !bind) state.binding = { proxy, text };
           else if (state.binding?.proxy !== proxy) state.binding = undefined;
           const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? args[0] : undefined;
@@ -650,6 +658,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false } = {}) {
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
           const result = await value.apply(raw, args);
+          if (editable) previous.completedAt = clock();
           state.completedActions++;
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }
