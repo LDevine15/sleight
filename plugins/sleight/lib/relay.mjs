@@ -59,7 +59,7 @@
 import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY } from './document-scope.mjs';
+import { DOCUMENT_TOOL, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -70,6 +70,7 @@ import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
+import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, menuIdentity, unchangedMenuWindow } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -422,6 +423,7 @@ export function createRelay({
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
+  menuContinuationTimeoutMs = 600,
   beginStop = () => {}, stopEngine, restartEngine, prepareEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
   clientIn, clientOut, serverIn, serverOut,
   sessionId = randomUUID(),
@@ -1380,6 +1382,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && msg.id !== undefined && msg.params.name !== TURN_END_TOOL) {
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
     }
+    if (msg.method === 'tools/call' && menuCalls.has(msg.id)) menuCalls.get(msg.id).forwardedAt = performance.now();
     serverIn.write(JSON.stringify(msg) + '\n');
     replWarmup.sent(msg);
   };
@@ -1485,6 +1488,7 @@ export function createRelay({
     if (msg.method === undefined && splitCalls.has(msg.id)) {
       const next = splitCalls.get(msg.id); splitCalls.delete(msg.id); callGenerations.delete(msg.id); next(msg); return;
     }
+    if (msg.method === undefined) { menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); }
     if (msg.method === undefined && splitHeads.has(msg.id)) {
       let head = splitHeads.get(msg.id); splitHeads.delete(msg.id);
       if (resultTrim && msg.result && !msg.result.isError) head = dropAcquisitionTree(head, msg.result.content);
@@ -1869,6 +1873,7 @@ export function createRelay({
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
+  const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Set();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
   function splitSave(msg) {
     if (!inputLease || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
@@ -1999,6 +2004,40 @@ export function createRelay({
     handleClient({ ...msg, id: prefixId, params: { ...msg.params, arguments: { ...msg.params.arguments, code: acquire } } });
     return true;
   }
+  function continueMenu(msg) {
+    const call = menuCalls.get(msg.id);
+    if (!call) return false;
+    menuCalls.delete(msg.id); menuAdmissions.delete(msg.id);
+    if (!Array.isArray(msg.result?.content)) return false;
+    const taken = takeGuardStop(msg.result.content, call.mark);
+    msg.result.content = taken.content;
+    const remainder = !msg.error && msg.result.isError && !documentMode && !changeReview && !menuContinued.has(msg.id) &&
+      call.target && menuRemainder(call.plan, taken.receipt, call.target, taken.content);
+    if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
+    const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
+    menuIdentity(windowIdentity, call.target, menuContinuationTimeoutMs).then(observed => {
+      if (!current()) { observeServerMessage(msg); return; }
+      if (leaseWindow !== call.target || !unchangedMenuWindow(call.target, call.baseline, observed, call.forwardedAt)) {
+        observeServerMessage(msg); return;
+      }
+      // Keep output from before the refused action, drop its exception, then let the normal
+      // result path record the menu tree. The remainder goes through the ordinary admission gates.
+      msg.result = { ...msg.result, isError: false, content: [...taken.head,
+        { type: 'text', text: GUARD_MARK + remainder.tree + GUARD_END }] };
+      menuContinued.add(msg.id);
+      splitCalls.set(msg.id, reply => {
+        if (!current()) { toClient({ ...reply, result: { ...reply.result, isError: true } }); return; }
+        splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
+        leaseWindow = call.target;
+        menuBaselines.set(msg.id, remainder.window);
+        nativeChecked.add(msg.id); focusedChecked.add(msg.id);
+        handleClient({ ...call.request, params: { ...call.request.params,
+          arguments: { ...call.request.params.arguments, code: remainder.code } } });
+      });
+      observeServerMessage(msg);
+    });
+    return true;
+  }
   function handleClient(msg) {
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
@@ -2114,6 +2153,28 @@ export function createRelay({
     }
     if (msg.method === 'tools/call' && (serverIn.writableEnded || serverIn.destroyed)) {
       leaseStop(msg, 'the engine connection ended during stop. Reconnect sleight for a fresh engine and app read.'); return;
+    }
+    if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
+        msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
+        !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
+      const plan = splitMenuActions(msg.params.arguments?.code);
+      if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
+        const target = leaseWindow, generation = stopGeneration;
+        const admission = { plan, target, generation };
+        menuAdmissions.set(msg.id, admission);
+        running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
+        menuIdentity(windowIdentity, target, menuContinuationTimeoutMs).then(baseline => {
+          if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
+            menuAdmissions.delete(msg.id); finishedCall(msg.id);
+            const error = new Error('Input lease: window changed while checking. Read again.');
+            if (!disposed && !stopCollected) leaseStop(msg, error.message);
+            return;
+          }
+          admission.baseline = baseline;
+          running.delete(msg.id); handleClient(msg);
+        });
+        return;
+      }
     }
     if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
         !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
@@ -2396,16 +2457,20 @@ export function createRelay({
             // before that action. Numbered, ID and label actions keep the read unless reads are slow.
             const prior = !documentMode && !changeReview && !careful && (!treeFreeFirstAction(originalCode) || focusedChecked.has(msg.id)) && priorRead && (priorRead.split || priorRead.ms > 2000 || treeFreeFirstAction(originalCode)) && priorRead.seq + 1 === callSeqs.get(msg.id) && Date.now() - priorRead.at < 10000 &&
               target?.app === priorRead.app && sameWindow(seenWindow, target) ? { text: priorRead.text, id: priorRead.id, title: priorRead.title, windows: priorRead.windows, split: priorRead.split } : undefined;
+            const menuBaseline = menuBaselines.get(msg.id);
+            const stopMark = guardStopMark();
+            menuCalls.set(msg.id, { ...menuAdmissions.get(msg.id), mark: stopMark,
+              request: { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: originalCode } } } });
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
             if (filteredCode !== swipeCode) filterMarks.set(msg.id, filterMark);
-            msg.params.arguments.code = guardedCode(filteredCode, target, reason,
+            msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, timing: guardTiming, careful: careful || documentMode, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+              { ...setup, guardStopMark: stopMark, timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
                 focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
                 bind: !careful && !documentMode && !changeReview,
-                adoptUrl: !documentMode && !changeReview, skipAppWrap: browserHandles.has('app'), prior,
+                adoptUrl: !documentMode && !changeReview && !menuBaseline, skipAppWrap: browserHandles.has('app'), prior,
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines: compactor.seenLines(seenWindow, numbers), literals: numbers,
@@ -2629,11 +2694,13 @@ export function createRelay({
       documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); browserCalls.delete(msg.id);
       spaceChecks.delete(msg.id); preHealth.delete(msg.id); nativeChecked.delete(msg.id); focusedChecked.delete(msg.id); restartRetries.delete(msg.id);
       flowCalls.delete(msg.id); helperReads.delete(msg.id); remapNotes.delete(msg.id); preapprovalNotes.delete(msg.id);
+      menuCalls.delete(msg.id); menuAdmissions.delete(msg.id);
       callSeqs.delete(msg.id); callStarts.delete(msg.id); resultCalls.delete(msg.id); guardCalls.delete(msg.id);
       finishedCall(msg.id);
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'Input lease: this call was stopped; its input outcome is unconfirmed. Read the app again.' }] } });
       stoppedClients.add(msg.id); return;
     }
+    if (msg.method === undefined && continueMenu(msg)) return;
     // Keep the original engine verdict even when close recovery rewrites noWindowsAvailable.
     const resultFailed = !!msg.error || !!msg.result?.isError;
     if (msg.method === undefined && guardCalls.has(msg.id)) {
@@ -3308,6 +3375,7 @@ export function createRelay({
         // Collection makes late results impossible. Resolve pending caller requests explicitly.
         for (const pending of clipboardReplies.values()) pending.reject(new Error('Stopped: engine collected.'));
         clipboardReplies.clear();
+        menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear();
         filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');

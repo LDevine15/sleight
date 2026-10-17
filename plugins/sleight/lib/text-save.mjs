@@ -3,7 +3,7 @@ import { verifyWindowIdentity } from './window-identity.mjs';
 
 // Like FowlBrowser's batched action tools, keep one caller result across the native settle.
 // A bounded splitter for standalone awaited statements, not a JavaScript interpreter.
-export function splitTextSave(code) {
+export function statementSpans(code) {
   const mask = code.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
     value => value.replace(/[^\n]/g, ' '));
   const spans = [];
@@ -18,6 +18,13 @@ export function splitTextSave(code) {
   }
   if (depth) return;
   spans.push([start, code.length]);
+  return { spans, mask };
+}
+
+export function splitTextSave(code) {
+  const split = statementSpans(code);
+  if (!split) return;
+  const { spans, mask } = split;
   const written = new Set();
   for (const [start, end] of spans) {
     const ts = tokens(code.slice(start, end));
