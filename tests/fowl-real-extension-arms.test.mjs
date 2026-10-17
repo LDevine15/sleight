@@ -176,6 +176,8 @@ test('dry plans for both extension arms show their browser setup without launchi
   assert.equal(cic.arms.length, 13);
   for (const arm of cic.arms) {
     assert.ok(arm.args.includes('--chrome'));
+    assert.equal(arm.args[arm.args.indexOf('--permission-mode') + 1], 'default', 'auto mode sent page actions to an unanswered prompt in Chrome');
+    assert.equal(arm.metadata.permissionMode, 'default');
     assert.ok(!arm.args.includes('--no-chrome'));
     assert.equal(arm.args.filter(arg => arg === '--tools').length, 1);
     assert.equal(arm.args[arm.args.indexOf('--tools') + 1], '');
