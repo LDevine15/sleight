@@ -77,7 +77,7 @@ import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason } from './compact-reads.mjs';
 import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
-import { createResultBudget } from './result-budget.mjs';
+import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { fillFormCode } from './fill-form.mjs';
@@ -3063,7 +3063,7 @@ export function createRelay({
         trace('payment-confirmation-policy', { status: 'unmatched' });
       } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
-      if (docs && docsShown) {
+      if (docs && docsShown && !requestsFullDocumentation(jsCode)) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).
         invalidateDiagnostics(); forgetHandles(); helperHandles.clear(); helperControls.clear(); helperActive = undefined;
         compactor.reset();

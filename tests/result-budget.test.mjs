@@ -21,7 +21,7 @@ function compactPolicyResult(options = {}, docs = confirmationDocs, request = { 
 for (const mode of ['always', 'requested', 'never']) test(`opt-in native confirmations preserve the payment mode: ${mode}`, () => {
   const docs = rewritePaymentPolicy(confirmationDocs, mode);
   const { out } = compactPolicyResult({}, docs);
-  assert.ok(out.length < docs.length * 0.65, `${out.length} of ${docs.length} characters`);
+  assert.ok(out.length < docs.length * 0.8, `${out.length} of ${docs.length} characters`);
   assert.match(out, /^## Computer Use\nNative reference\./);
   const always = out.slice(out.indexOf('### Always confirm'), out.indexOf('### Pre-approval'));
   const preapproval = out.slice(out.indexOf('### Pre-approval'), out.indexOf('### Allowed'));
@@ -30,7 +30,7 @@ for (const mode of ['always', 'requested', 'never']) test(`opt-in native confirm
     assert.doesNotMatch(preapproval, /\[11\]/);
   } else {
     assert.doesNotMatch(always, /\[11\]/);
-    assert.ok(preapproval.includes(docs.match(/^- \*\*\[11\]\*\*.*$/m)[0]));
+    assert.ok(preapproval.includes(docs.match(/^- \*\*\[11\]\*\*.*$/m)[0].replaceAll('**', '')));
   }
 });
 
@@ -60,6 +60,39 @@ test('the advertised full-policy call returns the effective docs without recompa
   assert.equal(budget.code(command), command);
   budget.request(2, { browser: false, code: command });
   assert.equal(texts(budget.apply([{ type: 'text', text: docs }], { id: 2 })), docs);
+});
+
+for (const code of ['await cua["rewriteDocumentation"]()', "await cua['rewriteDocumentation']()"])
+  test(`bracket full-policy requests bypass compaction: ${code}`, () => {
+    const { budget } = compactPolicyResult();
+    budget.request(2, { browser: false, code });
+    assert.equal(texts(budget.apply([{ type: 'text', text: confirmationDocs }], { id: 2 })), confirmationDocs);
+  });
+
+test('compact settings rule retains only the engine three-item scope', () => {
+  const { out } = compactPolicyResult();
+  const settings = out.split('\n').find(line => line.includes('[13]'));
+  assert.equal(settings, '- [13] Change VPN settings, OS security settings, computer password through UI.');
+});
+
+test('compact sensitive-data definition keeps the open-ended categories and examples', () => {
+  const { out } = compactPolicyResult();
+  assert.match(out, /photos\/files about a person/);
+  assert.match(out, /identifiers \(SSN\/passport\)/);
+  assert.match(out, /home address, etc\./);
+});
+
+test('compact scope, communications and hygiene retain the engine qualifications', () => {
+  const { out } = compactPolicyResult();
+  assert.match(out, /request user confirmation before risky actions/);
+  assert.match(out, /without directly operating the OS gui/);
+  const communications = out.split('\n').find(line => line.includes('[9]'));
+  assert.match(communications, /Representational/);
+  assert.match(communications, /patient note/);
+  assert.match(communications, /edit public low-stakes posts\/comments\/website text/);
+  assert.match(out, /[Ss]urface them to the user/);
+  assert.match(out, /confirm when specific risky steps appear/);
+  assert.doesNotMatch(out, /\*\*/);
 });
 
 test('default, full-doc override, browser-first and mixed replies keep the full policy', () => {

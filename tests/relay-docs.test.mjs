@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { RESULT_LIMIT } from '../plugins/sleight/lib/result-budget.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { GUARD_MARK } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const text = text => ({ type: 'text', text });
 const docs = '## Computer Use\nNative API reference.\n\n' + readFileSync(new URL('fixtures/engine-confirmations-policy.txt', import.meta.url), 'utf8');
@@ -46,6 +47,22 @@ function harness(t, options = {}) {
 }
 const body = result => result.content.map(c => c.text ?? '').join('\n');
 const result = (h, id) => h.received.find(m => m.id === id).result;
+
+for (const code of ['await cua.rewriteDocumentation()', 'await cua["rewriteDocumentation"]()',
+  "await cua['rewriteDocumentation']()"])
+  test(`requested documentation preserves the session and read baseline: ${code}`, async t => {
+    const baseline = tree + '\n' + Array.from({ length: 30 }, (_, i) => `\t${i + 2} button Item ${i}`).join('\n');
+    const h = harness(t); await h.open(1, [text(docs), text(baseline)]);
+    h.call(2, 'await cua.listApps()'); h.reply(2, [text('[]')]);
+    h.call(3, code); h.reply(3, [text(docs)]);
+    assert.doesNotMatch(body(result(h, 3)), /session restarted|handles.*gone/);
+    assert.ok(!h.traces.some(row => row.kind === 'engine-session-restarted'));
+    h.call(4, 'await __sleightOpenedApp1.getAXState()'); h.reply(4, [text(GUARD_MARK + baseline)]);
+    assert.match(body(result(h, 4)), /no change since the last full tree/);
+    h.call(5, 'await cua.listApps()'); h.reply(5, [text(docs), text('[]')]);
+    assert.match(body(result(h, 5)), /session restarted/);
+    assert.equal(h.traces.filter(row => row.kind === 'engine-session-restarted').length, 1);
+  });
 
 for (const confirmPayments of ['always', 'requested', 'never']) test(`opt-in compact native docs keep effective payments after deferral: ${confirmPayments}`, async t => {
   const saved = process.env.SLEIGHT_COMPACT_CONFIRMATIONS;

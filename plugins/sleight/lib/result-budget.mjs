@@ -15,7 +15,8 @@ const POLICY = '\n# Computer Use Confirmations Policy';
 const REFERENCE = '\n# API Reference\n';
 const OTHER_PLATFORM = /\b(?:Linux|Windows)\b/;
 const NATIVE_REFERENCE = /\bsleight\.nativeDocumentation\s*\(/;
-const POLICY_REFERENCE = /\bcua\.rewriteDocumentation\s*\(/;
+const POLICY_REFERENCE = /\bcua(?:\.rewriteDocumentation|\[\s*(['"])rewriteDocumentation\1\s*\])\s*\(/;
+export const requestsFullDocumentation = (code = '') => POLICY_REFERENCE.test(code);
 const NATIVE_NOTICE = 'sleight: Read the native reference with `nodeRepl.write("Full native reference:\\n" + await sleight.nativeDocumentation())` when needed. It documents `cua.getTab`, `cua.listTabs`, `cua.getState`, `cua.getApp` and the rest.';
 
 function dropOtherPlatforms(text) {
@@ -105,7 +106,7 @@ export function createResultBudget({ platform = process.platform, limit = RESULT
   return {
     request(id, { browser, code = '' }) {
       browserFirst ??= browser;
-      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code), policyReference: POLICY_REFERENCE.test(code) });
+      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code), policyReference: requestsFullDocumentation(code) });
     },
     finish(id) { requests.delete(id); },
     code(code) {
