@@ -73,7 +73,9 @@ TODO: full release pass result.
   the whole tree again. Element numbers Claude wasn't shown stay unknown, so a click on one is refused.
 - Non-text drags check only their two endpoints and the elements above them, instead of scanning the
   whole window. Finder drags hit the scan limit in the 2026-10-16 runs. A timed-out drag suggests
-  Copy or Cut and Paste.
+  Copy or Cut and Paste. An endpoint the hit test finds in the window isn't refused because a parent
+  element's frame misses it. Chess's board reported such frames, and every drag on its right half was
+  refused in the 2026-10-17 A/B.
 - The skill tells Claude to acquire an app the task names directly, and to use the changed lines an
   action returns instead of reading again to confirm them. It moves files with Copy and then the
   menu's Move item, since Cut is often disabled for files.

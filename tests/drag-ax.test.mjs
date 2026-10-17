@@ -104,18 +104,42 @@ test('non-text endpoints validate without reading unrelated children in a large 
   assert.equal(h.reads.includes('AXChildren'), false);
 });
 
-test('endpoint ancestry rejects chrome, other windows, clipped content and missing parents', () => {
+test('endpoint ancestry rejects chrome, other windows and missing parents', () => {
   for (const change of [
     h => { h.area.AXParent = h.toolbar; },
     h => { h.area.AXSubrole = 'AXTitleBar'; },
     h => { h.area.AXParent = { ...h.win }; },
-    h => { h.area.AXParent = h.element('AXGroup', 100, 160, 600, 300); h.area.AXParent.AXParent = h.win; },
     h => { delete h.area.AXParent; },
     h => { h.area.AXParent = h.area; },
   ]) {
     const h = harness(); h.area.AXRole = 'AXOutline'; change(h);
     assert.throws(() => h.context.dragContent(7, h.window(), h.bounds, [20, 40], [200, 40]), /content|window|parent|limit/i);
   }
+});
+
+// Chess's board reported ancestor frames that cut off its right half, so every drag there was refused
+// although the hit test had found the board at the point (2026-10-17 A/B). The hit test is the evidence.
+test('an ancestor frame that excludes the hit point does not refuse a non-text drag', () => {
+  const h = harness(); h.area.AXRole = 'AXImage';
+  const group = h.element('AXGroup', 100, 130, 150, 300); group.AXParent = h.win; h.area.AXParent = group;
+  h.area.AXSize = { width: 150, height: 300 };
+  const info = h.context.dragContent(7, h.window(), h.bounds, [400, 40], [400, 200]);
+  const points = h.context.validatePoints(info, h.bounds, [400, 40], [400, 200], 'Chess');
+  assert.equal(points.text, null); assert.equal(h.hits.length, 2);
+});
+
+// Widening a mis-framed text field to the window would make it contain a non-text start point, and a
+// stale selection there would turn the drag into a text move (review, 2026-10-17).
+test('a text field whose frame misses the point is not widened to the window', () => {
+  const h = harness(); h.area.AXRole = 'AXImage';
+  const field = { ...h.element('AXTextField', 600, 130, 90, 300), AXSelectedText: 'stale', AXValue: 'stale text', AXParent: h.win };
+  h.area.AXParent = field;
+  const image = { ...h.element('AXImage', 105, 130, 100, 100), AXParent: h.win };
+  const hit = h.context.$.AXUIElementCopyElementAtPosition;
+  h.context.$.AXUIElementCopyElementAtPosition = (el, x, y, out) => { const error = hit(el, x, y, out); if (x < 300) out[0] = image; return error; };
+  const info = h.context.dragContent(7, h.window(), h.bounds, [20, 40], [400, 200]);
+  assert.equal(info.areas.some(area => area.role === 'AXTextField' && area.bounds.Width === h.bounds.Width), false);
+  assert.equal(h.context.validatePoints(info, h.bounds, [20, 40], [400, 200], 'Editor').text, null);
 });
 
 test('endpoint AX timeouts and unreadable roles or geometry fail closed', () => {

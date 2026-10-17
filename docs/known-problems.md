@@ -63,7 +63,9 @@ our own runs. Dates and engine versions are given where they matter.
   closes. On 2026-10-16 the benchmark's own cleanup did this to TextEdit, Preview and Word (TextEdit's main thread sample showed
   `NSMenuTrackingSession`), and AXCancel on every menu didn't release TextEdit. The cleanup no longer opens menus in apps it
   launched. Claude can still open one through the engine. The relay warns that Escape doesn't always close a background
-  menu, and how often a session leaves one open is unmeasured.
+  menu, and how often a session leaves one open is unmeasured. On 2026-10-17 an A/B run left Word in that loop with its Window
+  menu open (main thread sample). AXCancel closed the menu, but Word still ignored Apple events. One Escape key event posted to
+  Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
 - `drag` can't drop text into another window. `from` and `to` are offsets from one window and must sit in the same text area,
   so the benchmark's textedit-window-drag can't pass through it (0/1 on 2026-10-16, its first run). Whether the engine's
   `app.drag` can move selected text between windows is unmeasured.
@@ -342,6 +344,10 @@ native reference, and oversized first results defer the browser reference while 
   remove them within 30 s, with or without `js_reset`.
 
 ## Specific apps
+
+- In Excel, a click on another sheet's tab right after renaming a new sheet by double-click swapped the two tabs' order in 3
+  of 3 runs where Claude did it (2026-10-17, and one run before both A/B builds), and excel-edit failed on sheet order each
+  time. sleight sends a plain click there. We haven't found whether Excel or the engine turns it into a tab drag.
 
 - Slack, Firefox and WhatsApp expose thin engine trees (2026-10-10, one read each, no input):
   Slack 15 elements and 483 characters, Firefox 24 / 898, WhatsApp 19 / 940. None of the three had a

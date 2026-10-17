@@ -190,14 +190,18 @@ function dragContent(pid, win, bounds, from, to) {
       if (typeof selected !== 'string' || !selected.trim()) throw new Error('Select non-whitespace text in this window before dragging; nothing was pressed');
       return content(win, bounds);
     }
-    let visible = bounds, body = false;
+    // The hit test already found this element at the point, inside the chosen window. Ancestor frames
+    // can be wrong: Chess's board reported ones that cut off its right half, so every drag there was
+    // refused (2026-10-17 A/B). A frame that misses the point falls back to the window bounds, except a
+    // text field's: widened, it would contain a non-text start point and its selection could move instead.
+    let body = false;
     for (const item of path.reverse()) {
       if (!item.bounds) throw new Error('AX endpoint geometry is unavailable; nothing was pressed');
-      visible = clip(visible, item.bounds);
-      if (!inside(visible, point)) throw new Error('drag endpoint is outside the visible window content; nothing was pressed');
       if (['AXScrollArea', 'AXTextArea', 'AXTextField', 'AXWebArea', 'AXTable', 'AXOutline', 'AXImage', 'AXSplitGroup'].includes(item.role) ||
           (item.role === 'AXGroup' && item.bounds.Y > bounds.Y)) {
-        areas.push({ ...item, bounds: visible }); body = true;
+        const visible = clip(bounds, item.bounds);
+        const text = ['AXTextArea', 'AXTextField'].includes(item.role);
+        areas.push({ ...item, bounds: inside(visible, point) || text ? visible : bounds }); body = true;
       }
     }
     if (!body) throw new Error('drag endpoint is outside the window content area; nothing was pressed');
