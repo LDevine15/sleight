@@ -169,7 +169,10 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         throw error;
       });
       writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck }, null, 2));
-      const start = await (runtime.resetBrowser || resetRealBrowser)(browser);
+      const start = await (runtime.resetBrowser || resetRealBrowser)(browser).catch(error => {
+        if (error.ownerCheck) writeFileSync(join(plan.out, 'browser.json'), JSON.stringify({ ...identity(), ownerCheck: error.ownerCheck }, null, 2));
+        throw error;
+      });
       // Sessionstore positions identify a snapshot, not stable tab identities.
       const startKeys = new Set(browser.browser === 'firefox' ? [] : Object.keys(start));
       if (browser.browser === 'firefox') {

@@ -85,7 +85,7 @@ export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProces
     }
     return { ...await startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }), ownerCheck };
   }
-  catch (error) { error.ownerCheck = ownerCheck; throw error; }
+  catch (error) { error.ownerCheck ??= ownerCheck; throw error; }
 }
 
 async function startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }) {

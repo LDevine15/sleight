@@ -50,13 +50,19 @@ export function firefoxTabs(state) {
   return tabs;
 }
 
-function readInventory(profile) {
+function readInventory(profile, notBefore = 0) {
   // A clean quit moves recovery to sessionstore.jsonlz4. Never read previous or
   // backup sessions, which could falsely certify a page from an earlier task.
   const source = [join(profile, 'sessionstore.jsonlz4'), join(profile, 'sessionstore-backups/recovery.jsonlz4')].find(existsSync);
   if (!source) throw Error('BENCH_FIREFOX_SESSIONSTORE_MISSING');
+  for (let path = dirname(source); ; path = dirname(path)) {
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw invalid();
+    if (path === profile) break;
+  }
   const stat = lstatSync(source);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) throw invalid();
+  if (stat.mtimeMs < notBefore) throw Error('BENCH_FIREFOX_SESSIONSTORE_STALE');
   return { tabs: firefoxTabs(decodeMozLz4(readFileSync(source))), source };
 }
 
@@ -95,7 +101,6 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
   const browser = { ...plan, get pid() { return current && !current.closed ? current.child.pid : undefined; }, ownerCheck,
     reset: async () => {
       await collect();
-      browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses });
       await start();
       return current.start;
     },
@@ -104,7 +109,7 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
       const unobserved = reason => ({ observed: false, tabs: {}, reason,
         unavailableGraders: ['tab retention', 'handoff', 'downloads'] });
       if (!graceful) return unobserved('Firefox graceful quit not proven; forced or unexpected exit');
-      try { return { observed: true, ...readInventory(plan.profileRoot), unavailableGraders: ['downloads'] }; }
+      try { return { observed: true, ...readInventory(plan.profileRoot, current.quitAt), unavailableGraders: ['downloads'] }; }
       catch (error) { return unobserved(error.message); }
     },
     stop: () => stopping ??= (async () => {
@@ -121,6 +126,7 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
     if (!current) return false;
     if (current.closed) return current.graceful;
     let requested = false;
+    current.quitAt = Date.now();
     try { await quitBrowser(browser); requested = true; } catch {}
     await wait(stopMs);
     if (current.closed) { current.graceful = requested && current.code === 0 && !current.signal; return current.graceful; }
@@ -133,6 +139,7 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
     rmSync(plan.profileRoot, { recursive: true, force: true }); mkdirSync(plan.profileRoot, { mode: 0o700 });
     const fresh = { ...prefs, 'app.update.lastUpdateTime.background-update-timer': Math.floor(Date.now() / 1000) };
     writeFileSync(join(plan.profileRoot, 'user.js'), Object.entries(fresh).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`).join('\n') + '\n', { mode: 0o600 });
+    browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses });
     const child = spawnBrowser(plan.command, plan.args, { stdio: 'ignore' });
     const state = current = { child, closed: false, graceful: false };
     state.exited = new Promise(resolve => {
