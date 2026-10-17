@@ -3,21 +3,26 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 12:33 UTC)
+## Banner (2026-10-17 12:50 UTC)
 
 Goal (owner): release 1.3.0, then the native claim and the video, then maintenance and benchmarking (owner, 2026-10-16: "I don't
 want to work on sleight forever"). ROADMAP.md is the plan. Read it whole, especially 1b. The owner is back and wants normal answers.
 
-**Merged since the boot** (full check 6,360 tests, 0 fail, exit 0, pushed as `921e2410`): IT1 (after an editable-field click,
-typing or paste on that handle in the same call waits until 250 ms since the click, default on, needs a live word-edit check),
-SK1 (`SLEIGHT_SKILL=screenshot`, opt-in), RB1 (`SLEIGHT_COMPACT_TOOLBARS=1`, opt-in), RF1 (const-warning strip, enabled-element
-preference among duplicate labels, API names after a missing method, default on). SK1 and RB1 wait for the word-edit/excel-edit A/B.
-**Running.** Codex lanes (gpt-6.1-sol high, `nohup`, logs in `ledger/lane-runs/<id>.log`): DG1 (drag by element or selection),
-CU1R (review fixes to `codex/cu1`: the parser skipped lines above the first app row, so a card naming Terminal was accepted on a
-Calculator allowlist; hooks allowed request_teach_access and request_full_control; app_* tools take bundle ids the allowlist
-lacks) and CP1R (review fixes to `codex/cp1`: its "full policy" call trips the relay's engine-restart notice, [13] broadened, the
-sensitive-data list narrowed). CU1 and CP1 merge only after those. No live run is going: the next ones wait for the owner to say
-they're away and a Puddle window.
+**Merged since the boot** (last full check 6,452 tests, 0 fail, exit 0, pushed as `97fd52ab`):
+- IT1: after an editable-field click, typing or paste on that handle in the same call waits until 250 ms since the click. Default
+  on. It needs a live word-edit check.
+- RF1: const-warning strip, enabled-element preference among duplicate labels, API names after a missing method. Default on.
+- SK1 (`SLEIGHT_SKILL=screenshot`) and RB1 (`SLEIGHT_COMPACT_TOOLBARS=1`), opt-in until the word-edit/excel-edit A/B.
+- CP1 with CP1R (`SLEIGHT_COMPACT_CONFIRMATIONS=1`, policy 5,946 to about 4,000 chars), opt-in until the owner reads the wording
+  in `plugins/sleight/lib/compact-confirmations.mjs` (side-by-side table in `ledger/claims/CP1R/REPORT.md`).
+- CU1 with CU1R and `eb8bde6e`: the claude-cu arm keeps its computer-use server under telemetry opt-out and answers the session card
+  only when each app and grant the card lists is on the task's fixture allowlist. Two Sonnet-high reviews; the second found the hook denied
+  every real `request_access` (the schema's required `reason`) and the block record kept the account banner, both fixed. Needs its
+  live check.
+
+**Running.** DG1R (Codex lane, log `ledger/lane-runs/dg1r.log`): review fixes to `codex/dg1` (drag by element number or text
+selection). Its element scan stopped at depth 12 or 300 elements, so deep web text would refuse, and titles with commas could match
+another element. DG1 merges after it. No live run is going: the next ones wait for the owner to say they're away and a Puddle window.
 sleight's 11:53 rerun (on `2c687b2a`'s code, flags off) finished 12:12:54Z, 26 of 27 passed, scored to
 `~/Projects/sleight-wt/sitting-1017/claim-score-final.txt`, and Puddle's window w-flagab-1017 was released at 12:13:06Z.
 Its harness bugs: run.mjs crashed in the unlock because something else removed `/tmp/sleight-live.lock` mid-run (fixed in
