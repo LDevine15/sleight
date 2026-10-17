@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { browserProcesses, checkBrowserOwner, matchesBrowserProcess } from './real-browser.mjs';
+import { checkBrowserOwner } from './real-browser.mjs';
 
 const execute = promisify(execFile), limit = 16 * 1024 * 1024;
 const invalid = () => Error('BENCH_FIREFOX_SESSIONSTORE_INVALID');
@@ -83,6 +83,9 @@ const prefs = {
   'app.update.interval': 2147483647, 'extensions.update.enabled': false,
   'extensions.systemAddon.update.enabled': false,
   'app.normandy.enabled': false, 'app.shield.optoutstudies.enabled': false,
+  // The start marker is a data: page from the command line. Firefox 157 blocks that
+  // load by default and records the URL as the title (measured 2026-10-17).
+  'security.data_uri.block_toplevel_data_uri_navigations': false,
 };
 
 export function firefoxProfileMetadata(home = homedir()) {
@@ -95,8 +98,26 @@ export function firefoxProfileMetadata(home = homedir()) {
   }));
 }
 
+// pid, start time and full argv string for every process. LC_ALL=C pins lstart's format.
+export async function processArguments() {
+  const { stdout } = await execute('/bin/ps', ['-axww', '-o', 'pid=,lstart=,args='],
+    { encoding: 'utf8', timeout: 5000, maxBuffer: limit, env: { ...process.env, LC_ALL: 'C' } });
+  if (!stdout.trim()) throw Error('BENCH_PROCESS_LIST_UNAVAILABLE');
+  return stdout.trim().split('\n').map(line => {
+    const match = /^\s*(\d+)\s+(\w{3} \w{3} +\d{1,2} \d\d:\d\d:\d\d \d{4})\s*(.*)$/.exec(line);
+    const startedMs = match && Date.parse(match[2]);
+    if (!match || !Number.isFinite(startedMs)) throw Error('BENCH_PROCESS_LIST_INVALID');
+    return { pid: Number(match[1]), startedMs, args: match[3] };
+  });
+}
+
+// The round's profile path is unique, so the exact "-profile <root>" pair names our Firefox.
+export const ownsProfile = (plan, row) => typeof row?.args === 'string' && row.args.startsWith(plan.executable + ' ') &&
+  (row.args + ' ').includes(` -profile ${plan.profileRoot} `);
+
 export function requestFirefoxQuit(executable, browser) {
-  return execute(executable, [String(browser.pid), browser.executable, String(process.pid)], { timeout: 5000 });
+  return execute(executable, [String(browser.pid), browser.executable, browser.profileRoot,
+    String(Math.floor(browser.startedMs / 1000))], { timeout: 5000 });
 }
 
 async function quitHelper(root) {
@@ -108,14 +129,22 @@ async function quitHelper(root) {
   return browser => requestFirefoxQuit(executable, browser);
 }
 
-// This lifecycle owns every child, the empty-profile seed, and its quit helper.
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Firefox spawned as our child is denied its profile ("Profile Missing"), so it
+// starts through LaunchServices and is tracked by pid, start time and profile argv.
+// This lifecycle owns that process, the empty-profile seed, and its quit helper.
 // Reset never reads an owner profile and never reuses a task's browsing state.
-export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata = firefoxProfileMetadata }) {
+export async function launchFirefox(plan, { openBrowser = (command, args) => execute(command, args, { timeout: 15000 }),
+  listProcesses, listArguments = processArguments, signalProcess = (pid, signal) => process.kill(pid, signal),
+  timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata = firefoxProfileMetadata }) {
   const root = dirname(plan.profileRoot);
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
   mkdirSync(root, { mode: 0o700 });
   let current, stopping;
-  const browser = { ...plan, get pid() { return current && !current.closed ? current.child.pid : undefined; }, ownerCheck, collections: [], profileAudit: {},
+  const owned = () => current && !current.closed;
+  const browser = { ...plan, get pid() { return owned() ? current.pid : undefined; },
+    get startedMs() { return owned() ? current.startedMs : undefined; }, ownerCheck, collections: [], profileAudit: {},
     reset: async () => {
       await collect();
       await start();
@@ -138,11 +167,18 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
       return { browserClosed: true, profileDeleted: true };
     })(),
   };
-  const wait = async ms => {
-    let timer;
-    try { await Promise.race([current.exited, new Promise(resolve => { timer = setTimeout(resolve, ms); })]); }
-    finally { clearTimeout(timer); }
+  // Closed means the exact pid with its recorded start time and profile argv is gone.
+  const live = async () => {
+    const row = (await listArguments()).find(row => row.pid === current.pid);
+    if (!row || row.startedMs !== current.startedMs || !ownsProfile(plan, row)) current.closed = true;
+    return !current.closed;
   };
+  const wait = async ms => {
+    const until = Date.now() + ms;
+    while (await live() && Date.now() < until) await sleep(Math.min(50, Math.max(1, until - Date.now())));
+  };
+  // Signals go only to the pid that live() just matched by start time and profile argv.
+  const force = async signal => { if (await live()) signalProcess(current.pid, signal); };
   const auditAfter = () => {
     browser.profileAudit.after = profileMetadata();
     browser.profileAudit.changed = JSON.stringify(browser.profileAudit.before) !== JSON.stringify(browser.profileAudit.after);
@@ -150,10 +186,10 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
   const collect = async () => {
     if (!current) return false;
     if (current.restartUnproved) throw Error('BENCH_BROWSER_CLEANUP_UNPROVED');
-    if (current.closed) { auditAfter(); return current.graceful; }
+    if (!current.pid || current.closed || !(await live())) { auditAfter(); return current.graceful; }
     let requested = false;
     current.quitAt = Date.now();
-    const receipt = { pid: current.child.pid, quit: {} }; browser.collections.push(receipt);
+    const receipt = { pid: current.pid, quit: {} }; browser.collections.push(receipt);
     try {
       try {
         const result = await quitBrowser(browser); requested = true;
@@ -161,9 +197,11 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
       } catch (error) { receipt.quit = { exitCode: error.code ?? null, stderr: error.stderr || '', error: error.message }; }
       await wait(Math.max(0, quitMs - (Date.now() - current.quitAt)));
       receipt.quit.durationMs = Date.now() - current.quitAt;
-      if (current.closed) { current.graceful = requested && current.code === 0 && !current.signal; return current.graceful; }
-      current.child.kill('SIGTERM'); await wait(stopMs);
-      if (!current.closed) { current.child.kill('SIGKILL'); await wait(stopMs); }
+      // launchd reaps Firefox, so its exit status is unavailable. A requested quit
+      // is graceful when the pid leaves within the budget, before any signal.
+      if (current.closed) { current.graceful = requested; return current.graceful; }
+      await force('SIGTERM'); await wait(stopMs);
+      if (!current.closed) { await force('SIGKILL'); await wait(stopMs); }
       if (!current.closed) throw Error('BENCH_BROWSER_CLEANUP_UNPROVED');
       return false;
     } finally {
@@ -177,47 +215,49 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
     writeFileSync(join(plan.profileRoot, 'user.js'), Object.entries(fresh).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`).join('\n') + '\n', { mode: 0o600 });
     browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses });
     browser.profileAudit = { before: profileMetadata() };
-    const child = spawnBrowser(plan.command, plan.args, { stdio: 'ignore', env: { ...process.env, MOZ_CRASHREPORTER_DISABLE: '1' } });
-    const state = current = { child, closed: false, graceful: false };
-    state.exited = new Promise(resolve => {
-      child.once('error', error => { state.error = error; });
-      child.once('close', (code, signal) => { state.closed = true; state.code = code; state.signal = signal; resolve(); });
-    });
+    // lstart has one-second resolution; anything started before this second predates the request.
+    const requestedAt = Date.now(), state = current = { closed: false, graceful: false, requestedAt,
+      notBefore: Math.floor(requestedAt / 1000) * 1000 };
+    try { await openBrowser(plan.command, plan.launchArgs); } catch (error) { state.error = error; }
     const deadline = Date.now() + timeoutMs;
     for (;;) {
+      const ours = (await listArguments()).filter(row => ownsProfile(plan, row) && row.startedMs >= state.notBefore);
+      if (!state.pid && !state.error && ours.length === 1) Object.assign(state, { pid: ours[0].pid, startedMs: ours[0].startedMs });
+      else if (state.pid && !ours.some(row => row.pid === state.pid && row.startedMs === state.startedMs)) state.closed = true;
       if (state.closed || state.error || Date.now() >= deadline) {
-        if (state.closed && state.code === 0 && !state.signal) await collectRestart();
-        throw Error('BENCH_BROWSER_START_FAILED');
+        await collectStrays();
+        throw Error('BENCH_BROWSER_START_FAILED', state.error ? { cause: state.error } : undefined);
       }
-      try {
-        const { tabs } = readInventory(plan.profileRoot, 0, true), values = Object.values(tabs);
-        if (values.length === 1 && values[0].title === plan.marker && values[0].url === plan.args.at(-1)) state.start = tabs;
-      } catch {}
+      if (state.pid) {
+        try {
+          const { tabs } = readInventory(plan.profileRoot, 0, true), values = Object.values(tabs);
+          if (values.length === 1 && values[0].title === plan.marker && values[0].url === plan.args.at(-1)) state.start = tabs;
+        } catch {}
+      }
       if (state.start) {
-        browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses, ownedPid: child.pid });
+        browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses, ownedPid: state.pid });
         return;
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await sleep(50);
     }
   };
-  const collectRestart = async () => {
+  // A failed start can leave other processes on this profile (a Firefox restart, or
+  // two seen at once). Quit each exact one; an uncollected one keeps the profile.
+  const collectStrays = async () => {
     current.restartUnproved = true;
-    const census = listProcesses || browserProcesses, rows = await census();
-    const runner = rows.find(row => row.pid === process.pid);
-    if (!runner || !Number.isSafeInteger(runner.pgid) || runner.pgid <= 0) throw Error('BENCH_BROWSER_CLEANUP_UNPROVED');
-    const replacements = rows.filter(row => row.pid !== current.child.pid && row.ppid === process.pid &&
-      row.pgid === runner.pgid && matchesBrowserProcess(plan, row));
-    for (const row of replacements) {
+    const strays = (await listArguments()).filter(row => row.pid !== current.pid && ownsProfile(plan, row) &&
+      row.startedMs >= current.notBefore);
+    for (const row of strays) {
       const receipt = { pid: row.pid, restarted: true, quit: {} }, started = Date.now(); browser.collections.push(receipt);
       try {
-        const result = await quitBrowser({ ...plan, pid: row.pid });
+        const result = await quitBrowser({ ...plan, pid: row.pid, startedMs: row.startedMs });
         receipt.quit = { exitCode: 0, stderr: result?.stderr || '' };
       } catch (error) { receipt.quit = { exitCode: error.code ?? null, stderr: error.stderr || '', error: error.message }; }
       const deadline = started + quitMs;
       try {
-        while ((await census()).some(candidate => candidate.pid === row.pid)) {
+        while ((await listArguments()).some(candidate => candidate.pid === row.pid && candidate.startedMs === row.startedMs)) {
           if (Date.now() >= deadline) throw Error('BENCH_BROWSER_CLEANUP_UNPROVED');
-          await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))));
+          await sleep(Math.min(50, Math.max(1, deadline - Date.now())));
         }
       } finally {
         receipt.quit.durationMs = Date.now() - started;
@@ -238,3 +278,4 @@ export async function launchFirefox(plan, { spawnBrowser, listProcesses, timeout
     throw error;
   }
 }
+

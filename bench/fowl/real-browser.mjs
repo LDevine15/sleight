@@ -16,8 +16,12 @@ export function realBrowserPlan({ browser, round, home = homedir() }) {
     profileName: 'sleight benchmark', profileOwned: false, headless: false, connectionMode: 'engine-computer',
     launchMode: 'NSWorkspace-background', resetMode: 'fresh-profile-window', inventoryMode: 'AX-tab-bar',
     quitMode: 'NSRunningApplication-owned-pid-and-launch-date', unavailableGraders: ['completed downloads', 'device viewport'] };
-  if (browser === 'firefox') return { browser, executable, profileRoot, marker, command: executable,
-    args: ['-profile', profileRoot, '-no-remote', '-new-instance', url],
+  // Firefox spawned as our child shows "Profile Missing" and never writes the profile;
+  // through LaunchServices (open -n) the same profile works. -g keeps focus where it is.
+  if (browser === 'firefox') return { browser, executable, profileRoot, marker, command: '/usr/bin/open',
+    launchArgs: ['-n', '-g', '-a', '/Applications/Firefox.app', '--env', 'MOZ_CRASHREPORTER_DISABLE=1', '--args',
+      '-profile', profileRoot, '-no-remote', '-new-instance', url],
+    args: ['-profile', profileRoot, '-no-remote', '-new-instance', url], launchMode: 'LaunchServices-open-new-instance',
     headless: false, connectionMode: 'engine-computer', version: '157', versionVerified: false,
     resetMode: 'quit-and-fresh-profile-relaunch', inventoryMode: 'sessionstore-after-graceful-quit',
     quitMode: 'normal-quit-by-owned-pid', unavailableGraders: ['completed downloads'] };
@@ -85,7 +89,7 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait } = {}) {
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, openBrowser, listArguments, signalProcess, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length) });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
@@ -98,7 +102,7 @@ export async function launchRealBrowser(plan, { spawnBrowser = spawn, listProces
     if (plan.browser === 'firefox') {
       ordinaryParents(plan.profileRoot);
       const { launchFirefox } = await import('./firefox-browser.mjs');
-      return await launchFirefox(plan, { spawnBrowser, listProcesses, timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata });
+      return await launchFirefox(plan, { openBrowser, listArguments, signalProcess, listProcesses, timeoutMs, stopMs, quitMs, quitBrowser, ownerCheck, profileMetadata });
     }
     return { ...await startRealBrowser(plan, { spawnBrowser, timeoutMs, stopMs }), ownerCheck };
   }
