@@ -275,6 +275,21 @@ function tabSelections(lines) {
   return groups;
 }
 
+// The engine names the focused element after the tree. The same element keeping focus with a new description
+// is a switch inside it, such as another sheet becoming active in a workbook area: in excel-edit-1 (2026-10-17)
+// that was the only signal, and Claude typed into the wrong sheet. Another element taking focus is not reported.
+function focusedDescriptionChange(before, after) {
+  const focus = lines => {
+    const line = lines.find(l => l.startsWith('The focused UI element is '))?.replace(/^The focused UI element is \d+ /, '');
+    const m = line && /^(.*?), Description: (.*?)(?=, (?:Help|ID|Secondary Actions|Value):|$)/.exec(line);
+    return m && { element: m[1], description: m[2] };
+  };
+  const was = focus(before), now = focus(after);
+  if (!was || !now || was.element !== now.element || was.description === now.description) return [];
+  const short = text => text.length > 60 ? text.slice(0, 57) + '...' : text;
+  return [`UI changed (${now.element}: ${short(was.description)} to ${short(now.description)})`];
+}
+
 // Match the same selector and its selected siblings, ignoring element renumbering.
 function selectedTabChanges(before, after) {
   const old = tabSelections(before), changes = [];
@@ -579,7 +594,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           !now.fields.some(field => field.startsWith('value:'))) clearedFields += was.fields.filter(field => field.startsWith('value:')).length;
     }
     observation.delta = { baseline: before.observation.id,
-      selectedTabs: selectedTabChanges(before.lines, lines),
+      selectedTabs: [...selectedTabChanges(before.lines, lines), ...focusedDescriptionChange(before.lines, lines)],
       semantic: removedState.length > 0 && addedState.length > 0 && JSON.stringify(removedState.sort()) !== JSON.stringify(addedState.sort()),
       panel: changedPanel, renumbered, element,
       lostState: removedState.length > addedState.length,

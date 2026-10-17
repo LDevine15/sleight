@@ -345,3 +345,13 @@ for (const [name, options] of [
     assert.doesNotMatch(note, /saved: observed/);
   });
 }
+
+test('the same focused element with a new description is reported, another element taking focus is not', () => {
+  const area = sheet => `\n\nThe focused UI element is 4 layout area Content Area, Description: Workbook area, ${sheet}, Sheet 2 of 2, Help: The content area`;
+  const rows = ['\t1 button Add Sheet', '\t4 layout area Content Area'];
+  assert.match(run(tree(rows) + area('Inventory'), tree(rows) + area('Review'), 'await app.click(1)'),
+    /UI changed \(layout area Content Area: Workbook area, Inventory, Sheet 2 of 2 to Workbook area, Review, Sheet 2 of 2\)/);
+  const field = name => `\n\nThe focused UI element is 4 text field ${name}, Description: ${name}`;
+  assert.doesNotMatch(run(tree(rows) + field('Name'), tree(rows) + field('City'), 'await app.click(1)') ?? '', /UI changed \(text field/);
+  assert.doesNotMatch(run(tree(rows) + area('Inventory'), tree(rows) + area('Inventory'), 'await app.click(1)') ?? '', /Workbook area/);
+});
