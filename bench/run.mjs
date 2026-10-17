@@ -758,6 +758,14 @@ pass: for (let run = 1; run <= runs; run++) {
     }
     save(true);
   } finally {
+    // An owned app a JXA helper read as gone but the kernel still runs is still this pass's, so the lock stays (real-fixture.mjs).
+    const disagreements = realContexts.flatMap(ctx => ctx.exitDisagreements ?? []);
+    if (unlock && disagreements.length) {
+      unlock = undefined; process.exitCode = 1;
+      console.error(privatePass ? 'STOP: PRIVATE_MAIL_EXIT_DISAGREEMENT; /tmp/sleight-live.lock kept.' :
+        `STOP: ${disagreements.map(item => `${item.app} pid ${item.pid} (${item.step})`).join(', ')} still running after a JXA helper read it as gone. ` +
+        '/tmp/sleight-live.lock is kept: check those processes, then remove it.');
+    }
     try { await unlock?.(); }
     catch (error) { console.error(`Live lock: ${error.message}`); process.exitCode = 1; }
     unlock = undefined;

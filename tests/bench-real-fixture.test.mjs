@@ -330,6 +330,7 @@ test('cleanup revalidates recovered focus before closing the retained document',
     const fixture = cleanupNative((element, attribute, time) => {
       if (attribute === 'AXFocusedWindow') return time < 12000 ? { code: -25204 } : { value: focusChanged ? other : owned };
       if (element === other && attribute === 'AXTitle') return { value: 'Notes' };
+      if (attribute === 'AXFocusedUIElement') return { code: -25212 }; // the closed-window sheet scan
       assert.equal(element, owned);
       return { value: attribute === 'AXRole' ? exists ? 'AXWindow' : '' : attribute === 'AXTitle' ? 'Report nonce' : null };
     });
