@@ -162,10 +162,16 @@ export function finalReturnCode(code) {
 // Strings are blanked first, so typed text that mentions an action doesn't count.
 export function unawaitedAction(code) { return unawaitedCall(code)?.method; }
 
+// The methods an engine handle takes. Input methods act on the app; read methods only look. One list for the unawaited-action
+// check and for the handles a call uses (recovery must see every handle an action goes through, GA1).
+const INPUT_METHODS = 'click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText|pickFromList';
+const HANDLE_METHODS = `${INPUT_METHODS}|doubleClick|rightClick|getAXState|getAXStateAndScreenshot|getScreenshot|waitFor|getJsDialog`;
+const UNAWAITED_CALL = new RegExp(String.raw`(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:${INPUT_METHODS})\()`, 'g');
+
 function unawaitedCall(code) {
   code = withoutPageCallbacks(code);
   const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, literal => literal.replace(/[^\r\n]/g, ' '));
-  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText|pickFromList)\()/g)) {
+  for (const m of bare.matchAll(UNAWAITED_CALL)) {
     let end = m.index + m[0].length - 1, chained = false;
     for (;;) {
       let depth = 0;
@@ -422,8 +428,16 @@ export function guardActions(code) {
 // A call's leading `let h = await cua.getApp("X")`, and the same without the declaration.
 const DECLARED_ACQUISITION = /^\s*((?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/;
 const ASSIGNED_ACQUISITION = /^\s*((?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/;
-// A name an engine method is called on: the handles a call uses.
-const HANDLE_CALL = /\b([A-Za-z_$][\w$]*)\s*\.\s*(?:getAXState|getAXStateAndScreenshot|getScreenshot|waitFor|click|doubleClick|rightClick|setValue|selectText|performSecondaryAction|scroll|drag|pressKey|typeText|paste)\s*\(/g;
+// A name an engine method is called on: the handles a call uses. METHOD_CALL counts every such call whatever its receiver, so a
+// call on a receiver HANDLE_CALL can't name (`apps[0].click(`, `h?.click(`) shows as more method calls than handles.
+const HANDLE_CALL = new RegExp(String.raw`\b([A-Za-z_$][\w$]*)\s*\.\s*(?:${HANDLE_METHODS})\s*\(`, 'g');
+const METHOD_CALL = new RegExp(String.raw`\.\s*(?:${HANDLE_METHODS})\s*\(`, 'g');
+// Any way the code can reach the engine's getApp: `cua.getApp (`, `cua["getApp"]`, a destructured or aliased getApp, or
+// a computed `cua[name]`. Recovery never speaks for such a call.
+function reachesGetApp(code) {
+  const text = String(code ?? ''), bare = codeOnly(text);
+  return /\bgetApp\b/.test(bare) || /\[\s*(["'`])getApp\1\s*\]/.test(text) || /\bcua\s*(?:\?\.)?\s*\[/.test(bare);
+}
 function numberedHandles(code) {
   return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
 }
@@ -735,6 +749,9 @@ export function createRelay({
   takeNotices,
   // Probes an app's windows outside the engine ({ status, windows, minimized, hidden, onScreen }).
   spaceProbe,
+  // Whether an app is running, asked before a recovery acquisition (which launches a quit app). It defaults to spaceProbe; with
+  // neither, recovery is refused.
+  runningProbe = spaceProbe,
   // Long-lived helper transaction: record, recheck before launch, restore the user's app once.
   frontRestore: restoreFront,
   trace: writeTrace = () => {},
@@ -1477,11 +1494,12 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
     standardWindows.clear(); appProcesses.clear(); processProbes.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
   const handleBundles = new Map();
+  const unconfirmedHandles = new Set(); // handles an acquisition bound without a confirmed bundle ID
   // Windows seen with a standard-window root, by documentKey, with when, for which bundle and in which process: only
   // these can be covered by a dialog the lease moves to. A process note forgets the bundle's windows from any other
   // process, and those seen before any process was known, since a relaunch may have come between.
@@ -2546,7 +2564,11 @@ export function createRelay({
   // app any call read (GA1: `h.click` recovered to Chrome after a Helium read whose result had no single window). An
   // unknown handle or two apps get no recovery. `app` is the one handle with no entry that recovery itself binds.
   function recoveryPlan(code) {
-    const handles = [...new Set([...codeOnly(code).matchAll(HANDLE_CALL)].map(m => m[1]))];
+    const bare = codeOnly(code), handles = [...new Set([...bare.matchAll(HANDLE_CALL)].map(m => m[1]))];
+    // A handle-style call on a receiver that isn't a plain name can't be mapped to an app.
+    if ([...bare.matchAll(METHOD_CALL)].length !== [...bare.matchAll(HANDLE_CALL)].length) return;
+    // Bound by an acquisition whose bundle ID the engine never confirmed: the global target is not its app (GA1).
+    if (handles.some(handle => unconfirmedHandles.has(handle))) return;
     const windows = handles.map(handle => handleBundles.get(handle) ?? (handle === 'app' ? lastConfirmedWindow : undefined));
     if (windows.some(window => !window?.appId) || new Set(windows.map(window => window.appId)).size > 1) return;
     const appId = windows[0]?.appId ?? lastConfirmedWindow.appId, target = `cua.getApp(${JSON.stringify(appId)})`;
@@ -2556,19 +2578,20 @@ export function createRelay({
       : `let sleightRecovery${nextInternalId} = await ${target}`;
     return { appId, expected, acquire };
   }
-  // One native running check, then the call goes on as if it had just arrived. Not running, or no answer: the call gets
-  // the refusal that needs no acquisition, and nothing launches.
-  function probeThenResume(msg, appId) {
+  // Running is something the probe saw: a responding app, or a process id with an error. Absent, denied, ambiguous or no
+  // answer all refuse, since a wrong yes launches an app.
+  const appRunning = health => health?.status === 'responding' || Number.isSafeInteger(health?.pid);
+  // The native running check came back as a promise: hold the call for it (600 ms at most), then go on as if it had just
+  // arrived. Not running, or no answer: the call gets the refusal that needs no acquisition, and nothing launches.
+  function probeThenResume(msg, appId, answer) {
     const generation = stopGeneration;
     running.add(msg.id); callDetails.set(msg.id, 'recovery running check');
     let timer;
-    Promise.race([Promise.resolve().then(() => spaceProbe(appId)).catch(() => undefined),
+    Promise.race([Promise.resolve(answer).catch(() => undefined),
       new Promise(resolve => { timer = setTimeout(resolve, menuContinuationTimeoutMs); timer.unref?.(); })]).then(health => {
       clearTimeout(timer); running.delete(msg.id); callDetails.delete(msg.id);
       if (generation !== stopGeneration || closing || disposed) { leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return; }
-      // Running is something the probe saw: a responding app, or a process id with an error. Absent, denied, ambiguous or
-      // no answer all refuse, since a wrong yes launches an app.
-      if (health?.status !== 'responding' && !Number.isSafeInteger(health?.pid)) {
+      if (!appRunning(health)) {
         trace('recovery-refused', { id: msg.id, reason: health?.status === 'absent' ? 'not-running' : 'unconfirmed' });
         if (!splitSave(msg)) handleClient(msg);
         return;
@@ -2613,11 +2636,22 @@ export function createRelay({
     const shown = lastShown;
     // Never for a call that names its own app (GA1: a recovery getApp of the last app launched it), for an unknown handle, or
     // for an app that isn't running (the engine launches a quit app on getApp).
-    if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code) && !/\bcua\.getApp\(/.test(codeOnly(code))) {
+    if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code) && !reachesGetApp(code)) {
       const plan = recoveryPlan(code);
-      if (!plan) trace('recovery-refused', { id: msg.id, reason: 'handle' });
-      else if (spaceProbe && probed !== plan.appId) { if (running.size) return false; probeThenResume(msg, plan.appId); return true; }
-      else { acquire = plan.acquire; rest = code; expected = plan.expected; recovered = true; }
+      // No probe, no recovery: the running check is what keeps recovery from launching an app.
+      if (!plan || !runningProbe) trace('recovery-refused', { id: msg.id, reason: plan ? 'no-probe' : 'handle' });
+      else {
+        let ok = probed === plan.appId;
+        if (!ok) {
+          if (running.size) return false;
+          let answer;
+          try { answer = runningProbe(plan.appId); } catch { /* No answer refuses. */ }
+          if (typeof answer?.then === 'function') { probeThenResume(msg, plan.appId, answer); return true; }
+          ok = appRunning(answer);
+          if (!ok) trace('recovery-refused', { id: msg.id, reason: 'unconfirmed' });
+        }
+        if (ok) { acquire = plan.acquire; rest = code; expected = plan.expected; recovered = true; }
+      }
     }
     if (!rest) return false;
     // Split even for the app the lease holds: the guard's setup refers to `app` before a `let app`
@@ -3992,8 +4026,8 @@ export function createRelay({
         // only a `Window:` line, or no windows left) says nothing about the app the lease held before it. The old target
         // would send the next action to an app this call moved off, or launch it (GA1). The next refusal names the app
         // this call acquired. The same app again keeps its target: only its window is unknown.
-        const acquired = /\bcua\.getApp\(/.test(codeOnly(jsCode ?? ''))
-          ? [...jsCode.matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/g)].map(m => m[1]) : undefined;
+        const acquired = reachesGetApp(jsCode)
+          ? [...String(jsCode).matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/g)].map(m => m[1]) : undefined;
         const same = literal => [lastConfirmedWindow.appId, lastConfirmedWindow.app].some(name =>
           typeof name === 'string' && name.toLowerCase() === literal.slice(1, -1).toLowerCase());
         if (closedLast || acquired && (!acquired.length || !acquired.every(same))) {
@@ -4066,11 +4100,15 @@ export function createRelay({
       if (call.handle) {
         if (known) {
           const rebound = handleBundles.get(call.handle)?.appId !== known;
-          handleBundles.set(call.handle, leaseWindow);
+          handleBundles.set(call.handle, leaseWindow); unconfirmedHandles.delete(call.handle);
           // A read that rebinds the handle to another app makes its acquisition argument stale.
           if (call.acquisition) handleOrigins.set(call.handle, call.selector); else if (rebound) handleOrigins.delete(call.handle);
         }
-        else if (call.acquisition) { handleBundles.delete(call.handle); handleOrigins.delete(call.handle); }
+        else if (call.acquisition) {
+          handleBundles.delete(call.handle); handleOrigins.delete(call.handle);
+          // A failed acquisition leaves the handle as it was.
+          if (!msg.error && !msg.result?.isError) unconfirmedHandles.add(call.handle);
+        }
       }
       if (known) {
         recoveryTarget = `cua.getApp(${JSON.stringify(known)})`; recoveryKnown = true;

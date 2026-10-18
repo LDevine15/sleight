@@ -46,6 +46,7 @@ async function fixture(t, { selected = true, confirm = true, nativeChange, selec
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-tc1-'))));
   const inputLease = new InputLease({ directory, holder: 'TC1 test' });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: false,
+    runningProbe: () => ({ status: 'responding' }),
     windowIdentity: async expected => ({ ...expected, ...native, matches: 1,
       epoch: 'helper', window: 1, pid: 123, processStart: 1 }),
     localTools: { tools: [SELECT_WINDOW_TOOL], target: async () => selectedTarget,

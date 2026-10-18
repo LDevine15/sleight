@@ -74,6 +74,8 @@ try {
   child.once('error', error => { for (const p of pending.values()) p.reject(error); });
   relay = createRelay({ clientIn, clientOut, serverIn: child.stdin, serverOut: child.stdout,
     sessionId: 'window-targeting-bench', inputLease: new InputLease({ directory: join(bank, 'leases') }),
+    // Recovery needs a running check; the bench's app is running.
+    runningProbe: () => ({ status: 'responding' }),
     localTools: { tools: [SELECT_WINDOW_TOOL], call: (name, args, approve, _, target) => callLocalTool(name, args, approve, runScript, target),
       target: async args => { const result = await runScript('lease-target.js', args);
         assert.ok(result.ok, result.error); return result.target; } },

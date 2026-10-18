@@ -48,6 +48,8 @@ async function client(holder) {
   const lease = baseline ? undefined : new (await import('../plugins/sleight/lib/input-lease.mjs')).InputLease({ directory: join(bank, 'leases'), holder });
   const relay = createRelay({ clientIn, clientOut, serverIn: child.stdin, serverOut: child.stdout,
     sessionId: holder, inputLease: lease,
+    // Recovery needs a running check; TextEdit is running for this bench.
+    runningProbe: () => ({ status: 'responding' }),
     onLeaseFault: terminate,
     ask: async message => /^Allow Computer Use to use "(?:TextEdit|com\.apple\.TextEdit)"\?$/.test(message) ? 'accept' : 'decline',
     trace: (direction, msg) => records.push({ holder, direction, msg }) });

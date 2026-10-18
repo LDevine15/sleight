@@ -46,6 +46,8 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-tt1n-'))));
   const inputLease = new InputLease({ directory, holder: 'TT1N2 test' });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: false,
+    // Recovery needs a running check; this app is always running.
+    runningProbe: () => ({ status: 'responding' }),
     windowIdentity: async expected => { identityChecks++; return identity ? identity(expected, native, identityChecks) : ({ ...expected, ...native,
       matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 }); }, ...options });
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); });
