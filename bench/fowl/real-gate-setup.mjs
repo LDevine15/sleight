@@ -11,6 +11,11 @@ import { genericSettings } from '../plugin-arm.mjs';
 import { withManifestBackup } from '../world/arms/chrome.mjs';
 import { claudeHostManifest } from './real-browser.mjs';
 
+// The sleight arm's MCP server gets an explicit env, so a trace the launching shell asked for stopped at the harness
+// (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE alone goes through; no other host variable does.
+export function traceEnv(host = process.env) {
+  return typeof host.SLEIGHT_TRACE === 'string' && host.SLEIGHT_TRACE ? { SLEIGHT_TRACE: host.SLEIGHT_TRACE } : {};
+}
 const defaultMcpRoot = () => join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser');
 // The two extension arms run in the round's own browser, which is the whole browser process: no window prompt.
 // FowlBrowser keeps the previous gate's world prompt and Stop hook; Claude in Chrome keeps its world arm's device pin.
@@ -84,7 +89,7 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     settings: { ...common.settings, ...genericSettings({ servers: ['plugin:sleight:computer'] }, repo) },
     // Turbo off: the round's Firefox or Safari is reachable only on the engine path, and a turbo.json in HOME would add
     // browser_* tools that point at the owner's Chrome or Helium (real round 2026-10-17: 5 of 12 tasks stopped on them).
-    mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0' } } },
+    mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', ...traceEnv() } } },
     env: { ...common.env, SLEIGHT_TURBO: '0', FOWL_GATE_WINDOW: JSON.stringify(gateWindowApps(realBrowser)) },
     allowed: 'mcp__plugin_sleight_computer__js,mcp__plugin_sleight_computer__js_reset,mcp__plugin_sleight_computer__open_file,mcp__plugin_sleight_computer__drag,mcp__plugin_sleight_computer__select_window',
     metadata: { ...common.metadata, surface, connectionMode: 'engine-computer' } }

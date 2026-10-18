@@ -40,7 +40,7 @@ fi
 [ "$(git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
 if [ -n "$REAL" ]; then
   exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
-    SLEIGHT_REPO="$REPO" node tools/rounds.mjs "$@" --model "$MODEL"
+    SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} node tools/rounds.mjs "$@" --model "$MODEL"
 fi
 # Every Claude arm runs on the owner's account login, never the API credit (owner, 2026-10-15, LAWS). Browser Use
 # needs an API key by design, so it runs only in a round of its own (computer use keeps its login beside it), and the

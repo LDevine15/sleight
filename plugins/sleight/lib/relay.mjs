@@ -67,6 +67,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
+import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
@@ -3776,6 +3777,9 @@ export function createRelay({
         trace('payment-confirmation-policy', { status: 'unmatched' });
       } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
+      if (msg.result._meta?.['codex/toolSurface']?.kind !== 'browserUse')
+        msg.result.content = msg.result.content.map(c => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
+          ? { ...c, text: rewriteBrowserInstructions(c.text, trace) } : c);
       if (docs && docsShown && !requestsFullDocumentation(jsCode)) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).
         invalidateDiagnostics(); forgetHandles(); helperHandles.clear(); helperControls.clear(); helperActive = undefined;
@@ -3798,6 +3802,7 @@ export function createRelay({
         msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;
+      if (isNativeGetState(jsCode, msg.result)) msg.result.content.push({ type: 'text', text: promptNotice(WINDOWS_LINE, prompt) });
     }
     if (pendingBrowser) {
       for (const handle of pendingBrowser.handles) {
