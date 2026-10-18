@@ -74,6 +74,10 @@ func profileEvidence(_ window: AXUIElement) throws -> [String: Any]? {
     }
     return preferredProfileEvidence(matches)
 }
+// The sidebar (an AXOutline named LibraryView) lists tabs and groups; with it open the tab count is not readable here.
+func hasSidebar(_ window: AXUIElement) throws -> Bool {
+    try chrome(window).contains { string($0, "AXRole") == "AXOutline" || string($0, "AXIdentifier") == "LibraryView" }
+}
 // A window still showing Safari's Start Page (no web content, nothing navigated) is what a fresh launch opens.
 func isStartPage(_ window: AXUIElement) throws -> Bool {
     var web = false
@@ -104,9 +108,19 @@ func snapshot(_ application: AXUIElement) throws -> [String: Any] {
     let result = try elements(application, "AXWindows").map { window in
         try windowSnapshot(identifier(window), evidence: profileEvidence(window), startPage: isStartPage(window)) {
             let groups = try chrome(window).filter { string($0, "AXRole") == "AXTabGroup" }
-            let tabNodes = try groups.flatMap { try chrome($0) }.filter { ["AXRadioButton", "AXTab"].contains(string($0, "AXRole")) }
+            // Safari 26 puts the tab bar in an AXOpaqueProviderGroup beside the split group, with AXRadioButton/AXTabButton children,
+            // and draws no tab bar for a single tab.
+            let tabNodes = try (groups.flatMap { try chrome($0) } + chrome(window).filter { string($0, "AXSubrole") == "AXTabButton" })
+                .filter { ["AXRadioButton", "AXTab"].contains(string($0, "AXRole")) }
             var unique: [AXUIElement] = []
             for tab in tabNodes where !unique.contains(where: { CFEqual($0, tab) }) { unique.append(tab) }
+            let title = string(window, "AXTitle")
+            if unique.isEmpty, groups.count == 1, try !hasSidebar(window), let field = try? address(window) {
+                // No tab bar and no sidebar listing tabs means one tab; its title is the window title after the profile prefix.
+                let prefix = profileName + " — ", url = string(field, "AXValue")
+                return ["title": title, "tabs": url.isEmpty ? [] : [["id": identifier(groups[0]),
+                    "title": title.hasPrefix(prefix) ? String(title.dropFirst(prefix.count)) : title, "url": url]]]
+            }
             let tabs: [[String: Any]] = unique.map { tab in
                 var url = string(tab, "AXURL")
                 if url.isEmpty { url = string(tab, "AXDocument") }
@@ -115,7 +129,7 @@ func snapshot(_ application: AXUIElement) throws -> [String: Any] {
                    let field = try? address(window) { url = string(field, "AXValue") }
                 return ["id": identifier(tab), "title": string(tab, "AXTitle"), "url": url]
             }
-            return ["title": string(window, "AXTitle"), "tabs": tabs]
+            return ["title": title, "tabs": tabs]
         }
     }
     return ["windows": result]
