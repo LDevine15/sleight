@@ -55,7 +55,9 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 - `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds (tested 19:51Z: no round started in 90 s).
 
 **Order from here:**
-1. Safari r2 and r3 are running, with Codex x3 and the r1 reruns queued. Score Safari when they finish.
+1. Safari r3 is running, with Codex r3f, the r1 reruns and the r2f drag reruns queued. Score Safari when they finish. Partial
+   score at 20:4xZ: sleight fastest on 9 of 12 and the only arm with every task passed. Fable studies of form-travel and mdn
+   are running on recorded traces. HS1: study handoff against lcu once it has 3 or more runs an arm (owner).
 2. sleight's Firefox rerun on the current build (queued).
 3. sleight inside Codex (arms `codex-sleight` gpt-6-luna, `codex-sleight-sol` gpt-6.1-sol): live smoke in Firefox (queued), then
    3 rounds each in Firefox and Safari. Codex in Chrome/Helium is blocked (item SF1).
