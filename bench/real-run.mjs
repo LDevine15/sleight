@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { acquireLiveLock } from './live-lock.mjs';
 import { retryFixtureCleanup } from './real-fixture.mjs';
-import { withElapsed } from './timing.mjs';
+import { withElapsed, withStamps } from './timing.mjs';
 
 // The real suite and default tasks with retained fixtures use this lifecycle.
 // A cleanup failure preserves its fixture and stops the pass, unless cleanupContained
@@ -85,6 +85,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       const elapsedMs = Date.now() - started;
       result.seconds = Math.round(elapsedMs / 100) / 10;
       withElapsed(result.timing, elapsedMs);
+      withStamps(result.timing, response.stamps, started);
     }
   } catch (error) {
     result.passed = false;

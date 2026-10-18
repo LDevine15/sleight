@@ -108,6 +108,15 @@ export function runTiming(out, trace, elapsedMs) {
   return withElapsed(timing, elapsedMs);
 }
 
+// Where the harness tail goes, in ms from the run's start (the clock elapsedMs counts from): the driver's last
+// output, its exit, its pipes closing, its process group gone. No effect on the figures above.
+export function withStamps(timing, stamps, started) {
+  if (!timing || !stamps || !Number.isFinite(started)) return timing;
+  const at = key => (Number.isFinite(stamps[key]) ? stamps[key] - started : undefined);
+  timing.tailStamps = { stdoutMs: at('stdoutAt'), exitMs: at('exitAt'), closeMs: at('closeAt'), groupGoneMs: at('groupGoneAt') };
+  return timing;
+}
+
 export function withElapsed(timing, elapsedMs) {
   if (timing?.totalMs && Number.isFinite(elapsedMs)) Object.assign(timing, { elapsedMs, harnessMs: Math.max(0, elapsedMs - timing.totalMs) });
   return timing;

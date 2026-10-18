@@ -280,3 +280,91 @@ test('a failed lookup cancels its elicitation', async t => {
   assert.equal(h.received.find(m => m.id === 1)?.result.isError, true);
   assert.equal(h.opened(), 0);
 });
+
+test('a running app skips the document probe and the open; a changed file or another app still follows the old order', async t => {
+  const args = fixture(t), running = { appId, app };
+  const run = async (options, target = running) => {
+    const events = [];
+    const result = await launch.openDocument(args, { fast: true, target, resolve: async () => appId,
+      hasDocument: async () => { events.push('check'); return true; }, exec: async () => events.push('open'), ...options });
+    return { events, result };
+  };
+  const warm = await run({});
+  assert.deepEqual(warm.events, []);
+  assert.equal(warm.result._meta['sleight/openedFile'].lazy, true);
+  // A file changed since this session opened it opens now, with no probe.
+  const stale = await run({ openedFiles: new Map([[JSON.stringify([appId, args.path]), 5000]]) });
+  assert.deepEqual(stale.events, ['open']);
+  assert.equal(stale.result._meta['sleight/openedFile'].lazy, undefined);
+  // An app that isn't running (no target) or a target for another app keeps the probe.
+  for (const target of [null, { appId: 'org.example.other' }]) {
+    const cold = await run({}, target);
+    assert.deepEqual(cold.events, ['check']);
+    assert.equal(cold.result._meta['sleight/openedFile'].lazy, undefined);
+  }
+  const absent = await run({ hasDocument: async () => false }, null);
+  assert.deepEqual(absent.events, ['open']);
+});
+
+test('reopenDocument runs the background open and records it for the mtime check', async t => {
+  const args = fixture(t), openedFiles = new Map(), calls = [];
+  await launch.reopenDocument(appId, args.path, { openedFiles, exec: async (file, argv) => calls.push([file, argv]) });
+  assert.deepEqual(calls, [['/usr/bin/open', ['-g', '-b', appId, args.path]]]);
+  assert.ok(openedFiles.get(JSON.stringify([appId, args.path])) > 0);
+});
+
+async function lazyOpen(t, windows, { reopenFails = false } = {}) {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const received = [], reads = [], events = [], file = '/tmp/note.txt';
+  clientOut.on('data', bytes => received.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  serverIn.on('data', bytes => {
+    for (const msg of bytes.toString().trim().split('\n').map(JSON.parse)) {
+      if (msg.method !== 'tools/call' || msg.params.name !== 'js') continue;
+      reads.push(msg.id); events.push('read');
+      const text = windows[Math.min(reads.length, windows.length) - 1];
+      serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text }] } }) + '\n');
+    }
+  });
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, openFast: true,
+    ask: async () => 'accept',
+    inputLease: { acquire: () => 'lease', renew() {}, release() {}, close() {} },
+    localTools: { tools: [{ name: 'open_file' }], target: async () => ({ appId, app }),
+      reopen: async (id, path) => { events.push(['reopen', id, path]); if (reopenFails) throw Error('open failed'); },
+      call: async (_name, _args, approve) => {
+        await approve(['open_file', app], 'Allow?');
+        return { content: [{ type: 'text', text: 'Opened.' }],
+          _meta: { 'sleight/openedApp': appId, 'sleight/openedFile': { path: file, real: file, size: 5, lazy: true } } };
+      } } });
+  t.after(() => relay.close());
+  clientIn.write(JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'open_file', arguments: { app, path: file } } }) + '\n');
+  for (let i = 0; i < 40 && !received.some(m => m.id === 1); i++) await tick();
+  return { events, reply: received.find(m => m.id === 1)?.result, reads };
+}
+const shows = name => `Window: "${name}", App: ${app}.\n0 standard window ${name}, URL: file:///tmp/${name}\n\t1 text area Value: x`;
+
+test('lazy open: a window already showing the file is not opened again', async t => {
+  const { events, reply } = await lazyOpen(t, [shows('note.txt')]);
+  assert.deepEqual(events, ['read']);
+  assert.match(reply.content[0].text, /Opened/);
+  assert.ok(!reply.content.some(c => /can't confirm/.test(c.text)));
+});
+
+test('lazy open: a running app showing another document opens the file and reads again', async t => {
+  const { events, reply, reads } = await lazyOpen(t, [shows('other.txt'), shows('note.txt')]);
+  assert.deepEqual(events, ['read', ['reopen', appId, '/tmp/note.txt'], 'read']);
+  assert.equal(new Set(reads).size, 2);
+  assert.ok(!reply.content.some(c => /can't confirm/.test(c.text)));
+  assert.ok(reply.content.some(c => /note\.txt/.test(c.text)));
+});
+
+test('lazy open: a window with no document URL also opens the file, and only one retry runs', async t => {
+  const bare = `Window: "Untitled", App: ${app}.\n0 standard window Untitled`;
+  const { events } = await lazyOpen(t, [bare, shows('other.txt')]);
+  assert.deepEqual(events, ['read', ['reopen', appId, '/tmp/note.txt'], 'read']);
+});
+
+test('lazy open: a failed reopen answers with the first read and its notice', async t => {
+  const { events, reply } = await lazyOpen(t, [shows('other.txt')], { reopenFails: true });
+  assert.deepEqual(events, ['read', ['reopen', appId, '/tmp/note.txt']]);
+  assert.ok(reply.content.some(c => /can't confirm/.test(c.text)));
+});

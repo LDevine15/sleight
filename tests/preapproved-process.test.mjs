@@ -68,6 +68,8 @@ test('normal exit and spawn failure keep their actual exit evidence', async t =>
   child.stdout.write('done\n'); close(7, null);
   const normal = await pending;
   assert.deepEqual(normal.exit, { code: 7, signal: null }); assert.match(normal.stdout, /done/);
+  const { stdoutAt, closeAt, groupGoneAt } = normal.stamps;
+  assert.ok(stdoutAt <= closeAt && closeAt <= groupGoneAt, JSON.stringify(normal.stamps));
   child.pid = undefined;
   const failed = runOwned('/does-not-exist/sleight-test', []);
   child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })); close(-2, null);

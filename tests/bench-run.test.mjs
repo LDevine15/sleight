@@ -127,7 +127,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     startFootprint: () => async () => footprint,
     runCodex: async (prompt, options) => { codexRuns.push({ prompt, options }); options.onSpawn?.(4321); return { code: 0, out: {}, forbidden: [] }; }, watchAppWindows: () => async () => [],
     acquireLiveLock: async () => { calls.push('lock'); return async () => calls.push('unlock'); },
-    runTiming: () => ({}), traceTiming: () => ({}), observePermission: () => { if (dryRun) assert.fail('no host permission observation in initialization-only discovery'); return false; },
+    runTiming: () => ({}), traceTiming: () => ({}), withStamps: timing => timing, observePermission: () => { if (dryRun) assert.fail('no host permission observation in initialization-only discovery'); return false; },
     assertCalculatorReady: async () => {
       assert.ok(calls.includes('lock'), 'Calculator observation requires the shared lock');
       calls.push('Calculator observation');

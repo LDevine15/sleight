@@ -38,7 +38,7 @@ import { selectSuiteTasks, assertShopSmokeRuns } from './shop.mjs';
 import { approveOnly, codexReady, codexConfigServers, runCodex } from './codex-arm.mjs';
 import { startFootprint, cpuSplit } from './footprint.mjs';
 import { watchAppWindows } from './app-windows.mjs';
-import { runTiming, traceTiming } from './timing.mjs';
+import { runTiming, traceTiming, withStamps } from './timing.mjs';
 import { executeRealTask, cleanupContained } from './real-run.mjs';
 import { mergeArmHooks } from './arm-hooks.mjs';
 import { observePermission } from './real-permission.mjs';
@@ -687,7 +687,7 @@ pass: for (let run = 1; run <= runs; run++) {
       // sleight traces into the run's scratch folder, so its timing comes from this run alone.
       const cpu = footprint([ctx.sim?.app ?? task.app], arm.codex ? 'codex' : 'claude');
       const codexRun = arm.codex ? await runCodex(prompt, { cwd: arm.cwd, model: codexModel, effort: codexEffort, timeoutMs: TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn }) : undefined;
-      const { code, out, stderr, groupClean = true, cancelled } = codexRun ?? await runClaude(prompt, arm, armName === 'sleight' ? { SLEIGHT_TRACE: dir } : {}, { onSpawn: cpu.onSpawn });
+      const { code, out, stderr, groupClean = true, cancelled, stamps } = codexRun ?? await runClaude(prompt, arm, armName === 'sleight' ? { SLEIGHT_TRACE: dir } : {}, { onSpawn: cpu.onSpawn });
       const cpuUsed = await cpu.finish();
       const appWindows = await stopWatching();
       const answer = out?.result ?? '';
@@ -710,7 +710,7 @@ pass: for (let run = 1; run <= runs; run++) {
         // Input, cached and output tokens: what a smaller result would save.
         usage: out?.usage && { input: out.usage.input_tokens, cacheRead: out.usage.cache_read_input_tokens,
           cacheWrite: out.usage.cache_creation_input_tokens, output: out.usage.output_tokens },
-        timing: runTiming(out, armName === 'sleight' ? traceTiming(dir) : undefined, elapsedMs),
+        timing: withStamps(runTiming(out, armName === 'sleight' ? traceTiming(dir) : undefined, elapsedMs), stamps, started),
         footprint: cpuUsed,
         // Samples every 5 s of the app's windows: on the current Space, only off it, or none.
         appWindows,

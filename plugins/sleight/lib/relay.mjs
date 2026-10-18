@@ -2299,8 +2299,12 @@ export function createRelay({
       const { 'sleight/openedApp': _, 'sleight/openedFile': openedFile, ...meta } = result._meta;
       result = { ...result, _meta: meta };
       if (!result.isError && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(openedApp)) {
-        const id = `sleight-open-file-${nextInternalId++}`, handle = `__sleightOpenedApp${nextInternalId++}`;
+        const handle = `__sleightOpenedApp${nextInternalId++}`;
         if (typeof openedFile?.path === 'string') compactor.noteOpenedFile(openedFile.path, openedFile.real, openedFile.size);
+        // A lazy open skipped `open -g` for a running app; the first read decides whether the file needs it.
+        let lazy = openedFile?.lazy === true && typeof localTools.reopen === 'function';
+        const acquire = () => {
+        const id = `sleight-open-file-${nextInternalId++}`;
         callGenerations.set(id, generation);
         splitCalls.set(id, async reply => {
           openShots.delete(id); openReads.delete(id);
@@ -2313,6 +2317,15 @@ export function createRelay({
           let shownPath;
           try { shownPath = shown?.url ? fileURLToPath(shown.url) : undefined; } catch { shownPath = null; }
           const confirmed = shownPath === undefined || [openedFile.path, openedFile.real].includes(shownPath);
+          if (lazy && ![openedFile.path, openedFile.real].includes(shownPath)) {
+            lazy = false;
+            const started = Date.now();
+            let opened = false;
+            try { await localTools.reopen(openedApp, openedFile.path); opened = true; } catch { /* The notice below says the file isn't confirmed. */ }
+            trace('open-reopen', { id: msg.id, ms: Date.now() - started, ok: opened });
+            if (generation !== stopGeneration || closing || disposed) return;
+            if (opened) { acquire(); return; }
+          }
           const opened = confirmed ? result.content ?? []
             : [{ type: 'text', text: promptNotice(`${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
               'Find its window before acting.', prompt) }];
@@ -2347,6 +2360,8 @@ export function createRelay({
         callSeqs.set(id, callSeqs.get(msg.id));
         handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
           arguments: { code: `var ${handle} = await cua.getApp(${JSON.stringify(openedApp)})` } } });
+        };
+        acquire();
         return;
       }
     }
