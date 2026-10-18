@@ -10,9 +10,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort. Benchmark runs publish every
   result, failures included, with the model ids each arm actually ran.
   Browser tasks are tested only against turbo, never sleight's engine browser path (owner, 2026-10-17), so the native claim
-  suite is the 9 native tasks in bench/claim-tasks.txt, plus the Electron editor tasks (vscode-edit, cursor-edit) the owner folded
-  into 1.3.0 on 2026-10-18, with VS Code and Cursor approved for benchmark use as separate instances with temporary profiles and
-  fixture content only. That covers the browsers turbo drives. In Safari and Firefox, which
+  suite is the 9 native tasks in bench/claim-tasks.txt, plus app tasks in VS Code, Slack and Spotify, apps people use (owner,
+  2026-10-18, replacing VS Code and Cursor). VS Code runs as a separate instance with a temporary profile and fixture content.
+  Slack runs in the owner's throwaway account on this Mac, and Spotify in the owner's account, where nothing is destructive.
+  That covers the browsers turbo drives. In Safari and Firefox, which
   turbo can't drive yet, sleight races on the engine path, and the headline's wording follows that race (owner, 2026-10-17,
   ROADMAP 1b).
   The word "fastest" is used only if sleight has the lowest expected time on a majority of the 9 native tasks and the lowest total,
