@@ -29,6 +29,10 @@ and are never in a hurry. Every trick on stage is a real screen capture.
    from sleight's icon). The painting resolves into the icon itself, and the film cuts to black. Production rule: the bow never
    passes through a fingers-down pose.
 
+App names on the cards are plain typeset text, with no logos, brand colours or lookalike type, and the claim measures every app on a
+card. The end credits and the launch post carry: "App names are trademarks of their owners. sleight is not affiliated
+with or endorsed by them." (owner, 2026-10-18).
+
 ## Teaser, about 15 s
 
 The race and the bow, from the clock stopping to the icon. The teaser goes in the post, and the main cut goes on the README and
