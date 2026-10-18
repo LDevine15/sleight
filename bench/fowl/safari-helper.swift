@@ -26,13 +26,13 @@ func identifier(_ element: AXUIElement) -> String {
     let id = UUID().uuidString
     references.append((id, element)); return id
 }
-func chrome(_ root: AXUIElement, limit: Int = 4000) throws -> [AXUIElement] {
+func chrome(_ root: AXUIElement) throws -> [AXUIElement] {
     var result: [AXUIElement] = [], visited: [AXUIElement] = []
     func walk(_ element: AXUIElement, _ depth: Int) throws {
         if visited.contains(where: { CFEqual($0, element) }) { return }
         visited.append(element)
         if string(element, "AXRole") == "AXWebArea" { return }
-        guard depth < 30, visited.count < limit else { throw refuse("BENCH_SAFARI_AX_LIMIT") }
+        guard depth < 30, visited.count < 4000 else { throw refuse("BENCH_SAFARI_AX_LIMIT") }
         result.append(element)
         for child in elements(element) { try walk(child, depth + 1) }
     }
@@ -185,21 +185,29 @@ func menusClear() throws -> Bool {
     let app = try ownedAX()
     guard let value = attribute(app, "AXMenuBar"), CFGetTypeID(value) == AXUIElementGetTypeID(),
           attribute(value as! AXUIElement, "AXChildren") is [AXUIElement] else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
-    // Safari 26's menu bar alone is about 3,800 elements (History and Bookmarks grow it).
-    return menuStateClear(try chrome(value as! AXUIElement, limit: 20000).map { element in
+    // Only the bar, its items and each item's menu say whether a menu is open. Walking every menu item (about 3,800 elements in
+    // Safari 26) is slow and races Safari rebuilding its menus after a press (an element vanishes mid-walk, 2026-10-18).
+    let bar = value as! AXUIElement
+    let nodes = [bar] + elements(bar).flatMap { [$0] + elements($0) }
+    return menuStateClear(try nodes.map { element in
         let names = attributeNames(element), role = string(element, "AXRole")
         guard !names.isEmpty, menuChildrenReadable(role: role, names: names, readable: attribute(element, "AXChildren") is [AXUIElement]) else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
         return ["role": role, "selected": attribute(element, "AXSelected") as Any,
                 "visible": menuVisible(role: role, names: names, value: attribute(element, "AXVisible") as Any)]
     })
 }
-// Safari 26 (2026-10-18): the menu bar holds a search field that lists AXChildren without returning them, and AXMenu has no
-// AXVisible at all. Only the menu, its bar item and the bar itself must read cleanly; an open menu shows as a selected bar item.
+// Safari 26 (2026-10-18): AXMenu has no AXVisible at all, so an open menu shows as a selected bar item.
 func menuChildrenReadable(role: String, names: [String], readable: Bool) -> Bool {
     !["AXMenuBar", "AXMenuBarItem", "AXMenu"].contains(role) || !names.contains("AXChildren") || readable
 }
 func menuVisible(role: String, names: [String], value: Any) -> Any {
     role == "AXMenu" && !names.contains("AXVisible") ? false : value
+}
+// Right after a menu item is pressed Safari rebuilds its menus, and a menu can briefly refuse to list its children (2026-10-18).
+func menusClearSoon(_ seconds: Double) throws -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline { if (try? menusClear()) == true { return true }; pump(0.05) }
+    return try menusClear()
 }
 func cleanMenus(escape: () throws -> Void, clear: () throws -> Bool) throws -> [String: Any] {
     for count in 1...2 {
@@ -237,7 +245,7 @@ func newProfile() throws -> [String: Any] {
     // Menu tracking must be dismissed, but keys must never reach an owner window.
     let deadline = Date().addingTimeInterval(2)
     while (try? keyProfileWindow()) == nil && Date() < deadline { pump(0.025) }
-    let cleanup = try cleanMenus(escape: { try key(53, window: keyProfileWindow()); pump(0.1) }, clear: menusClear)
+    let cleanup = try cleanMenus(escape: { try key(53, window: keyProfileWindow()); pump(0.1) }, clear: { try menusClearSoon(1) })
     if let error = failure { throw error }
     return cleanup
 }
