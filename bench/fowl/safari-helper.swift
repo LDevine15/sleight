@@ -129,7 +129,9 @@ func snapshot(_ application: AXUIElement) throws -> [String: Any] {
                 var url = string(tab, "AXURL")
                 if url.isEmpty { url = string(tab, "AXDocument") }
                 // A selected tab can use the verified profile window's address field.
-                if url.isEmpty && (unique.count == 1 || (attribute(tab, "AXValue") as? NSNumber)?.boolValue == true),
+                // Safari 26 marks the selected tab only in its identifier ("...isActive=true").
+                let selected = (attribute(tab, "AXValue") as? NSNumber)?.boolValue == true || string(tab, "AXIdentifier").contains("isActive=true")
+                if url.isEmpty && (unique.count == 1 || selected),
                    let field = try? address(window) { url = string(field, "AXValue") }
                 return ["id": identifier(tab), "title": string(tab, "AXTitle"), "url": url]
             }

@@ -91,13 +91,16 @@ function windows(snapshot) {
       new Set(snapshot.windows.map(w => w.id)).size !== snapshot.windows.length) throw Error('BENCH_SAFARI_AX_INVALID');
   return snapshot.windows;
 }
-function tabs(window) {
+// known: titles of pages this harness loaded itself. Safari exposes only the selected tab's URL (through the address field), so an
+// unselected tab still showing the harness's marker page gets the marker URL; any other unselected tab leaves the inventory unobserved.
+function tabs(window, known = {}) {
   if (!Array.isArray(window.tabs) || !window.tabs.length) throw Error('BENCH_SAFARI_TABS_UNOBSERVED');
   const result = {};
   for (const tab of window.tabs) {
+    const url = tab.url === '' && Object.hasOwn(known, tab.title) ? known[tab.title] : tab.url;
     if (typeof tab.id !== 'string' || !tab.id || typeof tab.title !== 'string' ||
-        typeof tab.url !== 'string' || !tab.url || result[`safari:${tab.id}`]) throw Error('BENCH_SAFARI_TABS_UNOBSERVED');
-    result[`safari:${tab.id}`] = { title: tab.title, url: tab.url };
+        typeof url !== 'string' || !url || result[`safari:${tab.id}`]) throw Error('BENCH_SAFARI_TABS_UNOBSERVED');
+    result[`safari:${tab.id}`] = { title: tab.title, url };
   }
   return result;
 }
@@ -184,11 +187,11 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
   // Quits the Safari launched here (the helper checks pid, executable and launch date, answers its own unsubmitted-form
   // alert and force-terminates only that process if it ignores the quit).
   const quitCurrent = async () => {
-    const receipt = { pid: browser.pid, requestedAt: new Date().toISOString() }; browser.collections.push(receipt);
+    const receipt = { pid: browser.pid, requestedAt: new Date().toISOString() }, began = Date.now(); browser.collections.push(receipt);
     try {
       const result = await bridge.request('quit', { quitMs });
       if (result.browserClosed !== true) throw Error('normal quit unproved');
-      receipt.browserClosed = true; running = false; windowId = undefined;
+      receipt.browserClosed = true; receipt.quitMs = Date.now() - began; running = false; windowId = undefined;
       if (result.unsubmittedFormQuitConfirmed === true) receipt.unsubmittedFormQuitConfirmed = true;
       if (result.forceTerminated === true) receipt.forceTerminated = true;
     } catch (error) { receipt.error = error.message; throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
@@ -218,7 +221,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       await census();
       const list = await snapshot();
       if (list.length !== 1) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
-      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(list)),
+      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(list), { [plan.marker]: plan.markerUrl }),
         unavailableGraders: ['completed downloads', 'device viewport'] };
     } catch (error) {
       return { observed: false, tabs: {}, reason: error.message, ...(error.ownerCheck ? { ownerCheck: error.ownerCheck } : {}),

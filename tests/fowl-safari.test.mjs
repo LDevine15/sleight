@@ -251,6 +251,19 @@ test('missing tab URLs and duplicate IDs report unobserved rather than certifyin
   await browser.stop();
 });
 
+test('a task that opened a second tab still observes: the marker tab keeps its known URL, any other unselected tab does not', async t => {
+  const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
+  const w = f.windows()[0];
+  w.tabs = [{ id: 'marker', title: f.plan.marker, url: '' }, { id: 'page', title: 'Mount Kilimanjaro - Wikipedia', url: 'en.wikipedia.org/wiki/Mount_Kilimanjaro' }];
+  const observed = await observeRealBrowser(browser);
+  assert.equal(observed.observed, true);
+  assert.equal(observed.tabs['safari:marker'].url, f.plan.markerUrl);
+  assert.equal(observed.tabs['safari:page'].url, 'en.wikipedia.org/wiki/Mount_Kilimanjaro');
+  w.tabs.push({ id: 'other', title: 'Somewhere else', url: '' });
+  assert.equal((await observeRealBrowser(browser)).observed, false);
+  await browser.stop();
+});
+
 test('profile changes during a task and owner arrivals invalidate observation', async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   f.windows()[0].toolbar = [];
