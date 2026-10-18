@@ -56,6 +56,8 @@ def fake_host():
     import subprocess
     import threading
     lock, flood = threading.Lock(), {'sent': 0, 'done': False}
+    # Flat sessions by id, as Chromium keeps them for the pipe's client: target T1 and T2 are pages.
+    sessions = {}
 
     def send(message):
         data = memoryview(json.dumps(message).encode() + b'\0')
@@ -111,6 +113,22 @@ def fake_host():
                 result = {'ok': True}
             elif method == 'Fake.flood':
                 result = dict(flood)
+            elif method == 'Target.attachToTarget':
+                session = 'S%d' % (len(sessions) + 1)
+                sessions[session] = request['params']['targetId']
+                result = {'sessionId': session}
+            elif method == 'Target.getTargets':
+                result = {'targetInfos': [{'targetId': target, 'type': 'page', 'title': '', 'url': 'app://main/', 'attached': target in sessions.values()}
+                                          for target in ('T1', 'T2')]}
+            elif method == 'Target.detachFromTarget':
+                named = [key for key, target in sessions.items() if key == request['params'].get('sessionId') or target == request['params'].get('targetId')]
+                if len(named) != 1:
+                    send({'id': request['id'], 'error': {'code': -32602, 'message': 'No session with given id' if not named else 'Multiple sessions attached, specify id.'}})
+                    continue
+                del sessions[named[0]]
+                result = {}
+            elif method == 'Fake.sessions':
+                result = {'sessions': sorted(sessions.values())}
             else:
                 result = {'ok': True}
             reply = {'id': request['id'], 'result': result}

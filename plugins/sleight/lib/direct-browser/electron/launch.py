@@ -698,7 +698,9 @@ def serve(argv, adapter_factory=Adapter):
 # what the app sends, and one restarted host that proves the launch's key attaches through the socket: the keeper then
 # relays the stream both ways. It never passes a descriptor, and it exits once the app is gone.
 KEEPER_VERSION = 1
-KEEPER_BARRIER = 2147483646  # the keeper's own command id; a host's ids stay below 2**30
+KEEPER_BARRIER = 2147483646  # the keeper's own command ids; a host's ids stay below 2**30
+KEEPER_TARGETS = 2147483645
+KEEPER_DETACH = 2147483644
 KEEPER_BUFFER = 16 * 1024 * 1024
 KEEPER_FRAME = 256 * 1024 * 1024
 TOKEN = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_')
@@ -797,6 +799,20 @@ class Keeper:
         self.host = False
         for fd in (3, 4):  # only this process uses these ends now
             fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
+        self.release_sessions()
+
+    def release_sessions(self):
+        """Detaches the sessions the dead host left. A page it was attached to would otherwise keep new frames waiting for a
+        debugger that is gone (auto-attach waits for one). Only this pipe's own sessions can be named: a detach by target
+        that finds none, or several, is refused by the app and changes nothing."""
+        deadline = time.monotonic() + 5
+        if self.barrier(deadline) is None:
+            return
+        answer = self.ask({'id': KEEPER_TARGETS, 'method': 'Target.getTargets'}, deadline)
+        targets = answer[0].get('result', {}).get('targetInfos', []) if answer else []
+        for info in targets if isinstance(targets, list) else []:
+            if isinstance(info, dict) and info.get('attached') is True and isinstance(info.get('targetId'), str):
+                self.to_app += json.dumps({'id': KEEPER_DETACH, 'method': 'Target.detachFromTarget', 'params': {'targetId': info['targetId']}}).encode() + b'\0'
 
     def control_line(self):
         try:
@@ -835,31 +851,44 @@ class Keeper:
         self.attached, self.partial, self.to_host = None, b'', bytearray()
 
     def barrier(self, deadline):
-        """Resynchronises the app's stream before a host attaches. A dead host may have left half a frame in either
-        direction: the keeper's own command ends any half frame in the app's input (it is sent again after a second), and
-        everything the app sends up to its reply is discarded. Returns what followed the reply."""
-        command = json.dumps({'id': KEEPER_BARRIER, 'method': 'Browser.getVersion'}).encode() + b'\0'
+        """Resynchronises the app's stream. A dead host may have left half a frame in either direction: the keeper's own
+        command ends any half frame in the app's input (it is sent again after a second), and everything the app sends up to
+        its reply is discarded. Returns what followed the reply, or None."""
+        answer = self.ask({'id': KEEPER_BARRIER, 'method': 'Browser.getVersion'}, deadline, resend=True)
+        return answer[1] if answer else None
+
+    def ask(self, message, deadline, resend=False):
+        """Sends one of the keeper's own commands and discards the app's output up to its reply. Returns (reply, rest)."""
+        command = json.dumps(message).encode() + b'\0'
         self.to_app += command
-        resent, buffer, marker = time.monotonic() + 1, b'', str(KEEPER_BARRIER).encode()
+        resent, marker = time.monotonic() + 1 if resend else deadline, str(message['id']).encode()
+        buffer, scanned = bytearray(), 0
         while time.monotonic() < deadline:
             if time.monotonic() >= resent and len(self.to_app) == 0:
                 self.to_app, resent = bytearray(command), deadline
             readable, writable, _ = select.select([4], [3] if self.to_app else [], [], 0.1)
             if writable:
                 self.write_app()
-            if readable:
-                buffer += self.read_app()
-                while b'\0' in buffer:
-                    raw, buffer = buffer.split(b'\0', 1)
-                    if marker in raw:
-                        try:
-                            reply = json.loads(raw)
-                        except ValueError:
-                            continue
-                        if isinstance(reply, dict) and reply.get('id') == KEEPER_BARRIER and 'result' in reply:
-                            return buffer
-                if len(buffer) > KEEPER_FRAME:
-                    buffer = b''
+            if not readable:
+                continue
+            buffer += self.read_app()
+            while True:
+                end = buffer.find(0, scanned)
+                if end < 0:
+                    scanned = len(buffer)
+                    break
+                raw = bytes(buffer[:end])
+                del buffer[:end + 1]
+                scanned = 0
+                if marker in raw:
+                    try:
+                        reply = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if isinstance(reply, dict) and reply.get('id') == message['id'] and 'result' in reply:
+                        return reply, bytes(buffer)
+            if len(buffer) > KEEPER_FRAME:
+                buffer, scanned = bytearray(), 0
         return None
 
     def accept(self):

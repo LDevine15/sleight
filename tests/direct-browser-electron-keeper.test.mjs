@@ -151,6 +151,21 @@ test('half a command left in the pipe by the dead host does not break the reatta
   } finally { second?._crashForTest(); await sleep(100); e.cleanup(); }
 });
 
+test('the keeper detaches the sessions the dead host left, so no page of the user\'s app waits on a debugger that is gone', { skip }, async () => {
+  const e = environment(), secret = randomBytes(32);
+  let second;
+  try {
+    const { child, started } = await hostProcess(e, { secret, flags: ['--profile-user', '--attach'] });
+    process.kill(child.pid, 'SIGKILL');
+    await until(() => !alive(child.pid), 'host gone');
+    await sleep(500);
+    second = await realHost(e, { adminSecret: secret });
+    await second.resume();
+    assert.deepEqual(await second.broker.pipe.request('Fake.sessions'), { sessions: [] }, 'T1\'s session went with its host');
+    assert.equal(alive(started.pid), true);
+  } finally { second?._crashForTest(); await sleep(100); e.cleanup(); }
+});
+
 // Every attach a foreign process can try: the keeper's socket, its answer while the host lives, and after the host's death a
 // wrong proof. It passes no descriptor to anyone (SCM_RIGHTS is read for on every message).
 const FOREIGN = `
