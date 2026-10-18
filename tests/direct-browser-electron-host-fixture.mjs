@@ -33,6 +33,7 @@ export function fakeApp({ pid = 4100, birth = 'birth-1' } = {}) {
       if (request.method === 'Page.fail') {
         queueMicrotask(() => output.write(JSON.stringify({ id: request.id, error: { code: -32000, message: 'No such thing' }, ...(request.sessionId ? { sessionId: request.sessionId } : {}) }) + '\0'));
       } else if (request.method === 'Target.attachToTarget') reply({ sessionId: 'S' + (++app.sessions) });
+      else if (request.method === 'Target.getTargetInfo') reply({ targetInfo: { targetId: request.params.targetId, type: 'page', url: 'app://main/' } });
       else if (request.method === 'Browser.getVersion') reply({ protocolVersion: '1.3', product: 'Chrome/130.0.6723.0', revision: '@1', jsVersion: '13.0.245', pid,
         userAgent: 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.0 Electron/33.0.0 Safari/537.36' });
       else reply({ ok: true });
@@ -103,6 +104,7 @@ export async function makeHost({ world = fakeWorld(), dir, appFactory, hostOptio
     stateDir: state.dir, Broker: ElectronBroker, builds: ['fake-build'],
     createAdapter: async () => { current = adapter ?? fakeAdapter(world, { appFactory }); return current; },
     authorizeLaunch: async () => true,
+    admitTarget: async info => info.type === 'page',
     requestQuit: async () => { world.alive = false; world.apps.at(-1)?.output.end(); },
     resumeAuthority: async () => true,
     brokerOptions: { identityMaxAgeMs: 0 },
@@ -110,6 +112,9 @@ export async function makeHost({ world = fakeWorld(), dir, appFactory, hostOptio
   });
   return { host, world, state, get adapter() { return current; }, get app() { return world.apps.at(-1); } };
 }
+
+/** A page session on the fake app, which page commands now need. */
+export const pageSession = async connection => (await connection.session.send('Target.attachToTarget', { targetId: 'T1', flatten: true })).sessionId;
 
 export async function connectWorker(host, session = 'worker-1', ticketOptions = {}) {
   const handle = host.issueTicket({ session, ...ticketOptions });

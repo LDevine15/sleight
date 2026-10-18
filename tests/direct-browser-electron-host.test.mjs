@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createElectronConnection, createFilterTransport } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 import { FrameReader, bare, deriveChannel, opener, plainJson, randomToken, sealer } from '../plugins/sleight/lib/direct-browser/electron-channel.mjs';
 import { loadPlaywrightCore } from '../plugins/sleight/lib/direct-browser/worlds.mjs';
-import { connectWorker, fakeApp, makeHost, rawSocket, tick, until } from './direct-browser-electron-host-fixture.mjs';
+import { connectWorker, fakeApp, makeHost, pageSession, rawSocket, tick, until } from './direct-browser-electron-host-fixture.mjs';
 
 async function started(options) {
   const h = await makeHost(options);
@@ -47,7 +47,7 @@ test('a worker can end its turn or be lost and a later worker reconnects to the 
   assert.equal(h.app.input.destroyed, false);
   assert.equal(h.host.broker.state, 'ready');
   const lost = await connectWorker(h.host, 'w2');
-  lost.connection.session.send('Runtime.evaluate', {}).catch(() => {});
+  lost.connection.session.send('Browser.getVersion', {}).catch(() => {});
   const raw = (await manualClient(h.host.issueTicket({ session: 'w3' })));
   raw.socket.destroy();                                       // parent-worker loss: no goodbye
   await tick(20);
@@ -169,7 +169,7 @@ test('sealed frames: tampering, a wrong sequence, an unknown op and extra keys d
   }
   assert.equal(h.host.broker.state, 'ready');
   assert.deepEqual(methods(h), ['Browser.getVersion'], 'no forged frame produced a command');
-  assert.equal((await good.connection.session.send('Runtime.evaluate', {})).ok, true, 'the honest worker is unaffected');
+  assert.equal((await good.connection.session.send('Runtime.evaluate', {}, await pageSession(good.connection))).ok, true, 'the honest worker is unaffected');
   finish(h);
 });
 
@@ -192,12 +192,12 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   const oversize = await connectWorker(h.host, 'oversize');
   await assert.rejects(oversize.connection.session.send('Runtime.evaluate', { text: 'x'.repeat(4000) }), /CLOSED/);
   assert.equal(methods(h).includes('Runtime.evaluate'), false, 'the host cut the channel before the frame became a command');
-  const worker = await connectWorker(h.host, 'w');
+  const worker = await connectWorker(h.host, 'w'), ws = await pageSession(worker.connection);
   h.app.hang.add('Page.captureScreenshot');
-  const one = worker.connection.session.send('Page.captureScreenshot', {}), two = worker.connection.session.send('Page.captureScreenshot', {});
+  const one = worker.connection.session.send('Page.captureScreenshot', {}, ws), two = worker.connection.session.send('Page.captureScreenshot', {}, ws);
   one.catch(() => {}); two.catch(() => {});
   await tick(20);
-  await assert.rejects(worker.connection.session.send('Page.captureScreenshot', {}), /QUEUE_FULL/);
+  await assert.rejects(worker.connection.session.send('Page.captureScreenshot', {}, ws), /QUEUE_FULL/);
   h.app.hang.clear();
   // A reader that never drains is dropped instead of buffered without bound.
   const slow = await manualClient(h.host.issueTicket({ session: 'slow' }));
@@ -213,7 +213,8 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   await until(() => h.host.status().channels < before, 'slow reader dropped');
   assert.equal(h.host.broker.state, 'ready', JSON.stringify(h.host.status().broker.parked));
   assert.equal(h.host.status().channels, before - 1, 'only the reader that never drained was cut off');
-  assert.equal((await (await connectWorker(h.host, 'after')).connection.session.send('Runtime.evaluate', {})).ok, true);
+  const after = (await connectWorker(h.host, 'after')).connection;
+  assert.equal((await after.session.send('Runtime.evaluate', {}, await pageSession(after))).ok, true);
   void one; void two;
   finish(h);
 });
@@ -323,17 +324,18 @@ test('revocation parks the app connection, ends every channel, and a command del
   const a = await connectWorker(h.host, 'a'), b = await connectWorker(h.host, 'b');
   let lostA = 0, lostB = 0;
   a.connection.onConnectionLoss(() => lostA++); b.connection.onConnectionLoss(() => lostB++);
+  const route = await pageSession(a.connection);
   const original = h.adapter.rpc.bind(h.adapter);
   let release;
   h.adapter.rpc = (cmd, payload) => cmd === 'inspect' ? new Promise(resolve => { release = () => resolve(original(cmd, payload)); }) : original(cmd, payload);
-  const delayed = a.connection.session.send('Input.dispatchKeyEvent', { type: 'keyDown', text: 'x' });
+  const delayed = a.connection.session.send('Input.dispatchKeyEvent', { type: 'keyDown', text: 'x' }, route);
   delayed.catch(() => {});
   await until(() => release, 'delayed identity check');
   h.host.revokeSession('a', 'user revoked');
   release();
   await assert.rejects(delayed, /APP_PARKED|CLOSED|PARKED/);
   await until(() => lostA === 1 && lostB === 1, 'both workers told');
-  assert.deepEqual(methods(h), ['Browser.getVersion'], 'the delayed key press was never sent');
+  assert.ok(!methods(h).includes('Input.dispatchKeyEvent'), 'the delayed key press was never sent');
   assert.equal(h.app.input.destroyed, false, 'the writer stays open');
   assert.equal(h.host.status().broker.parked.resumable, true);
   assert.equal(await a.connection.verifyConnection(a.connection.session), false);
@@ -341,7 +343,7 @@ test('revocation parks the app connection, ends every channel, and a command del
   h.adapter.rpc = original;
   assert.equal((await h.host.resume()).event, 'resumed');
   const back = await connectWorker(h.host, 'back');
-  assert.equal((await back.connection.session.send('Runtime.evaluate', {})).ok, true);
+  assert.equal((await back.connection.session.send('Runtime.evaluate', {}, await pageSession(back.connection))).ok, true);
   assert.equal(h.world.apps.length, 1);
   finish(h);
 });
@@ -350,11 +352,12 @@ test('PID reuse parks the connection without sending, and the workers are told',
   const h = await started();
   const a = await connectWorker(h.host, 'a');
   let lost = 0; a.connection.onConnectionLoss(() => lost++);
+  const route = await pageSession(a.connection);
   const original = h.adapter.rpc.bind(h.adapter);
   h.adapter.rpc = async (cmd, payload) => cmd === 'inspect' ? { parent: { pid: 4100, birth: 'someone-else' }, descendants: [], complete: true } : original(cmd, payload);
-  await assert.rejects(a.connection.session.send('Runtime.evaluate', {}), /APP_PARKED|FAILED|CLOSED|identity/);
+  await assert.rejects(a.connection.session.send('Runtime.evaluate', {}, route), /APP_PARKED|FAILED|CLOSED|identity/);
   await until(() => lost === 1, 'loss');
-  assert.deepEqual(methods(h), ['Browser.getVersion']);
+  assert.ok(!methods(h).includes('Runtime.evaluate'));
   assert.equal(h.host.status().broker.parked.resumable, false);
   await assert.rejects(h.host.resume(), /not resumable/);
   finish(h);
@@ -395,7 +398,7 @@ test('admin channel: one administrator at a time, issued handles work, a wrong a
   const issued = await channel.read();
   const connection = await createElectronConnection({ handle: issued.result });
   await connection.connect();
-  assert.equal((await connection.session.send('Runtime.evaluate', {})).ok, true);
+  assert.equal((await connection.session.send('Runtime.evaluate', {}, await pageSession(connection))).ok, true);
   channel.write({ op: 'status', id: 2 });
   const status = (await channel.read()).result;
   assert.equal(status.ownership.state, 'owned');
@@ -423,9 +426,9 @@ test('synthetic 1/4/13 worker contention: cold start, warm reconnect and command
       const second = await Promise.all(Array.from({ length: count }, (_, i) => connectWorker(h.host, 'r' + i)));
       warm.push(performance.now() - start);
       start = performance.now();
-      const results = await Promise.all(second.map(item => item.connection.session.send('Runtime.evaluate', {})));
+      const results = await Promise.all(second.map(item => item.connection.session.send('Browser.getVersion', {})));
       calls.push(performance.now() - start);
-      assert.ok(results.every(result => result.ok === true));
+      assert.ok(results.every(result => result.pid === 4100));
       assert.equal(h.world.apps.length, 1);
       finish(h);
     }

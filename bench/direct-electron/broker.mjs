@@ -6,17 +6,34 @@ import { randomUUID } from 'node:crypto';
 const methodPattern = /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/;
 const sessionPattern = value => typeof value === 'string' && value.length > 0 && value.length <= 512;
 const plainObject = value => value && typeof value === 'object' && !Array.isArray(value);
-// What trusted Playwright may send through the host. The worker's filter is the first fence;
-// this list is the second, so a bug there cannot reach the app's browser-wide commands.
-// Browser.close would quit the app without the user's click. Foreground, activation, cookie
-// and download commands are refused here exactly as in the filter. Target creation and
-// closing belong to later items' qualification.
+// What a worker may send through the host. The worker's CDP filter (app mode) is the first fence;
+// this is the second and refuses at least as much, so a bug or a bypass there cannot reach the app's
+// browser-wide commands. Browser.close would quit the app without the user's click. Foreground,
+// activation, cookie and download commands, Target creation and closing, closing or crashing a
+// renderer and focus emulation are refused. Every command except Browser.getVersion and the Target
+// reads and attaches needs a session the client owns, and an attach needs the parent's admitTarget.
 const transportDomains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Accessibility', 'Input', 'Network', 'Fetch',
   'Log', 'Emulation', 'Inspector', 'Debugger', 'Performance', 'Target', 'Browser']);
 const transportTarget = new Set(['getTargets', 'getTargetInfo', 'attachToTarget', 'detachFromTarget', 'setAutoAttach', 'setDiscoverTargets']);
 const transportRefused = new Set(['Page.bringToFront', 'Network.clearBrowserCookies', 'Network.clearBrowserCache', 'Network.getAllCookies',
   'Network.deleteCookies', 'Network.getCookies', 'Network.setCookie', 'Network.setCookies', 'Network.enableDeviceBoundSessions',
-  'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior']);
+  'Network.deleteDeviceBoundSession', 'Page.deleteCookie', 'Page.setDownloadBehavior', 'Target.createTarget', 'Target.closeTarget',
+  'Page.close', 'Page.crash', 'Emulation.setFocusEmulationEnabled']);
+const sessionless = new Set(['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'Target.attachToTarget', 'Target.detachFromTarget',
+  'Target.setDiscoverTargets']);
+const keysAre = (params, keys) => Object.keys(params).sort().join() === [...keys].sort().join();
+const framesOnly = filter => Array.isArray(filter) && filter.length === 2 && keysAre(filter[0], ['type']) && filter[0].type === 'iframe' &&
+  keysAre(filter[1], ['exclude']) && filter[1].exclude === true;
+// The shape rules on top of the method list. sessionId is the route the command would run on.
+export function transportCallAllowed(method, params, sessionId) {
+  if (!transportMethodAllowed(method) || !plainObject(params)) return false;
+  if (sessionId === undefined && !sessionless.has(method)) return false;
+  if (method === 'Target.attachToTarget') return sessionId === undefined && keysAre(params, ['targetId', 'flatten']) && params.flatten === true && sessionPattern(params.targetId);
+  if (method === 'Target.setDiscoverTargets') return keysAre(params, ['discover']) && typeof params.discover === 'boolean';
+  if (method === 'Target.setAutoAttach') return keysAre(params, ['autoAttach', 'waitForDebuggerOnStart', 'flatten', 'filter']) && typeof params.autoAttach === 'boolean' &&
+    typeof params.waitForDebuggerOnStart === 'boolean' && params.flatten === true && framesOnly(params.filter);
+  return true;
+}
 export function transportMethodAllowed(method) {
   if (typeof method !== 'string' || !methodPattern.test(method) || transportRefused.has(method)) return false;
   const [domain, name] = method.split('.');
@@ -116,13 +133,15 @@ const same = (a, b) => a && b && a.pid === b.pid && a.birth === b.birth;
 const identityValid = value => Number.isSafeInteger(value?.pid) && value.pid > 0 && typeof value.birth === 'string' && value.birth.length > 0;
 
 export class ElectronBroker extends EventEmitter {
-  constructor({ ownership, launch, authorizeLaunch, authorize, transport = {}, identityMaxAgeMs = 1000, now = () => performance.now(),
+  // admitTarget(targetInfo) is the trusted parent's answer to "does this target belong to the opted-in app?"
+  // (electron-targets.mjs's classification). Without it no target can be attached.
+  constructor({ ownership, launch, authorizeLaunch, authorize, admitTarget, transport = {}, identityMaxAgeMs = 1000, now = () => performance.now(),
     maxRoutes = 4096, maxTransportQueue = 256 }) {
     super();
     for (const value of [identityMaxAgeMs, maxRoutes, maxTransportQueue]) {
       if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid broker bound');
     }
-    Object.assign(this, { ownership, launch, authorizeLaunch, authorize, transportOptions: transport, identityMaxAgeMs, now, maxRoutes, maxTransportQueue });
+    Object.assign(this, { ownership, launch, authorizeLaunch, authorize, admitTarget, transportOptions: transport, identityMaxAgeMs, now, maxRoutes, maxTransportQueue });
     this.state = 'new'; this.instance = randomUUID(); this.epoch = 0;
     this.clients = new Set(); this.grants = new Set(); this.descendants = new Map(); this.receipts = [];
     this.preparing = 0; this.queued = 0; this.parkedBy = undefined; this.verifiedAt = -Infinity; this.verifying = undefined;
@@ -270,7 +289,7 @@ export class ElectronBroker extends EventEmitter {
   async transportSend(client, { method, params = {}, sessionId } = {}, { signal } = {}) {
     if (this.state !== 'ready') throw new Error('broker parked');
     if (!this.clients.has(client) || client.epoch !== this.epoch) throw new Error('unauthenticated client');
-    if (!transportMethodAllowed(method) || !plainObject(params)) throw new Error('CDP_COMMAND_REFUSED');
+    if (!transportCallAllowed(method, params, sessionId)) throw new Error('CDP_COMMAND_REFUSED');
     if (sessionId !== undefined && (!sessionPattern(sessionId) || this.routes.get(sessionId)?.client !== client)) throw new Error('CDP_SESSION_NOT_OWNED');
     this.ownsParamSessions(client, params);
     if (this.queued >= this.maxTransportQueue) throw new Error('authorization queue full');
@@ -285,6 +304,10 @@ export class ElectronBroker extends EventEmitter {
     if (!this.clients.has(client)) throw new Error('client detached during preparation');
     if (sessionId !== undefined && this.routes.get(sessionId)?.client !== client) throw new Error('CDP_SESSION_NOT_OWNED');
     this.ownsParamSessions(client, params);
+    if (method === 'Target.attachToTarget') {
+      await this.admitted(params.targetId);
+      if (epoch !== this.epoch || this.state !== 'ready' || !this.clients.has(client)) throw new Error('broker parked during preparation');
+    }
     if (signal?.aborted) throw new Error('cancelled before dispatch');
     try {
       const result = await this.pipe.request(method, params, { signal, sessionId });
@@ -302,6 +325,17 @@ export class ElectronBroker extends EventEmitter {
       if (error.cdp !== true && epoch === this.epoch) this.park(error.message, { resumable: !this.pipe.failed });
       throw error;
     }
+  }
+
+  // The target's own info from the app, judged by the parent's callback, before any attach is written.
+  async admitted(targetId) {
+    if (typeof this.admitTarget !== 'function') throw new Error('CDP_TARGET_NOT_OWNED');
+    let info;
+    try { info = (await this.pipe.request('Target.getTargetInfo', { targetId })).targetInfo; }
+    catch (error) { if (error.cdp === true) throw new Error('CDP_TARGET_NOT_OWNED'); throw error; }
+    let admitted = false;
+    try { admitted = plainObject(info) && info.targetId === targetId && await this.admitTarget(Object.freeze({ ...info })) === true; } catch { admitted = false; }
+    if (!admitted) throw new Error('CDP_TARGET_NOT_OWNED');
   }
 
   // A flat session id inside params (Target.detachFromTarget, sendMessageToTarget, ...) is a capability

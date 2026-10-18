@@ -18,6 +18,11 @@ function harness(options = {}) {
       const route = request.sessionId ? { sessionId: request.sessionId } : {};
       const send = body => queueMicrotask(() => output.write(JSON.stringify({ id: request.id, ...body, ...route }) + '\0'));
       if (request.method === 'Target.attachToTarget') send({ result: { sessionId: 'S' + (++sessions) } });
+      else if (request.method === 'Target.getTargetInfo') {
+        const targetId = request.params.targetId;
+        send({ result: { targetInfo: { targetId, type: targetId.startsWith('W') ? 'service_worker' : 'page',
+          url: targetId.startsWith('D') ? 'devtools://devtools/inspector.html' : 'app://main/index.html' } } });
+      }
       else if (request.method === 'Page.fail') send({ error: { code: -32000, message: 'no such node' } });
       else send({ result: { ok: true } });
     }
@@ -30,12 +35,39 @@ function harness(options = {}) {
     requestQuit: async () => { alive = false; events.emit('exit', 0); } };
   const broker = new ElectronBroker({
     ownership: { reserve: async () => ({}), record: async () => {}, remove: async () => calls.push('remove') },
-    launch: async () => child, authorizeLaunch: async () => true, ...options,
+    launch: async () => child, authorizeLaunch: async () => true,
+    admitTarget: async info => info.type === 'page' && !info.url.startsWith('devtools:'), ...options,
   });
   return { broker, child, frames, input, output, hang, calls, setAlive: value => { alive = value; } };
 }
 const ready = async options => { const h = harness(options); await h.broker.start({}); return h; };
 const methods = h => h.frames.map(frame => frame.method + (frame.sessionId ? '@' + frame.sessionId : ''));
+const attach = async (h, client, targetId = 'T1') => (await h.broker.transportSend(client, { method: 'Target.attachToTarget', params: { targetId, flatten: true } })).sessionId;
+
+test('the host fence matches the app filter: app-mode denials, a session on page commands, attach only to admitted targets', async () => {
+  const h = await ready();
+  const client = h.broker.connect('a');
+  for (const [method, params] of [['Runtime.evaluate', { expression: '1' }], ['Fetch.enable', {}], ['Input.dispatchKeyEvent', { type: 'keyDown' }],
+    ['Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }], ['Page.navigate', { url: 'https://x.example/' }],
+    ['Target.setDiscoverTargets', { discover: true, filter: [{}] }], ['Target.attachToTarget', { targetId: 'T1' }],
+    ['Target.attachToTarget', { targetId: 'T1', flatten: true, waitForDebuggerOnStart: true }]])
+    await assert.rejects(h.broker.transportSend(client, { method, params }), /CDP_COMMAND_REFUSED/, method);
+  assert.deepEqual(methods(h), ['Browser.getVersion'], 'nothing sessionless beyond the browser and target reads reaches the app');
+  for (const targetId of ['D1', 'W1']) await assert.rejects(attach(h, client, targetId), /CDP_TARGET_NOT_OWNED/);
+  assert.ok(!h.frames.some(frame => frame.method === 'Target.attachToTarget'), 'DevTools and workers are never attached');
+  const sessionId = await attach(h, client);
+  for (const method of ['Page.close', 'Page.crash', 'Emulation.setFocusEmulationEnabled', 'Target.createTarget', 'Target.closeTarget'])
+    await assert.rejects(h.broker.transportSend(client, { method, params: {}, sessionId }), /CDP_COMMAND_REFUSED/, method);
+  await assert.rejects(h.broker.transportSend(client, { method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId }),
+    /CDP_COMMAND_REFUSED/, 'child auto-attach must ask for frames only');
+  await h.broker.transportSend(client, { method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+    filter: [{ type: 'iframe' }, { exclude: true }] }, sessionId });
+  await h.broker.transportSend(client, { method: 'Target.setDiscoverTargets', params: { discover: true } });
+  assert.deepEqual(await h.broker.transportSend(client, { method: 'Runtime.evaluate', params: { expression: '1' }, sessionId }), { ok: true });
+  assert.equal(h.broker.state, 'ready');
+  const closed = await ready({ admitTarget: undefined });
+  await assert.rejects(attach(closed, closed.broker.connect('a')), /CDP_TARGET_NOT_OWNED/, 'without a parent callback nothing is attachable');
+});
 
 test('private NUL events become v3 session events; malformed events and replies fault the pipe', async () => {
   const input = new PassThrough(), output = new PassThrough();
@@ -108,7 +140,8 @@ test('transportSend gates by client, epoch and method before any pipe write', as
   await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate', params: [] }), /CDP_COMMAND_REFUSED/);
   await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate' , sessionId: 'S404' }), /CDP_SESSION_NOT_OWNED/);
   assert.deepEqual(methods(h), ['Browser.getVersion']);
-  assert.deepEqual(await h.broker.transportSend(client, { method: 'Runtime.evaluate', params: { expression: '1' } }), { ok: true });
+  const sessionId = await attach(h, client);
+  assert.deepEqual(await h.broker.transportSend(client, { method: 'Runtime.evaluate', params: { expression: '1' }, sessionId }), { ok: true });
   assert.equal(h.broker.state, 'ready');
 });
 
@@ -131,7 +164,7 @@ test('sessions: a client may only use, detach or be told about sessions its own 
   await assert.rejects(h.broker.transportSend(a, { method: 'Target.detachFromTarget', params: { sessionId: theirs } }), /CDP_SESSION_NOT_OWNED/);
   await assert.rejects(h.broker.transportSend(a, { method: 'Target.detachFromTarget', params: { sessionId: 'S404' } }), /CDP_SESSION_NOT_OWNED/);
   await assert.rejects(h.broker.transportSend(a, { method: 'Target.detachFromTarget', params: { sessionId: 7 } }), /CDP_SESSION_NOT_OWNED/);
-  await assert.rejects(h.broker.transportSend(a, { method: 'Page.enable', params: { targetSessionId: theirs } }), /CDP_SESSION_NOT_OWNED/);
+  await assert.rejects(h.broker.transportSend(a, { method: 'Page.enable', params: { targetSessionId: theirs }, sessionId: mine }), /CDP_SESSION_NOT_OWNED/);
   assert.equal(h.frames.length, before, 'no forged command reached the app');
   assert.equal(h.broker.routes.get(theirs).client, b, 'the other client keeps its session');
   await h.broker.transportSend(b, { method: 'Runtime.evaluate', sessionId: theirs });
@@ -223,15 +256,16 @@ test('a lost worker: its sessions are detached in the app, other clients keep th
 test('revocation during the identity check: the delayed command is never written', async () => {
   const h = await ready();
   const client = h.broker.connect('a');
+  const sessionId = await attach(h, client);
   let release;
   h.child.inspect = () => new Promise(resolve => { release = () => resolve({ parent: { pid: 100, birth: 'one' }, descendants: [], complete: true }); });
   h.broker.verifiedAt = -Infinity;
-  const call = h.broker.transportSend(client, { method: 'Input.dispatchKeyEvent', params: { type: 'keyDown' } });
+  const call = h.broker.transportSend(client, { method: 'Input.dispatchKeyEvent', params: { type: 'keyDown' }, sessionId });
   await tick();
   h.broker.revoke('user revoked');
   release();
   await assert.rejects(call, /parked/);
-  assert.deepEqual(methods(h), ['Browser.getVersion']);
+  assert.ok(!h.frames.some(frame => frame.method === 'Input.dispatchKeyEvent'));
   assert.equal(h.input.destroyed, false);
   assert.equal(h.broker.status().parked.resumable, true);
 });
@@ -240,27 +274,29 @@ test('PID reuse: a different birth time parks before the command is written; a s
   let now = 0;
   const h = await ready({ now: () => now, identityMaxAgeMs: 1000 });
   const client = h.broker.connect('a');
+  const sessionId = await attach(h, client);
   let inspections = 0;
   const original = h.child.inspect;
   h.child.inspect = async () => { inspections++; return original(); };
-  await h.broker.transportSend(client, { method: 'Runtime.evaluate' });
-  await h.broker.transportSend(client, { method: 'Runtime.evaluate' });
+  await h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId });
+  await h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId });
   assert.equal(inspections, 0, 'a fresh check is reused inside its window');
   now = 5000;
   h.child.inspect = async () => ({ parent: { pid: 100, birth: 'recycled' }, descendants: [], complete: true });
-  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate' }), /identity/);
+  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId }), /identity/);
   assert.equal(h.broker.state, 'parked');
   assert.equal(h.broker.status().parked.resumable, false);
-  assert.deepEqual(methods(h), ['Browser.getVersion', 'Runtime.evaluate', 'Runtime.evaluate']);
+  assert.deepEqual(methods(h), ['Browser.getVersion', 'Target.getTargetInfo', 'Target.attachToTarget', 'Runtime.evaluate@S1', 'Runtime.evaluate@S1']);
   await assert.rejects(h.broker.resume(async () => true), /not resumable/);
 });
 
 test('an incomplete census or a vanished parent parks; a child exit parks immediately', async () => {
   const h = await ready();
   const client = h.broker.connect('a');
+  const sessionId = await attach(h, client);
   h.child.inspect = async () => ({ descendants: [], complete: true });
   h.broker.verifiedAt = -Infinity;
-  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate' }), /census/);
+  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId }), /census/);
   assert.equal(h.broker.state, 'parked');
   const exited = await ready();
   exited.child.events.emit('exit', 0);
@@ -271,8 +307,9 @@ test('an incomplete census or a vanished parent parks; a child exit parks immedi
 test('timeouts and cancellation leave the effect unknown: park, resumable, never replayed', async () => {
   const h = await ready({ transport: { timeoutMs: 20 } });
   const client = h.broker.connect('a');
+  const sessionId = await attach(h, client);
   h.hang.add('Input.dispatchKeyEvent');
-  await assert.rejects(h.broker.transportSend(client, { method: 'Input.dispatchKeyEvent' }), error => error.dispatched === true && /effect unknown/.test(error.message));
+  await assert.rejects(h.broker.transportSend(client, { method: 'Input.dispatchKeyEvent', sessionId }), error => error.dispatched === true && /effect unknown/.test(error.message));
   assert.equal(h.broker.state, 'parked');
   assert.equal(h.frames.filter(frame => frame.method === 'Input.dispatchKeyEvent').length, 1);
   h.hang.clear();
@@ -281,8 +318,9 @@ test('timeouts and cancellation leave the effect unknown: park, resumable, never
   const aborted = await ready();
   aborted.hang.add('Input.dispatchKeyEvent');
   const controller = new AbortController();
-  const other = aborted.broker.connect('b');
-  const call = aborted.broker.transportSend(aborted.broker.connect('a'), { method: 'Input.dispatchKeyEvent' }, { signal: controller.signal });
+  const other = aborted.broker.connect('b'), first = aborted.broker.connect('a');
+  const route = await attach(aborted, first);
+  const call = aborted.broker.transportSend(first, { method: 'Input.dispatchKeyEvent', sessionId: route }, { signal: controller.signal });
   await tick(); controller.abort();
   await assert.rejects(call, /effect unknown/);
   assert.equal(aborted.input.destroyed, false);
@@ -316,28 +354,30 @@ test('descendants are handed to the durable journal before the next command reli
   const observed = [];
   const h = await ready({ ownership: { reserve: async () => ({}), record: async () => {}, remove: async () => {}, observe: async (_o, fresh) => observed.push(...fresh) } });
   const client = h.broker.connect('a');
+  const sessionId = await attach(h, client);
   const original = h.child.inspect;
   h.child.inspect = async () => ({ ...(await original()), descendants: [{ pid: 101, birth: 'kid' }] });
   h.broker.verifiedAt = -Infinity;
-  await h.broker.transportSend(client, { method: 'Runtime.evaluate' });
+  await h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId });
   await h.broker.inspect();
   assert.deepEqual(observed, [{ pid: 101, birth: 'kid' }], 'each incarnation is journaled once');
   h.child.inspect = async () => ({ ...(await original()), descendants: [{ pid: 102, birth: 'kid2' }] });
   h.broker.ownership.observe = async () => { throw Error('journal write failed'); };
   h.broker.verifiedAt = -Infinity;
-  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate' }), /journal/);
+  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId }), /journal/);
   assert.equal(h.broker.state, 'parked', 'an unrecorded descendant fails closed');
 });
 
 test('a full authorization queue refuses new commands without parking', async () => {
   const h = await ready({ maxTransportQueue: 1 });
   const client = h.broker.connect('a');
+  const sessionId = await attach(h, client);
   let release;
   h.child.inspect = () => new Promise(resolve => { release = () => resolve({ parent: { pid: 100, birth: 'one' }, descendants: [], complete: true }); });
   h.broker.verifiedAt = -Infinity;
-  const first = h.broker.transportSend(client, { method: 'Runtime.evaluate' });
+  const first = h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId });
   await tick();
-  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate' }), /queue full/);
+  await assert.rejects(h.broker.transportSend(client, { method: 'Runtime.evaluate', sessionId }), /queue full/);
   release(); await first;
   assert.equal(h.broker.state, 'ready');
 });

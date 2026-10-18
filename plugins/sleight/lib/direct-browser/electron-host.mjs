@@ -29,7 +29,7 @@ const MAX_SOCKET_PATH = 100;
 export function errorFrame(error) {
   const text = String(error?.message ?? '');
   if (error?.cdp === true) return { code: 'CDP_ERROR', message: text.slice(0, 500), dispatched: true };
-  const known = ['CDP_COMMAND_REFUSED', 'CDP_SESSION_NOT_OWNED'].find(code => text === code);
+  const known = ['CDP_COMMAND_REFUSED', 'CDP_SESSION_NOT_OWNED', 'CDP_TARGET_NOT_OWNED'].find(code => text === code);
   if (known) return { code: known, dispatched: false };
   if (/parked|not ready/i.test(text)) return { code: 'APP_PARKED', dispatched: error?.dispatched === true };
   if (/unauthenticated|detached/i.test(text)) return { code: 'UNAUTHENTICATED', dispatched: false };
@@ -91,7 +91,7 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
 }
 
 export async function createElectronHost({
-  stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, brokerOptions = {},
+  stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, admitTarget, brokerOptions = {},
   maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxChannels = 64, maxUnauthenticated = 8, handshakeMs = 2000, maxPendingPerChannel = 64,
   maxBufferedBytes = 4 * 1024 * 1024, maxTicketTtlMs = 300000, maxTickets = 256, adminSecret, uid = process.getuid?.(),
 } = {}) {
@@ -188,7 +188,7 @@ export async function createElectronHost({
     }
     ownership = { state: 'owned' };
     const parts = brokerParts();
-    broker = new Broker({ ...parts, authorizeLaunch, ...brokerOptions });
+    broker = new Broker({ ...parts, authorizeLaunch, admitTarget, ...brokerOptions });
     broker.on('routed', route);
     broker.on('parked', info => {
       for (const channel of [...channels]) if (channel.role === 'worker') channel.send({ op: 'parked', reason: info.reason, resumable: info.resumable, epoch: info.epoch }, true);

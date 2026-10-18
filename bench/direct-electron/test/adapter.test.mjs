@@ -70,7 +70,7 @@ test('handshake over host-created pipes: the app sees only descriptors 3 and 4, 
     const connection = await worker(host);
     const version = await connection.session.send('Browser.getVersion');
     assert.equal(version.pid, connection.identity.pid, 'the process that answers is the one the adapter spawned');
-    const { fds } = await connection.session.send('Runtime.evaluate', {}).then(() => host.broker.pipe.request('Fake.fds'));
+    const { fds } = await connection.session.send('Browser.getVersion', {}).then(() => host.broker.pipe.request('Fake.fds'));
     assert.equal(fds['0'], 'chr', 'stdin is /dev/null');
     assert.equal(fds['1'], 'reg'); assert.equal(fds['2'], 'reg');
     assert.ok(['sock', 'fifo'].includes(fds['3']) && ['sock', 'fifo'].includes(fds['4']));
@@ -98,7 +98,7 @@ test('worker loss and a new worker: one app, one writer, no relaunch', { skip },
     await host.start({ build: BUILD });
     const first = await worker(host, 'a');
     const pid = first.identity.pid;
-    first.session.send('Runtime.evaluate', {}).catch(() => {});
+    first.session.send('Browser.getVersion', {}).catch(() => {});
     await first.disconnect();
     const second = await worker(host, 'b');
     assert.equal(second.identity.pid, pid);
