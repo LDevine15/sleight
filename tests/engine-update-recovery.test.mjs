@@ -220,6 +220,7 @@ test('a handle approved by name is reacquired by name after a reconnect, so the 
 });
 
 test('Stop after a failed reconnect makes the next engine start a fresh turn', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = fixture(t, { initializeError: 1 });
   h.call(1, 'await cua.getApp("Example")'); h.reply(1);
   h.replace();
@@ -228,7 +229,13 @@ test('Stop after a failed reconnect makes the next engine start a fresh turn', a
   assert.equal(h.replies.find(msg => msg.id === 2).result.isError, true, 'the replacement failed to initialize');
   const failedTurn = h.relay.turnId;
   h.send({ id: 'stop', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } });
+  // The failed initialization leaves a running call for Stop's 1 ms drain grace.
+  // Advance it explicitly: immediate-loop polling need not let wall time elapse.
+  await flush();
+  assert.equal(h.replies.some(msg => msg.id === 'stop'), false, 'Stop waits for the drain grace');
+  t.mock.timers.tick(1);
   await until(() => h.replies.some(msg => msg.id === 'stop'));
+  assert.ok(h.replies.some(msg => msg.id === 'stop'), 'Stop completed before resume');
   h.send({ id: 'resume', method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_resume: true } } });
   await until(() => h.replies.some(msg => msg.id === 'resume'));
   h.call(3, 'await cua.getApp("Example")');
