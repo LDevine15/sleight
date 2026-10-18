@@ -42,17 +42,17 @@ async function manualClient(handle, { secret = Buffer.from(handle.secret, 'base6
 
 test('a worker can end its turn or be lost and a later worker reconnects to the same app pipe', async () => {
   const h = await started();
-  const first = await connectWorker(h.host, 'w1');
+  const first = await connectWorker(h.host, 'w');
   assert.equal((await first.connection.session.send('Browser.getVersion')).pid, 4100);
   await first.connection.disconnect();                      // endTurn
   assert.equal(h.app.input.destroyed, false);
   assert.equal(h.host.broker.state, 'ready');
-  const lost = await connectWorker(h.host, 'w2');
+  const lost = await connectWorker(h.host, 'w');
   lost.connection.session.send('Browser.getVersion', {}).catch(() => {});
-  const raw = (await manualClient(await h.host.issueTicket({ session: 'w3' })));
+  const raw = (await manualClient(await h.host.issueTicket({ session: 'w' })));
   raw.socket.destroy();                                       // parent-worker loss: no goodbye
   await tick(20);
-  const again = await connectWorker(h.host, 'w4');
+  const again = await connectWorker(h.host, 'w');
   assert.equal(again.connection.identity.pid, 4100);
   assert.equal(h.world.apps.length, 1, 'one app, never relaunched');
   assert.equal(h.adapter.calls.filter(([cmd]) => cmd === 'spawn').length, 1);
@@ -63,7 +63,7 @@ test('a worker can end its turn or be lost and a later worker reconnects to the 
 
 test('worker sessions are detached when its channel ends; another worker keeps its own', async () => {
   const h = await started();
-  const a = await connectWorker(h.host, 'a'), b = await connectWorker(h.host, 'b');
+  const a = await connectWorker(h.host, 's'), b = await connectWorker(h.host, 's');
   const mine = (await a.connection.session.send('Target.attachToTarget', { targetId: 'T1', flatten: true })).sessionId;
   const theirs = (await b.connection.session.send('Target.attachToTarget', { targetId: 'T2', flatten: true })).sessionId;
   await a.connection.disconnect();
@@ -161,7 +161,7 @@ test('sealed frames: tampering, a wrong sequence, an unknown op and extra keys d
     channel => channel.write('not an object'),
   ];
   for (const attack of cases) {
-    const client = await manualClient(await h.host.issueTicket({ session: 'forger' }));
+    const client = await manualClient(await h.host.issueTicket({ session: 'good' }));
     const channel = await client.open();
     channel.socket = client.socket;
     assert.equal((await channel.read()).op, 'open');
@@ -187,13 +187,13 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   const third = rawSocket(h.host.socketPath);
   await until(() => third.closed, 'third unauthenticated refused');
   await until(() => holds.every(item => item.closed), 'holders time out');
-  const careful = await createElectronConnection({ handle: await h.host.issueTicket({ session: 'careful' }), maxFrameBytes: 2048 });
+  const careful = await createElectronConnection({ handle: await h.host.issueTicket({ session: 'b' }), maxFrameBytes: 2048 });
   await careful.connect();
   await assert.rejects(careful.session.send('Runtime.evaluate', { text: 'x'.repeat(4000) }), /INVALID_CDP_COMMAND/);
-  const oversize = await connectWorker(h.host, 'oversize');
+  const oversize = await connectWorker(h.host, 'b');
   await assert.rejects(oversize.connection.session.send('Runtime.evaluate', { text: 'x'.repeat(4000) }), /CLOSED/);
   assert.equal(methods(h).includes('Runtime.evaluate'), false, 'the host cut the channel before the frame became a command');
-  const worker = await connectWorker(h.host, 'w'), ws = await pageSession(worker.connection);
+  const worker = await connectWorker(h.host, 'b'), ws = await pageSession(worker.connection);
   h.app.hang.add('Page.captureScreenshot');
   const one = worker.connection.session.send('Page.captureScreenshot', {}, ws), two = worker.connection.session.send('Page.captureScreenshot', {}, ws);
   one.catch(() => {}); two.catch(() => {});
@@ -201,7 +201,7 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   await assert.rejects(worker.connection.session.send('Page.captureScreenshot', {}, ws), /QUEUE_FULL/);
   h.app.hang.clear();
   // A reader that never drains is dropped instead of buffered without bound.
-  const slow = await manualClient(await h.host.issueTicket({ session: 'slow' }));
+  const slow = await manualClient(await h.host.issueTicket({ session: 'b' }));
   const channel = await slow.open();
   assert.equal((await channel.read()).op, 'open');
   slow.socket.pause();
@@ -214,7 +214,7 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   await until(() => h.host.status().channels < before, 'slow reader dropped');
   assert.equal(h.host.broker.state, 'ready', JSON.stringify(h.host.status().broker.parked));
   assert.equal(h.host.status().channels, before - 1, 'only the reader that never drained was cut off');
-  const after = (await connectWorker(h.host, 'after')).connection;
+  const after = (await connectWorker(h.host, 'b')).connection;
   assert.equal((await after.session.send('Runtime.evaluate', {}, await pageSession(after))).ok, true);
   void one; void two;
   finish(h);
@@ -305,7 +305,7 @@ test('the filter transport translates between Playwright messages and the filter
 
 test('events reach the owner as v3 session events, frozen and validated', async () => {
   const h = await started();
-  const a = await connectWorker(h.host, 'a'), b = await connectWorker(h.host, 'b');
+  const a = await connectWorker(h.host, 's'), b = await connectWorker(h.host, 's');
   const mine = (await a.connection.session.send('Target.attachToTarget', { targetId: 'T1', flatten: true })).sessionId;
   const theirs = (await b.connection.session.send('Target.attachToTarget', { targetId: 'T2', flatten: true })).sessionId;
   const seenA = [], seenB = [];
@@ -329,17 +329,18 @@ test('events reach the owner as v3 session events, frozen and validated', async 
 
 test('revocation parks the app connection, ends every channel, and a command delayed behind it is never written', async () => {
   const h = await started({ hostOptions: { brokerOptions: { identityMaxAgeMs: 0 } } });
-  const a = await connectWorker(h.host, 'a'), b = await connectWorker(h.host, 'b');
+  const a = await connectWorker(h.host, 's'), b = await connectWorker(h.host, 's');
   let lostA = 0, lostB = 0;
   a.connection.onConnectionLoss(() => lostA++); b.connection.onConnectionLoss(() => lostB++);
   const route = await pageSession(a.connection);
+  assert.equal((await a.connection.fence('acquire')).held, true, 'the key press below comes from the fence holder');
   const original = h.adapter.rpc.bind(h.adapter);
   let release;
   h.adapter.rpc = (cmd, payload) => cmd === 'inspect' ? new Promise(resolve => { release = () => resolve(original(cmd, payload)); }) : original(cmd, payload);
   const delayed = a.connection.session.send('Input.dispatchKeyEvent', { type: 'keyDown', text: 'x' }, route);
   delayed.catch(() => {});
   await until(() => release, 'delayed identity check');
-  h.host.revokeSession('a', 'user revoked');
+  h.host.revokeSession('s', 'user revoked');
   release();
   await assert.rejects(delayed, /APP_PARKED|CLOSED|PARKED/);
   await until(() => lostA === 1 && lostB === 1, 'both workers told');
@@ -347,10 +348,10 @@ test('revocation parks the app connection, ends every channel, and a command del
   assert.equal(h.app.input.destroyed, false, 'the writer stays open');
   assert.equal(h.host.status().broker.parked.resumable, true);
   assert.equal(await a.connection.verifyConnection(a.connection.session), false);
-  await assert.rejects(createElectronConnection({ handle: await h.host.issueTicket({ session: 'late' }) }).then(c => c.connect()), /PARKED/);
+  await assert.rejects(createElectronConnection({ handle: await h.host.issueTicket({ session: 's' }) }).then(c => c.connect()), /PARKED/);
   h.adapter.rpc = original;
   assert.equal((await h.host.resume()).event, 'resumed');
-  const back = await connectWorker(h.host, 'back');
+  const back = await connectWorker(h.host, 's');
   assert.equal((await back.connection.session.send('Runtime.evaluate', {}, await pageSession(back.connection))).ok, true);
   assert.equal(h.world.apps.length, 1);
   finish(h);
@@ -431,16 +432,19 @@ test('admin channel: the key is the parent\'s per-start secret, no file in the s
   assert.equal((await connection.session.send('Runtime.evaluate', {}, await pageSession(connection))).ok, true);
   current = false;
   channel.write({ op: 'issue', id: 2, args: { session: 'stale' } });
-  assert.equal((await channel.read()).error.code, 'FAILED', 'a grant the parent no longer holds issues nothing');
+  assert.equal((await channel.read()).error.code, 'GRANT_NOT_CURRENT', 'a grant the parent no longer holds issues nothing');
   await assert.rejects(h.host.issueTicket({ session: 'stale' }), /GRANT_NOT_CURRENT/);
   current = true;
   channel.write({ op: 'status', id: 3 });
   assert.equal((await channel.read()).result.ownership.state, 'owned');
   channel.write({ op: 'issue', id: 4, args: { session: 'bad session' } });
-  assert.equal((await channel.read()).error.code, 'FAILED');
+  assert.equal((await channel.read()).error.code, 'SESSION_INVALID');
+  channel.write({ op: 'issue', id: 7, args: { session: 'other' } });
+  assert.equal((await channel.read()).error.code, 'ELECTRON_BUSY', 'another session waits while via-admin is connected');
   channel.write({ op: 'revoke', id: 5, args: { session: 'via-admin' } });
   await channel.read();
   await until(() => h.host.status().broker.state === 'parked', 'parked');
+  await until(() => h.host.status().channels === 1, 'only the admin channel is left');
   channel.write({ op: 'resume', id: 6 });
   assert.equal((await channel.read()).result.event, 'resumed');
   finish(h);
@@ -488,14 +492,17 @@ test('synthetic 1/4/13 worker contention: cold start, warm reconnect and command
   const percentile = (values, p) => [...values].sort((a, b) => a - b)[Math.ceil(values.length * p) - 1];
   for (const count of [1, 4, 13]) {
     const cold = [], warm = [], calls = [];
+    let busy = 0;
     for (let run = 0; run < 5; run++) {
       let start = performance.now();
       const h = await started();
-      const first = await Promise.all(Array.from({ length: count }, (_, i) => connectWorker(h.host, 's' + i)));
+      const first = await Promise.all(Array.from({ length: count }, () => connectWorker(h.host, 's')));
+      for (let i = 0; i < count; i++) await h.host.issueTicket({ session: 'other' + i }).catch(error => { if (error.message === 'ELECTRON_BUSY') busy++; });
       cold.push(performance.now() - start);
       await Promise.all(first.map(item => item.connection.disconnect()));
       start = performance.now();
-      const second = await Promise.all(Array.from({ length: count }, (_, i) => connectWorker(h.host, 'r' + i)));
+      await until(() => h.host.status().channels === 0, 'first round closed');
+      const second = await Promise.all(Array.from({ length: count }, () => connectWorker(h.host, 'r')));
       warm.push(performance.now() - start);
       start = performance.now();
       const results = await Promise.all(second.map(item => item.connection.session.send('Browser.getVersion', {})));
@@ -504,7 +511,8 @@ test('synthetic 1/4/13 worker contention: cold start, warm reconnect and command
       assert.equal(h.world.apps.length, 1);
       finish(h);
     }
-    t.diagnostic(JSON.stringify({ clients: count, trials: 5, unit: 'ms', synthetic: true, fake: true,
+    assert.equal(busy, count * 5, 'every other session is refused while one session holds the app');
+    t.diagnostic(JSON.stringify({ clients: count, trials: 5, unit: 'ms', synthetic: true, fake: true, busyRefusals: busy,
       distributions: Object.fromEntries(Object.entries({ cold, warm, calls }).map(([key, values]) => [key, { p50: percentile(values, .5), p90: percentile(values, .9) }])) }));
   }
 });

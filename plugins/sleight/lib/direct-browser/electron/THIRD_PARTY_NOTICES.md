@@ -1,16 +1,16 @@
-# Electron broker prototype sources
+# Electron broker and launcher sources
 
 The broker, launcher and fake-child tests are independently authored. This item uses independently written source throughout.
 
 The transport uses the public Chromium NUL-delimited JSON protocol on inherited descriptors 3 and 4. The research in
 `ledger/electron-path-design.md` identified Playwright 1.64.0's Apache-2.0 transport and connection modules as future reuse candidates.
-This prototype does not import or redistribute Playwright. Its Electron launcher adds inspector and TCP flags, so it is excluded.
+The broker and launcher do not import or redistribute Playwright. Its Electron launcher adds inspector and TCP flags, so it is excluded.
 
 The recipe registry is empty. The measured research builds have no complete filesystem-isolation audit. A trusted host must
 review a build's isolation recipe before adding it, supply debugger approval, and use the app's own Quit only on the user's click.
 
 The host supplies `ElectronBroker` with launch, ownership and authority callbacks. `launch.py` supplies the pipe and owned-child
-primitive for that host. The host must supply app authority before these bench modules can operate.
+primitive for that host. The host must supply app authority before these modules can operate. They moved here from bench/direct-electron in EPV3-7.
 
 ## EPV3-2 additions
 

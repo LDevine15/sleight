@@ -3,8 +3,7 @@
 // callbacks that only the user can answer (launch approval, the app's own Quit, resume
 // authority). None of them can arrive through argv, the environment or the channel.
 //
-// The broker and the launch adapter currently live under bench/direct-electron (their prototype
-// home). EPV3-7 decides where they ship; until then this entry resolves them from the repository.
+// The broker and the launch adapter ship beside this file, in electron/.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { isAbsolute, normalize } from 'node:path';
@@ -30,8 +29,8 @@ export function parseHostArguments(argv) {
   if (!builds.length || builds.length > 16 || builds.some(build => !/^[A-Za-z0-9._@+-]{1,128}$/.test(build))) fail('HOST_ARGUMENTS_INVALID');
   return Object.freeze({ stateDir: parsed['--state-dir'], registryPath: parsed['--registry'], tempRoot: parsed['--temp-root'], builds,
     python: parsed['--python'] ?? 'python3', adminFd: Object.hasOwn(parsed, '--admin-fd') ? Number(parsed['--admin-fd']) : undefined,
-    script: parsed['--adapter-script'] ?? fileURLToPath(new URL('../../../../bench/direct-electron/launch.py', import.meta.url)),
-    brokerModule: parsed['--broker-module'] ?? fileURLToPath(new URL('../../../../bench/direct-electron/broker.mjs', import.meta.url)) });
+    script: parsed['--adapter-script'] ?? fileURLToPath(new URL('./electron/launch.py', import.meta.url)),
+    brokerModule: parsed['--broker-module'] ?? fileURLToPath(new URL('./electron/broker.mjs', import.meta.url)) });
 }
 
 // The parent's per-start admin secret: one base64url line (at least 32 bytes decoded) on an inherited

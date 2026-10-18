@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import { ElectronBroker, PipeTransport, transportMethodAllowed } from '../broker.mjs';
+import { ElectronBroker, PipeTransport, transportMethodAllowed } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 

@@ -13,6 +13,9 @@ import { packageFiles } from './session-host.mjs';
 import { nativeHelpersBuilt } from './host.mjs';
 import { browserChoices, browserDefinitions, qualifiedBrowserNames } from './browsers.mjs';
 import { signedBrowserAt, verifiedOnDisk, writeClass } from './executable-trust.mjs';
+import { BUNDLE_ID, appOptInPath, grantStorePath, readAppOptIns, registryPath as packagedRegistry } from './electron-config.mjs';
+import { readRecipeRegistry, recipeFor } from './electron-recipes.mjs';
+import { createGrantStore } from './electron-consent.mjs';
 
 const fail = (code, detail) => Object.assign(Error(code), detail === undefined ? {} : { detail });
 const unqualifiedMessage = browser => `${browser.name} isn't qualified yet. Live check needed: turn on remote debugging at ${browser.inspectURL}, ` +
@@ -222,11 +225,51 @@ export function doctorLines(d) {
   return lines;
 }
 
+// Removes the saved (Always) debugger permissions for one bundle id. A grant held in memory by a running worker ends
+// with its session; this process cannot reach it.
+function revokeSavedApp(bundleId, home) {
+  const store = createGrantStore({ path: grantStorePath(home) });
+  let removed = 0;
+  for (const record of store.list()) if (record.bundleId === bundleId && store.remove(record.key)) removed++;
+  return removed;
+}
+
+/** `sleight-mcp turbo app on|off <bundle id>`: the per-app opt-in for Electron turbo. on writes the registry's build for
+ *  that bundle id; off removes the entry and the app's saved debugger permissions. */
+function turboAppCommand([op, bundleId, ...rest], { out, home, uid, path = appOptInPath(home), registryPath = packagedRegistry,
+  revokeApp = id => revokeSavedApp(id, home) }) {
+  if (!['on', 'off'].includes(op) || typeof bundleId !== 'string' || !BUNDLE_ID.test(bundleId) || rest.length) {
+    out('usage: sleight-mcp turbo app on <bundle id>\n       sleight-mcp turbo app off <bundle id>\n'); return 2;
+  }
+  const code = error => /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_APP_FAILED';
+  let current;
+  try { current = readAppOptIns(path); } catch (error) { out(`turbo app ${op} failed: ${code(error)} (${path} is a link or has another owner or mode; delete it first)\n`); return 1; }
+  const apps = { ...(current?.apps ?? {}) };
+  if (op === 'on') {
+    let recipe;
+    try { recipe = recipeFor(readRecipeRegistry(registryPath), bundleId); } catch (error) {
+      const reason = code(error) === 'RECIPE_UNFILLED' ? ' (this build is not reviewed yet: the qualification harness fills its hashes)' : '';
+      out(`turbo stays off for ${bundleId}: ${code(error)}${reason}\n`); return 1;
+    }
+    apps[bundleId] = { enabled: true, build: recipe.build };
+  } else delete apps[bundleId];
+  try {
+    writeConfigFile(path, { version: 1, apps }, uid);
+    readAppOptIns(path);
+  } catch (error) { out(`turbo app ${op} failed: ${code(error)}\n`); return 1; }
+  if (op === 'on') { out(`turbo is on for ${bundleId} (${apps[bundleId].build}). The debugger asks once per app in sleight's own window.\n`); return 0; }
+  let removed;
+  try { removed = revokeApp(bundleId); } catch (error) { out(`turbo is off for ${bundleId}, but its saved debugger permissions were not removed: ${code(error)}\n`); return 1; }
+  out(`turbo is off for ${bundleId}. ${removed} saved debugger permissions removed.\n`); return 0;
+}
+
 /** `sleight-mcp turbo on|off|status`. Exit code 0 on success, 1 on failure, 2 on usage. */
 export function turboCommand(args, { out = text => process.stdout.write(text), configPath = installedConfigPath(), pluginRoot = INSTALLED_PLUGIN_ROOT,
-  home = userInfo().homedir, apps, uid = process.getuid(), diagnose = turboDiagnosis, env = process.env } = {}) {
+  home = userInfo().homedir, apps, uid = process.getuid(), diagnose = turboDiagnosis, env = process.env, appOptIns = {} } = {}) {
   const [op, ...rest] = args;
-  const usage = () => { out(`usage: sleight-mcp turbo on [--browser ${browserChoices()}]\n       sleight-mcp turbo off\n       sleight-mcp turbo status\n`); return 2; };
+  if (op === 'app') return turboAppCommand(rest, { out, home, uid, ...appOptIns });
+  const usage = () => { out(`usage: sleight-mcp turbo on [--browser ${browserChoices()}]\n       sleight-mcp turbo off\n       sleight-mcp turbo status\n` +
+    '       sleight-mcp turbo app on|off <bundle id>\n'); return 2; };
   let browser;
   if (rest.length) {
     if (op !== 'on' || rest.length !== 2 || rest[0] !== '--browser') return usage();

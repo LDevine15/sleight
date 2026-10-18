@@ -154,7 +154,7 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
                     !Number.isSafeInteger(message.epoch) || !validToken(message.instance)) fail('ELECTRON_PROTOCOL');
                 app = Object.freeze({ pid: message.incarnation.pid, birth: message.incarnation.birth, epoch: message.epoch, instance: message.instance });
                 stage = 'live'; finish();
-              } else if (message.op === 'refused') fail('ELECTRON_APP_PARKED');
+              } else if (message.op === 'refused') fail(message.code === 'ELECTRON_BUSY' ? 'ELECTRON_BUSY' : 'ELECTRON_APP_PARKED');
               else fail('ELECTRON_PROTOCOL');
             } else onFrame(receive(frame));
           }
@@ -204,6 +204,21 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
     } catch { fence(); return false; }
   }
 
+  // The host's instance mutation fence (electron-host.mjs): acquire before Input.*, release when done. The host refuses
+  // Input.* from a channel that does not hold it. Reply { held, holder, leaseMs }.
+  async function fenceOp(action) {
+    if (action !== 'acquire' && action !== 'release') fail('INVALID_FENCE');
+    if (!opened || fenced) fail('ELECTRON_CONNECTION_CLOSED');
+    const id = ++sequence;
+    const reply = await new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject, sent: false });
+      try { socket.write(send({ op: 'fence', id, action })); } catch { fence(); }
+    });
+    if (!ordinaryObject(reply) || typeof reply.held !== 'boolean' || reply.holder !== null && typeof reply.holder !== 'string' ||
+        !Number.isSafeInteger(reply.leaseMs)) { fence(); fail('ELECTRON_PROTOCOL'); }
+    return Object.freeze({ held: reply.held, holder: reply.holder, leaseMs: reply.leaseMs });
+  }
+
   // The connection is not usable until connectChannel() has run, so these derive from the first
   // handshake. They are filled in once, then frozen.
   // selectedBrowser names this host and session from the start, so the worker can name its connection before connect().
@@ -217,7 +232,7 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
       identity = Object.freeze({ host: handle.host, ...app });
       return result;
     },
-    verifyConnection, disconnect,
+    verifyConnection, disconnect, fence: fenceOp,
     get browserIncarnation() { return browserIncarnation; },
     get selectedBrowser() { return selectedBrowser; },
     get identity() { return identity; },

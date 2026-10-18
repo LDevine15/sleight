@@ -310,15 +310,15 @@ test('a real host: worker loss parks this session, the app pipe stays open, and 
     const admin = { calls: [], status: async () => h.host.status(), start: spec => h.host.start(spec), issue: args => h.host.issueTicket(args),
       revoke: async ({ session: name }) => { admin.calls.push(['revoke', name]); h.host.revokeSession(name); }, resume: () => h.host.resume(),
       quit: async () => assert.fail('the worker never quits the app') };
-    const fence = async () => ({ held: true, holder: session, leaseMs: 30000 });
     const playwright = { chromium: { async connectOverCDP(transport) { assert.equal(typeof transport.send, 'function'); return { contexts: () => [], async close() {} }; } } };
-    const real = { instanceFromRecipe: (recipe, options) => instanceFromRecipe(recipe, { ...options, inspect }), createElectronConnection, fenceOp: fence,
+    const real = { instanceFromRecipe: (recipe, options) => instanceFromRecipe(recipe, { ...options, inspect }), createElectronConnection,
       qualify: async () => ({ qualified: true }) };
     const select = turnId => runtime.selectAppConnection({ bundleId: 'invalid.fixture.app', session, turn: turnId, apps: ['invalid.fixture.app'], consent: consent.consent,
       registry, admin, playwright, windows: async () => JSON.stringify({ status: 'ok', observedAt: Date.now(), processStart: 'birth-1', windows: [] }), profile, dependencies: real });
     const asking = select('turn1'); await new Promise(resolve => setTimeout(resolve, 50)); consent.click(0, 'session');
     const connection = await asking;
     assert.equal(h.world.apps.length, 1, 'one launch, through the admin start');
+    assert.equal(connection.fence.acquire(session), true, "the host's own fence op granted the lease");
     // The worker process is lost: it releases what it can and the session is revoked at the host.
     await runtime.releaseAppConnection(connection); await admin.revoke({ session });
     assert.equal(h.host.broker.state, 'parked'); assert.equal(h.app.input.destroyed, false, 'the app pipe stays open');
@@ -332,13 +332,19 @@ test('a real host: worker loss parks this session, the app pipe stays open, and 
 });
 
 // Lines other lanes' files need for this path to run end to end (epv3-contracts.md: a failing expectation per missing line).
-test('electron-connection exposes the host fence op to the worker (provider.fence)', { todo: 'EPV3-7a: the client side of the { op: fence } channel op' }, async () => {
+test('electron-connection exposes the host fence op to the worker (provider.fence)', async () => {
   const h = await makeHost();
   try {
     await h.host.start({ build: 'fake-build' });
     const provider = await createElectronConnection({ handle: await h.host.issueTicket({ session }) });
     await provider.connect();
     assert.equal(typeof provider.fence, 'function');
+    const fence = runtime.createHostFence({ owner: session, op: action => provider.fence(action) });
+    assert.equal(await fence.renew(), true);
+    assert.equal(fence.acquire(session), true);
+    fence.release(session);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual(await provider.fence('acquire'), { held: true, holder: session, leaseMs: 30000 }, 'released, so free to take again');
     await provider.disconnect();
   } finally { h.host._crashForTest(); h.state.remove(); }
 });
