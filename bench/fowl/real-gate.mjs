@@ -17,7 +17,7 @@ import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
-import { taskSupport, raceBundles } from './support.mjs';
+import { taskSupport, raceBundles, isCodexSurface, CODEX_ARM_MODELS } from './support.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
@@ -28,7 +28,7 @@ const defaultArmHome = () => join(homedir(), 'Library/Caches/sleight-bench');
 // for the round and then goes back (bench/run.mjs does the same for the claim; first Firefox round, 2026-10-17: 12 of 12
 // "Computer Use was not approved to use Firefox"). Cua: its daemon must listen before the MCP proxy starts.
 export function roundArmPrep(plan, { armHome = defaultArmHome() } = {}) {
-  if (plan.surface === 'codex') return { approvals: raceBundles(plan.browser.browser) };
+  if (isCodexSurface(plan.surface)) return { approvals: raceBundles(plan.browser.browser) };
   if (plan.surface === 'cua') return { cuaDaemon: cuaDaemonPlan(nativeArmPlan('cua', { armHome }).cwd).start };
   if (plan.surface === 'peekaboo') return { host: 'Terminal.app (Peekaboo\'s grants)' };
   return {};
@@ -100,7 +100,7 @@ export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, r
       ...(args['chrome-local-state'] ? { localState: args['chrome-local-state'] } : {}) };
     const setup = realAgentSetup({ task, surface, dir, realBrowser: browser, repo, armHome, dryRun, mcpRoot, chromeFiles,
       model: args.model || 'haiku', effort: args.effort || 'high' });
-    return { ...setup, args: surface === 'codex' ? setup.args : [...setup.args, setup.prompt],
+    return { ...setup, args: isCodexSurface(surface) ? setup.args : [...setup.args, setup.prompt],
       task, surface, dir };
   });
   return { mode: 'real-browser', out, browser, arms, unsupported, mcpRoot, surface };
@@ -140,8 +140,8 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
   writeFileSync(events, '');
   let groupClean;
   try {
-    if (plan.surface === 'codex') {
-      const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: 'gpt-6-luna', effort: 'high', home: codexHome(),
+    if (isCodexSurface(plan.surface)) {
+      const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: CODEX_ARM_MODELS[plan.surface], effort: 'high', home: codexHome(),
         signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
         onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') }));
       groupClean = run.groupClean;
@@ -219,7 +219,7 @@ export async function admitRealGate(plan, { terminal = terminalAncestor } = {}) 
   const setups = plan.arms;
   if (plan.surface === 'peekaboo' && !terminal()) throw Error('Peekaboo\'s grants are on Terminal.app, so its rounds run from a Terminal window: ' +
     'put the rounds.sh command in a .command file and run: open -a Terminal <file>.command');
-  if (plan.surface === 'codex') {
+  if (isCodexSurface(plan.surface)) {
     if (codexConfigServers(codexHome()).length !== 1 || !existsSync(join(codexHome(), 'auth.json'))) throw Error('Codex benchmark home needs its isolated engine server and login');
   } else {
     assertWorldCLI(setups[0].command);

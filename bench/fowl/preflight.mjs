@@ -24,7 +24,7 @@ export async function fowlPreflight({ tasks, world = false, remote, home = homed
   if (!remote) {
     const browsers = [...new Set(tasks.filter(task => !['browser-use', 'sleight-turbo'].includes(task.surface)).map(task => task.browser))];
     for (const browser of browsers) await fowlSocket(browser, { home });
-    if (tasks.some(task => ['sleight', 'codex', 'codex-agent'].includes(task.surface))) await engineSockets();
+    if (tasks.some(task => ['sleight', 'codex', 'codex-sol', 'codex-agent'].includes(task.surface))) await engineSockets();
   }
   const seen = new Set();
   for (const task of tasks.filter(task => task.surface !== 'codex-agent' && account(task))) {

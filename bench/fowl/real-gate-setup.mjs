@@ -51,14 +51,16 @@ export async function withClaudeManifest(plan, run, { backup = withManifestBacku
   });
 }
 
-import { REAL_BROWSER_ARMS } from './support.mjs';
+import { REAL_BROWSER_ARMS, CODEX_ARM_MODELS, isCodexSurface } from './support.mjs';
 export const REAL_SURFACES = REAL_BROWSER_ARMS;
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
-export function codexBrowserSetup({ dir, prompt, realBrowser }) {
+export function codexBrowserSetup({ dir, prompt, realBrowser, surface = 'codex' }) {
   prompt = windowPrompt(realBrowser) + prompt;
-  return { command: 'codex', args: codexExecPlan(prompt, { cwd: dir, model: 'gpt-6-luna', effort: 'high' }),
-    prompt, mcpConfig: null, mcpConfigFile: join(codexHome(), 'config.toml'), env: { CODEX_HOME: codexHome() }, metadata: { model: 'gpt-6-luna', effort: 'high',
+  const model = CODEX_ARM_MODELS[surface];
+  if (!model) throw Error(`Unknown Codex arm: ${surface}`);
+  return { command: 'codex', args: codexExecPlan(prompt, { cwd: dir, model, effort: 'high' }),
+    prompt, mcpConfig: null, mcpConfigFile: join(codexHome(), 'config.toml'), env: { CODEX_HOME: codexHome() }, metadata: { model, effort: 'high',
       configDir: codexHome(), browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
       profileMode: realBrowser.profileMode || 'fresh', browserVersion: realBrowser.version ?? null, headless: false, focus: 'not measured' } };
 }
@@ -75,7 +77,7 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
   const browserName = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox', safari: 'Safari' }[realBrowser.browser];
   const prompt = task.prompt.replaceAll('{browser}', browserName).replaceAll('{repo}', repo).replaceAll('{out}', dir) +
     `\n\nEnd your answer with one line starting with RESULT: that states ${task.result}.`;
-  if (surface === 'codex') return codexBrowserSetup({ dir, prompt, realBrowser });
+  if (isCodexSurface(surface)) return codexBrowserSetup({ dir, prompt, realBrowser, surface });
   const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(key =>
     typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
   const engine = surface === 'sleight';

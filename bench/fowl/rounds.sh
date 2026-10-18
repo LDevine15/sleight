@@ -1,7 +1,7 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
 # (bench/fowl/sleight-surface.patch). Claude arms run on the owner's account login with no CLAUDE* variables from the host session.
-# Real gate: --real-browser chrome|helium|firefox|safari --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex|fowlbrowser|claude-in-chrome
+# Real gate: --real-browser chrome|helium|firefox|safari --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex|codex-sol|fowlbrowser|claude-in-chrome
 #   [--real-profile fresh|benchmark] [--dry-run]. benchmark (Chrome only) copies the "sleight benchmark" profile per round.
 #   Peekaboo's grants are on Terminal.app, so its rounds run from a Terminal window (`open -a Terminal x.command`); the gate
 #   refuses otherwise. A Codex round sets the engine's Always allow list to the round's apps and restores it; a Cua round

@@ -48,6 +48,13 @@ for (const task of [
   });
   assert.deepEqual(calls, []);
 });
+for (const surface of ['codex', 'codex-sol']) test(`${surface} checks the engine sockets like any Codex arm`, async () => {
+  const calls = [];
+  await fowlPreflight({ tasks: selectedTasks([{ name: 'engine', browser: 'chrome', surface }], {}), home: '/fixture' }, {
+    spend() { calls.push('spend'); }, engineSockets() { calls.push('engine'); }, login() {}, fowlSocket() {},
+  });
+  assert.ok(calls.includes('engine') && !calls.includes('spend'));
+});
 test('unsupported API arms do not change funding or socket admission for a runnable account task', async () => {
   const tasks = [{ name: 'login', browser: 'chrome', surface: 'claude-cu' },
     { name: 'unsupported', browser: 'native', surface: 'browser-use' },

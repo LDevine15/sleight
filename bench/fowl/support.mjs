@@ -1,7 +1,11 @@
 // Shared by the patched runner and admission. Unsupported tasks remain in the
 // runner's input so it can write their not-supported rows without agent setup.
 const BROWSER_ARMS = ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu', 'browser-use'];
-export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex', 'fowlbrowser', 'claude-in-chrome'];
+export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex', 'codex-sol', 'fowlbrowser', 'claude-in-chrome'];
+// The Codex arms are one arm on two models (LAWS, 2026-10-18): codex = gpt-6-luna, codex-sol = gpt-6.1-sol, both at effort high
+// with the same CODEX_HOME and approvals. The surface name is the row's arm label, so the scorer keeps the two apart.
+export const CODEX_ARM_MODELS = { codex: 'gpt-6-luna', 'codex-sol': 'gpt-6.1-sol' };
+export const isCodexSurface = surface => Object.hasOwn(CODEX_ARM_MODELS, surface);
 // The apps a competitor arm may be approved for in a real-window round: the round's own browser plus the hand-off tasks'
 // native apps, the same ones sleight's hook (origin-hook.mjs) accepts. All are on the benchmark's allowlist (bench/tasks.mjs).
 const RACE_BROWSERS = { chrome: ['Google Chrome', 'com.google.Chrome'], helium: ['Helium', 'net.imput.helium'],

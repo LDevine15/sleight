@@ -138,7 +138,16 @@ const ARMS = {
     };
   })(),
 };
-const armNames = armOption === 'all' ? ['sleight', 'lcu'] : armOption.split(',');
+// The Codex arm matches Haiku's class: gpt-6-luna at Claude's effort (owner, 2026-10-11). A second Codex arm runs gpt-6.1-sol
+// (LAWS, 2026-10-18). Each model scores as its own arm: `--arm codex --codex-model gpt-6.1-sol` is recorded as codex-sol, so the
+// claim scorer (it keys on the arm name) never mixes the two.
+const CODEX_SOL = 'gpt-6.1-sol';
+const codexModelOption = option('codex-model', undefined);
+const armNames = (armOption === 'all' ? ['sleight', 'lcu'] : armOption.split(','))
+  .map(name => name === 'codex' && codexModelOption === CODEX_SOL ? 'codex-sol' : name);
+if (armNames.includes('codex-sol') && codexModelOption && codexModelOption !== CODEX_SOL) throw new Error(`the codex-sol arm runs ${CODEX_SOL}, not ${codexModelOption}`);
+ARMS.codex.codexModel = codexModelOption ?? 'gpt-6-luna';
+ARMS['codex-sol'] = { ...ARMS.codex, codexModel: CODEX_SOL };
 const guardedPass = world || armNames.includes('claude-cu') || armNames.some(name => /^(plugin|mcp):/.test(name) || isNativeArm(name));
 const preparationErrors = [];
 let codexCleanConfig;
@@ -212,8 +221,6 @@ const realSurfaces = option('surfaces', 'computer');
 if (!['computer', 'browser,computer'].includes(realSurfaces)) throw new Error('--surfaces must be computer or browser,computer');
 const model = option('model', 'claude-haiku-5-5');
 const effort = option('effort', 'high');
-// The Codex arm matches Haiku's class: gpt-6-luna at Claude's effort (owner, 2026-10-11).
-const codexModel = option('codex-model', 'gpt-6-luna');
 const codexEffort = option('codex-effort', effort);
 const wanted = option('tasks', undefined)?.split(',');
 const claudeBin = world ? worldCLI(ARM_HOME) : process.env.CLAUDE_BIN || 'claude';
@@ -491,7 +498,7 @@ const save = (final = false) => {
   }
   const json = JSON.stringify({ stamp, ...(['real', 'world'].includes(suite) ? { suite, surfaces: realSurfaces, ownerAway, ownerPresent } : {}),
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
-    arms: armNames, ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
+    arms: armNames, ...(armNames.some(name => ARMS[name].codex) && { codexModels: Object.fromEntries(armNames.filter(name => ARMS[name].codex).map(name => [name, ARMS[name].codexModel])) }), ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
     ...(hygieneError && { hygieneError }),
     ...(calculatorGate && { liveConditions }), ...(passCleanupErrors.length && { passCleanupErrors }),
@@ -602,7 +609,7 @@ pass: for (let run = 1; run <= runs; run++) {
             const cpu = footprint(task.privateMail ? [] : [ctx.sim?.app ?? task.app], ARMS[armName].codex ? 'codex' : 'claude');
             const stopWatching = guardedPass ? watchAppWindows(ctx.sim?.app ?? task.app) : undefined;
             if (ARMS[armName].codex) {
-              const response = await runCodex(prompt, { cwd: ARMS[armName].cwd, model: codexModel, effort: codexEffort, timeoutMs: task.timeoutMs ?? TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
+              const response = await runCodex(prompt, { cwd: ARMS[armName].cwd, model: ARMS[armName].codexModel, effort: codexEffort, timeoutMs: task.timeoutMs ?? TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn, auditDrag: suite === 'world' && task.id === 'textedit-window-drag' });
               response.timing = runTiming(response.out);
               response.footprint = await cpu.finish();
               if (stopWatching) response.appWindows = await stopWatching();
@@ -632,6 +639,7 @@ pass: for (let run = 1; run <= runs; run++) {
         const { out, code, forbidden: _forbidden, ...rest } = result;
         if (task.noScreenshot) { delete rest.screenshot; delete rest.cartShot; }
         results.push(task.privateMail ? privateMailResult(task, ctx, result, { arm: armName, run }) : { arm: armName, task: task.id, run, ...rest,
+          ...(ARMS[armName].codex && { codexModel: ARMS[armName].codexModel }),
           ...(suite === 'world' && { half: task.half, timeoutMs: task.timeoutMs }),
           ...((task.surface || ctx.webKind) && { surface: task.surface ?? 'native' }),
           ...(isDryRun && ARMS[armName].generic && { command: [claudeBin, ...ARMS[armName].args, '--disallowedTools', OUTSIDE_TOOLS.join(','), '--settings', ARMS[armName].settings] }),
@@ -686,7 +694,7 @@ pass: for (let run = 1; run <= runs; run++) {
       const stopWatching = watchAppWindows(ctx.sim?.app ?? task.app);
       // sleight traces into the run's scratch folder, so its timing comes from this run alone.
       const cpu = footprint([ctx.sim?.app ?? task.app], arm.codex ? 'codex' : 'claude');
-      const codexRun = arm.codex ? await runCodex(prompt, { cwd: arm.cwd, model: codexModel, effort: codexEffort, timeoutMs: TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn }) : undefined;
+      const codexRun = arm.codex ? await runCodex(prompt, { cwd: arm.cwd, model: arm.codexModel, effort: codexEffort, timeoutMs: TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn }) : undefined;
       const { code, out, stderr, groupClean = true, cancelled, stamps } = codexRun ?? await runClaude(prompt, arm, armName === 'sleight' ? { SLEIGHT_TRACE: dir } : {}, { onSpawn: cpu.onSpawn });
       const cpuUsed = await cpu.finish();
       const appWindows = await stopWatching();
@@ -719,7 +727,7 @@ pass: for (let run = 1; run <= runs; run++) {
         answer: scrub(answer.slice(0, 300)),
         // What Claude Code reports it used, to catch a model setting that didn't apply.
         models: Object.keys(out?.modelUsage ?? {}),
-        ...(codexRun && { toolCalls: codexRun.toolCalls, engineMs: codexRun.engineMs }),
+        ...(codexRun && { toolCalls: codexRun.toolCalls, engineMs: codexRun.engineMs, codexModel: arm.codexModel }),
         stderr: code === 0 ? undefined : scrub(stderr),
       });
       finishRun(results.at(-1));
