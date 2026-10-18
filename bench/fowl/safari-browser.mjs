@@ -196,6 +196,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
         const result = await bridge.request('quit', { quitMs });
         if (result.browserClosed !== true) throw Error('normal quit unproved');
         receipt.browserClosed = true; collected = true;
+        if (result.unsubmittedFormQuitConfirmed === true) receipt.unsubmittedFormQuitConfirmed = true;
       } catch (error) { receipt.error = error.message; throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
     }
     try { await bridge?.close(); } catch (error) { throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }

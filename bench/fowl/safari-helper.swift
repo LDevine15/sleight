@@ -285,19 +285,35 @@ func launch() throws -> [String: Any] {
     guard let date = birth, date >= started else { throw refuse("BENCH_SAFARI_LAUNCH_DATE_UNPROVED") }
     return ["pid": app.processIdentifier, "executable": executable, "launchDate": date.timeIntervalSince1970]
 }
+// A task that typed into a form leaves Safari asking "Are you sure you want to quit Safari? You have entered text on ..."
+// (AXDialog UnsubmittedFormTextAlert), which blocks the quit for good (2026-10-18: form-checkout left Safari running). That alert
+// is about the benchmark page in the process this helper launched; confirming it only discards the round's own form text.
+func confirmUnsubmittedFormQuit() -> Bool {
+    guard let ax = try? ownedAX() else { return false }
+    for window in elements(ax, "AXWindows") where string(window, "AXIdentifier") == "UnsubmittedFormTextAlert" && string(window, "AXSubrole") == "AXDialog" {
+        for button in elements(window) where string(button, "AXIdentifier") == "ConfirmButton" && string(button, "AXTitle") == "Quit" {
+            return AXUIElementPerformAction(button, "AXPress" as CFString) == .success
+        }
+    }
+    return false
+}
 func quit(_ seconds: Double) throws -> [String: Any] {
     guard !launchPending else { throw refuse("BENCH_SAFARI_LAUNCH_PENDING") }
     guard owned != nil || !launchRequested else { throw refuse("BENCH_SAFARI_LAUNCH_UNRECEIPTED") }
+    var confirmed = false
     if let app = owned {
         if !app.isTerminated {
             _ = try ownedApplication()
             guard app.terminate() else { throw refuse("BENCH_SAFARI_QUIT_REFUSED") }
             let deadline = Date().addingTimeInterval(seconds)
-            while !app.isTerminated && Date() < deadline { pump(0.025) }
+            while !app.isTerminated && Date() < deadline {
+                if !confirmed && confirmUnsubmittedFormQuit() { confirmed = true }
+                pump(0.025)
+            }
             guard app.isTerminated else { throw refuse("BENCH_BROWSER_CLEANUP_UNPROVED") }
         }
     }
-    return ["browserClosed": true]
+    return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed]
 }
 func command(_ input: [String: Any]) throws -> [String: Any] {
     switch input["op"] as? String {

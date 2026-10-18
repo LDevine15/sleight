@@ -273,6 +273,13 @@ test('failed Safari collection retains the harness and never deletes the dedicat
   assert.ok(!f.calls.some(([op]) => op === 'bridge-closed'));
 });
 
+test('a quit that needed the unsubmitted-form alert confirmed is recorded in the collection receipt', async t => {
+  const f = fixture(t), request = f.bridge.request, browser = await launchRealBrowser(f.plan, f.options);
+  f.bridge.request = async (op, input) => op === 'quit' ? (await request(op, input), { browserClosed: true, unsubmittedFormQuitConfirmed: true }) : request(op, input);
+  await browser.stop();
+  assert.equal(browser.collections.at(-1).unsubmittedFormQuitConfirmed, true);
+});
+
 test('Safari stop is idempotent after proven collection', async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   const first = await browser.stop();
