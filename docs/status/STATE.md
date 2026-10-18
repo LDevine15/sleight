@@ -28,8 +28,12 @@ Peekaboo 47, Codex 65. spotify-play sleight 27, Codex 41, LCU 55, Cua 112. Total
 `~/Projects/sleight-wt/app-claim/app-score-1018.txt`, failure causes in the ledger (APP-CLAIM). Open owner question: whether "fastest"
 counts the app tasks with the 9 native ones (sleight wins 11 of 12 either way).
 
-**Browser race.** In Firefox, LCU r1 and Codex r1 are done and Cua r1 started 03:41Z. `touch ~/Projects/sleight-wt/race-1017/pause`
-holds the rounds between arms, and removing it resumes them.
+**Browser race.** Firefox: sleight's 3 rounds ran on the release build (`~/Projects/sleight-wt/race-rel`, 28e19c99), 04:13-04:50Z.
+After one round per arm, sleight is fastest on 5 of 12 (Codex 4, LCU 2, Cua 1). LCU, Codex and Cua rounds 2-3 run from 04:50Z
+(`race-firefox-comp.sh`), and Peekaboo's 3 rounds wait in a Terminal window (`race-firefox-peekaboo.command`). Chrome's step 1
+(sleight-turbo, FowlBrowser, Claude in Chrome x3) waits in another Terminal window until both Firefox logs say done
+(`race-browser.sh`, log `race-chrome-1.log`). `touch ~/Projects/sleight-wt/race-1017/pause` pauses every script between rounds.
+Loss studies start when Firefox finishes, and only lost tasks get tuned (owner, LAWS).
 
 Order from here:
 1. The Firefox race: competitor rounds (cua r1 overlapped a full check at load 5, so rerun it if it scores within 20% of sleight), then
