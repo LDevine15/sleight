@@ -70,10 +70,32 @@ function quitFixtureApplication(pid, bundle, application, clock) {
         ', bundle ' + actualBundle + ' vs ' + bundle + ')');
     }
   }
+  var windowless;
   function receipt(reason) {
-    clock.emit({ stage: 'quit', quitWait: { reason: reason, accepted: accepted,
-      elapsedMs: clock.now() - started, finishedLaunching: finishedLaunching } });
+    var wait = { reason: reason, accepted: accepted, elapsedMs: clock.now() - started, finishedLaunching: finishedLaunching };
+    if (windowless) wait.windowless = windowless;
+    clock.emit({ stage: 'quit', quitWait: wait });
   }
+  // The exact process this run launched: its pid and bundle, and the launch time the setup recorded.
+  function launchedByThisRun(target) {
+    var date = target.launchDate;
+    return clock.startedAtMs > 0 && !!date && !(date.isNil && date.isNil()) &&
+      Math.abs(Number(date.timeIntervalSince1970) * 1000 - clock.startedAtMs) < 1;
+  }
+  function force(reason) {
+    if (clock.check) clock.check();
+    if (!target.forceTerminate) { receipt('deadline'); throw new Error('Launched app refused force termination after thirty seconds'); }
+    var forcedAt = clock.now();
+    while (clock.now() - forcedAt < 5000) {
+      target = application();
+      if (!target) { receipt(reason); return true; }
+      identity(target);
+      clock.wait(100);
+    }
+    receipt('deadline');
+    throw new Error('Launched app still running five seconds after force termination');
+  }
+  var office = /^com\.microsoft\.(Word|Excel|Powerpoint)$/.test(bundle);
   if (clock.check) clock.check();
   var target = application();
   if (!target) { receipt('already-exited'); return true; }
@@ -88,28 +110,41 @@ function quitFixtureApplication(pid, bundle, application, clock) {
     target = application();
     if (!target) { receipt('exited'); return true; }
     identity(target);
+    // Word ignored a quit with no windows left after its fixture's Don't Save sheet was answered (2026-10-18, by hand: AX
+    // press, terminate, then forceTerminate). With no window there is no document to recover, so after ten seconds the exact
+    // launched process is force-terminated. With any window, or an unproven launch time, Office keeps the stop below.
+    if (office && clock.windowless && clock.now() - started >= 10000 && launchedByThisRun(target)) {
+      windowless = clock.windowless(target);
+      if (windowless && windowless.none === true) return force('force-terminated-windowless');
+    }
     var remaining = 30000 - (clock.now() - started);
     if (remaining <= 0) break;
     clock.wait(Math.min(100, remaining));
   }
   // A launched app that accepted the quit and is still up after 30 s is stuck: TextEdit deadlocked in a save, and TextEdit and
   // Preview sat in a background menu (2026-10-16). This run launched it with only its fixtures, so it is force-terminated by
-  // the same pid and bundle. Word and Excel keep the stop, because a forced end leaves recovery files that broke later runs.
-  if (/^com\.microsoft\.(Word|Excel|Powerpoint)$/.test(bundle)) {
+  // the same pid and bundle. Word and Excel with a window keep the stop, because a forced end leaves recovery files that
+  // broke later runs.
+  if (office) {
     receipt('deadline');
     throw new Error('Launched app quit unconfirmed after thirty seconds (normal quit accepted; finishedLaunching=' + finishedLaunching + ')');
   }
-  if (clock.check) clock.check();
-  if (!target.forceTerminate) { receipt('deadline'); throw new Error('Launched app refused force termination after thirty seconds'); }
-  var forcedAt = clock.now();
-  while (clock.now() - forcedAt < 5000) {
-    target = application();
-    if (!target) { receipt('force-terminated'); return true; }
-    identity(target);
-    clock.wait(100);
-  }
-  receipt('deadline');
-  throw new Error('Launched app still running five seconds after force termination');
+  return force('force-terminated');
+}
+
+// No window by both counts: the app's AX window list reads as empty, and the window server shows no on-screen layer-0
+// window for the pid (a sheet or alert is one). An unreadable list counts as windows present.
+function windowlessProcess(pid) {
+  var app = $.AXUIElementCreateApplication(pid);
+  $.AXUIElementSetMessagingTimeout(app, 0.5);
+  var value = Ref(), code = Number($.AXUIElementCopyAttributeValue(app, $('AXWindows'), value));
+  var list = code === 0 ? ObjC.castRefToObject(value[0]) : null;
+  var axWindows = list ? Number(list.count) : -1;
+  var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, $.kCGNullWindowID);
+  var onScreen = raw && !(raw.isNil && raw.isNil()) ? ObjC.deepUnwrap(ObjC.castRefToObject(raw)).filter(function (window) {
+    return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0;
+  }).length : -1;
+  return { none: axWindows === 0 && onScreen === 0, axWindows: axWindows, onScreen: onScreen, axCode: code };
 }
 
 function officeDeadlineError(state) {
@@ -345,7 +380,11 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
   step('identity');
   if (!api.matches(window, request, true)) throw new Error('Owned fixture document identity changed');
   var noDialog = function () {
-    if (request.refuseDialogs && api.dialog(app, window, request).length) throw new Error('Application dialog present; fixture cleanup refused');
+    var found = request.refuseDialogs ? api.dialog(app, window, request) : [];
+    // The refusal names what it saw, so the next fix is measured (Word's save sheets, 2026-10-18).
+    if (found.length) throw new Error('Application dialog present; fixture cleanup refused (' + found.map(function (item) {
+      return item.category + ' "' + item.title + '" [' + (item.buttons || []).join(', ') + ']';
+    }).join('; ') + ')');
   };
   var identity = function () { noDialog(); validateOwnedFixture(window, request, app, api, false); };
   var discardIdentity = function () {
@@ -354,14 +393,14 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
       epoch = api.readEpoch ? api.readEpoch() : 0;
       identity();
       if (request.mode === 'document') {
-        var focused = api.focused(app), sheet = api.discardable(window, request);
+        var focused = api.focused(app), sheet = api.discardable(window, request, app);
         if (!api.equal(focused, window) && !api.equal(focused, sheet)) throw new Error('Owned document lost focus; cleanup refused');
       }
     } while (api.readEpoch && api.readEpoch() !== epoch);
   };
   step('close');
-  if (request.refuseDialogs && api.discardable && api.discardable(window, request)) {
-    api.discard(window, discardIdentity, request);
+  if (request.refuseDialogs && api.discardable && api.discardable(window, request, app)) {
+    api.discard(window, discardIdentity, request, app);
   } else if (request.mode === 'document') {
     var sibling = raiseOverSibling(window, request, app, api);
     var validate = function () {
@@ -383,8 +422,8 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
       continue;
     }
     noDialog();
-    if (!request.refuseDialogs || (api.discardable && api.discardable(window, request))) {
-      api.discard(window, request.refuseDialogs ? discardIdentity : identity, request);
+    if (!request.refuseDialogs || (api.discardable && api.discardable(window, request, app))) {
+      api.discard(window, request.refuseDialogs ? discardIdentity : identity, request, app);
     }
   }
   throw new Error(sheetLeft ? HIDDEN_SHEET : 'Owned fixture window is still open');
@@ -462,20 +501,65 @@ function dialogContents(element, api) {
   return result;
 }
 
-// Only an attached save sheet on the exact nonce-bearing file can bypass a dialog refusal.
-function fixtureDiscardSheet(window, request, api) {
+var DISCARD_TITLES = ["Don't Save", 'Don’t Save'];
+// Buttons a save prompt may carry besides Don't Save. Untitled buttons are icons and help; any other title keeps the refusal.
+var SAVE_PROMPT_TITLES = DISCARD_TITLES.concat(['Save', 'Save…', 'Save...', 'Save As…', 'Save As...', 'Cancel', '']);
+
+// Four Word cleanups refused the fixture's own save sheet as an app dialog (2026-10-18 claim runs), and Word answered -25205
+// for a window's AXSheets at launch (2026-10-17). Where its sheet sits isn't measured, so a sheet counts as attached when
+// AXSheets lists it, the window's children hold it, or the focused window is a sheet whose parent is this window. A focused
+// alert (AXDialog) is marked as one, and must name the fixture file and nonce in its text.
+function attachedSheets(window, app, api) {
+  var sheets = api.children(window, 'AXSheets');
+  if (sheets.length) return { sheets: sheets, source: 'AXSheets' };
+  sheets = api.children(window).filter(function (child) { return api.text(child, 'AXRole') === 'AXSheet'; });
+  if (sheets.length) return { sheets: sheets, source: 'AXChildren' };
+  var focused = app && api.read ? api.read(app, 'AXFocusedWindow') : null;
+  if (!focused || api.equal(focused, window)) return { sheets: [], source: null };
+  var parent = function () { try { return api.read(focused, 'AXParent'); } catch (error) { if (error.code === -25205) return null; throw error; } };
+  if (api.text(focused, 'AXRole') === 'AXSheet' && api.equal(parent(), window)) return { sheets: [focused], source: 'focused sheet' };
+  if (api.text(focused, 'AXSubrole') === 'AXDialog') return { sheets: [focused], source: 'focused alert', alert: true };
+  return { sheets: [], source: null };
+}
+
+// Only a save prompt attached to the exact nonce-bearing file can bypass a dialog refusal: the window's AXDocument is the
+// fixture path, its title carries the run nonce, and the prompt has exactly one Don't Save and no unknown button.
+function fixtureDiscardSheet(window, request, api, app) {
+  var located = fixtureDiscardPrompt(window, request, api, app);
+  return located ? located.sheet : null;
+}
+
+function fixtureDiscardPrompt(window, request, api, app) {
   var token = request.runToken || request.token;
   if (!window || !token || !request.target || request.target[0] !== '/') return null;
-  var document = api.path(api.text(window, 'AXDocument')), expected = api.path(request.target);
-  if (!document || document !== expected || api.text(window, 'AXTitle').indexOf(token) === -1) return null;
-  var sheets = api.children(window, 'AXSheets');
-  if (sheets.length !== 1 || api.text(sheets[0], 'AXRole') !== 'AXSheet') return null;
-  var content = dialogContents(sheets[0], api), buttons = content.buttons;
-  if (buttons.length !== 3 || buttons.filter(function (title) { return title === 'Save'; }).length !== 1 ||
-      buttons.filter(function (title) { return title === 'Cancel'; }).length !== 1 ||
-      buttons.filter(function (title) { return title === "Don't Save" || title === 'Don’t Save'; }).length !== 1 ||
-      appDialogCategory({ subrole: 'AXDialog', title: api.text(sheets[0], 'AXTitle'), text: content.text, buttons: buttons }) !== 'application-result') return null;
-  return sheets[0];
+  var document = api.path(api.text(window, 'AXDocument')), expected = api.path(request.target), title = api.text(window, 'AXTitle');
+  if (!document || document !== expected || title.indexOf(token) === -1) return null;
+  var found = attachedSheets(window, app, api);
+  if (found.sheets.length !== 1) return null;
+  var sheet = found.sheets[0];
+  if (!found.alert && api.text(sheet, 'AXRole') !== 'AXSheet') return null;
+  var content = dialogContents(sheet, api), buttons = content.buttons;
+  if (buttons.filter(function (name) { return DISCARD_TITLES.indexOf(name) !== -1; }).length !== 1 ||
+      buttons.some(function (name) { return SAVE_PROMPT_TITLES.indexOf(name) === -1; }) ||
+      appDialogCategory({ subrole: 'AXDialog', title: api.text(sheet, 'AXTitle'), text: content.text, buttons: buttons }) !== 'application-result') return null;
+  if (found.alert) {
+    var name = request.target.split('/').pop(), stem = name.lastIndexOf('.') > 0 ? name.slice(0, name.lastIndexOf('.')) : name;
+    var said = content.text.join('\n');
+    if (said.indexOf(stem) === -1 || said.indexOf(token) === -1) return null;
+  }
+  return { sheet: sheet, source: found.source, windowTitle: title, buttons: buttons };
+}
+
+function discardButtons(sheet, api) {
+  var result = [], visited = 0;
+  (function visit(current, depth) {
+    if (depth < 0 || ++visited > 512) throw new Error('Application dialog inspection exceeded its bound');
+    api.children(current).forEach(function (child) {
+      if (api.text(child, 'AXRole') === 'AXButton' && DISCARD_TITLES.indexOf(api.text(child, 'AXTitle')) !== -1) result.push(child);
+      visit(child, depth - 1);
+    });
+  })(sheet, 8);
+  return result;
 }
 
 function recoverFixtureApplications(request, api, clock) {
@@ -518,8 +602,8 @@ function recoverFixtureApplications(request, api, clock) {
       guarded.closeButton = function (window, validate) {
         api.closeButton(window, function () { inventory(); validate(); });
       };
-      guarded.discard = function (window, validate, closeRequest) {
-        api.discard(window, function () { inventory(); validate(); }, closeRequest);
+      guarded.discard = function (window, validate, closeRequest, app) {
+        api.discard(window, function () { inventory(); validate(); }, closeRequest, app);
       };
       closeOwnedWindow(item.window, item.request, plan.app, guarded);
     });
@@ -604,7 +688,7 @@ function nativeAX(state, clock) {
     }
     var found = [];
     var safeSheet;
-    try { safeSheet = state.cleanup && owned && fixtureDiscardSheet(owned, request, { text: text, children: children, path: path }); }
+    try { safeSheet = state.cleanup && owned && fixtureDiscardSheet(owned, request, { text: text, children: children, path: path, read: read, equal: equal }, app); }
     catch (error) { if (error.code !== -25202) throw error; }
     for (var index = 0; index < candidates.length; index++) {
       var candidate = candidates[index];
@@ -625,6 +709,7 @@ function nativeAX(state, clock) {
     }
     return found;
   }
+  function equal(a, b) { return !!a && !!b && !!$.CFEqual(a, b); }
   function fileMenu(app, titles, beforePress, refuseDialogs) {
     var bar = read(app, 'AXMenuBar');
     var files = children(bar).filter(function (item) { return text(item, 'AXTitle') === 'File'; });
@@ -678,6 +763,7 @@ function nativeAX(state, clock) {
     return request.mode === 'inherit' || title.indexOf(request.token) !== -1 ||
       (retained === true && request.mode === 'folder' && title === 'Archive');
   }
+  var promptApi = { text: text, children: children, path: path, read: read, equal: equal };
   return {
     read: read, text: text, press: press, fileMenu: fileMenu, path: path,
     applications: function () {
@@ -790,20 +876,32 @@ function nativeAX(state, clock) {
       }
       return sheet;
     },
-    discardable: function (window, request) { return fixtureDiscardSheet(window, request, { text: text, children: children, path: path }); },
-    discard: function (window, validate, request) {
+    discardable: function (window, request, app) { return fixtureDiscardSheet(window, request, promptApi, app); },
+    discard: function (window, validate, request, app) {
+      if (request && request.refuseDialogs) {
+        var prompt = fixtureDiscardPrompt(window, request, promptApi, app);
+        if (!prompt) {
+          if (!attachedSheets(window, app, promptApi).sheets.length) return;
+          throw new Error('Unexpected owned fixture sheet; cleanup refused');
+        }
+        var discardButton = discardButtons(prompt.sheet, promptApi);
+        if (discardButton.length !== 1) throw new Error('Unexpected owned fixture sheet; cleanup refused');
+        if (validate) validate();
+        var current = this.discardable(window, request, app);
+        if (!current || !$.CFEqual(prompt.sheet, current)) throw new Error('Owned fixture sheet identity changed');
+        var pressed = text(discardButton[0], 'AXTitle');
+        press(discardButton[0]);
+        if (clock && clock.emit) clock.emit({ stage: 'fixture-sheet', fixtureSheet: { pressed: pressed, source: prompt.source,
+          windowTitle: prompt.windowTitle, buttons: prompt.buttons } });
+        return;
+      }
       var sheets = children(window, 'AXSheets');
       if (!sheets.length) return;
       if (sheets.length !== 1) throw new Error('Unexpected owned fixture sheets');
-      if (request && request.refuseDialogs && !this.discardable(window, request)) throw new Error('Unexpected owned fixture sheet; cleanup refused');
-      var discardButtons = buttons(sheets[0], ["Don't Save", 'Don’t Save'], 6);
-      if (discardButtons.length !== 1) throw new Error('Unexpected owned fixture sheet; cleanup refused');
+      var plain = buttons(sheets[0], DISCARD_TITLES, 6);
+      if (plain.length !== 1) throw new Error('Unexpected owned fixture sheet; cleanup refused');
       if (validate) validate();
-      if (request && request.refuseDialogs) {
-        var current = this.discardable(window, request);
-        if (!current || !$.CFEqual(sheets[0], current)) throw new Error('Owned fixture sheet identity changed');
-      }
-      press(discardButtons[0]);
+      press(plain[0]);
     },
   };
 }
@@ -837,6 +935,8 @@ function run(argv) {
       var value = $.NSRunningApplication.runningApplicationWithProcessIdentifier(request.pid);
       return value.isNil() || value.isTerminated ? null : value;
     }, { check: free, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit,
+      startedAtMs: Number(request.processStartedAtMs) || 0,
+      windowless: function () { return windowlessProcess(request.pid); },
       sameApp: function (target, bundle) {
         var url = target.bundleURL, expected = $.NSWorkspace.sharedWorkspace.URLForApplicationWithBundleIdentifier(bundle);
         if (!url || url.isNil() || !expected || expected.isNil()) return false;

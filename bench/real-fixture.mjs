@@ -121,6 +121,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       if (!lease.pid) throw new Error('Launched app identity unconfirmed; quit refused');
       const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', script,
         JSON.stringify({ bundle: lease.bundle || request.bundle, mode: 'quit', pid: Number(lease.pid),
+          ...(lease.processStartedAtMs > 0 && { processStartedAtMs: lease.processStartedAtMs }),
           ...(request.fixtureKind && { fixtureKind: request.fixtureKind, target: request.target }), ...(request.stopOnLiveHold && { stopOnLiveHold: true }) })], {
         signal: final ? undefined : ctx.cleanupSignal, timeoutMs: 35000,
       });
@@ -209,6 +210,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
           event.processHandoff?.fromPid, event.processHandoff?.toPid].filter(pid => Number.isInteger(pid) && pid > 0);
         if (recorded.length) { lease.pids = [...new Set([...lease.pids, ...recorded])]; diagnostics.pids = lease.pids; }
         if (event.processHandoff) diagnostics.processHandoff = event.processHandoff;
+        // A fixture save prompt the helper answered at cleanup: which button, on which window, from where.
+        if (event.fixtureSheet) (diagnostics.fixtureSheets ??= []).push(event.fixtureSheet);
         if (event.appDialog) {
           (diagnostics.appDialogs ??= []).push(event.appDialog);
           if (event.appDialog.stop !== false) diagnostics.appDialog = event.appDialog;
