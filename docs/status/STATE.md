@@ -3,97 +3,72 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 21:24 UTC, after the clear)
+## Banner (2026-10-18 23:20 UTC, flushed before the owner's clear)
 
-Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
-Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
-`~/Projects/sleight-wt/ledger/LEDGER.md` (every result, item and decision of 2026-10-18 is in the sections from APP-CLAIM on).
+Goal (owner): release 1.3.0, then the claim post and the launch video, then 1.3.1, then hold at 1.3.1 while the owner uses it.
+Owner (2026-10-18 evening): all building finishes now, and validation follows. The ledger
+(`~/Projects/sleight-wt/ledger/LEDGER.md`, sections from POST-1.3.0 BUILD on) records every result and ruling of the night.
 
-**Release line.** This worktree's branch is at `05e67bec` and pushed to `private` `pane/auto-mode`, with the main checkout fast-forwarded.
-The full check last passed on 9463c0c4 (8073 tests). Commits since then change only bench/fowl (cover record, Safari per-task
-PID), tests and docs. They passed 249 focused tests, and the full check waits until the timed rounds stop. Race worktree
-`~/Projects/sleight-wt/race-fx` moves to 05e67bec between rounds. Only the untracked `.playwright-mcp/`, `.vale/` and `node_modules`
-are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
+**Release line.** Branch `claude/boot-sleight-arch-6d0629` = `private` `pane/auto-mode` = main checkout, at the flush commit after
+`ffddc0e6`. The full check last passed on 9463c0c4 (8073 tests). Everything since on the release line is docs (STATE, LAWS, ROADMAP,
+storyboard, known-problems), bench/fowl harness (cover record, placement, Safari per-task PID) and MB1 (menu bar glove and menu,
+CHANGELOG). The flush ran the full check (see the flush commit). Race worktree `~/Projects/sleight-wt/race-fx` is pinned at 64396fa5.
+No open PRs.
 
-**Where the claim stands (all Haiku 5.5 high, real windows):**
-- Native 9 tasks: "fastest", 8 of 9, 251 s against claude-cu's 454 s on 995b4855 (lost preview-read 5.1 against Peekaboo's 4.4; its
-  study says the gap is model thinking every engine-tree arm shares). The build has changed since, so sleight's native arm reruns on
-  the final build before publishing.
-- App tasks (VS Code, Slack, Spotify): fastest on 3 of 3 (`~/Projects/sleight-wt/app-claim/app-score-1018.txt`).
-- Chrome turbo (b5, 0f706f6d): fastest on 12 of 13 against FowlBrowser, 39/39 passes, 247.6 against 441.8 s. Helium turbo (b5,
-  46ac78bf): 12 of 13, 241.8 against 363.3 s. Close pairs need 5-round top-ups. Claude in Chrome has no result (see owner items).
-- Firefox (sleight b3 on 326dde47, competitors 3 rounds): fastest on 10 of 12. Lost mdn (Codex 16.0 against 19.7) and
-  form-settings-helium, which only Cua passes. Fixes since (CT result trimming, EN lines, FM7, DRG drags) are unmeasured: sleight's
-  Firefox rounds rerun on the current build.
-- Safari: r1 for all four Terminal arms is set aside (`race-1017/failed-safari-pid-*`). Since the per-task relaunch, each prompt named
-  the first Safari's PID, and cua stopped on 11 of 12 tasks because that PID had no windows. 05e67bec replans each task. In
-  that r1, sleight and lcu both failed form-settings and form-settings-helium at the list's drag reorder. The Fable study found the
-  race's own Terminal window over Safari's list, and the engine's background drags miss in a covered window (known-problems,
-  Benchmark environment). AXRaise can't lift a background app's window over another app's (1/1). Since fea700fa every task's row
-  records the windows over the browser at its start (`cover`, report column "covered by"). Rounds don't raise or move windows.
-  Every task from 18:08Z to 19:35Z had two Finder run-folder windows over 41% of Safari. The owner said they weren't theirs, and
-  sleight-arch closed them by their AX close buttons at 19:35Z. The cover matters only for the two drag tasks. So each r2 of the
-  four Terminal arms is scored without form-settings and form-settings-helium (10 rows, `filtered.json` in the folder, originals in
-  `race-1017/failed-safari-finder`), and those two tasks rerun uncovered into `safari-<arm>-r2f`. Codex r1 (19:35Z) was the first
-  uncovered round: 7 of 12, cover "none". The owner added two 2560x1440 displays at about 20:05Z. From 64396fa5 (race-fx after
-  codex r3) each task first moves the round's own browser window to the least-covered spot on any display (TextEdit probe: 53%
-  covered to none), and the finished race `.command` Terminal windows close at that switch.
+**Branches built tonight, all pushed to `private`, none merged.** Each has a report in `ledger/p130/<id>-REPORT.md` and a Sonnet-high
+review recorded in the ledger.
+- Into 1.3.0 (race losses and security), merge first: `claude/p130-ft1` a4bf49b1 (form-travel: pickFromList first, renumbering
+  follow limited to one inserted block, `{ id }` mapping; reviewed twice), `claude/p130-fs1` (on ft1; form-settings: a user-asked
+  submit needs no more consent per the new LAWS form rule, drag tool for reorders, offscreen-row note; review fixes in flight at the
+  flush, check its report), `claude/p130-md1` 22c459f5 (mdn: partial-failure note, window line; reviewed), `claude/p130-sec130`
+  (SECURITY, since Claude could answer sleight's own menu and cards via menu_bar or getApp("consent-host"); review fixes in flight at the
+  flush), `claude/p130-es1` 59bbac27 (`turbo app on` refuses in 1.3.0; qualification disconnect cell), and the small lane branches
+  `codex/ff1` 6fe10b92, `codex/rg1r2` 0b60bbcf (on rg1 25c1683a), `codex/fl3` 028ec25f.
+- 1.3.1 (merge after the tag. The ghost hand branches go in as gh-c, then gh-a, then gh-b with `client: hand` passed to createRelayHand, then h8, sh1):
+  `claude/p130-gh-a` 3f3a2ad1, `claude/p130-gh-b` 4ce87780, `claude/p130-gh-c` b76b2770, `claude/p130-h8` 2188a456,
+  `claude/p130-sh1` 0f8d0a0d (shared host, hookup animation, Ghost Hand toggle), `claude/p130-rf1` ebd64df3 and `claude/p130-rf2`
+  7cba2e52 (Electron relaunch flow and the pipe keeper), `claude/p130-wk4` 7f17ce89 (stuck-menu Escape), `claude/p130-wb1` 377538ec
+  (Word steering, flags), `claude/p130-pm1` ccf2ed6f (Permissions; needs its own review), `claude/p130-so1` 5ca6468d (action outcomes
+  and log; needs a re-review), `claude/p130-spd` 4ac7bc82 (TS3 flag), `claude/p130-in1` 298271f6 (retired-ref refusal; could join
+  1.3.0), `claude/p130-cap1` 2bed084f (film capture recorder), `codex/el3` b06280ad, `codex/ga1t2` 5ced05fb, `codex/fa1` f2d7735e,
+  `codex/tt7` 6f205c02, `codex/wk2` 8407b890, `codex/am1fr3` ea6bc127. Closed with evidence: IN1, TT6, WK5, DR2, ET1, EL2, DC1 (live).
 
-**Running across a clear:**
-- The Terminal job finished r3 at 21:24Z. cua r3 broke on BENCH_SAFARI_KEY_WINDOW_UNPROVED after 3 tasks (harness), set aside in
-  `race-1017/failed-safari-harness`. Terminal job `race-safari-r1.command` (opened 21:24Z) reruns the four r1 rounds and cua r3
-  (log `race-safari-r1a.log`), then the r2f drag-task reruns, and writes `done` to `race-safari-r1.log` only at the end. After a clear, if that log doesn't exist once the term log says `done`, open it by hand.
-- Safari's Codex x3 finished at 20:21Z on the PID fix. r3 ran with the owner's Claude window over 44-75% of Safari, so its two
-  drag rows are dropped (`filtered.json`, original in `race-1017/failed-safari-cover`) and rerun as `safari-codex-r3f` from
-  sleight-arch's shell. race-fx is on 64396fa5 (placement on) since 20:21Z. The 14 finished race Terminal windows are closed.
-- Queued from sleight-arch's shell: sleight's Firefox b6 x3 (`race-firefox-b6.log`, after the safari-term, safari-codex and safari-r1
-  logs say `done`), then the sleight-in-Codex smoke in Firefox (both arms, wikipedia and form-checkout, `smoke-codex-sleight.sh`,
-  log `race-smoke-codex-sleight.log`). Its dry run passed, and `~/.codex-bench-sleight` was set up 17:53Z. A clear kills these
-  shell jobs: rerun the same commands (in `race-1017`, see each log's name).
-- `nohup` watchdog `race-1017/watchdog.sh` (pid 584, log `watchdog.log`): exits with an ALERT line if the live lock is held with no round
-  for 3 min, a round runs over 40 min, or Safari stays up with no round for 3 min. Nobody is woken after the clear, so read its log first.
-- `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds (tested 19:51Z: no round started in 90 s).
+**Where the claim stands (Haiku 5.5 high, real windows).** Native 9 tasks "fastest", 8 of 9, 251 s against claude-cu's 454 s (lost
+preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari, scored
+23:0xZ before the last reruns: sleight fastest on 9 of 12 by expected time and the only arm that passed all 12 tasks; by the owner's loss
+rule (lower expected time or a faster passing run) it loses form-travel and mdn to Codex, form-settings to cua (expected time), and
+form-checkout to one 42.3 s lcu pass. Fixes for all four are on ft1, fs1 and md1. Close pairs for top-ups: form-travel, wikipedia
+and mdn against Codex and Peekaboo, form-settings against cua.
 
-**Order from here:**
-1. Safari r3 is running, with Codex r3f, the r1 reruns and the r2f drag reruns queued. Score Safari when they finish. Partial
-   score at 20:4xZ: sleight fastest on 9 of 12 and the only arm with every task passed. Fable studies of form-travel and mdn
-   are running on recorded traces. HS1: study handoff against lcu once it has 3 or more runs an arm (owner).
-2. sleight's Firefox rerun on the current build (queued).
-3. sleight inside Codex (arms `codex-sleight` gpt-6-luna, `codex-sleight-sol` gpt-6.1-sol): live smoke in Firefox (queued), then
-   3 rounds each in Firefox and Safari. Codex in Chrome/Helium is blocked (item SF1).
-4. Claude in Chrome: first live smoke of the Allow watcher (bench/fowl/chrome-allow.*) from Terminal, then 3 Chrome rounds; then
-   reconnect GitHub (owner item).
-5. Top-ups to 5 rounds for every pair within 20% (Firefox about 16, Chrome and Helium a few, Safari once scored).
-6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call). The release pass
-   includes MB1 live with turbo connected in Chrome: the glove, the menu, and each of Pause, Disconnect and Turn Turbo Off
-   (owner, 2026-10-18).
+**Running across the clear.**
+- Terminal.app job `race-1017/race-safari-r1.command` reran Peekaboo r1 from 23:12Z (reopened by `nohup race-1017/reopen-r1.sh`,
+  log `reopen-r1.log`, done). It is the last Safari round. Its log is `race-safari-r1a.log`, and `race-safari-r1.log` gets `done`.
+- `nohup` watchdog `race-1017/watchdog.sh` (pid 63290, log `watchdog.log`): ALERT and exit if the live lock is held with no round
+  for 3 min, a round runs over 40 min, or Safari stays up with no round. Read it first after the clear.
+- The Firefox b6 and sleight-in-Codex smoke waiters were stopped on purpose: they would have run the old build.
 
-**Post-1.3.0 build, started 21:0xZ (owner: now, Opus and Sol both, speed and quality).** Opus agents in isolated worktrees,
-branches `claude/p130-<id>`, rules and reports in `ledger/p130/`: gh-a, gh-b and gh-c (ghost hand host and settings, relay
-planner, exclusions), rf1 (Electron relaunch flow), es1 (Electron security fixes), spd (TS3 and TS4 behind flags), ft1 (form-travel
-loss fixes from the study, for 1.3.0). Sol lanes codex-p130a to c work `ledger/queue/p130/` (ET1, FF1, RG1, FL3, AM1FR2, DC1,
-GA1T, EL2, EL3). Live work waits until the race ends. sleight-arch reviews and merges each branch. Post-1.3.0 work merges
-after the tag. ft1 merges after Safari's rounds and then needs new sleight race rounds.
+**Order from here.**
+1. Score Safari when Peekaboo r1 finishes (`node bench/fowl/race-score.mjs ~/Projects/sleight-wt/race-1017/safari-*-r[0-9]*`).
+2. Merge into the release line: sec130 and fs1 once their review fixes are in (read their reports), ft1, md1, es1, ff1, rg1r2, fl3.
+   Full check, lint, push, then move race-fx to that commit.
+3. Live checks the merges need first: sec130's engine card text for the consent host and a press_key probe against a frontmost
+   consent-host card, and ft1's Page Down in Safari's and Firefox's long lists.
+4. sleight's Safari x3 and Firefox x3 on the new build, rescore, then one top-up round to 5 for pairs still within 20%.
+5. sleight-in-Codex smoke and rounds; Claude in Chrome rounds (Allow watcher) and reconnect GitHub; native claim rerun on the final
+   build, then the release pass (including MB1 live with turbo connected) and the 1.3.0 tag (owner's call).
+6. 1.3.1: merge the post-1.3.0 branches in the order above, then validation in an away window with the owner, covering Electron qualification
+   (one Always allow click; watch the first relaunch of the real VS Code), ghost hand capture test (decides capture `visible`) and
+   cost pass, WK4 and DC1 live, AM1 fixtures, the flag A/Bs (GA1T2, TS3, FA1, WB1/WB2, SO1), then the 1.3.1 tag.
+7. Launch video (art greenlit, loc arch directs). Film captures after the 1.3.0 pass with the lid open, owner typing live in the
+   trick. cap1's recorder runs from a Terminal.app .command (Terminal already holds Screen Recording); send loc arch a 5 s test
+   stream and sync.json first, then the final numbers and the playbill CSV.
 
-**Owner items:**
-- GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
-  claude.ai/customize/connectors/yours/id/integration-github (owner does a passkey if asked).
-- Changed with the owner's OK for Claude in Chrome: its panel mode in the benchmark profile is "Skip all approvals", and claude.ai's
-  Claude in Chrome site default is "Allow all sites" (also covers the desktop app's built-in browser). Neither reached the per-action
-  prompt. The watcher clicks it.
-- FM6 (ledger): a drag-endpoint fix needs sleight to read page text values (AXValue), which LAWS excludes. Owner decides.
-- The Codex arm in Chrome and Helium is blocked (SF1). Chrome's profile copy needs Terminal, the approvals file needs sleight-arch's shell.
-- The 1.3.0 tag and publishing.
+**Owner items.** The 1.3.0 tag and publishing. GitHub Integration on claude.ai reconnect after the Claude in Chrome rounds
+(passkey if asked). The capture sitting (lid open, live typing). Electron qualification's one Always allow click.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
-
-**MB1 (3660e913 and review fixes 2e194479, owner's order).** Turbo's menu bar item shows only while turbo is in use or a request
-waits, with a menu of status, browser, payment check, Pause, Disconnect and Turn turbo off. A failed opt-out keeps turbo and says
-so, and an opt-out from any session ends every session's turbo at the next 60 s refresh. The owner found the cut-out two-hands
-glyph unreadable at 18 pt, so Fable drew four vector gloves and the owner picked the glove with wrist dabs and pointer (423e531c).
-The menu is the owner's approved layout (4579d7b8). It is part of 1.3.0 (CHANGELOG). race-fx stays on 64396fa5.
 
 **Older owner items.** One "Always allow" click on the VS Code debugger card at the Electron turbo qualification (1.3.1). The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
 Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
