@@ -269,8 +269,9 @@ export class ActionLog {
     const opened = /^(t[\w-]+) (https?:\/\/\S+)/m.exec(text);
     const origin = url => { try { return new URL(url).origin; } catch { return undefined; } };
     if (opened && origin(opened[2])) this.origins.set(opened[1], origin(opened[2]));
-    const at = this.origins.get(args.tab ?? opened?.[1]) ?? (call.name === 'browser_open' ? origin(args.url) : undefined);
-    const where = at ? { origin: at } : {};
+    const tab = args.tab ?? opened?.[1];
+    let at = this.origins.get(tab) ?? (call.name === 'browser_open' ? origin(args.url) : undefined);
+    let where = at ? { origin: at } : {};
     if (call.name === 'browser_read' || (call.name === 'browser_tabs' && args.do === 'list')) return [];
     if (call.name === 'browser_open') return [{ ...base, ...where, kind: 'open', ...(error ? refused({}) : { result: 'ok', outcome: 'opened' }) }];
     const rows = [];
@@ -278,7 +279,11 @@ export class ActionLog {
       const step = /^(\d+) (\w+)(?: ((?:f\d+)?e\d+|s\d+))?: (.*)$/.exec(line) ?? (call.name === 'browser_fill' && /^()()((?:f\d+)?e\d+|s\d+): (.*)$/.exec(line));
       if (!step) continue;
       const outcome = step[4].trim(), kind = step[2] || 'fill', target = step[3] ? { target: { ref: step[3] } } : {};
-      rows.push({ ...base, ...where, kind, ...target,
+      const row = { ...base, ...where, kind, ...target };
+      // Steps after a navigation act on the new page: only its origin is kept, never the path.
+      const moved = /^navigated\b/.test(outcome) && origin(/https?:\/\/\S+/.exec(outcome)?.[0]);
+      if (moved) { at = moved; where = { origin: at }; if (tab) this.origins.set(tab, at); }
+      rows.push({ ...row,
         ...(/^not reached/.test(outcome) ? { result: 'not run', reason: 'earlier step stopped' }
           : /^not run/.test(outcome) ? { result: 'refused', reason: /covered/.test(outcome) ? 'covered' : 'stopped by sleight' }
           : { result: 'ok', outcome: turboOutcome(outcome) }) });

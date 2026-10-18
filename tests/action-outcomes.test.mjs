@@ -326,7 +326,7 @@ test('turbo steps are logged by origin with their outcome category, never page t
   log.request({ id: 7, method: 'tools/call', params: { name: 'browser_open', arguments: { url: 'http://127.0.0.1:5413/settings?token=abc' } } });
   log.reply({ id: 7, result: { content: [{ type: 'text', text: 't2ef http://127.0.0.1:5413\nTitle (untrusted page content): Private' }] } });
   log.request({ id: 8, method: 'tools/call', params: { name: 'browser_act', arguments: { tab: 't2ef', steps: [{ do: 'type', ref: 'e15', text: 'p07' }, { do: 'click', ref: 'e38' }, { do: 'press', ref: 'e38', key: 'Enter' }] } } });
-  log.reply({ id: 8, result: { content: [{ type: 'text', text: '1 type e15: 16 lines changed (batch observation below)\n2 click e38: navigated, address (untrusted page content): http://127.0.0.1:5413/done?p07\n3 press e38: not reached\n# Changes since snapshot 1' }] } });
+  log.reply({ id: 8, result: { content: [{ type: 'text', text: '1 type e15: 16 lines changed (batch observation below)\n2 click e38: navigated, address (untrusted page content): http://localhost:5414/done?p07\n3 press e38: not reached\n# Changes since snapshot 1' }] } });
   log.request({ id: 9, method: 'tools/call', params: { name: 'browser_fill', arguments: { tab: 't2ef', fields: [{ ref: 'e45', value: 37 }] } } });
   log.reply({ id: 9, result: { content: [{ type: 'text', text: 'e45: set\nsubmit: not requested' }] } });
   const rows = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -334,8 +334,8 @@ test('turbo steps are logged by origin with their outcome category, never page t
     [7, 'http://127.0.0.1:5413', 'open', undefined, 'ok', 'opened'],
     [8, 'http://127.0.0.1:5413', 'type', 'e15', 'ok', 'changed'],
     [8, 'http://127.0.0.1:5413', 'click', 'e38', 'ok', 'navigated'],
-    [8, 'http://127.0.0.1:5413', 'press', 'e38', 'not run', 'earlier step stopped'],
-    [9, 'http://127.0.0.1:5413', 'fill', 'e45', 'ok', 'set'],
+    [8, 'http://localhost:5414', 'press', 'e38', 'not run', 'earlier step stopped'],
+    [9, 'http://localhost:5414', 'fill', 'e45', 'ok', 'set'],
   ]);
   assert.doesNotMatch(readFileSync(path, 'utf8'), /p07|token|Private|done|"37"|:37/);
 });
