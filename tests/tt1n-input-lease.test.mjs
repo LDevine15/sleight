@@ -19,7 +19,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 // the engine realm: only the relay's injected read-only identity helper can observe it.
 // errorFirst: the real engine's order, the exception as the first content item ahead of what the call wrote.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, ...options } = {}) {
+  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, windows = [{ title: 'report.txt' }], ...options } = {}) {
   let text = base, writes = [];
   const clicks = [], keys = [], values = [], typed = [], sent = [], received = [];
   let identityChecks = 0;
@@ -39,7 +39,7 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
   }, setValue: async (number, value) => { values.push([number, value]); if (onAction) text = onAction('setValue', number, text); },
   typeText: async value => { typed.push(value); if (onAction) text = onAction('typeText', value, text); } };
   const context = createContext({ cua: { getApp: async () => raw, listApps: async () => [
-    { id: 'org.test.editor', windows: [{ title: 'report.txt' }] }
+    { id: 'org.test.editor', windows }
   ] }, nodeRepl: { write: value => writes.push(String(value)) } });
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
@@ -1266,4 +1266,115 @@ for (const [name, options, reason, code = nextCall] of [
   assert.deepEqual(h.keys, []);
   assert.match(JSON.stringify(result), /nothing from this call ran/);
   assert.deepEqual(h.events, reason ? [reason] : []);
+});
+
+// SL4 (2026-10-18 Firefox runs, 7 stale-window refusals): a result with two trees, the acquisition's and the call's own
+// read, left the relay's record on the first tree's title, and the next call was refused for a title Claude had seen.
+// The runs sent `app = await cua.getApp(...)` with no `let`, so the relay did not split the acquisition and recovered
+// the window it last confirmed.
+const storePage = title => `Window: ${JSON.stringify(title)}, App: Fixture Editor.\n0 standard window ${title}\n\t1 button Other`;
+const followUp = 'await app.click("Other");';
+const echo = 'Window: "Shop", App: Fixture Editor.\n';
+const twin = [{ title: 'Shop' }, { title: 'Shop' }];
+const identityFor = number => (expected, native) => ({ ...expected, ...native, windowNumber: expected.title === 'Product' ? number : native.windowNumber,
+  matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 });
+// The first call's result shows Shop and then Product (the page loaded between the acquisition and the end of the
+// call; the fixture prints the page as it stands last); `tail` is anything written between the two trees.
+async function shown(t, { page = 'Product', tail = '', ...options } = {}) {
+  const h = await fixture(t, { base: storePage('Shop'), ...options });
+  h.setText(storePage(page));
+  const first = await h.call(`app = await cua.getApp("Fixture Editor"); nodeRepl.write(${JSON.stringify(storePage('Shop') + tail)});`);
+  return { h, first };
+}
+
+test('SL4: a result that ends on a second tree records that tree, and the next call on it runs', async t => {
+  const { h, first } = await shown(t);
+  const headers = first.content.map(item => item.text).join('\n').match(/^Window: .*$/gm);
+  assert.equal(headers[0], 'Window: "Shop", App: Fixture Editor.');
+  assert.equal(headers.at(-1), 'Window: "Product", App: Fixture Editor.');
+  const result = await h.call(followUp);
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 500));
+  assert.equal(h.clicks.length, 1);
+  assert.doesNotMatch(JSON.stringify(result), /nothing from this call ran/);
+});
+
+test('SL4: a window title Claude has not been shown still stops', async t => {
+  const { h } = await shown(t);
+  h.setText(storePage('Checkout'));
+  const result = await h.call(followUp);
+  assert.equal(result.isError, true);
+  assert.equal(h.clicks.length, 0);
+});
+
+test('SL4: a result with a dialog among its trees leaves the window unknown, and the title change still refuses', async t => {
+  const dialog = 'Window: "Insert", App: Fixture Editor.\n0 dialog Insert\n\t1 button OK';
+  const { h } = await shown(t, { tail: '\n' + dialog });
+  const result = await h.call(followUp);
+  assert.equal(result.isError, true);
+  assert.equal(h.clicks.length, 0);
+  assert.match(JSON.stringify(result), /nothing from this call ran/);
+});
+
+// A title change under one native window number: the result's trees can't be read as one window (a header without a
+// root in between), so the relay keeps the first title, and the next call shows a title that result displayed.
+const retitles = events => direction => { if (/^retitle/.test(direction)) events.push(direction); };
+
+test('SL4: a title change under the same window number runs when the previous result showed the new title', async t => {
+  const events = [];
+  const { h } = await shown(t, { windows: twin, identity: identityFor(22), tail: '\n' + echo, trace: retitles(events) });
+  const result = await h.call(followUp);
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 500));
+  assert.equal(h.clicks.length, 1);
+  assert.deepEqual(events, ['retitle-accepted']);
+});
+
+test('SL4: a title change under another window number still refuses', async t => {
+  const events = [];
+  const { h } = await shown(t, { windows: twin, identity: identityFor(23), tail: '\n' + echo, trace: retitles(events) });
+  const result = await h.call(followUp);
+  assert.equal(result.isError, true);
+  assert.equal(h.clicks.length, 0);
+  assert.match(JSON.stringify(result), /nothing from this call ran/);
+  assert.deepEqual(events, ['retitle-refused']);
+});
+
+test('SL4: a title change never shown refuses even under the same window number', async t => {
+  const events = [];
+  const { h } = await shown(t, { windows: twin, identity: identityFor(22), tail: '\n' + echo, trace: retitles(events) });
+  h.setText(storePage('Checkout'));
+  const result = await h.call(followUp);
+  assert.equal(result.isError, true);
+  assert.equal(h.clicks.length, 0);
+  assert.match(JSON.stringify(result), /nothing from this call ran/);
+  assert.deepEqual(events, []);
+});
+
+test('SL4: a title change with no known window number refuses', async t => {
+  const events = [];
+  const { h } = await shown(t, { tail: '\n' + echo, trace: retitles(events) });
+  const result = await h.call(followUp);
+  assert.equal(result.isError, true);
+  assert.equal(h.clicks.length, 0);
+  assert.deepEqual(events, []);
+});
+
+// S2/wikipedia:38: the page retitled after the last result, and a call that only filters and prints the tree was refused.
+const filteredRead = 'const s = await app.getAXState(); nodeRepl.write(s.split("\\n").filter(l => l.includes("button")).join("\\n"));';
+
+test('SL4: a read that only filters and prints runs on the window its acquisition showed', async t => {
+  const events = [];
+  const { h } = await shown(t, { tail: '\n' + echo, trace: (direction) => { if (direction === 'filtered-read-stale-window') events.push(direction); } });
+  const result = await h.call(filteredRead);
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 500));
+  assert.doesNotMatch(JSON.stringify(result), /nothing from this call ran/);
+  assert.match(JSON.stringify(result), /button Other/);
+  assert.deepEqual(events, ['filtered-read-stale-window']);
+});
+
+test('SL4: a filtered read that also clicks is still refused after the page retitled', async t => {
+  const { h } = await shown(t, { tail: '\n' + echo });
+  const result = await h.call(filteredRead.replace('nodeRepl.write', 'await app.click("Other"); nodeRepl.write'));
+  assert.equal(result.isError, true);
+  assert.equal(h.clicks.length, 0);
+  assert.match(JSON.stringify(result), /nothing from this call ran/);
 });

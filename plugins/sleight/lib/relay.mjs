@@ -60,7 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
+import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -68,7 +68,7 @@ import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
-import { isLeaseRead } from './input-lease.mjs';
+import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
@@ -2583,8 +2583,34 @@ export function createRelay({
       if (ended()) return;
       if (reply.error || reply.result?.isError) { toClient({ ...reply, id: msg.id }); return; }
       const acquiredNumber = acquire.match(/cua\.getApp\(\s*\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}\s*\)/)?.[1];
-      if (expected && !(leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
-          (!selectedWindow || !acquiredNumber || Number(acquiredNumber) === expected.windowNumber))) {
+      const unchanged = !expected || leaseWindow?.appId === expected.appId && sameWindow(leaseWindow, expected) &&
+          (!selectedWindow || !acquiredNumber || Number(acquiredNumber) === expected.windowNumber);
+      // The same native window under a title the previous result already showed: a page that loaded after the
+      // lease was taken, or a result whose trees named two titles. Claude acted on the new title, so the number
+      // must still be the leased window's, and the helper has to see that number under that title.
+      const retitled = unchanged || saveBaseline || !windowIdentity || !leaseWindow?.appId || leaseWindow.appId !== expected.appId || leaseWindow.app !== expected.app ||
+        !shown.has(documentKey({ title: leaseWindow.title, app: leaseWindow.app, url: leaseWindow.url })) ? undefined
+        : (sameWindow(expected, selectedWindow) ? selectedWindow.windowNumber : undefined) ?? expected.nativeIdentity?.windowNumber;
+      if (!unchanged && Number.isSafeInteger(retitled) && retitled > 0 && (!acquiredNumber || Number(acquiredNumber) === retitled)) {
+        const target = leaseWindow;
+        running.add(msg.id); callDetails.set(msg.id, 'retitled window check');
+        menuIdentity(windowIdentity, { appId: target.appId, title: target.title, url: target.url, windowNumber: retitled }, menuContinuationTimeoutMs).then(observed => {
+          running.delete(msg.id); callDetails.delete(msg.id);
+          if (ended()) return;
+          if (!observed || leaseWindow !== target || observed.windowNumber !== retitled) { trace('retitle-refused', { id: msg.id }); changed(); return; }
+          noteProcess(observed);
+          target.nativeIdentity = observed; target.identityRequired = true;
+          trace('retitle-accepted', { id: msg.id });
+          proceed();
+        });
+        return;
+      }
+      // A call that only reads and prints sends no input, so a window that changed since the last result is
+      // the window its acquisition just showed (wikipedia, 2026-10-18: a filtered read refused as stale).
+      if (!unchanged && !saveBaseline && isFilteredRead(rest)) { trace('filtered-read-stale-window', { id: msg.id }); proceed(); return; }
+      if (!unchanged) { changed(); return; }
+      proceed();
+      function changed() {
         const stale = () => {
           // The window changed: Claude acts on the tree above, so a compacted re-acquisition goes out whole.
           if (raw) reply = { ...reply, result: { ...reply.result, content: compactor.process(raw, { forceFull: true }) } };
@@ -2622,7 +2648,6 @@ export function createRelay({
           });
         return;
       }
-      proceed();
       function proceed() {
         // A metadata read must not replace the lease's native identity with the newly observed one.
         // The action still checks the window and focus against the target from before this read.
@@ -3891,7 +3916,7 @@ export function createRelay({
       // A window-change stop carries the window it saw, and the lease moves to it. Leasing that
       // window still refuses if another session holds it.
       const guardStop = msg.result?.isError && /^(?:Error: )?(?:sleight stopped before |Input lease stopped this action: (?:window or URL|app) changed)/m.test(text);
-      const window = !msg.error && (!msg.result?.isError || guardStop) && windowFromText(text);
+      const window = !msg.error && (!msg.result?.isError || guardStop) && lastWindowFromText(text);
       const known = observedAppId(call, window, msg.result);
       // An action whose result shows another window of the same app (a close, a new window). Said
       // plainly, or a "no change" about the window now in front reads as a failed action: Claude
