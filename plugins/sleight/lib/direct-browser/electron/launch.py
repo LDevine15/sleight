@@ -1006,8 +1006,8 @@ class Keeper:
 
 
 def keep(argv, table=None):
-    """`launch.py --keeper --socket PATH`. Descriptor 0: the host's link; its first line is {"key", "nonce"} (the key in
-    base64url, at least 32 bytes) and later lines may name the app, {"app": {"pid", "birth"}}. 1: one ready line, then
+    """`launch.py --keeper --socket PATH`. Descriptor 0: the host's link; its first line is {"key", "nonce", "challenge"} (the
+    key in base64url, at least 32 bytes; the ready line proves it for the challenge) and later lines may name the app, {"app": {"pid", "birth"}}. 1: one ready line, then
     closed. 3 and 4: duplicates of the host's ends of the app's pipe."""
     options = dict(zip(argv[0::2], argv[1::2]))
     if len(argv) != 2 or set(options) != {'--socket'}:
@@ -1025,13 +1025,14 @@ def keep(argv, table=None):
     first, rest = line.split(b'\n', 1)
     setup = json.loads(first)
     key = base64.urlsafe_b64decode(setup['key'] + '=' * (-len(setup['key']) % 4))
-    if len(key) < 32 or not _token_ok(setup.get('nonce'), 8):
+    if len(key) < 32 or not _token_ok(setup.get('nonce'), 8) or not _token_ok(setup.get('challenge')):
         return 1
     listener, identity = keeper_listener(options['--socket'])
     keeper = Keeper(key, setup['nonce'], listener, table)
     keeper.consume(rest)
     try:
-        _write_all(1, json.dumps({'ready': True, 'pid': os.getpid()}).encode() + b'\n')
+        _write_all(1, json.dumps({'ready': True, 'pid': os.getpid(),
+                                  'proof': keeper_proof(key, 'ready', setup['nonce'], setup['challenge'], '')}).encode() + b'\n')
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, 1)
         os.close(devnull)

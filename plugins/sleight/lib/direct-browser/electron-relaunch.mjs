@@ -23,6 +23,8 @@ const NOTICES = Object.freeze({
   ELECTRON_RELAUNCH_QUIT_PENDING: name => `${name} is still open after sleight asked it to quit; it may be asking about unsaved work. sleight did not reopen it and won't. ${native(name)}`,
   ELECTRON_RELAUNCH_CHANGED: name => `The ${name} process changed after the user's click, so sleight quit nothing. ${native(name)}`,
   ELECTRON_RELAUNCH_RACED: name => `${name} was opened again before sleight reopened it, so it is running without the debugger. ${native(name)}`,
+  ELECTRON_RELAUNCH_KEEPER_UNAVAILABLE: name => `sleight could not start the process that keeps ${name}'s debugger connection open if sleight stops, so it quit nothing. ${native(name)}`,
+  ELECTRON_RELAUNCH_REOPENED_NATIVE: name => `${name} could not be reopened with the debugger, so sleight opened it again normally, and turbo isn't available for it now. ${native(name)}`,
   ELECTRON_RELAUNCH_FAILED: name => `${name} quit but did not reopen. Tell the user to open it again, then use the app tools (the native path).`,
   ELECTRON_RELAUNCH_NO_PIPE: name => `${name} reopened without the debugger connection and is running normally. ${native(name)}`,
   ELECTRON_RELAUNCH_AMBIGUOUS: name => `More than one ${name} process is running, so sleight quits none of them. ${native(name)}`,
@@ -77,6 +79,14 @@ export function createAppProcesses({ run = execFile, script = helperScript } = {
         });
       });
     },
+    // The normal launch of the app bundle (LaunchServices, in the background, no arguments, so no pipe): the fallback that
+    // keeps a failed reopen from leaving the user's app closed.
+    open(appPath) {
+      if (typeof appPath !== 'string' || !/^\/.+\.app$/.test(appPath)) return Promise.reject(Error('ELECTRON_APPS_INVALID'));
+      return new Promise((resolve, reject) => {
+        run('/usr/bin/open', ['-g', appPath], { timeout: 15000, env: { PATH: '/usr/bin:/bin' } }, error => error ? reject(Error('ELECTRON_APPS_UNAVAILABLE')) : resolve());
+      });
+    },
     async front() {
       const reply = await call({ op: 'front' }, 5000);
       if (!exactly(reply, ['status', 'pid']) || reply.pid !== null && !Number.isSafeInteger(reply.pid)) fail('ELECTRON_APPS_INVALID');
@@ -104,12 +114,15 @@ export async function runningCopy({ recipe, processes, uid }) {
 }
 
 const ready = status => status?.broker?.state === 'ready' && plain(status.broker.identity);
+// The .app bundle of the recipe's executable (.../Name.app/Contents/MacOS/Name).
+const bundleOf = executable => /^(\/.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(executable ?? '')?.[1];
 
 /** After the debugger grant: the relaunch card for the exact running process (copy, as `instance` names it), and on the
  * user's click the app's own Quit, then the host's launch of the same build on the user's profile with the pipe.
  * Resolves { status, quitMs, launchMs, wasFront } with the host's status once its broker is ready. declined: this
  * session's Set of bundle ids whose card the user cancelled. */
-export async function quitAndReopen({ recipe, copy, instance, session, turn, consent, admin, processes, uid, quitWaitMs = 60000, declined, now = Date.now }) {
+export async function quitAndReopen({ recipe, copy, instance, session, turn, consent, admin, processes, uid, quitWaitMs = 60000, reopenWaitMs = 15000, declined,
+  now = Date.now }) {
   const name = recipe.name, same = row => row.pid === copy.pid && row.birth === copy.birth && row.uid === uid && row.executable === copy.executable;
   const answer = await consent.requestRelaunch(instance, { session, turn });
   if (answer?.status !== 'approved' || !answer.ticket) {
@@ -120,6 +133,9 @@ export async function quitAndReopen({ recipe, copy, instance, session, turn, con
   consent.consumeRelaunch(answer.ticket, instance, { session, turn });
   const again = await processes.list(recipe.bundleId);
   if (again.length !== 1 || !same(again[0])) throw relaunchError('ELECTRON_RELAUNCH_CHANGED', name);
+  // The pipe keeper, started and proved before anything quits: without it, sleight's host dying would quit the reopened app.
+  try { await admin.prepare({ build: recipe.build, profile: 'user' }); }
+  catch { throw relaunchError('ELECTRON_RELAUNCH_KEEPER_UNAVAILABLE', name); }
   const before = await processes.front().catch(() => null);
   const quitting = now();
   const quit = await processes.quit({ pid: copy.pid, birth: copy.birth, executable: copy.executable }, { waitMs: quitWaitMs });
@@ -140,5 +156,17 @@ export async function quitAndReopen({ recipe, copy, instance, session, turn, con
   const after = await processes.list(recipe.bundleId).catch(() => undefined);
   if (after?.length) throw relaunchError('ELECTRON_RELAUNCH_NO_PIPE', name);
   if (after) await Promise.resolve().then(() => admin.collect?.()).catch(() => {});
+  // sleight never leaves the app closed: it opens it again the normal way, without the pipe.
+  const bundle = bundleOf(recipe.executable);
+  if (bundle) {
+    try {
+      await processes.open(bundle);
+      for (const started = now(); ;) {
+        if ((await processes.list(recipe.bundleId).catch(() => [])).length) throw relaunchError('ELECTRON_RELAUNCH_REOPENED_NATIVE', name);
+        if (now() - started >= reopenWaitMs) break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    } catch (error) { if (error?.message === 'ELECTRON_RELAUNCH_REOPENED_NATIVE') throw error; }
+  }
   throw relaunchError('ELECTRON_RELAUNCH_FAILED', name);
 }

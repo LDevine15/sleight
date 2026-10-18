@@ -80,6 +80,8 @@ export async function connectAdmin({ stateDir, secret, hostId, socketPath = join
     revokeAll: () => request('revokeAll'),
     resume: () => request('resume'),
     reconcile: ({ acceptDiskEvidence = false } = {}) => request('reconcile', { acceptDiskEvidence }),
+    // The pipe keeper for a coming user-profile start, started and proved now (the relaunch flow asks before the app's Quit).
+    prepare: ({ build, profile } = {}) => request('prepare', { build, profile }),
     quit: () => request('quit'),
     collect: () => request('collect'),
     close: () => { try { socket.end(); } catch { /* closed */ } closed = true; },

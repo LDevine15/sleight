@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { ElectronBroker } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
 import { connectKeeper, createElectronHost, createPythonAdapter } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
 import { createElectronConnection } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
+import { connectAdmin } from '../plugins/sleight/lib/direct-browser/electron-admin.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const launch = join(here, '../plugins/sleight/lib/direct-browser/electron/launch.py'), fake = join(here, 'fixtures/fake-electron.py');
@@ -260,6 +261,40 @@ test('connectKeeper refuses a keeper that cannot prove the key, or names another
     await assert.rejects(connectKeeper({ socketPath: path, key: randomBytes(32), nonce: 'n'.repeat(32) }), /KEEPER_MISMATCH/);
     assert.equal(seen.length, 1);
   } finally { server.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// The relaunch flow asks for the keeper before the user's app quits (electron-relaunch.mjs), so a keeper that can't start
+// quits nothing.
+test('prepare starts and proves the keeper before any app exists, over the admin channel, and the start then uses it', { skip }, async () => {
+  const e = environment(), secret = randomBytes(32);
+  let host;
+  try {
+    host = await realHost(e, { adminSecret: secret });
+    const admin = await connectAdmin({ stateDir: e.stateDir, secret });
+    await assert.rejects(admin.prepare({ build: BUILD, profile: 'temporary' }), /BUILD_NOT_REGISTERED/);
+    const prepared = await admin.prepare({ build: BUILD, profile: 'user' });
+    e.pids.add(prepared.pid);
+    assert.equal(alive(prepared.pid), true); assert.equal(host.broker, undefined, 'no app yet');
+    assert.deepEqual(await admin.prepare({ build: BUILD, profile: 'user' }), prepared, 'asking again reuses it');
+    await admin.start({ build: BUILD, profile: 'user' });
+    e.pids.add(host.broker.identity.pid);
+    assert.equal(host.status().keeper.pid, prepared.pid);
+    admin.close();
+  } finally { host?._crashForTest(); await sleep(100); e.cleanup(); }
+});
+
+test('a keeper that cannot start fails the preflight and the start, and no app is launched', { skip }, async () => {
+  const e = environment();
+  let host;
+  try {
+    host = await realHost(e, { adminSecret: randomBytes(32) });
+    writeFileSync(join(e.stateDir, 'hold.sock'), 'not a socket');
+    await assert.rejects(host.prepare(), /KEEPER_UNAVAILABLE/);
+    assert.equal(host.status().ownership.state, 'free');
+    await assert.rejects(host.start({ build: BUILD, profile: 'user' }), /KEEPER_UNAVAILABLE/);
+    assert.equal(host.broker.identity, undefined, 'the user\'s app never ran without its keeper');
+    assert.equal((await host.reconcile()).resolved, true, 'and sleight\'s own launch record is collected');
+  } finally { host?._crashForTest(); await sleep(100); e.cleanup(); }
 });
 
 test('with the host alive the keeper only waits; it exits when the app quits, and a temporary profile gets none', { skip }, async () => {

@@ -107,7 +107,9 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
       const keeperEvents = new EventEmitter();
       keeper.stdin.on('error', () => {}); keeper.stdout.on('error', () => {});
       keeper.on('exit', () => keeperEvents.emit('exit'));
-      keeper.stdin.write(JSON.stringify({ key: key.toString('base64url'), nonce }) + '\n');
+      // The ready line proves the keeper holds this key for this challenge, so a start never relies on a keeper it didn't check.
+      const challenge = randomToken(32);
+      keeper.stdin.write(JSON.stringify({ key: key.toString('base64url'), nonce, challenge }) + '\n');
       return new Promise((resolve, reject) => {
         let text = '';
         const fail = () => { clearTimeout(timer); try { keeper.kill('SIGKILL'); } catch { /* gone */ } reject(Error('KEEPER_UNAVAILABLE')); };
@@ -118,13 +120,15 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
           if (!text.includes('\n')) { if (text.length > 4096) fail(); return; }
           let ready;
           try { ready = JSON.parse(text.split('\n')[0]); } catch { fail(); return; }
-          if (ready?.ready !== true || ready.pid !== keeper.pid) { fail(); return; }
+          if (ready?.ready !== true || ready.pid !== keeper.pid || !macEqual(ready.proof, keeperProof(key, 'ready', nonce, challenge, ''))) { fail(); return; }
           clearTimeout(timer); keeper.off('exit', fail); keeper.stdout.destroy(); keeper.unref();
           resolve(Object.freeze({ pid: keeper.pid, events: keeperEvents,
             watch: identity => { try { keeper.stdin.write(JSON.stringify({ app: { pid: identity.pid, birth: identity.birth } }) + '\n'); } catch { /* gone */ } },
             // The keeper reads EOF here as "the host is gone": safe once the app is gone, or when this host is dying anyway.
             release: () => { try { keeper.stdin.end(); } catch { /* gone */ } },
-            drop: () => { try { keeper.stdin.destroy(); } catch { /* gone */ } } }));
+            drop: () => { try { keeper.stdin.destroy(); } catch { /* gone */ } },
+            // Only for a keeper whose app was never started: it holds nothing the app needs.
+            stop: () => { try { keeper.kill('SIGKILL'); } catch { /* gone */ } } }));
         });
       });
     },
@@ -292,7 +296,10 @@ export async function createElectronHost({
     const launch = async () => {
       adapterSpent = true;
       // The user's own app never runs without its keeper: the keeper starts first, and a launch without one is refused.
-      if (record.mode === 'user' && typeof adapter.keep === 'function') await startKeeper(adapter);
+      if (record.mode === 'user' && typeof adapter.keep === 'function') {
+        if (!keeperReady()) await startKeeper(adapter);
+        write({ keeper: keeper.id });
+      }
       const spawned = await adapter.rpc('spawn');
       keeper?.watch?.({ pid: spawned.pid, birth: spawned.birth });
       return childParts({ pid: spawned.pid, birth: spawned.birth }, adapter.streams.input, adapter.streams.output, adapter.events);
@@ -319,19 +326,42 @@ export async function createElectronHost({
   // --- The pipe keeper -----------------------------------------------------------------------
   // Keyed on the parent's admin secret and the launch nonce, so only a host this parent starts can reattach. A host with no
   // admin secret still gets a keeper (the app survives it) under a key nobody keeps.
+  // Each keeper has an id of its own (its key is derived from it), so it can start before the launch is reserved. The
+  // journal names it once the launch exists. Its socket is probed too: a keeper that listens refuses while this host lives.
   async function startKeeper(current) {
-    const key = adminKey ? keeperKey(adminKey, record.nonce) : randomBytes(32);
-    const started = await current.keep({ socketPath: keeperPath, key, nonce: record.nonce });
+    const id = randomToken();
+    const key = adminKey ? keeperKey(adminKey, id) : randomBytes(32);
+    const started = { ...await current.keep({ socketPath: keeperPath, key, nonce: id }), id, adapter: current, exited: false };
+    started.events.once('exit', () => { started.exited = true; });
+    try { await connectKeeper({ socketPath: keeperPath, key: randomBytes(32), nonce: id, timeoutMs: 5000 }); } catch (error) {
+      if (error.message !== 'KEEPER_REFUSED' || started.exited) { started.stop(); refuse('KEEPER_UNAVAILABLE'); }
+    }
     keeper = started;
-    write({ keeper: true });
+    // A replacement for a live launch's keeper: the journal names the new one. (After a collect, record still holds the old
+    // launch, so a live broker is what tells.)
+    if (broker && !['new', 'collected'].includes(broker.state) && record?.mode === 'user') write({ keeper: id });
     started.events.once('exit', () => {
       if (keeper !== started) return;
       keeper = undefined;
       // Killed while this host still holds the pipe: another one, so a later host death still finds the pipe held.
-      if (!closed && broker && !['collected', 'retained'].includes(broker.state) && !APP_GONE.has(broker.parkedBy?.reason) && keeperRestarts++ < 3) {
+      if (!closed && broker && !['collected', 'retained', 'new'].includes(broker.state) && !APP_GONE.has(broker.parkedBy?.reason) && keeperRestarts++ < 3) {
         startKeeper(current).then(() => { if (broker?.identity) keeper?.watch?.(broker.identity); }, () => {});
       }
     });
+    return started;
+  }
+  const keeperReady = () => keeper && !keeper.exited && keeper.adapter === adapter;
+
+  // The relaunch flow's preflight, before the user's app quits: a fresh adapter and its keeper, started and proved. The
+  // start that follows uses them. Refused like a start when ownership would refuse one.
+  async function prepareKeeper() {
+    if (closed) refuse('HOST_CLOSED');
+    if (ownership.state === 'unresolved') refuse('ownership unresolved: ' + ownership.reason);
+    if (ownership.state !== 'free' || broker && !['collected', 'new'].includes(broker.state)) refuse('retained ownership prevents another launch');
+    if (typeof adapter.keep !== 'function') refuse('KEEPER_UNAVAILABLE');
+    if (adapterSpent || adapter.lost) { adapter.close?.(); adapter = await createAdapter(); watchAdapter(adapter); adapterSpent = false; adapterHolds = false; }
+    if (!keeperReady()) { keeper?.drop?.(); keeper = undefined; await startKeeper(adapter); }
+    return { keeper: true, pid: keeper.pid };
   }
   function releaseKeeper() { const held = keeper; keeper = undefined; held?.release(); }
 
@@ -340,11 +370,11 @@ export async function createElectronHost({
   // any failure leaves the app and its keeper as they were. Returns 'reattached' or why not.
   async function adopt(found) {
     const r = found.record;
-    if (!r || r.state !== 'running' || r.mode !== 'user' || r.keeper !== true) return 'no-keeper';
+    if (!r || r.state !== 'running' || r.mode !== 'user' || typeof r.keeper !== 'string') return 'no-keeper';
     if (found.lock?.state?.nonce !== r.nonce) return 'journal-contradicts-disk';
     if (!adminKey) return 'keeper-key-unavailable';
     let held;
-    try { held = await connectKeeper({ socketPath: keeperPath, key: keeperKey(adminKey, r.nonce), nonce: r.nonce }); }
+    try { held = await connectKeeper({ socketPath: keeperPath, key: keeperKey(adminKey, r.keeper), nonce: r.keeper }); }
     catch (error) { return { KEEPER_REFUSED: 'keeper-refused', KEEPER_UNREACHABLE: 'keeper-gone' }[error.message] ?? 'keeper-mismatch'; }
     try {
       const recovered = await adapter.rpc('recover', { build: r.build, nonce: r.nonce });
@@ -354,7 +384,7 @@ export async function createElectronHost({
       broker = newBroker();
       broker.adopt(childParts({ pid: r.pid, birth: r.birth }, held.socket, held.socket, new EventEmitter()), { nonce: r.nonce, root: r.root, lock: r.lock });
       held.socket.resume(); // connectKeeper paused it so nothing after the handshake was lost
-      keeper = { pid: held.pid, release: () => held.socket.end(), drop: () => held.socket.destroy() };
+      keeper = { pid: held.pid, id: r.keeper, release: () => held.socket.end(), drop: () => held.socket.destroy() };
       ownership = { state: 'owned' };
       write({});
       return 'reattached';
@@ -384,6 +414,8 @@ export async function createElectronHost({
       adapter.close?.();
       adapter = await createAdapter(); watchAdapter(adapter); adapterSpent = false; adapterHolds = false;
     }
+    // A prepared keeper holds this adapter's ends; any other is stale.
+    if (keeper && !keeperReady()) { keeper.drop?.(); keeper = undefined; }
     ownership = { state: 'owned' };
     keeperRestarts = 0;
     broker = newBroker();
@@ -616,6 +648,11 @@ export async function createElectronHost({
         return JSON.parse(JSON.stringify(await start(user ? { build, profile: 'user' } : { build })));
       }
       // The parent sends quit only on the user's click; the app's own Quit runs, with its unsaved-work prompts.
+      if (message.op === 'prepare') {
+        const build = message.args?.build;
+        if (typeof build !== 'string' || !builds.includes(build) || Object.keys(message.args ?? {}).sort().join() !== 'build,profile' || message.args.profile !== 'user') refuse('BUILD_NOT_REGISTERED');
+        return prepareKeeper();
+      }
       if (message.op === 'quit') return JSON.parse(JSON.stringify(await quit(async () => true)));
       if (message.op === 'collect') return JSON.parse(JSON.stringify(await collect()));
       refuse('CHANNEL_FRAME_INVALID');
@@ -669,7 +706,7 @@ export async function createElectronHost({
   }
 
   return Object.freeze({
-    hostId, socketPath, start, status, issueTicket, bindGrant, revokeSession, revokeAll, resume, reconcile: reconcileOwnership, close, _crashForTest,
+    hostId, socketPath, start, prepare: prepareKeeper, status, issueTicket, bindGrant, revokeSession, revokeAll, resume, reconcile: reconcileOwnership, close, _crashForTest,
     quit, collect,
     get broker() { return broker; }, events,
   });
