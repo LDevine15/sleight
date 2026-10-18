@@ -31,6 +31,9 @@ Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree
   cua and peekaboo on race-fx. sleight r1 finished all 12 tasks (10 of 12; form-settings and form-settings-helium submitted
   nothing). lcu r1 started 17:42Z.
 - Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell and takes the lock between the Terminal job's rounds.
+  Queued behind both: sleight's Firefox b6 x3 (`race-firefox-b6.log`), then the sleight-in-Codex smoke in Firefox (both arms,
+  wikipedia and form-checkout, `smoke-codex-sleight.sh`, log `race-smoke-codex-sleight.log`). Its dry run passed, and
+  `~/.codex-bench-sleight` was set up 17:53Z. A Fable study of Safari r1's two form-settings failures is running.
 - `nohup` watchdog `race-1017/watchdog.sh` (pid 584, log `watchdog.log`): exits with an ALERT line if the live lock is held with no round
   for 3 min, a round runs over 40 min, or Safari stays up with no round for 3 min. Nobody is woken after the clear, so read its log first.
 - `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds.
@@ -39,9 +42,9 @@ Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree
 
 **Order from here:**
 1. Safari's Codex rounds x3 (running, see above).
-2. sleight's Firefox rerun on the current build (`ARMS=sleight TAG=-b6`, BROWSER=firefox, from this shell).
-3. sleight inside Codex (arms `codex-sleight` gpt-6-luna, `codex-sleight-sol` gpt-6.1-sol, bench/codex-sleight*.mjs, never run): live
-   smoke in Firefox, then 3 rounds each in Firefox and Safari. Codex in Chrome/Helium is blocked (item SF1).
+2. sleight's Firefox rerun on the current build (queued).
+3. sleight inside Codex (arms `codex-sleight` gpt-6-luna, `codex-sleight-sol` gpt-6.1-sol): live smoke in Firefox (queued), then
+   3 rounds each in Firefox and Safari. Codex in Chrome/Helium is blocked (item SF1).
 4. Claude in Chrome: first live smoke of the Allow watcher (bench/fowl/chrome-allow.*) from Terminal, then 3 Chrome rounds; then
    reconnect GitHub (owner item).
 5. Top-ups to 5 rounds for every pair within 20% (Firefox about 16, Chrome and Helium a few, Safari once scored).
