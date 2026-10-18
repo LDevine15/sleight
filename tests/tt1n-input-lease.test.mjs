@@ -1427,12 +1427,23 @@ for (const [name, options] of [
   ['a gallery titled otherwise', { after: gallery.replaceAll('Styles', 'Format') }],
   ['a gallery with a document area', { after: gallery + '\n\t\t7 text area (settable) Value: draft' }],
   ['careful mode', { guardMode: 'careful' }],
+  // Review F1: a dialog subrole, a secure field in the opened window, or typing after the click.
+  ['a native dialog subrole', { identity: galleryIdentity({ windowSubrole: 'AXDialog' }) }],
+  ['a window with a secure field', { after: gallery + '\n\t\t7 secure text field (settable) Description: Password' }],
 ]) test(`WB1: the gallery continuation stops on ${name}`, async t => {
   const h = await fixture(t, { base: galleryDoc, after: gallery, afterItem: galleryDoc, identity: galleryIdentity(), routeSteering: true, ...options });
   const result = await h.call(galleryPick);
   assert.equal(result.isError, true);
   assert.deepEqual(h.clicks, [5]);
   assert.doesNotMatch(JSON.stringify(result), /sleight:guard-stop:/);
+});
+
+test('WB1 F1: typing after the click that opened the window stops there', async t => {
+  const h = await fixture(t, { base: galleryDoc, after: gallery, afterItem: galleryDoc, identity: galleryIdentity(), routeSteering: true });
+  const result = await h.call('await app.click({ label: "Styles" }); await app.typeText("secret");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [5]);
+  assert.deepEqual(h.typed, []);
 });
 
 // The relay hands both flags to its read compactor: a changed Undo item (WB2) and a clicked field the typing missed (WB1).

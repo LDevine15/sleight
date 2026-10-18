@@ -232,12 +232,14 @@ export function menuRemainder(plan, receipt, expected, content, { palette = fals
   const stopped = stopTree(receipt, content);
   if (!stopped || stopped.window.app !== expected.app) return;
   const { window, tree, line } = stopped;
-  if (palette && ['label', 'id'].includes(prev.kind)) {
+  // Only label or ID clicks may follow (review F1, 2026-10-18): a "Sign In" or "Share" button can open a window with an
+  // account field, and keys or text after the click would land in it. A window with a secure field never takes the rest.
+  if (palette && ['label', 'id'].includes(prev.kind) && plan.actions.slice(n).every(action => ['label', 'id'].includes(action.selector?.kind))) {
     const role = PALETTE_ROLES.find(role => line.startsWith(role + ' '));
     const title = role && line.slice(role.length + 1).split(/, (?:Secondary Actions|ID|Description|Help|URL): /)[0];
     const named = !!title && window.title === title && (prev.kind === 'label' ? title === prev.value
       : typeof prev.line === 'string' && hasIdentifier(prev.line, prev.value) && hasLabel(prev.line, title));
-    if (named && !window.url && !/(?:^|, )URL: /.test(line) && !/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/im.test(tree)) {
+    if (named && !window.url && !/(?:^|, )URL: /.test(line) && !/^\t*\d+ (?:text area|text entry area|web area|HTML content|secure text field)\b/im.test(tree)) {
       return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree, palette: true };
     }
   }
@@ -280,7 +282,7 @@ const tabsOf = entries => entries.flatMap((entry, index) => {
 // all count as the window's own.
 const earlierEntries = before => Object.entries(before).filter(([, line]) => typeof line === 'string').sort(([a], [b]) => a - b)
   .map(([number, line]) => ({ depth: /^\t*/.exec(line)[0].length, number: Number(number), line: line.replace(/^\t*/, '') }));
-function underDocument(entries, at) {
+export function underDocument(entries, at) {
   for (let i = at - 1, depth = entries[at].depth; i >= 0 && depth > 0; i--) {
     if (entries[i].depth >= depth) continue;
     depth = entries[i].depth;
@@ -516,6 +518,8 @@ export function returnRefusal(covered, baseline, observed, since, now = performa
 export function paletteRefusal(expected, baseline, observed, since, now = performance.now()) {
   if (!observed) return 'identity-unavailable';
   if (!baseline) return 'no-baseline';
+  // A dialog, system dialog or sheet asks for a decision; only a panel-like window takes the rest (review F1).
+  if (['AXDialog', 'AXSystemDialog', 'AXSheet'].includes(observed.windowSubrole)) return 'dialog-subrole';
   if (!Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0) return 'no-window-number';
   if (observed.windowNumber === baseline.windowNumber) return 'same-window';
   if (!idle(observed, since, now)) return 'hid-input';

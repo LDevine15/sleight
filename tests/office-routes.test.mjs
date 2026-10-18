@@ -131,6 +131,32 @@ test('WB2: an Edit-menu item or a toolbar tooltip names the Undo action in any a
   assert.doesNotMatch(text('await app.typeText("x");', [guard(editor('text Undo Typing'))]), /Undo item/);
 });
 
+// Review F2: Cmd+Z moves "Undo Style" back to the older "Undo Typing" and the Redo item gains "Redo Style". That undid an
+// edit, so no note claims one was recorded.
+const redoLine = title => `menu button ${title}, Help: For more options, press Control-Option-Shift-M.`;
+const withRedo = (tree, title) => tree.replace('\t\t\t111 button Repeat Style', `\t\t\t111 ${redoLine(title)}`);
+test('WB2 F2: an undo that brings back an older Undo title and fills Redo claims no edit', () => {
+  const call = session({ undoReceipts: true }, doc({ undoLine: undo('Typing') }));
+  assert.match(call('await app.pressKey("super+alt+1");', [guard(doc({ undoLine: undo('Style') }))]), UNDO_NOTE);
+  const out = call('await app.pressKey("super+z");', [guard(withRedo(doc({ undoLine: undo('Typing') }), 'Redo Style'))]);
+  assert.doesNotMatch(out, /recorded an edit/, out);
+  // Without a Redo item in the tree, a title this window already showed is no proof of a new edit either.
+  const bare = session({ undoReceipts: true }, doc({ undoLine: undo('Typing') }).replace('\t\t\t111 button Repeat Style\n', ''));
+  bare('await app.pressKey("super+alt+1");', [guard(doc({ undoLine: undo('Style') }).replace('\t\t\t111 button Repeat Style\n', ''))]);
+  assert.doesNotMatch(bare('await app.pressKey("super+z");', [guard(doc({ undoLine: undo('Typing') }).replace('\t\t\t111 button Repeat Style\n', ''))]), /recorded an edit/);
+  // A Redo item that didn't gain the previous title still allows the note.
+  const redo = session({ undoReceipts: true }, withRedo(doc({ undoLine: undo('Style') }), "Can't Redo"));
+  assert.match(redo('await app.click(18);', [guard(withRedo(doc({ undoLine: undo('Replace All') }), "Can't Redo"))]), UNDO_NOTE);
+});
+
+// Review F3: a page's own "Undo" button (a web mail toast) is document content, not the app's Undo item.
+test('WB2 F3: Undo buttons under a web or text area are not the app\'s Undo item', () => {
+  const page = toast => ['Window: "Inbox", App: Editor.', '0 standard window Inbox, URL: https://mail.example/inbox',
+    '\t1 web area Inbox', `\t\t2 button ${toast}`, '\t\t3 text Message sent'].join('\n');
+  const call = session({ undoReceipts: true }, page('Undo Archive'));
+  assert.doesNotMatch(call('await app.click({ label: "Send" });', [guard(page('Undo Send'))]), /Undo item/);
+});
+
 test('WB2: the lean prompt keeps the note short', () => {
   const note = 'sleight: the Undo item changed from "Can\'t Undo" to "Undo Style", so the app recorded an edit since your last read of this window. Treat that edit as done; don\'t open a gallery or pane to confirm it.';
   const lean = promptNotice(note, 'lean');
@@ -205,6 +231,34 @@ for (const [name, change] of [
   const plan = splitMenuActions(galleryCall);
   const r = { ...receipt, ...(change.prev ? { prev: change.prev } : {}), ...(change.root ? { root: change.root } : {}) };
   assert.equal(menuRemainder(plan, r, leased, [item(change.content ?? styles)], { palette: true })?.palette, undefined);
+});
+
+// Review F1: a "Sign In" or "Share" button can open a window with a password field, and typing after the click would land
+// there. Only label or ID clicks may follow, and a window holding a secure field never takes the rest.
+test('WB1 F1: the gallery continuation takes only label or ID clicks, and never a window with a secure field', () => {
+  const signIn = 'Window: "Sign In", App: Editor.\n0 window Sign In, Secondary Actions: Raise\n\t1 text field (settable) Description: Email\n\t2 button Next, ID: next';
+  const signInReceipt = { ...receipt, index: 1, prev: { kind: 'label', value: 'Sign In' }, root: '0 window Sign In, Secondary Actions: Raise' };
+  for (const rest of ['await app.typeText("me@example.com");', 'await app.pressKey("Return");', 'await app.click(2);',
+    'await app.click({ id: "next" }); await app.typeText("secret");', 'await app.setValue(1, "me@example.com");', 'await app.click([20, 40]);']) {
+    const plan = splitMenuActions(`await app.click({ label: "Sign In" }); ${rest}`);
+    assert.equal(menuRemainder(plan, signInReceipt, leased, [item(signIn)], { palette: true })?.palette, undefined, rest);
+  }
+  const clicks = splitMenuActions('await app.click({ label: "Sign In" }); await app.click({ id: "next" }); await app.click("Next");');
+  assert.equal(menuRemainder(clicks, signInReceipt, leased, [item(signIn)], { palette: true })?.palette, true);
+  const secure = signIn.replace('text field (settable) Description: Email', 'secure text field (settable) Description: Password');
+  assert.equal(menuRemainder(clicks, signInReceipt, leased, [item(secure)], { palette: true })?.palette, undefined);
+});
+
+test('WB1 F1: a palette whose native subrole is a dialog, system dialog or sheet is refused', () => {
+  const baseline = { status: 'ok', matches: 1, headerMatches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
+  const expected = { appId: 'org.test.editor', title: 'Styles', url: null };
+  const observed = { ...baseline, ...expected, window: 2, windowNumber: 31 };
+  for (const subrole of ['AXDialog', 'AXSystemDialog', 'AXSheet']) {
+    assert.equal(paletteRefusal(expected, baseline, { ...observed, windowSubrole: subrole }, performance.now() - 100), 'dialog-subrole', subrole);
+  }
+  for (const subrole of [null, 'AXFloatingWindow', 'AXStandardWindow']) {
+    assert.equal(paletteRefusal(expected, baseline, { ...observed, windowSubrole: subrole }, performance.now() - 100), undefined, String(subrole));
+  }
 });
 
 test('WB1: the gallery must be the focused window of the same process, idle since the call, and not the leased window', () => {

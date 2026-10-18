@@ -25,6 +25,7 @@ import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
 import { promptNotice } from './prompt-notice.mjs';
+import { underDocument } from './menu-continuation.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -471,16 +472,18 @@ function missedFieldNote(action, observation) {
 // <action>" or "Can't Undo" (English titles; other locales stay silent). One distinct title per read, else none. In
 // word-edit (2026-10-18) Haiku saw "Undo Style" after the heading shortcut and still opened the Styles gallery to check in
 // 11 of 18 runs (Fable study 2026-10-17, 1.7 verification turns and 7.2 s a run).
-const UNDO_TITLE = /^(?:Undo(?: [^,]{1,60})?|Can['’]t Undo)$/;
-function undoTitle(lines) {
+// Lines under a web or text area are document content (review F3): a page's "Undo Send" button is not the app's item.
+// The Redo item (same shape) tells an undo from an edit (review F2).
+const UNDO_TITLE = /^(?:Undo(?: [^,]{1,60})?|Can['’]t Undo)$/, REDO_TITLE = /^(?:Redo(?: [^,]{1,60})?|Can['’]t Redo)$/;
+function undoTitle(lines, pattern = UNDO_TITLE) {
   const titles = new Set();
-  for (const line of lines) {
-    const body = ELEMENT.exec(line)?.[3];
-    const role = body && /^(?:menu item|menu button|button|pop up button)\s+(?:\([^)]*\)\s*)?/.exec(body);
-    if (!role) continue;
+  const entries = lines.flatMap(line => { const m = ELEMENT.exec(line); return m ? [{ depth: m[1].length, line: m[3] }] : []; });
+  for (const [at, { line: body }] of entries.entries()) {
+    const role = /^(?:menu item|menu button|button|pop up button)\s+(?:\([^)]*\)\s*)?/.exec(body);
+    if (!role || underDocument(entries, at)) continue;
     const rest = body.slice(role[0].length);
     const found = [rest.split(', ')[0], /(?:^|, )Description: ([^,]*)/.exec(rest)?.[1], /(?:^|, )Help: ([^,]*)/.exec(rest)?.[1]]
-      .map(field => field?.trim()).filter(field => field && UNDO_TITLE.test(field)).sort((a, b) => b.length - a.length)[0];
+      .map(field => field?.trim()).filter(field => field && pattern.test(field)).sort((a, b) => b.length - a.length)[0];
     if (found) titles.add(found);
   }
   return titles.size === 1 ? [...titles][0] : undefined;
@@ -1300,7 +1303,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
   // window key -> { sets, calls }: setValue checks whose call ended in another window, such as an alert.
   const pendingSetValues = new Map();
-  // window key -> the Undo item's title in that window's last complete read (WB2).
+  // window key -> { title, history }: the Undo item's title in that window's last complete read, and every title it showed (WB2).
   const undoSeen = new Map();
   // window key -> { target, calls }: the current run of calls that scrolled one target in that window.
   const scrolls = new Map();
@@ -1764,13 +1767,19 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       }
       // WB2: the Undo item in the call's last complete read against that window's last read before this call. A call that
       // ends in a dialog or gallery says nothing; the next one that ends in the document compares with the read before it.
+      // An undo (Cmd+Z moving "Undo Style" back to "Undo Typing") gives the Redo item the title Undo had; without a Redo item,
+      // a title this window already showed proves no new edit. Neither says anything.
       if (undoReceipts && action && !action.overlap && complete(observedInResult)) {
         const was = undoSeen.get(documentKey(observedInResult.window)), now = undoTitle(observedInResult.lines);
-        if (was && now && now !== was && /^Undo /.test(now)) out.push({ type: 'text', text: promptNotice(undoNote(was, now), prompt) });
+        const redo = undoTitle(observedInResult.lines, REDO_TITLE);
+        const undid = was && (redo !== undefined ? redo === 'Redo' + was.title.slice(4) : was.history.has(now));
+        if (was && now && now !== was.title && /^Undo /.test(now) && !undid) out.push({ type: 'text', text: promptNotice(undoNote(was.title, now), prompt) });
       }
-      for (const item of resultObservations) {
+      if (undoReceipts) for (const item of resultObservations) {
         const title = complete(item) && undoTitle(item.lines);
-        if (title) undoSeen.set(documentKey(item.window), title);
+        if (!title) continue;
+        const key = documentKey(item.window), entry = undoSeen.get(key) ?? undoSeen.set(key, { history: new Set() }).get(key);
+        entry.title = title; entry.history.add(title);
       }
       if (routeSteering && action?.fieldTypings?.length && action.before && !action.overlap && complete(observedInResult) &&
           documentKey(action.before.window) === documentKey(observedInResult.window)) {
