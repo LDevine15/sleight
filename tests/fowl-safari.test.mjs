@@ -21,21 +21,21 @@ const window = (id, title = 'Start Page', url = 'about:blank') => ({ id, title,
 function fixture(t) {
   const plan = realBrowserPlan({ browser: 'safari', round: 'test-' + randomUUID() });
   t.after(() => rmSync(dirname(plan.profileRoot), { recursive: true, force: true }));
-  const calls = []; let running = false, windows = [], serial = 0;
+  const calls = []; let running = false, windows = [], serial = 0, pid = 4100;
   const bridge = { request: async (op, input = {}) => {
     calls.push([op, input]);
-    if (op === 'launch') { running = true; return { pid: 4100, executable: plan.executable, launchDate: Date.now() / 1000 }; }
+    if (op === 'launch') { running = true; pid += 1; return { pid, executable: plan.executable, launchDate: Date.now() / 1000 }; }
     if (op === 'snapshot') return { windows: structuredClone(windows) };
     if (op === 'close-launch-window') { windows = windows.filter(w => w.id !== input.window); return {}; }
     if (op === 'new-profile') { windows.push(window('fresh-' + ++serial)); return { menuEscapePosted: true, menuCleared: true, menuEscapes: 1 }; }
     if (op === 'navigate') { const w = windows.find(w => w.id === input.window); w.title = plan.marker; w.tabs = [{ id: w.id + '-tab', title: plan.marker, url: input.url }]; return {}; }
     if (op === 'close-window') { windows = windows.filter(w => w.id !== input.window); return {}; }
-    if (op === 'quit') { running = false; return { browserClosed: true }; }
+    if (op === 'quit') { running = false; windows = []; return { browserClosed: true }; }
     throw Error('unexpected operation ' + op);
   }, close: async () => calls.push(['bridge-closed']) };
   const options = { safariBridge: async () => bridge, timeoutMs: 50,
     restoreWait: async ms => { assert.equal(ms, 2000); calls.push(['restore-wait', { ms }]); },
-    listProcesses: async () => running ? [{ pid: 4100, ppid: 1, executable: plan.executable }] : [] };
+    listProcesses: async () => running ? [{ pid, ppid: 1, executable: plan.executable }] : [] };
   return { plan, options, bridge, calls, windows: value => { if (value) windows = value; return windows; } };
 }
 
@@ -89,25 +89,35 @@ test('Safari dry plans support all five arms with plain sleight, explicit limits
   assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: 'Allow Computer Use to use "Safari"?' }), 'accept');
 });
 
-test('Safari resets by closing only the preceding verified profile window', async t => {
+test('Safari gives each task its own Safari, quit by pid before the next launch, and never closes a window between tasks', async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
-  assert.equal(browser.pid, 4100);
+  assert.equal(browser.pid, 4101);
   assert.equal(browser.profileEvidence.attribute, 'AXDescription');
   assert.equal(browser.profileEvidence.value, profile);
+  const first = await resetRealBrowser(browser);
+  assert.equal(Object.values(first)[0].title, f.plan.marker);
+  assert.equal(f.calls.filter(([op]) => op === 'launch').length, 1);
+  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 0);
+  const firstWindow = f.windows()[0].id;
+  f.windows().push(window('popup-from-the-task'));
+  const second = await resetRealBrowser(browser);
+  assert.equal(Object.values(second)[0].title, f.plan.marker);
+  assert.equal(browser.pid, 4102);
   assert.equal(f.windows().length, 1);
+  assert.notEqual(f.windows()[0].id, firstWindow);
   assert.ok(!f.calls.some(([op]) => op === 'close-window'));
-  const first = f.windows()[0].id;
-  const start = await resetRealBrowser(browser);
-  assert.equal(Object.values(start)[0].title, f.plan.marker);
-  assert.notEqual(f.windows()[0].id, first);
-  assert.equal(f.windows().length, 1);
-  assert.deepEqual(f.calls.filter(([op]) => op === 'close-window').map(([, data]) => data.window), [first]);
+  const ops = f.calls.map(([op]) => op);
+  assert.ok(ops.lastIndexOf('quit') < ops.lastIndexOf('launch'));
   const observed = await observeRealBrowser(browser);
   assert.equal(observed.observed, true);
   assert.equal(Object.values(observed.tabs)[0].url, f.plan.markerUrl);
   assert.deepEqual(await browser.stop(), { browserClosed: true, profileDeleted: false, harnessDeleted: true });
   assert.equal(existsSync(dirname(f.plan.profileRoot)), false);
-  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 1);
+  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 2);
+  assert.equal(browser.collections.length, 2);
+  assert.deepEqual(browser.collections.map(row => row.pid), [4101, 4102]);
+  assert.equal(browser.launches.length, 2);
+  assert.ok(browser.launches.every(row => Number.isFinite(row.launchMs) && Number.isFinite(row.readyMs)));
 });
 
 test('Safari refuses owner restored windows before opening a profile or mutating windows', async t => {
@@ -122,7 +132,7 @@ test('Safari refuses owner restored windows before opening a profile or mutating
 test('Safari waits for delayed restore and never closes even a restored benchmark window', async t => {
   const f = fixture(t), request = f.bridge.request; let snapshots = 0;
   f.bridge.request = async (op, input) => {
-    if (op === 'snapshot' && ++snapshots === 2) f.windows([{ id: 'late-owner', toolbar: [] }]);
+    if (op === 'snapshot' && ++snapshots === 1) f.windows([{ id: 'late-owner', toolbar: [] }]);
     return request(op, input);
   };
   await assert.rejects(launchRealBrowser(f.plan, f.options), /RESTORED_WINDOWS/);
@@ -280,14 +290,18 @@ test('a quit that needed the unsubmitted-form alert confirmed is recorded in the
   assert.equal(browser.collections.at(-1).unsubmittedFormQuitConfirmed, true);
 });
 
-test('a failed reset still quits the launched Safari, and a forced termination is recorded', async t => {
+test('a failed fresh launch still quits the launched Safari, and a forced termination is recorded', async t => {
   const f = fixture(t), request = f.bridge.request, browser = await launchRealBrowser(f.plan, f.options);
-  f.windows().push(window('stray'));
-  await assert.rejects(resetRealBrowser(browser), /EXTRA_WINDOWS/);
-  f.bridge.request = async (op, input) => op === 'quit' ? (await request(op, input), { browserClosed: true, forceTerminated: true }) : request(op, input);
+  await resetRealBrowser(browser);
+  f.bridge.request = async (op, input) => {
+    const result = await request(op, input);
+    if (op === 'new-profile') f.windows([{ ...window('a'), toolbar: [] }]);
+    return op === 'quit' ? { ...result, forceTerminated: true } : result;
+  };
+  await assert.rejects(resetRealBrowser(browser), /PROFILE_WINDOW_UNPROVED/);
   await browser.stop();
   assert.equal(browser.collections.at(-1).forceTerminated, true);
-  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 1);
+  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 2);
 });
 
 test('Safari stop is idempotent after proven collection', async t => {
@@ -312,12 +326,14 @@ test('Safari gate uses structured observation and stable AX tab IDs for retentio
   assert.equal(existsSync(lockPath), false);
 });
 
-test('later resets refuse unexpected windows without closing or navigating them', async t => {
-  const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
-  f.windows().push(window('not-a-restored-window'));
-  f.calls.length = 0;
-  await assert.rejects(resetRealBrowser(browser), /EXTRA_WINDOWS/);
-  assert.ok(!f.calls.some(([op]) => ['new-profile', 'navigate', 'close-window'].includes(op)));
+test('a previous Safari still shutting down delays the next launch until its services are gone', async t => {
+  const f = fixture(t); let lingering = 0;
+  const options = { ...f.options, settleMs: 2000, listProcesses: async () => [...await f.options.listProcesses(), ...(lingering-- > 0 ? [{ pid: 7777, ppid: 1, executable: 'Safari Web Content' }] : [])] };
+  const browser = await launchRealBrowser(f.plan, options);
+  await resetRealBrowser(browser);
+  lingering = 3;
+  await resetRealBrowser(browser);
+  assert.equal(f.calls.filter(([op]) => op === 'launch').length, 2);
   await browser.stop();
 });
 

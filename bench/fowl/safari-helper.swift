@@ -346,6 +346,8 @@ func quit(_ seconds: Double) throws -> [String: Any] {
             guard app.isTerminated else { throw refuse("BENCH_BROWSER_CLEANUP_UNPROVED") }
         }
     }
+    // The process is gone: the next launch starts from a clean slate (one Safari per task), never reusing its windows.
+    if owned != nil { owned = nil; birth = nil; profileRequested = false; launchRequested = false; references.removeAll() }
     return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed, "forceTerminated": forced]
 }
 func command(_ input: [String: Any]) throws -> [String: Any] {
