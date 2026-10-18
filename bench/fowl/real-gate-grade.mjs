@@ -101,7 +101,9 @@ export function runErrorClass({ eventsText = '', stderr = '' } = {}) {
 // 2026-10-17). Smaller rounds scale the same share. rows: [{ task, ok, errorClass }].
 export function harnessFailure(rows, total = rows.length) {
   const need = Math.ceil(total * 10 / 12), byClass = {};
-  for (const row of rows) if (!row.ok && row.errorClass?.class) (byClass[row.errorClass.class] ??= []).push(row);
+  // Turbo availability is sleight's own failure, even when it affects the whole round.
+  for (const row of rows) if (!row.ok && row.errorClass?.class && row.errorClass.class !== 'turbo unavailable')
+    (byClass[row.errorClass.class] ??= []).push(row);
   const [cls, hit] = Object.entries(byClass).sort((a, b) => b[1].length - a[1].length)[0] ?? [];
   if (!hit || !total || hit.length < need) return null;
   return { reason: `${hit.length} of ${total} tasks failed with ${cls} ("${hit[0].errorClass.example}")`, class: cls,

@@ -175,11 +175,25 @@ test('saved rounds detect the new shared failures at ten of twelve and scoring s
       const dir = round(root, `${cls}-${count}`, 'fixture-browser', 'fixture-arm', Array.from({ length: 12 }, (_, i) =>
         [`task${i}`, 1, false, { events: i < count ? events : claudeCall('b', true, 'element changed') }]));
       const loaded = loadRound(dir);
-      assert.equal(loaded.detected?.class ?? null, count >= 10 ? cls : null);
-      assert.equal(loaded.detected?.count ?? null, count >= 10 ? count : null);
+      const excluded = cls === 'window unavailable' && count >= 10;
+      assert.equal(loaded.detected?.class ?? null, excluded ? cls : null);
+      assert.equal(loaded.detected?.count ?? null, excluded ? count : null);
       assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
     }
   }
+});
+
+test('eleven unavailable-turbo failures stay classified and count as sleight losses', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-turbo-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = round(root, 'sleight-regression', 'chrome', 'sleight-turbo', Array.from({ length: 12 }, (_, i) =>
+    [`task${i}`, 1, false, { events: claudeCall(String(i), true, i < 11 ? unavailableTurbo : 'element changed') }]));
+  const loaded = loadRound(dir);
+  assert.equal(loaded.rows.filter(row => row.errorClass?.class === 'turbo unavailable').length, 11);
+  assert.equal(loaded.excluded, null);
+  const scored = scoreRounds([loaded]);
+  assert.equal(scored.chrome.table['sleight-turbo'].task0.runs.length, 1);
+  assert.equal(scored.chrome.table['sleight-turbo'].task0.passes.length, 0);
+  assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
 });
 
 test('a saved row without events keeps its recorded browser-call count', () => {
