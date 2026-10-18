@@ -795,6 +795,32 @@ test('FT1b: ambiguous, changed, moved or bare elements still stop before the act
   assert.deepEqual(h.calls.filter(c => c[0] === 'click'), [['click', 1]]);
 });
 
+// FT1b review F1: a sort that swaps two product cards keeps the unique "button Add to cart" at the same depth, under a
+// "group", after an "image", but on the other product. Only one inserted or removed block of rows explains a shift.
+test('FT1b review: a reordered list stops; one inserted or removed block of rows is followed', async () => {
+  const card = (n, image, last) => [`\t${n} group`, `\t\t${n + 1} image`, `\t\t${n + 2} ${last}`];
+  let sorted = false;
+  const f = fixture({ current: () => tree(expected, (sorted ? [...card(1, 0, 'text Sold out'), ...card(4, 0, 'button Add to cart')]
+    : [...card(1, 0, 'button Add to cart'), ...card(4, 0, 'text Sold out')]).join('\n') + '\n\t7 button Sort, ID: sort'),
+    action: (name, args) => { if (args[0] === 7) sorted = true; } });
+  await assert.rejects(f.run('await app.click(7); await app.click(3);'), /click\(3\): an earlier action in this call changed what element 3 is/);
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click'), [['click', 7]]);
+  assert.deepEqual(samePlace(tree(expected, [...card(1, 0, 'button Add to cart'), ...card(4, 0, 'text Sold out')].join('\n')), 3,
+    tree(expected, [...card(1, 0, 'text Sold out'), ...card(4, 0, 'button Add to cart')].join('\n'))), []);
+  // A removed block: the rows after it come back one lower, and the target with them.
+  let gone = false;
+  const g = fixture({ current: () => tree(expected, gone ? '\t1 button Close, ID: close\n\t2 text Total\n\t3 button Pay'
+    : '\t1 button Close, ID: close\n\t2 text Coupon applied\n\t3 text Total\n\t4 button Pay'), action: () => { gone = true; } });
+  await g.run('await app.click(1); await app.click(4);');
+  assert.deepEqual(g.calls.filter(c => c[0] === 'click'), [['click', 1], ['click', 3]]);
+  // Two separate insertions are not one block, wherever the second one is.
+  for (const [number, at] of [[22, '\t\t\t\t\t\t\t39 button Next'], [31, '\t\t\t\t\t\t\t27 text Adults']]) {
+    const two = form({ autofill: true }).replace(at, '\t\t\t\t\t\t\t90 text New\n' + at);
+    assert.ok(two.includes('90 text New'));
+    assert.deepEqual(samePlace(form(), number, two), [], String(number));
+  }
+});
+
 test('FT1b: samePlace names one element only when line, depth, parent and the row before all agree', () => {
   const before = form(), after = form({ autofill: true, values: { 20: 'x' } });
   assert.deepEqual(samePlace(before, 22, after), [[23, 'email field (settable) Email']]);
@@ -840,7 +866,12 @@ test('a number the code read itself in this call is checked against that read, n
   // A literal number after a read in the call still means what Claude saw.
   let shifted = false;
   const h = fixture({ current: () => tree(expected, shifted ? '\t7 button Send\n\t8 button Stop' : '\t7 button Stop'), action: () => { shifted = true; } });
-  await assert.rejects(h.run('await app.click(7); await app.getAXState({ emit: false }); await app.click(7);', { seenLines: { 7: 'button Stop' }, literals: [7] }),
+  // Since FT1b it follows Stop to 8 (one inserted row), never Send, which the call's own read showed at 7.
+  await h.run('await app.click(7); await app.getAXState({ emit: false }); await app.click(7);', { seenLines: { 7: 'button Stop' }, literals: [7] });
+  assert.deepEqual(h.calls.filter(c => c[0] === 'click'), [['click', 7], ['click', 8]]);
+  shifted = false;
+  const reordered = fixture({ current: () => tree(expected, shifted ? '\t7 button Send\n\t8 button Stop' : '\t7 button Stop\n\t8 button Send'), action: () => { shifted = true; } });
+  await assert.rejects(reordered.run('await app.click(7); await app.getAXState({ emit: false }); await app.click(7);', { seenLines: { 7: 'button Stop' }, literals: [7] }),
     /an earlier action in this call changed what element 7 is/);
 });
 

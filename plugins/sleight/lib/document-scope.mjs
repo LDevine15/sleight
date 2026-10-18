@@ -164,26 +164,29 @@ export function sameElement(was, now) {
 
 // Where element `number` of the tree `before` is in the tree `after`, for a line with no ID, description or help that an
 // earlier action in the call renumbered: Safari's AutoFill button under a filled name field moved the email field from 22
-// to 23 and the guard stopped in 3 of 3 form-travel runs (race-1017). The whole line must be on exactly one element in each
-// tree, at the same depth, under the same parent, after the same row (the nearest one above at its depth or less). A bare
-// role says nothing about which element it was. Any doubt returns no element, so the caller stops as before.
+// to 23 and the guard stopped in 3 of 3 form-travel runs (race-1017). Only one inserted or removed block of rows may explain
+// the shift: without it, every row is the same element at the same depth and in the same order as before, and the target's
+// number moved by the block's size. A reorder (a sort that swaps two cards) is no such block. The target's whole line must
+// also be on exactly one element in each tree, and a bare role says nothing about which element it was. Any doubt returns
+// no element, so the caller stops as before.
 export function samePlace(before, number, after) {
   const rows = text => String(text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*?)\r?$/.exec(line)).filter(Boolean)
     .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
-  const place = (list, at) => {
-    let parent, previous;
-    for (let i = at - 1; i >= 0 && !parent; i--) if (list[i].depth < list[at].depth) parent = list[i].line;
-    for (let i = at - 1; i >= 0 && !previous; i--) if (list[i].depth <= list[at].depth) previous = list[i].line;
-    return { depth: list[at].depth, parent, previous };
-  };
   const old = rows(before), now = rows(after), at = old.findIndex(row => row.number === number);
   const line = old[at]?.line;
-  if (line === undefined || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line) || old.filter(row => row.line === line).length !== 1) return [];
-  const hits = now.flatMap((row, i) => row.line === line ? [i] : []);
-  if (hits.length !== 1) return [];
-  const was = place(old, at), is = place(now, hits[0]);
-  const same = (a, b) => a === b || (a !== undefined && b !== undefined && sameElement(a, b));
-  return was.depth === is.depth && same(was.parent, is.parent) && same(was.previous, is.previous) ? [[now[hits[0]].number, line]] : [];
+  if (line === undefined || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line) || old.filter(row => row.line === line).length !== 1 ||
+      now.filter(row => row.line === line).length !== 1) return [];
+  // Inserted rows are in `now` (size > 0), removed rows in `old` (size < 0).
+  const size = now.length - old.length, [long, short] = size >= 0 ? [now, old] : [old, now], k = Math.abs(size);
+  const same = (a, b) => a.depth === b.depth && sameElement(a.line, b.line);
+  let start = 0;
+  while (start < short.length && same(short[start], long[start])) start++;
+  if (!k || short.slice(start).some((row, i) => !same(row, long[start + k + i]))) return [];
+  // The target moved with the rows after the block, and was not part of it.
+  const to = at < start ? at : size > 0 ? at + k : at - k;
+  if (to < 0 || (size < 0 && at < start + k && at >= start)) return [];
+  const hit = now[to];
+  return hit && hit.line === line && hit.number === number + (at < start ? 0 : size) ? [[hit.number, line]] : [];
 }
 
 // Only a resolved focus outside the clicked field's subtree proves a mismatch. Focus on the settable
