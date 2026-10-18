@@ -17,17 +17,36 @@ export const geometryExpression = `(() => ({ x: window.screenX, y: window.screen
   scale: window.devicePixelRatio, visible: document.visibilityState === 'visible' }))()`;
 
 // One geometry read on a target session. send(method, params) is bound to that session; fenced() runs after every
-// await and throws when the target changed. The page's main world never runs this expression.
-export async function readIsolatedGeometry(send, fenced = () => {}) {
+// await and throws when the target changed. The page's main world never runs this expression. world caches the
+// isolated context per frame ({ frameId, contextId }, mutated here): a cached context that fails is recreated once.
+export async function readIsolatedGeometry(send, fenced = () => {}, world = {}) {
   const { frameTree } = await send('Page.getFrameTree', {}); fenced();
-  if (!id(frameTree?.frame?.id)) fail('ELECTRON_GEOMETRY_INVALID');
-  const { executionContextId } = await send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'sleight-geometry', grantUniveralAccess: false });
-  fenced();
-  if (!Number.isSafeInteger(executionContextId)) fail('ELECTRON_GEOMETRY_INVALID');
-  const reply = await send('Runtime.evaluate', { expression: geometryExpression, contextId: executionContextId, returnByValue: true });
-  fenced();
+  const frameId = frameTree?.frame?.id;
+  if (!id(frameId)) fail('ELECTRON_GEOMETRY_INVALID');
+  const create = async () => {
+    world.contextId = undefined;
+    const { executionContextId } = await send('Page.createIsolatedWorld', { frameId, worldName: 'sleight-geometry', grantUniveralAccess: false });
+    fenced();
+    if (!Number.isSafeInteger(executionContextId)) fail('ELECTRON_GEOMETRY_INVALID');
+    world.frameId = frameId; world.contextId = executionContextId;
+  };
+  const evaluate = async () => {
+    const reply = await send('Runtime.evaluate', { expression: geometryExpression, contextId: world.contextId, returnByValue: true });
+    fenced();
+    if (reply?.exceptionDetails) fail('ELECTRON_GEOMETRY_INVALID');
+    return reply;
+  };
+  const cached = world.frameId === frameId && Number.isSafeInteger(world.contextId);
+  if (!cached) await create();
+  let reply;
+  try { reply = await evaluate(); }
+  catch (error) {
+    world.contextId = undefined;
+    if (!cached || /^ELECTRON_TARGET_CHANGED$/.test(error.message)) throw error;
+    await create(); reply = await evaluate();
+  }
   const value = reply?.result?.value;
-  if (reply?.exceptionDetails || !plain(value) || Object.keys(value).sort().join() !== geometryKeys.join() || typeof value.visible !== 'boolean' ||
+  if (!plain(value) || Object.keys(value).sort().join() !== geometryKeys.join() || typeof value.visible !== 'boolean' ||
       !['x', 'y', 'width', 'height', 'scale'].every(key => Number.isFinite(value[key])) || value.width <= 0 || value.height <= 0 || value.scale <= 0)
     fail('ELECTRON_GEOMETRY_INVALID');
   return Object.freeze({ x: value.x, y: value.y, width: value.width, height: value.height, scale: value.scale, visible: value.visible });
@@ -150,7 +169,8 @@ export function createAppTargets({ upstream, identity, expected, recipe, verify,
     const name = await session.pending;
     const fenced = () => { if (!current(targetId, record.epoch)) fail('ELECTRON_TARGET_CHANGED'); };
     fenced();
-    return readIsolatedGeometry((method, params) => upstream.send(method, params, name), fenced);
+    session.world ??= {};
+    return readIsolatedGeometry((method, params) => upstream.send(method, params, name), fenced, session.world);
   }
   const filterHooks = Object.freeze({
     // The CDP filter asks before it owns a top-level target, and again after its own awaits.

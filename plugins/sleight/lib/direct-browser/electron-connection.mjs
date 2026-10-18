@@ -206,13 +206,14 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
 
   // The connection is not usable until connectChannel() has run, so these derive from the first
   // handshake. They are filled in once, then frozen.
-  let browserIncarnation, selectedBrowser, identity;
+  // selectedBrowser names this host and session from the start, so the worker can name its connection before connect().
+  let browserIncarnation, identity;
+  const selectedBrowser = 'b' + createHash('sha256').update(handle.host + '\0' + handle.session).digest('hex').slice(0, 32);
   const provider = {
     kind: 'electron-app', session, endpoint: undefined,
     async connect() {
       const result = await connectChannel();
       browserIncarnation = 'e' + createHash('sha256').update(JSON.stringify([handle.host, app.instance, app.epoch, app.pid, app.birth])).digest('hex');
-      selectedBrowser = 'b' + createHash('sha256').update(handle.host + '\0' + app.instance).digest('hex').slice(0, 32);
       identity = Object.freeze({ host: handle.host, ...app });
       return result;
     },
@@ -220,12 +221,14 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
     get browserIncarnation() { return browserIncarnation; },
     get selectedBrowser() { return selectedBrowser; },
     get identity() { return identity; },
-    // hooks: electron-targets.mjs's filterHooks. The filter runs in app mode either way, so without hooks it owns nothing,
+    // app: electron-targets.mjs's filterHooks. The filter runs in app mode either way, so without hooks it owns nothing,
     // and a Chrome-style owned list (which would skip admission) is refused.
-    createFilter(hooks) {
+    createFilter(options = {}) {
       if (!opened || fenced) fail('ELECTRON_CONNECTION_CLOSED');
-      if (hooks !== undefined && (typeof hooks?.admit !== 'function' || typeof hooks?.current !== 'function')) fail('ELECTRON_ADMISSION_REQUIRED');
-      const filter = createCDPFilter({ session, app: hooks ?? { admit: async () => false, current: () => false } });
+      const app = options?.app;
+      if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => key !== 'app') ||
+          app !== undefined && (typeof app?.admit !== 'function' || typeof app?.current !== 'function')) fail('ELECTRON_ADMISSION_REQUIRED');
+      const filter = createCDPFilter({ session, app: app ?? { admit: async () => false, current: () => false } });
       const lost = () => { filter.dispose(); losses.delete(lost); };
       losses.add(lost);
       return Object.freeze({ ...filter,

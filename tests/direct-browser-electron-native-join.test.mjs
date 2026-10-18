@@ -34,8 +34,9 @@ test('duplicate rectangles and stacked web contents views are ambiguous, so noth
   ({ result } = await joined([nativeWindow(11, rect(0, 0))], [view('a', rect(0, 0)), view('b', rect(0, 0))]));
   assert.deepEqual(statuses(result), { a: 'ambiguous', b: 'ambiguous' });
   ({ result } = await joined([nativeWindow(11, rect(0, 0))], [view('a', rect(0, 0)), view('b', rect(0, 0), { visible: false })]));
-  assert.deepEqual(statuses(result), { a: 'joined', b: 'hidden:not-visible' }, 'a hidden view does not compete for its window');
-  assert.equal(result.get('b').window, undefined);
+  assert.deepEqual(statuses(result), { a: 'ambiguous', b: 'ambiguous' }, 'renderer visibility is a page claim: a hidden view still competes for its window');
+  ({ result } = await joined([nativeWindow(11, rect(0, 0))], [view('a', rect(0, 0), { visible: false })]));
+  assert.deepEqual({ ...result.get('a') }, { status: 'joined', window: { id: 11, epoch: 1 }, renderer: 'hidden' }, 'a lone hidden renderer joins, marked for the header');
 });
 
 test('hidden, minimized and offscreen windows and scale mismatches join nothing', async () => {
@@ -56,7 +57,11 @@ test('the metadata is content-free by schema: a title or any extra key refuses t
 
 test('a sheet parks its window, stale metadata parks everything, and no engine approval reads nothing', async () => {
   let { result } = await joined([nativeWindow(11, rect(0, 0), { modal: 'sheet' }), nativeWindow(12, rect(900, 0))], [view('a', rect(0, 0)), view('b', rect(900, 0))]);
-  assert.deepEqual(statuses(result), { a: 'parked:native-modal', b: 'joined' });
+  assert.deepEqual(statuses(result), { a: 'parked:native-modal', b: 'parked:native-modal' }, 'a sheet on any window of the PID parks every renderer');
+  ({ result } = await joined([nativeWindow(11, rect(0, 0)), nativeWindow(13, rect(0, 700), { modal: 'menu', onScreen: false })], [view('a', rect(0, 0))]));
+  assert.deepEqual(statuses(result), { a: 'joined' }, 'a modal on a window that is not on screen does not count');
+  ({ result } = await joined([nativeWindow(11, rect(0, 0)), nativeWindow(21, rect(0, 700), { modal: 'dialog', pid: 4200 })], [view('a', rect(0, 0))]));
+  assert.deepEqual(statuses(result), { a: 'joined' }, 'another process\'s dialog does not count');
   const { createNativeJoin } = await load(), w = fakeWindows([nativeWindow(11, rect(0, 0))]);
   w.observedAt = 1000 - 5000;
   result = await createNativeJoin({ app, approved: () => true, readWindows: w.read, now: () => 1000 }).resolve([view('a', rect(0, 0))]);
@@ -80,7 +85,7 @@ test('check revalidates the admitted window: a new window epoch, a sheet, or a s
   w.windows = [nativeWindow(11, rect(0, 0)), nativeWindow(14, rect(0, 0))];
   await assert.rejects(join.check('a', admitted, geometry), /ELECTRON_JOIN_PARKED: ambiguous/);
   w.windows = [nativeWindow(11, rect(0, 0))];
-  await assert.rejects(join.check('a', admitted, { ...geometry, visible: false }), /ELECTRON_JOIN_PARKED: not-visible/);
+  assert.deepEqual(await join.check('a', admitted, { ...geometry, visible: false }), { window: admitted }, 'visibility does not gate the join');
   await assert.rejects(join.check('a', { id: 11, epoch: 1, extra: 1 }, geometry), /ELECTRON_JOIN_INVALID/);
 });
 

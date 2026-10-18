@@ -196,3 +196,22 @@ test('a renderer that overrides screenX, outerWidth, devicePixelRatio and visibi
     'the same expression in the main world would have been fooled');
   targets.stop();
 });
+
+test('the isolated world is created once per target and frame, and recreated once after a Runtime error', async () => {
+  const { f, targets } = await started([page('a')]);
+  const worlds = () => f.calls.filter(row => row.method === 'Page.createIsolatedWorld').length;
+  await targets.geometry('a'); await targets.geometry('a');
+  assert.equal(worlds(), 1, 'the second read reuses the context');
+  const send = f.session.send;
+  let failures = 1;
+  f.session.send = async (method, params, route) => {
+    if (method === 'Runtime.evaluate' && failures-- > 0) throw Error('Cannot find context with specified id');
+    return send(method, params, route);
+  };
+  assert.equal((await targets.geometry('a')).width, 800);
+  assert.equal(worlds(), 2, 'one new world after the stale context');
+  failures = 2;
+  await assert.rejects(targets.geometry('a'), /Cannot find context|ELECTRON_GEOMETRY_INVALID/, 'only one retry');
+  assert.equal(worlds(), 3);
+  targets.stop();
+});
