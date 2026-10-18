@@ -215,6 +215,9 @@ func launch() throws -> [String: Any] {
     let started = Date(), configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = false
     configuration.createsNewApplicationInstance = true
+    // Never reopen the windows of an earlier session (the owner's or a quit round's): they belong to other profiles and stop
+    // the round (BENCH_SAFARI_RESTORED_WINDOWS, 2026-10-18). The argument only affects this launch, not the owner's settings.
+    configuration.arguments = ["-ApplePersistenceIgnoreState", "YES"]
     var finished = false, launchError: Error?
     NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/Applications/Safari.app"), configuration: configuration) { app, error in
         owned = app; birth = app?.launchDate; launchError = error; finished = true
