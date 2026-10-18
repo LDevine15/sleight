@@ -210,8 +210,10 @@ export function menuRemainder(plan, receipt, expected, content) {
   return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree };
 }
 
-// A tab this call's own shortcut opened in the window it leased. In the Firefox race round (2026-10-17) Cmd+T
-// retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing. Only Cmd+T or Ctrl+T, and only when the tree shows exactly one tab more
+// A tab this call's own shortcut or new-tab button opened in the window it leased. In the Firefox race round (2026-10-17)
+// Cmd+T retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing; the 2026-10-18 round stopped 9
+// of 9 (6 Cmd+T, 3 clicks on the button) with the continuation firing 0 of 9. Only Cmd+T or Ctrl+T, or a plain click on a
+// button that sits among the window's tabs, and only when the tree shows exactly one tab more
 // than the window Claude last saw, that tab selected, no sheet or dialog, and focus on an editable field outside
 // any page or document, where the rest's typing lands. `before` is the earlier tree's lines by element number.
 const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+t$/i;
@@ -219,6 +221,22 @@ const tabsOf = lines => lines.flatMap(line => {
   const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(line);
   return tab ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) }] : [];
 });
+// The line a click named, as Claude saw it before the call: its receipt's line for a label or ID, else the earlier tree's.
+const clickedLine = (prev, before) => {
+  const line = prev.kind === 'number' ? before?.[prev.value] : ['label', 'id'].includes(prev.kind) ? prev.line : undefined;
+  return typeof line === 'string' ? line.replace(/^\t*/, '') : undefined;
+};
+// The new-tab button, by where it is and not by what it says: a button whose line is unique in the stopped tree and that
+// has a tab beside it (same parent), the way Firefox lists "Open a new tab" among its tabs. The tab count check proves it opened one.
+const isTab = line => /^tab(?: |$)/.test(line) && !/^tab group(?: |,|$)/.test(line);
+function tabStripButton(entries, line) {
+  if (!/^button(?: |,|$)/.test(line)) return false;
+  const at = entries.flatMap((entry, i) => entry.line === line ? [i] : []);
+  if (at.length !== 1) return false;
+  const depth = entries[at[0]].depth;
+  for (const step of [-1, 1]) for (let i = at[0] + step; entries[i]?.depth >= depth; i += step) if (entries[i].depth === depth && isTab(entries[i].line)) return true;
+  return false;
+}
 const DOCUMENT_ROLE = /^(?:web area|HTML content|text area|text entry area)(?: |,|$)/i;
 const APP_FIELD = /^(?:text field|combo box|search field|search text field)(?: |,|$)/i;
 export function tabRefusal(plan, receipt, expected, content, before) {
@@ -227,7 +245,8 @@ export function tabRefusal(plan, receipt, expected, content, before) {
   if (!plan) return 'unsplit-call';
   const n = stoppedAfter(plan, receipt);
   if (n === undefined) return 'receipt-mismatch';
-  if (receipt.prev.kind !== 'key' || !TAB_KEY.test(receipt.prev.value)) return 'not-a-tab-shortcut';
+  const key = receipt.prev.kind === 'key', button = key ? undefined : clickedLine(receipt.prev, before);
+  if (key ? !TAB_KEY.test(receipt.prev.value) : button === undefined || !/^button(?: |,|$)/.test(button)) return 'not-a-tab-shortcut';
   const stopped = stopTree(receipt, content);
   if (!stopped) return 'tree-mismatch';
   if (stopped.window.app !== expected?.app) return 'other-app';
@@ -246,6 +265,7 @@ export function tabRefusal(plan, receipt, expected, content, before) {
     left.set(tab.label, left.get(tab.label) - 1);
   }
   if ([...left].some(([label, count]) => count !== (label === selected[0].label ? 1 : 0))) return 'no-new-tab';
+  if (button !== undefined && !tabStripButton(entries, button)) return 'not-a-tab-button';
   // The engine names focus after the tree; it must be an app field, and none of its ancestors a page or document.
   const focused = Number(/^The focused UI element is (\d+) /m.exec(stopped.tree)?.[1]);
   const at = entries.findIndex(entry => entry.number === focused);
@@ -426,13 +446,16 @@ const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|b
 // numbers and non-typing keys only: typed or set text, single characters and label text stay out.
 // `closed`: the lease held a dialog, sheet or panel over a standard window, so an action that ran and then a stop onto a
 // standard window means the call's own action closed it (OK, then a click: 6 of 15 Office mid-call stops, 2026-10-17).
-export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen, closed = false } = {}) {
+// `tab`: the stop is a tab this call opened (tabRefusal passes). Its title changes but the app handle still addresses it, and
+// the select_window advice sent Claude to a refused call in 2 of 9 Firefox runs (2026-10-18).
+export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen, closed = false, tab = false } = {}) {
   if (receipt?.refused === true) return refusalNote(receipt, plan, earlier, content, seen, uniqueSeen);
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
   const dialog = closed && /^standard window(?: |,|$)/.test(stopTree(receipt, content ?? [])?.line ?? '');
   // The stop leased the window it shows, so the rest needs no re-read: in the Firefox race round (2026-10-17) Claude
   // spent a call only reading again after 10 of 12 new-tab stops.
   const recipe = ran => /* lean notice */ !ran ? '' : dialog ? ' Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.'
+    : tab ? ' After an action that opens a tab or page, end the call there; the next call can send the rest, on the same app handle, to the window shown here with no new read.'
     : ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.';
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
@@ -524,12 +547,20 @@ export async function menuIdentity(identity, expected, timeoutMs = 600, refused)
 }
 
 // Why a menu, navigation or tab continuation's window isn't the one the call started in, or undefined when it is.
-export function menuWindowRefusal(expected, baseline, observed, forwardedAt, now = performance.now()) {
+// `needIdle` false leaves out the HID-idle test, for the tab continuation: its own tree checks already tie the stop to the
+// leased window, and the engine's key presses reset HID idle (docs/known-problems.md), so idle over the call refused it.
+export function menuWindowRefusal(expected, baseline, observed, forwardedAt, now = performance.now(), needIdle = true) {
   if (!baseline || !Number.isSafeInteger(baseline.windowNumber) || baseline.windowNumber <= 0) return 'no-window-number';
   if (!observed) return 'identity-unavailable';
   if (observed.windowNumber !== baseline.windowNumber) return 'window-number-changed';
-  if (!idle(observed, forwardedAt, now)) return 'hid-input';
+  if (needIdle && !idle(observed, forwardedAt, now)) return 'hid-input';
   try { verifyWindowIdentity({ ...expected, nativeIdentity: baseline }, observed); } catch { return 'identity-mismatch'; }
 }
-export const unchangedMenuWindow = (expected, baseline, observed, forwardedAt, now = performance.now()) =>
-  !menuWindowRefusal(expected, baseline, observed, forwardedAt, now);
+export const unchangedMenuWindow = (expected, baseline, observed, forwardedAt, now = performance.now(), needIdle = true) =>
+  !menuWindowRefusal(expected, baseline, observed, forwardedAt, now, needIdle);
+// What the HID-idle test saw, for the relay's trace: the helper's idle seconds, the seconds since the call was sampled,
+// and whether idle covered them (the 2026-10-18 Firefox stops left the cause of 0 of 9 continuations unrecorded).
+export const idleSample = (observed, forwardedAt, now = performance.now()) => ({
+  hidIdleSeconds: Number.isFinite(observed?.hidIdleSeconds) ? observed.hidIdleSeconds : null,
+  callSeconds: Number.isFinite(forwardedAt) ? Math.round(now - forwardedAt) / 1000 : null,
+  idleCoversCall: !!observed && idle(observed, forwardedAt, now) });

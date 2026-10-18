@@ -69,6 +69,7 @@ export function promptNotice(text, prompt) {
     .replace('document identity unavailable', 'no document identity')
     .replace(': engine returned no error text', ': no error text')
     .replace(/; the stopped (.+?) and everything after it were not sent\./, '; not sent: the stopped $1 onward.')
+    .replace(' After an action that opens a tab or page, end the call there; the next call can send the rest, on the same app handle, to the window shown here with no new read.', ' End a call after an action that opens a tab or page; the next can act on the window shown here, on the same app handle, without reading.')
     .replace(' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.', ' End a call after an action that opens a tab or page; the next can act on the window shown here without reading.')
     .replace(": its number came from this call's first read, and the element changed (perhaps replaced by an earlier action)", ": its number, from this call's first read, changed")
     .replace(' sleight now reads this window before each numbered or named action, so the rest can go in one call.', ' sleight now reads before each numbered or named action; send the rest in one call.')
