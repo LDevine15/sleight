@@ -56,6 +56,9 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call).
 
 **Owner items:**
+- Finder windows titled `2026-10-17T23-09-36-785Z` and `2026-10-17T22-45-31-623Z` (run-folder names, 920x436) cover 41% of the race's
+  Safari window in every Safari task since 18:08Z (cover column). They may be benchmark leftovers, but sleight-arch doesn't close
+  windows it can't prove are its own. Closing them uncovers the browser for later rounds. All arms face the same cover until then.
 - GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
   claude.ai/customize/connectors/yours/id/integration-github (owner does a passkey if asked).
 - Changed with the owner's OK for Claude in Chrome: its panel mode in the benchmark profile is "Skip all approvals", and claude.ai's
