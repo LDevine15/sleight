@@ -3626,9 +3626,13 @@ export function createRelay({
     if (initializationNote) msg.result.content.push({ type: 'text', text: promptNotice(initializationNote, prompt) });
     if (msg.method === undefined && syntaxOrigins.has(msg.id)) {
       const origin = syntaxOrigins.get(msg.id); syntaxOrigins.delete(msg.id);
-      if (msg.result?.isError && Array.isArray(msg.result.content)) {
+      // The engine can report a parse error as a JSON-RPC error as well as an error result.
+      if (msg.error && typeof msg.error.message === 'string') {
+        const hint = syntaxErrorHint(msg.error.message, origin);
+        if (hint) msg.error.message += '\n' + promptNotice(hint, prompt);
+      } else if (msg.result?.isError && Array.isArray(msg.result.content)) {
         const hint = msg.result.content.map(c => c.type === 'text' ? syntaxErrorHint(c.text, origin) : undefined).find(Boolean);
-        if (hint) msg.result.content.push({ type: 'text', text: hint });
+        if (hint) msg.result.content.push({ type: 'text', text: promptNotice(hint, prompt) });
       }
     }
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);

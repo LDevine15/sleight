@@ -18,5 +18,5 @@ export function syntaxErrorHint(text, origin) {
   if (line < 1 || line > origin.lines) return;
   const column = Number(at[2]) - (line === 1 ? origin.column : 0);
   if (column < 0) return;
-  return `sleight: the engine's line counts sleight's setup code. In your code the error is at line ${line}, column ${column + 1}.`;
+  return /* lean notice */ `sleight: the engine's line counts sleight's setup code. In your code the error is at line ${line}, column ${column + 1}.`;
 }

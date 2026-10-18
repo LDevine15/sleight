@@ -12,10 +12,10 @@ export function initializationAdvice(content, failed, code = '') {
     /\bcua\.(?:getBrowser|getTab|listTabs|createBrowserTab)\(/.test(code);
   const read = browser ? 'await cua.listTabs()' : 'await cua.getState()';
   // A runtime throw ran up to the error (a JSON.parse error did, 2026-10-16 probe); a syntax error never ran.
-  const kind = !error ? 'sleight: the engine returned only required API documentation; execution is unconfirmed'
+  const kind = /* lean notice */ !error ? 'sleight: the engine returned only required API documentation; execution is unconfirmed'
     : outside.some(text => /^SyntaxError:/m.test(text)) ? 'sleight: initialization documentation accompanied a syntax error; the code did not run'
     : 'sleight: initialization documentation accompanied an error; the code may have run up to the error';
-  return `${kind}. Complete the documented initialization with one supported read: ${read}. Read current state before deciding what remains. Do not replay the pending input automatically. Existing approval requirements still apply.`;
+  return /* lean notice */ `${kind}. Complete the documented initialization with one supported read: ${read}. Read current state before deciding what remains. Do not replay the pending input automatically. Existing approval requirements still apply.`;
 }
 
 function withoutFences(text) {

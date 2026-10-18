@@ -72,3 +72,29 @@ test('the relay adds one mapped line to a failed reply, keeps the raw error, and
     assert.equal(replies[0].result.content.length, 2);
   } finally { relay.dispose(); }
 });
+
+test('a JSON-RPC error carries the mapped line in its message, in both prompt variants', () => {
+  for (const prompt of [undefined, 'lean']) {
+    const clientIn = new PassThrough(), clientOut = new PassThrough();
+    const serverIn = new PassThrough(), serverOut = new PassThrough();
+    const requests = [], replies = [];
+    serverIn.on('data', data => requests.push(...data.toString().trim().split('\n').map(JSON.parse)));
+    clientOut.on('data', data => replies.push(...data.toString().trim().split('\n').map(JSON.parse)));
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, prompt });
+    try {
+      const code = 'const a = 1;\nconst b = ;';
+      clientIn.write(JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+      const sent = requests[0].params.arguments.code, start = sent.indexOf(code);
+      const line = sent.slice(0, start).split('\n').length + 1;
+      const raw = `[${line}:10-${line}:11]: Unexpected token: ';'`;
+      serverOut.write(JSON.stringify({ id: 1, error: { code: -32603, message: raw } }) + '\n');
+      assert.equal(requests.length, 1);
+      assert.equal(replies.length, 1);
+      const [first, hint, ...rest] = replies[0].error.message.split('\n');
+      assert.equal(first, raw);
+      assert.match(hint, /^sleight: .*line 2, column 11\.$/);
+      assert.equal(rest.length, 0);
+      if (prompt === 'lean') assert.doesNotMatch(hint, /setup code/);
+    } finally { relay.dispose(); }
+  }
+});
