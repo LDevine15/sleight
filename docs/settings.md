@@ -279,6 +279,10 @@ gallery or floating window, the rest of the call still goes to the window under 
 palette closed by a button isn't refused. `SLEIGHT_PARENT_LEASE=0` (A/B baseline) keeps the "window changed
 since the last call" refusal when a dialog closed between calls ([input leases](design/input-lease.md#dialogs-and-palettes)).
 
+When two results in a row show a menu-bar item selected with no menu open, sleight posts one Escape to the leased app's
+process to close it. It does this once per stuck menu, only after half a second with no key or mouse input, and the result says
+so. `SLEIGHT_STUCK_ESCAPE=0` turns it off.
+
 ## First-call batching
 
 The engine's tool description tells Claude to send only the app's acquisition in its first call.

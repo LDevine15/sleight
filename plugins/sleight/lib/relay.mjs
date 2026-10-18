@@ -76,6 +76,7 @@ import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWho
   unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
+import { createStuckEscapes } from './stuck-escape.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason, TEXTLESS_NOTE } from './compact-reads.mjs';
 import { promptNotice } from './prompt-notice.mjs';
@@ -260,6 +261,13 @@ export function openMenuNote(text, prompt, shown = 0) {
   return shown ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` : cancel === undefined
     ? promptNotice(`sleight: a menu may be stuck open: menu-bar item ${number} is selected with no menu showing, and keys may not reach the document. Click ${number} to open its menu, then close that menu with \`await app.performSecondaryAction(<its menu>, "Cancel")\`; Cancel on the menu-bar item alone does nothing.`, prompt)
     : promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Close it with \`await app.performSecondaryAction(${cancel}, "Cancel")\`, not Escape or a click; if it stays open, tell the user.`, prompt);
+}
+// What the result says after sleight's one Escape to a stuck menu (stuck-escape.mjs), or today's note when none went out.
+export function stuckEscapeNote(result, app, number, fallback, prompt) {
+  if (result?.posted !== true) return fallback;
+  if (result.selected === false) return /* notice */ promptNotice(`sleight sent one Escape to ${app} to close a stuck menu (menu-bar item ${number}); no menu-bar item is selected now. The tree above is from before it.`, prompt);
+  if (result.selected === true) return /* notice */ promptNotice(`sleight sent one Escape to ${app} to close a stuck menu (menu-bar item ${number}); the item is still selected.`, prompt) + (fallback ? '\n' + fallback : '');
+  return /* notice */ promptNotice(`sleight sent one Escape to ${app} to close a stuck menu (menu-bar item ${number}). Read the window to check that it closed.`, prompt);
 }
 function cancelTarget(text, title) {
   for (const line of text.split('\n')) {
@@ -744,6 +752,9 @@ export function createRelay({
   staleHelperCheck,
   settleTextWrite,
   prepareTextWrite,
+  // Posts one Escape to the leased app's pid after a menu stayed stuck on two results in a row (stuck-escape.mjs).
+  // The launcher supplies it unless SLEIGHT_STUCK_ESCAPE=0.
+  stuckEscape,
   // Notices from work that finished between calls (rich-text clipboard recovery), added to the next
   // tool result Claude gets, so they don't stay on stderr where Claude never looks.
   takeNotices,
@@ -1141,6 +1152,7 @@ export function createRelay({
   const screenshots = new Map(); // lowercased app name -> { latest, byTitle } pixel sizes of its engine screenshots
   const framesNoted = new Set(); // [app, title, size] keys whose coordinate frame note Claude has seen
   const stuckMenus = new Map(); // window key -> { title, shown } of its selected menu-bar item
+  const stuckEscapes = createStuckEscapes();
   const openMenus = new Set(); // menuWindowKey of windows whose last result was an open menu
   const fileLists = new Map(); // window key -> file URLs its last file-browser tree listed
   let lastMenuTree; // the last result's tree, when it was a menu
@@ -4258,7 +4270,7 @@ export function createRelay({
       else if (msg.error && typeof msg.error.message === 'string') msg.error.message += '\n' + panelNote;
     }
     // Last, after every check above has read the full tree.
-    let chromeSettle = false;
+    let chromeSettle = false, stuckPlan;
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       chromeSettle = !automatic && !confirmedBrowser && jsCode !== undefined && !msg.error &&
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
@@ -4306,7 +4318,15 @@ export function createRelay({
         if (key && entry) stuckMenus.set(key, { title: entry.title, shown: OPEN_MENU.test(tree) ? shown : shown + 1 });
         else if (key && !msg.result.isError && /^\d+ (?:standard window|window|sheet|dialog)\b/m.test(tree) &&
             !/…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree)) stuckMenus.delete(key);
-        if (note) msg.result.content.push({ type: 'text', text: note });
+        // The Escape is for the leased, engine-confirmed app only, and only for the window this tree shows.
+        const escapeKey = stuckEscape && inputLease && !confirmedBrowser && key && leaseWindow?.appId && sameWindow(leaseWindow, treeWindow)
+          ? JSON.stringify([leaseWindow.appId, key]) : undefined;
+        const opened = OPEN_MENU.test(tree);
+        const cleared = !entry && !opened && !msg.result.isError && /^\d+ (?:standard window|window|sheet|dialog)\b/m.test(tree) &&
+          !/…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree);
+        if (stuckEscapes.observe(escapeKey, { stuck: !!entry && !opened, cleared }) && !running.size) {
+          stuckPlan = { key: escapeKey, number: entry.number, window: leaseWindow, note, since: clock() };
+        } else if (note) msg.result.content.push({ type: 'text', text: note });
       }
       // Explicit reads stay whole unless Claude printed a derived value. Recovery still forces
       // full output; neither choice skips the action's UI comparison.
@@ -4329,6 +4349,25 @@ export function createRelay({
       resultCalls.delete(msg.id);
     }
     if (msg.method === undefined) filterMarks.delete(msg.id);
+    if (stuckPlan) {
+      // One try per episode, whatever the checks decide. It counts as running, so no action starts while it posts.
+      const plan = stuckPlan, generation = stopGeneration, id = `sleight-stuck-escape-${nextInternalId++}`;
+      stuckEscapes.tried(plan.key);
+      running.add(id); callDetails.set(id, 'stuck-menu Escape');
+      Promise.resolve().then(() => generation !== stopGeneration || disposed || closing ? { posted: false, reason: 'call stopped' }
+        : stuckEscape(plan.window, inputLease.grant(inputLease.acquire(plan.window)), { since: plan.since, clock }))
+        .catch(error => ({ posted: false, reason: String(error?.message ?? error) }))
+        .then(result => {
+          finishedCall(id);
+          trace('stuck-escape', { id: msg.id, appId: plan.window.appId, item: plan.number, posted: result?.posted === true,
+            ...(result?.posted ? { selected: result.selected ?? null } : { reason: result?.reason ?? 'unknown' }) });
+          if (generation !== stopGeneration || disposed || closing) return;
+          const text = stuckEscapeNote(result, plan.window.app, plan.number, plan.note, prompt);
+          if (text) msg.result.content.push({ type: 'text', text });
+          if (!startup?.reply(msg)) toClient(msg);
+        });
+      return;
+    }
     if (chromeSettle && !chromeSettled.has(msg.id)) {
       const handle = chromeSettleHandle(jsCode);
       const first = lastImageData(msg.result.content);

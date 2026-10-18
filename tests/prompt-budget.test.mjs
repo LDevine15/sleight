@@ -305,7 +305,8 @@ test('the budget counts compactor, guard and stop notes marked as notices', { sk
   for (const text of [SCROLL_LOOP_NOTE, TEXTLESS_NOTE, 'UI changed (window)', 'sleight: <value> earlier reads of the same window in this call left out',
     'sleight: the click on <value> moved it from position', 'sleight: clicking also swapped', 'sleight: typed text landed in',
     'sleight: lines changed since the last full tree', 'sleight: this call ran <value>', 'Native access stopped: use the handle',
-    'that object names no element', 'Input lease stopped this action: app changed.', 'Copy/Cut used the native clipboard.']) assert.ok(texts.includes(text), text);
+    'that object names no element', 'Input lease stopped this action: app changed.', 'Copy/Cut used the native clipboard.',
+    'sleight sent one Escape to <value> to close a stuck menu']) assert.ok(texts.includes(text), text);
   const others = [...noticeInventory(), ...sharedNoticeInventory()].map(entry => entry.text);
   for (const entry of taggedNoticeInventory()) assert.ok(!others.includes(entry.text), `counted twice: ${entry.path}`);
 });

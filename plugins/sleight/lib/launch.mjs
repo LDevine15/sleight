@@ -24,6 +24,7 @@ import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
 import { isV3Frontend, createV3Frontend } from './direct-browser/worker.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
+import { stuckEscapeOption } from './stuck-escape.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
 import { loadFlowRules } from './flow-rules.mjs';
 import { InputLease } from './input-lease.mjs';
@@ -600,7 +601,7 @@ export function runScript(script, request, options = {}) {
   const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
-  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup ? 3000 : 30000,
+  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup || script === 'stuck-escape.js' ? 3000 : 30000,
     ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
   return new Promise(resolve => {
@@ -892,6 +893,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       if (!existsSync(join(LIB, 'settle-text-write.js'))) throw new Error('Text-write settle helper is unavailable.');
       return prepareTextWrite(target, current, { identity: window => appHealth.windowIdentity(window), run: runScript });
     },
+    stuckEscape: stuckEscapeOption(process.env, { identity: window => appHealth.windowIdentity(window), run: runScript }),
     spaceProbe: app => appHealth.probe(app),
     frontRestore: process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : request => appHealth.frontRestore(request),
     guardMode: process.env.SLEIGHT_GUARD,
