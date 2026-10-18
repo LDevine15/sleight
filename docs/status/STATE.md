@@ -3,35 +3,26 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 23:20 UTC, flushed before the owner's clear)
+## Banner (2026-10-18 23:55 UTC)
 
 Goal (owner): release 1.3.0, then the claim post and the launch video, then 1.3.1, then hold at 1.3.1 while the owner uses it.
 Owner (2026-10-18 evening): all building finishes now, and validation follows. The ledger
 (`~/Projects/sleight-wt/ledger/LEDGER.md`, sections from POST-1.3.0 BUILD on) records every result and ruling of the night.
 
-**Release line.** Branch `claude/boot-sleight-arch-6d0629` = `private` `pane/auto-mode` = main checkout, at the flush commit after
-`ffddc0e6`. The full check last passed on 9463c0c4 (8073 tests). Everything since on the release line is docs (STATE, LAWS, ROADMAP,
-storyboard, known-problems), bench/fowl harness (cover record, placement, Safari per-task PID) and MB1 (menu bar glove and menu,
-CHANGELOG). The flush's full check passed at 23:4xZ 2026-10-18 with 0 failures in 8086 tests (368 skipped). Race worktree `~/Projects/sleight-wt/race-fx` is pinned at 64396fa5.
-No open PRs.
+**Release line.** Branch `claude/boot-sleight-arch-6d0629` = `private` `pane/auto-mode` = main checkout, at 0917b8e9. The 1.3.0
+race and security branches are merged: sec130, ft1 (through fs1), fs1, md1, es1, ff1, rg1r2, fl3. Conflicts resolved by hand:
+relay.mjs keeps the own-host reply check ahead of fs1's offscreen-row delivery, and the prompt fixture's skill hash is repinned. The merged lean
+prompt measured 0.7105 of default against the 0.71 cap, so md1's app-handle hint got a lean wording (28,403 of 40,009), and opens
+drop md1's renamed select_window line. The full check on the merged line ran 8152 tests with 0 failures (368 skipped) and exit 0, and lint is clean.
+CHANGELOG and known-problems have the merged lines. No open PRs. race-fx moves to 0917b8e9 before the next live round.
 
-**Branches built tonight, all pushed to `private`, none merged.** Each has a report in `ledger/p130/<id>-REPORT.md` and a Sonnet-high
-review recorded in the ledger.
-- Into 1.3.0 (race losses and security), merge first: `claude/p130-ft1` a4bf49b1 (form-travel: pickFromList first, renumbering
-  follow limited to one inserted block, `{ id }` mapping; reviewed twice), `claude/p130-fs1` d58fb4ac (on ft1; form-settings: a user-asked
-  submit needs no more consent per the new LAWS form rule, drag tool for reorders, offscreen-row note, review fixes in. Its task turns two-factor on, which the form rule
-  still asks about by design (LAWS), so form-settings may stay a loss), `claude/p130-md1` 22c459f5 (mdn: partial-failure note, window line; reviewed), `claude/p130-sec130` a1523a38
-  (SECURITY, since Claude could answer sleight's own menu and cards via menu_bar or getApp("consent-host"); review fixes in, live
-  checks in its report), `claude/p130-es1` 59bbac27 (`turbo app on` refuses in 1.3.0; qualification disconnect cell), and the small lane branches
-  `codex/ff1` 6fe10b92, `codex/rg1r2` 0b60bbcf (on rg1 25c1683a), `codex/fl3` 028ec25f.
-- 1.3.1 (merge after the tag. The ghost hand branches go in as gh-c, then gh-a, then gh-b with `client: hand` passed to createRelayHand, then h8, sh1):
-  `claude/p130-gh-a` 3f3a2ad1, `claude/p130-gh-b` 4ce87780, `claude/p130-gh-c` b76b2770, `claude/p130-h8` 2188a456,
-  `claude/p130-sh1` 0f8d0a0d (shared host, hookup animation, Ghost Hand toggle), `claude/p130-rf1` ebd64df3 and `claude/p130-rf2`
-  7cba2e52 (Electron relaunch flow and the pipe keeper), `claude/p130-wk4` 7f17ce89 (stuck-menu Escape), `claude/p130-wb1` 377538ec
-  (Word steering, flags), `claude/p130-pm1` ccf2ed6f (Permissions; needs its own review), `claude/p130-so1` 5ca6468d (action outcomes
-  and log; needs a re-review), `claude/p130-spd` 4ac7bc82 (TS3 flag), `claude/p130-in1` 298271f6 (retired-ref refusal; could join
-  1.3.0), `claude/p130-cap1` 2bed084f (film capture recorder), `codex/el3` b06280ad, `codex/ga1t2` 5ced05fb, `codex/fa1` f2d7735e,
-  `codex/tt7` 6f205c02, `codex/wk2` 8407b890, `codex/am1fr3` ea6bc127. Closed with evidence: IN1, TT6, WK5, DR2, ET1, EL2, DC1 (live).
+**1.3.1 branches, all on `private`, none merged** (reports in `ledger/p130/<id>-REPORT.md`). Merge after the tag: gh-c, then gh-a,
+then gh-b with `client: hand` passed to createRelayHand, then h8, sh1. Others: rf1, rf2, wk4, wb1, pm1, so1, spd, in1, cap1, codex/el3,
+ga1t2, fa1, tt7, wk2, am1fr3. A dry merge onto 0917b8e9 (`git merge-tree`) is clean for in1, gh-a/b/c, h8, sh1, spd, cap1, el3,
+ga1t2, fa1, tt7 and am1fr3. Conflicts: rf1 and rf2 (tests/bench-electron-qualification.test.mjs, against es1), wk4 and wk2 (relay.mjs),
+wb1 and so1 (compact-reads.mjs, relay.mjs), pm1 (menubar.js, relay.mjs, against sec130's port of its own-host code). Sonnet-high reviews
+running: pm1 (`p130/pm1-REVIEW.md`) and so1's privacy fixes (`p130/so1-REVIEW2.md`). Closed with evidence: IN1, TT6, WK5, DR2, ET1,
+EL2, DC1 (live).
 
 **Where the claim stands (Haiku 5.5 high, real windows).** Native 9 tasks "fastest", 8 of 9, 251 s against claude-cu's 454 s (lost
 preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari is complete (3 rounds an arm, all reruns done 23:35Z): sleight fastest on 9 of 12
@@ -41,16 +32,14 @@ makes that task a loss too. form-settings is now sleight's (167.0 against cua's 
 ask (LAWS). Fixes for form-travel, mdn and form-checkout are on ft1, fs1 and md1. Close pairs for top-ups: form-travel, wikipedia
 and mdn against Codex and Peekaboo, form-settings against cua.
 
-**Running across the clear.**
-- The race is idle. Safari finished 23:35Z (Terminal job `race-safari-r1.command` done, `reopen-r1.sh` done).
+**Running now.**
+- The race is idle since Safari finished at 23:35Z. Neither the live lock nor `/tmp/sleight-hold` exists.
 - `nohup` watchdog `race-1017/watchdog.sh` (pid 63290, log `watchdog.log`): ALERT and exit if the live lock is held with no round
   for 3 min, a round runs over 40 min, or Safari stays up with no round. Read it first after the clear.
-- The Firefox b6 and sleight-in-Codex smoke waiters were stopped on purpose: they would have run the old build.
 
 **Order from here.**
 1. Safari is scored (`node bench/fowl/race-score.mjs ~/Projects/sleight-wt/race-1017/safari-*-r[0-9]*`).
-2. Merge into the release line: sec130 and fs1 (review fixes in, read their reports), ft1, md1, es1, ff1, rg1r2, fl3.
-   Full check, lint, push, then move race-fx to that commit.
+2. Done 23:5xZ (0917b8e9). Move race-fx to it before the next live round.
 3. Live checks the merges need first: sec130's engine card text for the consent host and a press_key probe against a frontmost
    consent-host card, and ft1's Page Down in Safari's and Firefox's long lists.
 4. sleight's Safari x3 and Firefox x3 on the new build, rescore, then one top-up round to 5 for pairs still within 20%.
