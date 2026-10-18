@@ -696,3 +696,16 @@ native reference, and oversized first results defer the browser reference while 
   searched, or loads rows only after a delay, can end as "ran out of time". Not measured on a real infinite-scroll list.
 - A combobox that filters on a different spelling than the option text gets up to three typed queries (the text, without brackets,
   its first two words). After a miss the field is typed back to the asked text.
+
+## Electron debugger consent (not in a release yet)
+
+- Always allow records for an Electron app's debugger are sealed with an HMAC key in a 0600 file beside them
+  (`grant-seal.key`). A hand-written record, an old unsealed one, or one with a changed field is refused (unit-tested,
+  2026-10-17). A process running as you, including Claude's own shell, can still read that key and seal its own record
+  for an app build. That build then gets the debugger without the card until you revoke it. The engine's own app
+  approval is still required. A seal that same-user processes can't read (a keychain item limited to the consent host
+  binary) isn't built. The consent host is compiled on your Mac and its code identity changes with each build. A
+  keychain item bound to it would prompt you after every rebuild.
+- The resident Electron host's ownership journal is sealed with `host.key`, also a 0600 file. A same-user process can
+  forge the journal and make the host refuse a launch or report a wrong owner. It can't open the host's channel,
+  whose admin secret the parent passes for each start and never writes.

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import { api as identity, instance, recipe, file, bind as bindFixture } from './fixtures/electron-app.mjs';
 // Missing module is the expected failure against the old web-only join.
@@ -72,7 +73,8 @@ test('Always allow is written only by an authenticated click and follows build a
   assert.equal(result.status, 'granted'); assert.equal(result.grant.scope, 'always'); assert.equal(result.persisted, true);
   assert.equal(statSync(path).mode & 0o777, 0o600); assert.equal(f.store.list().length, 1);
   const saved = JSON.parse(readFileSync(path, 'utf8'));
-  assert.deepEqual(Object.keys(saved.grants[0]).sort(), ['bundleId', 'cdhash', 'executable', 'key', 'name', 'profile', 'runtime', 'signer', 'version'], 'no process facts persist');
+  assert.equal(saved.version, 2); assert.match(saved.grants[0].seal, /^[A-Za-z0-9_-]{43}$/, 'every record carries its seal');
+  assert.deepEqual(Object.keys(saved.grants[0].record).sort(), ['bundleId', 'cdhash', 'executable', 'key', 'name', 'profile', 'runtime', 'signer', 'version'], 'no process facts persist');
   assert.equal(f.ui.authenticate(event), false, 'the event is spent'); f.presented[0].deliver(event); assert.equal(f.store.list().length, 1);
   // A fresh host process: same file, no card for the same build and profile, any PID.
   const g = fixture({ store: api.createGrantStore({ path }) });
@@ -98,21 +100,34 @@ test('a temporary profile never offers or stores Always', async () => {
   f.click(0, 'always'); const result = await pending;
   assert.deepEqual([result.status, result.code], ['refused', 'INVALID_CHOICE']); assert.equal(f.store.list().length, 0);
 });
-test('an unsafe grant file is never read as consent and never overwritten', async t => {
+test('a hand-written or altered Always record is refused; only a record the store sealed counts', async t => {
   const directory = temporary(); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, 'grants.json'), record = { key: identity.appKey(instance), name: instance.name, bundleId: instance.bundleId, signer: instance.signer,
     version: instance.version, runtime: instance.runtime, profile: instance.profile, executable: instance.executable, cdhash: instance.cdhash };
+  // The old unsealed format and a new-format record with a made-up seal: both written by hand, both refused.
   writeFileSync(path, JSON.stringify({ version: 1, grants: [record] }), { mode: 0o600 });
+  assert.equal(api.createGrantStore({ path }).list().length, 0, 'an unsealed record is not consent');
+  writeFileSync(path, JSON.stringify({ version: 2, grants: [{ record, seal: createHmac('sha256', Buffer.alloc(32, 1)).update(JSON.stringify(record)).digest('base64url') }] }), { mode: 0o600 });
+  const open = fixture({ store: api.createGrantStore({ path }) });
+  assert.equal(open.store.list().length, 0, 'a seal under some other key is not consent'); assert.equal(open.consent.grantFor(instance, { session, turn }), undefined);
+  rmSync(path);
+  // A real click: the store seals it, and a new store on the same file trusts it.
+  const sealed = fixture({ store: api.createGrantStore({ path }) }), pending = ask(sealed); sealed.click(0, 'always'); assert.equal((await pending).persisted, true);
   assert.equal(api.createGrantStore({ path }).list().length, 1);
-  chmodSync(path, 0o644); const open = fixture({ store: api.createGrantStore({ path }) });
-  assert.equal(open.store.list().length, 0, 'group-readable file is not trusted'); assert.equal(open.consent.grantFor(instance, { session, turn }), undefined);
-  const pending = ask(open); open.click(0, 'always'); const result = await pending;
+  const saved = readFileSync(path, 'utf8'), envelope = JSON.parse(saved);
+  writeFileSync(path, JSON.stringify({ ...envelope, grants: [{ ...envelope.grants[0], record: { ...envelope.grants[0].record, cdhash: 'f'.repeat(40) } }] }), { mode: 0o600 });
+  assert.equal(api.createGrantStore({ path }).list().length, 0, 'changing a sealed field breaks the seal');
+  writeFileSync(path, saved, { mode: 0o600 });
+  assert.equal(api.createGrantStore({ path, keyPath: join(directory, 'other.key') }).list().length, 0, 'another key does not verify it');
+  // File safety still holds: group-readable or linked files are not trusted, and an unsafe file is never overwritten.
+  chmodSync(path, 0o644); const unsafe = fixture({ store: api.createGrantStore({ path }) });
+  assert.equal(unsafe.store.list().length, 0, 'group-readable file is not trusted');
+  const degraded = ask(unsafe); unsafe.click(0, 'always'); const result = await degraded;
   assert.equal(result.grant.scope, 'session', 'the click degrades to a session grant when it cannot persist'); assert.equal(result.persisted, false);
-  assert.equal(readFileSync(path, 'utf8'), JSON.stringify({ version: 1, grants: [record] }), 'file untouched');
+  assert.equal(readFileSync(path, 'utf8'), saved, 'file untouched');
   const link = join(directory, 'link.json'); symlinkSync(path, link); chmodSync(path, 0o600);
   assert.equal(api.createGrantStore({ path: link }).list().length, 0, 'symlinks are not trusted');
-  writeFileSync(path, JSON.stringify({ version: 1, grants: [{ ...record, version: '9.9.9' }] }), { mode: 0o600 });
-  assert.equal(api.createGrantStore({ path }).list().length, 0, 'a record whose key does not match its fields is not trusted');
+  assert.equal(statSync(join(directory, 'grant-seal.key')).mode & 0o777, 0o600);
 });
 test('the store takes a write only with a receipt from an authenticated Always click', () => {
   const store = api.createGrantStore(), record = { key: identity.appKey(instance), name: instance.name, bundleId: instance.bundleId, signer: instance.signer,
