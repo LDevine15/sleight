@@ -48,11 +48,12 @@ function elementContexts(text) {
     if (!m) { stack.length = 0; continue; }
     const depth = m[1].length;
     while (stack.length && stack.at(-1).depth >= depth) stack.pop();
-    const parent = stack.at(-1), menu = /^menu bar(?:$|,| (?!item\b))/.test(m[3]) || !!parent?.menu;
+    const parent = stack.at(-1), bar = /^menu bar(?:$|,| (?!item\b))/.test(m[3]), menu = bar || !!parent?.menu;
     const content = !menu && !!(parent?.content || parent?.window);
-    contexts.set(Number(m[2]), { parent: parent?.line ?? 'unknown (root)', menu, content });
+    // barItem: a title directly under the menu bar, which opens its menu.
+    contexts.set(Number(m[2]), { parent: parent?.line ?? 'unknown (root)', menu, content, barItem: !!parent?.bar });
     const label = m[3].split(/(?:, | )(?=(?:Value|ID|Help|Secondary Actions):)/)[0];
-    stack.push({ depth, line: label, menu, content, window: /^(?:standard window|sheet|dialog)(?: |,|$)/.test(m[3]) });
+    stack.push({ depth, line: label, menu, bar, content, window: /^(?:standard window|sheet|dialog)(?: |,|$)/.test(m[3]) });
   }
   return contexts;
 }
@@ -164,6 +165,20 @@ export const documentLabel = window => `${JSON.stringify(window.title)} in ${win
 // A menu open in front of a window: its header has the window's title and app but no URL, and the root is
 // the menu ("0 menu …") or its named parent with an unnamed menu below ("0 Format, Secondary Actions:
 // Cancel, Pick" then "\t1 menu").
+// The selected item under the menu bar, as its number and its title.
+export function selectedMenuEntry(text) {
+  if (typeof text !== 'string' || /^\d+ menu(?: |$)(?!bar\b)/m.test(text)) return;
+  let bar;
+  for (const line of text.split('\n')) {
+    const item = /^(\t*)(\d+) (.*)$/.exec(line);
+    if (!item) { bar = undefined; continue; }
+    if (bar !== undefined && item[1].length <= bar) bar = undefined;
+    if (/^menu bar(?: |$)/.test(item[3]) && !/^menu bar item\b/.test(item[3])) bar = item[1].length;
+    else if (bar !== undefined && item[1].length === bar + 1 && /\([^)]*\bselected\b[^)]*\)/.test(item[3])) {
+      return { number: item[2], title: item[3].replace(/^menu bar item /, '').replace(/\([^)]*\)\s*/g, '').replace(/,.*$/, '') };
+    }
+  }
+}
 export function menuRoot(text) {
   const lines = String(text ?? '').split('\n'), at = lines.findIndex(line => /^0 /.test(line));
   if (at < 0) return false;
@@ -718,8 +733,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             // ID: One" (2026-10-09). With no match at all, one bare line named exactly that is it.
             let found = findTarget(elements(text));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
+            let barItems = [], outside = [];
             if (found.length > 1 && (kind === 'label' || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
-              const enabled = found.filter(([, line]) => !/^[a-z][a-z ]* \\([^()]*\\bdisabled\\b[^()]*\\)/.test(line));
+              // A menu-bar title sharing its label with one element outside the menu bar means that element: { label: "Table" }
+              // opened Word's Table menu, which then trapped typing (word-edit-1 and -2, 2026-10-17).
+              // A window root named like the title isn't a control, and a disabled one leaves the enabled preference below to choose.
+              const disabled = line => /^[a-z][a-z ]* \\([^()]*\\bdisabled\\b[^()]*\\)/.test(line);
+              barItems = found.filter(([number]) => ancestry.get(number)?.barItem);
+              outside = found.filter(([number, line]) => !ancestry.get(number)?.menu && !/^(?:standard window|sheet|dialog)(?: |,|$)/.test(line));
+              if (barItems.length && outside.length === 1 && !disabled(outside[0][1])) found = outside;
+              const enabled = found.filter(([, line]) => !disabled(line));
               if (enabled.length === 1) found = enabled;
               const content = found.filter(([number]) => ancestry.get(number)?.content);
               if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
@@ -727,7 +750,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             const disabledNote = !found.length && (kind === 'label' || kind === 'label or ID') ? disabledLabelNote(text, target) : undefined;
             if (disabledNote) throw stop('sleight stopped before ' + name + ': ' + disabledNote);
             if (found.length !== 1) {
-              const candidates = found.map(([number]) => 'candidate ' + number + ': parent ' + ancestry.get(number).parent).join('; ');
+              const split = barItems.length && outside.length > 1 && found.length > 1;
+              const candidates = split ? 'menu-bar item ' + barItems.map(([number]) => number).join(', ') + '; other elements ' + outside.map(([number]) => number + ' (parent ' + ancestry.get(number).parent + ')').join(', ')
+                : found.map(([number]) => 'candidate ' + number + ': parent ' + ancestry.get(number).parent).join('; ');
               throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ${quoted(/* lean notice */ ' Use an element number or another ID from the window below.')});
             }
             args = [found[0][0], ...args.slice(1)];

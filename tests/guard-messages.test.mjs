@@ -76,16 +76,36 @@ for (const [name, rows] of [
   const f = await execute(rows, 'await app.click({ label: "Insert" });');
   assert.match(f.error?.message ?? '', /elements with label "Insert"/);
   assert.deepEqual(f.inputs, []);
+  if (name === 'two content matches') {
+    // A menu-bar title among them is named apart from the other elements.
+    assert.match(f.error.message, /menu-bar item 6; other elements 2 \(parent tab group Ribbon\), 4 \(parent group Tools\)\./);
+    return;
+  }
   for (const line of rows.split('\n').filter(line => /(?:tab|button|menu item) Insert$|\d+ Insert$/.test(line))) {
     const number = /\d+/.exec(line)[0];
     assert.match(f.error.message, new RegExp('candidate ' + number + ': parent '));
   }
-  if (name === 'two content matches') {
-    assert.match(f.error.message, /candidate 2: parent tab group Ribbon/);
-    assert.match(f.error.message, /candidate 4: parent group Tools/);
-    assert.match(f.error.message, /candidate 6: parent menu bar/);
-  }
 });
+
+// word-edit-1 and -2 (2026-10-17): { label: "Table" } clicked the menu-bar title, whose menu then trapped typing.
+for (const selector of ['"Table"', '{ label: "Table" }']) {
+  test(`a menu-bar title loses to the one element outside the menu bar for ${selector}`, async () => {
+    // The toolbar is its own root, so no window-content preference applies.
+    const f = await execute('3 toolbar Tools\n\t4 button Table\n5 menu bar\n\t6 Insert\n\t7 Table', `await app.click(${selector});`);
+    assert.equal(f.error, undefined);
+    assert.deepEqual(f.inputs, [4]);
+  });
+  test(`a label only a menu-bar title has still clicks it for ${selector}`, async () => {
+    const f = await execute('\t1 button Insert\n5 menu bar\n\t6 Insert\n\t7 Table', `await app.click(${selector});`);
+    assert.equal(f.error, undefined);
+    assert.deepEqual(f.inputs, [7]);
+  });
+  test(`a menu-bar title and two other elements stop before input, naming both sides, for ${selector}`, async () => {
+    const f = await execute('3 toolbar Tools\n\t4 button Table\n8 group Panel\n\t9 button Table\n5 menu bar\n\t7 Table', `await app.click(${selector});`);
+    assert.deepEqual(f.inputs, []);
+    assert.match(f.error?.message ?? '', /3 elements with label (?:or ID )?"Table" in this window\. menu-bar item 7; other elements 4 \(parent toolbar Tools\), 9 \(parent group Panel\)\./);
+  });
+}
 
 test('duplicate IDs and full lines never get the content-label preference', async () => {
   for (const selector of ['{ id: "duplicate" }', '{ line: "button Insert, ID: duplicate" }']) {

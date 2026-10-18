@@ -22,18 +22,30 @@ const item = text => ({ type: 'text', text });
 const mark = '[sleight:filtered-read:wm1]';
 const warning = /typed text landed in/;
 
-test('a selected menu-bar title gives numbered recovery without promising it will work', () => {
+// word-edit-2 (2026-10-18, lines 104-114): Escape and clicking the menu-bar item reopened the menu; its Cancel closed it.
+const cancelFirst = /Close it(?: with|:) `await app\.performSecondaryAction\(132, "Cancel"\)`, not Escape/;
+test('a selected menu-bar title leads with its Cancel action, not Escape, without promising it will work', () => {
   for (const prompt of [undefined, 'lean']) {
     const note = openMenuNote(header + '\n' + menu, prompt);
     assert.match(note, prompt === 'lean' ? /Menu may trap input/ : /a menu may be stuck open; keys and clicks may not reach the document/);
-    assert.match(note, prompt === 'lean' ? /Escape once, then click menu-bar item/ : /Try one Escape; if it stays, click its menu-bar item by number/);
-    assert.match(note, /\(`app.click\(132\)`\); if (?:it still stays|still stuck), tell the user/);
-    assert.doesNotMatch(note, /closes it|won't land/);
+    assert.match(note, cancelFirst);
+    assert.match(note, /; if (?:it stays open|still stuck), tell the user\.$/);
+    assert.doesNotMatch(note, /Try one Escape|Escape once|app\.click\(|closes it|won't land/);
   }
 });
 
 test('selected menu-bar items with an explicit role also warn', () => {
-  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', 'menu bar item (selected) Table')), /app.click\(132\)/);
+  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', 'menu bar item (selected) Table')), cancelFirst);
+});
+
+test('a menu element with Cancel for the selected title is the one the note cancels', () => {
+  // The menu read as its own root, as in word-edit-2 line 107, and the item's own line carrying Cancel.
+  assert.match(openMenuNote(header + '\n' + menu + '\n140 Table, Secondary Actions: Cancel, Pick'), /performSecondaryAction\(140, "Cancel"\)/);
+  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', '(selected) Table, Secondary Actions: Cancel, Pick')), cancelFirst);
+  // Another title's Cancel or a button named like it is not the menu.
+  for (const extra of ['140 Insert, Secondary Actions: Cancel, Pick', '\t141 button Table, Secondary Actions: Cancel']) {
+    assert.match(openMenuNote(header + '\n' + menu + '\n' + extra), cancelFirst, extra);
+  }
 });
 
 test('the relay gives full advice once until selection disappears, then starts a new episode', t => {
@@ -49,22 +61,22 @@ test('the relay gives full advice once until selection disappears, then starts a
     serverOut.write(JSON.stringify({ id, result: { content: [item(rows)] } }) + '\n');
     return replies.find(reply => reply.id === id).result.content.map(part => part.text ?? '').join('\n');
   };
-  assert.match(read('## Computer Use\n\nNative reference.\n' + header + '\n' + menu), /Escape/);
+  assert.match(read('## Computer Use\n\nNative reference.\n' + header + '\n' + menu), cancelFirst);
   for (const rows of [menu, menu.replace('132', '142'), menu.replace('Table', 'Insert')]) {
     const out = read(header + '\n' + rows);
-    assert.doesNotMatch(out, /Try one Escape|if it still stays|Escape or a click/);
+    assert.doesNotMatch(out, /Close it with|if it stays open/);
     const notes = out.split('\n').filter(line => /^sleight:.*menu.*(?:stuck|open)/.test(line));
     assert.ok(notes.length <= 1);
   }
   read('No tree in this reply.');
-  assert.doesNotMatch(read(header + '\n' + menu), /Try one Escape/);
+  assert.doesNotMatch(read(header + '\n' + menu), cancelFirst);
   read(header + '\n…(20)');
-  assert.doesNotMatch(read(header + '\n' + menu), /Try one Escape/);
+  assert.doesNotMatch(read(header + '\n' + menu), cancelFirst);
   read(header + '\n+ 20 button Save');
-  assert.doesNotMatch(read(header + '\n' + menu), /Try one Escape/);
-  assert.doesNotMatch(read('## Computer Use\n\nNative reference.\n' + header + '\n' + menu), /Try one Escape/);
+  assert.doesNotMatch(read(header + '\n' + menu), cancelFirst);
+  assert.doesNotMatch(read('## Computer Use\n\nNative reference.\n' + header + '\n' + menu), cancelFirst);
   read(header + '\n' + menu.replace('(selected) ', ''));
-  assert.match(read(header + '\n' + menu), /Try one Escape/);
+  assert.match(read(header + '\n' + menu), cancelFirst);
 });
 
 // word-edit-1 (2026-10-17): the short note repeated through 15 calls of Escape and clicks while keys were swallowed.
@@ -82,7 +94,7 @@ test('the third stuck note for the same window and item says to check typing and
     return replies.find(reply => reply.id === id).result.content.map(part => part.text ?? '').join('\n');
   };
   const escalated = /keys may be swallowed[^\n]*\. Check that typing landed \(a value or count in the tree changed\), and switch route \(a toolbar or ribbon control, or a keyboard shortcut\) instead of repeating Escape or clicks\./;
-  assert.match(read(menu), /Try one Escape/);
+  assert.match(read(menu), cancelFirst);
   assert.doesNotMatch(read(menu), escalated);
   for (let i = 0; i < 3; i++) assert.match(read(menu), escalated);
   // Another selected title starts its count again, then escalates.
@@ -91,7 +103,7 @@ test('the third stuck note for the same window and item says to check typing and
   assert.match(read(other), escalated);
   // The item clears: the next episode starts with the full note.
   read(menu.replace('(selected) ', ''));
-  assert.match(read(menu), /Try one Escape/);
+  assert.match(read(menu), cancelFirst);
   assert.doesNotMatch(read(menu), escalated);
   assert.match(read(menu), escalated);
 });
@@ -333,4 +345,46 @@ test('focus on an element, typed text that arrived, a changed value or no typing
   assert.doesNotMatch(focusless(cells, { after: docRows('**Report** 7') }), noTarget);
   assert.doesNotMatch(focusless('await app.paste("Item");'), noTarget);
   assert.doesNotMatch(focusless('await app.typeText(text);'), noTarget);
+});
+
+// word-edit-2 (2026-10-18, lines 81-234) and word-edit-1 (2026-10-17, lines 61-217): with the Table menu selected in
+// the menu bar, typed text reached nothing and the word count stayed the same, whatever element had focus.
+const deadTyping = /typing reached nothing/;
+const stuckRows = (text = '**Report**', words = '12 words') => [...docRows(text), `\t82 button Status: ${words}`, ...menu.split('\n')];
+function dead(code, { before = stuckRows(), after = stuckRows(), focus = '\nThe focused UI element is 16 text entry area', prompt } = {}) {
+  const c = createReadCompactor({ prompt });
+  c.process([item(tree(before) + '\n' + focus)]);
+  const action = c.beginAction(code);
+  return c.process([item(GUARD_MARK + tree(after) + '\n' + focus + GUARD_END)], { action, code }).map(i => i.text).join('\n');
+}
+
+test('typing that changes nothing while a menu-bar item is selected names the item', () => {
+  for (const focus of ['\nThe focused UI element is 16 text entry area', windowFocus, '']) {
+    assert.match(dead(cells, { focus }), /sleight: typing reached nothing; menu-bar item 132 is still selected: cancel the menu first\./, focus);
+  }
+  assert.match(dead('await app.typeText("Quarterly summary");', { prompt: 'lean' }), /sleight: typing lost; menu-bar item 132 selected: cancel its menu first\./);
+});
+
+test('typing that changes nothing with focus on an element and no menu says so', () => {
+  const rows = () => stuckRows().filter(row => !/menu bar|\t1(?:29|32|33) /.test(row));
+  assert.match(dead(cells, { before: rows(), after: rows() }), /sleight: typing reached nothing; no typed text or value appears\. Click the target first\./);
+  assert.match(dead(cells, { before: rows(), after: rows(), prompt: 'lean' }), /sleight: typing lost \(nothing changed\); click the target first\./);
+  // Focus on the window itself keeps its own wording.
+  assert.match(dead(cells, { before: rows(), after: rows(), focus: windowFocus }), noTarget);
+});
+
+test('dead-typing stays silent when the text arrived, a value or count changed, or the field is secure', () => {
+  const secure = [...stuckRows(), '\t91 secure text field (settable) Description: Password'];
+  const valueless = stuckRows().filter(row => !/text entry area/.test(row));
+  for (const [name, options, code = cells] of [
+    ['typed text in the body', { after: stuckRows('**Report** Item Count 7') }],
+    ['typed text anywhere in the tree', { after: [...stuckRows(), '\t90 text Item'] }],
+    ['text already present before', { before: stuckRows('Item list'), after: stuckRows('Item list') }],
+    ['the word count changed', { after: stuckRows('**Report**', '13 words') }],
+    ['a value changed', { after: stuckRows('**Report** x') }],
+    ['short text only', {}, 'await app.typeText("ab"); await app.pressKey("Tab"); await app.typeText("7");'],
+    ['a non-literal string', {}, 'await app.typeText(text);'],
+    ['a secure field', { before: secure, after: secure }],
+    ['no text value to show typing', { before: valueless, after: valueless }],
+  ]) assert.doesNotMatch(dead(code, options), deadTyping, name);
 });
