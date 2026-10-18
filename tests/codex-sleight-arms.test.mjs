@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { baseClient } from '../bench/other-hosts-client.mjs';
 import { PROXY, approvalSummary, codexSleightRunConfig, codexSleightToml, ensureCodexSleightHome, tomlString, writeCodexSleightConfig } from '../bench/codex-sleight.mjs';
 import { acceptedContent, answerElicitation, guardReason, normalizeMessage, parseArgs } from '../bench/codex-sleight-proxy.mjs';
