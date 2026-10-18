@@ -770,4 +770,4 @@ native reference, and oversized first results defer the browser reference while 
 - The Claude in Chrome prompt watcher (`bench/fowl/chrome-allow.mjs`) has not run against a live prompt. The prompt's
   Accessibility shape (window title, whether Chrome exposes the extension page's URL and button labels) is unmeasured, so the
   matcher declines anything it cannot place and logs a role-and-label skeleton to `approvals.jsonl`. Turning on Chrome's page
-  accessibility for the prompt may slow pages in that round; we haven't measured it.
+  accessibility for the prompt may slow pages in that round, which isn't measured.
