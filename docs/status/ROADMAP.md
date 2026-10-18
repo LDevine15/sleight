@@ -33,6 +33,8 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
 5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). No work on the film, art included,
    starts until the claim suite (2.2), native apps included, backs the claim that sleight is the fastest at computer use on macOS, in the world. The film costs
    too much time and tokens to make for a narrower claim (owner, 2026-10-16). Its billing then repeats the claim post's words.
+   The owner greenlit the art on 2026-10-18 with the claim measured (native "fastest", 8 of 9). Numbers and captures lock after
+   the 1.3.0 runs.
    The art-direction architect the owner boots (LoC architect) directs the art. sleight-arch supplies single-window captures of the
    trick (in an away window), the race from a published run, and the numbers.
 
