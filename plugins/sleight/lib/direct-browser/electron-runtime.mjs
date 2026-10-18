@@ -148,6 +148,12 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
     await Promise.resolve().then(() => admin.collect()).catch(() => {});
     status = await admin.status();
   }
+  // A restarted host that could not take the app back from its pipe keeper: one census-proved reconcile, which frees the
+  // ownership once the user has quit the app (or reattaches it).
+  if (!running(status) && status?.ownership?.state === 'unresolved' && typeof admin.reconcile === 'function') {
+    await Promise.resolve().then(() => admin.reconcile({ acceptDiskEvidence: false })).catch(() => {});
+    status = await admin.status();
+  }
   // Nothing running and ownership not free: the launch would be refused, so no card asks for it.
   if (!running(status) && status?.ownership?.state !== 'free') fail('ELECTRON_OWNERSHIP_UNRESOLVED');
   // The user's own copy, running without the pipe. Another user's process, two processes or another build refuse here, before any card.

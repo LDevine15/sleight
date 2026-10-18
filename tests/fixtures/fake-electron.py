@@ -54,6 +54,24 @@ def fake_host():
         if stat.S_ISFIFO(value.st_mode) or stat.S_ISSOCK(value.st_mode):
             raise RuntimeError('adapter control channel leaked into the app on descriptor ' + str(fd))
     import subprocess
+    import threading
+    lock, flood = threading.Lock(), {'sent': 0, 'done': False}
+    # Flat sessions by id, as Chromium keeps them for the pipe's client: target T1 and T2 are pages.
+    sessions = {}
+
+    def send(message):
+        data = memoryview(json.dumps(message).encode() + b'\0')
+        with lock:
+            while data:
+                data = data[os.write(4, data):]
+
+    def flood_later(delay, total):
+        # Events nobody asked for, after the host is gone: a pipe nobody drains would block this writer.
+        time.sleep(delay)
+        while flood['sent'] < total:
+            send({'method': 'Fake.chatter', 'params': {'text': 'x' * 65536}})
+            flood['sent'] += 65536
+        flood['done'] = True
     buffer = b''
     while True:
         chunk = os.read(3, 65536)
@@ -62,8 +80,13 @@ def fake_host():
         buffer += chunk
         while b'\0' in buffer:
             raw, buffer = buffer.split(b'\0', 1)
-            request = json.loads(raw)
-            method = request['method']
+            try:
+                request = json.loads(raw)
+                method = request['method']
+            except (ValueError, KeyError, TypeError):
+                # As Chromium's pipe does: a message that does not parse gets an error notification, with no id.
+                send({'error': {'code': -32700, 'message': 'Message must be a valid JSON'}})
+                continue
             if method == 'Fake.quit':
                 sys.exit(0)
             if method == 'Browser.getVersion':
@@ -85,12 +108,33 @@ def fake_host():
                 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], close_fds=True,
                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 result = {'pid': child.pid}
+            elif method == 'Fake.floodLater':
+                threading.Thread(target=flood_later, args=(request['params']['delayMs'] / 1000, request['params']['bytes']), daemon=True).start()
+                result = {'ok': True}
+            elif method == 'Fake.flood':
+                result = dict(flood)
+            elif method == 'Target.attachToTarget':
+                session = 'S%d' % (len(sessions) + 1)
+                sessions[session] = request['params']['targetId']
+                result = {'sessionId': session}
+            elif method == 'Target.getTargets':
+                result = {'targetInfos': [{'targetId': target, 'type': 'page', 'title': '', 'url': 'app://main/', 'attached': target in sessions.values()}
+                                          for target in ('T1', 'T2')]}
+            elif method == 'Target.detachFromTarget':
+                named = [key for key, target in sessions.items() if key == request['params'].get('sessionId') or target == request['params'].get('targetId')]
+                if len(named) != 1:
+                    send({'id': request['id'], 'error': {'code': -32602, 'message': 'No session with given id' if not named else 'Multiple sessions attached, specify id.'}})
+                    continue
+                del sessions[named[0]]
+                result = {}
+            elif method == 'Fake.sessions':
+                result = {'sessions': sorted(sessions.values())}
             else:
                 result = {'ok': True}
             reply = {'id': request['id'], 'result': result}
             if 'sessionId' in request:
                 reply['sessionId'] = request['sessionId']
-            os.write(4, json.dumps(reply).encode() + b'\0')
+            send(reply)
 
 
 def census_test():

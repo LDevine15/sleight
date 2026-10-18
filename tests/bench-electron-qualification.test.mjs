@@ -401,13 +401,22 @@ test('relaunch cells name what each app decides, run dry on both apps, and a liv
     assert.equal(byId['relaunch-background'].detail.activated, false);
     assert.equal(byId['relaunch-unsaved'].detail.outcome, 'kept');
     assert.deepEqual(receipt.consent.cards.map(card => card.cell), ['relaunch-card', 'relaunch-card', 'relaunch-reuse', 'relaunch-host-loss', 'relaunch-host-loss']);
-    // Review F1: losing sleight's host closes the pipe; whether the owner's app and its unsaved work survive is measured, not assumed.
-    assert.deepEqual(byId['relaunch-host-loss'].detail, { appSurvived: false, unsaved: 'lost', prompt: false });
+    // RF2: the keeper holds the pipe, so losing sleight's host leaves the owner's app and its unsaved work alone, and the restarted host
+    // reattaches (or, without the parent's secret, releases the app to the user). The live run measures it.
+    assert.deepEqual(byId['relaunch-host-loss'].detail, { appSurvived: true, unsaved: 'kept', prompt: false, restarted: 'reattached' });
   }
   const unmeasured = fakeDriver({ now: clock().now }); unmeasured.hostLoss = async () => ({ card: { debugger: {}, relaunch: { status: 'granted' } } });
   const r2 = await runQualification({ app: APPS.vscode, driver: unmeasured, observer: fakeObserver({ now: clock().now }), io: quietIo(), clock: clock(),
     cells: RELAUNCH_CELLS.filter(cell => cell.id === 'relaunch-host-loss'), options: { mode: 'dry-run', relaunch: true } });
   assert.equal(r2.cells[0].error, 'HOST_LOSS_UNMEASURED');
+  for (const [loss, code] of [[{ appSurvived: false, unsaved: 'lost', prompt: false, restarted: 'released' }, 'APP_QUIT_ON_HOST_LOSS'],
+    [{ appSurvived: true, unsaved: 'lost', prompt: false, restarted: 'reattached' }, 'UNSAVED_WORK_LOST'],
+    [{ appSurvived: true, unsaved: 'kept', prompt: false, restarted: 'unresolved' }, 'HOST_LOSS_NOT_RECOVERED']]) {
+    const failing = fakeDriver({ now: clock().now }); failing.hostLoss = async () => ({ card: {}, ...loss });
+    const r3 = await runQualification({ app: APPS.vscode, driver: failing, observer: fakeObserver({ now: clock().now }), io: quietIo(), clock: clock(),
+      cells: RELAUNCH_CELLS.filter(cell => cell.id === 'relaunch-host-loss'), options: { mode: 'dry-run', relaunch: true } });
+    assert.equal(r3.cells[0].error, code);
+  }
   // An app that refuses or still asks at the deadline fails its quit cell, and the run is not qualified.
   const c = clock(), driver = fakeDriver({ now: c.now, relaunchQuit: 'running' });
   const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }), io: quietIo(), clock: c,

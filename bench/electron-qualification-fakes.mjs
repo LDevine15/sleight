@@ -106,9 +106,10 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
         activated: false, wasFront: false, joinedAfter: windows.length, ms: 2400 };
     },
     async nextTurn() { connected = true; readJoin = 0; return { card: { shown: false, existing: true, status: 'granted', scope: 'session', by: 'existing' }, launched: false }; },
-    // The fake models Electron quitting on pipe EOF without its unsaved-work prompt (docs/known-problems.md); the live cell measures it.
-    async hostLoss() { launch(); alive = false; connected = false; ownership = 'unresolved';
-      return { card: { debugger: card(), relaunch: card() }, appSurvived: false, unsaved: 'lost', prompt: false, ms: 300 }; },
+    // The fake models the pipe keeper: the host dies, the app and its unsaved work stay, and the restarted host reattaches the
+    // same process. The live cell measures it.
+    async hostLoss() { launch(); connected = true;
+      return { card: { debugger: card(), relaunch: card() }, appSurvived: true, unsaved: 'kept', prompt: false, restarted: 'reattached', ms: 300 }; },
     async userQuit() { alive = false; connected = false; ownership = 'free'; return { exited: true, collected: true, recordRemoved: true, profileUntouched: true, ms: 700 }; },
     async quit() { alive = false; connected = false; ownership = 'free'; current = undefined; return { exited: true, ms: 800, censusLeft: 0, profileRemoved: true }; },
     async cleanup() { alive = false; connected = false; return { confirmed: true, appExited: true, profileRemoved: true, left: [] }; },

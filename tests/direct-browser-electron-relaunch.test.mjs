@@ -61,14 +61,19 @@ function fakeAdmin({ state = 'none', ownership = 'free', start } = {}) {
     async revoke(args) { calls.push(['revoke', args]); },
     async resume() { calls.push('resume'); admin.state = 'ready'; return {}; },
     async collect() { calls.push('collect'); admin.state = 'collected'; admin.ownership = 'free'; admin.parked = undefined; return { cleanup: 'removed' }; },
+    async reconcile(args) { calls.push(['reconcile', args]); if (admin.reconciles) admin.ownership = 'free'; return { resolved: admin.ownership === 'free' }; },
+    // RF2: the pipe keeper is started and verified before the app's Quit.
+    async prepare(spec) { calls.push(['prepare', spec]); admin.onPrepare?.(); if (admin.prepareFails) throw Error('KEEPER_UNAVAILABLE'); return { keeper: true, pid: 9 }; },
     async quit() { throw Error('the worker never quits the app through the host'); },
   };
   return admin;
 }
 
 /** The user's process table and the app's own Quit, as the JXA helper reports them. No activate, no signal: there is no such method. */
-function fakeProcesses({ apps = [{ ...mine, uid, executable: EXE }], quit = 'exited', fronts = [90, 90], args = () => EXE } = {}) {
+function fakeProcesses({ apps = [{ ...mine, uid, executable: EXE }], quit = 'exited', fronts = [90, 90], args = () => EXE, opens = true } = {}) {
   const p = { calls: [], apps,
+    // The normal launch (LaunchServices, no pipe) sleight falls back to when the reopen with the pipe fails.
+    async open(path) { p.calls.push(['open', path]); if (!opens) throw Error('ELECTRON_APPS_UNAVAILABLE'); p.apps = [{ pid: 3001, birth: '1690000001.000001', uid, executable: EXE }]; },
     async args(pidValue) { p.calls.push(['args', pidValue]); return args(pidValue); },
     async list(bundleId) { p.calls.push(['list', bundleId]); return p.apps.map(item => ({ ...item })); },
     async quit(target, options) {
@@ -154,8 +159,10 @@ test('happy path: the debugger card, then the relaunch card naming the running p
   assert.equal(w.consent.presented[1].data.app.pid, mine.pid, 'the relaunch card names the exact running process');
   assert.deepEqual(w.consent.presented[1].choices, ['relaunch', 'cancel']);
   assert.deepEqual(quits(w), [], 'nothing quits before the click'); assert.deepEqual(starts(w), []);
+  w.admin.onPrepare = () => assert.deepEqual(quits(w), [], 'the keeper is ready before the Quit');
   w.consent.click(1, 'relaunch');
   const connection = await selecting;
+  assert.deepEqual(w.admin.calls.filter(call => call[0] === 'prepare'), [['prepare', { build: 'invalid.fixture.app@1.2.3', profile: 'user' }]]);
   assert.deepEqual(quits(w), [['quit', { pid: mine.pid, birth: mine.birth, executable: EXE }, { waitMs: 4000 }]]);
   assert.deepEqual(starts(w), [['start', { build: 'invalid.fixture.app@1.2.3', profile: 'user' }]]);
   assert.equal(connection.instance.pid, pid); assert.equal(connection.instance.profile, profilePath); assert.equal(connection.instance.temporary, false);
@@ -250,11 +257,25 @@ test('an app reopened by someone else before sleight\'s launch is left alone', a
   assert.deepEqual(starts(w), []);
 });
 
-test('a relaunch that fails leaves the app closed: the result says so, and sleight\'s own launch record is collected', async () => {
-  const w = world({ admin: fakeAdmin({ start: admin => { admin.state = 'retained'; admin.ownership = 'unresolved'; throw Error('APP_PARKED'); } }) });
+// RF2: sleight never leaves the user's app closed. A reopen with the pipe that fails (the keeper failing after the Quit, or
+// anything else) opens the app again the normal way, without the pipe, and turbo says it isn't available for it.
+test('a reopen with the pipe that fails opens the app again normally, collects sleight\'s record, and says turbo is unavailable', async () => {
+  const w = world({ admin: fakeAdmin({ start: admin => { admin.state = 'retained'; admin.ownership = 'unresolved'; throw Error('KEEPER_UNAVAILABLE'); } }) });
   const selecting = w.select(); await answer(w, ['session', 'relaunch']);
-  await assert.rejects(selecting, refusal('ELECTRON_RELAUNCH_FAILED', /quit but did not reopen.*open it again/));
+  await assert.rejects(selecting, refusal('ELECTRON_RELAUNCH_REOPENED_NATIVE', /opened it again normally.*turbo isn't available/));
   assert.ok(w.admin.calls.includes('collect'));
+  assert.deepEqual(w.processes.calls.filter(call => call[0] === 'open'), [['open', '/Applications/Fixture.app']]);
+  const stuck = world({ processes: fakeProcesses({ opens: false }), admin: fakeAdmin({ start: () => { throw Error('KEEPER_UNAVAILABLE'); } }) });
+  const failing = stuck.select(); await answer(stuck, ['session', 'relaunch']);
+  await assert.rejects(failing, refusal('ELECTRON_RELAUNCH_FAILED', /quit but did not reopen.*open it again/), 'only when the normal open fails too');
+});
+
+test('a keeper that cannot start or prove itself before the Quit quits nothing: the app stays open on the native path', async () => {
+  const admin = fakeAdmin(); admin.prepareFails = true;
+  const w = world({ admin });
+  const selecting = w.select(); await answer(w, ['session', 'relaunch']);
+  await assert.rejects(selecting, refusal('ELECTRON_RELAUNCH_KEEPER_UNAVAILABLE', /quit nothing/));
+  assert.deepEqual(quits(w), []); assert.deepEqual(starts(w), []);
 });
 
 test('an app that comes back without the pipe keeps running for the user and the turn takes the native path', async () => {
@@ -266,7 +287,7 @@ test('an app that comes back without the pipe keeps running for the user and the
   assert.ok(!w.admin.calls.includes('collect'), 'a running app is never collected');
   const ready = world({ processes: fakeProcesses(), admin: fakeAdmin({ start: admin => { admin.state = 'parked'; admin.ownership = 'owned'; return { phase: 'verified' }; } }) });
   const selected = ready.select(); await answer(ready, ['session', 'relaunch']);
-  await assert.rejects(selected, refusal('ELECTRON_RELAUNCH_FAILED'), 'a start whose host is not ready afterwards is a failed relaunch');
+  await assert.rejects(selected, refusal('ELECTRON_RELAUNCH_REOPENED_NATIVE'), 'a start whose host is not ready afterwards reopens the app normally');
 });
 
 test('another user\'s process, two processes and another build refuse before any card', async () => {
@@ -307,6 +328,22 @@ test('an app the user quit after a relaunch is collected at the next turn and op
   const connection = await selecting;
   assert.deepEqual(admin.calls.filter(call => typeof call === 'string' && call !== 'status'), ['collect']);
   assert.equal(starts(w).length, 1); assert.ok(!admin.calls.includes('resume'));
+  await runtime.releaseAppConnection(connection);
+});
+
+// RF2: a restarted host that could not reattach keeps the app's ownership unresolved while the app runs (its keeper holds the
+// pipe). Once the user quits the app, the next turn's reconcile frees it with the census; until then nothing asks or launches.
+test('unresolved ownership is reconciled once before the turn refuses: freed after the user quit, refused while the app runs', async () => {
+  const held = fakeAdmin({ ownership: 'unresolved' });
+  const w1 = world({ admin: held, processes: fakeProcesses({ apps: [] }) });
+  await assert.rejects(w1.select(), /^Error: ELECTRON_OWNERSHIP_UNRESOLVED$/);
+  assert.deepEqual(held.calls.filter(call => Array.isArray(call)), [['reconcile', { acceptDiskEvidence: false }]]);
+  assert.equal(w1.consent.presented.length, 0, 'no card while the app is held');
+  const freed = fakeAdmin({ ownership: 'unresolved' }); freed.reconciles = true;
+  const w2 = world({ admin: freed, processes: fakeProcesses({ apps: [] }) });
+  const selecting = w2.select(); await answer(w2, ['session']);
+  const connection = await selecting;
+  assert.equal(starts(w2).length, 1);
   await runtime.releaseAppConnection(connection);
 });
 
