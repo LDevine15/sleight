@@ -22,6 +22,7 @@ import { discoverExtensions, createBrowserSelection } from './browser-discovery.
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
+import { createRelayHand } from './hand/relay-hand.mjs';
 import { isV3Frontend, createV3Frontend } from './direct-browser/worker.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
@@ -945,6 +946,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       },
     },
     trace,
+    // The ghost hand, on unless SLEIGHT_HAND=0. Its client loads on the first action call; without one there is no hand.
+    hand: createRelayHand({ locate: request => runScript('hand/locate.js', request), trace: (direction, msg) => trace?.(direction, msg),
+      clientOptions: { trace: (direction, msg) => trace?.(direction, msg) } }),
     guardTiming: !!process.env.SLEIGHT_TRACE,
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',
     // SLEIGHT_SKILL=none leaves the skill out, for A/Bs. The app-agnostic skill replaced the old one after
