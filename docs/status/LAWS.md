@@ -32,7 +32,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   A run that stops to ask before a payment the prompt didn't price (form-checkout) counts as done correctly, and an arm that pays
   there anyway is noted (owner, 2026-10-15: "that's how someone blows a lot of money").
 - Tuning goes only to tasks sleight still loses across the claim and race trials. Where sleight wins, nothing gets tuned (owner,
-  2026-10-18). Loss studies start once each browser's rounds finish, beginning with Firefox.
+  2026-10-18). A task counts as lost when a competitor has the lower expected time or a faster passing run (owner, 2026-10-18,
+  after Codex's 36.5 s checkout against sleight's best of 52.5 s). Loss studies start once each browser's rounds finish, beginning with Firefox.
 - Codex's numbers on the same tasks are the speed bar. sleight is light enough that nobody notices it running, and its skill, tool
   descriptions and notices count against one small budget. When a competitor releases, sleight answers with a same-day head-to-head.
   Releasing on speed before footprint parity is the owner's call.
