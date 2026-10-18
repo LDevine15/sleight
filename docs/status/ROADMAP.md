@@ -43,6 +43,10 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    steps run in its order. When Firefox finishes, studies start on every task sleight still loses (native,
    app and race), and only those get fixes.
 
+1d. Owner, 2026-10-18 morning: study and fix Firefox's mdn and form losses; finish Chrome (turbo reruns on the fixed build, then
+   the competitor rounds), then put Safari through its rounds. The claim then covers turbo in real Chrome and Helium windows and the
+   engine-path race in Firefox and Safari, beside the native app claim and the Electron app tasks.
+
 1b. Heads-down first (owner, 2026-10-17): build every token, turn and reliability fix found on 2026-10-16 (TT1N to TT4, TK1 to
    TK3, TS1 to TS5), merge and freeze, then one combined A/B (old vs new sleight, claim plus held-out tasks), then the all-arms
    claim run (5 runs where any arm fails, scored by `bench/claim-score.mjs`), then the release pass and the tag. The tag moves
