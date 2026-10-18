@@ -81,6 +81,8 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
       deadlineSeconds > 0.5 ? Math.max(timeoutMs, deadlineSeconds * 1000 + 1500) : timeoutMs),
     frontRestore: request => probe.request({ ...request, op: 'front-restore' }, { status: 'unknown' }),
     windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }),
+    // On the probe lane with a short deadline: a result waits for it (offscreen-click.mjs).
+    elementVisibility: request => probe.request({ ...request, op: 'element-visibility' }, { status: 'unknown' }, 1500),
     target: args => target.request({ op: 'lease-target', app: args.app }, { ok: false,
       error: `Lease-target resolution failed: its helper was unavailable or did not answer within ${operationTimeoutMs / 1000} s. Stop this local action; reading the app again won't help.` }),
     keyboardTaps: async () => { const r = await taps.request({ op: 'keyboard-taps' }, { ok: false }); return r.ok ? r.taps : []; },

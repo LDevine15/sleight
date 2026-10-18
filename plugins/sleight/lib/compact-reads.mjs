@@ -25,6 +25,7 @@ import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
 import { promptNotice } from './prompt-notice.mjs';
+import { unchangedListClicks } from './offscreen-click.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -1263,7 +1264,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
-  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0;
+  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0, listClicks = [];
   // document key -> tab list key -> { first, last, clicked, blamed, noted }: each tab strip's order when it
   // first appeared, for the save line, and the tab click a later order change followed.
   const tabOrders = new Map();
@@ -1485,6 +1486,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
     process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK } = {}) {
+      listClicks = [];
       if (!Array.isArray(content)) return content;
       let filtered, typed;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -1626,6 +1628,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const checked = complete(observation) ? observation : trailingDegraded ? resultObservations.findLast(item =>
         complete(item) && swapDocumentKey(item.window) === swapDocumentKey(observation.window)) : undefined;
       const clickHalted = failed || stopped || forceFull || action?.overlap;
+      // List rows a numbered click left unchanged, compared against the tree the call started from.
+      listClicks = !clickHalted && action?.before && !action.before.incomplete && !action.before.degraded && complete(observation) &&
+        observation.delta?.baseline === action.before.id && documentKey(action.before.window) === documentKey(observation.window)
+        ? unchangedListClicks(action.code, action.before.lines, observation.lines).map(click => ({ ...click, window: observation.window })) : [];
       const own = action && !clickHalted ? clickedSiblings(action) : [];
       let moved;
       if (!clickHalted && checked) {
@@ -1896,5 +1902,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Whether the last process() call added the textless-document note. open_file then adds a screenshot
     // in its place, so the hint switch, a spent hint and an earlier screenshot of the window apply to both.
     lastReadNoted() { return textlessNoted; },
+    // The last processed result's unchanged list-row clicks, for the relay's offscreen check.
+    listClicks() { return listClicks; },
   };
 }

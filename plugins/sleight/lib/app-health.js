@@ -97,7 +97,7 @@ function run(argv) {
     const source = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${argv[1]}/${name}.js`, $.NSUTF8StringEncoding, null));
     return eval(`(function () { ${source}; return run; })()`);
   };
-  let taps, target, windowIdentity, frontRestore;
+  let taps, target, windowIdentity, frontRestore, elementVisibility;
   const stdin = $.NSFileHandle.fileHandleWithStandardInput, stdout = $.NSFileHandle.fileHandleWithStandardOutput;
   let buffer = '';
   for (;;) {
@@ -117,6 +117,7 @@ function run(argv) {
         request = JSON.parse(line);
         const result = request.op === 'front-restore' ? (frontRestore ||= query('front-restore'))(request)
           : request.op === 'window-identity' ? JSON.parse((windowIdentity ||= query('window-identity'))([JSON.stringify(request.window)]))
+          : request.op === 'element-visibility' ? JSON.parse((elementVisibility ||= query('element-visibility'))([JSON.stringify(request)]))
           : request.op === 'keyboard-taps' ? JSON.parse((taps ||= query('keyboard-taps'))())
           : request.op === 'lease-target' ? JSON.parse((target ||= query('lease-target'))([JSON.stringify({ app: request.app })])) : probe(request.app, request.deadlineSeconds);
         reply = { id: request.id, ...result };

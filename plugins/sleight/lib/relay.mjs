@@ -91,6 +91,7 @@ import { pickFromListCode } from './pick-from-list.mjs';
 import { backgroundLinksCode } from './browser-background-links.mjs';
 import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
 import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
+import { offscreenNotes, withOffscreenNotes } from './offscreen-click.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { ReplWarmup, replSetupCode, browserWarmupUseCode } from './repl-warmup.mjs';
@@ -661,6 +662,8 @@ export function createRelay({
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
+  // Whether a list row a click left unchanged lies outside the list's visible frame (offscreen-click.mjs).
+  elementVisibility,
   menuContinuationTimeoutMs = 600,
   // A tab the call's own Cmd+T or Ctrl+T opened in the leased window carries the call on (menu-continuation.mjs
   // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
@@ -4267,7 +4270,7 @@ export function createRelay({
       else if (msg.error && typeof msg.error.message === 'string') msg.error.message += '\n' + panelNote;
     }
     // Last, after every check above has read the full tree.
-    let chromeSettle = false;
+    let chromeSettle = false, listClicks = [];
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       chromeSettle = !automatic && !confirmedBrowser && jsCode !== undefined && !msg.error &&
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
@@ -4330,6 +4333,7 @@ export function createRelay({
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
+      if (!automatic && elementVisibility && jsCode !== undefined && !msg.result.isError) listClicks = compactor.listClicks();
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }
@@ -4338,31 +4342,46 @@ export function createRelay({
       resultCalls.delete(msg.id);
     }
     if (msg.method === undefined) filterMarks.delete(msg.id);
-    if (chromeSettle && !chromeSettled.has(msg.id)) {
-      const handle = chromeSettleHandle(jsCode);
-      const first = lastImageData(msg.result.content);
-      if (handle && first !== undefined) {
-        chromeSettled.add(msg.id);
-        const generation = stopGeneration;
-        waitForMatchingScreenshots({
-          first, take: () => extraChromeScreenshot(handle), now, sleep: chromeSettleSleep,
-          limitMs: chromeSettleMs, intervalMs: chromeSettleIntervalMs,
-        }).then(result => {
-          if (generation !== stopGeneration || disposed || closing) return;
-          if (result.data !== undefined && result.data !== first) {
-            msg.result.content = replaceLastImage(msg.result.content, result.data);
-          }
-          trace('chrome-settle', { id: msg.id, waitedMs: result.waitedMs, matched: result.matched, shots: result.shots });
-          toClient(msg);
-        }).catch(error => {
-          if (generation !== stopGeneration || disposed || closing) return;
-          trace('chrome-settle', { id: msg.id, error: error.message });
-          toClient(msg);
-        });
-        return;
+    const deliver = () => {
+      if (chromeSettle && !chromeSettled.has(msg.id)) {
+        const handle = chromeSettleHandle(jsCode);
+        const first = lastImageData(msg.result.content);
+        if (handle && first !== undefined) {
+          chromeSettled.add(msg.id);
+          const generation = stopGeneration;
+          waitForMatchingScreenshots({
+            first, take: () => extraChromeScreenshot(handle), now, sleep: chromeSettleSleep,
+            limitMs: chromeSettleMs, intervalMs: chromeSettleIntervalMs,
+          }).then(result => {
+            if (generation !== stopGeneration || disposed || closing) return;
+            if (result.data !== undefined && result.data !== first) {
+              msg.result.content = replaceLastImage(msg.result.content, result.data);
+            }
+            trace('chrome-settle', { id: msg.id, waitedMs: result.waitedMs, matched: result.matched, shots: result.shots });
+            toClient(msg);
+          }).catch(error => {
+            if (generation !== stopGeneration || disposed || closing) return;
+            trace('chrome-settle', { id: msg.id, error: error.message });
+            toClient(msg);
+          });
+          return;
+        }
       }
+      if (!startup?.reply(msg)) toClient(msg);
+    };
+    // A list row the call's click left unchanged: the helper says whether it lies outside the list's visible
+    // frame, and its note replaces "UI changed". The result waits for at most the helper's deadline.
+    if (listClicks.length) {
+      const generation = stopGeneration, appId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
+      offscreenNotes(listClicks, elementVisibility, { ...listClicks[0].window, appId }, prompt).catch(() => []).then(notes => {
+        if (generation !== stopGeneration || disposed || closing) return;
+        trace('offscreen-click', { id: msg.id, clicks: listClicks.length, notes: notes.length });
+        if (notes.length) msg.result.content = withOffscreenNotes(msg.result.content, notes);
+        deliver();
+      });
+      return;
     }
-    if (!startup?.reply(msg)) toClient(msg);
+    deliver();
   }
 
   // Ends the open turn, if any call used it. Resolves once the server answers

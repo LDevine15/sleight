@@ -953,6 +953,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     firstCallRules: process.env.SLEIGHT_SKILL === 'none' ? undefined : directBrowserRules(skillRules(), directBrowser),
     keyboardTaps: () => appHealth.keyboardTaps(),
     windowIdentity: window => appHealth.windowIdentity(window),
+    // SLEIGHT_OFFSCREEN_CLICK=0 is the A/B arm without the offscreen-row note.
+    elementVisibility: process.env.SLEIGHT_OFFSCREEN_CLICK === '0' ? undefined
+      : async request => (await appHealth.elementVisibility?.(request)) ?? { status: 'unknown' },
     beginStop: () => { stoppingForReceipt = true; },
     stopEngine: async () => {
       const engine = await collectOwnedEngine({ child, closed: childClosed });
