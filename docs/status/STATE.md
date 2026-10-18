@@ -14,7 +14,8 @@ Q1-7 to Q1-17 and AS-4, WK1 (menu-bar label preference, Cancel-first stuck-menu 
 stuck menu or with window focus), XL2 (Excel path skill lines, setValue-didn't-hold note, alert text), MT1, DW1, OT1, OT2, MC1, SP1, PB1.
 - Running: focused passes on `3180e084`, excel-edit x10 then word-edit x5 (`sitting-1017c/focus-2.sh`, logs `focus-2-<task>.log`).
 - Next, sleight's claim arm reruns on the frozen build with the top-up round. The browser race follows
-  `ledger/fable-1017-race-plan.md` as Mac load allows. Its smoke scripts are in `~/Projects/sleight-wt/race-1017/`.
+  `ledger/fable-1017-race-plan.md` as Mac load allows. Its smoke scripts are in `~/Projects/sleight-wt/race-1017/`. After the claim, the lease-broker live check with native Codex
+  (`bench/broker-live.mjs`, about 15 minutes, owner OK 2026-10-18), so the post can say sleight works side by side with Codex.
 
 **Electron (folded into 1.3.0, owner 2026-10-18).** EPV3-1 to EPV3-3 building (Opus lane); Fable reviewing the whole plan and writing
 contracts for EPV3-4 to EPV3-7 (`ledger/fable-1018-electron-review.md`, `ledger/epv3-contracts.md`) so those build in parallel; EH1
