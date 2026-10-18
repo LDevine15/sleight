@@ -204,7 +204,7 @@ test('real v3 a submit that only opens a confirm dialog settles in about a secon
   let started = Date.now();
   const result = await f.run(f.tab, [{ do: 'click', ref: await f.ref('Save') }], {});
   const took = Date.now() - started; t.diagnostic('dialog submit settled in ' + took + ' ms');
-  assert.match(result.lines[0], /submit unconfirmed: a dialog or panel opened and no request has started/);
+  assert.match(result.lines[0], /the page answered with a dialog or panel \(below\) and no request has started/);
   assert.ok(took >= 1000 && took < 2500, 'took ' + took + ' ms');
   assert.ok(f.tab.state.submitUnconfirmed, 'the submit stays unconfirmed until a read is delivered');
   const quiet = await fixture(t, '<form onsubmit="event.preventDefault()"><input aria-label="Note"><button type="submit">Save</button></form>');

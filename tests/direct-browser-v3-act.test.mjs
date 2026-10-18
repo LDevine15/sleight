@@ -447,7 +447,7 @@ test('v3 destroyed form evidence stops the batch after dispatched submit', async
 test('v3 a submit that opens a dialog with no request settles after one second and stays unconfirmed until a fresh read', async () => {
   let f; f = fixture({ submit: true, onClick() { f.setOverlay({ count: 1, hash: 7 }); } });
   const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'click', ref: 'e1' }], {});
-  assert.match(result.lines[0], /unconfirmed: a dialog or panel opened and no request has started/);
+  assert.match(result.lines[0], /the page answered with a dialog or panel \(below\) and no request has started/);
   assert.ok(f.time() >= 1000 && f.time() < 1200, 'settled at ' + f.time());
   assert.match(result.lines[1], /Read before resubmitting/); assert.equal(f.actions.length, 1);
   const submit = f.tab.state.submitUnconfirmed; assert.ok(submit && submit.settledAt >= 1000);
