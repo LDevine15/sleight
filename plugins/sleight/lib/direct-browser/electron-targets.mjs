@@ -13,8 +13,25 @@ const id = value => typeof value === 'string' && value.length > 0 && value.lengt
 const lifecycleTypes = new Set(['worker', 'service_worker', 'shared_worker', 'worklet', 'shared_storage_worklet', 'auction_worklet']);
 const geometryKeys = ['height', 'scale', 'visible', 'width', 'x', 'y'];
 // Read in an isolated world, so a page cannot replace these getters. Geometry and visibility only, no document content.
-const geometryExpression = `(() => ({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight,
+export const geometryExpression = `(() => ({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight,
   scale: window.devicePixelRatio, visible: document.visibilityState === 'visible' }))()`;
+
+// One geometry read on a target session. send(method, params) is bound to that session; fenced() runs after every
+// await and throws when the target changed. The page's main world never runs this expression.
+export async function readIsolatedGeometry(send, fenced = () => {}) {
+  const { frameTree } = await send('Page.getFrameTree', {}); fenced();
+  if (!id(frameTree?.frame?.id)) fail('ELECTRON_GEOMETRY_INVALID');
+  const { executionContextId } = await send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'sleight-geometry', grantUniveralAccess: false });
+  fenced();
+  if (!Number.isSafeInteger(executionContextId)) fail('ELECTRON_GEOMETRY_INVALID');
+  const reply = await send('Runtime.evaluate', { expression: geometryExpression, contextId: executionContextId, returnByValue: true });
+  fenced();
+  const value = reply?.result?.value;
+  if (reply?.exceptionDetails || !plain(value) || Object.keys(value).sort().join() !== geometryKeys.join() || typeof value.visible !== 'boolean' ||
+      !['x', 'y', 'width', 'height', 'scale'].every(key => Number.isFinite(value[key])) || value.width <= 0 || value.height <= 0 || value.scale <= 0)
+    fail('ELECTRON_GEOMETRY_INVALID');
+  return Object.freeze({ x: value.x, y: value.y, width: value.width, height: value.height, scale: value.scale, visible: value.visible });
+}
 
 const checkedRecipes = new WeakSet();
 const rulesOf = recipe => {
@@ -133,18 +150,7 @@ export function createAppTargets({ upstream, identity, expected, recipe, verify,
     const name = await session.pending;
     const fenced = () => { if (!current(targetId, record.epoch)) fail('ELECTRON_TARGET_CHANGED'); };
     fenced();
-    const { frameTree } = await upstream.send('Page.getFrameTree', {}, name); fenced();
-    if (!id(frameTree?.frame?.id)) fail('ELECTRON_GEOMETRY_INVALID');
-    const { executionContextId } = await upstream.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'sleight-geometry', grantUniveralAccess: false }, name);
-    fenced();
-    if (!Number.isSafeInteger(executionContextId)) fail('ELECTRON_GEOMETRY_INVALID');
-    const reply = await upstream.send('Runtime.evaluate', { expression: geometryExpression, contextId: executionContextId, returnByValue: true }, name);
-    fenced();
-    const value = reply?.result?.value;
-    if (reply?.exceptionDetails || !plain(value) || Object.keys(value).sort().join() !== geometryKeys.join() || typeof value.visible !== 'boolean' ||
-        !['x', 'y', 'width', 'height', 'scale'].every(key => Number.isFinite(value[key])) || value.width <= 0 || value.height <= 0 || value.scale <= 0)
-      fail('ELECTRON_GEOMETRY_INVALID');
-    return Object.freeze({ x: value.x, y: value.y, width: value.width, height: value.height, scale: value.scale, visible: value.visible });
+    return readIsolatedGeometry((method, params) => upstream.send(method, params, name), fenced);
   }
   const filterHooks = Object.freeze({
     // The CDP filter asks before it owns a top-level target, and again after its own awaits.
