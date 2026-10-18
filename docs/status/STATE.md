@@ -5,6 +5,8 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 
 ## Banner (2026-10-18 02:21 UTC)
 
+OWNER ASLEEP since 2026-10-18T06:26:31Z (/goodnight). Night Shift on.
+
 Goal (owner): release 1.3.0, then the claim post and the video. The owner is away from the PC, reachable by phone, and OK'd live
 runs tonight. Ledger: `~/Projects/sleight-wt/ledger/LEDGER.md` (sections CLAIM-1018, EPV3, APP-CLAIM).
 
