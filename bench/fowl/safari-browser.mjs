@@ -9,23 +9,33 @@ import { checkBrowserOwner } from './real-browser.mjs';
 const sameExecutable = (a, b) => { try { return typeof a === 'string' && realpathSync(a) === realpathSync(b); } catch { return false; } };
 
 const execute = promisify(execFile), profile = 'sleight benchmark';
+// Safari 26 names the toolbar profile button only in its identifier ("TabGroupPickerButton?Profile=sleight%20benchmark&Icon=..."),
+// with an empty title, description and value (2026-10-18).
+export function identifierProfile(identifier) {
+  const match = /^TabGroupPickerButton\?(.*)$/.exec(typeof identifier === 'string' ? identifier : '');
+  if (!match) return null;
+  for (const pair of match[1].split('&')) {
+    const at = pair.indexOf('=');
+    if (at < 0 || pair.slice(0, at) !== 'Profile') continue;
+    try { return decodeURIComponent(pair.slice(at + 1)); } catch { return null; }
+  }
+  return null;
+}
 export function safariProfileEvidence(window) {
   if (window.profileEvidence) {
     const evidence = window.profileEvidence;
     if (evidence.value === profile && typeof evidence.element === 'string' && evidence.element &&
         ['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(evidence.role) &&
-        ['AXTitle', 'AXDescription', 'AXValue'].includes(evidence.attribute)) return evidence;
+        ['AXTitle', 'AXDescription', 'AXValue', 'AXIdentifier'].includes(evidence.attribute)) return evidence;
     return null;
   }
   const matches = [];
   for (const node of window.toolbar || []) {
     if (!node.id || !['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(node.role)) continue;
-    for (const [key, attribute] of [['title', 'AXTitle'], ['description', 'AXDescription'], ['value', 'AXValue']]) {
-      if (node[key] !== profile) continue;
-      matches.push({ element: node.id, role: node.role,
-        ...(node.identifier ? { identifier: node.identifier } : {}), attribute, value: profile });
-      break;
-    }
+    const attribute = [['title', 'AXTitle'], ['description', 'AXDescription'], ['value', 'AXValue']].find(([key]) => node[key] === profile)?.[1] ||
+      (identifierProfile(node.identifier) === profile ? 'AXIdentifier' : null);
+    if (attribute) matches.push({ element: node.id, role: node.role,
+      ...(node.identifier ? { identifier: node.identifier } : {}), attribute, value: profile });
   }
   const preferred = matches.filter(node => /profile/i.test(node.identifier || ''));
   const candidates = preferred.length ? preferred : matches;
@@ -120,8 +130,20 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       await restoreWait(2000);
       await census();
       before = await snapshot();
-      if (before.some(window => !safariProfileEvidence(window))) throw Error('BENCH_SAFARI_RESTORED_WINDOWS: Safari restored windows from another profile; close your Safari windows or turn off window restore, then retry');
-      if (before.length) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
+      // Safari opens a Start Page window of its own at launch (in whichever profile was used last). It belongs to the process
+      // this harness launched and holds no navigation, so the helper may close it; any other window stops the round.
+      if (before.some(window => window.startPage !== true && !safariProfileEvidence(window))) throw Error('BENCH_SAFARI_RESTORED_WINDOWS: Safari restored windows from another profile; close your Safari windows or turn off window restore, then retry');
+      if (before.some(window => window.startPage !== true)) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
+      if (before.length) {
+        for (const window of before) await bridge.request('close-launch-window', { window: window.id });
+        const closing = Date.now() + timeoutMs;
+        for (;;) {
+          before = await snapshot();
+          if (!before.length) break;
+          if (Date.now() >= closing) throw Error('BENCH_SAFARI_LAUNCH_WINDOW_UNCLOSED');
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      }
     }
     const previous = new Set(before.map(w => w.id)), previousWindow = windowId;
     if (windowId && (before.length !== 1 || before[0].id !== windowId)) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
@@ -174,6 +196,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
         const result = await bridge.request('quit', { quitMs });
         if (result.browserClosed !== true) throw Error('normal quit unproved');
         receipt.browserClosed = true; collected = true;
+        if (result.unsubmittedFormQuitConfirmed === true) receipt.unsubmittedFormQuitConfirmed = true;
       } catch (error) { receipt.error = error.message; throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
     }
     try { await bridge?.close(); } catch (error) { throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
@@ -184,9 +207,10 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     bridge = await safariBridge(root, { spawnBrowser, timeoutMs });
     await census();
     launchAttempted = true;
-    const launched = await bridge.request('launch');
+    const requestedAt = Date.now(), launched = await bridge.request('launch');
+    // A process that predates this request is not ours; its windows are never touched.
     if (!Number.isSafeInteger(launched.pid) || launched.pid <= 0 || !sameExecutable(launched.executable, plan.executable) ||
-        !Number.isFinite(launched.launchDate)) throw Error('BENCH_SAFARI_LAUNCH_UNPROVED');
+        !Number.isFinite(launched.launchDate) || launched.launchDate * 1000 < requestedAt - 1000) throw Error('BENCH_SAFARI_LAUNCH_UNPROVED');
     Object.assign(browser, launched);
     await reset(); return browser;
   } catch (error) {

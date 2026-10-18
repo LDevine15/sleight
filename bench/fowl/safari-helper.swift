@@ -51,20 +51,47 @@ func preferredProfileEvidence(_ matches: [[String: Any]]) -> [String: Any]? {
     let candidates = preferred.isEmpty ? matches : preferred
     return candidates.count == 1 ? candidates[0] : nil
 }
+// Safari 26 labels the toolbar profile button only through its identifier, "TabGroupPickerButton?Profile=sleight%20benchmark&Icon=...";
+// its title, description and value are empty (2026-10-18).
+func identifierProfile(_ identifier: String) -> String? {
+    guard identifier.hasPrefix("TabGroupPickerButton?"), let query = identifier.split(separator: "?", maxSplits: 1).last else { return nil }
+    for pair in query.split(separator: "&") {
+        let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+        if parts.count == 2, parts[0] == "Profile" { return parts[1].removingPercentEncoding }
+    }
+    return nil
+}
 func profileEvidence(_ window: AXUIElement) throws -> [String: Any]? {
     let toolbar = try chrome(window).filter { string($0, "AXRole") == "AXToolbar" }.flatMap { try chrome($0) }
     var matches: [[String: Any]] = []
     for element in toolbar where ["AXMenuButton", "AXPopUpButton", "AXButton"].contains(string(element, "AXRole")) {
-        for name in ["AXTitle", "AXDescription", "AXValue"] where string(element, name) == profileName {
+        let named = ["AXTitle", "AXDescription", "AXValue"].first { string(element, $0) == profileName }
+        let attribute = named ?? (identifierProfile(string(element, "AXIdentifier")) == profileName ? "AXIdentifier" : nil)
+        if let name = attribute {
             matches.append(["element": identifier(element), "role": string(element, "AXRole"),
                             "identifier": string(element, "AXIdentifier"), "attribute": name, "value": profileName])
-            break
         }
     }
     return preferredProfileEvidence(matches)
 }
-func windowSnapshot(_ id: String, evidence: [String: Any]?, content: () throws -> [String: Any]) rethrows -> [String: Any] {
+// The sidebar (an AXOutline named LibraryView) lists tabs and groups; with it open the tab count is not readable here.
+func hasSidebar(_ window: AXUIElement) throws -> Bool {
+    try chrome(window).contains { string($0, "AXRole") == "AXOutline" || string($0, "AXIdentifier") == "LibraryView" }
+}
+// A window still showing Safari's Start Page (no web content, nothing navigated) is what a fresh launch opens.
+func isStartPage(_ window: AXUIElement) throws -> Bool {
+    var web = false
+    func hasWebArea(_ element: AXUIElement, _ depth: Int) throws {
+        guard depth < 30 else { throw refuse("BENCH_SAFARI_AX_LIMIT") }
+        if string(element, "AXRole") == "AXWebArea" { web = true; return }
+        for child in elements(element) { try hasWebArea(child, depth + 1) }
+    }
+    try hasWebArea(window, 0)
+    return try !web && chrome(window).contains { string($0, "AXIdentifier") == "StartPageCollectionView" }
+}
+func windowSnapshot(_ id: String, evidence: [String: Any]?, startPage: Bool = false, content: () throws -> [String: Any]) rethrows -> [String: Any] {
     var result: [String: Any] = ["id": id, "profileEvidence": evidence as Any? ?? NSNull()]
+    if startPage { result["startPage"] = true }
     if evidence != nil { result.merge(try content()) { _, new in new } }
     return result
 }
@@ -79,11 +106,21 @@ func address(_ window: AXUIElement) throws -> AXUIElement {
 }
 func snapshot(_ application: AXUIElement) throws -> [String: Any] {
     let result = try elements(application, "AXWindows").map { window in
-        try windowSnapshot(identifier(window), evidence: profileEvidence(window)) {
+        try windowSnapshot(identifier(window), evidence: profileEvidence(window), startPage: isStartPage(window)) {
             let groups = try chrome(window).filter { string($0, "AXRole") == "AXTabGroup" }
-            let tabNodes = try groups.flatMap { try chrome($0) }.filter { ["AXRadioButton", "AXTab"].contains(string($0, "AXRole")) }
+            // Safari 26 puts the tab bar in an AXOpaqueProviderGroup beside the split group, with AXRadioButton/AXTabButton children,
+            // and draws no tab bar for a single tab.
+            let tabNodes = try (groups.flatMap { try chrome($0) } + chrome(window).filter { string($0, "AXSubrole") == "AXTabButton" })
+                .filter { ["AXRadioButton", "AXTab"].contains(string($0, "AXRole")) }
             var unique: [AXUIElement] = []
             for tab in tabNodes where !unique.contains(where: { CFEqual($0, tab) }) { unique.append(tab) }
+            let title = string(window, "AXTitle")
+            if unique.isEmpty, groups.count == 1, try !hasSidebar(window), let field = try? address(window) {
+                // No tab bar and no sidebar listing tabs means one tab; its title is the window title after the profile prefix.
+                let prefix = profileName + " — ", url = string(field, "AXValue")
+                return ["title": title, "tabs": url.isEmpty ? [] : [["id": identifier(groups[0]),
+                    "title": title.hasPrefix(prefix) ? String(title.dropFirst(prefix.count)) : title, "url": url]]]
+            }
             let tabs: [[String: Any]] = unique.map { tab in
                 var url = string(tab, "AXURL")
                 if url.isEmpty { url = string(tab, "AXDocument") }
@@ -92,7 +129,7 @@ func snapshot(_ application: AXUIElement) throws -> [String: Any] {
                    let field = try? address(window) { url = string(field, "AXValue") }
                 return ["id": identifier(tab), "title": string(tab, "AXTitle"), "url": url]
             }
-            return ["title": string(window, "AXTitle"), "tabs": tabs]
+            return ["title": title, "tabs": tabs]
         }
     }
     return ["windows": result]
@@ -111,7 +148,7 @@ func probeSnapshot(_ application: AXUIElement) throws -> [String: Any] {
     return ["windows": windows]
 }
 
-var owned: NSRunningApplication?, birth: Date?, launchPending = false, launchRequested = false
+var owned: NSRunningApplication?, birth: Date?, launchPending = false, launchRequested = false, profileRequested = false
 func ownedApplication() throws -> NSRunningApplication {
     guard let app = owned, !app.isTerminated, let date = birth,
           let current = NSRunningApplication(processIdentifier: app.processIdentifier), !current.isTerminated,
@@ -162,12 +199,29 @@ func menusClear() throws -> Bool {
     let app = try ownedAX()
     guard let value = attribute(app, "AXMenuBar"), CFGetTypeID(value) == AXUIElementGetTypeID(),
           attribute(value as! AXUIElement, "AXChildren") is [AXUIElement] else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
-    return menuStateClear(try chrome(value as! AXUIElement).map { element in
-        let names = attributeNames(element)
-        guard !names.isEmpty, !names.contains("AXChildren") || attribute(element, "AXChildren") is [AXUIElement] else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
-        return ["role": string(element, "AXRole"), "selected": attribute(element, "AXSelected") as Any,
-                "visible": attribute(element, "AXVisible") as Any]
+    // Only the bar, its items and each item's menu say whether a menu is open. Walking every menu item (about 3,800 elements in
+    // Safari 26) is slow and races Safari rebuilding its menus after a press (an element vanishes mid-walk, 2026-10-18).
+    let bar = value as! AXUIElement
+    let nodes = [bar] + elements(bar).flatMap { [$0] + elements($0) }
+    return menuStateClear(try nodes.map { element in
+        let names = attributeNames(element), role = string(element, "AXRole")
+        guard !names.isEmpty, menuChildrenReadable(role: role, names: names, readable: attribute(element, "AXChildren") is [AXUIElement]) else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
+        return ["role": role, "selected": attribute(element, "AXSelected") as Any,
+                "visible": menuVisible(role: role, names: names, value: attribute(element, "AXVisible") as Any)]
     })
+}
+// Safari 26 (2026-10-18): AXMenu has no AXVisible at all, so an open menu shows as a selected bar item.
+func menuChildrenReadable(role: String, names: [String], readable: Bool) -> Bool {
+    !["AXMenuBar", "AXMenuBarItem", "AXMenu"].contains(role) || !names.contains("AXChildren") || readable
+}
+func menuVisible(role: String, names: [String], value: Any) -> Any {
+    role == "AXMenu" && !names.contains("AXVisible") ? false : value
+}
+// Right after a menu item is pressed Safari rebuilds its menus, and a menu can briefly refuse to list its children (2026-10-18).
+func menusClearSoon(_ seconds: Double) throws -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline { if (try? menusClear()) == true { return true }; pump(0.05) }
+    return try menusClear()
 }
 func cleanMenus(escape: () throws -> Void, clear: () throws -> Bool) throws -> [String: Any] {
     for count in 1...2 {
@@ -177,6 +231,7 @@ func cleanMenus(escape: () throws -> Void, clear: () throws -> Bool) throws -> [
     throw refuse("BENCH_SAFARI_MENU_STUCK")
 }
 func newProfile() throws -> [String: Any] {
+    profileRequested = true
     var failure: Error?
     do {
         let app = try ownedAX()
@@ -204,7 +259,7 @@ func newProfile() throws -> [String: Any] {
     // Menu tracking must be dismissed, but keys must never reach an owner window.
     let deadline = Date().addingTimeInterval(2)
     while (try? keyProfileWindow()) == nil && Date() < deadline { pump(0.025) }
-    let cleanup = try cleanMenus(escape: { try key(53, window: keyProfileWindow()); pump(0.1) }, clear: menusClear)
+    let cleanup = try cleanMenus(escape: { try key(53, window: keyProfileWindow()); pump(0.1) }, clear: { try menusClearSoon(1) })
     if let error = failure { throw error }
     return cleanup
 }
@@ -230,19 +285,35 @@ func launch() throws -> [String: Any] {
     guard let date = birth, date >= started else { throw refuse("BENCH_SAFARI_LAUNCH_DATE_UNPROVED") }
     return ["pid": app.processIdentifier, "executable": executable, "launchDate": date.timeIntervalSince1970]
 }
+// A task that typed into a form leaves Safari asking "Are you sure you want to quit Safari? You have entered text on ..."
+// (AXDialog UnsubmittedFormTextAlert), which blocks the quit for good (2026-10-18: form-checkout left Safari running). That alert
+// is about the benchmark page in the process this helper launched; confirming it only discards the round's own form text.
+func confirmUnsubmittedFormQuit() -> Bool {
+    guard let ax = try? ownedAX() else { return false }
+    for window in elements(ax, "AXWindows") where string(window, "AXIdentifier") == "UnsubmittedFormTextAlert" && string(window, "AXSubrole") == "AXDialog" {
+        for button in elements(window) where string(button, "AXIdentifier") == "ConfirmButton" && string(button, "AXTitle") == "Quit" {
+            return AXUIElementPerformAction(button, "AXPress" as CFString) == .success
+        }
+    }
+    return false
+}
 func quit(_ seconds: Double) throws -> [String: Any] {
     guard !launchPending else { throw refuse("BENCH_SAFARI_LAUNCH_PENDING") }
     guard owned != nil || !launchRequested else { throw refuse("BENCH_SAFARI_LAUNCH_UNRECEIPTED") }
+    var confirmed = false
     if let app = owned {
         if !app.isTerminated {
             _ = try ownedApplication()
             guard app.terminate() else { throw refuse("BENCH_SAFARI_QUIT_REFUSED") }
             let deadline = Date().addingTimeInterval(seconds)
-            while !app.isTerminated && Date() < deadline { pump(0.025) }
+            while !app.isTerminated && Date() < deadline {
+                if !confirmed && confirmUnsubmittedFormQuit() { confirmed = true }
+                pump(0.025)
+            }
             guard app.isTerminated else { throw refuse("BENCH_BROWSER_CLEANUP_UNPROVED") }
         }
     }
-    return ["browserClosed": true]
+    return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed]
 }
 func command(_ input: [String: Any]) throws -> [String: Any] {
     switch input["op"] as? String {
@@ -253,6 +324,18 @@ func command(_ input: [String: Any]) throws -> [String: Any] {
         guard let id = input["window"] as? String else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
         let window = try windowById(id)
         guard let closeValue = attribute(window, "AXCloseButton"), CFGetTypeID(closeValue) == AXUIElementGetTypeID() else { throw refuse("BENCH_SAFARI_CLOSE_UNAVAILABLE") }
+        try press(closeValue as! AXUIElement); return [:]
+    case "close-launch-window":
+        // Only the Start Page window Safari opens by itself in the first two minutes of the process this helper launched, and
+        // only before the benchmark's own window exists. It holds no navigation, so nothing of the owner's is lost.
+        guard let id = input["window"] as? String else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
+        let app = try ownedAX()
+        guard !profileRequested, let started = birth, Date().timeIntervalSince(started) < 120 else { throw refuse("BENCH_SAFARI_LAUNCH_WINDOW_UNPROVED") }
+        guard let entry = references.first(where: { $0.0 == id }),
+              elements(app, "AXWindows").contains(where: { CFEqual($0, entry.1) }),
+              elements(entry.1, "AXSheets").isEmpty else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
+        guard try isStartPage(entry.1) else { throw refuse("BENCH_SAFARI_LAUNCH_WINDOW_UNPROVED") }
+        guard let closeValue = attribute(entry.1, "AXCloseButton"), CFGetTypeID(closeValue) == AXUIElementGetTypeID() else { throw refuse("BENCH_SAFARI_CLOSE_UNAVAILABLE") }
         try press(closeValue as! AXUIElement); return [:]
     case "navigate":
         guard let id = input["window"] as? String, let url = input["url"] as? String, url.hasPrefix("data:text/html,") else { throw refuse("BENCH_SAFARI_MARKER_INVALID") }
@@ -299,6 +382,13 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
         _ = try cleanMenus(escape: { try verifyKeyWindow(hasProfile: false, matches: true); escapes += 1 }, clear: { true })
     }
     result["unsafeEscapes"] = escapes
+    result["identifierProfile"] = identifierProfile("TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill") == profileName
+    result["identifierOther"] = identifierProfile("TabGroupPickerButton?Profile=owner&Icon=x") == profileName
+    result["identifierPrefix"] = identifierProfile("Other?Profile=sleight%20benchmark") == nil
+    result["searchFieldReadable"] = menuChildrenReadable(role: "AXTextField", names: ["AXChildren"], readable: false)
+    result["menuChildrenUnreadable"] = menuChildrenReadable(role: "AXMenu", names: ["AXChildren"], readable: false)
+    result["menuWithoutVisible"] = menuStateClear([["role": "AXMenu", "visible": menuVisible(role: "AXMenu", names: ["AXChildren"], value: Optional<CFTypeRef>.none as Any)]])
+    result["menuVisibleUnknown"] = menuStateClear([["role": "AXMenu", "visible": menuVisible(role: "AXMenu", names: ["AXVisible"], value: Optional<CFTypeRef>.none as Any)]])
     result["preferredElement"] = preferredProfileEvidence([["element": "other"], ["element": "profile", "identifier": "ProfileButton"]])?["element"]
     result["ambiguousProfile"] = preferredProfileEvidence([["element": "one"], ["element": "two"]]) == nil
     result["visibleMenuClear"] = menuStateClear([["role": "AXMenu", "visible": true]])
