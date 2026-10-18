@@ -176,3 +176,42 @@ for (const type of ['image', 'IMAGE']) test(`real ${type} payment alt without a 
   assert.equal(check(f.ctx, 'click', target).verdict, 'confirm', 'a read cannot renew the consumed payment request');
   assert.equal(await f.page.evaluate(() => window.paid), 1);
 });
+
+test('real checkout link is navigation while buttons, payment-form links, javascript: and handler links keep the payment rule', { skip }, async t => {
+  const f = await fixture(t, `<main><a id="go" href="/shop/checkout/address">Go to checkout</a>
+    <button id="place">Place order</button>
+    <form><input autocomplete="cc-number"><a id="inForm" href="/shop/checkout/order">Go to checkout</a></form>
+    <a id="js" href="javascript:sessionStorage.paid=(+sessionStorage.paid||0)+1">Checkout</a>
+    <a id="tab" href="java&#9;script:sessionStorage.paid=(+sessionStorage.paid||0)+1">Checkout</a>
+    <a id="hash" href="#charged">Buy now</a>
+    <a id="handler" href="/shop/checkout/address" onclick="sessionStorage.paid=(+sessionStorage.paid||0)+1;return false">Go to checkout</a>
+    <a id="role" role="button" href="/shop/checkout/address">Go to checkout</a>
+    <a id="figure" href="/charge">Pay $18 now</a></main>
+    <script>document.querySelector('#place').onclick = () => { sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };
+      document.getElementById('hash').onclick = event => { event.preventDefault(); sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };</script>`);
+  const paid = () => f.page.evaluate(() => +sessionStorage.paid || 0);
+  const go = await f.target('#go');
+  assert.equal(go.element.payment, false); assert.equal(go.element.submit, false);
+  assert.equal(check(f.ctx, 'click', go).verdict, 'allow', 'following the link needs no consent');
+  for (const selector of ['#place', '#inForm', '#js', '#tab', '#hash', '#handler', '#role', '#figure']) {
+    const result = check(f.ctx, 'click', await f.target(selector));
+    if (result.verdict === 'allow') await f.page.locator(selector).click();
+    assert.equal(result.verdict, 'confirm', selector);
+  }
+  assert.equal(await paid(), 0, 'no guarded control was dispatched');
+  await f.page.locator('#go').click();
+  await f.page.waitForURL('**/shop/checkout/address');
+  assert.equal(await paid(), 0, 'the link followed and charged nothing');
+});
+
+test('real checkout link costs no payment budget: the payment the user priced proceeds after it, once', { skip }, async t => {
+  const f = await fixture(t, `<main><a id="go" href="/shop/checkout/address">Go to checkout</a><button id="place">Place order</button></main>
+    <script>document.querySelector('#place').onclick = () => { sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };</script>`);
+  f.ctx.userMessage = { source: 'user', id: 'request', session: 'session', turn: 'turn', text: 'Pay for Fixture item with Fixture card', payment: terms };
+  assert.equal(check(f.ctx, 'click', await f.target('#go')).verdict, 'allow');
+  const place = await f.target('#place');
+  assert.equal(check(f.ctx, 'click', place).verdict, 'allow', 'the payment the message priced');
+  await f.page.locator('#place').click();
+  assert.equal(check(f.ctx, 'click', place).verdict, 'confirm', 'a second payment in the request asks');
+  assert.equal(await f.page.evaluate(() => +sessionStorage.paid || 0), 1);
+});

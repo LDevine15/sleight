@@ -59,6 +59,15 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
     if (read(node, 'localName') === 'iframe') { try { return new URL(get(node, 'src'), location.href).origin !== location.origin; } catch { return true; } }
     return (read(node, 'localName') === 'button' || ['submit', 'image'].includes(inputType(node))) && payment(words(node));
   });
+  // Following a plain http(s) link is navigation: it sends nothing, and the page it loads asks for any payment itself. Not navigation:
+  // a link in a payment form, a javascript:, #, mailto: or other-scheme href, a script-driven link (role, inline on* handler, or an
+  // attribute list we cannot read), or link words that show a money figure ("Pay $18 now"). The figure rule is the payment rule's own.
+  const href = get(el, 'href').replace(/[\t\n\r]/g, '').replace(/^[\u0000-\u0020]+/, '');
+  const names = Element.prototype.getAttributeNames ? Array.from(Element.prototype.getAttributeNames.call(el)) : null;
+  const navigation = tag === 'a' && !button && state.kind === 'link' && !state.formPayment && href !== '' && !href.startsWith('#') &&
+    (!/^[a-z][a-z0-9+.\-]*:/i.test(href) || /^https?:/i.test(href)) && ['', 'link'].includes(role.toLowerCase()) &&
+    names !== null && !names.some(name => /^on/i.test(name)) && !/[$\u20ac\u00a3\u00a5]\s*\d|\d\s*(?:usd|eur|gbp|dollars?|euros?)\b|\d[.,]\d{2}\b/i.test(words(el));
+  if (navigation) state.payment = false;
   if ((button || state.kind === 'link') && state.payment) state.submit = true;
   // Any script-driven button in a payment form (div[role=button], button type=button) can charge: its handler is invisible here.
   if (button && state.formPayment && !state.submit && get(el, 'type').toLowerCase() !== 'reset') { state.submit = true; state.scriptButton = true; }
