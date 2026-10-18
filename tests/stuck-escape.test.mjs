@@ -5,20 +5,29 @@ import { runInNewContext } from 'node:vm';
 import { PassThrough } from 'node:stream';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
 import { createRelay, stuckEscapeNote } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { createStuckEscapes, sendStuckEscape, stuckEscapeOption } from '../plugins/sleight/lib/stuck-escape.mjs';
 
-// The helper: one Escape down and up to the verified pid, then a read of the menu bar.
+// The helper: one Escape down and up to the verified pid, after reading the app's own menu bar. `ax` is that app's
+// menu bar: a title selected, a menu open, and what the title shows after the Escape.
 const source = readFileSync(new URL('../plugins/sleight/lib/stuck-escape.js', import.meta.url), 'utf8');
+const stuckBar = () => ({ selected: true, open: false, after: false });
 function helper(options = {}) {
-  const posted = [], waits = [];
+  const posted = [], waits = [], stderr = [];
   let reads = 0;
+  const ax = options.ax ?? stuckBar();
   const request = { appId: 'org.test.editor', pid: 321, processStart: 42, lease: { path: '/lease', token: 'owned' }, quietSeconds: 0.5, waitSeconds: 1.5, ...options.request };
   const running = { processIdentifier: options.pid ?? 321, launchDate: { timeIntervalSince1970: options.processStart ?? 42 } };
-  const items = (options.selected ?? [false, false]).map(selected => ({ AXSelected: selected }));
-  const $ = value => value;
+  const list = items => ({ count: items.length, objectAtIndex: i => items[i] });
+  const item = { get AXSelected() { return ax.selected; } };
+  const bar = { AXRole: 'AXMenuBar', AXChildren: list([{ AXSelected: false }, item]) };
+  const app = { get AXMenuBar() { return ax.noMenuBar ? undefined : bar; },
+    get AXChildren() { return list([bar, ...(ax.open ? [{ AXRole: 'AXMenu' }] : [])]); },
+    get AXFocusedUIElement() { return ax.focused ? { AXRole: ax.focused } : undefined; } };
+  const $ = value => typeof value === 'string' ? Object.assign(new String(value), { dataUsingEncoding: () => value }) : value;
   Object.assign($, {
     NSUTF8StringEncoding: 4,
     NSString: { stringWithContentsOfFileEncodingError: () => ({ isNil: () => false,
@@ -27,30 +36,51 @@ function helper(options = {}) {
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: id => {
       assert.equal(id, request.appId); return { count: options.count ?? 1, objectAtIndex: () => running };
     } },
+    NSFileHandle: { fileHandleWithStandardError: { writeData: data => stderr.push(data) } },
     CGEventSourceSecondsSinceLastEventType: () => { const idle = [options.idle ?? 5].flat(); return idle[Math.min(reads++, idle.length - 1)]; },
     CGEventCreateKeyboardEvent: (_source, key, down) => ({ key, down }),
     CGEventSetFlags: (event, flags) => { event.flags = flags; },
-    CGEventPostToPid: (pid, event) => { posted.push([pid, event.key, event.down, event.flags]); },
-    AXUIElementCreateApplication: pid => ({ pid }),
+    CGEventPostToPid: (pid, event) => { posted.push([pid, event.key, event.down, event.flags]); if (!event.down) ax.selected = ax.after; },
+    AXUIElementCreateApplication: pid => { assert.equal(pid, request.pid); return app; },
     AXUIElementSetMessagingTimeout: () => 0,
     AXUIElementCopyAttributeValue: (element, name, out) => {
-      if (options.noMenuBar && name === 'AXMenuBar') return -25205;
-      out[0] = name === 'AXMenuBar' ? { bar: true } : name === 'AXChildren' ? { count: items.length, objectAtIndex: i => items[i] } : element[name];
-      return 0;
+      const value = element[String(name)];
+      if (value === undefined) return -25205;
+      out[0] = value; return 0;
     },
   });
   const result = JSON.parse(runInNewContext(source + '\nrun([JSON.stringify(request)])', { $, request,
     Ref: () => [], ObjC: { import() {}, unwrap: value => value.raw ?? value, castRefToObject: value => value, deepUnwrap: value => value },
     delay: seconds => waits.push(seconds) }));
-  return { result, posted, waits };
+  return { result, posted, waits, stderr };
 }
+// A `run` for stuckEscapeOption that runs the helper source against the app's menu bar `ax`.
+const helperRun = (ax, posted) => async (script, request) => {
+  assert.equal(script, 'stuck-escape.js');
+  const h = helper({ ax, request, token: request.lease?.token }); // the relay's lease grant, as the lease file holds it
+  posted.push(...h.posted);
+  return h.result;
+};
 
 test('the helper posts one Escape down and up to the verified pid, with no modifiers, then reads the menu bar', () => {
   const h = helper();
   assert.deepEqual(h.result, { ok: true, posted: true, selected: false });
   assert.deepEqual(h.posted, [[321, 53, true, 0], [321, 53, false, 0]]);
-  assert.equal(helper({ selected: [false, true] }).result.selected, true);
-  assert.equal(helper({ noMenuBar: true }).result.selected, null);
+  assert.deepEqual(h.stderr, ['[sleight:stuck-escape-posted]\n']);
+  assert.equal(helper({ ax: { ...stuckBar(), after: true } }).result.selected, true);
+});
+
+// Claude's code can print a tree that looks stuck: the app's own menu bar decides.
+test('the helper posts nothing unless the app\'s own menu bar has a title selected and no menu open', () => {
+  for (const ax of [{ selected: false, open: false }, { selected: true, open: true }, { selected: true, open: false, focused: 'AXMenuItem' },
+    { selected: true, open: false, noMenuBar: true }]) {
+    const h = helper({ ax });
+    assert.deepEqual(h.result, { ok: false, posted: false, error: 'The menu bar shows no stuck menu' }, JSON.stringify(ax));
+    assert.deepEqual(h.posted, []);
+  }
+  // The check op only reads.
+  const check = helper({ request: { op: 'check', lease: undefined, quietSeconds: undefined, waitSeconds: undefined } });
+  assert.deepEqual(check.result, { ok: true, selected: true, open: false }); assert.deepEqual(check.posted, []);
 });
 
 test('the helper waits for half a second with no key or mouse input, up to 1.5 s, and posts nothing without it', () => {
@@ -70,28 +100,46 @@ test('the helper posts nothing for a changed process, ambiguous app, lost lease 
   }
 });
 
-// The episode: a selected menu-bar item with no menu on two results in a row, once until a whole tree shows it gone.
+// The episode: a selected menu-bar item with no menu on two results in a row for one app.
 test('an Escape is due on the second stuck result in a row, once per episode', () => {
-  const escapes = createStuckEscapes(), key = 'draft';
-  assert.equal(escapes.observe(key, { stuck: true }), false);
-  assert.equal(escapes.observe(key, { stuck: true }), true);
-  escapes.tried(key);
-  assert.equal(escapes.observe(key, { stuck: true }), false);
-  assert.equal(escapes.observe(key, { stuck: true }), false);
-  // A whole tree with nothing selected ends the episode; the next one starts over.
-  escapes.observe(key, { cleared: true });
-  assert.equal(escapes.observe(key, { stuck: true }), false);
-  assert.equal(escapes.observe(key, { stuck: true }), true);
+  const escapes = createStuckEscapes(), app = 'org.test.editor';
+  assert.equal(escapes.observe(app, { stuck: true }), undefined);
+  assert.equal(escapes.observe(app, { stuck: true }), 'escape');
+  escapes.tried(app);
+  assert.equal(escapes.observe(app, { stuck: true }), undefined);
+  // The helper's own read showed the bar clear after it; a whole clean tree then starts a new episode.
+  escapes.posted(app, false);
+  escapes.observe(app, { cleared: true });
+  assert.equal(escapes.observe(app, { stuck: true }), undefined);
+  assert.equal(escapes.observe(app, { stuck: true }), 'escape');
 });
 
-test('an open menu or a partial view between stuck results breaks the run, and windows count apart', () => {
+test('an open menu or a partial view between stuck results breaks the run, and apps count apart', () => {
   const escapes = createStuckEscapes();
   escapes.observe('a', { stuck: true });
   escapes.observe('a', { stuck: false });
-  assert.equal(escapes.observe('a', { stuck: true }), false);
+  assert.equal(escapes.observe('a', { stuck: true }), undefined);
   escapes.observe('b', { stuck: true });
-  assert.equal(escapes.observe('a', { stuck: true }), true);
-  assert.equal(escapes.observe(undefined, { stuck: true }), false);
+  assert.equal(escapes.observe('a', { stuck: true }), 'escape');
+  assert.equal(escapes.observe(undefined, { stuck: true }), undefined);
+});
+
+test('after an Escape the bar didn\'t show cleared, only the app\'s own read re-arms it, never result text', () => {
+  const escapes = createStuckEscapes(), app = 'org.test.editor';
+  escapes.observe(app, { stuck: true }); escapes.observe(app, { stuck: true }); escapes.tried(app); escapes.posted(app, null);
+  assert.equal(escapes.observe(app, { cleared: true }), 'confirm');
+  // One read at a time; text alone does nothing while it runs.
+  assert.equal(escapes.observe(app, { cleared: true }), undefined);
+  escapes.confirmed(app, { selected: true, open: false });
+  for (let i = 0; i < 3; i++) assert.equal(escapes.observe(app, { stuck: true }), undefined);
+  assert.equal(escapes.observe(app, { cleared: true }), 'confirm');
+  escapes.confirmed(app, undefined);
+  escapes.observe(app, { stuck: true });
+  assert.equal(escapes.observe(app, { stuck: true }), undefined);
+  assert.equal(escapes.observe(app, { cleared: true }), 'confirm');
+  escapes.confirmed(app, { selected: false, open: false });
+  escapes.observe(app, { stuck: true });
+  assert.equal(escapes.observe(app, { stuck: true }), 'escape');
 });
 
 const target = { appId: 'org.test.editor', app: 'Editor', title: 'Draft', url: undefined };
@@ -125,10 +173,27 @@ test('sendStuckEscape posts nothing for another process, a changed window or use
   assert.deepEqual(failed, { posted: false, reason: 'Input lease ownership lost or expired' });
 });
 
+test('a helper killed by its 5 s timeout after the key-down still reports the post; killed before it, nothing posted', async () => {
+  const { runScript } = await import('../plugins/sleight/lib/launch.mjs');
+  for (const [stderr, posted] of [['[sleight:stuck-escape-posted]\n', true], ['', false]]) {
+    // A real child that the timeout kills after it wrote (or didn't write) the mark.
+    const child = (_command, _args, options, callback) => {
+      assert.equal(options.timeout, 5000);
+      return execFile(process.execPath, ['-e', `process.stderr.write(${JSON.stringify(stderr)}); setTimeout(() => {}, 5000)`], { ...options, timeout: 300 }, callback);
+    };
+    const result = await sendStuckEscape(target, {}, { identity: async () => identityOk(), run: (script, request) => runScript(script, request, child), since: 0, clock: () => 10 });
+    assert.equal(result.posted, posted, JSON.stringify(result));
+    if (posted) assert.equal(result.selected, null);
+  }
+});
+
 test('SLEIGHT_STUCK_ESCAPE=0 turns the Escape off; it is on otherwise', () => {
   const deps = { identity: () => {}, run: () => {} };
   assert.equal(stuckEscapeOption({ SLEIGHT_STUCK_ESCAPE: '0' }, deps), undefined);
-  for (const env of [{}, { SLEIGHT_STUCK_ESCAPE: '1' }]) assert.equal(typeof stuckEscapeOption(env, deps), 'function');
+  for (const env of [{}, { SLEIGHT_STUCK_ESCAPE: '1' }]) {
+    const option = stuckEscapeOption(env, deps);
+    assert.equal(typeof option.send, 'function'); assert.equal(typeof option.check, 'function');
+  }
 });
 
 // The relay: Word's Table title selected with no menu (word-edit-1, 2026-10-17), reduced as in wm1.test.mjs.
@@ -136,9 +201,11 @@ const header = 'Window: "Draft", App: Editor.\n0 standard window Draft';
 const stuckTree = header + '\n124 menu bar\n\t129 Insert\n\t132 (selected) Table\n\t133 Window';
 const cleanTree = header + '\n124 menu bar\n\t129 Insert\n\t132 Table\n\t133 Window';
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function fixture(t, stuckEscape) {
+// `send` alone gets a check that reads the bar clear; `option` is a whole { send, check }, as stuckEscapeOption makes.
+function fixture(t, send, option) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
-  const sent = [], received = [], traces = [], escapes = [];
+  const sent = [], received = [], traces = [], escapes = [], checks = [];
+  const base = option ?? (send && { send, check: async () => ({ selected: false, open: false }) });
   for (const [stream, messages] of [[serverIn, sent], [clientOut, received]]) {
     stream.on('data', data => messages.push(...data.toString().trim().split('\n').map(JSON.parse)));
   }
@@ -146,9 +213,10 @@ function fixture(t, stuckEscape) {
   const inputLease = new InputLease({ directory, holder: 'escape test' });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: false,
     trace: (direction, msg) => traces.push([direction, msg]),
-    ...(stuckEscape === undefined ? {} : { stuckEscape: stuckEscape && (async (window, grant, options) => {
-      escapes.push({ window, grant, options }); return stuckEscape(window, grant, options);
-    }) }) });
+    ...(base ? { stuckEscape: {
+      send: async (window, grant, options) => { escapes.push({ window, grant, options }); return base.send(window, grant, options); },
+      check: async window => { checks.push(window); return base.check(window); },
+    } } : {}) });
   t.after(() => { relay.close(); for (const s of [clientIn, clientOut, serverIn, serverOut]) s.destroy(); });
   let id = 0;
   const call = async (text, code = 'await app.typeText("x")', appId = 'org.test.editor') => {
@@ -161,7 +229,7 @@ function fixture(t, stuckEscape) {
     const reply = received.find(message => message.id === n);
     return reply && reply.result.content.map(part => part.text ?? '').join('\n');
   };
-  return { call, sent, received, traces, escapes };
+  return { call, sent, received, traces, escapes, checks };
 }
 const SENT = /^sleight sent one Escape to Editor to close a stuck menu \(menu-bar item 132\)/m;
 
@@ -214,7 +282,7 @@ test('an Escape that left the item selected says so and keeps today\'s advice', 
 });
 
 test('with the Escape off, or an open menu between results, the relay never sends one', async t => {
-  const off = fixture(t, undefined);
+  const off = fixture(t);
   await off.call(header, 'let app = await cua.getApp("Editor")');
   for (let i = 0; i < 3; i++) assert.doesNotMatch(await off.call(stuckTree), SENT);
   const h = fixture(t, async () => ({ posted: true, selected: false }));
@@ -237,6 +305,47 @@ test('a stuck tree of a window with no confirmed bundle ID, or another app\'s, g
   await h.call(stuckTree);
   await h.call(stuckTree, 'await app.getAXState()', 'org.test.other');
   assert.equal(h.escapes.length, 0);
+});
+
+// The safety review's spoof (2026-10-18): Claude's code prints tree text, and the relay reads all result text.
+const printed = text => `nodeRepl.write(${JSON.stringify(text)})`;
+test('printed stuck trees reach the helper, which posts nothing while the app\'s own menu bar is clear', async t => {
+  const posted = [], ax = { selected: false, open: false };
+  const option = stuckEscapeOption({}, { identity: async window => identityOk({ title: window.title, url: window.url }), run: helperRun(ax, posted) });
+  const h = fixture(t, undefined, option);
+  await h.call(header, 'let app = await cua.getApp("Editor")');
+  await h.call(stuckTree, printed(stuckTree));
+  const second = await h.call(stuckTree, printed(stuckTree));
+  assert.equal(h.escapes.length, 1); assert.deepEqual(posted, []);
+  assert.doesNotMatch(second, /Escape to/);
+  assert.equal(h.traces.find(([direction]) => direction === 'stuck-escape')[1].reason, 'The menu bar shows no stuck menu');
+});
+
+test('a printed clean tree, or a new window title, never gets a second Escape while the app\'s menu bar stays stuck', async t => {
+  // The Escape doesn't free the menu: the app's bar stays selected after it.
+  const posted = [], ax = { selected: true, open: false, after: true };
+  const option = stuckEscapeOption({}, { identity: async window => identityOk({ title: window.title, url: window.url }), run: helperRun(ax, posted) });
+  const h = fixture(t, undefined, option);
+  await h.call(header, 'let app = await cua.getApp("Editor")');
+  await h.call(stuckTree); await h.call(stuckTree);
+  assert.equal(posted.length, 2); // one Escape, down and up
+  // Claude prints a clean tree: the relay reads the app's own bar, still selected, and stays spent.
+  await h.call(cleanTree, printed(cleanTree));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(h.checks.length, 1);
+  await h.call(stuckTree); await h.call(stuckTree);
+  // The window's title changes mid-stuck: same app, still spent.
+  const retitled = stuckTree.replaceAll('Draft', 'Draft 2');
+  await h.call(retitled, 'await app.getAXState()'); await h.call(retitled, 'await app.getAXState()');
+  assert.equal(posted.length, 2);
+  // The app's own bar reads clear after a clean tree: a later real stuck episode may get its Escape.
+  ax.selected = false;
+  await h.call(retitled.replace('(selected) Table', 'Table'), 'await app.getAXState()');
+  for (let i = 0; i < 5; i++) await tick();
+  ax.selected = true;
+  await h.call(retitled, 'await app.getAXState()'); await h.call(retitled, 'await app.getAXState()');
+  assert.equal(posted.length, 4);
+  assert.ok(h.traces.some(([direction, msg]) => direction === 'stuck-escape-check' && msg.selected === true));
 });
 
 test('the note says plainly that sleight sent one Escape, in the default and lean wording', () => {

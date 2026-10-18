@@ -752,8 +752,8 @@ export function createRelay({
   staleHelperCheck,
   settleTextWrite,
   prepareTextWrite,
-  // Posts one Escape to the leased app's pid after a menu stayed stuck on two results in a row (stuck-escape.mjs).
-  // The launcher supplies it unless SLEIGHT_STUCK_ESCAPE=0.
+  // { send, check }: posts one Escape to the leased app's pid after a menu stayed stuck on two results in a row, and
+  // reads that app's menu bar (stuck-escape.mjs). The launcher supplies it unless SLEIGHT_STUCK_ESCAPE=0.
   stuckEscape,
   // Notices from work that finished between calls (rich-text clipboard recovery), added to the next
   // tool result Claude gets, so they don't stay on stderr where Claude never looks.
@@ -4318,14 +4318,23 @@ export function createRelay({
         if (key && entry) stuckMenus.set(key, { title: entry.title, shown: OPEN_MENU.test(tree) ? shown : shown + 1 });
         else if (key && !msg.result.isError && /^\d+ (?:standard window|window|sheet|dialog)\b/m.test(tree) &&
             !/…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree)) stuckMenus.delete(key);
-        // The Escape is for the leased, engine-confirmed app only, and only for the window this tree shows.
-        const escapeKey = stuckEscape && inputLease && !confirmedBrowser && key && leaseWindow?.appId && sameWindow(leaseWindow, treeWindow)
-          ? JSON.stringify([leaseWindow.appId, key]) : undefined;
+        // The Escape is for the leased, engine-confirmed app only, and only when this tree shows the lease's window.
+        // One per app, whatever its window's title does, until the app's own menu bar reads clear.
+        const escapeApp = stuckEscape && inputLease && !confirmedBrowser && key && leaseWindow?.appId && sameWindow(leaseWindow, treeWindow)
+          ? leaseWindow.appId : undefined;
         const opened = OPEN_MENU.test(tree);
         const cleared = !entry && !opened && !msg.result.isError && /^\d+ (?:standard window|window|sheet|dialog)\b/m.test(tree) &&
           !/…\(\d+\)|^[+~\-] |sleight: (?:lines changed|no change since)/m.test(tree);
-        if (stuckEscapes.observe(escapeKey, { stuck: !!entry && !opened, cleared }) && !running.size) {
-          stuckPlan = { key: escapeKey, number: entry.number, window: leaseWindow, note, since: clock() };
+        const due = stuckEscapes.observe(escapeApp, { stuck: !!entry && !opened, cleared });
+        if (due === 'confirm') {
+          const window = leaseWindow;
+          Promise.resolve().then(() => stuckEscape.check(window)).catch(() => undefined).then(menu => {
+            stuckEscapes.confirmed(escapeApp, menu);
+            trace('stuck-escape-check', { appId: escapeApp, selected: menu?.selected ?? null, open: menu?.open ?? null });
+          });
+        }
+        if (due === 'escape' && !running.size) {
+          stuckPlan = { appId: escapeApp, number: entry.number, window: leaseWindow, note, since: clock() };
         } else if (note) msg.result.content.push({ type: 'text', text: note });
       }
       // Explicit reads stay whole unless Claude printed a derived value. Recovery still forces
@@ -4352,13 +4361,14 @@ export function createRelay({
     if (stuckPlan) {
       // One try per episode, whatever the checks decide. It counts as running, so no action starts while it posts.
       const plan = stuckPlan, generation = stopGeneration, id = `sleight-stuck-escape-${nextInternalId++}`;
-      stuckEscapes.tried(plan.key);
+      stuckEscapes.tried(plan.appId);
       running.add(id); callDetails.set(id, 'stuck-menu Escape');
       Promise.resolve().then(() => generation !== stopGeneration || disposed || closing ? { posted: false, reason: 'call stopped' }
-        : stuckEscape(plan.window, inputLease.grant(inputLease.acquire(plan.window)), { since: plan.since, clock }))
+        : stuckEscape.send(plan.window, inputLease.grant(inputLease.acquire(plan.window)), { since: plan.since, clock }))
         .catch(error => ({ posted: false, reason: String(error?.message ?? error) }))
         .then(result => {
           finishedCall(id);
+          if (result?.posted) stuckEscapes.posted(plan.appId, result.selected ?? null);
           trace('stuck-escape', { id: msg.id, appId: plan.window.appId, item: plan.number, posted: result?.posted === true,
             ...(result?.posted ? { selected: result.selected ?? null } : { reason: result?.reason ?? 'unknown' }) });
           if (generation !== stopGeneration || disposed || closing) return;
