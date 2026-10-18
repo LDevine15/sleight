@@ -51,6 +51,11 @@ for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }])
     assert.match(first, /Top-level `await`, no `return`/);
     assert.match(first, /Write text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(first, /sleight\.fillForm|sleight\.dragTo|downloadMedia|tab\.getJsDialog/);
+    // Engine-path browser sessions (Firefox, Safari) never see the Browsers section, so the form batching rule is outside it.
+    assert.match(first, /In a form, fill every independent (?:visible )?field(?: you already see)? in one call\./);
+    assert.match(first, /Observe again after\s+autocomplete, a (?:field-adding|selection that adds fields)/);
+    assert.match(first, /async validation/);
+    assert.match(first, /Stop at a required confirmation\./);
     // A native-first session can act in a browser before its first browser result: the submit rule and
     // tab-handle routing ride in the first rules, not with the deferred browser how-to.
     assert.match(first, /stop before the final click/);
@@ -101,7 +106,7 @@ test('lean calls teach persistent handles and action endings only under the expe
       assert.match(selected, /Keep the app handle across calls/);
       assert.match(selected, /End on the action/);
     } else assert.equal(selected, normal, 'the lean skill has no native call guidance to replace');
-    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 430 : 930));
+    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 450 : 960));
     assert.equal(skillRules(skillPath, { SLEIGHT_PROMPT: prompt, SLEIGHT_LEAN_CALLS: '0' }), normal);
   }
 });
@@ -134,14 +139,14 @@ test('the default skill explains masked field reads without claiming a fill succ
 });
 
 test('both skill variants explain browser routing and script input within their word budgets', () => {
-  for (const [env, limit] of [[{}, 930], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
+  for (const [env, limit] of [[{}, 960], [{ SLEIGHT_PROMPT: 'lean' }, 450]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
     assert.match(skill, /[Tt]op-level `await`, no `return`/);
     assert.match(skill, /[Ww]rite text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(skill, /last expression is the result/);
     assert.match(skill, /Tab input.*first argument.*element index or `null`/);
-    assert.match(skill, /Fill every (?:field you already see|visible field) in one call/);
+    assert.match(skill, /[Ff]ill every (?:independent )?(?:field you already see|visible field) in one call/);
     assert.match(skill, /nodeRepl\.write\(await sleight\.fillForm\(tab,/);
     assert.match(skill, /takes each field by label or locator \(an index needs a stable ID in the tree\)/);
     if (!env.SLEIGHT_PROMPT) assert.match(skill, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
