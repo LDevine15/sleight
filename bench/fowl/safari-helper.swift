@@ -1,7 +1,9 @@
 import AppKit
 import ApplicationServices
 
-let executable = "/Applications/Safari.app/Contents/MacOS/Safari"
+// /Applications/Safari.app is a symlink into the Safari cryptex on current macOS, and a running Safari reports the
+// cryptex path, so the identity checks compare against the resolved path (2026-10-18: every launch failed identity).
+let executable = URL(fileURLWithPath: "/Applications/Safari.app/Contents/MacOS/Safari").resolvingSymlinksInPath().path
 let profileName = "sleight benchmark"
 struct Refusal: Error { let message: String }
 func refuse(_ message: String) -> Refusal { Refusal(message: message) }
