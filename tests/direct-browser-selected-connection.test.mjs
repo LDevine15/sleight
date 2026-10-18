@@ -303,6 +303,33 @@ test('mismatched response route closes connection and rejects command on actual 
   const command = p.session.send('Runtime.enable', {}, 'child'), rejected = assert.rejects(command, /SELECTED_CONNECTION_CLOSED/);
   socket.message({ id: socket.frames[0].id, sessionId: 'other', result: {} }); assert.equal(socket.closeCalls, 1); socket.closed(); await rejected;
 });
+test('a session-gone reply without a sessionId fails its own routed command and keeps the connection', async t => {
+  const f = fixture(t), p = await createSelectedConnection(f.options), losses = []; p.onConnectionLoss(reason => losses.push(reason));
+  await f.connect(p); const socket = f.sockets[0];
+  const gone = p.session.send('Input.dispatchKeyEvent', {}, 'closed-popup'), other = p.session.send('Runtime.enable', {}, 'opener');
+  socket.message({ id: socket.frames[0].id, error: { code: -32001, message: 'Session with given id not found.' } });
+  await assert.rejects(gone, /CDP_COMMAND_FAILED/);
+  socket.message({ id: socket.frames[1].id, sessionId: 'opener', result: {} }); assert.deepEqual(await other, {});
+  assert.deepEqual(losses, []); assert.equal(socket.closeCalls, 0); assert.equal(await p.verifyConnection(p.session), true);
+  const close = p.disconnect(); socket.closed(); assert.equal(await close, true);
+});
+for (const [name, send, reply, code] of [
+  ['a routed reply to an unrouted command', ['Target.getTargets', {}], { sessionId: 'child', result: {} }, 'REPLY_ROUTE_MISMATCH'],
+  ['another error code', ['Runtime.enable', {}, 'child'], { error: { code: -32000, message: 'x' } }, 'REPLY_ROUTE_MISMATCH'],
+  ['a result without its route', ['Runtime.enable', {}, 'child'], { result: {} }, 'REPLY_ROUTE_MISMATCH'],
+  ['a wrong sessionId on a gone-session error', ['Runtime.enable', {}, 'child'], { sessionId: 'other', error: { code: -32001, message: 'x' } }, 'REPLY_ROUTE_MISMATCH'],
+  ['an unknown id', ['Runtime.enable', {}, 'child'], { id: 99, result: {} }, 'REPLY_UNKNOWN_ID'],
+]) test('fences on ' + name + ' and reports the reason code', async t => {
+  const f = fixture(t), p = await createSelectedConnection(f.options), losses = []; p.onConnectionLoss(reason => losses.push(reason));
+  await f.connect(p); const socket = f.sockets[0];
+  const command = p.session.send(...send), rejected = assert.rejects(command, /SELECTED_CONNECTION_CLOSED/);
+  socket.message({ id: socket.frames[0].id, ...reply }); assert.equal(socket.closeCalls, 1); socket.closed(); await rejected;
+  assert.deepEqual(losses, [code]);
+});
+test('a socket close reports its own reason code', async t => {
+  const f = fixture(t), p = await createSelectedConnection(f.options), losses = []; p.onConnectionLoss(reason => losses.push(reason));
+  await f.connect(p); f.sockets[0].closed(); assert.deepEqual(losses, ['SOCKET_CLOSED']);
+});
 test('verification fences a replaced browser incarnation before any further command', async t => {
   const f = fixture(t), p = await createSelectedConnection(f.options); await f.connect(p); const socket = f.sockets[0];
   f.metadata = { ...f.metadata, incarnation: 'p4312-s124-u456' };

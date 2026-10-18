@@ -144,23 +144,25 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   const endpoint = validateEndpoint('ws://127.0.0.1:' + identity.file.port + identity.file.browserPath);
   let socket, opened = false, fenced = false, attempted = false, closeIssued = false, closeConfirmed = false, opening, closing;
   let finishOpen, failOpen;
-  const losses = new Set(); let lossNotified = false;
-  function notifyLoss() {
+  const losses = new Set(); let lossNotified = false, lossReason = 'UNKNOWN';
+  // Why the connection was fenced, kept as a code from a fixed list, never a frame's content. The first reason stays: later fences are consequences of it.
+  const reasonCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{2,47}$/.test(value) ? value : 'UNKNOWN';
+  function notifyLoss(reason) {
     if (lossNotified) return;
-    lossNotified = true;
-    for (const callback of losses) try { callback(); } catch {}
+    lossNotified = true; lossReason = reason;
+    for (const callback of losses) try { callback(lossReason); } catch {}
   }
   const callbacks = new Set(), pending = new Map(); let sequence = 0;
   function confirmedClose() {
     fenced = true; opened = false; closeConfirmed = true;
-    notifyLoss();
+    notifyLoss('SOCKET_CLOSED');
     failOpen?.(Error('SELECTED_CONNECTION_CLOSED'));
     for (const command of pending.values()) command.reject(Error('SELECTED_CONNECTION_CLOSED'));
     pending.clear();
   }
-  function fenceClose() {
+  function fenceClose(reason = 'FENCED') {
     fenced = true; opened = false;
-    notifyLoss();
+    notifyLoss(reasonCode(reason));
     failOpen?.(Error('SELECTED_CONNECTION_CLOSED'));
     if (socket && !closeIssued && !closeConfirmed) {
       closeIssued = true;
@@ -169,7 +171,7 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   }
   function disconnect(candidate = session) {
     if (candidate !== session) return Promise.resolve(false);
-    fenceClose();
+    fenceClose('DISCONNECTED');
     if (!socket || closeConfirmed) return Promise.resolve(true);
     if (closing) return closing;
     closing = new Promise(resolve => {
@@ -185,23 +187,31 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
     await listenerOwner(run, identity.file.port, identity.pid, uid);
   }
   function message(event) {
+    let reason = 'FRAME_INVALID';
     try {
-      if (typeof event.data !== 'string' || Buffer.byteLength(event.data) > 8388608) throw Error();
+      if (typeof event.data !== 'string' || Buffer.byteLength(event.data) > 8388608) { reason = 'FRAME_NOT_TEXT_OR_TOO_LARGE'; throw Error(); }
       const frame = JSON.parse(event.data);
-      if (!ordinaryObject(frame)) throw Error();
+      if (!ordinaryObject(frame)) { reason = 'FRAME_NOT_OBJECT'; throw Error(); }
       if (Object.hasOwn(frame, 'id')) {
         const command = pending.get(frame.id);
-        if (!command || frame.sessionId !== command.route || Object.hasOwn(frame, 'result') === Object.hasOwn(frame, 'error')) throw Error();
+        if (!command) { reason = 'REPLY_UNKNOWN_ID'; throw Error(); }
+        // Chromium answers a command for a session whose target has since closed (a popup that closed itself) with
+        // -32001 and no sessionId. That is the one reply allowed to miss its route, and it fails only its own command.
+        const sessionGone = command.route !== undefined && frame.sessionId === undefined && ordinaryObject(frame.error) && frame.error.code === -32001;
+        if (frame.sessionId !== command.route && !sessionGone) { reason = 'REPLY_ROUTE_MISMATCH'; throw Error(); }
+        if (Object.hasOwn(frame, 'result') === Object.hasOwn(frame, 'error')) { reason = 'REPLY_SHAPE'; throw Error(); }
         pending.delete(frame.id);
         if (Object.hasOwn(frame, 'error')) command.reject(Error('CDP_COMMAND_FAILED'));
         else command.resolve(frame.result);
       } else {
-        if (!methodName(frame.method) || !ordinaryObject(frame.params) || frame.sessionId !== undefined && typeof frame.sessionId !== 'string') throw Error();
+        if (!methodName(frame.method) || !ordinaryObject(frame.params) || frame.sessionId !== undefined && typeof frame.sessionId !== 'string') {
+          reason = 'EVENT_SHAPE'; throw Error();
+        }
         if (!fenced) for (const callback of callbacks) {
           try { callback(Object.freeze({ method: frame.method, params: frame.params, ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }) })); } catch {}
         }
       }
-    } catch { fenceClose(); }
+    } catch { fenceClose(reason); }
   }
   const session = Object.freeze({ sessionId: 'r' + randomBytes(24).toString('hex'),
     send(method, params = {}, sessionId = session.sessionId) {
@@ -217,7 +227,7 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
       } catch { return Promise.reject(Error('INVALID_CDP_COMMAND')); }
       return new Promise((resolve, reject) => {
         pending.set(id, { route, resolve, reject });
-        try { socket.send(text); } catch { fenceClose(); }
+        try { socket.send(text); } catch { fenceClose('SOCKET_SEND_FAILED'); }
       });
     },
     on(name, callback) { if (name !== 'event' || typeof callback !== 'function') fail('INVALID_CDP_EVENT'); callbacks.add(callback); },
@@ -233,9 +243,9 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
         socket = new Socket(endpoint);
         socket.addEventListener('close', confirmedClose, { once: true });
         socket.addEventListener('message', message);
-        socket.addEventListener('error', fenceClose);
+        socket.addEventListener('error', () => fenceClose('SOCKET_ERROR'));
         await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { reject(Error('SELECTED_CONNECTION_TIMEOUT')); fenceClose(); }, openTimeout);
+          const timer = setTimeout(() => { reject(Error('SELECTED_CONNECTION_TIMEOUT')); fenceClose('OPEN_TIMEOUT'); }, openTimeout);
           finishOpen = () => { clearTimeout(timer); resolve(); };
           failOpen = error => { clearTimeout(timer); reject(error); };
           socket.addEventListener('open', finishOpen, { once: true });
@@ -252,7 +262,7 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   async function verifyConnection(candidate, expectedIncarnation = browserIncarnation) {
     if (candidate !== session || expectedIncarnation !== browserIncarnation || !opened || fenced || socket?.readyState !== 1) return false;
     try { await current(); return opened && !fenced && socket.readyState === 1; }
-    catch { fenceClose(); return false; }
+    catch (error) { fenceClose(/^(?:STALE_INSTANCE|SELECTED_[A-Z_]{1,40})$/.test(error?.message) ? error.message : 'VERIFY_FAILED'); return false; }
   }
   return Object.freeze({ session, connect, verifyConnection, disconnect, browserIncarnation, selectedBrowser, identity, endpoint,
     createFilter(ownedTargets = []) {
@@ -264,7 +274,7 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
     },
     onConnectionLoss(callback) {
       if (typeof callback !== 'function') fail('TRUSTED_ROUTE_REQUIRED');
-      losses.add(callback); if (lossNotified) callback();
+      losses.add(callback); if (lossNotified) callback(lossReason);
       return () => losses.delete(callback);
     } });
 }

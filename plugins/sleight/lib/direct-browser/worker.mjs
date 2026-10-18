@@ -1,4 +1,7 @@
 import { fork } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readInstalledConfig, acceptedInstalledPackage } from './installed-config.mjs';
@@ -14,6 +17,17 @@ const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(v
 // operator's opt-in file and its own debugger grant before turbo touches it.
 const bundleId = value => typeof value === 'string' && value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(value);
 const approvedApps = value => Array.isArray(value) && value.length <= 64 && value.every(bundleId) && new Set(value).size === value.length;
+// Why turbo lost the browser connection goes to the relay's trace file (SLEIGHT_TRACE, see launch.mjs) as a code from
+// selected-connection.mjs, never a frame's content. The relay is this worker's parent, so its pid names the file.
+const lossCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{2,47}$/.test(value) ? value : 'UNKNOWN';
+function traceLoss(reason) {
+  const setting = process.env.SLEIGHT_TRACE;
+  if (!setting || !process.ppid) return;
+  try {
+    const dir = setting === '1' ? join(homedir(), 'Library', 'Logs', 'sleight') : setting;
+    appendFileSync(join(dir, `trace-${process.ppid}.jsonl`), JSON.stringify({ t: new Date().toISOString(), direction: 'turbo-connection-lost', msg: { code: lossCode(reason) } }) + '\n');
+  } catch {}
+}
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -359,7 +373,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
         .slice(0, 4).map(([key]) => ({ bundleId: key }));
     }
     function subscribe() {
-      unsubscribe = selected.onConnectionLoss(() => {
+      unsubscribe = selected.onConnectionLoss(reason => {
+        try { (dependencies.traceLoss ?? traceLoss)(lossCode(reason)); } catch {}
         connected = false;
         if (!connecting && !stopped) { retryConnection = true; protocol?.end().catch(() => {}); }
       });
