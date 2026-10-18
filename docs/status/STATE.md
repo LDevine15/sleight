@@ -3,15 +3,17 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 18:10 UTC, after the clear)
+## Banner (2026-10-18 18:20 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
 `~/Projects/sleight-wt/ledger/LEDGER.md` (every result, item and decision of 2026-10-18 is in the sections from APP-CLAIM on).
 
-**Release line.** This worktree's branch is at `9463c0c4` and pushed to `private` `pane/auto-mode`, with the main checkout fast-forwarded.
-Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree `~/Projects/sleight-wt/race-fx` is detached at the same commit. Only the untracked
-`.playwright-mcp/`, `.vale/` and `node_modules` are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
+**Release line.** This worktree's branch is at `05e67bec` and pushed to `private` `pane/auto-mode`, with the main checkout fast-forwarded.
+The full check last passed on 9463c0c4 (8073 tests). Commits since then change only bench/fowl (cover record, Safari per-task
+PID), tests and docs. They passed 249 focused tests, and the full check waits until the timed rounds stop. Race worktree
+`~/Projects/sleight-wt/race-fx` moves to 05e67bec between rounds. Only the untracked `.playwright-mcp/`, `.vale/` and `node_modules`
+are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 
 **Where the claim stands (all Haiku 5.5 high, real windows):**
 - Native 9 tasks: "fastest", 8 of 9, 251 s against claude-cu's 454 s on 995b4855 (lost preview-read 5.1 against Peekaboo's 4.4; its
@@ -23,29 +25,28 @@ Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree
 - Firefox (sleight b3 on 326dde47, competitors 3 rounds): fastest on 10 of 12. Lost mdn (Codex 16.0 against 19.7) and
   form-settings-helium, which only Cua passes. Fixes since (CT result trimming, EN lines, FM7, DRG drags) are unmeasured: sleight's
   Firefox rounds rerun on the current build.
-- Safari has a fixed harness (Safari 26 profile identifier, menus, tab bar, form sheets; now a fresh Safari per task, launch outside the
-  timed span). Rounds restarted 17:31Z.
+- Safari: r1 for all four Terminal arms is set aside (`race-1017/failed-safari-pid-*`). Since the per-task relaunch, each prompt named
+  the first Safari's PID, and cua stopped on 11 of 12 tasks because that PID had no windows. 05e67bec replans each task. In
+  that r1, sleight and lcu both failed form-settings and form-settings-helium at the list's drag reorder. The Fable study found the
+  race's own Terminal window over Safari's list, and the engine's background drags miss in a covered window (known-problems,
+  Benchmark environment). AXRaise can't lift a background app's window over another app's (1/1). Since fea700fa every task's row
+  records the windows over the browser at its start (`cover`, report column "covered by"). Rounds don't raise or move windows.
 
-**Running across the clear:**
-- Terminal.app job `~/Projects/sleight-wt/race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari x3 for sleight, lcu,
-  cua and peekaboo on race-fx. sleight r1 finished all 12 tasks (10 of 12) and lcu r1 9 of 12. Both failed form-settings and
-  form-settings-helium at the list's drag reorder. The Fable study found the race's own Terminal window over Safari's list, and
-  the engine's background drags miss in a covered window (known-problems, Benchmark environment). AXRaise can't lift a background
-  app's window over another app's (1/1). From fea700fa (harness only, plugin unchanged) every task's row records the windows over the
-  browser at its start (`cover`, report column "covered by"). race-fx moves to fea700fa after cua r1. Rounds aren't raised or
-  re-placed. Every arm faces the same covered window. Its full check was deferred during timed rounds (236 focused tests passed).
-- Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell, taking the lock between the Terminal job's rounds.
-  Queued behind both: sleight's Firefox b6 x3 (`race-firefox-b6.log`), then the sleight-in-Codex smoke in Firefox (both arms,
-  wikipedia and form-checkout, `smoke-codex-sleight.sh`, log `race-smoke-codex-sleight.log`). Its dry run passed, and
-  `~/.codex-bench-sleight` was set up 17:53Z. A Fable study of Safari r1's two form-settings failures is running.
+**Running across a clear:**
+- Terminal.app job `race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari r2 and r3 for sleight, lcu, cua and
+  peekaboo. When it logs `done`, a waiter in sleight-arch's shell opens `race-safari-r1.command` (log `race-safari-r1.log`), which
+  reruns only the missing r1 rounds. After a clear, if that log doesn't exist once the term log says `done`, open it by hand.
+- Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell and has not started a round yet, so it runs on the fix.
+- Queued from sleight-arch's shell: sleight's Firefox b6 x3 (`race-firefox-b6.log`, after the safari-term, safari-codex and safari-r1
+  logs say `done`), then the sleight-in-Codex smoke in Firefox (both arms, wikipedia and form-checkout, `smoke-codex-sleight.sh`,
+  log `race-smoke-codex-sleight.log`). Its dry run passed, and `~/.codex-bench-sleight` was set up 17:53Z. A clear kills these
+  shell jobs: rerun the same commands (in `race-1017`, see each log's name).
 - `nohup` watchdog `race-1017/watchdog.sh` (pid 584, log `watchdog.log`): exits with an ALERT line if the live lock is held with no round
   for 3 min, a round runs over 40 min, or Safari stays up with no round for 3 min. Nobody is woken after the clear, so read its log first.
 - `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds.
-- The 17:40Z recheck commit ran lint, `npm run validate` and the STATE-pinned test only. The full check (8073 tests) passed on
-  9463c0c4 and was skipped so it would not load the Mac during timed Safari rounds. The diff is STATE.md text.
 
 **Order from here:**
-1. Safari's Codex rounds x3 (running, see above).
+1. Safari r2 and r3 are running, with Codex x3 and the r1 reruns queued. Score Safari when they finish.
 2. sleight's Firefox rerun on the current build (queued).
 3. sleight inside Codex (arms `codex-sleight` gpt-6-luna, `codex-sleight-sol` gpt-6.1-sol): live smoke in Firefox (queued), then
    3 rounds each in Firefox and Safari. Codex in Chrome/Helium is blocked (item SF1).
