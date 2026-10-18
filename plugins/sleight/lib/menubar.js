@@ -16,6 +16,7 @@
 //   { op: "notify-press", banner, button }  press a banner's button by name
 
 ObjC.import('Foundation');
+ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
 
 const se = Application('System Events');
@@ -24,9 +25,24 @@ function attempt(fn, fallback) {
   try { return fn(); } catch (e) { return fallback; }
 }
 
+// sleight's own consent host (its glove, its menus, its approval and payment alerts) is the binary sleight builds in its
+// helper cache. Only the person's click answers it, so no op opens, chooses, presses or closes it, and "apps" leaves it
+// out. The process counts by its name, its file, or the executable behind its pid (own-host.mjs).
+const OWN_HOST_LINE = "That is sleight's own confirmation window; only you can answer it.";
+const HELPER_CACHE = /\/Library\/Caches\/sleight\/turbo-host\//i;
+function ownHostPid(pid) {
+  const app = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null);
+  return !!app && HELPER_CACHE.test(attempt(() => String(ObjC.unwrap(app.executableURL.path) ?? ''), ''));
+}
+function ownHost(proc, name) {
+  return /^consent-host$/i.test(String(name ?? '').trim()) || HELPER_CACHE.test(attempt(() => String(proc.applicationFile().posixPath() ?? ''), '')) ||
+    ownHostPid(attempt(() => proc.unixId(), 0));
+}
+
 function statusItems(app) {
   const proc = se.processes.byName(app);
   if (!attempt(() => proc.exists(), false)) throw new Error(`${app} isn't running`);
+  if (ownHost(proc, attempt(() => proc.name(), app))) throw new Error(OWN_HOST_LINE);
   const bars = proc.menuBars();
   if (bars.length < 2) throw new Error(`${app} has no status item in the menu bar. Its own menus (File, Edit, Format…) are in its tree: use js.`);
   return { proc, items: bars[1].menuBarItems() };
@@ -243,7 +259,8 @@ function run(argv) {
         // find them; accessibility is the only source, and it takes seconds.
         const names = se.processes.name();
         const bars = se.processes.menuBars();
-        result = { apps: names.filter((n, i) => bars[i] && bars[i].length > 1) };
+        // The few apps with a status item are checked one by one, for sleight's own host.
+        result = { apps: names.filter((n, i) => bars[i] && bars[i].length > 1 && !ownHost(se.processes.byName(n), n)) };
         break;
       }
       case 'open': result = open(request.app, request.item ?? 0); break;

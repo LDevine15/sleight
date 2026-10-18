@@ -940,7 +940,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
         approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared),
       target: async args => {
         const result = await appHealth.target(args);
-        if (!result.ok) throw new Error(`Input lease: ${result.error}`);
+        // sleight's own consent host answers with its one line, which Claude passes on.
+        if (!result.ok) throw new Error(result.ownHost ? result.error : `Input lease: ${result.error}`);
         return result.target;
       },
     },
