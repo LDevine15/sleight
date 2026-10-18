@@ -67,8 +67,9 @@ function fakeAdmin({ state = 'none', ownership = 'free', start } = {}) {
 }
 
 /** The user's process table and the app's own Quit, as the JXA helper reports them. No activate, no signal: there is no such method. */
-function fakeProcesses({ apps = [{ ...mine, uid, executable: EXE }], quit = 'exited', fronts = [90, 90] } = {}) {
+function fakeProcesses({ apps = [{ ...mine, uid, executable: EXE }], quit = 'exited', fronts = [90, 90], args = () => EXE } = {}) {
   const p = { calls: [], apps,
+    async args(pidValue) { p.calls.push(['args', pidValue]); return args(pidValue); },
     async list(bundleId) { p.calls.push(['list', bundleId]); return p.apps.map(item => ({ ...item })); },
     async quit(target, options) {
       p.calls.push(['quit', target, options]);
@@ -127,12 +128,15 @@ const refusal = (code, pattern) => error => { assert.equal(error.message, code);
 test('a recipe may name the user\'s own profile: its folder under Application Support and launch arguments with no profile switch', () => {
   assert.deepEqual(recipe().userProfile, { supportDir: 'Fixture', args: [] });
   assert.deepEqual(recipes.userProfileFor(recipe(), home), { path: profilePath, temporary: false });
+  assert.deepEqual(recipeFor(readRecipeRegistry(registryFile(row({ userProfile: { supportDir: 'Fixture', args: [], switches: ['--profile'] } }))), 'invalid.fixture.app')
+    .userProfile.switches, ['--profile'], 'a recipe may name the app\'s own profile switches');
   const bare = { ...row() }; delete bare.userProfile;
   const without = recipeFor(readRecipeRegistry(registryFile(bare)), 'invalid.fixture.app');
   assert.throws(() => recipes.userProfileFor(without, home), /ELECTRON_USER_PROFILE_UNSUPPORTED/);
   for (const [userProfile, reason] of [[{ supportDir: 'Fixture' }, 'userProfile'], [{ supportDir: '../Code', args: [] }, 'userProfile'], [{ supportDir: 'a/b', args: [] }, 'userProfile'],
     [{ supportDir: 'Fixture', args: ['--user-data-dir=/tmp/x'] }, 'userProfile'], [{ supportDir: 'Fixture', args: ['{profile}/x'] }, 'userProfile'],
-    [{ supportDir: 'Fixture', args: ['--remote-debugging-port=9222'] }, 'userProfile'], [{ supportDir: 'Fixture', args: [], extra: 1 }, 'userProfile'], ['Fixture', 'userProfile']]) {
+    [{ supportDir: 'Fixture', args: ['--remote-debugging-port=9222'] }, 'userProfile'], [{ supportDir: 'Fixture', args: [], extra: 1 }, 'userProfile'], ['Fixture', 'userProfile'],
+    [{ supportDir: 'Fixture', args: [], switches: ['profile'] }, 'userProfile'], [{ supportDir: 'Fixture', args: [], switches: [] }, 'userProfile']]) {
     assert.throws(() => readRecipeRegistry(registryFile(row({ userProfile }))), error => error.message === 'INVALID_RECIPE_REGISTRY' && error.reason === reason, JSON.stringify(userProfile));
   }
 });
@@ -168,7 +172,7 @@ test('macOS activating the reopened app is recorded and never fought: no activat
   const selecting = w.select(); await answer(w, ['session', 'relaunch']);
   const connection = await selecting;
   assert.equal(connection.relaunch.activated, true);
-  assert.deepEqual(w.processes.calls.map(call => call[0]), ['list', 'list', 'front', 'quit', 'list', 'front']);
+  assert.deepEqual(w.processes.calls.map(call => call[0]), ['list', 'args', 'list', 'front', 'quit', 'list', 'front']);
   await runtime.releaseAppConnection(connection);
 });
 
@@ -443,4 +447,30 @@ test('createAppProcesses validates the helper\'s replies and gives Quit its wait
   }
   replies.quit = { status: 'ok', outcome: 'forced', ms: 1 };
   await assert.rejects(p.quit({ pid: 3000, birth: 'b', executable: EXE }, { waitMs: 1000 }), /ELECTRON_APPS_INVALID/);
+});
+
+// Review F4: a copy started on a profile of its own would be reopened on the default one, so it is left alone.
+test('a running copy started with a profile switch, or whose arguments cannot be read, refuses before any card', async () => {
+  for (const args of [() => EXE + ' --user-data-dir=/Users/x/work', () => EXE + ' --extensions-dir /tmp/e', () => { throw Error('ELECTRON_APPS_UNAVAILABLE'); }]) {
+    const w = world({ processes: fakeProcesses({ args }) });
+    await assert.rejects(w.select(), refusal('ELECTRON_RELAUNCH_OTHER_PROFILE', /profile of its own/));
+    assert.equal(w.consent.presented.length, 0); assert.deepEqual(quits(w), []);
+  }
+  // The recipe's own switch counts too; a token that only starts with the same letters, or a path containing it, does not.
+  const own = recipeFor(readRecipeRegistry(registryFile(row({ userProfile: { supportDir: 'Fixture', args: [], switches: ['--profile'] } }))), 'invalid.fixture.app');
+  await assert.rejects(relaunch.runningCopy({ recipe: own, uid, processes: fakeProcesses({ args: () => EXE + ' --profile work' }) }), refusal('ELECTRON_RELAUNCH_OTHER_PROFILE'));
+  await assert.rejects(relaunch.runningCopy({ recipe: own, uid, processes: fakeProcesses({ args: () => EXE + ' --profile=work' }) }), refusal('ELECTRON_RELAUNCH_OTHER_PROFILE'));
+  assert.equal((await relaunch.runningCopy({ recipe: own, uid, processes: fakeProcesses({ args: () => EXE + ' --profiles-shown' }) })).pid, mine.pid);
+  assert.equal((await relaunch.runningCopy({ recipe: recipe(), uid, processes: fakeProcesses({ args: () => '/Applications/Fixture--user-data-dir.app/Contents/MacOS/Fixture' }) })).pid, mine.pid);
+});
+
+test('createAppProcesses reads a process\'s arguments with ps, whole lines, for that pid only', async () => {
+  const calls = [];
+  const run = (file, args, options, callback) => { calls.push([file, args, options.env]); callback(null, EXE + ' --wait\n'); };
+  const p = relaunch.createAppProcesses({ run, script: '/x/electron-apps.js' });
+  assert.equal(await p.args(3000), EXE + ' --wait');
+  assert.deepEqual(calls, [['/bin/ps', ['-ww', '-o', 'args=', '-p', '3000'], { PATH: '/usr/bin:/bin' }]]);
+  await assert.rejects(p.args('3000'), /ELECTRON_APPS_INVALID/);
+  const failing = relaunch.createAppProcesses({ run: (file, args, options, callback) => callback(Error('exit 1'), ''), script: '/x' });
+  await assert.rejects(failing.args(3000), /ELECTRON_APPS_UNAVAILABLE/);
 });

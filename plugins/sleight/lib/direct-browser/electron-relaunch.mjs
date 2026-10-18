@@ -2,11 +2,13 @@
 // The app runs without the debugger pipe, so turbo needs it reopened with the pipe. Only the user's click on sleight's
 // relaunch card starts that. sleight then asks the app to quit through its own Quit (NSRunningApplication terminate,
 // which may show the app's unsaved-work prompt; sleight answers nothing there), waits, and has the resident host open the
-// same bundle on the same profile plus the pipe, in the background. A launch macOS activates anyway is recorded, never
-// undone. Every way this can go wrong ends on the native path with a result that says what happened to the app.
+// same bundle on the same profile plus the pipe. That launch is a plain posix_spawn, since a LaunchServices launch (the one
+// that can skip activation) can't hand the app the pipe, so the app may come to the front briefly, as the card says. That is
+// recorded, never undone. Every way this can go wrong ends on the native path with a result that says what happened to the app.
 // No app names here: the recipe supplies the name, the bundle, the executable and the profile.
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { profileSwitches } from './electron-recipes.mjs';
 
 const fail = code => { throw Error(code); };
 const plain = value => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -25,6 +27,7 @@ const NOTICES = Object.freeze({
   ELECTRON_RELAUNCH_NO_PIPE: name => `${name} reopened without the debugger connection and is running normally. ${native(name)}`,
   ELECTRON_RELAUNCH_AMBIGUOUS: name => `More than one ${name} process is running, so sleight quits none of them. ${native(name)}`,
   ELECTRON_RELAUNCH_BUILD_CHANGED: name => `The running ${name} is not the reviewed build, so sleight leaves it alone. ${native(name)}`,
+  ELECTRON_RELAUNCH_OTHER_PROFILE: name => `The running ${name} may be on a profile of its own (started with a profile switch), and sleight reopens only the default profile, so it leaves it alone. ${native(name)}`,
   ELECTRON_APP_OTHER_USER: name => `${name} is running as another macOS user, so sleight leaves it alone. ${native(name)}`,
   ELECTRON_USER_PROFILE_UNSUPPORTED: name => `Turbo isn't set up for ${name} on the user's own profile yet. ${native(name)}`,
 });
@@ -64,6 +67,16 @@ export function createAppProcesses({ run = execFile, script = helperScript } = {
       if (!exactly(reply, ['status', 'outcome', 'ms']) || !OUTCOMES.has(reply.outcome) || !Number.isFinite(reply.ms)) fail('ELECTRON_APPS_INVALID');
       return Object.freeze({ outcome: reply.outcome, ms: reply.ms });
     },
+    // The process's command line, for the profile-switch check only. ps prints the arguments joined by spaces.
+    args(pid) {
+      if (!Number.isSafeInteger(pid) || pid < 1) return Promise.reject(Error('ELECTRON_APPS_INVALID'));
+      return new Promise((resolve, reject) => {
+        run('/bin/ps', ['-ww', '-o', 'args=', '-p', String(pid)], { timeout: 5000, maxBuffer: 1 << 20, env: { PATH: '/usr/bin:/bin' } }, (error, stdout) => {
+          const line = String(stdout ?? '').trim();
+          if (error || !line) reject(Error('ELECTRON_APPS_UNAVAILABLE')); else resolve(line);
+        });
+      });
+    },
     async front() {
       const reply = await call({ op: 'front' }, 5000);
       if (!exactly(reply, ['status', 'pid']) || reply.pid !== null && !Number.isSafeInteger(reply.pid)) fail('ELECTRON_APPS_INVALID');
@@ -73,13 +86,20 @@ export function createAppProcesses({ run = execFile, script = helperScript } = {
 }
 
 /** The user's own running copy of the recipe's app, or undefined when none runs. Refuses before any card for another
- * user's process, more than one process, or a copy whose executable is not the reviewed build's. */
+ * user's process, more than one process, a copy whose executable is not the reviewed build's, and a copy started on a
+ * profile of its own (a profile switch among its arguments, or arguments sleight can't read): reopening it would land on
+ * the default profile instead. */
 export async function runningCopy({ recipe, processes, uid }) {
   const rows = await processes.list(recipe.bundleId);
   if (!rows.length) return undefined;
   if (rows.some(row => row.uid !== uid)) throw relaunchError('ELECTRON_APP_OTHER_USER', recipe.name);
   if (rows.length > 1) throw relaunchError('ELECTRON_RELAUNCH_AMBIGUOUS', recipe.name);
   if (rows[0].executable !== recipe.executable) throw relaunchError('ELECTRON_RELAUNCH_BUILD_CHANGED', recipe.name);
+  let line;
+  try { line = await processes.args(rows[0].pid); } catch { line = undefined; }
+  const switches = profileSwitches(recipe), tokens = typeof line === 'string' ? line.split(/\s+/) : undefined;
+  if (!tokens || tokens.some(token => switches.some(name => token === name || token.startsWith(name + '='))))
+    throw relaunchError('ELECTRON_RELAUNCH_OTHER_PROFILE', recipe.name);
   return rows[0];
 }
 

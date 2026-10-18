@@ -111,6 +111,24 @@ test('a user-profile launch names no profile, has the account\'s home, logs noth
   } finally { await finishReal(host, e); }
 });
 
+// Review F1: the adapter is the app's parent but holds none of its pipe ends after the spawn, so losing it leaves the app and
+// its pipe alone (the host parks: nothing can collect until a person quits). Losing the host is the case that closes the pipe.
+test('killing the launch adapter leaves the user-profile app running with its pipe open; the host parks', { skip }, async () => {
+  const e = environment();
+  let adapter;
+  const { host } = await realHost(e, { createAdapter: async () => (adapter = createPythonAdapter({ script: launch, registryPath: e.registryPath, tempRoot: e.tempRoot })) });
+  try {
+    await host.start({ build: BUILD, profile: 'user' });
+    const pid = host.broker.identity.pid;
+    adapter.child.kill('SIGKILL');
+    await until(() => adapter.lost, 'adapter lost');
+    await sleep(300);
+    assert.equal(alive(pid), true, 'the fake app quits on pipe EOF, so it is still alive only if its pipe is open');
+    assert.equal(host.broker.state, 'parked');
+    assert.equal(host.status().ownership.state, 'unresolved');
+  } finally { await finishReal(host, e); }
+});
+
 test('launch.py refuses a user-profile launch without a reviewed userProfile, or one whose arguments name a profile', { skip }, () => {
   const script = `
 import importlib.util, json, sys

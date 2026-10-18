@@ -27,12 +27,20 @@ const bundleId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._
 
 const launchArgs = args => Array.isArray(args) && args.length <= 64 && args.every(arg => typeof arg === 'string' && arg.length <= 4096 && !arg.includes('\0')) &&
   !args.some(arg => FORBIDDEN.some(prefix => arg.toLowerCase().startsWith(prefix)));
+// switches (optional): the app's own profile switches beyond the Chromium ones, which mark a copy the user started on a
+// profile of its own; the relaunch flow leaves such a copy alone (electron-relaunch.mjs runningCopy).
 function checkUserProfile(value) {
-  if (!plain(value) || Object.keys(value).sort().join() !== 'args,supportDir' || !printable(value.supportDir, 255) || /[/\\]/.test(value.supportDir) ||
+  const keys = Object.keys(plain(value) ? value : {}).sort().join();
+  if (!plain(value) || keys !== 'args,supportDir' && keys !== 'args,supportDir,switches' || !printable(value.supportDir, 255) || /[/\\]/.test(value.supportDir) ||
       ['.', '..'].includes(value.supportDir) || !launchArgs(value.args) || value.args.some(arg => /[{}]/.test(arg)) ||
-      value.args.some(arg => PROFILE_DIRS.some(name => arg.toLowerCase().startsWith(name)))) invalid('userProfile');
-  return Object.freeze({ supportDir: value.supportDir, args: Object.freeze([...value.args]) });
+      value.args.some(arg => PROFILE_DIRS.some(name => arg.toLowerCase().startsWith(name))) ||
+      value.switches !== undefined && (!Array.isArray(value.switches) || !value.switches.length || value.switches.length > 16 ||
+        value.switches.some(name => typeof name !== 'string' || !/^--[a-z0-9][a-z0-9-]{0,63}$/.test(name)))) invalid('userProfile');
+  return Object.freeze({ supportDir: value.supportDir, args: Object.freeze([...value.args]),
+    ...(value.switches ? { switches: Object.freeze([...value.switches]) } : {}) });
 }
+/** Every switch that puts a running copy on a profile of its own: Chromium's and the recipe's. */
+export const profileSwitches = recipe => Object.freeze([...new Set([...PROFILE_DIRS, ...(recipe?.userProfile?.switches ?? [])])]);
 
 function checkRecipe(recipe) {
   if (!plain(recipe) || !keys.every(key => Object.hasOwn(recipe, key)) || Object.keys(recipe).some(key => !keys.includes(key) && !optional.includes(key))) invalid('fields');

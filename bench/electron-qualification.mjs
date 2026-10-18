@@ -390,6 +390,13 @@ export const RELAUNCH_CELLS = Object.freeze([
     if (!r.profileUntouched) fail('PROFILE_CHANGED');
     return { number: r.ms, unit: 'ms', detail: { collected: true, recordRemoved: true, profileUntouched: true } };
   } },
+  { id: 'relaunch-host-loss', measures: 'what the owner\'s app does when sleight\'s host dies and its pipe closes: quits or stays, and whether its unsaved work and prompt survive', async run(c) {
+    // Reopens the app once more (the owner clicks both cards again), then the driver kills the host. Run with nothing unsaved that matters.
+    const r = await c.driver.hostLoss({ consentWaitMs: c.options.consentWaitMs });
+    c.consent(r.card?.debugger, 'relaunch-host-loss'); c.consent(r.card?.relaunch, 'relaunch-host-loss');
+    if (typeof r.appSurvived !== 'boolean' || !['kept', 'lost', 'none'].includes(r.unsaved) || typeof r.prompt !== 'boolean') fail('HOST_LOSS_UNMEASURED');
+    return { number: r.appSurvived ? 1 : 0, unit: 'app survived', detail: { appSurvived: r.appSurvived, unsaved: r.unsaved, prompt: r.prompt } };
+  } },
 ].map(cell => Object.freeze(cell)));
 
 export const cellsFor = app => CELLS.filter(cell => !cell.apps || cell.apps.includes(app.key));

@@ -63,10 +63,11 @@ const foreignHost = name => { const app = printableName(name) ? name : 'The app'
 const APP_NOTICE = /^ELECTRON_(?:RELAUNCH_[A-Z_]{1,32}|APP_OTHER_USER|USER_PROFILE_UNSUPPORTED)$/;
 const appNotice = error => APP_NOTICE.test(error?.message ?? '') && typeof error.notice === 'string' && error.notice.length <= 600 &&
   error.notice.startsWith(error.message + ': ') && /^[^\x00-\x1f\x7f]+$/.test(error.notice) ? { text: error.notice, isError: true } : undefined;
-// One app turn's call waits on sleight's own cards (120 s each, debugger and relaunch), the app's own Quit (60 s) and the
-// reopen; the begin reply carries this deadline so the bridge does not take the wait for a hung worker.
-const APP_TURN_WAIT_MS = 360000;
-const validWait = value => Number.isSafeInteger(value) && value >= 1000 && value <= 600000;
+// The call that prepares an app turn waits, per app and one app after another, on sleight's own cards (120 s each, debugger
+// and relaunch), the app's own Quit (60 s), the reopen and its windows (30 s). The begin reply carries that deadline, capped
+// at 10 minutes, so the bridge does not take the wait for a hung worker; later calls keep the default.
+const APP_PREPARE_WAIT_MS = 330000, APP_PREPARE_CAP_MS = 600000;
+const validWait = value => Number.isSafeInteger(value) && value >= 1000 && value <= APP_PREPARE_CAP_MS;
 
 export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31000 } = {}, dependencies = {}) {
   const config = (dependencies.readConfig ?? readInstalledConfig)();
@@ -134,7 +135,8 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
       const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps], appSecret: serverAppSecret() });
       if (epoch !== generation || lost || !current()) return false;
       active = result?.available === true;
-      // An app turn's calls may wait on the user's clicks; the worker names the deadline, within 10 minutes.
+      // An app turn's first calls prepare it and may wait on the user's clicks; the worker names that deadline, within 10 minutes.
+      // It lasts until the first call returns, when preparation is over.
       if (active && validWait(result.waitMs) && result.waitMs > timeoutMs) callTimeoutMs = result.waitMs;
       return active;
     },
@@ -145,6 +147,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
       const epoch = generation;
       try {
         const reply = await rpc('call', request, callTimeoutMs);
+        if (epoch === generation) callTimeoutMs = timeoutMs;
         if (!active || lost || epoch !== generation || !current()) return failure(request.name !== 'browser_read');
         if (!exact(reply, ['resultId', 'result']) || !id(reply.resultId) || !exact(reply.result, ['text', 'isError']) ||
             typeof reply.result.text !== 'string' || typeof reply.result.isError !== 'boolean' || reply.result.text.length > 100000) throw Error();
@@ -514,7 +517,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
               return await runtime.call(request);
             } catch (error) { return error?.message === 'ELECTRON_HOST_FOREIGN' ? foreignHost(error.appName) : appNotice(error) ?? failure(); }
           },
-          ...(selections.length ? { waitMs: APP_TURN_WAIT_MS } : {}),
+          ...(selections.length ? { waitMs: Math.min(APP_PREPARE_CAP_MS, selections.length * APP_PREPARE_WAIT_MS) } : {}),
           delivered: result => !turnEnded && resource.runtime?.delivered(result) === true,
           end() {
             turnEnded = true;

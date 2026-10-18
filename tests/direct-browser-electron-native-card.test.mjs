@@ -84,7 +84,9 @@ let unlaunchedWords = appCardText(appFrame(card("debugger", app: ["pid": 0, "pid
 let words: [Bool] = [
   relaunchWords.title.contains("Fixture App"), relaunchWords.body.contains("its own Quit"), !relaunchWords.body.contains("Always"),
   // 1.3.1's relaunch flow: same profile, in the background, no answer to the app's prompts, and what Cancel does.
-  relaunchWords.body.contains("in the background on the same profile"), relaunchWords.body.contains("sleight answers none of them"),
+  // Review F2: a launch that carries the pipe can't be kept from activating, so the card says so.
+  relaunchWords.body.contains("on the same profile"), relaunchWords.body.contains("may come to the front briefly"),
+  !relaunchWords.body.contains("in the background"), relaunchWords.body.contains("sleight answers none of them"),
   relaunchWords.body.contains("Cancel keeps Fixture App as it is"), relaunchWords.body.contains("Process: 4242"),
   debuggerWords.title.contains("Fixture App"), debuggerWords.body.contains("separate from the app approval"), debuggerWords.body.contains("Process: 4242"),
   debuggerWords.body.contains("Signer: TEAM123456"),

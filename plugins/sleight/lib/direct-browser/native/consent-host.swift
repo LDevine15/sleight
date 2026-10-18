@@ -67,7 +67,7 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
     let identity = "\(name) \(version)\nBundle: \(bundle)\nSigner: \(signer)\nExecutable: \(executable)\nProfile: \(profile)\nProcess: \(process)\nSession: \(card.session)"
     if card.kind == "relaunch" {
         return ("Quit and reopen " + name + " for sleight?",
-            "sleight will ask " + name + " to quit through its own Quit command, then reopen it in the background on the same profile with the debugger connection. Unsaved work follows the app's own prompts, and sleight answers none of them. Cancel keeps " + name + " as it is. This approval is for this process only, once.\n\n" + identity)
+            "sleight will ask " + name + " to quit through its own Quit command, then reopen it on the same profile with the debugger connection. It may come to the front briefly. Unsaved work follows the app's own prompts, and sleight answers none of them. Cancel keeps " + name + " as it is. This approval is for this process only, once.\n\n" + identity)
     }
     return ("Let sleight debug " + name + "?",
         "The debugger lets sleight read the pages in " + name + " and operate them in the background, including anything open or signed in. This is separate from the app approval you already gave. Once ends with this turn, This session ends with the session, and Always allow stays until you revoke it for this build and profile.\n\n" + identity)

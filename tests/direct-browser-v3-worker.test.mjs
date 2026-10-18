@@ -287,6 +287,8 @@ test('an app turn\'s begin reply sets that turn\'s call deadline; a browser turn
       assert.equal(await bridge.bind({ ...bridge.bootstrapEnvelope(), event: 'begin', turn: 'turn' + String(waitMs), text: 'edit' }), true);
       const result = await bridge.call({ name: 'browser_tabs', arguments: { do: 'list' } });
       assert.equal(result.text === 'slow result', survives, String(waitMs));
+      // Review F3: only the call that prepares the turn (the first) gets the long deadline; a later slow call is a hung worker.
+      if (survives) assert.notEqual((await bridge.call({ name: 'browser_tabs', arguments: { do: 'list' } })).text, 'slow result');
     } finally { await bridge.detach(); }
   }
 });
