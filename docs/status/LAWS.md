@@ -12,8 +12,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Browser tasks are tested only against turbo, never sleight's engine browser path (owner, 2026-10-17), so the native claim
   suite is the 9 native tasks in bench/claim-tasks.txt, plus app tasks in VS Code, Slack and Spotify, apps people use (owner,
   2026-10-18, replacing VS Code and Cursor). VS Code runs as a separate instance with a temporary profile and fixture content.
-  Slack runs in the owner's throwaway account on this Mac, and Spotify in the owner's account, where nothing is destructive.
-  That covers the browsers turbo drives. In Safari and Firefox, which
+  Slack runs in the owner's throwaway account on this Mac and posts one fixed message in one test channel. Spotify runs in the
+  owner's account and searches, plays and pauses a track. These tasks run on the native path users get in 1.3.0, and Electron
+  turbo comes in 1.3.1 with the relaunch flow (owner, 2026-10-18, decision F3). That covers the browsers turbo drives. In Safari and Firefox, which
   turbo can't drive yet, sleight races on the engine path, and the headline's wording follows that race (owner, 2026-10-17,
   ROADMAP 1b).
   The word "fastest" is used only if sleight has the lowest expected time on a majority of the 9 native tasks and the lowest total,
