@@ -243,7 +243,24 @@ function actionKind(code, before) {
   const typedTarget = clicked && textField(clicked.key) && calls[1]?.[1] === 'typeText' && calls.slice(1).every((call, index) =>
     receiver(call) === receiver(first) && (index === 0 || call[1] === 'pressKey' && index === calls.length - 2 &&
       /^(?:return|enter)$/i.test(literal(argsOf(call)) ?? ''))) ? clicked : undefined;
-  return { save, opens, deletes, clickAndTyping, typedTarget, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
+  // Where input was aimed: an element's key, null when unknown (coordinates, a shortcut, Tab), undefined for none.
+  const aim = call => {
+    const args = argsOf(call), lines = before?.lines.map(parse) ?? [];
+    if (call[1] === 'pressKey') return /\+|^tab$/i.test(literal(args) ?? '+') ? null : undefined;
+    if (!['click', 'setValue', 'selectText', 'performSecondaryAction'].includes(call[1])) return;
+    const number = /^\s*(\d+)\s*(?:,|$)/.exec(args)?.[1], locator = !number && clickLocator(args);
+    if (!number && !locator) return null;
+    const matches = lines.filter(line => line.num !== undefined && (number ? line.num === Number(number) : locatorMatches(locator, line.key.trim())));
+    return matches.length === 1 ? fieldKey(matches[0].key) : number ? null : undefined;
+  };
+  const aims = calls.map(aim), firstTyping = calls.findIndex(call => ['typeText', 'paste'].includes(call[1]));
+  const lastAim = list => list.findLast(value => value !== undefined);
+  const typing = {
+    first: firstTyping >= 0 ? literal(argsOf(calls[firstTyping])) : undefined,
+    aim: firstTyping >= 0 ? lastAim(aims.slice(0, firstTyping)) : undefined, lastAim: lastAim(aims),
+    texts: calls.filter(call => call[1] === 'typeText').map(call => literal(argsOf(call))),
+  };
+  return { save, opens, deletes, clickAndTyping, typedTarget, typing, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
 
@@ -358,11 +375,38 @@ function misplacedTextNote(action, observation, typed) {
     fieldKey(line.key) !== target && fieldValue(line.key)?.includes(value) &&
     !before.some(old => old.path === line.path && fieldValue(old.key)?.includes(value)));
   if (landed.length !== 1 || !before.some(old => old.path === landed[0].path)) return;
-  const describe = line => {
-    const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(line.key)?.[1];
-    return `element ${line.num}` + (label ? ` (${label})` : '');
-  };
-  return /* lean notice */ `sleight: typed text landed in ${describe(landed[0])}, not in the clicked ${describe(clicked[0])}.`;
+  return /* lean notice */ `sleight: typed text landed in ${describeField(landed[0])}, not in the clicked ${describeField(clicked[0])}.`;
+}
+const describeField = line => {
+  const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(line.key)?.[1];
+  return `element ${line.num}` + (label ? ` (${label})` : '');
+};
+
+// Typing aimed elsewhere that shows up as a single-line field's new value: in word-edit-1 (2026-10-17) a sidebar's
+// Replace With combo box kept focus, a table's text went there, and Claude took 3 calls to find it.
+// aim is the call's last target before typing, else the window's (lastAim); unknown or the field itself stays silent.
+function strayTypingNote(action, observation, lastAim) {
+  const typed = action.typing?.first?.trim().toLowerCase(), aim = action.typing.aim !== undefined ? action.typing.aim : lastAim;
+  if (action.typedTarget || !typed || typed.length < 3 || typeof aim !== 'string') return;
+  const before = positionedFields(action.before.lines);
+  const landed = positionedFields(observation.lines).filter(field => /^\s*(?:text field|search (?:text )?field|combo box)\b/.test(field.key) &&
+    fieldKey(field.key) !== aim && fieldValue(field.key)?.includes(typed) &&
+    before.some(old => old.path === field.path && !fieldValue(old.key)?.includes(typed)));
+  if (landed.length !== 1) return;
+  return /* lean notice */ `sleight: typed text landed in ${describeField(landed[0])}, not the document; click the document before typing.`;
+}
+
+// Keys sent while the window itself has focus reach nothing: after a sidebar closed in word-edit-1 (2026-10-17),
+// 4 calls of typing and Tab changed nothing until a paste. Silent when a value changed or typed text appears.
+function focuslessTypingNote(action, observation) {
+  const texts = action.typing?.texts ?? [];
+  if (!texts.length || texts.some(text => text === undefined) || observation.delta?.semantic || !/\bwindow\b/.test(observation.root)) return;
+  const focus = /^The focused UI element is (\d+) /.exec(observation.lines.find(line => line.startsWith('The focused UI element is ')) ?? '');
+  if (!focus || Number(focus[1]) !== parse(observation.lines[1] ?? '').num) return;
+  const count = (lines, text) => lines.join('\n').toLowerCase().split(text).length;
+  if (texts.some(text => text.trim().length >= 3 &&
+      count(observation.lines, text.trim().toLowerCase()) > count(action.before.lines, text.trim().toLowerCase()))) return;
+  return /* lean notice */ 'sleight: keyboard focus is on the window itself, so typed keys have no target. Click the document first.';
 }
 
 function tabSelections(lines) {
@@ -1106,6 +1150,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
   // window key -> { target, calls }: the current run of calls that scrolled one target in that window.
   const scrolls = new Map();
+  // window key -> the last element Claude aimed input at there (null: unknown), for where typing should go.
+  const aims = new Map();
   const omissionHints = readHints.omissionHints ??= new Set();
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
@@ -1465,6 +1511,16 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           out.push({ type: 'text', text: promptNotice(siblingSwapNote(swap), prompt) });
           moved = undefined; // the swap line already names the clicked item
         }
+      }
+      if (action?.typing && action.before) {
+        const key = documentKey(action.before.window);
+        if (!failed && !stopped && !action.overlap && !action.before.incomplete && observedInResult && !observedInResult.invalid &&
+            !observedInResult.incomplete && !observedInResult.degraded && observedInResult.delta?.baseline === action.before.id &&
+            key === documentKey(observedInResult.window)) {
+          const typing = strayTypingNote(action, observedInResult, aims.get(key)) ?? focuslessTypingNote(action, observedInResult);
+          if (typing) out.push({ type: 'text', text: promptNotice(typing, prompt) });
+        }
+        if (action.typing.lastAim !== undefined) aims.set(key, action.typing.lastAim);
       }
       if (moved) out.push({ type: 'text', text: promptNotice(moved, prompt) });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;

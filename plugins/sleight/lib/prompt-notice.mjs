@@ -52,6 +52,8 @@ export function promptNotice(text, prompt) {
     // The read compactor's notes (compact-reads.mjs) and the stop notes (menu-continuation.mjs).
     .replace('sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.',
       'sleight: 3 scroll calls in a row. Loop scroll and getAXState() in one call (fixed count) until the target shows or rows stop; click it, check it reads selected.')
+    .replace(', not the document; click the document before typing.', '; click the document first.')
+    .replace('sleight: keyboard focus is on the window itself, so typed keys have no target.', 'sleight: window has focus; keys have no target.')
     .replace(' earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.', ' earlier reads of this window omitted; numbers refer to the last tree.')
     .replace("if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.", 'if unintended, Cmd+Z (or a move dialog) restores it.')
     .replace(" To switch tabs, use the app's next/previous-tab key or go-to control, not a click.", ' Switch tabs with the next/previous-tab key or a go-to control, not a click.')

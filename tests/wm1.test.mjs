@@ -265,3 +265,72 @@ test('the relay carries the runtime receipt into the compactor without driving a
   assert.match(out, warning);
   assert.doesNotMatch(out, /filtered-read|"typed"/);
 });
+
+// word-edit-1 at 2026-10-17T23-30-19 (lines 139-141): after Insert > Table, typing with no click went into the
+// sidebar's Replace With combo box, and no note fired (no click, four typed strings, a degraded read).
+const sidebarRows = value => ['1 split group', '\t2 Task Pane Sidebar',
+  `\t\t12 combo box (settable) Description: Search Document, Value: amber, Secondary Actions: Confirm`,
+  `\t\t15 combo box (settable) Description: Replace With, Value: ${value}, Secondary Actions: Confirm`,
+  '\t\t23 table', '\t24 split group Document Pane',
+  '\t\t36 text entry area (disabled, settable) Description: Page 1 content, Value: **Report**', 'The violet shipment is ready.',
+  '\t92 button Checking for proofing errors.', '132 menu bar', '\t137 Insert'];
+const stray = /typed text landed in element 15 \(Replace With\), not the document; click the document before typing\./;
+function typing(previous, code, { after = sidebarRows('Item'), prompt, focus = '\nThe focused UI element is 23 table', was = 'violet' } = {}) {
+  const c = createReadCompactor({ prompt });
+  const before = tree(sidebarRows(was)) + '\n\nSelected text: ```\nviolet\n```';
+  c.process([item(before)]);
+  if (previous) {
+    const action = c.beginAction(previous);
+    c.process([item(GUARD_MARK + before + GUARD_END)], { action, code: previous });
+  }
+  const action = c.beginAction(code);
+  return c.process([item(GUARD_MARK + tree(after) + '\n' + focus + GUARD_END)], { action, code }).map(i => i.text).join('\n');
+}
+const cells = 'await app.typeText("Item"); await app.pressKey("Tab"); await app.typeText("Count"); await app.pressKey("Tab"); await app.typeText("7");';
+
+test('typing aimed at the document that lands in a sidebar field says where it went', () => {
+  assert.match(typing('await app.click(137);', cells), stray);
+  // The same call clicking a document element first.
+  assert.match(typing(undefined, 'await app.click(36); ' + cells), stray);
+  assert.match(typing('await app.click(137);', cells, { prompt: 'lean' }), /typed text landed in element 15 \(Replace With\); click the document first\./);
+});
+
+test('typing into the field Claude aimed at, or after unknown focus moves, stays silent', () => {
+  for (const [previous, code] of [
+    [undefined, cells], // nothing aimed in this window yet
+    ['await app.click(15);', cells], ['await app.setValue(15, "x");', cells],
+    ['await app.pressKey("super+f");', cells], ['await app.click([400, 196]);', cells],
+    ['await app.click(137);', 'await app.pressKey("Tab"); ' + cells], ['await app.click(137);', 'await app.click([10, 10]); ' + cells],
+  ]) assert.doesNotMatch(typing(previous, code), /typed text landed/, `${previous} ${code}`);
+  // The field already held the text, the text is too short, or it went into the document.
+  assert.doesNotMatch(typing('await app.click(137);', cells, { was: 'Item', after: sidebarRows('Item') }), /typed text landed/);
+  assert.doesNotMatch(typing('await app.click(137);', 'await app.typeText("It");', { after: sidebarRows('It') }), /typed text landed/);
+  assert.doesNotMatch(typing('await app.click(137);', cells, { after: sidebarRows('violet').map(row => row.replace('**Report**', '**Report** Item')) }), /typed text landed/);
+});
+
+// Same run, lines 173-180: with the sidebar closed the window kept focus, and typing and Tab reached nothing.
+const windowFocus = '\nThe focused UI element is 0 standard window Draft';
+const noTarget = /keyboard focus is on the window itself, so typed keys have no target\. Click the document first\./;
+const docRows = (text = '**Report**', button = 'No proofing errors.') => ['1 split group', '\t2 split group Document Pane',
+  `\t\t16 text entry area (disabled, settable) Description: Page 1 content, Value: ${text}`, `\t81 button ${button}`];
+function focusless(code, { after = docRows(), focus = windowFocus, prompt } = {}) {
+  const c = createReadCompactor({ prompt });
+  c.process([item(tree(docRows('**Report**', 'Checking for proofing errors.')) + '\n' + windowFocus)]);
+  const action = c.beginAction(code);
+  return c.process([item(GUARD_MARK + tree(after) + '\n' + focus + GUARD_END)], { action, code }).map(i => i.text).join('\n');
+}
+
+test('typing while the window itself has focus says keys have no target', () => {
+  assert.match(focusless(cells + ' await app.getScreenshot();'), noTarget);
+  assert.match(focusless('await app.click([100, 224]); await app.typeText("Item");'), noTarget);
+  assert.match(focusless(cells, { prompt: 'lean' }), /window has focus; keys have no target\. Click the document first\./);
+});
+
+test('focus on an element, typed text that arrived, a changed value or no typing stays silent', () => {
+  assert.doesNotMatch(focusless(cells, { focus: '\nThe focused UI element is 16 text entry area' }), noTarget);
+  assert.doesNotMatch(focusless(cells, { focus: '' }), noTarget);
+  assert.doesNotMatch(focusless(cells, { after: docRows('**Report** Item') }), noTarget);
+  assert.doesNotMatch(focusless(cells, { after: docRows('**Report** 7') }), noTarget);
+  assert.doesNotMatch(focusless('await app.paste("Item");'), noTarget);
+  assert.doesNotMatch(focusless('await app.typeText(text);'), noTarget);
+});
