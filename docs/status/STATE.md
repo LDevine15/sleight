@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 17:40 UTC, flushed before the owner's clear)
+## Banner (2026-10-18 17:40 UTC, flushed before the owner's clear; rechecked 17:40 UTC)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -28,11 +28,14 @@ Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree
 
 **Running across the clear:**
 - Terminal.app job `~/Projects/sleight-wt/race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari x3 for sleight, lcu,
-  cua and peekaboo on race-fx. A round started earlier from this session (sleight r1, pid 99671) keeps running and frees the lock. The
-  Terminal job may redo sleight r1 after it.
+  cua and peekaboo on race-fx. A round started earlier from this session (sleight r1, pid 99671, on form-settings-helium at 17:38Z) keeps running and frees the
+  lock. The Terminal job logged "safari sleight r1 already done" (its partial results.json counts) and goes on to r2 once the
+  lock frees, so check r1's results.json has all 4 tasks and rerun r1 if not.
 - `nohup` watchdog `race-1017/watchdog.sh` (pid 584, log `watchdog.log`): exits with an ALERT line if the live lock is held with no round
   for 3 min, a round runs over 40 min, or Safari stays up with no round for 3 min. Nobody is woken after the clear, so read its log first.
 - `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds.
+- The 17:40Z recheck commit ran lint, `npm run validate` and the STATE-pinned test only. The full check (8073 tests) passed on
+  9463c0c4 and was skipped so it would not load the Mac during timed Safari rounds. The diff is STATE.md text.
 
 **Order from here:**
 1. Safari's Codex rounds x3 from sleight-arch's own shell (Terminal can't read ChatGPT's approvals file):
