@@ -51,7 +51,9 @@ export async function withClaudeManifest(plan, run, { backup = withManifestBacku
   });
 }
 
-import { REAL_BROWSER_ARMS, CODEX_ARM_MODELS, isCodexSurface } from './support.mjs';
+import { REAL_BROWSER_ARMS, CODEX_ARM_MODELS, isCodexSurface, isCodexSleightSurface, sleightKind, codexModelFor } from './support.mjs';
+import { CODEX_SLEIGHT_HOME, codexSleightServers, codexSleightToml } from '../codex-sleight.mjs';
+import { CODEX_HOME } from '../codex-arm.mjs';
 export const REAL_SURFACES = REAL_BROWSER_ARMS;
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
@@ -63,6 +65,25 @@ export function codexBrowserSetup({ dir, prompt, realBrowser, surface = 'codex' 
     prompt, mcpConfig: null, mcpConfigFile: join(codexHome(), 'config.toml'), env: { CODEX_HOME: codexHome() }, metadata: { model, effort: 'high',
       configDir: codexHome(), browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
       profileMode: realBrowser.profileMode || 'fresh', browserVersion: realBrowser.version ?? null, headless: false, focus: 'not measured' } };
+}
+// sleight inside Codex (LAWS, 2026-10-18): the sleight / sleight-turbo arm's servers, tools and prompt for this browser, run by
+// `codex exec` from a Codex home of its own. The sleight server sits behind the benchmark proxy (bench/codex-sleight-proxy.mjs),
+// which answers its approval forms from origin-hook.mjs (the race's allowlist) and applies the same select_window and
+// engine-browser guards the Claude arms get as hooks. config.toml is written into the home just before the run.
+export function codexSleightBrowserSetup({ arm, prompt, surface, kind, dir, realBrowser, home = CODEX_SLEIGHT_HOME }) {
+  const model = codexModelFor(surface), turbo = kind === 'sleight-turbo';
+  const servers = codexSleightServers({ mcpServers: arm.mcpServers, allowed: arm.allowed, dir, policy: 'race',
+    gateWindow: !turbo, turboBrowser: turbo ? 'bbench' : undefined,
+    extraEnv: arm.env.FOWL_GATE_WINDOW ? { FOWL_GATE_WINDOW: arm.env.FOWL_GATE_WINDOW } : {} });
+  const toml = codexSleightToml({ model, effort: 'high', servers, comment: `${surface} on ${realBrowser.browser}, ${kind} configuration` });
+  return { command: 'codex', args: codexExecPlan(prompt, { cwd: dir, model, effort: 'high' }), prompt, mcpConfig: null,
+    codexConfig: { home, file: join(home, 'config.toml'), toml, servers: Object.keys(servers), sleightMcp: arm.mcpServers['plugin:sleight:computer'].command }, env: { CODEX_HOME: home },
+    metadata: { model, effort: 'high', host: 'codex exec', surface, sleightAs: kind, configDir: home, loginSource: CODEX_HOME,
+      connectionMode: turbo ? 'turbo (bench v3 server) plus engine companion, under Codex' : 'engine-computer under Codex',
+      approvals: 'benchmark proxy (race allowlist, origin-hook.mjs); preapproved.json and the engine list untouched',
+      codexServers: Object.keys(servers), browser: realBrowser.browser, profile: realBrowser.profileName || realBrowser.profileRoot,
+      profileMode: realBrowser.profileMode || 'fresh', browserVersion: realBrowser.version ?? null, headless: false,
+      focus: turbo ? 'host monitor' : 'not measured' } };
 }
 // The names select_window may use for the round's own browser (origin-hook.mjs gateWindow), and its marker title.
 export function gateWindowApps(realBrowser) {
@@ -78,12 +99,14 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
   const prompt = task.prompt.replaceAll('{browser}', browserName).replaceAll('{repo}', repo).replaceAll('{out}', dir) +
     `\n\nEnd your answer with one line starting with RESULT: that states ${task.result}.`;
   if (isCodexSurface(surface)) return codexBrowserSetup({ dir, prompt, realBrowser, surface });
-  const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(key =>
+  // The sleight-in-Codex arms build the sleight / sleight-turbo arm for this browser, then run it under Codex.
+  const kind = sleightKind(surface, realBrowser.browser);
+  const env =Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(key =>
     typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
-  const engine = surface === 'sleight';
+  const engine = kind === 'sleight';
   const extension = ['fowlbrowser', 'claude-in-chrome'].includes(surface);
   const computer = ['firefox', 'safari'].includes(realBrowser.browser);
-  if ((engine && !computer) || (surface === 'sleight-turbo' && computer)) throw Error('Firefox/Safari use plain sleight; Chrome/Helium use sleight-turbo');
+  if ((engine && !computer) || (kind === 'sleight-turbo' && computer)) throw Error('Firefox/Safari use plain sleight; Chrome/Helium use sleight-turbo');
   const common = engine ? worldAgentSetup({ surface: 'sleight', dir, hostEnv: env }) : null;
   const arm = extension ? extensionArmSetup({ task, surface, dir, realBrowser, env, mcpRoot,
     ...(armRoot ? { armRoot } : {}), ...(chromeFiles ? { chromeFiles } : {}) })
@@ -95,10 +118,11 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     env: { ...common.env, SLEIGHT_TURBO: '0', FOWL_GATE_WINDOW: JSON.stringify(gateWindowApps(realBrowser)) },
     allowed: 'mcp__plugin_sleight_computer__js,mcp__plugin_sleight_computer__js_reset,mcp__plugin_sleight_computer__open_file,mcp__plugin_sleight_computer__drag,mcp__plugin_sleight_computer__select_window',
     metadata: { ...common.metadata, surface, connectionMode: 'engine-computer' } }
-    : surface === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
+    : kind === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
     : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
   // The engine arm identifies the window natively. The turbo arm cannot (its tools show tabs, not windows), so it gets its own tools' truth.
-  const fullPrompt = arm.promptPrefix + (engine ? windowPrompt(realBrowser) : surface === 'sleight-turbo' ? turboWindowPrompt(realBrowser) : '') + prompt;
+  const fullPrompt = arm.promptPrefix + (engine ? windowPrompt(realBrowser) : kind === 'sleight-turbo' ? turboWindowPrompt(realBrowser) : '') + prompt;
+  if (isCodexSleightSurface(surface)) return codexSleightBrowserSetup({ arm, prompt: fullPrompt, surface, kind, dir, realBrowser });
   // Pinned: the same login reported "default" at 17:03 and "auto" from 20:05 on 2026-10-17, and under auto Claude in
   // Chrome sent every page action to a prompt in Chrome that nobody answers. allowedTools still lists each arm's tools.
   const args = ['-p', '--model', modelId(model), '--effort', effort, '--permission-mode', 'default', '--output-format', 'stream-json', '--verbose',

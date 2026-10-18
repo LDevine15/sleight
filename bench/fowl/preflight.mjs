@@ -24,10 +24,11 @@ export async function fowlPreflight({ tasks, world = false, remote, home = homed
   if (!remote) {
     const browsers = [...new Set(tasks.filter(task => !['browser-use', 'sleight-turbo'].includes(task.surface)).map(task => task.browser))];
     for (const browser of browsers) await fowlSocket(browser, { home });
-    if (tasks.some(task => ['sleight', 'codex', 'codex-sol', 'codex-agent'].includes(task.surface))) await engineSockets();
+    if (tasks.some(task => ['sleight', 'codex', 'codex-sol', 'codex-agent', 'codex-sleight', 'codex-sleight-sol'].includes(task.surface))) await engineSockets();
   }
   const seen = new Set();
-  for (const task of tasks.filter(task => task.surface !== 'codex-agent' && account(task))) {
+  // codex-agent and the sleight-in-Codex arms run on Codex's own login, so no Claude login applies to them.
+  for (const task of tasks.filter(task => !['codex-agent', 'codex-sleight', 'codex-sleight-sol'].includes(task.surface) && account(task))) {
     const surface = task.surface, arm = join(home, '.config/sleight-bench/world/arms', surface);
     const ownCLI = world || ['sleight-turbo', 'claude-cu', 'claude-in-chrome', 'playwright-mcp', 'chrome-devtools-mcp'].includes(surface);
     const cliArm = surface === 'sleight-turbo' ? join(home, '.config/sleight-bench/world/arms/fowlbrowser') : arm;
@@ -59,7 +60,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const tasks = selectedTasks(JSON.parse(readFileSync(file, 'utf8')), args);
       if (args['funding-surfaces']) {
         // Codex's own model does not use the Claude API key.
-        console.log([...new Set(runnableTasks(tasks, args).filter(task => task.surface !== 'codex-agent').map(task => task.surface))].join('\n'));
+        console.log([...new Set(runnableTasks(tasks, args).filter(task => !['codex-agent', 'codex-sleight', 'codex-sleight-sol'].includes(task.surface)).map(task => task.surface))].join('\n'));
       } else await fowlPreflight({ tasks, world: args.world, remote: args.remote });
     } catch (error) { console.error(`preflight failed: ${error.message}`); process.exitCode = 1; }
   }

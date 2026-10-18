@@ -1,8 +1,12 @@
 #!/bin/sh
 # FowlBrowser's own round runner (github.com/argofowl/FowlBrowser, pinned below) with one added surface, sleight
 # (bench/fowl/sleight-surface.patch). Claude arms run on the owner's account login with no CLAUDE* variables from the host session.
-# Real gate: --real-browser chrome|helium|firefox|safari --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex|codex-sol|fowlbrowser|claude-in-chrome
+# Real gate: --real-browser chrome|helium|firefox|safari --surface sleight-turbo|sleight|lcu|cua|peekaboo|codex|codex-sol|codex-sleight|codex-sleight-sol|fowlbrowser|claude-in-chrome
 #   [--real-profile fresh|benchmark] [--dry-run]. benchmark (Chrome only) copies the "sleight benchmark" profile per round.
+#   codex-sleight / codex-sleight-sol run sleight itself inside Codex (gpt-6-luna / gpt-6.1-sol, effort high) from ~/.codex-bench-sleight
+#   (login copied from ~/.codex-bench by the round's arm prep or `node bench/codex-sleight.mjs setup`): turbo in Chrome and Helium,
+#   the engine path in Firefox and Safari. A proxy (bench/codex-sleight-proxy.mjs) answers sleight's approval forms from the race's
+#   allowlist, so the engine's Always allow list and sleight's preapproved.json are not touched.
 #   Peekaboo's grants are on Terminal.app, so its rounds run from a Terminal window (`open -a Terminal x.command`); the gate
 #   refuses otherwise. A Codex round sets the engine's Always allow list to the round's apps and restores it; a Cua round
 #   starts Cua's daemon when it isn't running and stops it afterwards (bench/fowl/real-gate.mjs, arm-prep.json).

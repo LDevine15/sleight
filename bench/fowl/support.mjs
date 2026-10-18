@@ -1,11 +1,21 @@
 // Shared by the patched runner and admission. Unsupported tasks remain in the
 // runner's input so it can write their not-supported rows without agent setup.
 const BROWSER_ARMS = ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu', 'browser-use'];
-export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex', 'codex-sol', 'fowlbrowser', 'claude-in-chrome'];
+export const REAL_BROWSER_ARMS = ['sleight-turbo', 'sleight', 'lcu', 'cua', 'peekaboo', 'codex', 'codex-sol', 'codex-sleight', 'codex-sleight-sol', 'fowlbrowser', 'claude-in-chrome'];
 // The Codex arms are one arm on two models (LAWS, 2026-10-18): codex = gpt-6-luna, codex-sol = gpt-6.1-sol, both at effort high
 // with the same CODEX_HOME and approvals. The surface name is the row's arm label, so the scorer keeps the two apart.
 export const CODEX_ARM_MODELS = { codex: 'gpt-6-luna', 'codex-sol': 'gpt-6.1-sol' };
 export const isCodexSurface = surface => Object.hasOwn(CODEX_ARM_MODELS, surface);
+// Two more arms run sleight itself inside Codex as its MCP plugin (LAWS, 2026-10-18), on the same two models at effort high:
+// codex-sleight = gpt-6-luna, codex-sleight-sol = gpt-6.1-sol. They are not the Codex arms above (those drive the engine's own
+// computer-use server from ~/.codex-bench); they use their own CODEX_HOME (bench/codex-sleight.mjs).
+export const CODEX_SLEIGHT_ARM_MODELS = { 'codex-sleight': 'gpt-6-luna', 'codex-sleight-sol': 'gpt-6.1-sol' };
+export const isCodexSleightSurface = surface => Object.hasOwn(CODEX_SLEIGHT_ARM_MODELS, surface);
+// Every arm that runs `codex exec`, and the model each one is asked for.
+export const runsCodexExec = surface => isCodexSurface(surface) || isCodexSleightSurface(surface);
+export const codexModelFor = surface => CODEX_ARM_MODELS[surface] ?? CODEX_SLEIGHT_ARM_MODELS[surface];
+// A sleight arm inside Codex races as sleight does in each browser: turbo in Chromium browsers, the engine path in Firefox and Safari.
+export const sleightKind = (surface, browser) => isCodexSleightSurface(surface) ? (['chrome', 'helium'].includes(browser) ? 'sleight-turbo' : 'sleight') : surface;
 // The apps a competitor arm may be approved for in a real-window round: the round's own browser plus the hand-off tasks'
 // native apps, the same ones sleight's hook (origin-hook.mjs) accepts. All are on the benchmark's allowlist (bench/tasks.mjs).
 const RACE_BROWSERS = { chrome: ['Google Chrome', 'com.google.Chrome'], helium: ['Helium', 'net.imput.helium'],
@@ -17,6 +27,7 @@ export function raceApps(browser) {
 export const raceBundles = browser => raceApps(browser).filter(app => /^[a-z]+\.[\w.-]+$/i.test(app));
 export function taskSupport(task, surface, { world = false, remote = null, realBrowser } = {}) {
   if (realBrowser) {
+    surface = sleightKind(surface, realBrowser);
     if (remote) return 'Real browser gate is local only';
     if (!REAL_BROWSER_ARMS.includes(surface)) return `Real browser gate uses ${REAL_BROWSER_ARMS.join(', ')}`;
     if (!['chrome', 'helium', 'firefox', 'safari'].includes(task.browser)) return 'Real browser gate supports browser tasks only';

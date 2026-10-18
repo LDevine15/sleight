@@ -17,7 +17,8 @@ import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
-import { taskSupport, raceBundles, isCodexSurface, CODEX_ARM_MODELS } from './support.mjs';
+import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
+import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
@@ -29,13 +30,21 @@ const defaultArmHome = () => join(homedir(), 'Library/Caches/sleight-bench');
 // "Computer Use was not approved to use Firefox"). Cua: its daemon must listen before the MCP proxy starts.
 export function roundArmPrep(plan, { armHome = defaultArmHome() } = {}) {
   if (isCodexSurface(plan.surface)) return { approvals: raceBundles(plan.browser.browser) };
+  // sleight inside Codex: no engine list change at all. The proxy answers sleight's approval forms from the race's allowlist, so
+  // the engine's Always allow list and sleight's preapproved.json stay as the owner has them. The step is the arm's Codex home.
+  if (isCodexSleightSurface(plan.surface)) return { codexSleightHome: CODEX_SLEIGHT_HOME, approvalPath: 'proxy: race allowlist (origin-hook.mjs)' };
   if (plan.surface === 'cua') return { cuaDaemon: cuaDaemonPlan(nativeArmPlan('cua', { armHome }).cwd).start };
   if (plan.surface === 'peekaboo') return { host: 'Terminal.app (Peekaboo\'s grants)' };
   return {};
 }
 export async function prepareRoundArms(plan, { armHome = defaultArmHome(), approve = approveOnly, daemon = ensureCuaDaemon,
-  logs = join(homedir(), 'Library/Logs/sleight') } = {}) {
+  logs = join(homedir(), 'Library/Logs/sleight'), codexHome = ensureCodexSleightHome } = {}) {
   const prep = roundArmPrep(plan, { armHome }), receipt = {}, undo = [];
+  if (prep.codexSleightHome) {
+    const home = codexHome({ home: prep.codexSleightHome });
+    if (!home.ok) throw Error(home.problem);
+    Object.assign(receipt, { codexSleightHome: home.home, setup: home.did, approvalPath: prep.approvalPath });
+  }
   if (prep.approvals) {
     mkdirSync(logs, { recursive: true });
     const backup = join(logs, `ComputerUseAppApprovals.before-${plan.out.split('/').pop()}.json`);
@@ -100,7 +109,7 @@ export function realGatePlan({ args, tasks, repo = repoRoot, mcpRoot, armHome, r
       ...(args['chrome-local-state'] ? { localState: args['chrome-local-state'] } : {}) };
     const setup = realAgentSetup({ task, surface, dir, realBrowser: browser, repo, armHome, dryRun, mcpRoot, chromeFiles,
       model: args.model || 'haiku', effort: args.effort || 'high' });
-    return { ...setup, args: isCodexSurface(surface) ? setup.args : [...setup.args, setup.prompt],
+    return { ...setup, args: runsCodexExec(surface) ? setup.args : [...setup.args, setup.prompt],
       task, surface, dir };
   });
   return { mode: 'real-browser', out, browser, arms, unsupported, mcpRoot, surface };
@@ -140,9 +149,13 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
   writeFileSync(events, '');
   let groupClean;
   try {
-    if (isCodexSurface(plan.surface)) {
-      const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: CODEX_ARM_MODELS[plan.surface], effort: 'high', home: codexHome(),
-        signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
+    if (runsCodexExec(plan.surface)) {
+      // sleight's arms: this run's servers go into the arm's own Codex home first (a copy sits in the run's folder as evidence).
+      if (plan.codexConfig) {
+        writeCodexSleightConfig(plan.codexConfig.toml, plan.codexConfig.home, join(plan.dir, 'codex-config.toml'));
+      }
+      const run = await collect(() => runNativeCodex(plan.prompt, { cwd: plan.dir, model: codexModelFor(plan.surface), effort: 'high',
+        home: plan.codexConfig?.home ?? codexHome(), signal, timeoutMs: (plan.task.budgetSeconds || 600) * 4000,
         onEvent: event => appendFileSync(events, JSON.stringify({ t: Date.now(), ...event }) + '\n') }));
       groupClean = run.groupClean;
       // A failed engine call (an app approval refused, a script error) is the Codex counterpart of a Claude tool error.
@@ -151,7 +164,10 @@ export async function runGateAgent(plan, { signal, runClaude = runOwned, runNati
         catch { return false; }
       }).length;
       result = { exitCode: run.code, result: run.out, timedOut: run.timedOut, groupClean: run.groupClean,
-        forbidden: run.forbidden, toolCalls: run.toolCalls, toolErrors, engineMs: run.engineMs };
+        forbidden: run.forbidden, toolCalls: run.toolCalls, toolErrors, engineMs: run.engineMs,
+        // The model id Codex ran (its rollout's turn_context), beside the one the arm asked for.
+        modelRequested: run.modelRequested, modelsRan: run.modelsRan,
+        ...(plan.codexConfig ? { approvals: approvalSummary(join(plan.dir, 'approvals.jsonl')) } : {}) };
       if (run.forbidden.length) result.result = { ...run.out, is_error: true };
       writeFileSync(join(plan.dir, 'stderr.txt'), run.stderr);
     } else {
@@ -206,7 +222,7 @@ export function gatePreflight(plan, { executable = executableProblem } = {}) {
   // The product refuses a browser binary others can write unless it is a signed browser whose signature checks
   // (executable-trust.mjs). Before that relaxation a turbo round on this Mac's mode-775 Chrome answered from memory
   // (live smoke 2026-10-17: every call "Turbo bench unavailable").
-  const reason = plan.surface === 'sleight-turbo' && executable(plan.browser.executable);
+  const reason = sleightKind(plan.surface, plan.browser.browser) === 'sleight-turbo' && executable(plan.browser.executable);
   if (reason) problems.push(`Turbo refuses ${plan.browser.executable} (${reason}); the owner can run: chmod go-w "${plan.browser.executable}"`);
   return problems;
 }
@@ -221,6 +237,14 @@ export async function admitRealGate(plan, { terminal = terminalAncestor } = {}) 
     'put the rounds.sh command in a .command file and run: open -a Terminal <file>.command');
   if (isCodexSurface(plan.surface)) {
     if (codexConfigServers(codexHome()).length !== 1 || !existsSync(join(codexHome(), 'auth.json'))) throw Error('Codex benchmark home needs its isolated engine server and login');
+  } else if (isCodexSleightSurface(plan.surface)) {
+    // The arm's Codex home holds sleight's servers alone (never the engine's own computer-use server), and its login is the
+    // codex arm's. The home itself is created by the round's arm prep (or `node bench/codex-sleight.mjs setup`).
+    const allowed = ['plugin_sleight_computer', 'sleight-turbo'];
+    for (const setup of setups) if (!setup.codexConfig || !setup.codexConfig.servers.includes('plugin_sleight_computer') ||
+        setup.codexConfig.servers.some(name => !allowed.includes(name))) throw Error('sleight-in-Codex arms may configure only sleight\'s servers');
+    if (!existsSync(PROXY) || setups.some(setup => !existsSync(setup.codexConfig.sleightMcp ?? SLEIGHT_MCP))) throw Error('sleight-in-Codex arms need the approval proxy and the race build\'s sleight-mcp');
+    if (!existsSync(join(CODEX_SLEIGHT_HOME, 'auth.json')) && !existsSync(join(codexHome(), 'auth.json'))) throw Error(`no Codex login to use: run CODEX_HOME=${CODEX_SLEIGHT_HOME} codex login`);
   } else {
     assertWorldCLI(setups[0].command);
     assertLogin({ command: setups[0].command, env: setups[0].env });
@@ -276,7 +300,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     plan = realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: identity(), dryRun: false });
     writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
     writeFileSync(join(plan.out, 'unsupported.json'), JSON.stringify(plan.unsupported, null, 2));
-    if (plan.surface === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
+    if (sleightKind(plan.surface, plan.browser.browser) === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
     // Claude in Chrome reaches Anthropic's browser bridge about 6 s after launch (smoke 2026-10-17: launch 20:17:53,
     // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
     if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
@@ -374,7 +398,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (cleanupProven) rmdirSync(lockPath);
     else console.error(`Cleanup unproved; retained ${lockPath} and ${plan.browser.profileRoot}`);
   }
-  for (const row of rows) row.focusGrade = row.surface === 'sleight-turbo' ? gradeHostMonitor(monitor?.log || [], row.run, rows.map(row => row.run))
+  for (const row of rows) row.focusGrade = sleightKind(row.surface, row.task.browser) === 'sleight-turbo' ? gradeHostMonitor(monitor?.log || [], row.run, rows.map(row => row.run))
     : { ok: null, cell: 'not measured', events: [], problems: [] };
   writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
   const harness = markHarnessFailure(plan.out, rows, plan.arms.length);

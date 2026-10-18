@@ -552,6 +552,13 @@ native reference, and oversized first results defer the browser reference while 
   whether Cursor shows a sign-in or onboarding screen over an empty profile, or whether VS Code and Cursor create
   `~/.vscode/argv.json` and `~/.cursor/argv.json` outside that profile when those are missing. The Firefox tasks still quit
   Firefox with an AppleScript `quit`, which is an Apple event.
+- The sleight-in-Codex arms (`codex-sleight`, `codex-sleight-sol`) have never run live. `codex exec` can't answer an MCP form, so
+  `bench/codex-sleight-proxy.mjs` sits between Codex and sleight-mcp and answers sleight's approval forms from the benchmark's
+  allowlist, as the Claude arms' hooks do. Their rows include one extra process hop that Claude-hosted rows don't have. It added
+  0.016 ms a call over 2,000 offline echo calls (0.020 ms with both guards), and we haven't measured its start-up or a live run. Codex doesn't run a Stop hook, and sleight ends a used turn after 30 idle seconds.
+  The arms' Codex login is a copy of the codex arm's `auth.json`. We don't know whether Codex rotates refresh tokens, which
+  would log the other copy out. We don't know whether sleight's replies keep the engine's `codex/nodeReplExecutionDurationMs`
+  field that fills `engineMs` in the codex arm's rows.
 
 ## Turbo in unattended runs
 
