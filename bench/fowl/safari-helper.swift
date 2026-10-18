@@ -297,10 +297,31 @@ func confirmUnsubmittedFormQuit() -> Bool {
     }
     return false
 }
+// Closing the previous benchmark window after a task that typed into a form raises a sheet on that window, "Are you sure you want
+// to close this window? You have entered text on ..." (2026-10-18: form-checkout then shipping-link stopped with the old window
+// held by the sheet and the new window never key). The window is the harness's own verified profile window, so its Close button
+// only discards the round's form text. Returns whether the sheet appeared; throws if the window does not go away.
+func confirmUnsubmittedFormClose(_ window: AXUIElement) throws -> Bool {
+    var confirmed = false
+    let deadline = Date().addingTimeInterval(4)
+    while Date() < deadline {
+        guard elements(try ownedAX(), "AXWindows").contains(where: { CFEqual($0, window) }) else { return confirmed }
+        if !confirmed {
+            for sheet in elements(window, "AXSheets") where elements(sheet).contains(where: { string($0, "AXValue").hasPrefix("Are you sure you want to close this window?") }) {
+                for button in elements(sheet) where string(button, "AXRole") == "AXButton" && string(button, "AXTitle") == "Close" {
+                    guard AXUIElementPerformAction(button, "AXPress" as CFString) == .success else { throw refuse("BENCH_SAFARI_AX_PRESS_REFUSED") }
+                    confirmed = true
+                }
+            }
+        }
+        pump(0.05)
+    }
+    throw refuse("BENCH_SAFARI_CLOSE_UNPROVED")
+}
 func quit(_ seconds: Double) throws -> [String: Any] {
     guard !launchPending else { throw refuse("BENCH_SAFARI_LAUNCH_PENDING") }
     guard owned != nil || !launchRequested else { throw refuse("BENCH_SAFARI_LAUNCH_UNRECEIPTED") }
-    var confirmed = false
+    var confirmed = false, forced = false
     if let app = owned {
         if !app.isTerminated {
             _ = try ownedApplication()
@@ -310,10 +331,18 @@ func quit(_ seconds: Double) throws -> [String: Any] {
                 if !confirmed && confirmUnsubmittedFormQuit() { confirmed = true }
                 pump(0.025)
             }
+            if !app.isTerminated {
+                // Safari ignored the quit (a sheet on a window can hold it). Only the process this helper launched, with the
+                // recorded launch date, is force-terminated, so a failed round never leaves its Safari running.
+                _ = try ownedApplication()
+                forced = app.forceTerminate()
+                let hard = Date().addingTimeInterval(5)
+                while !app.isTerminated && Date() < hard { pump(0.025) }
+            }
             guard app.isTerminated else { throw refuse("BENCH_BROWSER_CLEANUP_UNPROVED") }
         }
     }
-    return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed]
+    return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed, "forceTerminated": forced]
 }
 func command(_ input: [String: Any]) throws -> [String: Any] {
     switch input["op"] as? String {
@@ -324,7 +353,8 @@ func command(_ input: [String: Any]) throws -> [String: Any] {
         guard let id = input["window"] as? String else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
         let window = try windowById(id)
         guard let closeValue = attribute(window, "AXCloseButton"), CFGetTypeID(closeValue) == AXUIElementGetTypeID() else { throw refuse("BENCH_SAFARI_CLOSE_UNAVAILABLE") }
-        try press(closeValue as! AXUIElement); return [:]
+        try press(closeValue as! AXUIElement)
+        return ["unsubmittedFormCloseConfirmed": try confirmUnsubmittedFormClose(window)]
     case "close-launch-window":
         // Only the Start Page window Safari opens by itself in the first two minutes of the process this helper launched, and
         // only before the benchmark's own window exists. It holds no navigation, so nothing of the owner's is lost.
