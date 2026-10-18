@@ -56,6 +56,40 @@ test('each failed run gets one error class: no tools, no daemon, approval refuse
   assert.equal(runErrorClass({ eventsText: claudeCall('a', false, 'Computer Use was not approved to use Firefox') }), null);
 });
 
+// RG1: shared setup failures from the 2026-10-18 race, with fixture PIDs and no private paths.
+const agentResult = text => JSON.stringify({ type: 'result', result: text, is_error: false });
+const unavailableTurbo = 'Turbo is unavailable. Use the engine browser path.';
+const unavailableWindow = 'I stopped without browsing because I could not identify the designated window. PID 12345 owns no windows.';
+
+test('unavailable turbo is a shared error class only in a failed tool result', () => {
+  assert.deepEqual(runErrorClass({ eventsText: claudeCall('a', true, unavailableTurbo) }),
+    { class: 'turbo unavailable', example: unavailableTurbo });
+  const codex = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'failed', error: { message: unavailableTurbo } } });
+  assert.equal(runErrorClass({ eventsText: codex }).class, 'turbo unavailable');
+  assert.equal(runErrorClass({ eventsText: claudeCall('a', false, unavailableTurbo) }), null);
+  assert.equal(runErrorClass({ eventsText: agentResult('The page says "Turbo is unavailable", but the task completed.') }), null);
+});
+
+for (const answer of [
+  unavailableWindow,
+  'I stopped without signing in because I could not identify the dedicated FixtureBrowser window. PID 12345 has no windows at all.',
+  "I stopped before touching the form because the window's identity doesn't fully match your instructions. No process with PID 12345 is running.",
+  "I couldn't identify the dedicated FixtureBrowser window, so I stopped without acting in any browser. PID 12345 isn't running.",
+  'I stopped without opening the shop. PID 12345 is not running and owns no windows.',
+  'RESULT: not submitted (dedicated FixtureBrowser window PID 12345 not found)',
+]) test(`an agent stopped on an unavailable designated window is classified: ${answer}`, () => {
+  assert.equal(runErrorClass({ eventsText: agentResult(answer) })?.class, 'window unavailable');
+});
+
+test('window classification ignores the prompt and recovered intermediate observations', () => {
+  const prompt = JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: unavailableWindow }] } });
+  const intermediate = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: unavailableWindow }] } });
+  assert.equal(runErrorClass({ eventsText: [prompt, intermediate, agentResult('The form was submitted. Submission id: SUB-1')].join('\n') }), null);
+  assert.equal(runErrorClass({ eventsText: claudeCall('a', false, 'PID 12345 owns no windows') }), null);
+  assert.equal(runErrorClass({ eventsText: agentResult('The page has no windows in stock.') }), null);
+  assert.equal(runErrorClass({ eventsText: [claudeInit('failed'), agentResult(unavailableWindow)].join('\n') }).class, 'no tools');
+});
+
 test('a round is a harness failure only when 10 of its 12 tasks fail with the same class', () => {
   const rows = (n, cls, ok = false) => Array.from({ length: n }, (_, i) => ({ task: `${cls}-${i}`, ok, errorClass: cls ? { class: cls, example: `${cls} text` } : null }));
   const ten = harnessFailure([...rows(10, 'approval refused'), ...rows(2, null, true)], 12);
@@ -131,6 +165,63 @@ test('race-score groups rounds by browser, arm and task with the claim rules, an
   assert.equal(existsSync(join(root, 'real-c9-codex', 'harness-failure.json')), false, 'scoring alone writes nothing');
   spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), root, '--mark'], { encoding: 'utf8' });
   assert.equal(JSON.parse(readFileSync(join(root, 'real-c9-codex', 'harness-failure.json'), 'utf8')).class, 'approval refused');
+});
+
+test('saved turbo and window failures stay scored at nine, ten and twelve failures', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-shared-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [cls, events] of [['turbo unavailable', claudeCall('a', true, unavailableTurbo)],
+    ['window unavailable', agentResult(unavailableWindow)]]) {
+    for (const count of [9, 10, 12]) {
+      const dir = round(root, `${cls}-${count}`, 'fixture-browser', 'fixture-arm', Array.from({ length: 12 }, (_, i) =>
+        [`task${i}`, 1, false, { events: i < count ? events : claudeCall('b', true, 'element changed') }]));
+      const loaded = loadRound(dir);
+      assert.equal(loaded.detected, null);
+      assert.equal(loaded.excluded, null);
+      assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
+    }
+  }
+});
+
+test('window identity failures count for competitors and sleight, including recorded classes and tool errors', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-window-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const failures = [unavailableWindow, "I couldn't confirm the target window.", 'PID 99999 owns no windows.'];
+  for (const arm of ['codex', 'sleight']) for (const [index, failure] of failures.entries()) {
+    const dir = round(root, `${arm}-${index}`, 'safari', arm, Array.from({ length: 12 }, (_, i) =>
+      [`task${i}`, 2, false, { events: i % 2 ? agentResult(failure) : claudeCall(String(i), true, failure) }]));
+    // Older results can carry this class even when their event log is absent or later classifiers change.
+    const results = JSON.parse(readFileSync(join(dir, 'results.json'), 'utf8'));
+    results[0].errorClass = { class: 'window unavailable', example: failure };
+    writeFileSync(join(dir, 'results.json'), JSON.stringify(results));
+    const loaded = loadRound(dir), scored = scoreRounds([loaded]);
+    assert.equal(loaded.rows[0].errorClass.class, 'window unavailable');
+    assert.equal(loaded.excluded, null, `${arm}: ${failure}`);
+    assert.equal(scored.safari.table[arm].task0.runs.length, 1);
+    assert.equal(scored.safari.table[arm].task0.passes.length, 0);
+    assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
+  }
+});
+
+test('historical window classes never cause automatic exclusion, but a reviewed marker still does', t => {
+  const rows = Array.from({ length: 12 }, (_, i) => ({ task: `task${i}`, ok: false,
+    errorClass: { class: 'window unavailable', example: unavailableWindow } }));
+  assert.equal(harnessFailure(rows), null);
+  const root = mkdtempSync(join(tmpdir(), 'race-score-reviewed-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = round(root, 'reviewed-window', 'safari', 'codex', [['task0', 2, false, { events: agentResult(unavailableWindow) }]],
+    { 'harness-failure.json': { reason: 'reviewed: wrong PID supplied by harness' } });
+  assert.equal(loadRound(dir).excluded, 'reviewed: wrong PID supplied by harness');
+});
+
+test('eleven unavailable-turbo failures stay classified and count as sleight losses', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-turbo-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = round(root, 'sleight-regression', 'chrome', 'sleight-turbo', Array.from({ length: 12 }, (_, i) =>
+    [`task${i}`, 1, false, { events: claudeCall(String(i), true, i < 11 ? unavailableTurbo : 'element changed') }]));
+  const loaded = loadRound(dir);
+  assert.equal(loaded.rows.filter(row => row.errorClass?.class === 'turbo unavailable').length, 11);
+  assert.equal(loaded.excluded, null);
+  const scored = scoreRounds([loaded]);
+  assert.equal(scored.chrome.table['sleight-turbo'].task0.runs.length, 1);
+  assert.equal(scored.chrome.table['sleight-turbo'].task0.passes.length, 0);
+  assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
 });
 
 test('a saved row without events keeps its recorded browser-call count', () => {
