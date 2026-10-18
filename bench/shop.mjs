@@ -106,7 +106,8 @@ export function selectSuiteTasks(suiteTasks, wanted) {
     if (wanted.some(id => !suiteTasks.some(task => task.id === id))) throw new Error('unknown task in selected suite');
     return selected;
   }
-  return suiteTasks.filter(task => !task.smoke && !task.ownerPresent);
+  // Held-out tasks (tasks-held-out.mjs) measure a generic fix on tasks it wasn't tuned on, so they run only by name.
+  return suiteTasks.filter(task => !task.smoke && !task.ownerPresent && !task.heldOut);
 }
 
 export function assertShopSmokeRuns(selected, runs) {

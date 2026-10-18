@@ -66,6 +66,10 @@ export function promptNotice(text, prompt) {
     .replace(/^sleight: setValue on (.*?) didn't hold \(Value: (.*?)\); the next action began at (.*?)\.(?: Undo restores\.)? Click the field, type, Return\.$/s,
       'sleight: setValue $1 reverted to $2; input went to $3. Click it, type, Return.')
     .replace(/^sleight: the alert says "(.*)" Its buttons: /s, 'sleight: alert "$1" buttons: ')
+    .replace(/^sleight: the Undo item changed from "(.*?)" to "(.*?)", so the app recorded an edit since your last read of this window\. Treat that edit as done; don't open a gallery or pane to confirm it\.$/s,
+      'sleight: Undo now "$2" (was "$1"): edit recorded; no gallery or pane check needed.')
+    .replace(/^sleight: the text typed after clicking (.*?) isn't in (?:that field|those fields)\. `(.*?)` sets a field without typing\.$/s,
+      'sleight: typing after clicking $1 missed it; $2 sets it.')
     .replace(' earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.', ' earlier reads of this window omitted; numbers refer to the last tree.')
     .replace("if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.", 'if unintended, Cmd+Z (or a move dialog) restores it.')
     .replace(" To switch tabs, use the app's next/previous-tab key or go-to control, not a click.", ' Switch tabs with the next/previous-tab key or a go-to control, not a click.')

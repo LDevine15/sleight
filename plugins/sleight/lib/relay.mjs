@@ -74,7 +74,7 @@ import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWholeTree, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
   unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate,
-  failedActionText } from './menu-continuation.mjs';
+  failedActionText, paletteRefusal } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { createStuckEscapes } from './stuck-escape.mjs';
@@ -685,6 +685,13 @@ export function createRelay({
   // The next call takes the covered window as its lease after the dialog closed between calls (parentLeaseRefusal).
   // SLEIGHT_PARENT_LEASE=0 keeps the stale-lease refusal, for the A/B.
   parentLease = process.env.SLEIGHT_PARENT_LEASE !== '0',
+  // SLEIGHT_WB1=1 (off until its held-out A/B): one route per document sub-step. A gallery or palette window the call's own
+  // label or ID click opened takes the rest of the call (menuRemainder's palette, paletteRefusal), and typing that missed a
+  // clicked field says so and names setValue (compact-reads.mjs missedFieldNote).
+  routeSteering = process.env.SLEIGHT_WB1 === '1',
+  // SLEIGHT_WB2=1 (off until its held-out A/B): a call whose last read shows a new Undo item title says the app recorded the
+  // edit (compact-reads.mjs undoTitle).
+  undoReceipts = process.env.SLEIGHT_WB2 === '1',
   // Milliseconds for the dialog continuation's HID-idle windows; tests inject one.
   clock = () => performance.now(),
   beginStop = () => {}, stopEngine, restartEngine, prepareEngine, backendChanged, engineChanged, browserChoice, inspectInput, onStopReported = () => {}, stopGraceMs = 3000, restartTimeoutMs = 30000,
@@ -815,7 +822,7 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
-  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints });
+  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -988,7 +995,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error(/* notice */ 'Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined; lastTree = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       // Rules held for Claude's first js result go with the next engine docs instead.
@@ -2852,7 +2859,8 @@ export function createRelay({
       if (reason && reason !== 'palette-needs-close-check') refuse(reason);
     }
     let remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
-      menuRemainder(call.plan, taken.receipt, call.target, taken.content));
+      menuRemainder(call.plan, taken.receipt, call.target, taken.content, { palette: routeSteering }));
+    const refusePalette = reason => trace('palette-continuation-refused', { id: msg.id, reason });
     // Every window stop no other continuation took says why no tab continuation ran either.
     // `extra` carries what the HID-idle test saw (idleSample), once the helper has been asked.
     const refuseTab = (reason, extra) => trace('tab-continuation-refused', { id: msg.id, reason, ...extra });
@@ -2873,14 +2881,16 @@ export function createRelay({
     if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
     // A tab continuation also asks the helper for the window's sheets and focused element.
+    // A palette is a window of its own: the helper must find it focused, under its title and with no URL (paletteRefusal).
     const expected = remainder.dialog ? { appId: covered.appId, title: covered.title, app: covered.app, url: covered.url }
+      : remainder.palette ? { appId: call.target.appId, title: remainder.window.title, app: remainder.window.app, url: null }
       : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline,
         ...(remainder.tab ? { focus: true } : {}) } : call.target;
     // A palette the lease held must be gone, not just behind the document, unless Escape closed it.
     const gone = remainder.closeCheck ? windowGone(windowIdentity, { appId: covered.appId, title: call.target.title, url: call.target.url }, menuContinuationTimeoutMs)
       : Promise.resolve(true);
     gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`)
-      : remainder.tab ? error => refuseTab(`identity: ${error}`) : undefined)
+      : remainder.tab ? error => refuseTab(`identity: ${error}`) : remainder.palette ? error => refusePalette(`identity: ${error}`) : undefined)
       : (refuse('palette-still-open'), undefined)).then(observed => {
       if (!current()) { if (remainder.tab) refuseTab('call-superseded'); observeServerMessage(msg); return; }
       if (remainder.dialog) noteProcess(observed);
@@ -2890,18 +2900,22 @@ export function createRelay({
       const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && (covered.seen?.process !== processKey(call.baseline)
         ? 'covered-process-changed' : returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at, covered.seenAt), clock()))
         : remainder.tab ? menuWindowRefusal(expected, call.baseline, observed, stopAt, clock()) || tabFocusRefusal(observed)
+        : remainder.palette ? observed && paletteRefusal(expected, call.baseline, observed, since, clock())
         : !unchangedMenuWindow(expected, call.baseline, observed, since) && 'menu-window-changed';
       if (refusal || !observed) {
         if (remainder.dialog && refusal) refuse(refusal);
+        if (remainder.palette && refusal) refusePalette(refusal);
         // Without an observation, menuIdentity already traced why.
         if (remainder.tab && refusal && observed) refuseTab(refusal, idleSample(observed, stopAt, clock(), since));
         observeServerMessage(msg); return;
       }
       // The sample also says whether idle over the whole call held: the cause of 0 of 9 Firefox continuations (2026-10-18) was not recorded.
       if (remainder.tab) trace('tab-continuation-checked', { id: msg.id, ...idleSample(observed, stopAt, clock(), since) });
-      // The rest goes to the covered window under its own lease, pinned to the native window just observed.
-      const baseline = remainder.dialog ? observed : call.baseline, lease = remainder.dialog ? covered : call.target;
-      const forward = remainder.dialog ? { ...expected, windowNumber: observed.windowNumber } : expected;
+      // The rest goes to the covered window under its own lease, pinned to the native window just observed. A palette's rest
+      // is pinned to the palette the same way and keeps the call's lease, as a menu's does.
+      const pinned = remainder.dialog || remainder.palette;
+      const baseline = pinned ? observed : call.baseline, lease = remainder.dialog ? covered : call.target;
+      const forward = pinned ? { ...expected, windowNumber: observed.windowNumber } : expected;
       const original = structuredClone(msg), head = splitHeads.get(msg.id);
       // Keep output from before the refused action, drop its exception, then let the normal
       // result path record the menu tree. The remainder goes through the ordinary admission gates.
@@ -2910,7 +2924,7 @@ export function createRelay({
       msg.result = { ...msg.result, isError: false, content: [...taken.head.filter(item => !(item?.type === 'text' && STOP_LINE.test(item.text ?? ''))),
         { type: 'text', text: GUARD_MARK + remainder.tree + GUARD_END }] };
       menuContinued.set(msg.id, taken.receipt.index);
-      const kind = remainder.dialog ? 'dialog' : remainder.tab ? 'tab' : remainder.navigation ? 'navigation' : 'menu';
+      const kind = remainder.dialog ? 'dialog' : remainder.tab ? 'tab' : remainder.navigation ? 'navigation' : remainder.palette ? 'palette' : 'menu';
       trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind });
       splitCalls.set(msg.id, reply => {
         if (!current()) { toClient({ ...reply, result: { ...reply.result, isError: true } }); return; }

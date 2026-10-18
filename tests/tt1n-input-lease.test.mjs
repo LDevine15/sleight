@@ -1393,3 +1393,76 @@ test('SL4: a filtered read that also clicks is still refused after the page reti
   assert.equal(h.clicks.length, 0);
   assert.match(JSON.stringify(result), /nothing from this call ran/);
 });
+
+// WB1 (SLEIGHT_WB1=1): the call's own label click opened a gallery window titled like that label (Word's Styles button,
+// 03-17-17 #3 call 5, 2026-10-18), and the gallery pick after it ran in the same call. Native truth: the gallery is the app's
+// focused window, number 31, in the leased window's process.
+const galleryDoc = document.replace('\t3 button Other', '\t3 button Other\n\t5 menu button Styles, Value: 0');
+const gallery = 'Window: "Styles", App: Fixture Editor.\n0 window Styles, Secondary Actions: Raise\n\t1 container Styles\n\t\t6 button Description: Heading 1, Help: Heading 1, Value: 0, ID: gallery-heading-1';
+const galleryIdentity = (change = {}) => async (expected, native) => expected.title === 'Styles'
+  ? { ...expected, ...native, windowNumber: 31, matches: 1, headerMatches: 1, epoch: 'helper', window: 2, pid: 123, processStart: 1, ...change }
+  : { ...expected, ...native, matches: 1, headerMatches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+const galleryPick = 'await app.click({ label: "Styles" }); await app.click({ id: "gallery-heading-1" });';
+
+test('WB1: a gallery the call\'s own click opened takes the rest of the call', async t => {
+  const events = [];
+  const h = await fixture(t, { base: galleryDoc, after: gallery, afterItem: galleryDoc, identity: galleryIdentity(), routeSteering: true,
+    trace: (direction, msg) => { if (/continuation/.test(direction)) events.push(direction + ':' + (msg?.kind ?? msg?.reason)); } });
+  const result = await h.call(galleryPick);
+  assert.notEqual(result.isError, true, JSON.stringify(result).slice(0, 600));
+  assert.deepEqual(h.clicks, [5, 6]);
+  assert.equal(h.received.length, 1);
+  assert.match(JSON.stringify(result), /opened a panel, then click id \\"gallery-heading-1\\" in \\"Styles\\"/);
+  assert.doesNotMatch(JSON.stringify(result), /sleight:guard-stop|window or URL changed/);
+  assert.ok(events.includes('menu-continuation:palette'), events.join(' '));
+});
+
+for (const [name, options] of [
+  ['the flag off', { routeSteering: false }],
+  ['user input since the call', { identity: galleryIdentity({ hidIdleSeconds: 0 }) }],
+  ['the gallery reported as the leased window', { identity: galleryIdentity({ windowNumber: 22 }) }],
+  ['another process', { identity: galleryIdentity({ pid: 999 }) }],
+  ['two windows with that title', { identity: galleryIdentity({ headerMatches: 2 }) }],
+  ['a gallery that is not the focused window', { identity: galleryIdentity({ status: 'mismatch', error: 'Focused window differs' }) }],
+  ['a gallery titled otherwise', { after: gallery.replaceAll('Styles', 'Format') }],
+  ['a gallery with a document area', { after: gallery + '\n\t\t7 text area (settable) Value: draft' }],
+  ['careful mode', { guardMode: 'careful' }],
+  // Review F1: a dialog subrole, a secure field in the opened window, or typing after the click.
+  ['a native dialog subrole', { identity: galleryIdentity({ windowSubrole: 'AXDialog' }) }],
+  ['a window with a secure field', { after: gallery + '\n\t\t7 secure text field (settable) Description: Password' }],
+]) test(`WB1: the gallery continuation stops on ${name}`, async t => {
+  const h = await fixture(t, { base: galleryDoc, after: gallery, afterItem: galleryDoc, identity: galleryIdentity(), routeSteering: true, ...options });
+  const result = await h.call(galleryPick);
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [5]);
+  assert.doesNotMatch(JSON.stringify(result), /sleight:guard-stop:/);
+});
+
+test('WB1 F1: typing after the click that opened the window stops there', async t => {
+  const h = await fixture(t, { base: galleryDoc, after: gallery, afterItem: galleryDoc, identity: galleryIdentity(), routeSteering: true });
+  const result = await h.call('await app.click({ label: "Styles" }); await app.typeText("secret");');
+  assert.equal(result.isError, true);
+  assert.deepEqual(h.clicks, [5]);
+  assert.deepEqual(h.typed, []);
+});
+
+// The relay hands both flags to its read compactor: a changed Undo item (WB2) and a clicked field the typing missed (WB1).
+const undoDoc = document.replace('\t3 button Other', "\t3 button Other\n\t7 menu button (disabled) Can't Undo\n\t8 combo box (settable) Description: Search Document");
+for (const on of [true, false]) test(`WB2 and WB1 notes reach the result through the relay only when on (${on})`, async t => {
+  const styled = await fixture(t, { base: undoDoc, after: undoDoc.replace("(disabled) Can't Undo", 'Undo Style'), undoReceipts: on });
+  const undone = JSON.stringify(await styled.call('await app.pressKey("super+alt+1");'));
+  assert.equal(/the Undo item changed from \\"Can't Undo\\" to \\"Undo Style\\"/.test(undone), on, undone.slice(0, 800));
+  const typed = await fixture(t, { base: undoDoc, after: undoDoc, routeSteering: on });
+  const missed = JSON.stringify(await typed.call('await app.click(8); await app.typeText("amber");'));
+  assert.deepEqual(typed.typed, ['amber']);
+  assert.equal(/the text typed after clicking element 8 \(Search Document\) isn't in that field/.test(missed), on, missed.slice(0, 800));
+});
+
+test('WB1: a plain menu still continues as a menu with the flag on', async t => {
+  const events = [];
+  const h = await fixture(t, { routeSteering: true, trace: (direction, msg) => { if (direction === 'menu-continuation') events.push(msg.kind); } });
+  const result = await h.call('await app.click("File"); await app.click("Save");');
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(h.clicks, [2, 4]);
+  assert.deepEqual(events, ['menu']);
+});

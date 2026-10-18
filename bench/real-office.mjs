@@ -228,6 +228,39 @@ export const checkWord = checked(ctx => {
   same(rows.map(row => children(row, NS.w, 'tc').map(cell => texts(cell, NS.w))), [['Item', 'Count'], ['Crates', '7']], 'unexpected table cells');
 });
 
+// Held-out Word documents for the WB1 and WB2 A/B (2026-10-18), kept apart from word-edit, the claim task: the same story
+// and body checks as checkWord, with their own paragraphs, heading levels by paragraph index, and table cells.
+export const wordChecker = expect => checked(ctx => {
+  const pkg = readPackage(ctx, 'word/document.xml'), document = pkg.read('word/document.xml');
+  for (const name of pkg.parts.keys()) if (/^word\/(?:header[^/]*|footer[^/]*|comments[^/]*|footnotes|endnotes|glossary\/document)\.xml$/.test(name)) {
+    need(texts(pkg.read(name), NS.w).trim() === '', 'unexpected Word story content');
+  }
+  need(is(document, NS.w, 'document'), 'invalid Word document');
+  const body = one(document, NS.w, 'body');
+  need(body.children.every(n => n.uri === NS.w && ['p', 'tbl', 'sectPr'].includes(n.name)), 'unexpected Word body content');
+  for (const name of ['del', 'ins', 'drawing', 'object', 'altChunk', 'instrText', 'fldSimple', 'tab', 'br', 'vanish']) need(!all(document, NS.w, name).length, 'unsupported Word content');
+  const paragraphs = children(body, NS.w, 'p').filter(p => texts(p, NS.w) !== '');
+  same(paragraphs.map(p => texts(p, NS.w)), expect.paragraphs(ctx), 'unexpected Word paragraphs');
+  const stylesRel = [...pkg.relationships('word/document.xml').values()].filter(r => r.type === `${NS.r}/styles`);
+  need(stylesRel.length === 1, 'missing Word style relationship');
+  const styles = pkg.read(stylesRel[0].path);
+  const level = paragraph => {
+    const style = children(paragraph, NS.w, 'pPr').flatMap(pPr => children(pPr, NS.w, 'pStyle'));
+    if (!style.length) return undefined;
+    const found = children(styles, NS.w, 'style').filter(s => attr(s, 'styleId', NS.w) === attr(style[0], 'val', NS.w));
+    need(style.length === 1 && found.length === 1 && attr(found[0], 'type', NS.w) === 'paragraph', 'unresolved Word paragraph style');
+    const heading = /^heading\s*([1-9])$/i.exec(attr(one(found[0], NS.w, 'name'), 'val', NS.w) ?? '');
+    if (!heading) return undefined;
+    need(attr(one(one(found[0], NS.w, 'pPr'), NS.w, 'outlineLvl'), 'val', NS.w) === String(heading[1] - 1), 'heading style without its outline level');
+    return Number(heading[1]);
+  };
+  paragraphs.forEach((paragraph, index) => need(level(paragraph) === expect.headings[index], `paragraph ${index + 1} has the wrong heading level`));
+  const tables = all(document, NS.w, 'tbl'); need(tables.length === 1, 'unexpected Word tables');
+  const blocks = body.children.filter(n => !is(n, NS.w, 'sectPr') && !(is(n, NS.w, 'p') && texts(n, NS.w) === ''));
+  need(blocks.at(-1) === tables[0], 'table is not at the end of the document');
+  same(children(tables[0], NS.w, 'tr').map(row => children(row, NS.w, 'tc').map(cell => texts(cell, NS.w))), expect.table, 'unexpected table cells');
+});
+
 function sheetCells(root, strings) {
   need(is(root, NS.s, 'worksheet'), 'invalid worksheet');
   for (const name of ['mergeCell', 'drawing', 'hyperlink', 'tablePart', 'oleObject']) need(!all(root, NS.s, name).length, 'unsupported worksheet content');
@@ -340,6 +373,20 @@ function wordParts(nonce) {
     'word/_rels/document.xml.rels': rels([['rId1', 'styles', 'styles.xml']]),
     'word/styles.xml': declaration + `<w:styles xmlns:w="${NS.w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:keepLines/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style></w:styles>`,
   };
+}
+// A held-out document's parts: its paragraphs, with Normal, Heading 1 and Heading 2 defined as word-edit defines Heading 1.
+const headingStyle = level => `<w:style w:type="paragraph" w:styleId="Heading${level}"><w:name w:val="heading ${level}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:keepLines/><w:outlineLvl w:val="${level - 1}"/></w:pPr><w:rPr><w:b/><w:sz w:val="${34 - 2 * level}"/></w:rPr></w:style>`;
+const heldOutWordParts = lines => ({
+  ...packageBase('word/document.xml', [['word/document.xml', 'wordprocessingml.document.main'], ['word/styles.xml', 'wordprocessingml.styles']]),
+  'word/document.xml': declaration + `<w:document xmlns:w="${NS.w}"><w:body>${lines.map(paragraph).join('')}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`,
+  'word/_rels/document.xml.rels': rels([['rId1', 'styles', 'styles.xml']]),
+  'word/styles.xml': declaration + `<w:styles xmlns:w="${NS.w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>${headingStyle(1)}${headingStyle(2)}</w:styles>`,
+});
+export function prepareWordDocument(ctx, name, lines) {
+  need(typeof ctx.nonce === 'string' && /^[A-Za-z0-9_-]{1,20}$/.test(ctx.nonce), 'unsafe Office nonce');
+  need(/^[A-Za-z]{1,20}$/.test(name), 'unsafe Office fixture name');
+  ctx.officePath = join(ctx.dir, `${name}-${ctx.nonce}.docx`);
+  writeFileSync(ctx.officePath, zip(heldOutWordParts(lines)), { flag: 'wx', mode: 0o600 });
 }
 const inlineCell = (ref, value) => typeof value === 'number' ? `<c r="${ref}"><v>${value}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${escape(value)}</t></is></c>`;
 function excelParts() {
