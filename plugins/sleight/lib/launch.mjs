@@ -362,7 +362,7 @@ const DRAG_TOOL = {
   name: 'drag',
   // app.drag moved no priority row in Safari form-settings r1 or r3 (race-1017); this tool moved 6 of 6.
   description: 'A drag that holds the mouse down and moves in steps, for what app.drag in the js tool can\'t do, such as ' +
-    'reordering list rows or moving selected text (select it with js first).`from` accepts an element number from the last window read or "the current text selection"; ' +
+    'reordering list rows or moving selected text (select it with js first). `from` accepts an element number from the last window read or "the current text selection"; ' +
     '`to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. ' +
     'Both also accept coordinate pairs, in the same frame as the app\'s engine ' +
     'screenshot, from that window\'s top-left corner. Omit `windowId` for one window; an ambiguous target refuses. ' +

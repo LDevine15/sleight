@@ -70,7 +70,8 @@ test('the skill enters a known spreadsheet block as one paste from the active ce
 
 test('the drag and menu_bar descriptions carry what the skill no longer repeats', () => {
   const drag = localToolDefinitions({}).find(tool => tool.name === 'drag');
-  assert.match(localToolDefinitions({ SLEIGHT_PROMPT: 'lean' }).find(tool => tool.name === 'drag').description, /^Stepped drag for list rows; select text with js first\./);
+  assert.match(localToolDefinitions({ SLEIGHT_PROMPT: 'lean' }).find(tool => tool.name === 'drag').description, /^Stepped drag for list rows; select text with js first\. `from`/);
+  assert.ok(drag.description.includes('(select it with js first). `from` accepts'), 'a space between the sentences');
   for (const passage of ['for what app.drag in the js tool can\'t do, such as reordering list rows or moving selected text (select it with js first)',
     'in the same frame as the app\'s engine screenshot', 'Omit `windowId` for one window',
     'A lost-text error tells you to press Cmd+Z in the target app and named window.']) assert.ok(drag.description.includes(passage), passage);
