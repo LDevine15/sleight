@@ -441,7 +441,9 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
       }
       // Page-domain commands can never run on the browser connection. Unknown
       // domains stay closed, including SystemInfo, Tethering and window APIs.
-      if (isRoot || !domains.has(domain)) refuse();
+      // DOMDebugger stays closed (its breakpoints pause the page) except the one read-only listing the rules use to see whether script
+      // listens on a link (closed-handle.mjs clickListeners). Without it that answer is "unavailable" and every checkout link asks.
+      if (isRoot || !(domains.has(domain) || method === 'DOMDebugger.getEventListeners')) refuse();
       if (protectedPort !== undefined && domain === 'Fetch') {
         if (method === 'Fetch.enable' || method === 'Fetch.disable') {
           const ownedRoute = routes.get(route), previous = ownedRoute.fetchPatterns;
