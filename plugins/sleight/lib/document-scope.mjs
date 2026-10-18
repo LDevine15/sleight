@@ -162,6 +162,30 @@ export function sameElement(was, now) {
   return false;
 }
 
+// Where element `number` of the tree `before` is in the tree `after`, for a line with no ID, description or help that an
+// earlier action in the call renumbered: Safari's AutoFill button under a filled name field moved the email field from 22
+// to 23 and the guard stopped in 3 of 3 form-travel runs (race-1017). The whole line must be on exactly one element in each
+// tree, at the same depth, under the same parent, after the same row (the nearest one above at its depth or less). A bare
+// role says nothing about which element it was. Any doubt returns no element, so the caller stops as before.
+export function samePlace(before, number, after) {
+  const rows = text => String(text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*?)\r?$/.exec(line)).filter(Boolean)
+    .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
+  const place = (list, at) => {
+    let parent, previous;
+    for (let i = at - 1; i >= 0 && !parent; i--) if (list[i].depth < list[at].depth) parent = list[i].line;
+    for (let i = at - 1; i >= 0 && !previous; i--) if (list[i].depth <= list[at].depth) previous = list[i].line;
+    return { depth: list[at].depth, parent, previous };
+  };
+  const old = rows(before), now = rows(after), at = old.findIndex(row => row.number === number);
+  const line = old[at]?.line;
+  if (line === undefined || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line) || old.filter(row => row.line === line).length !== 1) return [];
+  const hits = now.flatMap((row, i) => row.line === line ? [i] : []);
+  if (hits.length !== 1) return [];
+  const was = place(old, at), is = place(now, hits[0]);
+  const same = (a, b) => a === b || (a !== undefined && b !== undefined && sameElement(a, b));
+  return was.depth === is.depth && same(was.parent, is.parent) && same(was.previous, is.previous) ? [[now[hits[0]].number, line]] : [];
+}
+
 // Only a resolved focus outside the clicked field's subtree proves a mismatch. Focus on the settable
 // field that holds the clicked element counts as inside: a click on a field's inner text node focuses
 // the field itself (Firefox address bar, 3 of 9 runs, 2026-10-18). Missing rows or focus leave the
@@ -431,14 +455,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
       return !!before.opened;
     };
     state.failures = []; state.getAppFailures = [];
-    // Element lines at this call's first action, which Claude's numbers refer to.
-    state.callElements = new WeakMap();
+    // Element lines at this call's first action, which Claude's numbers refer to, and the tree they came from.
+    state.callElements = new WeakMap(); state.callTrees = new WeakMap();
     const elements = ${elementLines.toString()};
     const contexts = ${elementContexts.toString()};
     const hasIdentifier = ${hasIdentifier.toString()};
     const hasLabel = ${hasLabel.toString()};
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
+    const samePlace = ${samePlace.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const selectedMenuEntry = ${selectedMenuEntry.toString()};
     const trappingMenu = ${trappingMenu.toString()};
@@ -907,7 +932,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
           if (codeRead) {
-            if (!state.callElements.has(proxy)) state.callElements.set(proxy, elements(text ?? ''));
+            if (!state.callElements.has(proxy)) { state.callElements.set(proxy, elements(text ?? '')); state.callTrees.set(proxy, text); }
             const was = codeRead.get(args[0]), now = elements(text ?? '').get(args[0]);
             if (!sameElement(was, now)) {
               const moved = [...codeRead.values()].filter(line => line === was).length === 1 ? sameLine(was) : [];
@@ -916,7 +941,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             }
           }
           else if (!state.callElements.has(proxy)) {
-            if (text !== undefined || !state.firstOff) state.callElements.set(proxy, elements(text ?? ''));
+            if (text !== undefined || !state.firstOff) { state.callElements.set(proxy, elements(text ?? '')); state.callTrees.set(proxy, text); }
             // The window can renumber between Claude's read and this call: TextEdit gave a saved
             // document a URL and 14 became File (textedit-save, 2026-10-09). When the line Claude saw
             // is now on exactly one element, act there, as the relay's remap does between calls: a
@@ -932,13 +957,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             }
           }
           else if (typeof args[0] === 'number' && !byId) {
-            const was = (state.bind ? state.boundNumbers.get(proxy)?.get(literal)?.line : undefined) ?? state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);
+            const bound = state.bind ? state.boundNumbers.get(proxy)?.get(literal)?.line : undefined;
+            const was = bound ?? state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);
             // Calculator renumbers every button when its first click closes the history, so a batch
             // of numbers from one read went stale and Claude rewrote it as an ID lookup over four calls
             // (calculator-click, 2026-10-10). The element Claude meant is the line it saw: when that
             // line, with an ID, description or help, is in the new tree exactly once, act on it there.
-            const moved = sameElement(was, now) || typeof was !== 'string' || !/\\b(?:ID|Description|Help): /.test(was) ? []
-              : [...elements(text)].filter(([, line]) => sameElement(was, line));
+            // A line without them must also keep its place in the call's first tree (samePlace).
+            const moved = sameElement(was, now) || typeof was !== 'string' ? []
+              : /\\b(?:ID|Description|Help): /.test(was) ? [...elements(text)].filter(([, line]) => sameElement(was, line))
+              : bound === undefined ? samePlace(state.callTrees.get(proxy), args[0], text) : [];
             if (moved.length === 1) {
               nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
               args = [moved[0][0], ...args.slice(1)];

@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement } from '../plugins/sleight/lib/document-scope.mjs';
+import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement, samePlace } from '../plugins/sleight/lib/document-scope.mjs';
 import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
@@ -726,6 +726,84 @@ test('the first action goes where the line Claude saw moved, and stops when that
   const same = fixture({ current: () => tree(expected, '\t14 menu bar item Format') });
   await same.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' }, literals: [14] });
   assert.deepEqual(same.calls.filter(c => c[0] === 'click'), [['click', 14]]);
+});
+
+// FT1b: Safari added a "contact info AutoFill" button under the filled name field, so the email field went from 22 to 23
+// and Add adult from 31 to 32 while the call ran; the guard stopped there in 3 of 3 form-travel runs (race-1017), and
+// recovery took two more calls. The rows replay r3's call 4. A line with no ID, description or help is followed only when
+// it is on exactly one element in each tree, at the same depth, under the same parent, after the same row.
+const form = ({ autofill = false, values = {}, rows = r => r } = {}) => {
+  const v = (n, line) => values[n] ? `${line}, Value: ${values[n]}` : line;
+  const lines = ['\t\t\t\t\t\t8 container', '\t\t\t\t\t\t\t17 text Reference code', v(18, '\t\t\t\t\t\t\t18 text field (settable) Reference code'),
+    '\t\t\t\t\t\t\t19 text Full name', v(20, '\t\t\t\t\t\t\t20 text field (settable) Full name'),
+    ...(autofill ? ['\t\t\t\t\t\t\t\t21 button contact info AutoFill'] : []),
+    '\t\t\t\t\t\t\t21 text Email', '\t\t\t\t\t\t\t22 email field (settable) Email', '\t\t\t\t\t\t\t23 text Dates',
+    '\t\t\t\t\t\t\t26 text Adults', '\t\t\t\t\t\t\t27 container Adults', '\t\t\t\t\t\t\t\t28 button Remove adult',
+    '\t\t\t\t\t\t\t\t29 container 1', '\t\t\t\t\t\t\t\t\t30 text 1', '\t\t\t\t\t\t\t\t31 button Add adult', '\t\t\t\t\t\t\t38 button Next'];
+  // After the inserted button every later element is one higher, as in the trace.
+  let shift = 0;
+  return tree(expected, rows(lines.map(line => {
+    if (/AutoFill/.test(line)) { shift = 1; return line; }
+    return line.replace(/^(\t*)(\d+) /, (_, tabs, n) => `${tabs}${Number(n) + shift} `);
+  })).join('\n'));
+};
+function formFixture(after) {
+  const values = {};
+  let filled = false;
+  const f = fixture({ current: () => filled ? after(values) : form({ values }),
+    action: (name, args) => { if (name === 'setValue') { values[args[0]] = args[1]; if (args[0] === 20) filled = true; } } });
+  return f;
+}
+const formCall = 'await app.setValue(18, "p01"); await app.setValue(20, "Mira Okonkwo-Hale"); await app.setValue(22, "mira.hale@example.net"); await app.click(31);';
+
+test('FT1b: an element with no ID that an inserted button renumbered mid-call is followed when only it matches', async () => {
+  const f = formFixture(values => form({ autofill: true, values }));
+  await f.run(formCall);
+  assert.deepEqual(f.calls.filter(c => ['setValue', 'click'].includes(c[0])).map(c => [c[0], c[1]]),
+    [['setValue', 18], ['setValue', 20], ['setValue', 23], ['click', 32]]);
+  assert.ok(f.output.some(o => /setValue\(22\) went to element 23, the same "email field \(settable\) Email": an earlier action in this call renumbered the window/.test(o)), f.output.join('\n'));
+  assert.ok(f.output.some(o => /click\(31\) went to element 32, the same "button Add adult"/.test(o)));
+});
+
+test('FT1b: ambiguous, changed, moved or bare elements still stop before the action', async () => {
+  const stops = {
+    // A second email field: two elements carry the line.
+    ambiguous: values => form({ autofill: true, values, rows: r => [...r, '\t\t\t\t\t\t\t40 email field (settable) Email'] }),
+    // The field's own line changed (another field now sits there).
+    changed: values => form({ autofill: true, values, rows: r => r.map(l => l.replace('email field (settable) Email', 'email field (settable) Work email')) }),
+    // The same line under another parent: a different place in the window.
+    moved: values => form({ autofill: true, values, rows: r => r.map(l => l.replace('\t23 email field (settable) Email', '\t23 group\n\t\t24 email field (settable) Email')) }),
+    // The row before it is another element now, though the line itself is the same.
+    neighbour: values => form({ autofill: true, values, rows: r => r.map(l => l.replace('22 text Email', '22 text Work email')) }),
+  };
+  for (const [name, after] of Object.entries(stops)) {
+    const f = formFixture(after);
+    await assert.rejects(f.run(formCall), /setValue\(22\): an earlier action in this call changed what element 22 is \(was "email field \(settable\) Email"/, name);
+    assert.deepEqual(f.calls.filter(c => ['setValue', 'click'].includes(c[0])).map(c => c[1]), [18, 20], name);
+  }
+  // Two such lines in the tree the call started from: the one left may be the other's.
+  let filled = false;
+  const g = fixture({ current: () => filled ? form({ autofill: true })
+    : form({ rows: r => [...r, '\t\t\t\t\t\t\t39 button Add adult'] }), action: (name, args) => { if (args[0] === 20) filled = true; } });
+  await assert.rejects(g.run('await app.setValue(20, "x"); await app.click(31);'), /click\(31\): an earlier action in this call changed what element 31 is/);
+  assert.deepEqual(g.calls.filter(c => c[0] === 'click'), []);
+  // A bare role says nothing about which element it was.
+  let grown = false;
+  const h = fixture({ current: () => tree(expected, grown ? '\t1 button New\n\t2 button Save, ID: Save\n\t3 container' : '\t1 button Save, ID: Save\n\t2 container'),
+    action: () => { grown = true; } });
+  await assert.rejects(h.run('await app.click(1); await app.click(2);'), /changed what element 2 is/);
+  assert.deepEqual(h.calls.filter(c => c[0] === 'click'), [['click', 1]]);
+});
+
+test('FT1b: samePlace names one element only when line, depth, parent and the row before all agree', () => {
+  const before = form(), after = form({ autofill: true, values: { 20: 'x' } });
+  assert.deepEqual(samePlace(before, 22, after), [[23, 'email field (settable) Email']]);
+  assert.deepEqual(samePlace(before, 31, after), [[32, 'button Add adult']]);
+  assert.deepEqual(samePlace(before, 99, after), [], 'a number the first tree lacks');
+  assert.deepEqual(samePlace(before, 8, after), [], 'a bare role');
+  assert.deepEqual(samePlace(undefined, 22, after), [], 'no first tree');
+  assert.deepEqual(samePlace(before, 22, after.replace('\t23 email field', '\t\t23 email field')), [], 'another depth');
+  assert.deepEqual(samePlace(before, 22, after.replace('22 text Email', '22 text Phone')), [], 'another row before it');
 });
 
 test('a number the code read itself in this call is checked against that read, not the tree before the call', async () => {

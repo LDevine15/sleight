@@ -278,18 +278,24 @@ test('an untitled sheet the call opened in the same app passes the lease, but no
 });
 
 test('a batch stops when an earlier action in the call renumbers its target', async () => {
-  let shifted = false; const clicked = [];
+  // A second "button 8" after the shift: two elements carry the line Claude saw, so the batch stops (FT1b keeps this).
+  let shifted = false, extra = true; const clicked = [];
   const tree = () => ['Window: "Calculator", App: Calculator.', '0 standard window Calculator',
-    ...(shifted ? [] : ['\t1 list HistoryView']), ...['7', '8', '9'].map((k, i) => `\t${i + (shifted ? 1 : 2)} button ${k}`)].join('\n');
+    ...(shifted ? [] : ['\t1 list HistoryView']), ...['7', '8', '9'].map((k, i) => `\t${i + (shifted ? 1 : 2)} button ${k}`),
+    ...(shifted && extra ? ['\t4 button 8'] : [])].join('\n');
   const raw = { getAXState: async () => tree(), click: async n => { clicked.push(n); shifted = true; } };
   const context = { cua: { getApp: async () => raw }, nodeRepl: { write: () => {} } };
   const run = code => runInNewContext(`(async () => { ${code} })()`, context);
   await run(readCode('await cua.getApp("Calculator");'));
   const window = { title: 'Calculator', app: 'Calculator', url: null };
   await assert.rejects(run(guardedCode('for (const i of [2, 3, 4]) await app.click(i);', window)),
-    /stopped before click\(3\).*was "button 8", now "button 9"[\s\S]*\nWindow: "Calculator", App: Calculator\.\n0 standard window Calculator\n\t1 button 7\n\t2 button 8\n\t3 button 9$/,
+    /stopped before click\(3\).*was "button 8", now "button 9"[\s\S]*\nWindow: "Calculator", App: Calculator\.\n0 standard window Calculator\n\t1 button 7\n\t2 button 8\n\t3 button 9\n\t4 button 8$/,
     'the stop carries the read it just took, header and tree');
   assert.deepEqual(clicked, [2], 'only the first click ran');
+  // Without the second one, each line Claude saw is on one element, in the same place: the batch clicks 7, 8 and 9.
+  shifted = false; extra = false; clicked.length = 0;
+  await run(guardedCode('for (const i of [2, 3, 4]) await app.click(i);', window));
+  assert.deepEqual(clicked, [2, 2, 3]);
   clicked.length = 0;
   await run(guardedCode('await app.click(1); await app.click(1);', window));
   assert.deepEqual(clicked, [1, 1], 'an unchanged target goes through');
