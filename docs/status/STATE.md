@@ -3,27 +3,25 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-17 22:31 UTC)
+## Banner (2026-10-18 00:45 UTC)
 
-Goal (owner): release 1.3.0, then the native claim and the video. The owner is "focused on winning everything we can" (2026-10-17):
-no claim shortcuts, but every measured fix lands before the claim. Puddle is shut down, and sleight has the Mac. The owner is away
-from the PC but home and reachable by phone (since 21:46Z), so live runs are allowed.
+Goal (owner): release 1.3.0 with Electron folded in (owner, 2026-10-18), then the claim post and the video. The owner is away from
+the PC but home and reachable by phone, so live runs are allowed. Quota is not a constraint tonight (owner).
 
-**Tonight's state (details and numbers in `~/Projects/sleight-wt/ledger/LEDGER.md`, sections ASTRA-1017 and AB-LOSS).**
-- All three Astra lanes finished (native 21:38Z, office ~22:00Z, browser ~22:05Z). Reports `ledger/astra-1017-<name>-report.md`, items
-  AN1 to AN7, AO1 to AO5, AB1 to AB5. No product code from them.
-- Merged and pushed (`3ff925db`, full check 6583 pass, prose lint clean): the five reviewed loss-fix branches, AN1 (switch tabs by
-  key, not click), AN4 (open_file adds a screenshot when the tree has no document text), AN6 (bench timing parts add up), AO1 (one
-  paste for a known block of cells), AO5 (cleanup confirms exits independently), AB4 (one coordinate frame note), AN2 (results that
-  name supported alternatives and what ran), MS1 (stuck menu-bar note escalates), AB2 (one call's repeated reads compacted). Each had a
-  Sonnet-high review and fixes.
-- In review: AB1 (continue across a tab the call opened, after its safety review) and AB3 (fresh numbers after an invalid-ID stop).
-- First A/B (old 369bc9a2, new c34549ff, 6 rounds): no clear win. Expected s: excel 57.1 to 44.7, save 10.6 to 9.8, preview 4.4 to
-  4.9, word 75.9 to 113.3 (one model-variance failure, passing mean 78.9).
-- Running now, A/B 2 (`sitting-1017c/ab2.sh`, old 369bc9a2, new 3ff925db, 6 tasks, 5 rounds, started 22:30Z).
-- Late-alert probe (AN3, light Return check): first live run unusable (Finder baseline, Excel alert never triggered, TextEdit open
-  panel), so it went back to its lane. The light check stays off.
-- The owner made the Safari profile named "sleight benchmark" on 2026-10-16.
+**Claim build** `3180e084` (pushed, full check 6902 pass, prose lint clean): tonight's loss fixes and every reviewed follow-up
+(details and numbers in `~/Projects/sleight-wt/ledger/LEDGER.md`, sections ASTRA-1017, AB-LOSS, FS1, FO1, FW2, FX2, POST-130), plus
+Q1-7 to Q1-17 and AS-4, WK1 (menu-bar label preference, Cancel-first stuck-menu advice, dead-typing note, stops before typing into a
+stuck menu or with window focus), XL2 (Excel path skill lines, setValue-didn't-hold note, alert text), MT1, DW1, OT1, OT2, MC1, SP1, PB1.
+- Running: focused passes on `3180e084`, excel-edit x10 then word-edit x5 (`sitting-1017c/focus-2.sh`, logs `focus-2-<task>.log`).
+- Next, sleight's claim arm reruns on the frozen build with the top-up round. The browser race follows
+  `ledger/fable-1017-race-plan.md` as Mac load allows. Its smoke scripts are in `~/Projects/sleight-wt/race-1017/`.
+
+**Electron (folded into 1.3.0, owner 2026-10-18).** EPV3-1 to EPV3-3 building (Opus lane); Fable reviewing the whole plan and writing
+contracts for EPV3-4 to EPV3-7 (`ledger/fable-1018-electron-review.md`, `ledger/epv3-contracts.md`) so those build in parallel; EH1
+fixes the Electron fixture harness (a separate instance with a temporary profile, quit by pid through NSRunningApplication). The claim suite gains
+vscode-edit and cursor-edit (LAWS). Fixtures use temporary profiles, though the owner doesn't use VS Code. Astra lanes (gpt-6-astra xhigh, headless codex exec) started 00:4xZ: `astra-1018-electron` and
+`astra-1018-firstaction` (reports `ledger/astra-1018-<name>-report.md`). The ghost hand is designed (`ledger/fable-1018-ghost-hand.md`)
+for 1.3.1.
 
 **Native claim: the scorer says "fastest"** (`~/Projects/sleight-wt/sitting-1017c/claim-score-final.{txt,json}`). sleight's final
 claim run (bb6f99f6, 2026-10-17 19:07-19:32Z, results copied into the main checkout's `bench/results`) passed 44 of 45, and the one
