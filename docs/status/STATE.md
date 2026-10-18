@@ -29,8 +29,12 @@ counts the app tasks with the 9 native ones. sleight's 9 native tasks are rerunn
 **Browser race.** The Firefox competitor rounds resumed 02:20Z with codex r1. Pause them with `touch ~/Projects/sleight-wt/race-1017/pause`,
 which holds between rounds. Pause them before the app-claim runs.
 
-**Next:** 1) sleight native rerun and top-ups on the release build, then rescore; 2) the Firefox race (paused); 3) CU1, the world
-runner starting Cua's daemon; 4) the Codex lease-broker live check; 5) the release pass for 1.3.0.
+Next, in order:
+1. sleight's native rerun and top-ups on the release build, then the rescore.
+2. The Firefox race (paused).
+3. CU1, the world runner starting Cua's daemon.
+4. The Codex lease-broker live check.
+5. The release pass for 1.3.0.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
