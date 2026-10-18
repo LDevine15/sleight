@@ -112,7 +112,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   apps quit through NSRunningApplication and their own Don't Save sheet, answered through System Events.
 - Apps are approved without the owner only through the benchmark's own allowlist.
   For the claude-cu arm, the harness may press Claude Code's "Allow for this session" card in its own terminal only when every
-  app the card names is on that allowlist (owner, 2026-10-17).
+  app the card names is on that allowlist (owner, 2026-10-17). sleight-arch may click Allow on Claude in Chrome's own permission
+  prompts in the benchmark Chrome profile for the race's sites only (owner, 2026-10-18).
 - Screenshots and recordings capture single windows, never the whole screen, and published results show home paths as `~` with the
   owner's name scrubbed.
 - During another project's timed window (`/tmp/sleight-hold`), live runs and heavy checks wait.
