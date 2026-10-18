@@ -149,6 +149,22 @@ TODO: full release pass result.
   and short text, and refuses a click on a number it left out.
   TODO: these entries' A/B result.
 
+- On a list with more rows than it shows, the skill and the 3-scroll note make
+  `app.pickFromList("<whole row text>")` the first move, with search, keys or a scroll loop after it
+  stops. In the Safari and Firefox race, 5 of 6 form-travel runs wrote scroll-and-read loops, up to 34.7 s.
+- The renumbering guard follows an element with no ID that an earlier action in the same call moved,
+  when one inserted or removed block of rows explains the shift and its whole line is on one element in
+  each tree. Anything else still stops. Safari's AutoFill button stopped 3 of 3 form-travel runs.
+- `{ id: "18" }` alone at the top of a call acts on element 18 when no element has that ID or label,
+  and the result says so. An `{ id }` that matches no element's ID is looked up as a label, and
+  `setValue` takes the one settable match when a field and its text label share a label.
+- A failed action's note names the actions that ran before it, the action that failed, and an app
+  handle's argument order when the call used a tab's (`pressKey("Return")`, not `pressKey(null, "Return")`).
+- Row reorders go to the `drag` tool, which the skill and the tool's description now name for list
+  rows. In Safari, `app.drag` left every row in place in both runs that tried it.
+- A click on a list row outside the list's visible part says so and names the scroll that brings it
+  into view, in place of "UI changed". `SLEIGHT_OFFSCREEN_CLICK=0` turns it off.
+
 ### Browsers
 
 - `sleight.fillForm(tab, fields)` fills a form in one call and never submits. It reports the count
@@ -216,6 +232,14 @@ TODO: full release pass result.
   `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` also skips turbo's
   check of a money figure larger than your amount, for a payment your message named with its amount.
   An unrequested payment, a second payment in the same request and a different amount still ask.
+- No tool can answer sleight's own menu or its approval and payment cards. The menu bar tool, hover,
+  drag, window selection and every engine call refuse the process that shows them (sleight's consent
+  host), matched by name, by its file and by its pid, so only your click answers them.
+- When your own message asks to submit or save a form or settings page, sleight no longer stops to
+  confirm the values it names, notification, email and SMS switches included. It still asks before a
+  page dialog that adds anything you didn't name, high-stakes submissions, account, security, privacy
+  and sharing settings, and submits only the page proposes. Bookings your message asks for work the
+  same way, and any money they charge follows the payment rule.
 - In Cursor and other MCP clients, approval prompts use the client's name instead of Claude.
 - The mod refuses Claude's file edits and common shell writes to the preapproved-apps file. Reads
   stay allowed. A path built at run time still gets past it.

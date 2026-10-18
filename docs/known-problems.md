@@ -8,6 +8,13 @@ our own runs. Dates and engine versions are given where they matter.
 - The preapproval loader proves file ownership, not who wrote it. The mod refuses Claude's file edits
   and common shell writes to it (unit-tested, 2026-10-12), but any other process running as you can
   write it, and a path built at run time gets past the check.
+- The consent-host refusal (2026-10-18) hasn't run against the live engine. It assumes the engine's approval card and read
+  header name the host as `consent-host`, its file or its pid. A `getApp` argument computed at run time is checked only at that
+  card. We haven't checked whether the engine's `pressKey` to another app can answer a frontmost host card, or whether the
+  engine's own clicks at a point under the card press its buttons. Any process named `consent-host` is refused, sleight's or not.
+- The form rule asks before account, security, privacy and sharing settings even when your message names them, so the
+  race's form-settings task (two-factor on) stops before Save by design. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps form and
+  switch confirmations too.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
 - `sleight-mcp setup` hasn't had a full live run: macOS permissions always need the user's click.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with
@@ -145,6 +152,14 @@ our own runs. Dates and engine versions are given where they matter.
   review found it on 2026-10-13. No recorded run wrote such code.
 
 ## Browsers
+
+- `app.pickFromList` on Safari and Firefox web lists hasn't run live (2026-10-18). If Page Down doesn't move the list's
+  accessibility rows, it stops with "no-progress" and Claude falls back to a scroll loop.
+- The offscreen-row note hasn't run against a live app. It needs the engine's role words to equal the accessibility role
+  descriptions and the list's rows to match one for one; otherwise the result reads as before. It covers rows in lists,
+  tables, outlines, browsers, collections and grids, not a control below a page's fold.
+- The renumbering guard still stops when an element is inserted at the target's own depth right before it. The relay
+  rewrites `{ id: "N" }` to element N from the tree Claude saw last, and says so in the result.
 
 - Turbo v3 sends Enter and Space (and Shift+Enter or Control+Enter in a text field) through the page keyboard inside the click
   shield: a hook registered before page scripts is armed with the checked element and its form (action, method, target, enctype,
