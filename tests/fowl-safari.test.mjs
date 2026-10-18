@@ -280,6 +280,16 @@ test('a quit that needed the unsubmitted-form alert confirmed is recorded in the
   assert.equal(browser.collections.at(-1).unsubmittedFormQuitConfirmed, true);
 });
 
+test('a failed reset still quits the launched Safari, and a forced termination is recorded', async t => {
+  const f = fixture(t), request = f.bridge.request, browser = await launchRealBrowser(f.plan, f.options);
+  f.windows().push(window('stray'));
+  await assert.rejects(resetRealBrowser(browser), /EXTRA_WINDOWS/);
+  f.bridge.request = async (op, input) => op === 'quit' ? (await request(op, input), { browserClosed: true, forceTerminated: true }) : request(op, input);
+  await browser.stop();
+  assert.equal(browser.collections.at(-1).forceTerminated, true);
+  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 1);
+});
+
 test('Safari stop is idempotent after proven collection', async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   const first = await browser.stop();
