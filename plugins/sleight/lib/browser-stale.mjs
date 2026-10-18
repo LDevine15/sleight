@@ -75,14 +75,17 @@ function install(cua, config, parse, methods, samePage, sameRow) {
             if (was === undefined || !fresh?.header || !samePage(fresh.header, seen.header) || !sameRow(was, now)) {
               const matches = was === undefined || !fresh?.rows ? []
                 : Object.entries(fresh.rows).filter(([, line]) => sameRow(was, line));
+              const identity = owners.size === 1 && unique && samePage(fresh?.header, seen.header) &&
+                !/^[a-z][a-z ]*(?: \([^)]*\))*$/.test(was ?? '') && matches.length === 1
+                ? ` Current unique row ${matches[0][0]}: ${JSON.stringify(matches[0][1].slice(0, 320))}${matches[0][1].length > 320 ? ' (truncated)' : ''}.` : '';
               if (owners.size === 1 && current.literals.length === 1 && current.literals[0] === requested &&
                   unique && samePage(fresh.header, seen.header) &&
                   !/^[a-z][a-z ]*(?: \([^)]*\))*$/.test(was ?? '') && matches.length === 1) {
                 const to = Number(matches[0][0]);
-                nodeRepl.write(`sleight: ${name}(${requested}) went to element ${to}, the same ${JSON.stringify(was)}: the tab renumbered since you read it.\n`);
+                nodeRepl.write(`sleight: ${name}(${requested}) went to element ${to}, the same labelled row: the tab renumbered since you read it.${identity}\n`);
                 args = [to, ...args.slice(1)];
                 call.moved[requested] = to;
-              } else throw new Error(`sleight stopped before ${name}(${requested}): element ${requested} changed or is missing since you read the tab. Read this tab again before using its numbers.` + (typeof text === 'string' ? '\n' + text : ''));
+              } else throw new Error(`sleight stopped before ${name}(${requested}): element ${requested} changed or is missing since you read the tab.${identity} Read this tab again before using its numbers.` + (typeof text === 'string' ? '\n' + text : ''));
             } else call.moved[requested] = number;
           }
           return value.apply(raw, args);

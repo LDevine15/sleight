@@ -125,7 +125,7 @@ export function promptNotice(text, prompt) {
     .replace("Don't retry the same call: ask the user to show the window on the current desktop, or open a window if the app has none.", "Don't retry: ask the user to show the window on the current desktop, or open one if the app has none.")
     .replace('engine initialization was stopped and collection is unconfirmed.', 'engine initialization stopped, collection unconfirmed.')
     .replace('Reconnect sleight for a fresh engine and app read.', 'Reconnect sleight, then read the app.')
-    .replace('; keys may be lost. Check typing landed, then use a toolbar control or shortcut, not more Escape or clicks.', '; keys may be lost. Check typing landed; use a toolbar control or shortcut, not Escape or clicks.')
+    .replace('; keys may be lost. Check typing landed, then use a toolbar control or shortcut, not more Escape or clicks.', '; keys may be lost. Check typing landed; use a toolbar control or shortcut.')
     .replace(" If that fails too, tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", ' If that fails, tell the user to run `sleight-mcp --doctor`.')
     .replace('Any action in this call may or may not have run, so read the app before you repeat one. A read alone is safe to repeat.', 'Actions may or may not have run; read the app before repeating one. Reads are safe to repeat.')
     .replace('sleight-warning: native window identity inconclusive or no Accessibility permission; using the engine header and window guards, without equal-title replacement detection.', 'sleight-warning: native window identity unavailable; no equal-title replacement detection.')
@@ -158,5 +158,12 @@ export function promptNotice(text, prompt) {
     .replace(' (name or bundle ID); actions may follow on its returned handle.', '; actions may follow on that handle.')
     .replace('. Use the numbers in this result from now on.', ". Use this result's numbers from now on.")
     .replace(' succeeded while sleight checked the fault. Read that app', ' worked during the fault check. Read that app')
+    // Q1's initialization and syntax-error notes (initialization-guidance.mjs, syntax-errors.mjs).
+    .replace('sleight: the engine returned only required API documentation; execution is unconfirmed', 'sleight: engine returned only API docs; execution unconfirmed')
+    .replace('sleight: initialization documentation accompanied a syntax error; the code did not run', 'sleight: docs came with a syntax error; code did not run')
+    .replace('sleight: initialization documentation accompanied an error; the code may have run up to the error', 'sleight: docs came with an error; code may have run up to it')
+    .replace('. Complete the documented initialization with one supported read: ', '. Finish initialization with one read: ')
+    .replace('. Read current state before deciding what remains. Do not replay', '. Read state before continuing. Do not replay')
+    .replace("sleight: the engine's line counts sleight's setup code. In your code the error is at line ", 'sleight: in your code the error is at line ')
     .replace(/Use a (?:literal )?number from a \+ line in the latest result, or read the whole window with getAXState\(\{ disableDiffing: true \}\) first\./g, 'Use a + line number from the latest result, or read with getAXState({ disableDiffing: true }) first.');
 }

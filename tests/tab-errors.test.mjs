@@ -242,12 +242,12 @@ test('recorded evaluate writes name the failed operation and the replacement act
     ['TypeError: prioList.appendChild is not a function', /appendChild/, /sleight\.dragTo/],
     ['TypeError: DragEvent is not a constructor', /DragEvent/, /sleight\.dragTo/],
     ['TypeError: DataTransfer is not a constructor', /DataTransfer/, /sleight\.dragTo/],
-    ['TypeError: PointerEvent is not a constructor', /PointerEvent/, /locator\.click/],
-    ['TypeError: MouseEvent is not a constructor', /MouseEvent/, /locator\.click/],
-    ['TypeError: Event is not a constructor', /Event cannot run|so Event cannot/, /locator\.click/],
-    ['TypeError: document.createEvent is not a function', /createEvent/, /locator\.click/],
+    ['TypeError: PointerEvent is not a constructor', /PointerEvent/, /evaluate/],
+    ['TypeError: MouseEvent is not a constructor', /MouseEvent/, /evaluate/],
+    ['TypeError: Event is not a constructor', /Event cannot run|so Event cannot/, /evaluate/],
+    ['TypeError: document.createEvent is not a function', /createEvent/, /evaluate/],
     ['TypeError: Cannot set property checked of [object Object] which has only a getter', /checked/, /locator\.setChecked/],
-    ['TypeError: CustomEvent is not a constructor', /CustomEvent/, /locator\.click/],
+    ['TypeError: CustomEvent is not a constructor', /CustomEvent/, /evaluate/],
     ['TypeError: Cannot set property selectedIndex of [object Object] which has only a getter', /selectedIndex/, /selectOption/],
   ];
   for (const [msg, op, next] of cases) {
@@ -262,9 +262,11 @@ test('recorded evaluate writes name the failed operation and the replacement act
   }
   assert.match(rewriteTabError('Error: TypeError: DragEvent is not a constructor' + stack), /sleight\.dragTo/);
   const parse = 'TypeError: parseInt is not a function' + stack;
-  assert.equal(rewriteTabError(parse), parse);
+  assert.ok(rewriteTabError(parse).startsWith(parse));
+  assert.match(rewriteTabError(parse), /restricted read-only scope/);
   const fetch = 'TypeError: Cannot add property fetch, object is not extensible' + stack;
-  assert.equal(rewriteTabError(fetch), fetch);
+  assert.ok(rewriteTabError(fetch).startsWith(fetch));
+  assert.match(rewriteTabError(fetch), /read-only/);
   const formData = 'TypeError: FormData is not a constructor' + stack;
   assert.equal(rewriteTabError(formData), formData);
   for (const operation of ['innerHTML', 'textContent', 'className']) {
@@ -303,6 +305,19 @@ test('evaluate write hints skip array bugs and unnamed setAttribute', () => {
   assert.doesNotMatch(out, /The page scope is read-only/);
 });
 
+test('non-extensible evaluate page objects retain the error and explain the read-only boundary', () => {
+  const stack = '\n    at __playwrightEvaluate (<anonymous>:10:2)';
+  for (const property of ['fetch', 'draggable', 'cssText']) {
+    const raw = `TypeError: Cannot add property ${property}, object is not extensible` + stack;
+    const out = rewriteTabError(raw);
+    assert.ok(out.startsWith(raw));
+    assert.match(out, /read-only/);
+    assert.match(out, /If this was a page object/);
+    assert.doesNotMatch(out, /locator\.click|locator\.fill|sleight\.dragTo/);
+    assert.equal(rewriteTabError(raw.replace('__playwrightEvaluate', 'ownFunction')), raw.replace('__playwrightEvaluate', 'ownFunction'));
+  }
+});
+
 test('covered, stale and page-dialog errors preserve surrounding result lines', () => {
   for (const error of ['Accessibility element 29 is covered by DIV or otherwise not hittable',
     'Accessibility element 16 is stale or missing', ...['confirm', 'alert', 'prompt'].map(kind =>
@@ -325,8 +340,9 @@ test('native calls and native observations do not get tab recovery advice', t =>
 test('unmatched engine text is returned unchanged', () => {
   const src = 'noWindowsAvailable';
   assert.equal(rewriteTabError(src), src);
-  assert.equal(rewriteTabError('Browser Use rejected this action due to browser security policy.'),
-    'Browser Use rejected this action due to browser security policy.');
+  const refused = 'Browser Use rejected this action due to browser security policy.';
+  assert.ok(rewriteTabError(refused).startsWith(refused));
+  assert.match(rewriteTabError(refused), /Read-only inventory: await cua.listBrowsers/);
 });
 
 test('the relay rewrites a covered-element error and leaves a success containing the same words alone', t => {
@@ -381,15 +397,17 @@ test('debugger detail is retained and a caller sentence starting with its words 
     'Debugger unattached: a caller explanation']) assert.equal(rewriteTabError(text), text);
 });
 
-test('input timeouts use guarded short dialog advice and retain input uncertainty', () => {
+test('input timeouts offer read-only dialog inspection and retain input uncertainty', () => {
   const out = rewriteTabError('Error: Timed out after 2991ms waiting for CDP command Input.dispatchMouseEvent.');
   assert.match(out, /input may already have been sent/);
-  assert.match(out, /const dialog = await tab.getJsDialog\(\); if \(dialog\)/);
-  assert.match(out, /dialog\.dismiss\(\)/);
+  assert.match(out, /nodeRepl\.write.*await tab.getJsDialog\(\)/);
+  assert.match(out, /dialog is not confirmed/);
+  assert.match(out, /if one is open, answer it with dialog\.accept\(\) or dialog\.dismiss\(\)/);
+  assert.doesNotMatch(out, /\bawait dialog\.(?:dismiss|accept)/);
   assert.doesNotMatch(out, /\/\*|alert\/beforeunload|read dialog\.type and message/);
   assert.match(out, /getAXState/);
   assert.doesNotMatch(out, /\} if a page dialog is open/);
-  assert.match(out, /\} Read the page before retrying input:/);
+  assert.match(out, /Read the page before retrying input:/);
 });
 
 test('regex literal quotes cannot hide actions from debugger error advice', t => {
@@ -469,4 +487,23 @@ test('reorder, pickFromList and fillForm count as tab input', () => {
     assert.doesNotMatch(out, /no input was sent/);
   }
   assert.equal(isTabBinding('await cua.getTab(id, { browser })'), true);
+});
+
+test('a selector diagnostic reuses the engine snapshot without any input retry or follow-up read', t => {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [], replies = [];
+  serverIn.on('data', data => sent.push(JSON.parse(data.toString())));
+  clientOut.on('data', data => replies.push(JSON.parse(data.toString())));
+  const relay = createRelay({clientIn, clientOut, serverIn, serverOut, changeReview: false});
+  t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
+  clientIn.write(JSON.stringify({id: 1, method: 'tools/call', params: {name: 'js', arguments: {
+    code: 'await tab.playwright.locator("#gone").click()' }}}) + '\n');
+  assert.equal(sent.length, 1);
+  const text = 'Error: Playwright selector deadline exceeded\nwaiting on click for selector #gone\n' +
+    'Locator diagnostics: {"kind":"no_matches","action":"click","locator":"#gone","matchCount":0,"matches":[]}';
+  serverOut.write(JSON.stringify({id: 1, result: {isError: true, content: [{type: 'text', text}]}}) + '\n');
+  assert.equal(sent.length, 1, 'the engine already read once for its diagnostic');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].result.isError, true);
+  assert.match(replies[0].result.content[0].text, /Current matches: 0/);
 });

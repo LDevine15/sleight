@@ -119,6 +119,15 @@ test('the search cap bounds an unsorted list without guessing a match', async ()
   assert.ok(h.calls.length <= 24); assert.deepEqual(h.clicks, []);
 });
 
+test('a prefix seen before the scroll cap never stands in for an exact option the search did not reach', async () => {
+  // AS-4: an unsorted list scans in small steps, so 24 scrolls cover only part of it; the exact row is last.
+  const labels = ['Portland International PDX', 'Zulu', 'Alpha', ...Array.from({ length: 997 }, (_, i) => 'Other ' + i), 'Portland'];
+  const h = fixture(labels);
+  const result = await pickFromList(h.tab, '#list', 'Portland');
+  assert.equal(result.found, false); assert.equal(result.verified, false);
+  assert.match(result.note, /cap/); assert.deepEqual(h.clicks, []);
+});
+
 test('ambiguous or disabled options send no click, and list and text inputs are validated', async () => {
   for (const settings of [{ duplicate: true }, { disabled: ['Beta'] }]) {
     const h = fixture(['Alpha', 'Beta', 'Gamma'], settings);

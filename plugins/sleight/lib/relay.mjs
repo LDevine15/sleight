@@ -102,6 +102,8 @@ import { splitTextSave } from './text-save.mjs';
 import { autoPrintCode, noOutputNotice } from './no-output.mjs';
 import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
+import { initializationAdvice } from './initialization-guidance.mjs';
+import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 
@@ -157,9 +159,11 @@ export function finalReturnCode(code) {
 // `app.click(3); …` with no await and more code after it: the call goes on without the action,
 // and a failure then ends the session. A last statement is fine, since the call returns its promise.
 // Strings are blanked first, so typed text that mentions an action doesn't count.
-export function unawaitedAction(code) {
+export function unawaitedAction(code) { return unawaitedCall(code)?.method; }
+
+function unawaitedCall(code) {
   code = withoutPageCallbacks(code);
-  const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
+  const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, literal => literal.replace(/[^\r\n]/g, ' '));
   for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText)\()/g)) {
     let end = m.index + m[0].length - 1, chained = false;
     for (;;) {
@@ -173,7 +177,10 @@ export function unawaitedAction(code) {
       chained = true;
       end += chain[0].length;
     }
-    if (m[1] ? chained : bare.slice(end + 1).replace(/^\s*;?/, '').trim()) return m[2];
+    if (m[1] ? chained : bare.slice(end + 1).replace(/^\s*;?/, '').trim()) {
+      const start = m.index + m[0].lastIndexOf(m[2]);
+      return { method: m[2], line: bare.slice(0, start).split('\n').length };
+    }
   }
 }
 
@@ -1023,6 +1030,7 @@ export function createRelay({
   // js calls awaiting a reply, and whether this engine session has shown its first-call docs:
   // docs again without a js_reset mean the session restarted and every handle is gone.
   const jsCalls = new Map();
+  const syntaxOrigins = new Map();
   const chromeSettled = new Set();
   let guardReady = false, guardGeneration = 0;
   const guardCalls = new Map();
@@ -1597,7 +1605,8 @@ export function createRelay({
         // one listWindows expression with a template literal was refused with this same advice).
         const inventory = /\bcua\.(?:listApps|listWindows|getState)\(/.test(code)
           ? ' To look up apps or windows, send one expression with plain quotes, such as \u0060(await cua.listApps()).map(a => a.id).join("\\n")\u0060.' : '';
-        leaseStop(msg, promptNotice(`a bundle ID and full window header are required. ${recovery}${inventory} Use the handle returned by cua.getApp directly.`, prompt), true);
+        const missing = ['bundle ID', ...(typeof leaseWindow?.app !== 'string' || typeof leaseWindow?.title !== 'string' ? ['full window header'] : [])];
+        leaseStop(msg, promptNotice(`a bundle ID and full window header are required. Missing target identity: ${missing.join(', ')}. ${recovery}${inventory} Use the handle returned by cua.getApp directly.`, prompt), true);
         return false;
       }
       if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return false; }
@@ -2952,10 +2961,10 @@ export function createRelay({
     // A failed action without await, with more code after it, can end the engine's session and
     // every handle (3/3, 2026-10-07), so it never reaches the engine.
     const unawaited = msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined &&
-      typeof originalCode === 'string' && unawaitedAction(originalCode);
+      typeof originalCode === 'string' && unawaitedCall(originalCode);
     if (unawaited) {
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text:
-        promptNotice(`sleight stopped this call before it ran: \u0060${unawaited}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await and send it again.`, prompt) }] } });
+        promptNotice(`sleight stopped this call before it ran: \u0060${unawaited.method}…)\u0060 has no await and more code follows it. A failed action without await can end the engine's session and lose every handle. Add await at line ${unawaited.line} and send it again.`, prompt) }] } });
       return;
     }
     if (msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined &&
@@ -3205,6 +3214,10 @@ export function createRelay({
       if (msg.id !== undefined) running.add(msg.id);
       if (flowPlan) { flowRules.forward(flowPlan); flowCalls.set(msg.id, flowPlan); }
     }
+    if (jsCalls.has(msg.id)) {
+      const origin = syntaxOrigin(msg.params?.arguments?.code, jsCalls.get(msg.id));
+      if (origin) syntaxOrigins.set(msg.id, origin);
+    }
     if (clipboardAction) {
       const generation = stopGeneration;
       let response;
@@ -3413,7 +3426,7 @@ export function createRelay({
         health.pending = undefined;
         if (!closing && !serverIn.writableEnded && !serverIn.destroyed) scheduleHelperRead(health);
       }
-      documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); browserCalls.delete(msg.id);
+      documentCalls.delete(msg.id); changeCalls.delete(msg.id); jsCalls.delete(msg.id); syntaxOrigins.delete(msg.id); browserCalls.delete(msg.id);
       spaceChecks.delete(msg.id); preHealth.delete(msg.id); nativeChecked.delete(msg.id); focusedChecked.delete(msg.id); restartRetries.delete(msg.id);
       flowCalls.delete(msg.id); helperReads.delete(msg.id); remapNotes.delete(msg.id); requireNotes.delete(msg.id); preapprovalNotes.delete(msg.id);
       menuCalls.delete(msg.id); menuAdmissions.delete(msg.id);
@@ -3604,6 +3617,19 @@ export function createRelay({
         else msg.result.content.push({ type: 'text', text: advice });
       }
     }
+    const initializationNote = jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
+    if (initializationNote) msg.result.content.push({ type: 'text', text: promptNotice(initializationNote, prompt) });
+    if (msg.method === undefined && syntaxOrigins.has(msg.id)) {
+      const origin = syntaxOrigins.get(msg.id); syntaxOrigins.delete(msg.id);
+      // The engine can report a parse error as a JSON-RPC error as well as an error result.
+      if (msg.error && typeof msg.error.message === 'string') {
+        const hint = syntaxErrorHint(msg.error.message, origin);
+        if (hint) msg.error.message += '\n' + promptNotice(hint, prompt);
+      } else if (msg.result?.isError && Array.isArray(msg.result.content)) {
+        const hint = msg.result.content.map(c => c.type === 'text' ? syntaxErrorHint(c.text, origin) : undefined).find(Boolean);
+        if (hint) msg.result.content.push({ type: 'text', text: promptNotice(hint, prompt) });
+      }
+    }
     const emptyNote = !msg.error && !msg.result?.isError && noOutputNotice(jsCode, msg.result?.content);
     if (emptyNote) msg.result.content.push({ type: 'text', text: promptNotice(emptyNote, prompt) });
     if (jsCode !== undefined) replWarmup.attach(msg);
@@ -3611,7 +3637,7 @@ export function createRelay({
     if (pendingBrowser && !msg.result?._meta?.['codex/toolSurface']?.app?.appId &&
         msg.result?.isError && Array.isArray(msg.result.content)) {
       const rewritten = text => rewriteDragAttempt(
-        rewriteTabError(text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode) }), jsCode);
+        rewriteTabError(text, { read: isLeaseRead(jsCode) || isTabBinding(jsCode), code: jsCode }), jsCode);
       if (jsCode !== undefined && createdTabCall(jsCode) && !openedReads.has(msg.id)) {
         openedReads.add(msg.id);
         const probeId = `sleight-opened-tabs-${nextInternalId++}`, generation = stopGeneration;
@@ -4228,7 +4254,7 @@ export function createRelay({
         helperProbes.clear(); helperReads.clear(); helperControls.clear(); helperFullReads.clear(); lateDiagnosticControls.clear();
         for (const state of helperStates.values()) clearTimeout(state.timer);
         helperStates.clear(); helperHandles.clear(); helperAliases.clear();
-        leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); browserCalls.clear();
+        leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); syntaxOrigins.clear(); browserCalls.clear();
         spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
         // The stopped turn's receipt keeps its unanswered calls as unknown; nothing carries into the next engine.
         resultCalls.clear(); guardCalls.clear(); finishReceipt();
