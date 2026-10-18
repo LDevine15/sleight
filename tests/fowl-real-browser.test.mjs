@@ -321,3 +321,21 @@ test('Claude gate execution records comparable calls and errors from fake stream
   assert.equal(run.result.num_turns, 2);
   assert.ok(run.finished >= run.started);
 });
+
+test('window instructions match each surface: engine arm identifies the window, turbo gets its own tools truth, extension arms get none', async () => {
+  const { realAgentSetup } = await import('../bench/fowl/real-gate-setup.mjs');
+  const { windowPrompt, turboWindowPrompt } = await import('../bench/fowl/native-setup.mjs');
+  const dir = '/private/tmp/gate-task';
+  const turbo = realAgentSetup({ task, surface: 'sleight-turbo', dir, realBrowser: browser }).prompt;
+  assert.ok(turbo.includes(turboWindowPrompt(browser)));
+  assert.doesNotMatch(turbo, /Identify that window|Sleight Gate|initially titled|PID|If it cannot be identified, stop/);
+  assert.match(turbo, /dedicated Chrome browser, profile /);
+  assert.ok(turbo.includes(browser.profileRoot));
+  assert.match(turbo, /browser_open/);
+  const codex = realAgentSetup({ task, surface: 'codex', dir, realBrowser: browser }).prompt;
+  assert.ok(codex.startsWith(windowPrompt(browser)));
+  assert.match(codex, /Identify that window before acting/);
+  assert.throws(() => turboWindowPrompt({ browser: 'chrome' }), /Isolated real browser required/);
+  assert.throws(() => turboWindowPrompt({ ...browser, browser: 'brave' }), /Isolated real browser required/);
+  assert.throws(() => turboWindowPrompt({ ...browser, marker: '' }), /Isolated real browser required/);
+});

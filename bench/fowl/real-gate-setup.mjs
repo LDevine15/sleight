@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nativeBrowserSetup, windowPrompt } from './native-setup.mjs';
+import { nativeBrowserSetup, windowPrompt, turboWindowPrompt } from './native-setup.mjs';
 import { turboSetup } from '../turbo/setup.mjs';
 import { codexExecPlan } from '../codex-arm.mjs';
 import { modelId } from './accounting.mjs';
@@ -90,7 +90,8 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     metadata: { ...common.metadata, surface, connectionMode: 'engine-computer' } }
     : surface === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
     : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
-  const fullPrompt = arm.promptPrefix + (engine || surface === 'sleight-turbo' ? windowPrompt(realBrowser) : '') + prompt;
+  // The engine arm identifies the window natively. The turbo arm cannot (its tools show tabs, not windows), so it gets its own tools' truth.
+  const fullPrompt = arm.promptPrefix + (engine ? windowPrompt(realBrowser) : surface === 'sleight-turbo' ? turboWindowPrompt(realBrowser) : '') + prompt;
   // Pinned: the same login reported "default" at 17:03 and "auto" from 20:05 on 2026-10-17, and under auto Claude in
   // Chrome sent every page action to a prompt in Chrome that nobody answers. allowedTools still lists each arm's tools.
   const args = ['-p', '--model', modelId(model), '--effort', effort, '--permission-mode', 'default', '--output-format', 'stream-json', '--verbose',
