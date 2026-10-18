@@ -5,7 +5,8 @@ import { createServer } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { check, inspectElement, beginSubmit, finishSubmit, captureSnapshot, deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { check, inspectElement, releaseNavigation, beginSubmit, finishSubmit, captureSnapshot, deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { clickListeners } from '../plugins/sleight/lib/direct-browser/closed-handle.mjs';
 
 const skip = process.env.SLEIGHT_LIVE_DOM_TEST !== '1' ? 'headless real-page qualification runs through sleight-arch host runner' : false;
 const terms = { item: 'Fixture item', method: 'Fixture card', amount: '18.00', payee: 'Fixture shop' };
@@ -177,7 +178,14 @@ for (const type of ['image', 'IMAGE']) test(`real ${type} payment alt without a 
   assert.equal(await f.page.evaluate(() => window.paid), 1);
 });
 
-test('real checkout link is navigation while buttons, payment-form links, javascript: and handler links keep the payment rule', { skip }, async t => {
+// What v3-context does for a link: the page-side read, then the CDP listener evidence on the same node; only "no listeners" releases it.
+async function linkTarget(f, selector) {
+  const target = await f.target(selector), handle = await f.page.locator(selector).elementHandle();
+  try { releaseNavigation(target.element, await clickListeners(handle)); } finally { await handle.dispose(); }
+  return target;
+}
+
+test('real checkout link is navigation while buttons, payment-form links, javascript:, handler and Buy links keep the payment rule', { skip }, async t => {
   const f = await fixture(t, `<main><a id="go" href="/shop/checkout/address">Go to checkout</a>
     <button id="place">Place order</button>
     <form><input autocomplete="cc-number"><a id="inForm" href="/shop/checkout/order">Go to checkout</a></form>
@@ -186,15 +194,22 @@ test('real checkout link is navigation while buttons, payment-form links, javasc
     <a id="hash" href="#charged">Buy now</a>
     <a id="handler" href="/shop/checkout/address" onclick="sessionStorage.paid=(+sessionStorage.paid||0)+1;return false">Go to checkout</a>
     <a id="role" role="button" href="/shop/checkout/address">Go to checkout</a>
-    <a id="figure" href="/charge">Pay $18 now</a></main>
+    <a id="figure" href="/charge">Pay $18 now</a>
+    <a id="buy" href="/shop/buy">Buy now</a>
+    <a id="invoice" href="/invoices/7/pay" data-method="post">Pay invoice</a>
+    <a id="htmx" href="/shop/checkout" hx-post="/shop/checkout">Go to checkout</a>
+    <a id="vue" href="/shop/checkout" @click="pay()">Go to checkout</a>
+    <a id="alpine" href="/shop/checkout" x-on:click="pay()">Go to checkout</a>
+    <a id="ng" href="/shop/checkout" ng-click="pay()">Go to checkout</a>
+    <a id="ping" href="/shop/checkout" ping="/track">Go to checkout</a></main>
     <script>document.querySelector('#place').onclick = () => { sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };
       document.getElementById('hash').onclick = event => { event.preventDefault(); sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };</script>`);
   const paid = () => f.page.evaluate(() => +sessionStorage.paid || 0);
-  const go = await f.target('#go');
+  const go = await linkTarget(f, '#go');
   assert.equal(go.element.payment, false); assert.equal(go.element.submit, false);
   assert.equal(check(f.ctx, 'click', go).verdict, 'allow', 'following the link needs no consent');
-  for (const selector of ['#place', '#inForm', '#js', '#tab', '#hash', '#handler', '#role', '#figure']) {
-    const result = check(f.ctx, 'click', await f.target(selector));
+  for (const selector of ['#place', '#inForm', '#js', '#tab', '#hash', '#handler', '#role', '#figure', '#buy', '#invoice', '#htmx', '#vue', '#alpine', '#ng', '#ping']) {
+    const result = check(f.ctx, 'click', await linkTarget(f, selector));
     if (result.verdict === 'allow') await f.page.locator(selector).click();
     assert.equal(result.verdict, 'confirm', selector);
   }
@@ -204,11 +219,36 @@ test('real checkout link is navigation while buttons, payment-form links, javasc
   assert.equal(await paid(), 0, 'the link followed and charged nothing');
 });
 
+test('real checkout link with an addEventListener handler asks; ancestor and document delegation do not count; no enumeration asks', { skip }, async t => {
+  const f = await fixture(t, `<main id="root"><a id="plain" href="/shop/checkout/address">Go to checkout</a>
+    <a id="click" href="/shop/checkout/address">Go to checkout</a>
+    <a id="down" href="/shop/checkout/address">Go to checkout</a>
+    <a id="key" href="/shop/checkout/address">Go to checkout</a>
+    <a id="child" href="/shop/checkout/address"><span id="inner">Go to checkout</span></a>
+    <a id="focusOnly" href="/shop/checkout/address">Go to checkout</a></main>
+    <script>
+      const charge = event => { event.preventDefault(); sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };
+      click.addEventListener('click', charge); down.addEventListener('pointerdown', charge); key.addEventListener('keydown', charge);
+      inner.addEventListener('mousedown', charge); focusOnly.addEventListener('focus', () => {});
+      document.addEventListener('click', () => {}); document.getElementById('root').addEventListener('click', () => {});
+    </script>`);
+  assert.equal(check(f.ctx, 'click', await linkTarget(f, '#plain')).verdict, 'allow', 'document and ancestor listeners are not the link\'s');
+  assert.equal(check(f.ctx, 'click', await linkTarget(f, '#focusOnly')).verdict, 'allow', 'a focus listener cannot take the click');
+  for (const selector of ['#click', '#down', '#key', '#child']) assert.equal(check(f.ctx, 'click', await linkTarget(f, selector)).verdict, 'confirm', selector);
+  // The enumeration is unavailable (a disposed handle): the link keeps the ask.
+  const target = await f.target('#plain'), handle = await f.page.locator('#plain').elementHandle();
+  await handle.dispose();
+  assert.equal(await clickListeners(handle), undefined);
+  releaseNavigation(target.element, await clickListeners(handle));
+  assert.equal(check(f.ctx, 'click', target).verdict, 'confirm');
+  assert.equal(await f.page.evaluate(() => +sessionStorage.paid || 0), 0);
+});
+
 test('real checkout link costs no payment budget: the payment the user priced proceeds after it, once', { skip }, async t => {
   const f = await fixture(t, `<main><a id="go" href="/shop/checkout/address">Go to checkout</a><button id="place">Place order</button></main>
     <script>document.querySelector('#place').onclick = () => { sessionStorage.paid = (+sessionStorage.paid || 0) + 1; };</script>`);
   f.ctx.userMessage = { source: 'user', id: 'request', session: 'session', turn: 'turn', text: 'Pay for Fixture item with Fixture card', payment: terms };
-  assert.equal(check(f.ctx, 'click', await f.target('#go')).verdict, 'allow');
+  assert.equal(check(f.ctx, 'click', await linkTarget(f, '#go')).verdict, 'allow');
   const place = await f.target('#place');
   assert.equal(check(f.ctx, 'click', place).verdict, 'allow', 'the payment the message priced');
   await f.page.locator('#place').click();

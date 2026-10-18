@@ -59,15 +59,19 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
     if (read(node, 'localName') === 'iframe') { try { return new URL(get(node, 'src'), location.href).origin !== location.origin; } catch { return true; } }
     return (read(node, 'localName') === 'button' || ['submit', 'image'].includes(inputType(node))) && payment(words(node));
   });
-  // Following a plain http(s) link is navigation: it sends nothing, and the page it loads asks for any payment itself. Not navigation:
-  // a link in a payment form, a javascript:, #, mailto: or other-scheme href, a script-driven link (role, inline on* handler, or an
-  // attribute list we cannot read), or link words that show a money figure ("Pay $18 now"). The figure rule is the payment rule's own.
+  // A candidate for navigation, not yet one: a plain http(s) link whose only payment word is "checkout". The element keeps its payment
+  // classification until the caller has the page's listener evidence on the element and calls releaseNavigation, so every other caller of
+  // this reader fails closed. Not a candidate: a link in a payment form; a javascript:, #, mailto: or other-scheme href; no href; any
+  // other payment word (buy, pay, purchase, place order, subscribe ...); a money figure in its words; a button or other role; a
+  // non-anchor link; or a declarative handler attribute (on*, ping, Rails data-method, Turbo, Stimulus, htmx, Vue, Alpine, Angular).
   const href = get(el, 'href').replace(/[\t\n\r]/g, '').replace(/^[\u0000-\u0020]+/, '');
   const names = Element.prototype.getAttributeNames ? Array.from(Element.prototype.getAttributeNames.call(el)) : null;
-  const navigation = tag === 'a' && !button && state.kind === 'link' && !state.formPayment && href !== '' && !href.startsWith('#') &&
+  const matched = words(el).match(/\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/gi) ?? [];
+  state.navigation = state.payment && tag === 'a' && !button && state.kind === 'link' && !state.formPayment && href !== '' && !href.startsWith('#') &&
     (!/^[a-z][a-z0-9+.\-]*:/i.test(href) || /^https?:/i.test(href)) && ['', 'link'].includes(role.toLowerCase()) &&
-    names !== null && !names.some(name => /^on/i.test(name)) && !/[$\u20ac\u00a3\u00a5]\s*\d|\d\s*(?:usd|eur|gbp|dollars?|euros?)\b|\d[.,]\d{2}\b/i.test(words(el));
-  if (navigation) state.payment = false;
+    matched.length > 0 && matched.every(word => word.toLowerCase() === 'checkout') &&
+    names !== null && !names.some(name => /^(?:ping$|on|data-(?:method|turbo|remote|action|confirm)|hx-|@|x-on|v-on|ng-|\(click\)|\[)/i.test(name)) &&
+    !/[$\u20ac\u00a3\u00a5]\s*\d|\d\s*(?:usd|eur|gbp|dollars?|euros?)\b|\d[.,]\d{2}\b/i.test(words(el));
   if ((button || state.kind === 'link') && state.payment) state.submit = true;
   // Any script-driven button in a payment form (div[role=button], button type=button) can charge: its handler is invisible here.
   if (button && state.formPayment && !state.submit && get(el, 'type').toLowerCase() !== 'reset') { state.submit = true; state.scriptButton = true; }
@@ -75,6 +79,14 @@ export function inspectElement(el, unused, read = (node, key) => { const value =
   // Digest of the same node in the same step, for the click shield to compare with what it sealed.
   if (typeof seal === 'function') state.seal = seal(el, read);
   return state;
+}
+
+// The caller read the listeners on the link and its descendants (closed-handle.mjs clickListeners): false means none for click,
+// mousedown, pointerdown, pointerup, auxclick or keydown. Only then does a navigation candidate stop being a payment. true or
+// undefined (the enumeration failed or was unavailable) leaves it a payment.
+export function releaseNavigation(element, listeners) {
+  if (element?.navigation === true && listeners === false) { element.payment = false; element.submit = false; return true; }
+  return false;
 }
 
 // Every spelling of a key that activates (Enter, NumpadEnter, \r, \n, Space) maps to one name, so no alias can dodge the

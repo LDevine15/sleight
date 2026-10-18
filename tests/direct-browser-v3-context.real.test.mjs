@@ -59,6 +59,23 @@ test('real trust join refuses page and tool authority, masked payment controls a
   assert.equal((await f.ctx.check('press',f.target('f1e1',{key:'Enter'}))).verdict,'confirm');
   assert.equal(await f.page.locator('#count').innerText(),'0');
 });
+test('real v3 context: a checkout link with no listener navigates without consent; one with a script listener, or any Buy link, asks', { skip }, async t => {
+  const f = await fixture(t);
+  await f.page.evaluate(() => {
+    document.body.insertAdjacentHTML('beforeend', '<a id="e8" href="/shop/checkout/address">Go to checkout</a><a id="e9" href="/shop/checkout/address">Go to checkout</a><a id="e10" href="/shop/buy">Buy now</a>');
+    document.querySelector('#e9').addEventListener('click', event => { event.preventDefault(); document.querySelector('#count').textContent++; });
+  });
+  assert.equal((await f.ctx.check('click', f.target('e8'))).verdict, 'allow');
+  assert.equal((await f.ctx.check('click', f.target('e9'))).verdict, 'confirm');
+  assert.equal((await f.ctx.check('click', f.target('e10'))).verdict, 'confirm');
+  const result = await f.runSteps(f.tab, [{ do: 'click', ref: 'e9' }], f.ctx);
+  assert.match(result.lines[0], /not run:.*confirmation required/);
+  assert.equal(await f.page.locator('#count').innerText(), '0');
+  const followed = await f.runSteps(f.tab, [{ do: 'click', ref: 'e8' }], f.ctx);
+  assert.doesNotMatch(followed.lines[0], /not run/, followed.lines[0]);
+  await f.page.waitForURL('**/shop/checkout/address', { timeout: 5000 }).catch(() => {});
+  assert.match(f.page.url(), /\/shop\/checkout\/address$/, followed.lines.join('|'));
+});
 test('real request terms are independently read and exact, and one request pays once', { skip }, async t => {
   const f = await fixture(t,'Pay ' + JSON.stringify(terms));
   await f.page.locator('[data-payment-amount]').evaluate(el => { el.setAttribute('data-payment-amount','19.00'); el.textContent='Amount: 19.00'; });
