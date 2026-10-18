@@ -130,7 +130,8 @@ export async function liveRuntime(options, { io } = {}, deps = {}) {
   return { observer, driverFor: app => liveDriver(app, { root, exec, observer }), async close() { rmSync(root, { recursive: true, force: true }); } };
 }
 
-function liveDriver(app, { root, exec, observer }) {
+// forkWorker: the seam the unit tests use for a fake worker; the run forks electron-qualification-worker.mjs.
+export function liveDriver(app, { root, exec, observer, forkWorker = worker }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const base = mkdtempSync(join(root, app.key + '-'));
   const tempRoot = join(base, 'profiles'), stateDir = join(base, 'state'), registryPath = join(base, 'recipes.json');
@@ -158,11 +159,10 @@ function liveDriver(app, { root, exec, observer }) {
   const seen = reply => { if (reply.ok && reply.hostPid) hostPid = reply.hostPid; return reply; };
   // A turn in the given worker, or in a new one (a new consent instance, so a new card).
   async function startWorker(consentWaitMs, sessionId = session, w) {
-    if (!w) { w = worker(); workers.add(w); }
+    if (!w) { w = forkWorker(); workers.add(w); }
     const reply = seen(await w.send('start', message(sessionId, { consentWaitMs })));
     return { w, reply };
   }
-  const drop = async w => { if (!w) return; await w.send('end'); w.kill(); workers.delete(w); if (active === w) active = undefined; };
   // The driver's own admin connection, once the workers' channels have closed (the host takes one administrator at a time).
   async function driverAdmin() {
     const { ensureHost } = await import(new URL('electron-admin.mjs', D));
@@ -216,13 +216,14 @@ function liveDriver(app, { root, exec, observer }) {
     async appAlive() { return !!current && await alive(current.pid); },
     async revoke() { await active.send('revoke'); },
     async resume() { await active.send('resume'); },
-    // Retention is read after the worker is gone, from the host itself; the driver's admin closes before the reconnect.
+    // The indicator's Disconnect in the live worker, which keeps running: the cell's next call goes through that same worker,
+    // so its refusal proves the disconnect. Retention and the closed worker channel come from the host's own status after it.
     async disconnect() {
-      await drop(active);
-      const admin = await driverAdmin();
-      let status;
-      try { status = await admin.status(); } finally { await admin.close?.(); }
-      return { appAlive: await driver.appAlive(), pipeRetained: pipeRetained(status) };
+      const reply = await active.send('disconnect');
+      if (!reply.ok) throw Error(reply.error);
+      const open = reply.status?.workers;
+      if (!Array.isArray(open) || open.length) throw Error(`DISCONNECT_WORKER_CHANNEL_OPEN: ${Array.isArray(open) ? open.length : 'unknown'}`);
+      return { appAlive: await driver.appAlive(), pipeRetained: pipeRetained(reply.status) };
     },
     // In the live worker: release and select again (a new turn, the session grant). Without one: a new worker and its card.
     async reconnect({ consentWaitMs } = {}) {
@@ -250,7 +251,7 @@ function liveDriver(app, { root, exec, observer }) {
     },
     // The host's own ownership recovery once the app is gone; no launch, no card.
     async reconcile() {
-      const w = worker(); workers.add(w);
+      const w = forkWorker(); workers.add(w);
       const reply = await w.send('reconcile', message());
       w.kill(); workers.delete(w);
       return { code: !reply.ok ? (/[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error) : reply.resolved ? null : 'ELECTRON_OWNERSHIP_UNRESOLVED', reason: reply.reason ?? null };

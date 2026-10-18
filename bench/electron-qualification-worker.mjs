@@ -109,6 +109,17 @@ const ops = {
     return { row };
   },
   async revoke() { await base.host.admin.revoke({ session: turn.session }); return {}; },
+  // The indicator's Disconnect: the session's grants end here and at the host, which drops this session's channel and parks
+  // the app's connection. The turn object stays, so the next call meets the grant and host checks, not a missing turn;
+  // the next start releases it. Returns the host's own status once the channel is gone (or after 2 s).
+  async disconnect() {
+    if (!turn) throw Error('V3_WORKER_UNAVAILABLE');
+    base.consent.revokeSession(turn.session);
+    await base.host.admin.revoke({ session: turn.session });
+    let s = await base.host.admin.status();
+    for (let i = 0; i < 20 && s?.workers?.length; i++) { await new Promise(resolve => setTimeout(resolve, 100)); s = await base.host.admin.status(); }
+    return { status: s };
+  },
   async resume() { await base.host.admin.resume(); return {}; },
   async status() {
     const s = await base.host.admin.status();
