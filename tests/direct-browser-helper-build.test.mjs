@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, lstatSync, chmodSync, symlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, lstatSync, chmodSync, symlinkSync, existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,4 +154,56 @@ test('Darwin first-use compiler builds both real sources without launching conse
   assert.equal(result.status, 'ready', JSON.stringify(result));
   for (const name of ['peer-host', 'consent-host']) assert.ok(lstatSync(join(result.directory, name)).size > 1000);
   assert.equal(typeof host.createNativeProcessProvider(result.receipt), 'function');
+});
+
+// A build lock names its owner (pid, process start, creation time). A session killed mid-compile leaves its lock behind, and
+// the next build reclaims it once the owner is gone, its pid now belongs to a later process, or it is older than two compiles.
+const startOf = () => Date.now() - process.uptime() * 1000;
+async function deadPid() {
+  const child = childProcess.spawn(process.execPath, ['-e', '']);
+  await new Promise(resolve => child.on('exit', resolve));
+  return child.pid;
+}
+function plantLock(f, owner, { ageMs = 0 } = {}) {
+  const lock = join(f.cacheRoot, 'build.lock');
+  mkdirSync(f.cacheRoot, { recursive: true, mode: 0o700 }); chmodSync(f.cacheRoot, 0o700);
+  mkdirSync(lock, { mode: 0o700 });
+  if (owner) writeFileSync(join(lock, 'owner.json'), JSON.stringify(owner), { mode: 0o600 });
+  if (ageMs) { const then = new Date(Date.now() - ageMs); utimesSync(lock, then, then); }
+  return lock;
+}
+test('a lock left by a dead owner is reclaimed, and the build goes ahead and releases its own lock', { skip }, async t => {
+  const f = fixture(t), lock = plantLock(f, { pid: await deadPid(), started: startOf(), created: Date.now() });
+  const result = await host.prepareNativeHelpers(f.options);
+  assert.equal(result.status, 'ready', JSON.stringify(result)); assert.equal(f.builds(), 2);
+  assert.equal(existsSync(lock), false);
+});
+test('a live owner\'s lock is respected and left as it is', { skip }, async t => {
+  const owner = { pid: process.pid, started: startOf(), created: Date.now() };
+  const f = fixture(t), lock = plantLock(f, owner);
+  const result = await host.prepareNativeHelpers(f.options);
+  assert.equal(result.status, 'unavailable'); assert.equal(result.code, 'HOST_BUILD_BUSY'); assert.equal(f.builds(), 0);
+  assert.deepEqual(JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')), owner);
+});
+for (const [name, owner, options] of [
+  ['its pid now belongs to a later process', () => ({ pid: process.pid, started: startOf() - 3600000, created: Date.now() })],
+  ['it is older than two compiles', () => ({ pid: process.pid, started: startOf(), created: Date.now() - 601000 })],
+  ['it has no owner file and is older than two compiles', () => undefined, { ageMs: 601000 }],
+]) test('a lock is reclaimed when ' + name, { skip }, async t => {
+  const f = fixture(t), lock = plantLock(f, owner(), options);
+  const result = await host.prepareNativeHelpers(f.options);
+  assert.equal(result.status, 'ready', JSON.stringify(result)); assert.equal(existsSync(lock), false);
+});
+test('a fresh lock without an owner file is still busy (its owner may be writing it)', { skip }, async t => {
+  const f = fixture(t); plantLock(f);
+  assert.equal((await host.prepareNativeHelpers(f.options)).code, 'HOST_BUILD_BUSY');
+});
+test('the build writes its own owner record while it holds the lock', { skip }, async t => {
+  let seen;
+  const f = fixture(t), compile = f.options.compile;
+  const result = await host.prepareNativeHelpers({ ...f.options, async compile(data) {
+    seen ??= JSON.parse(readFileSync(join(f.cacheRoot, 'build.lock', 'owner.json'), 'utf8')); await compile(data);
+  } });
+  assert.equal(result.status, 'ready');
+  assert.equal(seen.pid, process.pid); assert.ok(Math.abs(seen.started - startOf()) < 2000); assert.ok(Math.abs(seen.created - Date.now()) < 60000);
 });

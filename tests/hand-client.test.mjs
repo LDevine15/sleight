@@ -170,6 +170,39 @@ test('settings are read again once a minute: off stops the host, on restarts it,
   assert.ok(h.traces.some(([d, detail]) => d === 'hand-restart' && detail.capture === 'hidden'));
 });
 
+test('the tools check asks xcode-select, never xcrun, and needs swiftc and clang under the developer folder', async () => {
+  const calls = [];
+  const run = dir => async (command, args, options) => { calls.push([command, args, options.env]); if (dir instanceof Error) throw dir; return { stdout: dir + '\n' }; };
+  const tools = ['swiftc', 'clang'];
+  const present = paths => path => paths.some(prefix => tools.some(tool => path === prefix + '/' + tool));
+  assert.equal(await host.appleToolsPresent({ run: run('/Library/Developer/CommandLineTools'), exists: present(['/Library/Developer/CommandLineTools/usr/bin']) }), true);
+  assert.deepEqual(calls[0], ['/usr/bin/xcode-select', ['-p'], { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' }]);
+  assert.equal(await host.appleToolsPresent({ run: run('/Applications/Xcode.app/Contents/Developer'),
+    exists: present(['/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin']) }), true);
+  assert.equal(await host.appleToolsPresent({ run: run(Object.assign(Error('unable to get active developer directory'), { code: 2 })), exists: () => true }), false);
+  assert.equal(await host.appleToolsPresent({ run: run('relative/dir'), exists: () => true }), false);
+  assert.equal(await host.appleToolsPresent({ run: run('/Library/Developer/CommandLineTools'), exists: path => path.endsWith('/swiftc') }), false);
+  assert.ok(calls.every(([command]) => command === '/usr/bin/xcode-select'));
+});
+
+test('close kills a host that ignores the end of its input', async t => {
+  t.after(() => setHandPid(0));
+  const children = [];
+  const client = createHandClient({ setting: () => ({ enabled: true }), built: () => true, killAfterMs: 10,
+    prepare: async () => ({ status: 'ready', spawn: () => { const c = fakeChild(); c.kill = () => { c.killed = true; }; children.push(c); return c; } }) });
+  client.send(frame()); await settle();
+  client.close();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(children[0].ended, true); assert.equal(children[0].killed, true);
+  // A host that exits on its own is not killed.
+  const quiet = createHandClient({ setting: () => ({ enabled: true }), built: () => true, killAfterMs: 10,
+    prepare: async () => ({ status: 'ready', spawn: () => { const c = fakeChild(); c.kill = () => { c.killed = true; }; c.stdin.end = () => { c.exitCode = 0; c.emit('exit', 0, null); }; children.push(c); return c; } }) });
+  quiet.send(frame()); await settle();
+  quiet.close();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(children[1].killed, undefined);
+});
+
 test('prepareHandHost builds through the helper pipeline and its handle starts only the hand, with the capture mode', { skip: process.platform !== 'darwin' && 'macOS only' }, async t => {
   const root = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-hand-build-')))));
   const sourceRoot = join(root, 'sources'), cacheRoot = join(root, 'cache');
@@ -179,7 +212,10 @@ test('prepareHandHost builds through the helper pipeline and its handle starts o
   // Each fake helper writes its arguments next to itself.
   const compile = async ({ binary }) => { builds++; writeFileSync(binary, '#!/bin/sh\nprintf "%s" "$*" > "$0.args"\n', { mode: 0o700 }); };
   assert.equal(host.handHostBuilt({ cacheRoot, sourceRoot }), false);
-  const ready = await host.prepareHandHost({ cacheRoot, sourceRoot, compile });
+  // Without Apple's command-line tools nothing compiles, so xcrun never gets to open macOS's install dialog.
+  assert.deepEqual(await host.prepareHandHost({ cacheRoot, sourceRoot, compile, tools: async () => false }), { status: 'unavailable', code: 'APPLE_TOOLS_MISSING' });
+  assert.equal(builds, 0);
+  const ready = await host.prepareHandHost({ cacheRoot, sourceRoot, compile, tools: async () => true });
   assert.equal(ready.status, 'ready'); assert.equal(builds, 2);
   assert.deepEqual(Object.keys(ready).sort(), ['spawn', 'status'], 'no receipt leaves the hand handle');
   assert.equal(host.handHostBuilt({ cacheRoot, sourceRoot }), true);
@@ -192,8 +228,8 @@ test('prepareHandHost builds through the helper pipeline and its handle starts o
     assert.equal(readFileSync(join(cacheRoot, key, 'consent-host.args'), 'utf8'), '--hand --capture=' + (capture ?? 'hidden'));
   }
   assert.throws(() => ready.spawn({ capture: 'readOnly' }), /HAND_CAPTURE_INVALID/);
-  // The cached build is reused, and a changed source is a different build.
-  assert.equal((await host.prepareHandHost({ cacheRoot, sourceRoot, compile })).status, 'ready'); assert.equal(builds, 2);
+  // The cached build is reused without asking for the tools, and a changed source is a different build.
+  assert.equal((await host.prepareHandHost({ cacheRoot, sourceRoot, compile, tools: async () => false })).status, 'ready'); assert.equal(builds, 2);
   writeFileSync(join(sourceRoot, 'consent-host.swift'), 'changed', { mode: 0o600 });
   assert.equal(host.handHostBuilt({ cacheRoot, sourceRoot }), false);
   assert.deepEqual(await host.prepareHandHost({ cacheRoot, sourceRoot: join(root, 'missing'), compile }), { status: 'unavailable', code: 'HOST_SOURCE_MISMATCH' });

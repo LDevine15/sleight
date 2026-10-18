@@ -34,7 +34,7 @@ export function handWireFrame(frame) {
 
 /** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed. */
 export function createHandClient({ env = process.env, setting = () => handSetting({ env }), built = handHostBuilt, prepare = prepareHandHost,
-  trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000 } = {}) {
+  trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000 } = {}) {
   const nonce = randomBytes(32).toString('hex'), queue = [];
   let seq = 0, child, state, checked = now(), checking = false, capture = 'hidden', running;
   // idle (not started), starting, running, disabled (settings say off; rechecked) or dead (failed this session; final)
@@ -59,6 +59,10 @@ export function createHandClient({ env = process.env, setting = () => handSettin
     queue.length = 0;
     if (!child) return;
     const ending = child; child = undefined;
+    // The host exits at the end of its input. One that hasn't after killAfterMs is killed.
+    const timer = setTimeout(() => { if (ending.exitCode == null && ending.signalCode == null) try { ending.kill(); } catch {} }, killAfterMs);
+    timer.unref?.();
+    ending.once('exit', () => clearTimeout(timer));
     try { ending.stdin.end(); } catch {}
   };
   const die = (reason, detail) => { if (state === 'dead') return; state = 'dead'; stop(); note('hand-off', { reason, ...detail }); };
