@@ -47,6 +47,10 @@ test('launcher bounds a hung call on EOF, collects its engine, then removes its 
   const snapshot = events.find(e => e.direction === 'snapshot-before-call');
   assert.ok(snapshot, 'hung action captured a saved file before forwarding');
   await assert.rejects(stat(snapshot.msg.directory), { code: 'ENOENT' });
+  // The shutdown stamps for the harness tail, in order.
+  const order = ['stop-entry', 'relay-shutdown', 'engine-closed', 'process-exit'].map(name => events.findIndex(e => e.direction === name));
+  assert.ok(order.every(i => i >= 0), JSON.stringify(order));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
 test('launcher stays connected across stop and lazily initializes a new engine with remembered approval', { timeout: 20000 }, async t => {
   const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-restart-test-')));

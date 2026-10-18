@@ -7,10 +7,12 @@ export async function runOwned(command, args, { cwd, env, timeoutMs = 180000, gr
   // The new process group's ID, which is the leader's pid (detached).
   if (child.pid) onSpawn?.(child.pid);
   let leaderExited = false, groupCollected = false;
-  child.once('exit', () => { leaderExited = true; });
+  // Epoch-ms stamps for the harness tail: the last output, the leader's exit, the pipes' close, the group gone.
+  const stamps = { spawnAt: Date.now() };
+  child.once('exit', () => { leaderExited = true; stamps.exitAt = Date.now(); });
   let stdout = '', stderr = '', spawnError, timedOut = false, cancelled = false, stopping = false, force;
   const signalErrors = [];
-  child.stdout.on('data', data => { stdout += data; onStdout?.(data); });
+  child.stdout.on('data', data => { stdout += data; stamps.stdoutAt = Date.now(); onStdout?.(data); });
   child.stderr.on('data', data => { stderr += data; });
   function collected(error) {
     if (error.code !== 'ESRCH' && !(leaderExited && error.code === 'EPERM')) return false;
@@ -40,6 +42,7 @@ export async function runOwned(command, args, { cwd, env, timeoutMs = 180000, gr
   const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
   child.on('error', error => { spawnError = error.message; });
   const exit = await new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+  stamps.closeAt = Date.now();
   clearTimeout(timer); clearTimeout(force); signal?.removeEventListener('abort', abort);
   const alive = () => {
     if (!child.pid || groupCollected) return false;
@@ -60,5 +63,6 @@ export async function runOwned(command, args, { cwd, env, timeoutMs = 180000, gr
     }
   }
   const groupGone = !await alive();
-  return { exit, timedOut, cancelled, spawnError, stdout, stderr, signalErrors, groupClean: groupGone && signalErrors.length === 0 };
+  stamps.groupGoneAt = Date.now();
+  return { stamps, exit, timedOut, cancelled, spawnError, stdout, stderr, signalErrors, groupClean: groupGone && signalErrors.length === 0 };
 }

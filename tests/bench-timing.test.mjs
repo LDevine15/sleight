@@ -3,12 +3,22 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { intervalUnion, runSplit, runTiming, traceTiming } from '../bench/timing.mjs';
+import { intervalUnion, runSplit, runTiming, traceTiming, withStamps } from '../bench/timing.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const at = ms => new Date(Date.UTC(2026, 9, 7) + ms).toISOString();
 const line = (ms, direction, msg) => JSON.stringify({ t: at(ms), direction, msg });
 const call = (id, name) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } });
+
+test('tail stamps are ms from the run start and leave the other figures alone', () => {
+  const timing = { totalMs: 4000, elapsedMs: 4600, harnessMs: 600 };
+  const stamps = { spawnAt: 1005, stdoutAt: 5000, exitAt: 5100, closeAt: 5120, groupGoneAt: 5200 };
+  assert.deepEqual(withStamps(timing, stamps, 1000).tailStamps, { stdoutMs: 4000, exitMs: 4100, closeMs: 4120, groupGoneMs: 4200 });
+  assert.equal(timing.harnessMs, 600);
+  assert.equal(withStamps(undefined, stamps, 1000), undefined);
+  const bare = { totalMs: 1 };
+  assert.equal(withStamps(bare, undefined, 1000), bare); assert.equal(bare.tailStamps, undefined);
+});
 
 test('splits tool time into engine, relay and local tools; a refusal is relay time only', t => {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-timing-')));

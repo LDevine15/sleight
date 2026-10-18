@@ -495,7 +495,7 @@ const runOpen = (file, argv) => new Promise((resolve, reject) =>
 // executable files, relative paths, and anything but an existing regular file. The open goes to the
 // resolved bundle ID, so the app checked is the app that opens the file.
 export async function openDocument(args, { exec = runOpen, resolve = resolveAppId, home = homedir(),
-  fast = false, bundleId: preparedId, current = () => {}, openedFiles,
+  fast = false, bundleId: preparedId, current = () => {}, openedFiles, target,
   hasDocument = async (appId, path) => {
     const result = await runScript('open-file-window.js', { appId, path });
     return result.ok === true && result.matches === true;
@@ -517,8 +517,17 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   }
   current();
   const started = Date.now(), key = JSON.stringify([bundleId, path]);
-  let present = false;
-  if (fast) {
+  let present = false, lazy = false;
+  if (fast && target?.appId === bundleId) {
+    // The app runs, so the engine read that follows decides: the relay opens the file and reads again only
+    // when the window it gets back isn't this file (the osascript probe cost 150 to 200 ms, 2026-10-18). A
+    // file changed since the last open still opens now.
+    try {
+      const lastOpened = openedFiles?.get(key), latest = lstatSync(path);
+      lazy = present = latest.isFile() && latest.mtimeMs === info.mtimeMs &&
+        (lastOpened === undefined || latest.mtimeMs <= lastOpened);
+    } catch { lazy = present = false; }
+  } else if (fast) {
     let timer;
     try {
       present = await Promise.race([
@@ -542,7 +551,14 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   let real = path;
   try { real = realpathSync(path); } catch { /* The open already ran; the plain path still names the file. */ }
   return { ...text(`Opened ${raw} in ${app} in the background.`),
-    _meta: { 'sleight/openedApp': bundleId, 'sleight/openedFile': { path, real, size: info.size } } };
+    _meta: { 'sleight/openedApp': bundleId, 'sleight/openedFile': { path, real, size: info.size, ...(lazy ? { lazy } : {}) } } };
+}
+
+// The relay's follow-up when a running app's window wasn't showing the file: the same background open.
+export async function reopenDocument(bundleId, path, { exec = runOpen, openedFiles } = {}) {
+  const started = Date.now();
+  await exec('/usr/bin/open', ['-g', '-b', bundleId, path]);
+  openedFiles?.set(JSON.stringify([bundleId, path]), started);
 }
 
 const approveOpenFile = (args, approve) => approve(['open_file', args.app],
@@ -657,7 +673,7 @@ export async function callLocalTool(name, args, approve, runLocal = runScript, r
     if (!await approveOpenFile(args, approve)) {
       return text(`The user didn't allow opening files in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
-    return openDocument(args, prepared ? { ...prepared, fast: true } : undefined);
+    return openDocument(args, prepared ? { ...prepared, fast: true, target: resolved } : undefined);
   }
   if (name === 'drag') {
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
@@ -812,7 +828,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     const current = spawn(activeServer.command, activeServer.args, { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...activeServer.env } });
     child = current;
     trace?.('engine-started', { pid: current.pid });
-    childClosed = new Promise(resolve => current.once('close', (code, signal) => resolve({ code, signal })));
+    childClosed = new Promise(resolve => current.once('close', (code, signal) => { trace?.('engine-closed', { code, signal }); resolve({ code, signal }); }));
     let startError;
     current.on('error', err => { startError = err; });
     const observer = firstClientCallRefresh(surfaceCache), cache = surfaceCache;
@@ -919,6 +935,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       tools: localToolDefinitions(),
       prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), { openedFiles }),
+      reopen: (bundleId, path) => reopenDocument(bundleId, path, { openedFiles }),
       call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared),
       target: async args => {
@@ -966,6 +983,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       if (report.engine === 'unconfirmed') stoppingForReceipt = false;
     },
   });
+  // Stamps for the harness tail (stop entry to exit); they only write when SLEIGHT_TRACE is set.
+  process.once('exit', () => trace?.('process-exit', { code: process.exitCode ?? 0 }));
   process.once('exit', () => relay.close());
 
   // Claude Code closing the connection is the end of the session: end the
@@ -973,10 +992,12 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   async function stop(signal) {
     if (stopping) return;
     stopping = true;
+    trace?.('stop-entry', { signal });
     // Begin the deadline before draining, not after an unanswered call.
     const deadline = setTimeout(() => terminateEngine(signal), 3000);
     deadline.unref();
     const ended = await relay.shutdown();
+    trace?.('relay-shutdown', { ended });
     await turnHook?.close();
     if (ended !== false) clearTimeout(deadline);
     terminateEngine(signal);
