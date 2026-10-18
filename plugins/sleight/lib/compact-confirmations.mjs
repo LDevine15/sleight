@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
-// The engine policy and sleight's payment-only rewrite. Unknown wording stays whole.
+// The engine policy and sleight's rewrite (payments, and forms and switches the user asked to submit). Unknown wording stays whole.
 const KNOWN = new Set(['706eb9fe2a96913bf129daed48d60f927e205dc35a9fb2d5ed12d80503bae555',
-  '4c68909e44f7161a050ad5afbe59c6ae89119a73415d581699f22c5999f6c3e8']);
+  '50c78b76fc7a7c47ab6e217a3b57263b9f877e76b3455c16123d91b5a87bb281']);
 const MARKER = '# Computer Use Confirmations Policy';
 
 export function compactConfirmationsPolicy(text) {
@@ -13,6 +13,7 @@ export function compactConfirmationsPolicy(text) {
   if (!KNOWN.has(createHash('sha256').update(policy).digest('hex'))) return;
   const payment = policy.match(/^- \*\*\[11\]\*\*.*$/m)[0].replaceAll('**', '');
   const requested = payment.includes("user's own message");
+  const submit = requested ? policy.match(/^- \*\*\[9\], \[10\]\*\*.*$/m)[0].replaceAll('**', '') + '\n' : '';
   const compact = `${MARKER}
 
 Computer Use can trigger external side effects through live UI actions: request user confirmation before risky actions.
@@ -30,9 +31,8 @@ Transmission is sharing user data with a third party via messages, forms, posts,
 - [2.1, 2.2, 2.5, 2.6] Change cloud permissions/access; final account creation; create API/OAuth keys or persistent access; save browser passwords/cards.
 - [4] Solve CAPTCHAs.
 - [8.3–8.5] Install software/extensions or run newly acquired software through UI; pre-existing software needs no confirmation.
-- [9] Representational communication to third parties (create/modify): low-stakes messages/comments/forms; create/edit appointments/reservations; high-stakes submissions (job app, tax form, credit app, patient note); social likes/reactions; edit public low-stakes posts/comments/website text. Cancel/delete is [1].
-- [10] Subscribe/unsubscribe notifications/email/SMS.
-${requested ? '' : payment + '\n'}- [13] Change VPN settings, OS security settings, computer password through UI.
+- [9] Representational communication to third parties (create/modify): ${requested ? "low-stakes messages/comments, and forms the user's own message didn't ask to submit;" : 'low-stakes messages/comments/forms;'} create/edit appointments/reservations; high-stakes submissions (job app, tax form, credit app, patient note); social likes/reactions; edit public low-stakes posts/comments/website text. Cancel/delete is [1].
+${requested ? '' : '- [10] Subscribe/unsubscribe notifications/email/SMS.\n' + payment + '\n'}- [13] Change VPN settings, OS security settings, computer password through UI.
 - [17] Medical care actions, including patient requests and clinician-on-behalf actions.
 
 ### Pre-approval explicitly permitted in the initial prompt; otherwise confirm at action-time
@@ -42,7 +42,7 @@ ${requested ? '' : payment + '\n'}- [13] Change VPN settings, OS security settin
 - [6] Upload files.
 - [12] UI file move/rename: local, or within the same cloud.
 - [14] Transmit sensitive data: pre-approval must name specific data + specific destination.
-${requested ? payment + '\n' : ''}
+${submit}${requested ? payment + '\n' : ''}
 ### Allowed: no confirmation
 - [3.1, 3.2] Cookie consent; accept ToS/Privacy Policy during account creation.
 - [7] Download files (inbound).
