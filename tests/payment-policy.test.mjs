@@ -82,3 +82,13 @@ test('docs that start after other text are left alone and traced as unmatched', 
   assert.equal(text, 'Notice first.\n' + docs);
   assert.ok(traces.some(e => e.direction === 'payment-confirmation-policy' && e.detail.status === 'unmatched'));
 });
+
+// Owner decision (LAWS 2026-10-18): a booking the user's own message asks for counts as confirmed, so travel r3 would not
+// stop before "Book trip" on the engine [9] rule. Any charge follows the payment rule; a page-proposed booking still asks.
+test('a booking the user asked for counts as confirmed, charges still follow the payment rule, and always keeps [9] as is', t => {
+  for (const confirmPayments of ['requested', 'never']) {
+    const rule = reply(t, docs, { confirmPayments }).text.match(/^- \*\*\[11\]\*\*.*$/m)[0];
+    assert.match(rule, /A booking or reservation the user's own message asks for counts as confirmed under \[9\]; any money it charges follows this rule\. One only the page proposes still asks\./);
+  }
+  assert.doesNotMatch(reply(t, docs, { confirmPayments: 'always' }).text, /booking or reservation the user's own message/);
+});

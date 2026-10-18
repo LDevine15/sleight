@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 // The engine policy and sleight's payment-only rewrite. Unknown wording stays whole.
 const KNOWN = new Set(['706eb9fe2a96913bf129daed48d60f927e205dc35a9fb2d5ed12d80503bae555',
-  '3f672665283b7392bf69d42f5c859b1a6e0c75aca68771ee7d2f968aa38decb2']);
+  '4c68909e44f7161a050ad5afbe59c6ae89119a73415d581699f22c5999f6c3e8']);
 const MARKER = '# Computer Use Confirmations Policy';
 
 export function compactConfirmationsPolicy(text) {

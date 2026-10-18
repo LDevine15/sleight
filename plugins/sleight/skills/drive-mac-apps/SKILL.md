@@ -18,6 +18,9 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - When the task specifies an app, start with `let app = await cua.getApp("<name or bundle ID>")`.
   Use `cua.getState()` only to find an app you can't name. Batch known actions. Re-acquire in a call
   switching apps. Keep the handle and `await` every action.
+- In a form, fill every independent field you already see in one call. Observe again after
+  autocomplete, a selection that adds fields or async validation, then use fresh IDs for the next
+  group. Stop at a required confirmation.
 - After renumbering, prefer stable IDs or labels to element numbers:
   `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
 - End on the action. Its result includes changed lines. Don't read just to confirm them.
@@ -71,7 +74,6 @@ Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` 
 `await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
 Tab input's first argument is an element index or `null`.
-Fill every field you already see in one call.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.
