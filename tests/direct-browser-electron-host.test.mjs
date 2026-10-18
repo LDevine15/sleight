@@ -436,7 +436,9 @@ test('admin channel: the key is the parent\'s per-start secret, no file in the s
   await assert.rejects(h.host.issueTicket({ session: 'stale' }), /GRANT_NOT_CURRENT/);
   current = true;
   channel.write({ op: 'status', id: 3 });
-  assert.equal((await channel.read()).result.ownership.state, 'owned');
+  const shown = (await channel.read()).result;
+  assert.equal(shown.ownership.state, 'owned');
+  assert.deepEqual(shown.workers, ['via-admin'], 'status names the session whose worker is connected, so another one refuses before its card');
   channel.write({ op: 'issue', id: 4, args: { session: 'bad session' } });
   assert.equal((await channel.read()).error.code, 'SESSION_INVALID');
   channel.write({ op: 'issue', id: 7, args: { session: 'other' } });

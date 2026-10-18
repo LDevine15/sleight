@@ -423,6 +423,8 @@ export async function createElectronHost({
   function status() {
     return Object.freeze({ hostId, socket: socketPath, closed, channels: channels.size, tickets: tickets.size,
       ownership: { state: ownership.state, reason: ownership.reason, possibleAppExit: ownership.possibleAppExit === true, lastAttempt: ownership.lastAttempt },
+      // The sessions whose worker channel is open (busyFor's view), so the parent refuses another session before its card.
+      workers: [...new Set([...channels].filter(item => item.role === 'worker' && item.client && !item.dropped).map(item => item.session))],
       broker: broker?.status() });
   }
   function admin(channel, message) {

@@ -123,6 +123,8 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
   const running = status => ['ready', 'parked'].includes(status?.broker?.state) && plain(status.broker.identity);
   // 2. The process the host already holds, or the build and profile before any process exists.
   let status = await admin.status();
+  // Another session's worker is connected: busy now, before sleight's card asks the user for anything.
+  if (Array.isArray(status?.workers) && status.workers.some(other => other !== session)) fail('ELECTRON_BUSY: another session is acting in this app; nothing was sent');
   let instance = running(status) ? launchedFrom(status) : d.instanceFromRecipe(recipe, { ...form, pid: 0, pidBirth: UNLAUNCHED });
   // 3. The debugger grant: an existing one for this exact process, else sleight's own card.
   let grant = consent.grantFor(instance, { session, turn });

@@ -53,10 +53,10 @@ function consentFixture({ engine = () => 'approved' } = {}) {
 }
 
 /** The host as the admin client shows it, over an in-memory model. Every op is recorded; quit is never allowed. */
-function fakeAdmin({ state = 'none', ownership = 'free' } = {}) {
+function fakeAdmin({ state = 'none', ownership = 'free', workers } = {}) {
   const calls = [];
-  const admin = { calls, state, ownership,
-    async status() { calls.push('status'); return { ownership: { state: admin.ownership }, ...(admin.state === 'none' ? {} : { broker: { state: admin.state, epoch: 1, instance: 'i', identity: { pid, birth } } }) }; },
+  const admin = { calls, state, ownership, workers,
+    async status() { calls.push('status'); return { ownership: { state: admin.ownership }, ...(admin.workers ? { workers: admin.workers } : {}), ...(admin.state === 'none' ? {} : { broker: { state: admin.state, epoch: 1, instance: 'i', identity: { pid, birth } } }) }; },
     async start(spec) { calls.push(['start', spec]); admin.state = 'ready'; admin.ownership = 'owned'; return { phase: 'verified' }; },
     async issue(args) { calls.push(['issue', args]); return { handle: 'h' + calls.length }; },
     async revoke(args) { calls.push(['revoke', args]); },
@@ -363,4 +363,17 @@ test('connectAppHost hands the server\'s secret to ensureHost and names the app 
   assert.deepEqual(host.profile, { path: '/private/tmp/sleight-epv3-f2/invalid.fixture.app', temporary: true });
   await assert.rejects(runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret,
     dependencies: deps(async () => { throw Error('ELECTRON_HOST_FOREIGN'); }) }), error => error.message === 'ELECTRON_HOST_FOREIGN' && error.appName === 'Fixture App');
+});
+
+// H4: a second session refuses busy from the host's status, before sleight's card asks the user anything.
+test('another session connected at the host refuses ELECTRON_BUSY before any card, launch or ticket', async () => {
+  const busy = world({ admin: fakeAdmin({ state: 'ready', ownership: 'owned', workers: ['sessionb'] }) });
+  await assert.rejects(busy.select(), /ELECTRON_BUSY: another session is acting in this app; nothing was sent/);
+  assert.equal(busy.consent.presented.length, 0, 'no card');
+  assert.deepEqual(busy.admin.calls, ['status']);
+  const mine = world({ admin: fakeAdmin({ state: 'ready', ownership: 'owned', workers: [session] }), qualify: () => ({ qualified: true }) });
+  const selecting = mine.select(); await tick(); await tick();
+  assert.equal(mine.consent.presented.length, 1, 'this session\'s own channel is not busy');
+  mine.consent.click(0, 'session');
+  await runtime.releaseAppConnection(await selecting);
 });
