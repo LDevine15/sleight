@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 20:37 UTC, after the clear)
+## Banner (2026-10-18 20:52 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -67,6 +67,13 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call). The release pass
    includes MB1 live with turbo connected in Chrome: the glove, the menu, and each of Pause, Disconnect and Turn Turbo Off
    (owner, 2026-10-18).
+
+**Post-1.3.0 build, started 21:0xZ (owner: now, Opus and Sol both, speed and quality).** Opus agents in isolated worktrees,
+branches `claude/p130-<id>`, rules and reports in `ledger/p130/`: gh-a, gh-b and gh-c (ghost hand host and settings, relay
+planner, exclusions), rf1 (Electron relaunch flow), es1 (Electron security fixes), spd (TS3 and TS4 behind flags), ft1 (form-travel
+loss fixes from the study, for 1.3.0). Sol lanes codex-p130a to c work `ledger/queue/p130/` (ET1, FF1, RG1, FL3, AM1FR2, DC1,
+GA1T, EL2, EL3). Live work waits until the race ends. sleight-arch reviews and merges each branch. Post-1.3.0 work merges
+after the tag. ft1 merges after Safari's rounds and then needs new sleight race rounds.
 
 **Owner items:**
 - GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
