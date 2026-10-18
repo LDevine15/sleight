@@ -71,7 +71,7 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
 
 ## 2. After 1.3.0, in the owner's order
 
-Post-release work builds on branches now and merges after the tag (owner, 2026-10-14). On 2026-10-18 the owner had the build rows started at once in lanes on the `post-130` branch (Electron EPV3-1 to EPV3-3, the Q1 reviews, the small queued items), with a Fable design and performance pass for the ghost hand (`ledger/fable-1018-ghost-hand.md`). They merge after the tag, not into the claim build.
+Post-release work builds on branches now and merges after the tag (owner, 2026-10-14). On 2026-10-18 the owner had the build rows started at once in lanes on the `post-130` branch (Electron EPV3-1 to EPV3-3, the Q1 reviews, the small queued items), with a Fable design and performance pass for the ghost hand (`ledger/fable-1018-ghost-hand.md`). The ready ones (Q1-7 to Q1-17, AS-4) went into the claim build the same night, so the claim measures them (owner, 2026-10-18). Electron and the ghost hand ship as 1.3.1 with their own rerun of sleight's claim arm.
 
 1. Electron on turbo v3: EPV3-1 to EPV3-8 (`ledger/electron-v3-plan.md`), carrying over EP-2's cleanup and EP-6's build
    qualification. EPV3-1 is building on `arch/epv3-1` since 2026-10-15, and the rest follow in the plan's order.
