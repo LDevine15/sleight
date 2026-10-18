@@ -10,7 +10,7 @@ export function typingReceiptCall(code = '') {
     new Set(inputs.map(call => call[1])).size === 1;
 }
 
-const signature = lines => lines.filter(line => /^Window: |^\t*\d+ |^The focused UI element is /.test(line)).join('\n');
+const signature = lines => lines.join('\n').trim();
 
 export function typedTextReceipt({ action, content, mark, failed = false }) {
   const before = action?.before;

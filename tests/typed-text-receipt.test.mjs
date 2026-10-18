@@ -55,3 +55,9 @@ test('runtime marker contains only a count, and removing it preserves filtered-r
   const input = [{ type: 'text', text: filtered + writes[0] }, { type: 'image', data: 'AA==' }];
   assert.deepEqual(withoutTypingReceipt(input, mark), [{ type: 'text', text: filtered }, input[1]]);
 });
+
+test('a changed continuation of a multiline value is a tree change', () => {
+  const before = tree.replace('Value: existing', 'Value: existing\nold continuation');
+  const after = tree.replace('Value: existing', 'Value: existing\nnew continuation');
+  assert.equal(typedTextReceipt({ action: { before: { lines: before.split('\n') } }, content: content(after), mark }), undefined);
+});
