@@ -668,6 +668,32 @@ function clickLists(lines) {
   return found;
 }
 
+const siblingLabel = node =>
+  /(?:^|, )Description: (.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(node.body)?.[1] ?? node.description.label;
+
+// Each tab strip by its labels, which survive selection, renumbering and a sheet's own content changing:
+// list key -> { labels in order, element numbers }.
+function tabLists(lines) {
+  const found = new Map();
+  for (const [key, matches] of clickLists(lines)) {
+    const [parentRole, depth, role] = JSON.parse(key);
+    if (matches.length !== 1 || !tabStrip(parentRole, [role])) continue;
+    const labels = matches[0].map(siblingLabel);
+    if (new Set(labels).size !== labels.length) continue;
+    const id = JSON.stringify([parentRole, depth, role, [...labels].sort()]);
+    found.set(id, found.has(id) ? undefined : { labels, nums: matches[0].map(child => child.num) });
+  }
+  return new Map([...found].filter(([, list]) => list));
+}
+
+// The part of two orders that differs, without the ends they share (an Excel strip's arrows and Insert sheet).
+function changedRun(now, was) {
+  let start = 0, end = 0;
+  while (start < now.length && now[start] === was[start]) start++;
+  while (end < now.length - start && now[now.length - 1 - end] === was[was.length - 1 - end]) end++;
+  return [now.slice(start, now.length - end), was.slice(start, was.length - end)];
+}
+
 // Every click in the call whose target sits in a sibling list. A call with other clicks counts too: in
 // excel-edit-2 (2026-10-17) click(7) plus a Name Box click swapped the sheet tabs with no note, and
 // Claude saved the wrong order.
@@ -691,8 +717,7 @@ function clickedSiblings(action) {
       if (matches.length !== 1) continue;
       const index = matches[0].findIndex(child => child.num === num);
       if (index < 0) continue;
-      const target = matches[0][index];
-      const label = /(?:^|, )Description: (.*?)(?=, (?:Value|Secondary Actions|ID|Help|Details):|$)/.exec(target.body)?.[1] ?? target.description.label;
+      const target = matches[0][index], label = siblingLabel(target);
       const [parentRole, , role] = JSON.parse(key);
       clicks.push({ num, key, target: target.key, label, position: index + 1, order: matches[0].map(child => child.key),
         tabs: tabStrip(parentRole, [role]), window: swapDocumentKey(action.before.window) });
@@ -1234,7 +1259,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
-  let latest, observedInResult, observationId = 0, textlessNoted = false;
+  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0;
+  // document key -> tab list key -> { first, last, clicked, blamed, noted }: each tab strip's order when it
+  // first appeared, for the save line, and the tab click a later order change followed.
+  const tabOrders = new Map();
   // app -> its last standard-window read of a file document, the save baseline when the read just
   // before a save is a menu or nothing at all.
   const documents = new Map();
@@ -1245,10 +1273,45 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       !!(latest?.window.app === window.app && latest.window.title === window.title && latest.window.url && !window.url);
     const observation = { id: ++observationId, window, lines, root, degraded,
       incomplete: !ELEMENT.test(lines[1] ?? '') || /…\(\d+\)|sleight: (?:lines changed|no change since)/.test(tree) };
-    observedInResult = observation;
+    observedInResult = observation; resultObservations.push(observation);
     if (!degraded) latest = observation;
     if (/^standard window\b/.test(root) && window.url?.startsWith('file://')) documents.set(window.app, observation);
     return observation;
+  }
+
+  // The save line: excel-edit-8 (2026-10-18) saved a tab order a click had swapped, after the swap note
+  // never came. It needs a confirmed save, an order unlike the strip's first, and that change seen right
+  // after a tab click (a save in between keeps the click). A reorder through a menu or keys blames nothing.
+  function trackTabOrders(action, own, read, halted, note, moved) {
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const entries = key => tabOrders.get(key) ?? tabOrders.set(key, new Map()).get(key);
+    const entry = (lists, key, labels) => lists.get(key) ?? lists.set(key, { first: labels, last: labels }).get(key);
+    if (halted || action && !action.save) for (const lists of tabOrders.values()) for (const item of lists.values()) item.clicked = undefined;
+    if (halted) return;
+    if (own.length && action.before) {
+      const lists = entries(swapDocumentKey(action.before.window));
+      for (const [key, list] of tabLists(action.before.lines)) {
+        const click = own.findLast(click => click.tabs && list.nums.includes(click.num));
+        if (click) entry(lists, key, list.labels).clicked = { label: click.label, call: callCount };
+      }
+    }
+    if (!read) return;
+    const lists = entries(swapDocumentKey(read.window)), now = tabLists(read.lines);
+    for (const [key, { labels }] of now) {
+      const item = entry(lists, key, labels);
+      if (!same(labels, item.last)) {
+        item.blamed = same(labels, item.first) ? undefined : item.clicked?.label;
+        item.last = labels; item.clicked = undefined;
+      } else if (item.clicked && item.clicked.call < callCount && !action?.save) item.clicked = undefined;
+    }
+    if (!action?.save || moved || !/\bsaved: observed\b/.test(note ?? '')) return;
+    for (const [key, { labels }] of now) {
+      const item = lists.get(key);
+      if (!item.blamed || same(labels, item.first) || same(labels, item.noted)) continue;
+      item.noted = labels;
+      const [is, was] = changedRun(labels, item.first);
+      return /* lean notice */ `sleight: tab order changed since you opened it (now: ${is.join(', ')}; was: ${was.join(', ')}) after a click on ${item.blamed}; Cmd+Z restores before saving again.`;
+    }
   }
 
   function compact(tree, prefix, action, refreshNumbers = false) {
@@ -1453,7 +1516,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (compactToolbars && !filter && !failed && !stopped && !action) content = dedupeTrees(content, true, true, sliced, !forceFull && !explicitFull);
       const shownText = filter ? content.filter(item => item?.type === 'text').map(item => item.text
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
-      observedInResult = undefined; textlessNoted = false;
+      observedInResult = undefined; textlessNoted = false; resultObservations = []; callCount++;
       const full = forceFull || explicitFull && !filter;
       const refreshNumbers = typeof code === 'string' && /\.\s*getAXState\s*\(/.test(maskCode(code));
       const shownTrees = new Set();
@@ -1546,50 +1609,66 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       }
       // Keep the reminder only while complete observations still show that order in this document.
       const observation = observedInResult;
-      const safeClickRead = !failed && !stopped && !forceFull && !action?.overlap && observation &&
-        !observation.invalid && !observation.incomplete && !observation.degraded && !observation.delta?.degraded;
-      if (!safeClickRead && (action || observation || failed || stopped)) pendingClicks.clear();
+      const complete = item => item && !item.invalid && !item.incomplete && !item.degraded && !item.delta?.degraded;
+      // A degraded trailing read, such as the first lines of a tree the call printed itself after the engine's whole
+      // tree (excel-edit-8, 2026-10-18), leaves the checks to the last complete read of that window in the result.
+      const trailingDegraded = observation && !observation.invalid && !observation.incomplete && !complete(observation);
+      const checked = complete(observation) ? observation : trailingDegraded ? resultObservations.findLast(item =>
+        complete(item) && swapDocumentKey(item.window) === swapDocumentKey(observation.window)) : undefined;
+      const clickHalted = failed || stopped || forceFull || action?.overlap;
+      const own = action && !clickHalted ? clickedSiblings(action) : [];
       let moved;
-      if (safeClickRead) {
-        const key = swapDocumentKey(observation.window), pending = pendingClicks.get(key);
+      if (!clickHalted && checked) {
+        const key = swapDocumentKey(checked.window), pending = pendingClicks.get(key);
         // A save may expose a delayed move; other new input ends attribution to the earlier clicks.
-        const own = action ? clickedSiblings(action) : [];
         const clicks = action ? (own.length ? own : action.save ? pending : undefined) : pending;
         if (action) pendingClicks.clear();
         else pendingClicks.delete(key);
         const here = clicks?.filter(click => click.window === key) ?? [];
         if (here.length) {
-          moved = here.map(click => clickMoveNote(click, observation)).find(Boolean);
+          moved = here.map(click => clickMoveNote(click, checked)).find(Boolean);
           if (!moved && action && clicks !== pending) pendingClicks.set(key, here);
         }
-      }
+      } else if (!clickHalted && trailingDegraded) {
+        // Nothing complete to check against: the call's own clicks wait for the next complete read.
+        if (action) {
+          const kept = own.length ? own : action.save ? [...pendingClicks.values()].flat() : [];
+          pendingClicks.clear();
+          for (const click of kept) pendingClicks.set(click.window, [...pendingClicks.get(click.window) ?? [], click]);
+        }
+      } else if (action || observation || failed || stopped) pendingClicks.clear();
       if (failed || stopped || action?.overlap || action && (!observation || observation.invalid)) pendingSwaps.clear();
-      if (observation && !observation.invalid) {
-        const key = swapDocumentKey(observation.window), pending = pendingSwaps.get(key);
+      let swapReminder;
+      if (checked || observation && !observation.invalid && !trailingDegraded) {
+        const read = checked ?? observation, key = swapDocumentKey(read.window), pending = pendingSwaps.get(key);
         if (pending) {
-          const matches = siblingGroups(observation.lines).get(pending.key);
-          if (observation.incomplete || observation.degraded || observation.delta?.degraded || matches?.length !== 1 ||
+          const matches = siblingGroups(read.lines).get(pending.key);
+          if (!checked || matches?.length !== 1 ||
               JSON.stringify(matches[0].children.map(node => node.key)) !== JSON.stringify(pending.order)) pendingSwaps.delete(key);
           else if (action?.save && action.before && swapDocumentKey(action.before.window) === key && !failed && !stopped && !action.overlap) {
-            out.push({ type: 'text', text: promptNotice(`sleight: ${pending.summary}.`, prompt) });
+            swapReminder = { type: 'text', text: promptNotice(`sleight: ${pending.summary}.`, prompt) };
             pendingSwaps.delete(key);
           }
         }
       }
       if (action?.clickAndTyping && !failed && !stopped && !action.overlap &&
-          action.before && !action.before.incomplete && !action.before.degraded &&
-          observedInResult && !observedInResult.invalid && !observedInResult.incomplete && !observedInResult.degraded &&
-          !observedInResult.delta?.degraded && observedInResult.delta?.baseline === action.before.id &&
-          documentKey(action.before.window) === documentKey(observedInResult.window)) {
-        const misplaced = misplacedTextNote(action, observedInResult, typed);
-        if (misplaced) out.push({ type: 'text', text: promptNotice(misplaced, prompt) });
-        const swap = swappedSiblings(action.before.lines, observedInResult.lines);
+          action.before && !action.before.incomplete && !action.before.degraded) {
+        if (complete(observedInResult) && observedInResult.delta?.baseline === action.before.id &&
+            documentKey(action.before.window) === documentKey(observedInResult.window)) {
+          const misplaced = misplacedTextNote(action, observedInResult, typed);
+          if (misplaced) out.push({ type: 'text', text: promptNotice(misplaced, prompt) });
+        }
+        const swap = checked && checked.delta?.baseline === action.before.id &&
+          documentKey(action.before.window) === documentKey(checked.window) && swappedSiblings(action.before.lines, checked.lines);
         if (swap) {
-          pendingSwaps.set(swapDocumentKey(observedInResult.window), swap);
+          pendingSwaps.set(swapDocumentKey(checked.window), swap);
           out.push({ type: 'text', text: promptNotice(siblingSwapNote(swap), prompt) });
           moved = undefined; // the swap line already names the clicked item
         }
       }
+      const saveLine = trackTabOrders(action, own, clickHalted ? undefined : checked, clickHalted, note, moved);
+      if (saveLine) out.push({ type: 'text', text: promptNotice(saveLine, prompt) });
+      else if (swapReminder) out.push(swapReminder);
       if (action?.typing && action.before) {
         const key = documentKey(action.before.window);
         if (!failed && !stopped && !action.overlap && !action.before.incomplete && observedInResult && !observedInResult.invalid &&
