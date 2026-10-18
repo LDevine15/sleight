@@ -28,9 +28,14 @@ for (const mode of ['always', 'requested', 'never']) test(`opt-in native confirm
   if (mode === 'always') {
     assert.match(always, /\[11\].*financial transactions.*scheduling.*canceling.*subscriptions/i);
     assert.doesNotMatch(preapproval, /\[11\]/);
+    assert.match(always, /^- \[10\] Subscribe\/unsubscribe/m);
+    assert.match(always, /low-stakes messages\/comments\/forms;/);
   } else {
     assert.doesNotMatch(always, /\[11\]/);
     assert.ok(preapproval.includes(docs.match(/^- \*\*\[11\]\*\*.*$/m)[0].replaceAll('**', '')));
+    assert.doesNotMatch(always, /^- \[10\]/m);
+    assert.match(always, /low-stakes messages\/comments, and forms the user's own message didn't ask to submit;/);
+    assert.ok(preapproval.includes(docs.match(/^- \*\*\[9\], \[10\]\*\*.*$/m)[0].replaceAll('**', '')));
   }
 });
 

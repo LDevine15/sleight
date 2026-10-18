@@ -25,6 +25,7 @@ import { randomBytes } from 'node:crypto';
 import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
 import { promptNotice } from './prompt-notice.mjs';
+import { unchangedListClicks } from './offscreen-click.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -1238,8 +1239,11 @@ const scrollTargets = code => [...maskCode(code).matchAll(/\.\s*scroll\s*\(/g)].
 });
 // Travel's airport search took 15 calls and 88.7 s, 45.7 s of it between calls; one call that scrolled
 // and read in a loop found and selected the airport in 33 s (Firefox, 2026-10-17).
-export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, ' +
-  'scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.';
+// The next call wrote the loop this note described in 2 of 3 Safari form-travel runs (race-1017), so the
+// paging helper comes first and the loop only when it stops (not a list, unsorted, or keys that don't page).
+export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scrolled this list. In one call, click a row, then ' +
+  '`await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: ' +
+  'scroll, read with getAXState(), and stop when the target shows or the rows stop changing.';
 
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false, prompt,
   callTrees = process.env.SLEIGHT_CALL_TREES !== 'all', scrollNote = process.env.SLEIGHT_SCROLL_NOTE !== '0',
@@ -1260,7 +1264,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
-  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0;
+  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0, listClicks = [];
   // document key -> tab list key -> { first, last, clicked, blamed, noted }: each tab strip's order when it
   // first appeared, for the save line, and the tab click a later order change followed.
   const tabOrders = new Map();
@@ -1482,6 +1486,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
     process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK } = {}) {
+      listClicks = [];
       if (!Array.isArray(content)) return content;
       let filtered, typed;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -1623,6 +1628,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const checked = complete(observation) ? observation : trailingDegraded ? resultObservations.findLast(item =>
         complete(item) && swapDocumentKey(item.window) === swapDocumentKey(observation.window)) : undefined;
       const clickHalted = failed || stopped || forceFull || action?.overlap;
+      // List rows a numbered click left unchanged, compared against the tree the call started from.
+      listClicks = !clickHalted && action?.before && !action.before.incomplete && !action.before.degraded && complete(observation) &&
+        observation.delta?.baseline === action.before.id && documentKey(action.before.window) === documentKey(observation.window)
+        ? unchangedListClicks(action.code, action.before.lines, observation.lines).map(click => ({ ...click, window: observation.window })) : [];
       const own = action && !clickHalted ? clickedSiblings(action) : [];
       let moved;
       if (!clickHalted && checked) {
@@ -1828,6 +1837,37 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // A literal number Claude took from an older tree names the element it saw there. When that
     // element's text is on exactly one line of the current tree, the action can name it by that
     // line ({ line }), which the guard looks up fresh, instead of costing Claude a read and a turn.
+    // { id: "18" } written for element 18: 2 of 3 Safari form-travel runs (race-1017), each stop a call. When the
+    // tree Claude last saw has element 18 and no element whose ID or label is "18", the number is the only reading,
+    // so the action names it bare and gets the number checks. Two readings, or a number it never saw, stay as written.
+    // So does every { id } after an earlier action in the call, or in a loop: a click can open a picker whose day has
+    // ID 18, and then Claude's tree no longer settles it. Leading zeros go out in decimal ("010" would be octal 8).
+    numberIds(window, code) {
+      const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
+      if (!entry || typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every)\(/.test(maskCode(code))) return undefined;
+      const believed = new Map(entry.believed ?? numbered(entry.lines));
+      const lines = [...believed.values()].map(line => line.replace(/^\t*/, ''));
+      // Only a top-level statement (no enclosing bracket, arrow or function, so it runs once and now) with nothing but
+      // reads before it: any other call, in any spelling (app["click"](24), a helper, an IIFE), may have acted.
+      const masked = maskCode(code), reads = /^(?:getAXState|getAXStateAndScreenshot|getScreenshot|getApp|getState|listApps|write)$/;
+      const settled = at => {
+        const before = masked.slice(0, at);
+        let depth = 0;
+        for (const ch of before) depth += '([{'.includes(ch) ? 1 : ')]}'.includes(ch) ? -1 : 0;
+        if (depth !== 0 || /=>|\bfunction\b/.test(before)) return false;
+        return [...before.matchAll(/([\w$]+|[\])])\s*(?:\?\.\s*)?\(/g)].every(m => /^(?:if|await)$/.test(m[1]) ||
+          (reads.test(m[1]) && before.slice(0, m.index).trimEnd().endsWith('.')));
+      };
+      const sent = [];
+      const out = code.replace(/(\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*)\{\s*(?:id|"id"|'id')\s*:\s*(["'])(\d+)\2\s*\}(?=\s*[,)])/g, (whole, head, quote, digits, at) => {
+        const number = Number(digits), forms = [...new Set([digits, String(number)])];
+        if (!settled(at) || !believed.has(number) ||
+            lines.some(line => forms.some(form => hasIdentifier(line, form) || hasLabel(line, form)))) return whole;
+        sent.push({ id: digits, number, line: believed.get(number).replace(/^\t*/, '') });
+        return head + number;
+      });
+      return sent.length ? { code: out, sent } : undefined;
+    },
     // Undefined unless every stale number in the call can be named that way.
     remapStale(window, code) {
       const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
@@ -1862,5 +1902,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Whether the last process() call added the textless-document note. open_file then adds a screenshot
     // in its place, so the hint switch, a spent hint and an earlier screenshot of the window apply to both.
     lastReadNoted() { return textlessNoted; },
+    // The last processed result's unchanged list-row clicks, for the relay's offscreen check.
+    listClicks() { return listClicks; },
   };
 }

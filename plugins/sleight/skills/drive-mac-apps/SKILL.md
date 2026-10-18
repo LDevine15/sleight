@@ -18,14 +18,14 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - When the task specifies an app, start with `let app = await cua.getApp("<name or bundle ID>")`.
   Use `cua.getState()` only to find an app you can't name. Batch known actions. Re-acquire in a call
   switching apps. Keep the handle and `await` every action.
-- In a form, fill every independent field you already see in one call. Put autocomplete last.
+- In a form, fill every independent visible field in one call. Put autocomplete last.
   `setValue` fields. Observe again after
-  autocomplete, a selection that adds fields or async validation, then use fresh IDs for the next
-  group. Stop at a required confirmation.
+  autocomplete, a field-adding selection or async validation, then use fresh IDs.
+  Stop at a required confirmation.
 - In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that
   call.
-- After renumbering, prefer stable IDs or labels to element numbers:
-  `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
+- After renumbering, prefer an `ID:` value or label to an element number:
+  `await app.click({ id: "<ID: value>" }); await app.click({ label: "<label>" })`.
 - End on the action. Its result includes changed lines. Don't read just to confirm them.
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
@@ -55,8 +55,9 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - Don't switch back to a sheet or tab just to look at it before saving. Clicks can drag tabs: switch
   with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
-  later edits.
-- If scrolling fails, use search or keyboard navigation. In a focused sorted list, `await app.pickFromList("<exact row label>")` pages by key and clicks the row.
+  edits.
+- A list with more rows than it shows: click it, then `await app.pickFromList("<whole row text>")` in that call.
+  Skip scrolling, typed prefixes and read loops. If it stops, search or use keys.
 
 ## When to stop
 
@@ -92,7 +93,7 @@ Click a button that may open a page dialog (pay, delete, leave) with
 
 ## sleight's other tools
 
-- To move selected text, select it in `js`, then call the `drag` tool, not `app.drag`.
+- Reorder rows or move selected text (select it in `js`) with the `drag` tool, not `app.drag`.
 - Engine events don't trigger hover. Before the `hover` tool, try `Help:`, `Secondary Actions:`,
   right-click or keys.
 - `notifications` presses buttons on banners, which leave in seconds, so act at once.

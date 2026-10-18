@@ -15,7 +15,7 @@ function run() {
   return JSON.stringify([axPair($.AXValueCreate(1, point.bytes), 1), axPair($.AXValueCreate(2, size.bytes), 2)]);
 }`;
 
-for (const file of ['drag.js', 'window-identity.js']) {
+for (const file of ['drag.js', 'window-identity.js', 'element-visibility.js']) {
   test(`${file} reads AX points and sizes through real JXA`, { skip: process.platform !== 'darwin' && 'macOS only' }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'ax-geometry-'));
     try {

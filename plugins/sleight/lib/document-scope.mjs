@@ -162,6 +162,33 @@ export function sameElement(was, now) {
   return false;
 }
 
+// Where element `number` of the tree `before` is in the tree `after`, for a line with no ID, description or help that an
+// earlier action in the call renumbered: Safari's AutoFill button under a filled name field moved the email field from 22
+// to 23 and the guard stopped in 3 of 3 form-travel runs (race-1017). Only one inserted or removed block of rows may explain
+// the shift: without it, every row is the same element at the same depth and in the same order as before, and the target's
+// number moved by the block's size. A reorder (a sort that swaps two cards) is no such block. The target's whole line must
+// also be on exactly one element in each tree, and a bare role says nothing about which element it was. Any doubt returns
+// no element, so the caller stops as before.
+export function samePlace(before, number, after) {
+  const rows = text => String(text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*?)\r?$/.exec(line)).filter(Boolean)
+    .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
+  const old = rows(before), now = rows(after), at = old.findIndex(row => row.number === number);
+  const line = old[at]?.line;
+  if (line === undefined || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line) || old.filter(row => row.line === line).length !== 1 ||
+      now.filter(row => row.line === line).length !== 1) return [];
+  // Inserted rows are in `now` (size > 0), removed rows in `old` (size < 0).
+  const size = now.length - old.length, [long, short] = size >= 0 ? [now, old] : [old, now], k = Math.abs(size);
+  const same = (a, b) => a.depth === b.depth && sameElement(a.line, b.line);
+  let start = 0;
+  while (start < short.length && same(short[start], long[start])) start++;
+  if (!k || short.slice(start).some((row, i) => !same(row, long[start + k + i]))) return [];
+  // The target moved with the rows after the block, and was not part of it.
+  const to = at < start ? at : size > 0 ? at + k : at - k;
+  if (to < 0 || (size < 0 && at < start + k && at >= start)) return [];
+  const hit = now[to];
+  return hit && hit.line === line && hit.number === number + (at < start ? 0 : size) ? [[hit.number, line]] : [];
+}
+
 // Only a resolved focus outside the clicked field's subtree proves a mismatch. Focus on the settable
 // field that holds the clicked element counts as inside: a click on a field's inner text node focuses
 // the field itself (Firefox address bar, 3 of 9 runs, 2026-10-18). Missing rows or focus leave the
@@ -431,14 +458,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
       return !!before.opened;
     };
     state.failures = []; state.getAppFailures = [];
-    // Element lines at this call's first action, which Claude's numbers refer to.
-    state.callElements = new WeakMap();
+    // Element lines at this call's first action, which Claude's numbers refer to, and the tree they came from.
+    state.callElements = new WeakMap(); state.callTrees = new WeakMap();
     const elements = ${elementLines.toString()};
     const contexts = ${elementContexts.toString()};
     const hasIdentifier = ${hasIdentifier.toString()};
     const hasLabel = ${hasLabel.toString()};
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
+    const samePlace = ${samePlace.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const selectedMenuEntry = ${selectedMenuEntry.toString()};
     const trappingMenu = ${trappingMenu.toString()};
@@ -747,12 +775,20 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             : typeof spec?.id === 'string' && typeof spec?.label === 'string' ? ['ID ' + JSON.stringify(spec.id) + ' and label', spec.label, (line, value) => hasIdentifier(line, spec.id) && hasLabel(line, value)]
             : typeof spec?.id === 'string' ? ['ID', spec.id, hasIdentifier]
             : typeof spec?.label === 'string' ? ['label', spec.label, hasLabel] : ['line', spec?.line, (line, value) => line === value];
+          // An element number written as an ID ({ id: "18" }) matches no label or bare line: it may mean element 18 or an
+          // element labeled 18 (a date picker's days), and the guard doesn't choose. The relay sends it as a number when
+          // the tree Claude saw allows only that reading (FT1c, form-travel, race-1017).
+          const numeric = kind === 'ID' && /^\\d+$/.test(target);
+          const bareLine = line => /^[a-z][a-z ]* /.test(line) &&
+            !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target;
           const findTarget = lines => {
             let found = [...lines].filter(([, line]) => match(line, target));
             if (bare !== undefined && !found.length) found = [...lines].filter(([, line]) => hasIdentifier(line, target));
+            // An { id } that no element carries is taken as a label, as { label } would be: { id: "Reference code" } reached
+            // only the field's text label by the bare-line match below, which the engine can't set (form-travel r2, race-1017).
+            if (!found.length && kind === 'ID' && !numeric) return [...lines].filter(([, line]) => hasLabel(line, target) || bareLine(line));
             // A bare line carries no ID, so it can't satisfy { id, label }.
-            if (!found.length && kind !== 'line' && !kind.endsWith(' and label')) found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
-              !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target);
+            if (!found.length && kind !== 'line' && !kind.endsWith(' and label') && !numeric) found = [...lines].filter(([, line]) => bareLine(line));
             return found;
           };
           const codeRead = typeof args[0] === 'number' && !byId && state.literals && !state.literals.has(args[0]) ? state.codeReads.get(proxy) : undefined;
@@ -864,9 +900,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             // A read on a busy Mac can drop attributes: "button One" for "button Description: 1,
             // ID: One" (2026-10-09). With no match at all, one bare line named exactly that is it.
             let found = findTarget(elements(text));
+            // An { id } that matched by label is looked up as { label } is from here on.
+            const asLabel = kind === 'ID' && found.length > 0 && !found.some(([, line]) => hasIdentifier(line, target));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
             let barItems = [], outside = [];
-            if (found.length > 1 && (kind === 'label' || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
+            if (found.length > 1 && (kind === 'label' || asLabel || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
               // A menu-bar title sharing its label with one element outside the menu bar means that element: { label: "Table" }
               // opened Word's Table menu, which then trapped typing (word-edit-1 and -2, 2026-10-17).
               // A window root named like the title isn't a control, and a disabled one leaves the enabled preference below to choose.
@@ -879,13 +917,20 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               const content = found.filter(([number]) => ancestry.get(number)?.content);
               if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
             }
+            // A field and its text label share the label, and setValue on the text fails (-10005, not settable): of several
+            // matches, the one settable element is the field (form-travel, race-1017: Reference code, Full name, Email).
+            if (name === 'setValue' && found.length > 1) {
+              const settable = found.filter(([, line]) => /^[a-z][a-z ]* \\([^()]*\\bsettable\\b[^()]*\\)/.test(line));
+              if (settable.length === 1) found = settable;
+            }
             const disabledNote = !found.length && (kind === 'label' || kind === 'label or ID') ? disabledLabelNote(text, target) : undefined;
             if (disabledNote) throw stop('sleight stopped before ' + name + ': ' + disabledNote);
             if (found.length !== 1) {
               const split = barItems.length && outside.length > 1 && found.length > 1;
               const candidates = split ? 'menu-bar item ' + barItems.map(([number]) => number).join(', ') + '; other elements ' + outside.map(([number]) => number + ' (parent ' + ancestry.get(number).parent + ')').join(', ')
                 : found.map(([number]) => 'candidate ' + number + ': parent ' + ancestry.get(number).parent).join('; ');
-              throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ${quoted(/* lean notice */ ' Use an element number or another ID from the window below.')});
+              throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + (asLabel ? 'label' : kind) + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ${quoted(/* lean notice */ ' Use an element number or another ID from the window below.')} +
+                (numeric ? ${quoted(/* lean notice */ ' An element number goes bare: ')} + name + '(' + target + ').' : ''));
             }
             args = [found[0][0], ...args.slice(1)];
           }
@@ -907,7 +952,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
           if (codeRead) {
-            if (!state.callElements.has(proxy)) state.callElements.set(proxy, elements(text ?? ''));
+            if (!state.callElements.has(proxy)) { state.callElements.set(proxy, elements(text ?? '')); state.callTrees.set(proxy, text); }
             const was = codeRead.get(args[0]), now = elements(text ?? '').get(args[0]);
             if (!sameElement(was, now)) {
               const moved = [...codeRead.values()].filter(line => line === was).length === 1 ? sameLine(was) : [];
@@ -916,7 +961,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             }
           }
           else if (!state.callElements.has(proxy)) {
-            if (text !== undefined || !state.firstOff) state.callElements.set(proxy, elements(text ?? ''));
+            if (text !== undefined || !state.firstOff) { state.callElements.set(proxy, elements(text ?? '')); state.callTrees.set(proxy, text); }
             // The window can renumber between Claude's read and this call: TextEdit gave a saved
             // document a URL and 14 became File (textedit-save, 2026-10-09). When the line Claude saw
             // is now on exactly one element, act there, as the relay's remap does between calls: a
@@ -932,13 +977,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             }
           }
           else if (typeof args[0] === 'number' && !byId) {
-            const was = (state.bind ? state.boundNumbers.get(proxy)?.get(literal)?.line : undefined) ?? state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);
+            const bound = state.bind ? state.boundNumbers.get(proxy)?.get(literal)?.line : undefined;
+            const was = bound ?? state.callElements.get(proxy).get(args[0]), now = elements(text).get(args[0]);
             // Calculator renumbers every button when its first click closes the history, so a batch
             // of numbers from one read went stale and Claude rewrote it as an ID lookup over four calls
             // (calculator-click, 2026-10-10). The element Claude meant is the line it saw: when that
             // line, with an ID, description or help, is in the new tree exactly once, act on it there.
-            const moved = sameElement(was, now) || typeof was !== 'string' || !/\\b(?:ID|Description|Help): /.test(was) ? []
-              : [...elements(text)].filter(([, line]) => sameElement(was, line));
+            // A line without them must also keep its place in the call's first tree (samePlace).
+            const moved = sameElement(was, now) || typeof was !== 'string' ? []
+              : /\\b(?:ID|Description|Help): /.test(was) ? [...elements(text)].filter(([, line]) => sameElement(was, line))
+              : bound === undefined ? samePlace(state.callTrees.get(proxy), args[0], text) : [];
             if (moved.length === 1) {
               nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
               args = [moved[0][0], ...args.slice(1)];

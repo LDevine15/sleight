@@ -150,7 +150,7 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /nodeRepl\.write\(await sleight\.fillForm\(tab,/);
     assert.match(skill, /takes each field by label or locator \(an index needs a stable ID in the tree\)/);
     if (!env.SLEIGHT_PROMPT) assert.match(skill, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
-    else assert.doesNotMatch(skill, /pickFromList/);
+    else assert.doesNotMatch(skill, /sleight\.pickFromList/);
     assert.match(skill, /[Rr]ead once at the end/);
     assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*confirmation policy\sdoesn't require confirming it\./);
     assert.match(skill, /Otherwise stop before the final click\./);
@@ -172,7 +172,7 @@ test('the default skill retains extension selection and lean retains precise saf
   assert.match(normal, /Several Chromium browsers report as Chrome/);
   assert.match(normal, /metadata\.extensionInstanceId.*await cua\.listBrowsers\(\)/s);
   assert.match(normal, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
-  assert.doesNotMatch(lean, /pickFromList/);
+  assert.doesNotMatch(lean, /sleight\.pickFromList/);
   assert.match(normal, /cua\.getBrowser\(\{ extensionInstanceId \}\).*in a call of its own/s);
   assert.match(lean, /tell the user first that it moves their pointer/i);
   assert.match(lean, /ask the user to run `bin\/sleight-mcp --doctor` from the plugin folder/);

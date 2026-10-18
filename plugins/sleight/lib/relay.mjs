@@ -92,6 +92,7 @@ import { pickFromListCode } from './pick-from-list.mjs';
 import { backgroundLinksCode } from './browser-background-links.mjs';
 import { browserAliasesCode, createBrowserAliasNotices } from './browser-aliases.mjs';
 import { reorderCode, rewriteDragAttempt } from './reorder.mjs';
+import { offscreenNotes, withOffscreenNotes } from './offscreen-click.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { ReplWarmup, replSetupCode, browserWarmupUseCode } from './repl-warmup.mjs';
@@ -211,7 +212,7 @@ function requireNote(refused, saved, prompt) {
 // The skill's rules for an open_file result under SLEIGHT_OPEN_RULES=short: without what open_file already
 // did (acquiring, choosing a window, opening a document), tap coordinates, the drag, hover and banner tools,
 // and the doctor line. Every safety passage stays word for word, and a heading left empty goes too.
-const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- Multiply tap coordinates|- Acquire a document that's already open|- To move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Selected text: |If `js` fails to start|Startup failure: )/;
+const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- Multiply tap coordinates|- Acquire a document that's already open|- Reorder rows or move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Rows, text selected in |If `js` fails to start|Startup failure: )/;
 export function openFileRules(rules) {
   if (typeof rules !== 'string') return rules;
   const blocks = [];
@@ -662,6 +663,8 @@ export function createRelay({
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
+  // Whether a list row a click left unchanged lies outside the list's visible frame (offscreen-click.mjs).
+  elementVisibility,
   menuContinuationTimeoutMs = 600,
   // A tab the call's own Cmd+T or Ctrl+T opened in the leased window carries the call on (menu-continuation.mjs
   // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
@@ -3097,10 +3100,19 @@ export function createRelay({
       if (numberedHandles(msg.params.arguments.code).length > 1) {
         leaseStop(msg, promptNotice('send numbered actions on one handle per call. Read that window before acting.', prompt)); return;
       }
+      const ids = compactor.numberIds(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
+      if (ids) {
+        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: ids.code } } };
+        for (const sent of ids.sent) {
+          const line = sent.line.length > 60 ? sent.line.slice(0, 57) + '...' : sent.line;
+          remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + `sleight: { id: "${sent.id}" } was sent as element ${sent.number}, ${line}.`);
+        }
+        trace('id-numbers', { id: msg.id, numbers: ids.sent.map(s => s.number) });
+      }
       const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
       if (stale) {
         msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
-        remapNotes.set(msg.id, 'sleight: numbers in this window changed since you saw them, so ' +
+        remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + 'sleight: numbers in this window changed since you saw them, so ' +
           stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
         trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
       }
@@ -4297,7 +4309,7 @@ export function createRelay({
       else if (msg.error && typeof msg.error.message === 'string') msg.error.message += '\n' + panelNote;
     }
     // Last, after every check above has read the full tree.
-    let chromeSettle = false;
+    let chromeSettle = false, listClicks = [];
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       chromeSettle = !automatic && !confirmedBrowser && jsCode !== undefined && !msg.error &&
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
@@ -4360,6 +4372,7 @@ export function createRelay({
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
+      if (!automatic && elementVisibility && jsCode !== undefined && !msg.result.isError) listClicks = compactor.listClicks();
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }
@@ -4374,33 +4387,48 @@ export function createRelay({
       const own = withheld.get(msg.id) ?? (isOwnHost(msg.result?._meta?.['codex/toolSurface']?.app?.appId) ||
         ownWindow(lastWindowFromText(shown) || undefined) ? OWN_HOST_LINE : undefined);
       withheld.delete(msg.id);
-      if (own) { delete msg.error; msg.result = { isError: true, content: [{ type: 'text', text: own }] }; }
+      if (own) { delete msg.error; msg.result = { isError: true, content: [{ type: 'text', text: own }] }; listClicks = []; }
     }
-    if (chromeSettle && !chromeSettled.has(msg.id)) {
-      const handle = chromeSettleHandle(jsCode);
-      const first = lastImageData(msg.result.content);
-      if (handle && first !== undefined) {
-        chromeSettled.add(msg.id);
-        const generation = stopGeneration;
-        waitForMatchingScreenshots({
-          first, take: () => extraChromeScreenshot(handle), now, sleep: chromeSettleSleep,
-          limitMs: chromeSettleMs, intervalMs: chromeSettleIntervalMs,
-        }).then(result => {
-          if (generation !== stopGeneration || disposed || closing) return;
-          if (result.data !== undefined && result.data !== first) {
-            msg.result.content = replaceLastImage(msg.result.content, result.data);
-          }
-          trace('chrome-settle', { id: msg.id, waitedMs: result.waitedMs, matched: result.matched, shots: result.shots });
-          toClient(msg);
-        }).catch(error => {
-          if (generation !== stopGeneration || disposed || closing) return;
-          trace('chrome-settle', { id: msg.id, error: error.message });
-          toClient(msg);
-        });
-        return;
+    const deliver = () => {
+      if (chromeSettle && !chromeSettled.has(msg.id)) {
+        const handle = chromeSettleHandle(jsCode);
+        const first = lastImageData(msg.result.content);
+        if (handle && first !== undefined) {
+          chromeSettled.add(msg.id);
+          const generation = stopGeneration;
+          waitForMatchingScreenshots({
+            first, take: () => extraChromeScreenshot(handle), now, sleep: chromeSettleSleep,
+            limitMs: chromeSettleMs, intervalMs: chromeSettleIntervalMs,
+          }).then(result => {
+            if (generation !== stopGeneration || disposed || closing) return;
+            if (result.data !== undefined && result.data !== first) {
+              msg.result.content = replaceLastImage(msg.result.content, result.data);
+            }
+            trace('chrome-settle', { id: msg.id, waitedMs: result.waitedMs, matched: result.matched, shots: result.shots });
+            toClient(msg);
+          }).catch(error => {
+            if (generation !== stopGeneration || disposed || closing) return;
+            trace('chrome-settle', { id: msg.id, error: error.message });
+            toClient(msg);
+          });
+          return;
+        }
       }
+      if (!startup?.reply(msg)) toClient(msg);
+    };
+    // A list row the call's click left unchanged: the helper says whether it lies outside the list's visible
+    // frame, and its note replaces "UI changed". The result waits for at most the helper's deadline.
+    if (listClicks.length) {
+      const generation = stopGeneration, appId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
+      offscreenNotes(listClicks, elementVisibility, { ...listClicks[0].window, appId }, prompt).catch(() => []).then(notes => {
+        if (generation !== stopGeneration || disposed || closing) return;
+        trace('offscreen-click', { id: msg.id, clicks: listClicks.length, notes: notes.length });
+        if (notes.length) msg.result.content = withOffscreenNotes(msg.result.content, notes);
+        deliver();
+      });
+      return;
     }
-    if (!startup?.reply(msg)) toClient(msg);
+    deliver();
   }
 
   // Ends the open turn, if any call used it. Resolves once the server answers

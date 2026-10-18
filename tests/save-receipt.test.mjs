@@ -125,7 +125,7 @@ test('open rules keep every safety passage and drop what an open already did', (
     const short = openFileRules(full);
     for (const passage of baseline.skillSafety) assert.ok(short.includes(passage), passage);
     assert.ok(short.length < full.length * (env.SLEIGHT_PROMPT ? 0.9 : 0.8), `${short.length} of ${full.length}`);
-    assert.doesNotMatch(short, /select_window|tap coordinates|--doctor|trigger hover|Selected text:/);
+    assert.doesNotMatch(short, /select_window|tap coordinates|--doctor|trigger hover|Selected text:|Rows, text selected|Reorder rows/);
     assert.doesNotMatch(short, /\n\n\n|## [^\n]*\n\n## /);
     if (!env.SLEIGHT_PROMPT) {
       assert.match(short, /End on the action\./);

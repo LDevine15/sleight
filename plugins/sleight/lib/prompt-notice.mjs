@@ -49,9 +49,10 @@ export function promptNotice(text, prompt) {
     .replace('`js` has no `require` and no file system access.', '`js` has no `require` or file access.')
     .replace(" The save result's `on disk:` field already gives the saved file's size and kind.", " The save's `on disk:` gives size and kind.")
     .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.')
+    .replace(/ is outside the visible part of (.+?), so this click didn't reach it\. Scroll it into view with (`[^`]*`), then click it again\./, " is outside $1's view; click missed. $2, then click again.")
     // The read compactor's notes (compact-reads.mjs) and the stop notes (menu-continuation.mjs).
-    .replace('sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.',
-      'sleight: 3 scroll calls in a row. Loop scroll and getAXState() in one call (fixed count) until the target shows or rows stop; click it, check it reads selected.')
+    .replace('sleight: 3 calls in a row scrolled this list. In one call, click a row, then `await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: scroll, read with getAXState(), and stop when the target shows or the rows stop changing.',
+      'sleight: 3 scroll calls in a row. In one call, click a row, then `await app.pickFromList("<whole row text>")`. If it stops, loop scroll and getAXState() (fixed count) until the target shows or rows stop.')
     .replace(', not the document; click the document before typing.', '; click the document first.')
     .replace('sleight: keyboard focus is on the window itself, so typed keys have no target.', 'sleight: window has focus; keys have no target.')
     .replace('sleight: typing reached nothing; menu-bar item ', 'sleight: typing lost; menu-bar item ')

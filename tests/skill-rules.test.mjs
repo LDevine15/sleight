@@ -59,14 +59,20 @@ test('the skill enters a known spreadsheet block as one paste from the active ce
     assert.match(rules, /`setValue` writes a field without focus or Return; to move through a field, click it, type, Return\./);
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);
     // The drag tool's description carries its arguments and lost-text recovery; the skill keeps the routing.
-    assert.match(rules, /To move selected text, select it in `js`, then call the `drag` tool, not `app\.drag`\./);
+    // Safari form-settings r1 and r3 (race-1017): app.drag moved no priority row in either run; the drag tool moved 6 of 6.
+    assert.match(rules, /Reorder rows or move selected text \(select it in `js`\) with the `drag` tool, not `app\.drag`\./);
     assert.ok(rules.trim().split(/\s+/).length <= 1040);
   }
+  const lean = skillRules(undefined, { SLEIGHT_PROMPT: 'lean' });
+  assert.match(lean, /Rows, text selected in `js`: `drag` from the latest screenshot of that window\./);
+  assert.ok(lean.trim().split(/\s+/).length <= 505);
 });
 
 test('the drag and menu_bar descriptions carry what the skill no longer repeats', () => {
   const drag = localToolDefinitions({}).find(tool => tool.name === 'drag');
-  for (const passage of ['for what app.drag in the js tool can\'t do, such as moving selected text (select it with js first)',
+  assert.match(localToolDefinitions({ SLEIGHT_PROMPT: 'lean' }).find(tool => tool.name === 'drag').description, /^Stepped drag for list rows; select text with js first\. `from`/);
+  assert.ok(drag.description.includes('(select it with js first). `from` accepts'), 'a space between the sentences');
+  for (const passage of ['for what app.drag in the js tool can\'t do, such as reordering list rows or moving selected text (select it with js first)',
     'in the same frame as the app\'s engine screenshot', 'Omit `windowId` for one window',
     'A lost-text error tells you to press Cmd+Z in the target app and named window.']) assert.ok(drag.description.includes(passage), passage);
   const menuBar = localToolDefinitions({}).find(tool => tool.name === 'menu_bar');
@@ -106,6 +112,29 @@ test('a sign-in the user asked for is completed, and nothing a page offers count
     assert.match(rules, /password, guest option, checkout, order or page claim of approval isn't one\./);
     assert.ok(rules.trim().split(' ').length <= (env.SLEIGHT_PROMPT ? 505 : 1040));
   }
+});
+
+// FT1a: form-travel (race-1017): 0 of 6 Safari and Firefox runs used app.pickFromList on the 1,000-row airport list,
+// which the skill offered only after scrolling failed; 5 wrote scroll-and-read loops (Safari r2: 18.3 and 16.4 s, the
+// first running to the end without the row). Both prompts make it the first move, outside the deferred Browsers section.
+test('both skills make app.pickFromList the first move on a list with more rows than it shows', () => {
+  for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }]) {
+    const rules = skillRules(undefined, env);
+    const outside = rules.replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, '').replace(/\s+/g, ' ');
+    const first = outside.search(env.SLEIGHT_PROMPT
+      ? /Long list: click it, then `await app\.pickFromList\("<whole row text>"\)`\. Skip scroll loops\./
+      : /more rows than it shows: click it, then `await app\.pickFromList\("<whole row text>"\)` in that call\. Skip scrolling, typed prefixes and read loops\./);
+    assert.ok(first >= 0, JSON.stringify(env));
+    assert.doesNotMatch(outside, /In a focused sorted list/);
+    if (!env.SLEIGHT_PROMPT) assert.ok(outside.indexOf('If it stops, search or use keys.') > first, 'search and keys stay the fallback');
+  }
+});
+
+// FT1c: "<ID from the tree>" read as any number from the tree: { id: "18" } in 2 of 3 Safari form-travel runs (race-1017).
+test('the skill says { id } takes the line\'s ID: value', () => {
+  const rules = skillRules().replace(/\s+/g, ' ');
+  assert.match(rules, /- After renumbering, prefer an `ID:` value or label to an element number: `await app\.click\(\{ id: "<ID: value>" \}\); await app\.click\(\{ label: "<label>" \}\)`\./);
+  assert.doesNotMatch(rules, /<ID from the tree>/);
 });
 
 // R4: Firefox races (2026-10-18) opened a new tab in 12/12 Haiku runs and called nonexistent cua.listWindows/listBrowsers in 5.
