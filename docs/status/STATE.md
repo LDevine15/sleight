@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 20:25 UTC, after the clear)
+## Banner (2026-10-18 20:45 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -63,8 +63,6 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call).
 
 **Owner items:**
-- MB1 (ledger): turbo's menu bar item says "sleight disconnected" whenever a session's turbo worker runs. Proposed: show it only
-  while connected, paused or cleanup-required. Built after the race.
 - GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
   claude.ai/customize/connectors/yours/id/integration-github (owner does a passkey if asked).
 - Changed with the owner's OK for Claude in Chrome: its panel mode in the benchmark profile is "Skip all approvals", and claude.ai's
@@ -77,6 +75,10 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
+
+**MB1 (built 3660e913, owner's order).** Turbo's menu bar item shows the icon's two hands only while turbo is in use or a
+request waits, with a menu of status, browser, payment check, Pause, Disconnect and Turn turbo off. A safety review is running. The
+owner sees it in a new session once the installed plugin updates. race-fx stays on 64396fa5.
 
 **Older owner items.** One "Always allow" click on the VS Code debugger card at the Electron turbo qualification (1.3.1). The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
 Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
