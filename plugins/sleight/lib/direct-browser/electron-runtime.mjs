@@ -307,18 +307,23 @@ export async function createWorkerConsent({ ui, approvedApps, dependencies = {} 
     engineApproval: instance => approvedApps().includes(instance.bundleId) ? 'approved' : 'unknown' });
 }
 
-/** The registry recipe, the profile identity and an admin client to this app's own resident host (started if needed). */
-export async function connectAppHost({ bundleId, dependencies = {} } = {}) {
+/** The registry recipe, the profile identity and an admin client to this app's own resident host (started if needed).
+ * secret: the MCP server's admin secret (worker.mjs serverAppSecret), so every worker of one server reaches the same host.
+ * A host started under another secret is ELECTRON_HOST_FOREIGN, carrying the registry's app name for the user's message. */
+export async function connectAppHost({ bundleId, secret, dependencies = {} } = {}) {
   const readRecipeRegistry = await pick(dependencies, 'readRecipeRegistry', 'electron-recipes');
   const recipeFor = await pick(dependencies, 'recipeFor', 'electron-recipes');
   const instanceFromRecipe = await pick(dependencies, 'instanceFromRecipe', 'electron-recipes');
   const ensureHost = await pick(dependencies, 'ensureHost', 'electron-admin');
   const config = dependencies.config ?? await import('./electron-config.mjs');
-  const registry = readRecipeRegistry(registryPath), recipe = recipeFor(registry, bundleId);
+  const path = dependencies.registryPath ?? registryPath;
+  const registry = readRecipeRegistry(path), recipe = recipeFor(registry, bundleId);
   // Temporary profiles only on this path (LAWS): one identity per app under sleight's temporary root.
   const tempRoot = value(config.tempRoot);
   const profile = Object.freeze({ path: join(tempRoot, bundleId), temporary: true });
   const key = appKey(instanceFromRecipe(recipe, { profile: profile.path, temporary: true, pid: 0, pidBirth: UNLAUNCHED }));
-  const admin = await ensureHost({ stateDir: config.hostStateDir(key), registryPath, tempRoot, build: recipe.build });
+  let admin;
+  try { admin = await ensureHost({ stateDir: config.hostStateDir(key), registryPath: path, tempRoot, build: recipe.build, secret }); }
+  catch (error) { if (error?.message === 'ELECTRON_HOST_FOREIGN') error.appName = recipe.name; throw error; }
   return Object.freeze({ admin, registry, profile });
 }

@@ -342,6 +342,21 @@ test('an opted-in, engine-approved app takes the turn: labeled list, no Chrome, 
   assert.deepEqual(f.admin.calls, [['revoke', f.app.selections[0].session], ['close']], 'closing the worker ends the session at the host');
   assert.ok(f.consent.calls.some(row => row[0] === 'revokeSession'));
 });
+test('the app host gets the server\'s admin secret from the begin frame, and a host it cannot administer names the window to quit', async () => {
+  const secret = 'S'.repeat(43);
+  const f = appFixture(), hosts = [];
+  f.dependencies.connectAppHost = async options => { hosts.push(options);
+    throw Object.assign(Error('ELECTRON_HOST_FOREIGN'), { appName: 'Fixture App' }); };
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    f.channel.emit('message', { version: 3, id: 'begin', method: 'begin', params: { turn: 'one', text: 'edit', apps: [appId], appSecret: secret } }); await settle();
+    const list = await callList(f, 'list');
+    assert.equal(hosts[0].secret, secret, 'the secret the MCP server holds, not one this worker made');
+    assert.equal(list.result.isError, true);
+    assert.match(list.result.text, /Fixture App is held by an earlier sleight session.*Quit the Fixture App window sleight opened.*Nothing was sent/);
+    assert.doesNotMatch(list.result.text, new RegExp(secret));
+  } finally { await host.close(); }
+});
 test('an app the engine has not approved this session stays on the browser path', async () => {
   const f = appFixture(), host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
   try {

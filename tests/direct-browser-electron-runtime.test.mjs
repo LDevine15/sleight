@@ -348,3 +348,19 @@ test('electron-connection exposes the host fence op to the worker (provider.fenc
     await provider.disconnect();
   } finally { h.host._crashForTest(); h.state.remove(); }
 });
+
+// F2: the admin secret comes from the MCP server through the worker; a host started by an earlier server stays foreign.
+test('connectAppHost hands the server\'s secret to ensureHost and names the app when the host is foreign', async () => {
+  const path = registryFile(recipeRow()), asked = [];
+  const deps = (ensureHost) => ({ registryPath: path, ensureHost, instanceFromRecipe: (recipe, options) => instanceFromRecipe(recipe, { ...options, inspect }),
+    config: { tempRoot: '/private/tmp/sleight-epv3-f2', hostStateDir: key => '/private/tmp/sleight-epv3-f2/hosts/' + key } });
+  const secret = 'S'.repeat(43);
+  const host = await runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret,
+    dependencies: deps(async options => { asked.push(options); return { pid: 77 }; }) });
+  assert.equal(asked[0].secret, secret);
+  assert.equal(asked[0].registryPath, path);
+  assert.equal(host.admin.pid, 77);
+  assert.deepEqual(host.profile, { path: '/private/tmp/sleight-epv3-f2/invalid.fixture.app', temporary: true });
+  await assert.rejects(runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret,
+    dependencies: deps(async () => { throw Error('ELECTRON_HOST_FOREIGN'); }) }), error => error.message === 'ELECTRON_HOST_FOREIGN' && error.appName === 'Fixture App');
+});

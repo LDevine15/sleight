@@ -24,6 +24,15 @@ const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconf
 // The name comes only from the operator-owned config's executable path and a fixed list, never a page.
 export const applicationName = browserApplicationName;
 const unsafeStartup = new Set(['HOST_PACKAGE_MISMATCH', 'HOST_SOURCE_MISMATCH', 'HOST_CACHE_UNSAFE', 'INSTALLED_CONFIG_UNSAFE']);
+// The admin secret of the resident Electron app hosts. The MCP server process makes it once and hands it to each worker
+// it forks in the begin frames (IPC only, never argv, env or disk), so a new worker can still administer a host that
+// an earlier worker of this server started. A host from an earlier server run stays foreign (docs/known-problems.md).
+let appSecret;
+export const serverAppSecret = () => (appSecret ??= randomBytes(32).toString('base64url'));
+const validAppSecret = value => typeof value === 'string' && /^[A-Za-z0-9_-]{43,128}$/.test(value);
+const printableName = value => typeof value === 'string' && /^[^\x00-\x1f\x7f]{1,64}$/.test(value);
+const foreignHost = name => { const app = printableName(name) ? name : 'The app';
+  return { text: `${app} is held by an earlier sleight session's host, so turbo can't reach it. Quit the ${app} window sleight opened (the app's own Quit), then retry. Nothing was sent.`, isError: true }; };
 
 export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31000 } = {}, dependencies = {}) {
   const config = (dependencies.readConfig ?? readInstalledConfig)();
@@ -87,7 +96,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
           frame.session !== hello.session || frame.nonce !== hello.nonce || frame.event !== 'begin' || !id(frame.turn) ||
           typeof frame.text !== 'string' || Buffer.byteLength(frame.text) > 65536 || !approvedApps(apps) || turns.has(frame.turn) || lost || !current()) throw Error('TRUSTED_TURN_REQUIRED');
       turns.add(frame.turn); fence(); const epoch = generation;
-      const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps] });
+      const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps], appSecret: serverAppSecret() });
       if (epoch !== generation || lost || !current()) return false;
       active = result?.available === true; return active;
     },
@@ -180,15 +189,17 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
       return;
     }
     if (frame.method === 'begin') {
-      if (!exact(frame.params, ['turn', 'text', 'apps']) || !id(frame.params.turn) || turns.has(frame.params.turn) ||
+      const keys = Object.hasOwn(frame.params ?? {}, 'appSecret') ? ['turn', 'text', 'apps', 'appSecret'] : ['turn', 'text', 'apps'];
+      if (!exact(frame.params, keys) || !id(frame.params.turn) || turns.has(frame.params.turn) ||
           typeof frame.params.text !== 'string' || Buffer.byteLength(frame.params.text) > 65536 || !approvedApps(frame.params.apps)) return respond({ available: false });
       turns.add(frame.params.turn); const stopped = fence(), epoch = generation, apps = Object.freeze([...frame.params.apps]);
+      const secret = validAppSecret(frame.params.appSecret) ? frame.params.appSecret : undefined;
       work = work.catch(() => {}).then(async () => {
         await stopped;
         if (ended || epoch !== generation || !current()) return { available: false };
         const message = Object.freeze({ source: 'user', session, turn: frame.params.turn, id: frame.params.turn, text: frame.params.text });
         const binding = createV3TurnBinding(message, () => !ended && epoch === generation && current());
-        const prepared = await begin(message, binding, { apps });
+        const prepared = await begin(message, binding, { apps, ...(secret ? { appSecret: secret } : {}) });
         if (ended || epoch !== generation || !current()) { await prepared?.end(); return { available: false }; }
         runtime = prepared; return { available: !!runtime };
       });
@@ -227,7 +238,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   const resources = new Set();
   // Opted-in Electron apps (EPV3-7): this session's id at the resident hosts, the debugger consent, one admin
   // client per app host, qualification receipts and the latest begin frame's engine approvals.
-  let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]);
+  let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
   const admins = new Map(), receipts = new Map();
   // admins: bundle id -> the pending { admin, registry, profile } of that app's resident host.
   const eachAdmin = action => Promise.allSettled([...admins.values()].map(async pending => action((await pending).admin)));
@@ -348,9 +359,10 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     }
     subscribe();
     protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
-      async begin(message, binding, { apps = [] } = {}) {
+      async begin(message, binding, { apps = [], appSecret: secret } = {}) {
         if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
         turnApps = Object.freeze([...apps]);
+        hostSecret ??= secret;
         const selections = await appSelections(apps);
         if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
         const resource = {}; resources.add(resource);
@@ -366,7 +378,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
           resource.apps = []; resource.consentTurn = { session: message.session, turn: message.turn };
           for (const { bundleId } of selections) {
             if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
-            if (!admins.has(bundleId)) admins.set(bundleId, (dependencies.connectAppHost ?? runtimeModule.connectAppHost)({ bundleId, dependencies: app }));
+            if (!admins.has(bundleId)) admins.set(bundleId, (dependencies.connectAppHost ?? runtimeModule.connectAppHost)({ bundleId, secret: hostSecret, dependencies: app }));
             let host;
             try { host = await admins.get(bundleId); } catch (error) { admins.delete(bundleId); throw error; }
             if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
@@ -440,7 +452,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
               const runtime = await (preparing ??= prepare());
               if (!current() || turnEnded || !await verified()) throw Error('STALE_INSTANCE');
               return await runtime.call(request);
-            } catch { return failure(); }
+            } catch (error) { return error?.message === 'ELECTRON_HOST_FOREIGN' ? foreignHost(error.appName) : failure(); }
           },
           delivered: result => !turnEnded && resource.runtime?.delivered(result) === true,
           end() {

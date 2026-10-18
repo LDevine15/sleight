@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createV3Bridge, createV3Frontend, serveV3Worker, applicationName } from '../plugins/sleight/lib/direct-browser/worker.mjs';
+import { createV3Bridge, createV3Frontend, serveV3Worker, applicationName, serverAppSecret } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { prepareInstalledStartup, directBrowserRules, skillRules } from '../plugins/sleight/lib/launch.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PassThrough } from 'node:stream';
@@ -178,8 +178,8 @@ test('bind forwards the relay\'s approved bundle ids to the worker and refuses a
   try {
     const frame = turn => ({ ...f.bridge.bootstrapEnvelope(), event: 'begin', turn, text: 'edit' });
     assert.equal(await f.bridge.bind(frame('t1'), ['com.microsoft.VSCode']), true);
-    assert.deepEqual(f.events.at(-1)[2], { apps: ['com.microsoft.VSCode'] });
-    assert.equal(await f.bridge.bind(frame('t2')), true); assert.deepEqual(f.events.at(-1)[2], { apps: [] });
+    assert.deepEqual(f.events.at(-1)[2], { apps: ['com.microsoft.VSCode'], appSecret: serverAppSecret() });
+    assert.equal(await f.bridge.bind(frame('t2')), true); assert.deepEqual(f.events.at(-1)[2], { apps: [], appSecret: serverAppSecret() });
     for (const [i, apps] of [['Visual Studio Code'], ['a.b', 'a.b'], 'com.x.y', Array.from({ length: 65 }, (_, n) => 'invalid.app' + n)].entries())
       await assert.rejects(f.bridge.bind(frame('bad' + i), apps), /TRUSTED_TURN_REQUIRED/, JSON.stringify(apps));
     await assert.rejects(f.bridge.bind({ ...frame('t3'), apps: ['com.microsoft.VSCode'] }), /TRUSTED_TURN_REQUIRED/);
@@ -188,6 +188,29 @@ test('bind forwards the relay\'s approved bundle ids to the worker and refuses a
     assert.doesNotMatch(JSON.stringify(tools), /oneOf|anyOf|allOf/);
   } finally { await f.bridge.detach(); }
 });
+// F2: the app hosts' admin secret lives in this (the MCP server) process, so a new worker reaches a host an earlier worker started.
+test('every worker this server forks gets the same app-host admin secret in its begin frames, over IPC only', async () => {
+  const secret = serverAppSecret();
+  assert.match(secret, /^[A-Za-z0-9_-]{43}$/, '32 random bytes, base64url');
+  assert.equal(serverAppSecret(), secret, 'made once per server process');
+  const first = await fixture(), second = await fixture();
+  try {
+    for (const [i, f] of [first, second].entries()) {
+      assert.equal(await f.bridge.bind({ ...f.bridge.bootstrapEnvelope(), event: 'begin', turn: 'k' + i, text: 'edit' }, ['com.microsoft.VSCode']), true);
+      assert.equal(f.events.at(-1)[2].appSecret, secret);
+      assert.ok(!JSON.stringify(f.forkOptions).includes(secret), 'never in the fork arguments or environment');
+    }
+  } finally { await first.bridge.detach(); await second.bridge.detach(); }
+  // The worker side takes only a well-formed secret; a bad one is dropped, the begin still runs.
+  const channel = new EventEmitter(), frames = [], seen = [];
+  channel.connected = true; channel.send = frame => frames.push(frame);
+  const served = serveV3Worker({ channel, browser: 'bfixture', begin: async (_m, _b, extra) => { seen.push(extra); return { end: async () => ({ revoked: true, cleanup: [] }) }; } });
+  const settled = async () => { for (let i = 0; i < 5; i++) { await served.drain(); await new Promise(resolve => setImmediate(resolve)); } };
+  channel.emit('message', { version: 3, id: 'x1', method: 'begin', params: { turn: 'x1', text: 'read', apps: [], appSecret: 'short' } }); await settled();
+  channel.emit('message', { version: 3, id: 'x2', method: 'begin', params: { turn: 'x2', text: 'read', apps: [] } }); await settled();
+  assert.deepEqual(seen, [{ apps: [] }, { apps: [] }]);
+});
+
 test('the relay\'s begin frame lists the bundle ids the engine approved this session, from cards and the pre-approved list', async () => {
   const { PreapprovedApps } = await import('../plugins/sleight/lib/preapproved.mjs');
   const f = await fixture();

@@ -713,3 +713,11 @@ native reference, and oversized first results defer the browser reference while 
 - The resident Electron host's ownership journal is sealed with `host.key`, also a 0600 file. A same-user process can
   forge the journal and make the host refuse a launch or report a wrong owner. It can't open the host's channel,
   whose admin secret the parent passes for each start and never writes.
+- The MCP server process holds the host's admin secret in memory and hands it to each turbo worker it starts, so a new worker
+  reaches the host an earlier one started (unit-tested, 2026-10-18). The next Claude Code session runs a new server with a
+  new secret. The new server can't administer a host and app from the earlier session, and turbo answers that you should quit the
+  window sleight opened, until you quit that instance with the app's own Quit. Measured live: not yet.
+- Killing the resident host (`kill -9` from Claude's shell is one way, which the write guard doesn't stop) closes the
+  app's debugging pipe, and Electron quits on pipe EOF, so the window sleight opened quits without its unsaved-work prompt.
+  Your own instances of the app aren't affected. Keeping the pipe open past the host needs another process to hold it, and
+  that isn't built or measured.
