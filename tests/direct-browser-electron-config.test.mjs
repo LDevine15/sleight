@@ -7,10 +7,11 @@ import { join } from 'node:path';
 import { appOptInPath, enabledApps, grantStorePath, hostStateDir, readAppOptIns, registryPath, tempRoot }
   from '../plugins/sleight/lib/direct-browser/electron-config.mjs';
 import { turboCommand } from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const support = home => join(home, 'Library/Application Support/sleight');
 function world(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-econfig-')));
+  const root = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-econfig-'))));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'home');
   mkdirSync(support(home), { recursive: true, mode: 0o700 });

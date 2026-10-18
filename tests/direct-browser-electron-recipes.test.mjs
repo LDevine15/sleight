@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // EPV3-6: the reviewed recipe registry that launch.py reads, validated on the JS side the same way plus the
 // fields only JS uses. A missing module is the expected failure before the build.
@@ -16,7 +17,7 @@ const good = (extra = {}) => ({ build: 'invalid.fixture.app@1.2.3', name: 'Fixtu
   runtime: 'electron/39.0.0', executable: '/Applications/Fixture.app/Contents/MacOS/Fixture', sha256: hex, cdhash: 'c'.repeat(40),
   args: ['--user-data-dir={profile}/user-data', '--new-window', '{profile}/workspace'], schemes: ['fixture'], fileRoots: [],
   joinTolerance: 2, focusEmulation: false, zoomLevel: 0, qualified: false, ...extra });
-const dir = mkdtempSync(join(tmpdir(), 'sleight-recipes-'));
+const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-recipes-')));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 let files = 0;
 const write = value => { const path = join(dir, `r${++files}.json`); writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value)); return path; };

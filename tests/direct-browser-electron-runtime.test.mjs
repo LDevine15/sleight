@@ -13,6 +13,7 @@ import { assertEndpointRead } from '../plugins/sleight/lib/direct-browser/endpoi
 import { createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { page, rect, fakeUpstream, fakeWindows, nativeWindow, fakeBrowser, tick } from './fixtures/electron-graph.mjs';
 import { makeHost } from './direct-browser-electron-host-fixture.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 // EPV3-7b: the worker's app runtime. The EPV3-3 to EPV3-6 modules are the real ones (targets, join, pages, filter,
 // recipes, read, handoff, capabilities); the app's pipe, the native window helper, the host's admin channel and
@@ -22,7 +23,7 @@ const runtime = await import('../plugins/sleight/lib/direct-browser/electron-run
 });
 const session = 'sessiona', turn = 'turn1';
 const pid = 4100, birth = '1700000000.000001';
-const dir = mkdtempSync(join(tmpdir(), 'sleight-epv3-7b-'));
+const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-epv3-7b-')));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 const recipeRow = (extra = {}) => ({ build: 'invalid.fixture.app@1.2.3', name: 'Fixture App', bundleId: 'invalid.fixture.app', signer: 'TEAM123456',
   runtime: 'electron/39.0.0', executable: '/Applications/Fixture.app/Contents/MacOS/Fixture', sha256: 'a'.repeat(64), cdhash: 'c'.repeat(40),
