@@ -80,6 +80,16 @@ our own runs. Dates and engine versions are given where they matter.
   drag that has no selected text and points to `app.drag`. On that board `drag` took 11 to 14 s, 9.4 s
   of it reading the window's elements through System Events. That scan now uses the Accessibility API
   with a 0.5 s deadline (unit-tested, 2026-10-12). Its live timing is unmeasured.
+- In the 2026-10-17 Firefox settings runs, `drag` refused 22 covered endpoints and the engine's
+  `app.drag` left the list order unchanged in 13 of 13 retries. `drag` now moves a covered endpoint to an
+  exposed point inside the same element and adds one stationary move on the destination before the
+  release (raw headless mouse input missed the drop 6/6 without it and landed 6/6 with it). Both are
+  unit-tested only. Whether Firefox accepts the drop, and whether Accessibility's hit test answers
+  for a point another app covers, are unmeasured. The new point must be on a leaf item (row, cell,
+  button, text, or a childless group or image) and on that element itself, 4 points clear of any
+  other app's window, so a web row with child elements often refuses. A fully covered row refuses.
+  `lib/reorder-plan.mjs` plans the shortest drop sequence and refuses to repeat an ineffective
+  method. No tool calls it yet.
 - After an Accessibility text write, TextEdit's next Cmd+S deadlocked on the document's save lock in 10
   of 13 probe trials with the file opened through the Open panel (0 of 3 opened with `open -g`), the
   same hang as `setValue` on 2026-10-05. One Shift press and release posted to TextEdit's process after

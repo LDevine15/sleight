@@ -8,10 +8,10 @@ const test = (name, fn) => nodeTest(`${defaultAppId}: ${name}`, fn);
 
 // Only the native AX/CG boundary is replaced. run() does the real selection,
 // validation, coordinate conversion, mouse sequence and post-drop check.
-function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null } = {}) {
+function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null, rows = 0, coverBounds = null, rowRole = 'AXRow', rowChild = null, shiftRowsOnRaise = 0, extraWindows = [] } = {}) {
   const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [], textWrites = [];
   let visited = 0, inputChecks = 0, readbacks = 0;
-  let mainId = 22;
+  let mainId = 22, rowShift = 0;
   let order = [22, 11];
   const frames = new Map([[11, { X: 100, Y: 100, Width: 600, Height: 400 }], [22, { X: 900, Y: 200, Width: 800, Height: 500 }]]);
   if (stacked) frames.set(22, { ...frames.get(11) });
@@ -32,6 +32,14 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
         },
       }) },
     };
+    // Reorderable rows inside window 11's content area, 30 points tall every 40 points.
+    const rowEls = id !== 11 ? [] : Array.from({ length: rows }, (_, i) => ({
+      role: () => rowRole, subrole: () => '', name: () => `row ${i}`, position: () => [b.X + 5, b.Y + 30 + i * 40 + rowShift], size: () => [b.Width - 10, 30],
+      uiElements: () => rowChild ? [{ role: () => 'AXButton', subrole: () => '', name: () => `button ${i}`, position: () => [b.X + rowChild[0], b.Y + 30 + i * 40 + rowShift],
+        size: () => [rowChild[1], 30], uiElements: () => [], attributes: { byName: () => ({ value: () => '' }) } }] : [],
+      attributes: { byName: () => ({ value: () => '' }) },
+    }));
+    area.uiElements = () => rowEls;
     const toolbar = { role: () => 'AXToolbar', position: () => [b.X, b.Y + 20], size: () => [b.Width, 10], uiElements: () => [] };
     return {
       role: () => 'AXWindow', position: () => [b.X, b.Y], size: () => [b.Width, b.Height], name: () => `${id}.txt`,
@@ -42,7 +50,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
       uiElements: () => missingContent ? [toolbar] : [toolbar, area, ...Array.from({ length: extraElements }, () => ({
         role: () => { visited++; return 'AXButton'; }, subrole: () => '',
         position: () => [b.X + 10, b.Y + 32], size: () => [10, 10], uiElements: () => [],
-      })), ...(splitAreas ? [{ ...area, position: () => [b.X + 5, b.Y + 180] }] : [])], actions: { byName: () => ({ perform: () => { if (raiseWorks) order = [id, ...order.filter(n => n !== id)]; if (raiseActivates) $.NSWorkspace.sharedWorkspace.frontmostApplication = target; } }) },
+      })), ...(splitAreas ? [{ ...area, position: () => [b.X + 5, b.Y + 180] }] : [])], actions: { byName: () => ({ perform: () => { rowShift = shiftRowsOnRaise; if (raiseWorks) order = [id, ...order.filter(n => n !== id)]; if (raiseActivates) $.NSWorkspace.sharedWorkspace.frontmostApplication = target; } }) },
     };
   }) };
   const previous = { isNil: () => false, processIdentifier: 99, activateWithOptions: () => restored.push('app') };
@@ -102,9 +110,17 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     AXUIElementSetMessagingTimeout: () => 0,
     CFEqual: (a, b) => a === b,
     AXUIElementCopyElementAtPosition: (_app, x, y, out) => {
+      nativeWindows ??= proc.windows();
       const win = nativeWindows.find(w => { const [wx, wy] = w.position(), [width, height] = w.size(); return x >= wx && x < wx + width && y >= wy && y < wy + height; });
       if (!win) return -25212;
       const children = win.uiElements();
+      const rowHit = children[1]?.uiElements().find(el => { const [ex, ey] = el.position(), [width, height] = el.size(); return x >= ex && x < ex + width && y >= ey && y < ey + height; });
+      if (rowHit) {
+        parents.set(rowHit, children[1]); parents.set(children[1], win);
+        const child = rowHit.uiElements().find(el => { const [ex, ey] = el.position(), [width, height] = el.size(); return x >= ex && x < ex + width && y >= ey && y < ey + height; });
+        if (child) parents.set(child, rowHit);
+        out[0] = child ?? rowHit; return 0;
+      }
       const hit = children.slice(0, 2).find(el => { const [ex, ey] = el.position(), [width, height] = el.size(); return x >= ex && x < ex + width && y >= ey && y < ey + height; }) ?? win;
       if (hit !== win) parents.set(hit, win);
       out[0] = hit; return 0;
@@ -172,7 +188,8 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     };
   };
   context.windows = onScreenOnly => noWindows || (onScreenOnly && offSpace) ? [] : [
-    ...(coveredEnd ? [{ id: 33, pid: coveredPid, owner: coveredPid === 7 ? 'TextEdit' : 'Other app', title: coverTitle, layer: 0, bounds: { X: 180, Y: 130, Width: 80, Height: 40 } }] : []),
+    ...extraWindows.map(w => ({ id: 44, pid: 9, owner: 'Other app', title: '', layer: 0, ...w })),
+    ...(coveredEnd ? [{ id: 33, pid: coveredPid, owner: coveredPid === 7 ? 'TextEdit' : 'Other app', title: coverTitle, layer: 0, bounds: coverBounds ? { ...coverBounds } : { X: 180, Y: 130, Width: 80, Height: 40 } }] : []),
     ...order.filter(id => second || id === 11).map(id => ({ id, pid: 7, owner: 'TextEdit', title: `${id}.txt`, layer: 0, bounds: { ...frames.get(id) } })),
   ];
   const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], ...changes })]));
@@ -222,7 +239,7 @@ test('readback timeouts report unverified delivery and never repeat the drag', (
     assert.equal(result.ok, false); assert.match(result.error, /cannot verify.*read.*window/i);
     assert.doesNotMatch(result.error, /nothing was pressed|unchanged|disappeared|failed \(-25204\)/);
     assert.equal(result.deliveryVerified, false);
-    assert.equal(h.pidEvents.length, background ? 28 : 0);
+    assert.equal(h.pidEvents.length, background ? 29 : 0);
     assert.equal(h.events.length, background ? 0 : 28);
   }
 });
@@ -251,7 +268,7 @@ test('formatted selections use posted dragging without plain text writes', () =>
   const h = harness({ background: true, ax: { formatted: true }, backgroundAfter: 'beta gamma alpha\n' });
   const result = h.run(pastEnd);
   assert.equal(result.ok, true, result.error); assert.equal(result.path, 'background');
-  assert.equal(h.axWrites.length, 0); assert.equal(h.pidEvents.length, 28);
+  assert.equal(h.axWrites.length, 0); assert.equal(h.pidEvents.length, 29);
   assert.match(result.fallbackReason, /formatting/);
 });
 test('covered formatted selections retain the foreground coverage refusal', () => {
@@ -325,7 +342,7 @@ test('posted text drags have no app-specific Command modifier', () => {
     const h = harness({ background: true, appId, selection: 'alpha' });
     const r = h.run(pastEnd);
     assert.equal(r.ok, true, r.error);
-    assert.equal(h.pidEvents.length, 28);
+    assert.equal(h.pidEvents.length, 29);
     assert.ok(h.pidEvents.every(e => e.flags === 0));
   }
 });
@@ -386,14 +403,14 @@ test('background text move uses PID posting, repairs spacing and never activates
   const h = harness({ background: true }); const r = h.run({ windowId: 11 });
   assert.equal(r.ok, true); assert.equal(r.path, 'background'); assert.equal(r.spaceInserted, true);
   assert.equal(r.textChanged, true); assert.equal(h.values.get(11), 'beta gamma alpha\n');
-  assert.equal(h.pidEvents.length, 28); assert.equal(h.events.length, 0);
+  assert.equal(h.pidEvents.length, 29); assert.equal(h.events.length, 0);
   assert.ok(h.pidEvents.every(e => e.flags === 0));
   assert.equal(h.activations.length, 0); assert.equal(h.restored.length, 0);
 });
 test('unchanged background text alone permits the foreground fallback', () => {
   const h = harness({ background: true, backgroundAfter: 'alpha beta gamma\n' }); const r = h.run({ windowId: 11 });
   assert.equal(r.ok, true); assert.equal(r.path, 'foreground'); assert.equal(r.fallbackReason, 'background text unchanged');
-  assert.equal(h.pidEvents.length, 28); assert.equal(h.activations.length, 1); assert.equal(h.events.length, 28);
+  assert.equal(h.pidEvents.length, 29); assert.equal(h.activations.length, 1); assert.equal(h.events.length, 28);
 });
 test('another app covering the drag points skips background posting and says which app', () => {
   const h = harness({ background: true, coveredEnd: true, coveredPid: 9 }); const r = h.run({ windowId: 11 });
@@ -682,7 +699,7 @@ test('a large non-text window posts without scanning unrelated elements', () => 
   const h = harness({ background: true, areaRole: 'AXOutline', selection: '', extraElements: 301 });
   const r = h.run({ windowId: 11 });
   assert.equal(r.ok, true, r.error); assert.equal(r.path, 'background');
-  assert.equal(r.deliveryVerified, false); assert.equal(h.visits(), 0); assert.equal(h.pidEvents.length, 28);
+  assert.equal(r.deliveryVerified, false); assert.equal(h.visits(), 0); assert.equal(h.pidEvents.length, 29);
 });
 test('non-text posting failure before mouse-down reaches guarded foreground fallback', () => {
   const h = harness({ background: true, areaRole: 'AXOutline', selection: '', failBeforePress: true, busyChecks: 2 });
@@ -705,5 +722,118 @@ test('non-text posting failure after mouse-down never repeats an uncertain drag'
   const r = h.run({ windowId: 11 });
   assert.equal(r.ok, false); assert.match(r.error, /posting interrupted/);
   assert.equal(r.path, 'background'); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+});
+
+// Rows of window 11 (at 100, 100): row i spans x 105..695, y 130 + 40 i .. 160 + 40 i. Row 0's centre is
+// window point [300, 45] and row 2's is [300, 125].
+const rowDrag = { windowId: 11, from: [300, 45], to: [300, 125] };
+const rowFixture = options => harness({ background: true, areaRole: 'AXOutline', selection: '', rows: 3, ...options });
+test('the background sequence adds one stationary move on the destination before the release', () => {
+  const h = rowFixture({}); const r = h.run(rowDrag);
+  assert.equal(r.ok, true, r.error); assert.equal(r.path, 'background');
+  const types = h.pidEvents.map(e => e.type);
+  assert.deepEqual(types, [5, 1, ...Array(26).fill(6), 2]);
+  const [lastMove, beforeLast, release] = [h.pidEvents.at(-2), h.pidEvents.at(-3), h.pidEvents.at(-1)];
+  assert.deepEqual(lastMove.point, beforeLast.point); assert.deepEqual(lastMove.point, release.point);
+  assert.deepEqual(release.point, { x: 400, y: 225 });
+  assert.deepEqual(lastMove.local, release.local);
+  assert.equal(r.steps, 25); assert.equal(h.delays.filter(s => s === 0.5).length, 1, 'hold unchanged');
+  assert.equal(h.delays.filter(s => s === 0.02).length, 26);
+  assert.equal(h.delays.includes(1.5), true, 'settle unchanged');
+});
+test('a single-step drag still ends with the stationary move before the release', () => {
+  const h = rowFixture({}); const r = h.run({ ...rowDrag, steps: 1 });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(h.pidEvents.map(e => e.type), [5, 1, 6, 6, 2]);
+});
+test('a covered destination row moves to an exposed point inside the same row', () => {
+  const h = rowFixture({ coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, true, r.error); assert.equal(r.path, 'background'); assert.deepEqual(r.relocated, ['to']);
+  assert.match(r.note, /to moved to an exposed point inside the same element/);
+  assert.equal(h.activations.length, 0); assert.equal(h.events.length, 0); assert.equal(h.restored.length, 0);
+  const press = h.pidEvents.find(e => e.type === 1), release = h.pidEvents.at(-1);
+  assert.deepEqual(press.point, { x: 400, y: 145 });
+  // Inside row 2's frame and outside the covering window.
+  assert.ok(release.point.x >= 105 && release.point.x <= 695 && release.point.y >= 220 && release.point.y <= 250, JSON.stringify(release.point));
+  assert.equal(release.point.x < 350 || release.point.x >= 450, true);
+  assert.deepEqual(h.pidEvents.at(-2).point, release.point);
+});
+test('a covered source row is relocated the same way and the destination is untouched', () => {
+  const h = rowFixture({ coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 125, Width: 100, Height: 40 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, true, r.error); assert.deepEqual(r.relocated, ['from']);
+  const press = h.pidEvents.find(e => e.type === 1);
+  assert.ok(press.point.y >= 130 && press.point.y <= 160 && (press.point.x < 350 || press.point.x >= 450), JSON.stringify(press.point));
+  assert.deepEqual(h.pidEvents.at(-1).point, { x: 400, y: 225 });
+});
+test('a fully covered row refuses before any raise, press or window write and names the endpoint', () => {
+  const h = rowFixture({ coveredEnd: true, coveredPid: 9, coverBounds: { X: 90, Y: 200, Width: 640, Height: 60 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /to is covered by Other app and no part of that element is exposed/);
+  assert.match(r.error, /don't repeat it/); assert.match(r.error, /nothing was pressed$/);
+  assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+  assert.deepEqual(h.mainWrites, []);
+});
+test('a covered endpoint on a container is never moved within it', () => {
+  const h = harness({ background: true, areaRole: 'AXOutline', selection: '', coveredEnd: true, coveredPid: 9 });
+  const r = h.run({ windowId: 11 });
+  assert.equal(r.ok, false); assert.match(r.error, /can't move within it|no element is known/);
+  assert.equal(h.pidEvents.length, 0);
+});
+test('a relocated drag never falls back to the foreground path', () => {
+  const h = rowFixture({ coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 }, failBeforePress: true });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, false); assert.match(r.error, /background posting did not work.*nothing was pressed/);
+  assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0); assert.equal(h.restored.length, 0);
+});
+test('a child control inside the row is never the landing point', () => {
+  // The press is on the row (x 400); its left part, x 105 to 305, is a button the point must not land on.
+  const h = rowFixture({ rowChild: [5, 200], coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, true, r.error);
+  const release = h.pidEvents.at(-1).point;
+  assert.ok(release.x > 305 && release.x <= 695, JSON.stringify(release));
+  assert.ok(release.x < 346 || release.x >= 454, JSON.stringify(release));
+});
+test('a group or list parent is refused even when its row-sized frame is exposed', () => {
+  for (const rowRole of ['AXGroup', 'AXList']) {
+    const h = rowFixture({ rowRole, rowChild: [5, 200], coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 } });
+    const r = h.run(rowDrag);
+    assert.equal(r.ok, false, rowRole); assert.match(r.error, /is not a single item, so the point can't move within it/);
+    assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0);
+  }
+});
+test('a leaf group is a single item and relocates', () => {
+  const h = rowFixture({ rowRole: 'AXGroup', coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, true, r.error); assert.deepEqual(r.relocated, ['to']);
+});
+test('a row that moves during the raise and settle refuses before the first post', () => {
+  const h = rowFixture({ shiftRowsOnRaise: 20, coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, false); assert.match(r.error, /element at the (from|to) point moved since it was chosen; read the window again; nothing was pressed$/);
+  assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
+});
+test('a point within four points of another app\'s window edge is refused', () => {
+  // The cover leaves only x 690 to 695 of row 2; the nearest grid point, 693, is 3 points from its edge.
+  const h = rowFixture({ coveredEnd: true, coveredPid: 9, coverBounds: { X: 90, Y: 200, Width: 600, Height: 60 } });
+  const r = h.run(rowDrag);
+  assert.equal(r.ok, false); assert.match(r.error, /no part of that element is exposed/);
+  assert.equal(h.pidEvents.length, 0);
+});
+test('a window of another app above layer 0 covers the row too', () => {
+  for (const layer of [20, 25]) {
+    const h = rowFixture({ coveredEnd: true, coveredPid: 9, coverBounds: { X: 350, Y: 205, Width: 100, Height: 40 },
+      extraWindows: [{ id: 55, layer, bounds: { X: 90, Y: 200, Width: 640, Height: 60 } }] });
+    const r = h.run(rowDrag);
+    assert.equal(r.ok, false, `layer ${layer}`); assert.match(r.error, /no part of that element is exposed/);
+    assert.equal(h.pidEvents.length, 0);
+  }
+});
+test('an uncovered row drag is not relocated', () => {
+  const h = rowFixture({}); const r = h.run(rowDrag);
+  assert.equal(r.relocated, undefined); assert.deepEqual(h.pidEvents.find(e => e.type === 1).point, { x: 400, y: 145 });
 });
 }
