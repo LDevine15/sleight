@@ -5,6 +5,7 @@ import { canonical } from './authority.mjs';
 import { check, inspectElement, intent, expirePaymentDialog, keyClass, activationKey, textChord, deferRefund, endDeferredRefund } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
+import { isAppBinding } from './electron-identity.mjs';
 
 const bindings = new WeakMap(), contexts = new WeakSet();
 const text = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 4096;
@@ -625,15 +626,26 @@ function dialogTerms(message) {
   } catch { return; }
 }
 
-export function createV3Context({ binding, browser, ui, confirmPayments, now = Date.now } = {}) {
+// app is the trusted adapter's Electron binding (createAppBinding), never tool JSON or page data. With it the
+// document identity is typed (app document or real HTTPS origin) and the app's debugger grant must stay current.
+// Without it only HTTP(S) frames pass, as before.
+export function createV3Context({ binding, browser, app, ui, confirmPayments, now = Date.now } = {}) {
   const bound = bindings.get(binding);
-  if (!bound || !text(browser)) throw Error('TRUSTED_TURN_REQUIRED');
+  if (app !== undefined && !isAppBinding(app)) throw Error('TRUSTED_TURN_REQUIRED');
+  if (!bound || !(app ? app.current() && app.session === bound.message.session && (app.turn === null || app.turn === bound.message.turn) : text(browser))) throw Error('TRUSTED_TURN_REQUIRED');
   const never = (confirmPayments ?? process.env.SLEIGHT_CONFIRM_PAYMENTS) === 'never';
   const requested = requestedPayment(bound.message.text), documents = new Map(), targets = new WeakMap(), held = new Set();
   const watched = new Map();
   const uploads = new WeakMap(), offered = new Map(), tickets = new Map(), pending = new Map();
   let closed = false, live, sequence = 0, dialogOwner;
-  const current = () => { try { return !closed && bound.current() === true; } catch { return false; } };
+  const current = () => { try { return !closed && bound.current() === true && (!app || app.current()); } catch { return false; } };
+  // One place derives the document identity, so every later check agrees with the first.
+  const documentOf = (frame, observed) => {
+    if (app) return app.classify(frame, observed);
+    const parsed = new URL(frame.url());
+    if (!['http:', 'https:'].includes(parsed.protocol) || observed !== undefined && observed !== parsed.origin) throw Error('TRUSTED_TARGET_REQUIRED');
+    return { origin: parsed.origin };
+  };
   const fileProvider = createUserFileProvider({ now,
     readUserMessage: event => current() && event === binding ? { session: bound.message.session, text: bound.message.text } : undefined,
     resolveInput: ref => current() ? offered.get(ref) : undefined,
@@ -667,7 +679,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
     if (!record || !native || !['item','amount','payee','method'].every(key => text(terms[key]))) return false;
     const action = { type: 'fill', press: 'key', submit: 'click', check: 'click', uncheck: 'click' }[target.do] ?? target.do ?? 'click';
     const base = { ...record.identity, action, args: { ref: target.ref ?? record.ref ?? 'focused', key: target.key ?? null, accept: target.accept ?? null },
-      destination: record.origin + '/', payment: { ...terms } };
+      destination: record.origin + '/', payment: { ...terms }, ...(record.principal ? { principal: record.principal } : {}) };
     const keyBase = canonical(base);
     for (const [key, value] of pending) if (now() >= value.expires) { pending.delete(key); tickets.delete(key); }
     let entry = [...pending.values()].find(value => value.keyBase === keyBase);
@@ -732,17 +744,17 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       const closed = closedDetails(handle);
       if (target.do === 'press' && !await focusProved(handle, true, closed)) throw Error(focusRequired);
       const observed = await trustedRead(handle, readPaymentPage, never);
-      const parsed = new URL(frame.url());
-      if (!['http:', 'https:'].includes(parsed.protocol) || observed.origin !== parsed.origin || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
-      const identity = { browserIncarnation: browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
-        leaseGeneration: 1, target: doc.id, frame: doc.id, document: doc.id, origin: observed.origin };
-      const record = { handle, doc, frame, page: target.page, identity, origin: observed.origin, name: observed.name, ref: target.ref, closed };
+      const place = documentOf(frame, observed.origin);
+      if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
+      const identity = { browserIncarnation: app ? app.incarnation : browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
+        leaseGeneration: 1, target: doc.id, frame: doc.id, document: doc.id, origin: place.origin };
+      const record = { handle, doc, frame, page: target.page, identity, origin: place.origin, principal: place.principal, name: observed.name, ref: target.ref, closed };
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
       const { seal, ...element } = await trustedRead(handle, inspectElement);
       const sealEvidence = { element: seal, ...await foldForwarded(handle, element) };
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
-      Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: observed.origin,
+      Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: place.origin,
         sealEvidence, element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, ...(never && observed.unchecked ? { unchecked: observed.unchecked } : {}), method: requested?.method },
         submit: intent(target.do ?? 'click', { ...target, element }).submit });
       return record;
@@ -760,7 +772,7 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
           if (target.accept === false) { dialogOwner = undefined; expirePaymentDialog(ruleContext); return { verdict: 'allow' }; }
           if (!dialogOwner?.dialog || target.state?.dialog !== dialogOwner.dialog || !dialogOwner.doc.valid || !current()) return refused();
           if (target.page && dialogOwner.page !== target.page) return refused();
-          if (new URL(dialogOwner.frame.url()).origin !== dialogOwner.origin) return refused();
+          if (documentOf(dialogOwner.frame).origin !== dialogOwner.origin) return refused();
           const page = dialogTerms(target.message), record = dialogOwner;
           Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: record.doc.id, origin: record.origin,
             terms: { page, method: requested?.method }, element: { payment: !!page || /\bpay|payment|buy|purchase|charge\b/i.test(target.message ?? '') } });
@@ -821,7 +833,8 @@ export function createV3Context({ binding, browser, ui, confirmPayments, now = D
       if (!entry || !current() || !entry.record.doc.valid || !equal(paths, entry.paths) || !await trustedRead(entry.record.handle, samePageDocument, entry.record.doc.handle))
         throw Error('USER_NAMED_FILE_REQUIRED');
       const observed = await trustedRead(entry.record.handle, readPaymentPage);
-      if (observed.origin !== entry.record.origin || observed.name !== entry.record.name || !current()) throw Error('USER_NAMED_FILE_REQUIRED');
+      let again; try { again = documentOf(entry.record.frame, observed.origin).origin; } catch { again = undefined; }
+      if (again !== entry.record.origin || observed.name !== entry.record.name || !current()) throw Error('USER_NAMED_FILE_REQUIRED');
       live = entry.record.identity;
       const bindingData = { ...entry.record.identity, ref: target.ref, operation: 'upload' };
       return stageUserUploads({ event: binding, binding: bindingData, provider: {

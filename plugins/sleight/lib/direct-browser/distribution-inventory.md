@@ -8,6 +8,10 @@ The plugin distributes native/peer-host.c and native/consent-host.swift as sourc
 browser's PID, start time and executable evidence. The consent host supplies authenticated payment and connection controls.
 Both compile locally at first use with Apple's command-line tools. No signed or notarized native binary is distributed.
 
+electron-identity.mjs and electron-consent.mjs use built-in Node modules only. consent-ui, host-files and v3-context import
+electron-identity and use it only when a trusted app binding exists. Nothing on the installed path imports electron-consent yet
+(EPV3-7 wires it).
+
 host.mjs publishes both helpers only after compilation and hash verification, under a private per-user cache.
 Its exclusive build.lock refuses concurrent publication. Source and executable identity are rechecked before each launch.
 Only a locally issued receipt object can start a helper. Missing tools or failed compilation leave the engine route available.

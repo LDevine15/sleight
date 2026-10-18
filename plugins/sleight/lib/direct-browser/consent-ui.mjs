@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, normalize } from 'node:path';
+import { validateOperationPrincipal, describeOperationDocument, validateCardOperation, cardChoices } from './electron-identity.mjs';
 
 // Native host protocol only. No page bridge or model-facing approval endpoint.
 // BP2-1 repeats its policy/lease/document checks through checkCurrent at dispatch.
@@ -46,9 +47,11 @@ function webOrigin(value) {
   if (!['http:', 'https:'].includes(url.protocol) || url.origin !== value || url.username || url.password) fail('INVALID_ORIGIN');
   return value;
 }
+// An operation inside an Electron app carries one extra key, a typed principal. It is
+// checked against origin, destination and incarnation; without it only web origins pass.
 function operationKey(operation) {
-  const key = canonical(operation);
-  if (Buffer.byteLength(key) > 65536 || Object.keys(operation).length !== identityKeys.length) fail('INVALID_OPERATION');
+  const key = canonical(operation), typed = Object.hasOwn(operation, 'principal');
+  if (Buffer.byteLength(key) > 65536 || Object.keys(operation).length !== identityKeys.length + (typed ? 1 : 0)) fail('INVALID_OPERATION');
   for (const field of identityKeys) {
     if (!Object.hasOwn(operation, field)) fail('INVALID_OPERATION');
     const value = operation[field];
@@ -57,10 +60,18 @@ function operationKey(operation) {
     else if (field === 'payment') { if (value !== null && (typeof value !== 'object' || Array.isArray(value))) fail('INVALID_OPERATION'); }
     else if (typeof value !== 'string' || !value || value.length > 4096) fail('INVALID_OPERATION');
   }
-  webOrigin(operation.origin);
   if (!verbs.has(operation.action)) fail('INVALID_OPERATION');
+  if (typed) { validateOperationPrincipal(operation); return key; }
+  webOrigin(operation.origin);
   const destination = new URL(operation.destination);
   if (!['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password) fail('INVALID_DESTINATION');
+  return key;
+}
+// Debugger and relaunch cards name an app and a requesting turn instead of a page action.
+function cardKey(kind, operation) {
+  const key = canonical(operation);
+  if (Buffer.byteLength(key) > 65536) fail('INVALID_OPERATION');
+  validateCardOperation(kind, operation);
   return key;
 }
 
@@ -80,20 +91,28 @@ export function createConsentUi({ authenticate, present, checkCurrent = () => fa
   return {
     request(operation, { kind = 'action', label = '' } = {}) {
       if (typeof authenticate !== 'function' || typeof present !== 'function') fail('TRUSTED_UI_UNAVAILABLE');
-      if (kind !== 'action' || !operation?.payment) fail('INVALID_CONFIRMATION');
+      const card = kind === 'debugger' || kind === 'relaunch';
+      if (!card && (kind !== 'action' || !operation?.payment)) fail('INVALID_CONFIRMATION');
       for (const [id, record] of pending) if (now() >= record.expires) pending.delete(id);
       if (pending.size >= 32) fail('CONFIRMATION_BACKPRESSURE');
-      const key = operationKey(operation), id = randomUUID();
-      const snapshot = JSON.parse(key);
-      pending.set(id, { key, snapshot, kind, epoch, expires: now() + ttlMs });
+      const key = card ? cardKey(kind, operation) : operationKey(operation), id = randomUUID();
+      const snapshot = JSON.parse(key), choices = card ? cardChoices(kind, snapshot) : ['once', 'cancel'];
+      pending.set(id, { key, snapshot, kind, choices, epoch, expires: now() + ttlMs });
       try {
         // The host renders escaped observations as text outside page DOM. It
         // renders exact data/payment details from the second, private argument
         // in its native surface. That argument must never enter logs/model output.
-        present(Object.freeze({ id, kind, operation: snapshot.sequence, clientSession: escapeLabel(snapshot.clientSession),
-          origin: escapeLabel(snapshot.origin), destinationOrigin: escapeLabel(new URL(snapshot.destination).origin),
-          action: snapshot.action, pageLabel: escapeLabel(label), data: 'protected', payment: snapshot.payment ? 'protected' : null,
-          choices: ['once', 'cancel'] }), JSON.parse(key));
+        if (card) present(Object.freeze({ id, kind, operation: snapshot.sequence, clientSession: escapeLabel(snapshot.session),
+          app: Object.freeze({ name: escapeLabel(snapshot.app.name), bundleId: escapeLabel(snapshot.app.bundleId), version: escapeLabel(snapshot.app.version),
+            profile: escapeLabel(snapshot.app.profile), pid: snapshot.app.pid }), choices }), JSON.parse(key));
+        else {
+          const document = describeOperationDocument(snapshot);
+          present(Object.freeze({ id, kind, operation: snapshot.sequence, clientSession: escapeLabel(snapshot.clientSession),
+            origin: escapeLabel(document.origin), destinationOrigin: escapeLabel(document.destinationOrigin), documentKind: document.documentKind,
+            ...(document.app ? { app: escapeLabel(document.app) } : {}),
+            action: snapshot.action, pageLabel: escapeLabel(label), data: 'protected', payment: snapshot.payment ? 'protected' : null,
+            choices }), JSON.parse(key));
+        }
       } catch { pending.delete(id); fail('TRUSTED_UI_UNAVAILABLE'); }
       return id;
     },
@@ -103,7 +122,9 @@ export function createConsentUi({ authenticate, present, checkCurrent = () => fa
       pending.delete(event.id);
       if (!record || record.epoch !== epoch || now() >= record.expires) fail('STALE_CONFIRMATION');
       if (['cancel', 'close'].includes(event.choice)) return null;
-      if (event.choice !== 'once') fail('INVALID_CHOICE');
+      // Each card kind allows only the choices it offered. A debugger reply cannot answer a payment, and
+      // Always exists only on a debugger card for a profile that persists.
+      if (!record.choices.includes(event.choice)) fail('INVALID_CHOICE');
       const ticket = Object.freeze({});
       tickets.set(ticket, { ...record, choice: event.choice });
       return ticket;
@@ -112,10 +133,11 @@ export function createConsentUi({ authenticate, present, checkCurrent = () => fa
       const record = ticket && typeof ticket === 'object' ? tickets.get(ticket) : undefined;
       if (record) tickets.delete(ticket);
       let key;
-      try { key = operationKey(operation); } catch { fail('STALE_CONFIRMATION'); }
+      try { key = record && ['debugger', 'relaunch'].includes(record.kind) ? cardKey(record.kind, operation) : operationKey(operation); } catch { fail('STALE_CONFIRMATION'); }
       if (!record || record.epoch !== epoch || now() >= record.expires || record.key !== key) fail('STALE_CONFIRMATION');
       if (checkCurrent(JSON.parse(record.key)) !== true) fail('CURRENT_AUTHORITY_REQUIRED');
-      return { phase: 'prepared', effect: 'none', completed: [], next: 'broker authorization and dispatch fence' };
+      if (record.kind === 'action') return { phase: 'prepared', effect: 'none', completed: [], next: 'broker authorization and dispatch fence' };
+      return { phase: 'prepared', effect: 'none', completed: [], kind: record.kind, choice: record.choice, next: 'grant bookkeeping' };
     },
     revoke() { epoch++; pending.clear(); tickets = new WeakMap(); },
   };
