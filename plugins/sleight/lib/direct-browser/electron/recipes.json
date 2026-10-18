@@ -1,4 +1,63 @@
 {
   "version": 1,
-  "recipes": []
+  "recipes": [
+    {
+      "build": "com.microsoft.VSCode@1.141.0",
+      "name": "Visual Studio Code",
+      "bundleId": "com.microsoft.VSCode",
+      "signer": null,
+      "runtime": "electron/43.7.7",
+      "executable": "/Applications/Visual Studio Code.app/Contents/MacOS/Code",
+      "sha256": null,
+      "cdhash": null,
+      "args": [
+        "--user-data-dir={profile}/user-data",
+        "--extensions-dir={profile}/extensions",
+        "--shared-data-dir={profile}/shared",
+        "--use-inmemory-secretstorage",
+        "--disable-workspace-trust",
+        "--skip-welcome",
+        "--skip-release-notes",
+        "--disable-telemetry",
+        "--disable-updates",
+        "--new-window",
+        "{profile}/workspace"
+      ],
+      "schemes": ["vscode-file", "vscode-webview"],
+      "fileRoots": [],
+      "joinTolerance": 2,
+      "focusEmulation": false,
+      "zoomLevel": 0,
+      "qualified": false
+    },
+    {
+      "build": "com.todesktop.230313mzl4w4u92@3.25.6",
+      "name": "Cursor",
+      "bundleId": "com.todesktop.230313mzl4w4u92",
+      "signer": null,
+      "runtime": "electron/42.10.0",
+      "executable": "/Applications/Cursor.app/Contents/MacOS/Cursor",
+      "sha256": null,
+      "cdhash": null,
+      "args": [
+        "--user-data-dir={profile}/user-data",
+        "--extensions-dir={profile}/extensions",
+        "--shared-data-dir={profile}/shared",
+        "--use-inmemory-secretstorage",
+        "--disable-workspace-trust",
+        "--skip-welcome",
+        "--skip-release-notes",
+        "--disable-telemetry",
+        "--disable-updates",
+        "--new-window",
+        "{profile}/workspace"
+      ],
+      "schemes": ["vscode-file", "vscode-webview"],
+      "fileRoots": [],
+      "joinTolerance": 2,
+      "focusEmulation": false,
+      "zoomLevel": 0,
+      "qualified": false
+    }
+  ]
 }
