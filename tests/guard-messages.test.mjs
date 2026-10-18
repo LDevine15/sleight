@@ -216,6 +216,46 @@ for (const [name, code, engineError, expected] of [
   assert.deepEqual(inputs, name === 'first stop' ? [] : [1]);
 });
 
+// Safari mdn r2 (race-1017): setValue on the address bar ran, then `pressKey(null, "Return")` threw the engine's null.trim,
+// and the note said only "call failed (partial input possible)". Haiku re-read the window before sending Return (6.0 s).
+async function failedCall(t, code, raw) {
+  const f = relayFixture(t, { changeReview: true });
+  const content = tree('\t1 text field (settable) Description: address');
+  f.call(1, 'let app = await cua.getApp("Fixture Editor");');
+  f.reply({ id: 1, result: { content: [text(content)], _meta: { 'codex/toolSurface': { app: { appId: 'org.test.editor' } } } } });
+  f.call(2, code);
+  const forwarded = f.sent.find(m => m.id === 2), output = [];
+  const context = { app: { getAXState: async () => content, ...raw }, cua: {}, nodeRepl: { write: value => output.push(String(value)) } };
+  context.cua.getApp = async () => context.app;
+  try { await runInNewContext(`(async () => { ${forwarded.params.arguments.code} })()`, context); }
+  catch (error) { output.push(String(error?.message ?? error)); }
+  f.reply({ id: 2, result: { isError: true, content: [text(output.join('\n'))] } });
+  return f.received.at(-1).result.content.at(-1).text;
+}
+
+test('a failed action names what ran, the call that failed and the app handle\'s shape for it', async t => {
+  const sent = [];
+  const note = await failedCall(t, 'await app.setValue(1, "https://example.org/teapot"); await app.pressKey(null, "Return"); await app.getAXState();',
+    { setValue: async (n, value) => sent.push(value), pressKey: async key => sent.push(key.trim()) });
+  assert.deepEqual(sent, ['https://example.org/teapot']);
+  assert.match(note, /^sleight: call failed \(partial input possible\): Cannot read properties of null \(reading 'trim'\)\./);
+  assert.match(note, /setValue ran; pressKey\(null, "Return"\) failed\. An app handle's pressKey takes the key first: pressKey\("Return"\)\.$/);
+  // Set text stays out of the note.
+  assert.doesNotMatch(note, /example\.org/);
+});
+
+test('typeText with an element first gets the text-first shape, and typed text stays out', async t => {
+  const note = await failedCall(t, 'await app.click(1); await app.typeText(1, "secret words");',
+    { click: async () => {}, typeText: async value => value.trim() });
+  assert.match(note, /click ran; typeText\(1, <12 characters>\) failed\. An app handle's typeText takes the text first: typeText\(<text>\)\./);
+  assert.doesNotMatch(note, /secret/);
+});
+
+test('a lone failing action with no shape to give keeps the plain note', async t => {
+  const note = await failedCall(t, 'await app.click(1);', { click: async () => { throw new Error('engine target is unavailable'); } });
+  assert.equal(note, 'sleight: call failed (partial input possible): engine target is unavailable.');
+});
+
 test('the content-label preference still refuses a different document', async () => {
   const rows = '\t1 group Ribbon\n\t\t2 tab Insert\n3 menu bar\n\t4 Insert';
   const f = await execute(rows, 'await app.click("Insert");', { prior: { text: tree(rows).replaceAll('Draft', 'Other'), windows: null } });

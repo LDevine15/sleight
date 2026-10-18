@@ -51,6 +51,7 @@ export function promptNotice(text, prompt) {
     .replace("sleight: the fresh engine still couldn't reach its helper after one reconnection. Stop and tell the user; `sleight-mcp --doctor` prints a fix when macOS won't relaunch the helper.", 'sleight: fresh engine helper failed. Stop; tell the user to run `sleight-mcp --doctor`.')
     .replace(/ is outside the visible part of (.+?), so this click didn't reach it\. Scroll it into view with (`[^`]*`), then click it again\./, " is outside $1's view; click missed. $2, then click again.")
     // The read compactor's notes (compact-reads.mjs) and the stop notes (menu-continuation.mjs).
+    .replace(/ An app handle's [^ ]+ takes the ([^ ]+) first: /, ' App handle: $1 first: ')
     .replace('sleight: 3 calls in a row scrolled this list. In one call, click a row, then `await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: scroll, read with getAXState(), and stop when the target shows or the rows stop changing.',
       'sleight: 3 scroll calls in a row. In one call, click a row, then `await app.pickFromList("<whole row text>")`. If it stops, loop scroll and getAXState() (fixed count) until the target shows or rows stop.')
     .replace(', not the document; click the document before typing.', '; click the document first.')

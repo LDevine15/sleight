@@ -30,7 +30,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
   changed, read again before retrying.
-- Among windows, use `select_window`.
+- A window other than getApp's: `select_window`.
 - Multiply tap coordinates by the screenshot multiplier.
 
 ## Text, menus and files
@@ -80,7 +80,7 @@ doesn't require confirming it. Otherwise stop before the final click.
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from
 `await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
-Tab input's first argument is an element index or `null`.
+Tab-handle input's first argument: element index or `null`.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.

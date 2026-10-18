@@ -73,7 +73,8 @@ import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWholeTree, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate,
+  failedActionText } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -212,7 +213,7 @@ function requireNote(refused, saved, prompt) {
 // The skill's rules for an open_file result under SLEIGHT_OPEN_RULES=short: without what open_file already
 // did (acquiring, choosing a window, opening a document), tap coordinates, the drag, hover and banner tools,
 // and the doctor line. Every safety passage stays word for word, and a heading left empty goes too.
-const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- Multiply tap coordinates|- Acquire a document that's already open|- Reorder rows or move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Rows, text selected in |If `js` fails to start|Startup failure: )/;
+const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- A window other than getApp's|- Multiply tap coordinates|- Acquire a document that's already open|- Reorder rows or move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Rows, text selected in |If `js` fails to start|Startup failure: )/;
 export function openFileRules(rules) {
   if (typeof rules !== 'string') return rules;
   const blocks = [];
@@ -2812,7 +2813,7 @@ export function createRelay({
     const handle = text => tabStop ? text.replace(/Call select_window with \{[^\n]*?\}\./g, 'This window keeps its handle; send the rest on it after reading the result.') : text;
     if (tabStop) for (const item of msg.result.content) if (item?.type === 'text' && typeof item.text === 'string') item.text = handle(item.text);
     const action = resultCalls.get(msg.id);
-    if (action && taken.receipt) action.failure = { message: handle(taken.receipt.error ?? failureReason(taken.content)),
+    if (action && taken.receipt) action.failure = { message: handle(failedActionText(taken.receipt) ?? failureReason(taken.content)),
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
     // A lease on a dialog or sheet remembers the window it covered (parent), so a stop onto a standard window after the
