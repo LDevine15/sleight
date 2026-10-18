@@ -20,16 +20,28 @@ const act = (seq, over = {}) => ({ hand: 'act', nonce, seq, kind: 'click', pid: 
 const line = frame => (typeof frame === 'string' ? frame : JSON.stringify(frame)) + '\n';
 
 test('hand source: it never posts input, moves the pointer, activates, takes key or writes stdout', () => {
-  const host = section('HAND HOST'), frame = section('HAND FRAME'), art = section('HAND ART');
-  assert.ok(host && frame && art, 'hand sections absent');
-  for (const text of [host, frame, art]) {
+  const host = section('HAND HOST'), frame = section('HAND FRAME'), art = section('HAND ART'), motion = section('HAND MOTION');
+  assert.ok(host && frame && art && motion, 'hand sections absent');
+  for (const text of [host, frame, art, motion]) {
     assert.doesNotMatch(text, /CGEvent|CGWarp|NSCursor|activate\(|makeKey|makeMain|becomeKey\(|orderFront\(|AXUIElement|standardOutput|print\(|NSLog/);
   }
   assert.match(host, /orderFrontRegardless\(\)/);
   assert.match(host, /IsSecureEventInputEnabled\(\)/);
-  assert.match(host, /CAKeyframeAnimation\(keyPath: "position"\)/);
-  // The timings sleight-arch set until the art director delivers.
-  assert.match(host, /glide = 0\.3, flourish = 0\.15, fade = 0\.3, silence = 1\.5/);
+  assert.match(motion, /CAKeyframeAnimation\(keyPath: keyPath\)/);
+});
+
+test('hand art: the six delivered states are embedded as vector SVG on one 48 pt canvas, with no files at runtime', () => {
+  const art = section('HAND ART');
+  for (const state of ['rest', 'point', 'press', 'grab', 'scroll', 'dabs']) {
+    const svg = art.match(new RegExp(`\\.${state}: ##"""\\n([\\s\\S]*?)\\n"""##`))?.[1];
+    assert.ok(svg, state + ' absent');
+    assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 48 48" width="48" height="48">/, state);
+    assert.match(svg, new RegExp(`state "${state}"\\. Canvas 48 pt, hotspot \\(10,10\\)`), state);
+    assert.match(svg, /<\/svg>$/, state);
+  }
+  // The palette: ivory and its shadow side, the navy halo, and the dabs' blues.
+  for (const colour of ['#EFE9DC', '#B9BFC9', '#141A26', '#A9C4F5', '#7299EA', '#4E79D9']) assert.ok(art.includes(colour), colour);
+  assert.doesNotMatch(source, /contentsOfFile|Bundle\.main|URL\(fileURLWithPath/);
 });
 
 // One compile for the file, removed when the process exits.
@@ -170,15 +182,50 @@ test('hand dump: the panel has exactly the flags of the design, never shown, wit
     accessibilityElement: false, contentAccessibilityElement: false, hidesOnDeactivate: false, visible: false,
   });
   assert.equal(dump.capture, 'hidden');
-  assert.deepEqual(dump.timing,{ glide: 0.3, flourish: 0.15, fade: 0.3, silence: 1.5 });
-  assert.equal(dump.art.height, 32); assert.equal(dump.art.opacity, 0.7);
-  assert.ok(dump.art.width > 32 && dump.art.width < 64, String(dump.art.width));
-  assert.deepEqual(dump.art.pixels, [[Math.round(dump.art.width), 32], [Math.round(dump.art.width * 2), 64]]);
-  // Mostly white glove with a thin dark outline, so it reads on light and dark windows.
-  const [white, dark] = dump.art.tones;
-  assert.ok(white > 300 && dark > 100 && dark < white * 2, JSON.stringify(dump.art.tones));
-  // The hand's action point is the glyph's pointer tip, near the top right of the art.
-  assert.ok(dump.art.anchor[0] > 0.5 && dump.art.anchor[0] < 1 && dump.art.anchor[1] > 0.8 && dump.art.anchor[1] <= 1, JSON.stringify(dump.art.anchor));
+  const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 1e-6, `${what}: ${actual} is not ${expected}`);
+  // Layers: the dabs under the glove, siblings on one 48 pt canvas anchored on the hotspot (10, 10).
+  assert.deepEqual(dump.layers.map(l => [l.isDabs, l.isGlove, l.bounds]), [[true, false, [0, 0, 48, 48]], [false, true, [0, 0, 48, 48]]]);
+  for (const layer of dump.layers) { near(layer.anchor[0], 10 / 48, 'anchor x'); near(layer.anchor[1], 38 / 48, 'anchor y'); }
+  // The art: every state at 48 and 96 px, its paint on the hotspot and nothing 4 pt beyond it up-left, ivory glove, blue dabs.
+  assert.deepEqual([dump.art.opacity, dump.art.lifted, dump.art.canvas, dump.art.hotspot, dump.art.axis], [0.85, 0.6, 48, [10, 10], [0.574, 0.819]]);
+  for (const state of ['rest', 'point', 'press', 'grab', 'scroll']) {
+    const art = dump.art[state];
+    assert.deepEqual(art.pixels, [[48, 48], [96, 96]], state);
+    assert.ok(art.hotspotAlpha > 0.5, `${state} paints the hotspot (${art.hotspotAlpha})`);
+    assert.ok(art.beyondTipAlpha < 0.05, `${state} has nothing past the tip (${art.beyondTipAlpha})`);
+    assert.ok(art.ivory > 300 && art.blue === 0, `${state} is the ivory glove (${art.ivory}, ${art.blue})`);
+  }
+  assert.ok(dump.art.dabs.blue > 40 && dump.art.dabs.ivory === 0 && dump.art.dabs.hotspotAlpha === 0, JSON.stringify(dump.art.dabs));
+  // Frame to state: what the glove shows while it approaches and while it acts.
+  assert.deepEqual(dump.states, { click: ['point', 'press'], double: ['point', 'press'], right: ['point', 'press'], key: ['point', 'point'],
+    type: ['point', 'point'], scroll: ['scroll', 'scroll'], drag: ['point', 'grab'] });
+  // The timing table of the spec.
+  const { glides, ease, ...table } = dump.timing;
+  assert.deepEqual(table, { entry: 0.16, glideBase: 0.22, glidePerPoint: 0.00025, glideMax: 0.42, flourish: 0.15, scroll: 0.2, grab: 0.09,
+    lift: 0.22, silence: 1.5, fade: 0.3, crossfade: 0.07, trail: 0.05, entryOffset: 18, hold: 3, liftOffset: 10, fadeOffset: 14,
+    scrollDrop: 5, typeStep: 1.5, pecks: 6, pressScale: 0.93, grabScale: 0.95, tilt: -0.22 });
+  [0.22, 0.245, 0.32, 0.42].forEach((value, i) => near(glides[i], value, 'glide ' + i));
+  near(ease[0], 0, 'ease 0'); near(ease[2], 1, 'ease 1'); assert.ok(ease[1] > 0.8, 'the out curve is past 80% at half time');
+  // Each kind's plan for (100, 100) to (160, 200), entering fresh: entry, glide by distance, the flourish, the lift.
+  const glide = d => Math.min(0.42, 0.22 + 0.00025 * d), length = Math.hypot(60, 100), back = (p, d) => [p[0] + 0.574 * d, p[1] + 0.819 * d];
+  const expected = {
+    click: [0.16 + glide(length) + 0.15 + 0.22, ['point', 'press', 'rest']], double: [0.16 + glide(length) + 0.3 + 0.22, ['point', 'press', 'rest']],
+    right: [0.16 + glide(length) + 0.15 + 0.22, ['point', 'press', 'rest']], key: [0.16 + glide(length + 3) + 0.15 + 0.22, ['point', 'rest']],
+    type: [0.16 + glide(length + 3) + 0.9 + 0.22, ['point', 'rest']], scroll: [0.16 + glide(length) + 0.2 + 0.22, ['scroll', 'rest']],
+    drag: [0.16 + 0.09 + glide(60) + 0.09 + 0.22, ['point', 'grab', 'rest']],
+  };
+  for (const [kind, [total, states]] of Object.entries(expected)) {
+    near(dump.plans[kind].total, total, kind + ' total'); assert.deepEqual(dump.plans[kind].states, states, kind);
+  }
+  // Secure input skips the pecks; the hand still arrives and lifts.
+  near(dump.plans.type.secureTotal, 0.16 + glide(length + 3) + 0.22, 'secure type'); near(dump.plans.click.secureTotal, dump.plans.click.total, 'secure click');
+  // The lift ends 10 pt back along the axis from where the hand acted, and the fade drifts to 14 pt.
+  back([160, 200], 10).forEach((v, i) => near(dump.plans.click.rest[i], v, 'click rest'));
+  back([160, 200], 14).forEach((v, i) => near(dump.plans.click.fadeTo[i], v, 'click fade'));
+  back(back([160, 200], 3).map((v, i) => i ? v : v + 1.5 * 5), 10).forEach((v, i) => near(dump.plans.type.rest[i], v, 'type rest'));
+  back([220, 200], 10).forEach((v, i) => near(dump.plans.drag.rest[i], v, 'drag rest'));
+  // A frame during the hold has no entry: it glides on from where the hand is.
+  near(dump.continuing.total, glide(length) + 0.15 + 0.22, 'continuing click');
   // A route from (100, 100) to (160, 200) gets a panel of its box plus 48 pt, clipped to a window at (60, 0) sized 200 by 200,
   // in global top-left points as [x, y, width, height].
   assert.deepEqual(dump.box, { unclipped: [52, 52, 156, 196], clipped: [60, 52, 148, 148] });
