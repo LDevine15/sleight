@@ -26,12 +26,14 @@ and are never in a hurry. Every trick on stage is a real screen capture.
 5. The bow, 10 s. The hands rise a little, turn palms out and open, showing them empty, and hold. The curtain falls. Title: SLEIGHT. Under it: "Computer use for your
    Mac. Done behind your back." A smaller line stays up two beats: "Free. Open source. Nothing up our sleeve." The hands clap
    once, one beat after it's comfortable. Then they reach toward each other with a cursor between their fingertips (the pose
-   from sleight's icon). The painting resolves into the icon itself, and the film cuts to black. Production rule: the bow never
+   from sleight's icon). The painting resolves into the icon itself. For its last 2 s, a small typeset line sits under the icon,
+   at the race disclosure's size and colour: "App names are trademarks of their owners. sleight is not affiliated with or endorsed
+   by them." Then the film cuts to black. Production rule: the bow never
    passes through a fingers-down pose.
 
-App names on the cards are plain typeset text, with no logos, brand colours or lookalike type, and the claim measures every app on a
-card. The end credits and the launch post carry: "App names are trademarks of their owners. sleight is not affiliated
-with or endorsed by them." (owner, 2026-10-18).
+App names on the cards are plain typeset text in the film's one text face, with no logos, brand colours or lookalike type, and
+the claim measures every app on a card. The film has no credit roll, so the trademark line is at the foot of the end frame in shot 5,
+and the launch post repeats the same sentence (owner, 2026-10-18).
 
 ## Teaser, about 15 s
 
