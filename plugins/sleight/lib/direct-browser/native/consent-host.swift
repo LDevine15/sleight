@@ -73,14 +73,46 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
 }
 // END APP FRAME
 
+// BEGIN STATUS MENU
+// The menu bar item shows only while turbo is in use: connected, idle, paused or waiting for cleanup, or while a request
+// waits for the person. Disconnected with nothing pending, it is hidden. Rows are (title, choice); a nil choice is a
+// plain status line. The worker's choices map to labels here and nowhere else.
+let statusWords = ["connected": "Connected", "connected-idle": "Connected, idle", "paused": "Paused", "cleanup-required": "Cleanup needed", "disconnected": "Disconnected"]
+let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean up", "turbo-off": "Turn turbo off", "cancel": "Cancel"]
+let paymentWords = ["ask": "ask when the amount isn't in your message", "always": "always ask", "never": "only for payments you didn't ask for"]
+func statusVisible(_ status: String?, requests: Int) -> Bool {
+    requests > 0 || ["connected", "connected-idle", "paused", "cleanup-required"].contains(status ?? "")
+}
+func statusRows(_ data: [String: Any], _ choices: [String]) -> [(String, String?)]? {
+    guard let status = data["status"] as? String, let word = statusWords[status],
+        choices.allSatisfy({ choiceWords[$0] != nil }) else { return nil }
+    var rows: [(String, String?)] = [("sleight turbo: " + word, nil)]
+    if let browser = data["browser"] as? String, !browser.isEmpty, browser.count <= 40,
+        browser.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) { rows.append(("Browser: " + browser, nil)) }
+    if let payments = data["payments"] as? String, let words = paymentWords[payments] { rows.append(("Payment check: " + words, nil)) }
+    rows.append(("-", nil))
+    for choice in choices { rows.append((choiceWords[choice]!, choice)) }
+    return rows
+}
+// END STATUS MENU
+
 final class ConsentHost: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var pending: [String: [String: Any]] = [:]
     var nonce: String?
     let outputLock = NSLock()
 
+    var status: String?
+    // The two hands from sleight's icon as a menu bar template image (18 points tall), drawn by macOS in the bar's own colour.
+    static let glyph = "iVBORw0KGgoAAAANSUhEUgAAAC0AAAAkCAYAAAAdFbNSAAADj0lEQVR4nM2YW4hNURjHf/ucYyaRXCNGFAnHPfeS3IskSih3UsoDIw9o4oEH18ithCa8IBEPJB6kjFA8Iddi3G/TSJgbbf2Xvra9zaSz95mvVmvvtdZe67/++1vfZUHjlBSQCWn3VBodUM+0tQFWAN2AphqTN9AekBbIMEb7ARuA18Aj4BkwRn2ZsA/ilhRQB9QG2nsDk4EZwDCNs/JD9c9MHtitEbsjgD7AIGCInv1+JzVmfOJq4S9myckCt3zGQkq1QNbp3dU/tUkCG4tdWgJrgQoD8IeKBeqKey+V2jRNgm1Pv9VfbCXwJILdsFKj+kLcIKNU4qwB8wm4DFwBbgKLgYNAlQFaa5jvq7kKkgDtAG8UkLvAfKBEoLcAE4GOGndSIL+bDRYnqcNukaVa/AbQFhgAvAXeAMuBsWKxE/DcgC0HluQD8CABOCWd9uWI2jYB64GhQGfgjtrfS/db/x79t53+I7m0054Wbw+cAy4C86SvHvBQ/WgjHYATQFd5vCnAfbP5oPOJRRwzhcam+tJE9XTprW/2RgMvtYkPUh104Oo1a5G/4D88nS9bge5AmcB6hrFHeq+UWviH8KoO5Cxgrv5KKm7QaWOm6nSofMCT5Dzc4fKAB1KRRQJ3QmwPBPZKt9E8icS6RaqLjTfbbMLJjPpnqr+d3ldocz3N3DmXoAkaLpN2WO+zBapSFqJVIHAvlGPpbAD20KHMeVBk2eoF7JdHc79/sPp8/dwl9zsuYqMF5jk2O2wnniZ76sDeA0apz2epuZ59wNf0bX2/POcMO8BddFgc2OsK1p3jCANWFAHGyyXA4MQO8BrpqAN82jDqUiYLPCu9zQbaYxULuCQQeZ1XezDqcmrQTPHFbdnpxAHvFuAqga4yKdEEHcRtCh+d7Nc3A/IR8Ow02YVLQqu1ESdzxPxNbWaJvjmUD8DjDcNhudpxYIHS/P7AJeCFxnzQXYXLWhIDXSYALpNoaPmmGNrOFatkVE8N5GhR+Vu1eX4KPAaWBeaKVVIqLQTA6fC/WPXHfJVz8W32DqlFOqn7iZTqMyEsOzVx7LpSpf6zxiMmLqXGWgTvHaLKAfN9ojdAGWAh8E4q4QWupMqVCn2WZfBV4gvwCthnrEQiqZEFPVK3PGmx61RgD7BdYKPEecvEZYoWfybwFbpmdZIKXMu6ktfL7SxwDDgKfARWq70hYWXeZR2wSs95vXGvT34BxBkpFy1HC1IAAAAASUVORK5CYII="
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        item.button?.title = "sleight disconnected"
+        if let data = Data(base64Encoded: ConsentHost.glyph), let image = NSImage(data: data) {
+            image.size = NSSize(width: image.size.width * 18 / image.size.height, height: 18)
+            image.isTemplate = true
+            item.button?.image = image
+        } else { item.button?.title = "sleight" }
+        item.isVisible = false
         item.menu = NSMenu()
         DispatchQueue.global().async { [weak self] in
             var buffer = Data()
@@ -112,9 +144,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         pending[id] = frame
         if let status = data["status"] as? String {
             // Status is broker-owned; page observations belong only in the sheet.
-            guard ["connected-idle", "connected", "paused", "disconnected", "cleanup-required"].contains(status),
-                choices.allSatisfy({ ["pause", "resume", "disconnect", "connect", "cancel", "cleanup"].contains($0) }) else { exit(65) }
-            item.button?.title = "sleight " + status
+            guard statusRows(data, choices) != nil else { exit(65) }
+            self.status = status
+            item.button?.toolTip = "sleight turbo: " + (statusWords[status] ?? status)
+            item.button?.appearsDisabled = status == "paused"
             for old in Array(pending.keys) where old != id && (pending[old]?["data"] as? [String: Any])?["status"] != nil {
                 pending.removeValue(forKey: old)
             }
@@ -134,8 +167,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             guard let frame = pending[id], let choices = frame["choices"] as? [String],
                 let data = frame["data"] as? [String: Any] else { continue }
             if data["status"] != nil {
-                for choice in choices {
-                    let row = NSMenuItem(title: choice.capitalized, action: #selector(control(_:)), keyEquivalent: "")
+                for (title, choice) in statusRows(data, choices) ?? [] {
+                    if title == "-" { menu.addItem(NSMenuItem.separator()); continue }
+                    guard let choice = choice else { menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")); continue }
+                    let row = NSMenuItem(title: title, action: #selector(control(_:)), keyEquivalent: "")
                     row.target = self; row.representedObject = ["id": id, "choice": choice]; menu.addItem(row)
                 }
             } else {
@@ -144,6 +179,8 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             }
         }
         item.menu = menu
+        let requests = pending.values.filter { ($0["data"] as? [String: Any])?["status"] == nil }.count
+        item.isVisible = statusVisible(status, requests: requests)
     }
     @objc func control(_ sender: NSMenuItem) {
         guard let event = sender.representedObject as? [String: String], let id = event["id"], let choice = event["choice"] else { return }

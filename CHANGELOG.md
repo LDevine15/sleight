@@ -232,6 +232,9 @@ TODO: full release pass result.
   With turbo on, Claude can also choose the engine's browser tools, including mobile viewport control.
   Each path keeps separate tabs and refs. A safety refusal or an uncertain action must not be retried
   through the other path.
+- The menu bar shows sleight's two hands only while turbo is connected, paused or waiting for cleanup, or while a request
+  waits for you. Its menu lists the state, the browser and the payment check, with Pause, Disconnect and Turn turbo off.
+  It used to read "sleight disconnected" for as long as a session ran.
 - At startup sleight writes the operator-owned `~/Library/Application Support/sleight/turbo.json` for
   Google Chrome (or Helium when Chrome isn't installed), and rewrites it after a plugin update or a
   node version change. A file with `enabled: false` is never overwritten. With no supported browser,

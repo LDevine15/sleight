@@ -211,6 +211,27 @@ for (const choice of ['pause', 'disconnect']) {
     }
   });
 }
+test('the menu bar status names the browser and payment check and offers Turn turbo off, which opts out and disconnects', async t => {
+  const f = await controls(t), control = f.views[0];
+  assert.deepEqual(control.choices, ['pause', 'disconnect', 'turbo-off']);
+  assert.equal(control.data.payments, 'ask');
+  assert.equal(control.data.browser, undefined, 'a config with no executable names no browser');
+  let optedOut = 0;
+  f.dependencies.turboOff = async () => { optedOut++; };
+  await f.choose(control, 'turbo-off');
+  assert.equal(optedOut, 1);
+  assert.ok(f.events.includes('disconnect'));
+  assert.ok(f.events.includes('ui-close'));
+});
+test('the menu bar status reads the browser from the operator config only', async t => {
+  const f = fixture(), views = [];
+  f.dependencies.readConfig = () => ({ executable: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
+  f.dependencies.createUi = () => ({ present(id, data, choices) { views.push({ id, data, choices }); }, authenticate: () => true, close() {} });
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  t.after(() => host.close());
+  await settle();
+  assert.equal(views[0].data.browser, 'Google Chrome');
+});
 test('installed delayed cleanup retains ownership until collection succeeds', async t => {
   const f = await controls(t); let cleanedUp = false;
   f.dependencies.createPages = () => ({ endTurn: async () => ({ cleanedUp }), list: async () => [] });

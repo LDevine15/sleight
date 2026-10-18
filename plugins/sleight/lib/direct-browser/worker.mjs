@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readInstalledConfig, acceptedInstalledPackage } from './installed-config.mjs';
+import { readInstalledConfig, acceptedInstalledPackage, installedConfigPath } from './installed-config.mjs';
 import { browserTools, validateToolCall, createToolDispatcher } from './tools.mjs';
 import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
 import { browserApplicationName } from './browsers.mjs';
@@ -37,6 +37,11 @@ const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconf
 // The model sees which application turbo selected, so a task naming it needs no engine search.
 // The name comes only from the operator-owned config's executable path and a fixed list, never a page.
 export const applicationName = browserApplicationName;
+// The person's "Turn turbo off" click in the menu bar: the same opt-out file the launcher writes. turbo-setup loads only then.
+async function optOut() {
+  const { writeConfigFile } = await import('./turbo-setup.mjs');
+  writeConfigFile(installedConfigPath(), { version: 1, enabled: false });
+}
 const unsafeStartup = new Set(['HOST_PACKAGE_MISMATCH', 'HOST_SOURCE_MISMATCH', 'HOST_CACHE_UNSAFE', 'INSTALLED_CONFIG_UNSAFE']);
 // The admin secret of the resident Electron app hosts. The MCP server process makes it once and hands it to each worker
 // it forks in the begin frames (IPC only, never argv, env or disk), so a new worker can still administer a host that
@@ -260,6 +265,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   // Opted-in Electron apps (EPV3-7): this session's id at the resident hosts, the debugger consent, one admin
   // client per app host, qualification receipts and the latest begin frame's engine approvals.
   let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
+  let browserName; // the menu bar's browser line, from the operator-owned config's executable only
   const admins = new Map(), receipts = new Map();
   // admins: bundle id -> the pending { admin, registry, profile } of that app's resident host.
   const eachAdmin = action => Promise.allSettled([...admins.values()].map(async pending => action((await pending).admin)));
@@ -343,9 +349,16 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     if (!ui) return;
     const state = resources.size && (parentLost || stopped) ? 'cleanup-required' : stopped ? 'paused'
       : connected || appConnected ? parentLost ? 'connected-idle' : 'connected' : 'disconnected';
-    ui.present('v3-control-' + (++sequence), { status: state }, state === 'cleanup-required' ? ['cleanup'] : ['pause','disconnect'], async event => {
+    // The menu bar shows the state, the browser and the payment check beside the person's own controls. Turning turbo off
+    // writes the launcher's opt-out and disconnects; only the person's click in sleight's own window sends it.
+    const payments = ['always', 'never'].includes(process.env.SLEIGHT_CONFIRM_PAYMENTS) ? process.env.SLEIGHT_CONFIRM_PAYMENTS : 'ask';
+    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments },
+      state === 'cleanup-required' ? ['cleanup'] : ['pause','disconnect','turbo-off'], async event => {
       if (ui.authenticate(event) !== true) return;
-      if (['disconnect','cleanup'].includes(event.action)) await close();
+      if (event.action === 'turbo-off') {
+        await (dependencies.turboOff ?? optOut)().catch(() => {});
+        await close();
+      } else if (['disconnect','cleanup'].includes(event.action)) await close();
       else if (event.action === 'pause') { stopped = true; await protocol?.end(); await revokeApps(); status(); }
     }, { deadline: Date.now() + 300000 });
   }
@@ -353,6 +366,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     const config = (dependencies.readConfig ?? readInstalledConfig)();
     if (!config) throw Error('SETTING_OFF');
     accepted = (dependencies.acceptPackage ?? acceptedInstalledPackage)(config); startupCurrent();
+    try { browserName = applicationName(config.executable); } catch {}
     const host = await import('./host.mjs'); startupCurrent();
     const built = await (dependencies.prepareHelpers ?? host.prepareNativeHelpers)({ inventory: config.receipt }); startupCurrent();
     if (built.status !== 'ready') throw Error(built.code);
