@@ -80,7 +80,7 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
 ## 2. After 1.3.0, in the owner's order
 
 Owner, 2026-10-18 21:4xZ: all remaining building finishes now, beside the race. Validation follows, and sleight holds at 1.3.1
-and use it before deciding what comes next. Everything below that is build work was dispatched that night (ledger, POST-1.3.0
+while the owner uses it, before deciding what comes next. Everything below that is build work was dispatched that night (ledger, POST-1.3.0
 BUILD). What remains after it is validation: live runs, A/Bs and the owner's watched checks.
 
 Post-release work builds on branches now and merges after the tag (owner, 2026-10-14). On 2026-10-18 the owner had the build rows started at once in lanes on the `post-130` branch (Electron EPV3-1 to EPV3-3, the Q1 reviews, the small queued items), with a Fable design and performance pass for the ghost hand (`ledger/fable-1018-ghost-hand.md`). The ready ones (Q1-7 to Q1-17, AS-4) went into the claim build the same night, and the claim measures them (owner, 2026-10-18). Later that night the owner folded Electron into 1.3.0, and then decided (F3, 2026-10-18, LAWS) that 1.3.0's app tasks run on the native path and Electron turbo comes in 1.3.1 with the relaunch flow. EPV3 builds in parallel lanes against Fable's contracts
