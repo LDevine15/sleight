@@ -31,6 +31,7 @@ function fixture() {
         return { sessionId };
       }
       if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: route.replace(/^s-/, '').replace(/-\d+$/, ''), url: 'about:blank', securityOrigin: '://', mimeType: 'text/html', loaderId: 'loader' } } };
+      if (method === 'DOMDebugger.getEventListeners') return { listeners: [] };
       if (/^(Page|Runtime|Network|Fetch|Log|Emulation|Inspector|DOM|Target)\./.test(method)) return {};
       throw Error('fake has no CDP method: ' + method);
     } };
@@ -129,6 +130,19 @@ for (const method of ['Page.bringToFront', 'Target.activateTarget', 'Browser.set
     assert.deepEqual(f.calls, []);
   });
 }
+test('DOMDebugger.getEventListeners passes on an owned page session; no other DOMDebugger command does, and the browser route refuses it', async t => {
+  const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'] }); t.after(() => filter.dispose());
+  await filter.session.send('Target.attachToTarget', { targetId: 'owned', flatten: true });
+  f.calls.length = 0;
+  await filter.session.send('DOMDebugger.getEventListeners', { objectId: 'node', depth: -1 }, 's-owned');
+  assert.deepEqual(f.calls.map(row => row.method), ['DOMDebugger.getEventListeners']);
+  f.calls.length = 0;
+  for (const method of ['DOMDebugger.setEventListenerBreakpoint', 'DOMDebugger.setDOMBreakpoint', 'DOMDebugger.setXHRBreakpoint', 'DOMDebugger.removeEventListenerBreakpoint'])
+    await assert.rejects(filter.session.send(method, { eventName: 'click' }, 's-owned'), /CDP_COMMAND_REFUSED/, method);
+  await assert.rejects(filter.session.send('DOMDebugger.getEventListeners', { objectId: 'node' }), /CDP_COMMAND_REFUSED/);
+  await assert.rejects(filter.session.send('DOMDebugger.getEventListeners', { objectId: 'node' }, 'forged'), /CDP_SESSION_NOT_OWNED/);
+  assert.deepEqual(f.calls, []);
+});
 test('root auto-attach attaches owned pages individually and never installs browser-wide auto-attach', async t => {
   const f = fixture(), filter = (await factory())({ session: f.session, ownedTargets: ['owned'] }); t.after(() => filter.dispose());
   const events = []; filter.session.on('event', event => events.push(event));
