@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 20:45 UTC, after the clear)
+## Banner (2026-10-18 20:30 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -43,7 +43,9 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 - Terminal.app job `race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari r3 for sleight, lcu, cua and
   peekaboo. When it logs `done`, a waiter in sleight-arch's shell opens `race-safari-r1.command`. It reruns the four r1 rounds
   (log `race-safari-r1a.log`), then the r2f drag-task reruns, and writes `done` to `race-safari-r1.log` only at the end. After a clear, if that log doesn't exist once the term log says `done`, open it by hand.
-- Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell and has not started a round yet, so it runs on the fix.
+- Safari's Codex x3 finished at 20:21Z on the PID fix. r3 ran with the owner's Claude window over 44-75% of Safari, so its two
+  drag rows are dropped (`filtered.json`, original in `race-1017/failed-safari-cover`) and rerun as `safari-codex-r3f` from
+  sleight-arch's shell. race-fx is on 64396fa5 (placement on) since 20:21Z. The 14 finished race Terminal windows are closed.
 - Queued from sleight-arch's shell: sleight's Firefox b6 x3 (`race-firefox-b6.log`, after the safari-term, safari-codex and safari-r1
   logs say `done`), then the sleight-in-Codex smoke in Firefox (both arms, wikipedia and form-checkout, `smoke-codex-sleight.sh`,
   log `race-smoke-codex-sleight.log`). Its dry run passed, and `~/.codex-bench-sleight` was set up 17:53Z. A clear kills these
@@ -76,9 +78,10 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
 
-**MB1 (built 3660e913, owner's order).** Turbo's menu bar item shows the icon's two hands only while turbo is in use or a
-request waits, with a menu of status, browser, payment check, Pause, Disconnect and Turn turbo off. A safety review is running. The
-owner sees it in a new session once the installed plugin updates. race-fx stays on 64396fa5.
+**MB1 (3660e913 and review fixes 2e194479, owner's order).** Turbo's menu bar item shows only while turbo is in use or a request
+waits, with a menu of status, browser, payment check, Pause, Disconnect and Turn turbo off. A failed opt-out keeps turbo and says
+so, and an opt-out from any session ends every session's turbo at the next 60 s refresh. The owner found the cut-out two-hands
+glyph unreadable at 18 pt. A Fable agent is drawing four vector glove candidates for the owner to pick. race-fx stays on 64396fa5.
 
 **Older owner items.** One "Always allow" click on the VS Code debugger card at the Electron turbo qualification (1.3.1). The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
 Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
