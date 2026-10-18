@@ -164,7 +164,7 @@ export function unawaitedAction(code) { return unawaitedCall(code)?.method; }
 function unawaitedCall(code) {
   code = withoutPageCallbacks(code);
   const bare = code.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, literal => literal.replace(/[^\r\n]/g, ' '));
-  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText)\()/g)) {
+  for (const m of bare.matchAll(/(?:^|[;{}\n])\s*((?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:click|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText|pickFromList)\()/g)) {
     let end = m.index + m[0].length - 1, chained = false;
     for (;;) {
       let depth = 0;
@@ -415,7 +415,7 @@ export function literalNumbers(code) {
 }
 // The action names in a call's code, in order, when the code runs each once: no loops or sleight helpers.
 export function guardActions(code) {
-  if (typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every)\(|\bsleight\s*\./.test(code)) return;
+  if (typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every|pickFromList)\(|\bsleight\s*\./.test(code)) return;
   return [...code.matchAll(/\.(click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\s*\(/g)].map(m => m[1]);
 }
 function numberedHandles(code) {

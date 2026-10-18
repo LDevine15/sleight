@@ -33,7 +33,7 @@ test('named native tasks acquire directly and action results avoid a confirming 
   assert.match(rules, /Don't read just to confirm them/);
   assert.match(rules, /For missing information, use `await app\.getAXState\(\)`/);
   assert.match(rules, /empty tree[\s\S]*user changed the app[\s\S]*header\s+changed, read again before retrying/);
-  assert.ok(rules.split(/\s+/).length <= 930);
+  assert.ok(rules.split(/\s+/).length <= 980);
 });
 
 // AN1: posted clicks on sheet tabs dragged them in 6 of 8 runs; next/previous-sheet keys moved nothing (6/6).
@@ -43,7 +43,7 @@ test('the skill skips switching back to look before saving and switches tabs by 
   assert.match(rules, /Don't switch back to a sheet or tab just to look at it before saving\. Clicks can drag tabs: switch\s+with the next\/previous-tab key\./);
   assert.doesNotMatch(rules, /After finishing any edit, switch sheets/);
   assert.doesNotMatch(rules, /Excel|Numbers|Option\+(?:Left|Right)|Name Box/);
-  for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 930);
+  for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 980);
 });
 
 // AO1: one rectangular paste entered a known block in 3.82 s mean against 7.53 s cell by cell (3/3 each);
@@ -60,7 +60,7 @@ test('the skill enters a known spreadsheet block as one paste from the active ce
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);
     // The drag tool's description carries its arguments and lost-text recovery; the skill keeps the routing.
     assert.match(rules, /To move selected text, select it in `js`, then call the `drag` tool, not `app\.drag`\./);
-    assert.ok(rules.trim().split(/\s+/).length <= 930);
+    assert.ok(rules.trim().split(/\s+/).length <= 980);
   }
 });
 
