@@ -7,8 +7,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 
 - The goal is a published claim that sleight is the fastest computer use plugin for Mac, measured against Claude in Chrome,
   Claude's own computer use, FowlBrowser, Codex, LCU and other reputable plugins. Haiku 5.5 at high effort drives the benchmark,
-  with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort, and a second Codex arm runs gpt-6.1-sol, both in real browser windows (owner,
-  2026-10-18). Benchmark runs publish every
+  with one Opus head-to-head for the headline. The Codex arm runs gpt-6-luna at the same effort. sleight also runs inside Codex as its plugin (MCP server), on gpt-6-luna and on
+  gpt-6.1-sol, in real browser windows (owner, 2026-10-18). Benchmark runs publish every
   result, failures included, with the model ids each arm actually ran.
   Browser tasks are tested only against turbo, never sleight's engine browser path (owner, 2026-10-17), so the native claim
   suite is the 9 native tasks in bench/claim-tasks.txt, plus app tasks in VS Code, Slack and Spotify, apps people use (owner,
