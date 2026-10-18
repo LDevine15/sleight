@@ -23,6 +23,7 @@ import { discoverExtensions, createBrowserSelection } from './browser-discovery.
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
+import { createRelayHand } from './hand/relay-hand.mjs';
 import { isV3Frontend, createV3Frontend } from './direct-browser/worker.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
@@ -610,7 +611,8 @@ export function runScript(script, request, options = {}) {
   const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
-  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup ? 3000 : 30000,
+  // The ghost hand stops waiting for locate.js after 2 s; a stalled AX app must not leave osascripts running.
+  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : script === 'hand/locate.js' ? 2500 : cleanup ? 3000 : 30000,
     ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
   // Their cover checks skip the ghost hand's panel by this pid, which only the launcher sets: a pid
@@ -962,6 +964,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       },
     },
     trace,
+    // The ghost hand, on unless SLEIGHT_HAND=0. Its client loads on the first action call; without one there is no hand.
+    hand: createRelayHand({ locate: request => runScript('hand/locate.js', request), trace: (direction, msg) => trace?.(direction, msg),
+      clientOptions: { trace: (direction, msg) => trace?.(direction, msg) } }),
     guardTiming: !!process.env.SLEIGHT_TRACE,
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',
     // SLEIGHT_SKILL=none leaves the skill out, for A/Bs. The app-agnostic skill replaced the old one after

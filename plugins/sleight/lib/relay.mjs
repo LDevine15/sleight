@@ -777,6 +777,9 @@ export function createRelay({
   openAutoShot = process.env.SLEIGHT_OPEN_AUTO_SHOT !== '0',
   openShotTimeoutMs = 5000,
   onClientReply = () => {},
+  // The ghost hand (hand/relay-hand.mjs), told about admitted calls, approvals and results. Fire-and-forget:
+  // the relay never awaits it or reads its state, and without it nothing changes.
+  hand,
 }) {
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
@@ -1601,6 +1604,8 @@ export function createRelay({
     leaseTimer.unref?.();
   }
   function finishedCall(id) {
+    // A call that ends without an engine result (a refusal, a retry, a stop) shows no more hand.
+    hand?.result(id, true);
     callDetails.delete(id);
     lightReturn?.end(id);
     const call = leaseCalls.get(id);
@@ -1776,6 +1781,8 @@ export function createRelay({
   let nextElicitId = 0;
 
   const toServer = (msg, continuationChecked = false) => {
+    // An accepted app approval is the exact beat of its action.
+    if (hand && msg.method === undefined && msg.id !== undefined) hand.answered(msg.id, msg.result?.action);
     if (msg.method === undefined && msg.id !== undefined) {
       const request = engineRequests.get(msg.id);
       if (request) {
@@ -3226,6 +3233,8 @@ export function createRelay({
     } else if (!prepareLease(msg, browser)) return;
     refreshHeartbeat();
     if (msg.method === 'tools/call' && localNames.has(msg.params?.name)) {
+      // The local pointer tools check what covers the window and move the real pointer: no hand on screen.
+      if (msg.params.name === 'drag' || msg.params.name === 'hover') hand?.hide();
       trace('from-client', msg);
       if (flowPlan) flowRules.forward(flowPlan);
       turnUsed = true;
@@ -3427,6 +3436,12 @@ export function createRelay({
       }
       if (msg.id !== undefined) running.add(msg.id);
       if (flowPlan) { flowRules.forward(flowPlan); flowCalls.set(msg.id, flowPlan); }
+      // Admission has decided. The hand plans on a later tick, outside the guard path, from what Claude last saw.
+      if (hand && name === 'js' && !browser && msg.id !== undefined && typeof originalCode === 'string' && ACTION.test(originalCode)) {
+        const target = documentMode ? observedDocument : inputLease ? leaseWindow : lastWindow, seen = numberWindow(originalCode, target);
+        hand.admit(msg.id, { code: originalCode, target, lines: () => compactor.seenLines(seen),
+          screenshotSize: () => screenshots.get(target?.app?.toLowerCase())?.byTitle[target?.title] });
+      }
     }
     if (jsCalls.has(msg.id)) {
       const origin = syntaxOrigin(msg.params?.arguments?.code, jsCalls.get(msg.id));
@@ -4219,12 +4234,13 @@ export function createRelay({
           promptNotice(refusalNotice(refused), prompt) }] };
       }
     }
-    if (msg.method === undefined) { reportPreapprovals(msg); finishedCall(msg.id); }
+    if (msg.method === undefined) { hand?.result(msg.id, !!(msg.error || msg.result?.isError)); reportPreapprovals(msg); finishedCall(msg.id); }
     if (engineForbiddenTargets && isAppApproval(msg)) {
       const warning = forbiddenTargetWarning(msg.params?._meta?.tool_params?.app);
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
     if (isAppApproval(msg)) {
+      hand?.approval(msg.id, msg.params?._meta);
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);
       const diagnostic = [...helperProbes.entries()].filter(([id, probe]) => probe.control && running.has(id));
@@ -4604,6 +4620,7 @@ export function createRelay({
     for (const pending of clipboardReplies.values()) pending.reject(new Error(/* notice */ 'Clipboard guard: engine connection closed.'));
     clipboardReplies.clear();
     clearTimeout(idleTimer);
+    hand?.close();
     try { dispose(); } finally { releaseLeases(); }
     return Promise.all([clipboard?.close(), directBrowser?.end()]);
   }
