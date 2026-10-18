@@ -374,6 +374,7 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     menuEscapes: 2, menuEscapePosted: true, stuckEscapes: 2, stuckMenu: 'BENCH_SAFARI_MENU_STUCK',
     unsafeEscapes: 0, unsafeMenu: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
     identifierProfile: true, identifierOther: false, identifierPrefix: true,
+    searchFieldReadable: true, menuChildrenUnreadable: false, menuWithoutVisible: true, menuVisibleUnknown: false,
     preferredElement: 'profile', ambiguousProfile: true, visibleMenuClear: false, selectedMenuClear: false,
     clearMenuEscapes: 1,
     unknownSelectedMenuClear: false, unknownRoleMenuClear: false, bridgedSelectedMenuClear: false,

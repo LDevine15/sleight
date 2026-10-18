@@ -26,13 +26,13 @@ func identifier(_ element: AXUIElement) -> String {
     let id = UUID().uuidString
     references.append((id, element)); return id
 }
-func chrome(_ root: AXUIElement) throws -> [AXUIElement] {
+func chrome(_ root: AXUIElement, limit: Int = 4000) throws -> [AXUIElement] {
     var result: [AXUIElement] = [], visited: [AXUIElement] = []
     func walk(_ element: AXUIElement, _ depth: Int) throws {
         if visited.contains(where: { CFEqual($0, element) }) { return }
         visited.append(element)
         if string(element, "AXRole") == "AXWebArea" { return }
-        guard depth < 30, visited.count < 4000 else { throw refuse("BENCH_SAFARI_AX_LIMIT") }
+        guard depth < 30, visited.count < limit else { throw refuse("BENCH_SAFARI_AX_LIMIT") }
         result.append(element)
         for child in elements(element) { try walk(child, depth + 1) }
     }
@@ -185,12 +185,21 @@ func menusClear() throws -> Bool {
     let app = try ownedAX()
     guard let value = attribute(app, "AXMenuBar"), CFGetTypeID(value) == AXUIElementGetTypeID(),
           attribute(value as! AXUIElement, "AXChildren") is [AXUIElement] else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
-    return menuStateClear(try chrome(value as! AXUIElement).map { element in
-        let names = attributeNames(element)
-        guard !names.isEmpty, !names.contains("AXChildren") || attribute(element, "AXChildren") is [AXUIElement] else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
-        return ["role": string(element, "AXRole"), "selected": attribute(element, "AXSelected") as Any,
-                "visible": attribute(element, "AXVisible") as Any]
+    // Safari 26's menu bar alone is about 3,800 elements (History and Bookmarks grow it).
+    return menuStateClear(try chrome(value as! AXUIElement, limit: 20000).map { element in
+        let names = attributeNames(element), role = string(element, "AXRole")
+        guard !names.isEmpty, menuChildrenReadable(role: role, names: names, readable: attribute(element, "AXChildren") is [AXUIElement]) else { throw refuse("BENCH_SAFARI_MENU_STUCK") }
+        return ["role": role, "selected": attribute(element, "AXSelected") as Any,
+                "visible": menuVisible(role: role, names: names, value: attribute(element, "AXVisible") as Any)]
     })
+}
+// Safari 26 (2026-10-18): the menu bar holds a search field that lists AXChildren without returning them, and AXMenu has no
+// AXVisible at all. Only the menu, its bar item and the bar itself must read cleanly; an open menu shows as a selected bar item.
+func menuChildrenReadable(role: String, names: [String], readable: Bool) -> Bool {
+    !["AXMenuBar", "AXMenuBarItem", "AXMenu"].contains(role) || !names.contains("AXChildren") || readable
+}
+func menuVisible(role: String, names: [String], value: Any) -> Any {
+    role == "AXMenu" && !names.contains("AXVisible") ? false : value
 }
 func cleanMenus(escape: () throws -> Void, clear: () throws -> Bool) throws -> [String: Any] {
     for count in 1...2 {
@@ -338,6 +347,10 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     result["identifierProfile"] = identifierProfile("TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill") == profileName
     result["identifierOther"] = identifierProfile("TabGroupPickerButton?Profile=owner&Icon=x") == profileName
     result["identifierPrefix"] = identifierProfile("Other?Profile=sleight%20benchmark") == nil
+    result["searchFieldReadable"] = menuChildrenReadable(role: "AXTextField", names: ["AXChildren"], readable: false)
+    result["menuChildrenUnreadable"] = menuChildrenReadable(role: "AXMenu", names: ["AXChildren"], readable: false)
+    result["menuWithoutVisible"] = menuStateClear([["role": "AXMenu", "visible": menuVisible(role: "AXMenu", names: ["AXChildren"], value: Optional<CFTypeRef>.none as Any)]])
+    result["menuVisibleUnknown"] = menuStateClear([["role": "AXMenu", "visible": menuVisible(role: "AXMenu", names: ["AXVisible"], value: Optional<CFTypeRef>.none as Any)]])
     result["preferredElement"] = preferredProfileEvidence([["element": "other"], ["element": "profile", "identifier": "ProfileButton"]])?["element"]
     result["ambiguousProfile"] = preferredProfileEvidence([["element": "one"], ["element": "two"]]) == nil
     result["visibleMenuClear"] = menuStateClear([["role": "AXMenu", "visible": true]])
