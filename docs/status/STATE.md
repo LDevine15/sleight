@@ -8,8 +8,10 @@ What is true now. One banner, replaced in place as work happens. Always-true rul
 Goal (owner): release 1.3.0, then the claim post and the video. The owner is away from the PC, reachable by phone, and OK'd live
 runs tonight. Ledger: `~/Projects/sleight-wt/ledger/LEDGER.md` (sections CLAIM-1018, EPV3, APP-CLAIM).
 
-**Native claim: "fastest" (scorer wording), sleight fastest on 8 of 9, 230 s total against claude-cu's 454 s** on claim build
-`9c836f22`. Score: `~/Projects/sleight-wt/sitting-1017c/claim-score-1018.{txt,json}`. Lost: preview-read (Peekaboo 4.4 against 5.1).
+**Native claim on the release build: "fastest" (scorer wording), sleight fastest on 8 of 9, 251 s total against claude-cu's 454 s.**
+Build 995b4855 (Electron, MV2, FL2), sleight rerun 03:17-03:38Z with top-ups to 5 on preview-read, word-edit and excel-edit, against
+the competitors' claim files. Lost preview-read (5.1 against Peekaboo's 4.4). Score: `~/Projects/sleight-wt/app-claim/native-score-1018b.txt`.
+The earlier claim build `9c836f22` scored 230 s, 8 of 9.
 
 **Owner decisions 2026-10-18 (in LAWS):** F3 decided: 1.3.0's app tasks run on the native path, and Electron turbo comes in 1.3.1 with
 the relaunch flow. The claim's app tasks are VS Code (vscode-edit, temporary profile), Slack (slack-post: one fixed message in
@@ -24,17 +26,16 @@ Electron tests' trackTemp fix. Full check green (7739 tests, 7381 pass, 0 fail, 
 LCU 32, Codex 42, Cua 45 (Peekaboo and claude-cu never pass). slack-post sleight 13.5 (5/5), LCU 14.2 (5/5), claude-cu 16 (5/5), Cua 26,
 Peekaboo 47, Codex 65. spotify-play sleight 27, Codex 41, LCU 55, Cua 112. Totals sleight 57, LCU 101, Codex 147, Cua 183. Score in
 `~/Projects/sleight-wt/app-claim/app-score-1018.txt`, failure causes in the ledger (APP-CLAIM). Open owner question: whether "fastest"
-counts the app tasks with the 9 native ones. sleight's 9 native tasks are rerunning on the release build (MV2 changed sleight).
+counts the app tasks with the 9 native ones (sleight wins 11 of 12 either way).
 
-**Browser race.** The Firefox competitor rounds resumed 02:20Z with codex r1. Pause them with `touch ~/Projects/sleight-wt/race-1017/pause`,
-which holds between rounds. Pause them before the app-claim runs.
+**Browser race.** In Firefox, LCU r1 and Codex r1 are done and Cua r1 started 03:41Z. `touch ~/Projects/sleight-wt/race-1017/pause`
+holds the rounds between arms, and removing it resumes them.
 
-Next, in order:
-1. sleight's native rerun and top-ups on the release build, then the rescore.
-2. The Firefox race (paused).
-3. CU1, the world runner starting Cua's daemon.
-4. The Codex lease-broker live check.
-5. The release pass for 1.3.0.
+Order from here:
+1. The Firefox race: competitor rounds (cua r1 overlapped a full check at load 5, so rerun it if it scores within 20% of sleight), then
+   sleight's Firefox rounds from a race worktree at the release build, then the plan's later steps.
+2. The Codex lease-broker live check.
+3. The release pass for 1.3.0.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
