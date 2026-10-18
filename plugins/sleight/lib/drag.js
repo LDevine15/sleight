@@ -659,7 +659,9 @@ function focusedSelection(pid) {
   }, '');
 }
 
-const COVERED_NO_TEXT = cover => `${cover} covers the window at the drag points, and this drag has no selected text. Use the engine's app.drag in js instead: it reaches a covered window; nothing was pressed`;
+// The engine's app.drag reaches a covered window (a Chess pawn moved 1/1) but changed no list order in 13 of 13
+// Firefox reorders (2026-10-17), so it gets one try, and an unchanged result ends the attempt.
+const COVERED_NO_TEXT = (cover, detail = '') => `${cover} covers the window at the drag points, and this drag has no selected text${detail}. Use the engine's app.drag in js once if the content may change; if the order or content is unchanged afterwards, don't repeat it: stop and tell the user that part of the window needs uncovering; nothing was pressed`;
 
 function raiseWindow(win) {
   attempt(() => { win.attributes.byName('AXMain').value = true; });
@@ -688,6 +690,88 @@ function coveringApp(list, main, points) {
     if (top && top.pid !== main.pid) return top.owner || 'another app';
   }
   return null;
+}
+
+// The topmost on-screen window at a point, as the window server would pick the drop target.
+const topAt = (list, p) => list.find(w => w.layer === 0 && inside(w.bounds, p) && !/Computer Use$/.test(w.owner));
+
+// Containers hold many items; a point moved inside one could land on a different item.
+const CONTAINER_ROLES = ['AXApplication', 'AXWindow', 'AXToolbar', 'AXScrollArea', 'AXTextArea', 'AXTextField', 'AXWebArea',
+  'AXTable', 'AXOutline', 'AXImage', 'AXSplitGroup'];
+
+// Grid points inside one element's frame, nearest the original point first.
+function candidatePoints(rect, point) {
+  const inset = Math.min(2, rect.Width / 4, rect.Height / 4), out = [];
+  for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) {
+    out.push({ x: rect.X + inset + (rect.Width - 2 * inset) * i / 11, y: rect.Y + inset + (rect.Height - 2 * inset) * j / 11 });
+  }
+  return out.sort((a, b) => Math.hypot(a.x - point.x, a.y - point.y) - Math.hypot(b.x - point.x, b.y - point.y));
+}
+
+// A point inside the rect that the window server shows (exposed) and that Accessibility still resolves
+// to the same element (accept). At most `tries` Accessibility hit tests. null when none qualifies.
+function exposedPointIn(rect, point, exposed, accept, tries = 6) {
+  let tested = 0;
+  for (const p of candidatePoints(rect, point)) {
+    if (!exposed(p)) continue;
+    if (++tested > tries) return null;
+    if (accept(p)) return p;
+  }
+  return null;
+}
+
+// Another app covers an endpoint of a drag with no selected text. Rather than refuse, choose an exposed point
+// inside the exact same element (a list row, a button); every coverage check runs again on the new points.
+// endpointElement(name, point) returns { rect, role, accepts(p) } for the element under the original point.
+// Returns { start, end, moved: [names] }, or { refusal } naming the endpoint that has no exposed part.
+function relocateCovered(list, main, points, endpointElement) {
+  const result = { start: points.start, end: points.end, moved: [] };
+  const exposed = p => { const top = topAt(list, p); return !!top && top.id === main.id && top.pid === main.pid; };
+  for (const [name, key] of [['from', 'start'], ['to', 'end']]) {
+    const top = topAt(list, points[key]);
+    if (!top || top.pid === main.pid) continue;
+    const covered = `${name} is covered by ${top.owner || 'another app'}`;
+    const target = endpointElement(name, points[key]);
+    if (!target || !target.rect) return { refusal: `; ${covered} and no element is known there` };
+    if (CONTAINER_ROLES.includes(target.role)) return { refusal: `; ${covered} and the element there (${target.role}) holds other items, so the point can't move within it` };
+    const rect = clip(target.rect, main.bounds);
+    if (rect.Width < 4 || rect.Height < 4 || rect.Width * rect.Height > main.bounds.Width * main.bounds.Height / 2) {
+      return { refusal: `; ${covered} and the element there is too large or too small to move the point within it` };
+    }
+    const found = exposedPointIn(rect, points[key], exposed, target.accepts);
+    if (!found) return { refusal: `; ${covered} and no part of that element is exposed` };
+    result[key] = found; result.moved.push(name);
+  }
+  return result;
+}
+
+// The element under a covered endpoint, from Accessibility's hit test (which ignores other apps' windows) or,
+// for a numbered element, the observed element itself. accepts(p) is true when a hit at p is that element or inside it.
+function coveredEndpoint(pid, main, resolved, request) {
+  const app = $.AXUIElementCreateApplication(pid);
+  if (Number($.AXUIElementSetMessagingTimeout(app, 0.5)) !== 0) throw new Error('AX deadline unavailable');
+  const hit = p => {
+    const out = Ref(), error = Number($.AXUIElementCopyElementAtPosition(app, p.x, p.y, out));
+    if (error) throw axFailure('endpoint hit test', error);
+    return axElement(ObjC.castRefToObject(out[0]));
+  };
+  const within = (el, root) => {
+    for (let depth = 0; depth < 64; depth++) {
+      if ($.CFEqual(el.reference, root.reference)) return true;
+      if (attempt(() => el.role(), '') === 'AXWindow') return false;
+      const parent = attempt(() => axAttribute(el.reference, 'AXParent'), null);
+      if (!parent) return false;
+      el = axElement(parent);
+    }
+    return false;
+  };
+  return (name, point) => {
+    const numbered = resolved && elementEndpoint(request[name]) ? resolved.elements[request[name]]?.el : null;
+    const el = numbered || attempt(() => hit(point), null);
+    const rect = el && attempt(() => frame(el), null);
+    if (!el || !rect) return null;
+    return { rect, role: attempt(() => el.role(), ''), accepts: p => attempt(() => within(hit(p), el), false) };
+  };
 }
 
 function finishCrossWindowDrop(source, destination, a, b) {
@@ -929,7 +1013,7 @@ function runCrossWindow(request) {
 }
 
 function run(argv) {
-  let previous = null, saved = null, pid = null, pressed = false, didPress = false, post = null, current = null;
+  let previous = null, saved = null, pid = null, pressed = false, didPress = false, post = null, current = null, relocated = false;
   let path = 'none', fallbackReason = null, units = {};
   let backgroundSnapshot = null, scanned = null;
   // The launcher stops this process at 30 s, maybe mid-press. Never start a press late.
@@ -974,7 +1058,7 @@ function run(argv) {
         own.filter(w => w.title === main.title).length !== 1) throw new Error('element window title is ambiguous; read the exact window again');
     const win = semantic ? axWindow(pid, main) : null;
     const resolved = semantic ? semanticPoints(request, pid, win, main) : null;
-    const pointFrom = resolved ? resolved.from : toPoints(from, scale), pointTo = resolved ? resolved.to : toPoints(to, scale);
+    let pointFrom = resolved ? resolved.from : toPoints(from, scale), pointTo = resolved ? resolved.to : toPoints(to, scale);
     const verifySemantic = () => { if (resolved) checkSemantic(resolved, request, pid, chosenWindow, main); };
     // Name the frame Claude's numbers were read in, not the internal pixels-per-point factor. In
     // both Firefox settings runs (2026-10-17) Claude retried drags sent in the shown image's frame,
@@ -984,8 +1068,20 @@ function run(argv) {
       : { coordinates: request.screenshot ? 'window points: the latest screenshot is of another window size' : 'window points: no engine screenshot of this app yet' } };
     // A drag no other app lets through is decided before any window scan: without selected text it
     // is refused below anyway, and the raise and scan took 10 to 13 s to get there (2026-10-09).
-    const early = coveringApp(windows(true), main, { start: at(main.bounds, pointFrom), end: at(main.bounds, pointTo) });
-    if (early && !focusedSelection(pid)) throw new Error(COVERED_NO_TEXT(early));
+    const listed = windows(true);
+    let early = coveringApp(listed, main, { start: at(main.bounds, pointFrom), end: at(main.bounds, pointTo) });
+    if (early && !focusedSelection(pid)) {
+      // Plan around the covering window: an exposed point inside the same element, or a refusal.
+      const moved = relocateCovered(listed, main, { start: at(main.bounds, pointFrom), end: at(main.bounds, pointTo) },
+        coveredEndpoint(pid, main, resolved, request));
+      if (moved.refusal) throw new Error(COVERED_NO_TEXT(early, moved.refusal));
+      pointFrom = [moved.start.x - main.bounds.X, moved.start.y - main.bounds.Y];
+      pointTo = [moved.end.x - main.bounds.X, moved.end.y - main.bounds.Y];
+      relocated = true;
+      units = { ...units, relocated: moved.moved, note: [units.note, `${moved.moved.join(' and ')} moved to an exposed point inside the same element (window points ${moved.moved.map(n => (n === 'from' ? pointFrom : pointTo).map(v => Math.round(v * 10) / 10).join(', ')).join(' and ')})`].filter(Boolean).join('; ') };
+      early = coveringApp(windows(true), main, { start: moved.start, end: moved.end });
+      if (early) throw new Error(COVERED_NO_TEXT(early, '; the moved points are still covered'));
+    }
     const chosenWindow = win || axWindow(pid, main);
     let build;
     try { build = backgroundBuilder(); }
@@ -1047,8 +1143,11 @@ function run(argv) {
         }));
         // Prepare and validate every event, including the release, before down.
         const event = (type, p) => build(type, p, main);
+        // One stationary move on the destination before the release: raw mouse input without it never got an
+        // accepted dragover on the target, so the drop was missing 6/6 and one extra move fixed 6/6 (headless
+        // Chromium, 2026-10-18). The hold and the step spacing are unchanged.
         sequence = [event(5, points.start), event(1, points.start),
-          ...moves.map(p => event(6, p)), event(2, points.end)];
+          ...moves.map(p => event(6, p)), event(6, points.end), event(2, points.end)];
       } catch (e) { fallbackReason = `background unavailable: ${e.message || e}`; }
       if (sequence) {
         path = 'background';
@@ -1096,6 +1195,8 @@ function run(argv) {
       }
     }
     unchangedText();
+    // A drag that was covered and moved to exposed points was only cleared for background posting.
+    if (relocated) throw new Error(`background posting failed${fallbackReason ? ` (${fallbackReason})` : ''}; the foreground path would take the pointer of the person at the Mac and this drag was covered, so nothing was pressed`);
     waitForIdle();
     unchangedText();
     path = 'foreground';
