@@ -73,7 +73,8 @@ export async function connectAdmin({ stateDir, secret, hostId, socketPath = join
   return Object.freeze({
     hostId: host,
     status: () => request('status'),
-    start: ({ build } = {}) => request('start', { build }),
+    // profile: 'user' launches the build on the user's own profile (the relaunch flow); the host refuses any other value.
+    start: ({ build, profile } = {}) => request('start', profile === undefined ? { build } : { build, profile }),
     issue: ({ session } = {}) => request('issue', { session }),
     revoke: ({ session } = {}) => request('revoke', { session }),
     revokeAll: () => request('revokeAll'),

@@ -65,11 +65,12 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
     let bundle = card.app["bundleId"] as? String ?? "", profile = card.app["profile"] as? String ?? ""
     let pid = (card.app["pid"] as? NSNumber)?.intValue ?? 0
     let executable = card.app["executable"] as? String ?? "", signer = card.app["signer"] as? String ?? ""
-    let process = pid == 0 ? "not running (sleight starts it only after this approval)" : "\(pid)"
+    // pid 0: no process with the debugger yet. A copy the user is running without it gets its own relaunch card next.
+    let process = pid == 0 ? "not connected yet (sleight starts or reopens it only after your approval)" : "\(pid)"
     let identity = "\(name) \(version)\nBundle: \(bundle)\nSigner: \(signer)\nExecutable: \(executable)\nProfile: \(profile)\nProcess: \(process)\nSession: \(card.session)"
     if card.kind == "relaunch" {
         return ("Quit and reopen " + name + " for sleight?",
-            "sleight will ask " + name + " to quit through its own Quit command, then reopen it with the debugger connection. Unsaved work follows the app's own prompts. This approval is for this process only, once.\n\n" + identity)
+            "sleight will ask " + name + " to quit through its own Quit command, then reopen it on the same profile with the debugger connection. It may come to the front briefly. Unsaved work follows the app's own prompts, and sleight answers none of them. Cancel keeps " + name + " as it is. This approval is for this process only, once.\n\n" + identity)
     }
     return ("Let sleight debug " + name + "?",
         "The debugger lets sleight read the pages in " + name + " and operate them in the background, including anything open or signed in. This is separate from the app approval you already gave. Once ends with this turn, This session ends with the session, and Always allow stays until you revoke it for this build and profile.\n\n" + identity)

@@ -165,13 +165,16 @@ export async function createElectronHost({
   function brokerParts() {
     const ownershipHooks = {
       async reserve({ spec }) {
-        const reserved = await adapter.rpc('reserve', { build: spec.build });
+        // A user-profile launch (the relaunch flow) opens the app on its own profile: the adapter's root is only sleight's
+        // launch record, and nothing fills or reads the profile.
+        const user = spec.profile === 'user';
+        const reserved = await adapter.rpc('reserve', { build: spec.build, ...(user ? { mode: 'user' } : {}) });
         adapterHolds = true;
-        record = { state: 'reserved', build: spec.build, nonce: reserved.nonce, root: reserved.root, lock: reserved.lock, observed: [] };
+        record = { state: 'reserved', build: spec.build, nonce: reserved.nonce, root: reserved.root, lock: reserved.lock, observed: [], ...(user ? { mode: 'user' } : {}) };
         write({});
-        // The caller fills the reserved profile (a workspace to open) before anything runs in it. A failure here leaves the
-        // reservation held, so ownership is unresolved until reconcile() collects it.
-        if (prepareProfile) await prepareProfile(reserved.root, structuredClone(spec));
+        // The caller fills the reserved temporary profile (a workspace to open) before anything runs in it. A failure here
+        // leaves the reservation held, so ownership is unresolved until reconcile() collects it.
+        if (prepareProfile && !user) await prepareProfile(reserved.root, structuredClone(spec));
         return reserved;
       },
       async record(_owned, identity) { write({ state: 'running', pid: identity.pid, birth: identity.birth }); },
@@ -437,11 +440,13 @@ export async function createElectronHost({
       if (message.op === 'status') return JSON.parse(JSON.stringify(status()));
       if (message.op === 'resume') return resume();
       if (message.op === 'reconcile') return reconcileOwnership({ acceptDiskEvidence: message.args?.acceptDiskEvidence === true });
-      // A start names a reviewed build from the registry the host was given; nothing else reaches the launch spec.
+      // A start names a reviewed build from the registry the host was given, and profile 'user' for the user's own profile
+      // (the relaunch flow); nothing else reaches the launch spec.
       if (message.op === 'start') {
-        const build = message.args?.build;
-        if (typeof build !== 'string' || !builds.includes(build) || Object.keys(message.args).length !== 1) refuse('BUILD_NOT_REGISTERED');
-        return JSON.parse(JSON.stringify(await start({ build })));
+        const build = message.args?.build, keys = Object.keys(message.args ?? {}).sort().join();
+        const user = keys === 'build,profile' && message.args.profile === 'user';
+        if (typeof build !== 'string' || !builds.includes(build) || keys !== 'build' && !user) refuse('BUILD_NOT_REGISTERED');
+        return JSON.parse(JSON.stringify(await start(user ? { build, profile: 'user' } : { build })));
       }
       // The parent sends quit only on the user's click; the app's own Quit runs, with its unsaved-work prompts.
       if (message.op === 'quit') return JSON.parse(JSON.stringify(await quit(async () => true)));

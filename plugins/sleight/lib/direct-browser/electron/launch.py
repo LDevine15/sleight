@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import select
 import shutil
 import stat
@@ -30,7 +31,42 @@ def recipe_for_build(registry, build):
     return matches[0]
 
 
-def recipe_for(registry, build):
+MODES = ('temporary', 'user')
+PROFILE_SWITCHES = ('--user-data-dir', '--extensions-dir', '--shared-data-dir')
+
+
+def launch_args(recipe, mode='temporary'):
+    """The recipe's arguments for a launch mode. 'temporary' is a separate instance on a temporary {profile} (benchmarks).
+    'user' is the same build on the user's own profile (the relaunch flow): the recipe's reviewed userProfile arguments,
+    which name no profile at all, so the app opens the profile it always opens."""
+    if mode not in MODES:
+        raise ValueError('unknown launch mode')
+    if mode == 'user':
+        profile = recipe.get('userProfile')
+        if not isinstance(profile, dict):
+            raise ValueError('recipe has no user profile')
+        args = profile.get('args')
+    else:
+        args = recipe.get('args')
+    if not isinstance(args, list) or not all(isinstance(arg, str) and '\0' not in arg for arg in args):
+        raise ValueError('invalid recipe arguments')
+    # Recipe review must establish complete isolation. This filter only catches
+    # known dangerous switches; it does not claim a universal isolation sandbox.
+    forbidden = ('--inspect', '--remote-debugging', '--no-sandbox', '--disable-web-security', '--ignore-certificate')
+    if any(arg.lower().startswith(forbidden) for arg in args):
+        raise ValueError('forbidden launch switch')
+    if mode == 'user':
+        if any('{' in arg or '}' in arg for arg in args) or any(arg.lower().startswith(PROFILE_SWITCHES) for arg in args):
+            raise ValueError('a user-profile launch names no profile')
+        return list(args)
+    if not any('{profile}' in arg for arg in args):
+        raise ValueError('recipe lacks isolated profile')
+    if any('{' in arg.replace('{profile}', '') or '}' in arg.replace('{profile}', '') for arg in args):
+        raise ValueError('unknown recipe substitution')
+    return list(args)
+
+
+def recipe_for(registry, build, mode='temporary'):
     if registry.get('version') != 1:
         raise ValueError('unknown recipe format')
     matches = [r for r in registry.get('recipes', []) if r.get('build') == build]
@@ -42,18 +78,7 @@ def recipe_for(registry, build):
         raise ValueError('executable identity changed')
     if hashlib.sha256(executable.read_bytes()).hexdigest() != recipe.get('sha256'):
         raise ValueError('build hash changed')
-    args = recipe.get('args')
-    if not isinstance(args, list) or not all(isinstance(arg, str) and '\0' not in arg for arg in args):
-        raise ValueError('invalid recipe arguments')
-    # Recipe review must establish complete isolation. This filter only catches
-    # known dangerous switches; it does not claim a universal isolation sandbox.
-    forbidden = ('--inspect', '--remote-debugging', '--no-sandbox', '--disable-web-security', '--ignore-certificate')
-    if any(arg.lower().startswith(forbidden) for arg in args):
-        raise ValueError('forbidden launch switch')
-    if not any('{profile}' in arg for arg in args):
-        raise ValueError('recipe lacks isolated profile')
-    if any('{' in arg.replace('{profile}', '') or '}' in arg.replace('{profile}', '') for arg in args):
-        raise ValueError('unknown recipe substitution')
+    launch_args(recipe, mode)
     return dict(recipe)
 
 
@@ -190,8 +215,11 @@ def census_absent(identities, table=None):
 
 
 class OwnedLaunch:
-    def __init__(self, temporary_root, registry, build):
-        self.recipe = recipe_for(registry, build)
+    # mode 'user': the root below is sleight's own launch record (owner marker only). The app gets no path inside it,
+    # writes no log there, and keeps its own profile, which nothing here opens, copies or removes.
+    def __init__(self, temporary_root, registry, build, mode='temporary'):
+        self.recipe = recipe_for(registry, build, mode)
+        self.mode = mode
         lock_key = hashlib.sha256(build.encode()).hexdigest()
         self.lock = Path(temporary_root).resolve() / ('sleight-ep2-lock-' + lock_key)
         self.lock.mkdir(mode=0o700)  # Existing ownership is never stolen.
@@ -232,6 +260,7 @@ class OwnedLaunch:
         recipe = dict(recipe_for_build(registry, build))
         self = object.__new__(cls)
         self.recipe = recipe
+        self.mode = 'temporary'
         lock_key = hashlib.sha256(build.encode()).hexdigest()
         self.lock = Path(temporary_root).resolve() / ('sleight-ep2-lock-' + lock_key)
         lock_status = self.lock.lstat()
@@ -265,6 +294,7 @@ class OwnedLaunch:
         self.root = root
         self.marker = marker
         self.nonce = nonce
+        self.mode = data.get('mode') if data.get('mode') in MODES else 'temporary'
         self.lock_identity = lock_status.st_dev, lock_status.st_ino
         self.lock_owner_identity = owner_status.st_dev, owner_status.st_ino
         self.root_identity = root_status.st_dev, root_status.st_ino
@@ -294,7 +324,7 @@ class OwnedLaunch:
         data = {'owner': self.nonce, 'phase': phase, 'pid': self.pid, 'identity': self.identity,
                 'observed': sorted(self.observed), 'build': self.recipe['build'], 'lock': str(self.lock),
                 'root': str(self.root), 'lockIdentity': list(self.lock_identity), 'rootIdentity': list(self.root_identity),
-                'lockOwnerIdentity': list(self.lock_owner_identity)}
+                'lockOwnerIdentity': list(self.lock_owner_identity), 'mode': self.mode}
         # The exact private root is owned before any process can start.
         temporary = self.root / '.owner-next'
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -313,7 +343,8 @@ class OwnedLaunch:
         if self.recovered:
             raise RuntimeError('recovered ownership never spawns')
         # Recheck executable immediately before spawn, not only at reservation.
-        recipe_for({'version': 1, 'recipes': [self.recipe]}, self.recipe['build'])
+        recipe_for({'version': 1, 'recipes': [self.recipe]}, self.recipe['build'], self.mode)
+        user = self.mode == 'user'
         self.launched = True
         self.record('spawning')
         descriptors = []
@@ -330,7 +361,8 @@ class OwnedLaunch:
                 child_read, self.writer, self.reader, child_write = descriptors
             devnull = high_fd(os.open(os.devnull, os.O_RDWR))
             descriptors.append(devnull)
-            log = high_fd(os.open(self.root / 'child.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            # The user's own app logs nothing into sleight's folder: what it prints may name the user's files.
+            log = high_fd(os.open(os.devnull, os.O_WRONLY) if user else os.open(self.root / 'child.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
             descriptors.append(log)
             actions = [(os.POSIX_SPAWN_DUP2, child_read, 3),
                        (os.POSIX_SPAWN_DUP2, child_write, 4)]
@@ -348,10 +380,17 @@ class OwnedLaunch:
                         pass
             actions += [(os.POSIX_SPAWN_CLOSE, fd) for fd in sorted(opened)]
             args = [str(self.recipe['executable'])]
-            args += [arg.replace('{profile}', str(self.root)) for arg in self.recipe['args']]
+            if user:
+                args += launch_args(self.recipe, 'user')
+            else:
+                args += [arg.replace('{profile}', str(self.root)) for arg in self.recipe['args']]
             args.append('--remote-debugging-pipe')
             # No HOME rewrite, NODE_OPTIONS, CLAUDE env or live-profile copy.
             environment = {'PATH': '/usr/bin:/bin', 'LANG': 'en_US.UTF-8'}
+            if user:
+                # The account's own home and names, as a normal launch has them, so the app finds its own profile.
+                account = pwd.getpwuid(os.getuid())
+                environment.update({'HOME': account.pw_dir, 'USER': account.pw_name, 'LOGNAME': account.pw_name, 'SHELL': account.pw_shell})
             self.pid = os.posix_spawn(args[0], args, environment, file_actions=actions)
             os.close(child_read); descriptors.remove(child_read)
             os.close(child_write); descriptors.remove(child_write)
@@ -508,10 +547,12 @@ class Adapter:
             if self.launch is not None and self.launch.cleanup_result is None:
                 raise RuntimeError('retained ownership prevents another reservation')
             self.exit_reported = False
-            build = request.get('build')
+            build, mode = request.get('build'), request.get('mode', 'temporary')
             if not isinstance(build, str) or not build or len(build) > 256:
                 raise ValueError('invalid build')
-            self.launch = OwnedLaunch(self.temporary_root, self.registry, build)
+            if mode not in MODES:
+                raise ValueError('unknown launch mode')
+            self.launch = OwnedLaunch(self.temporary_root, self.registry, build, mode)
             return {'nonce': self.launch.nonce, 'root': str(self.launch.root), 'lock': str(self.launch.lock)}
         if command == 'lockstate':
             build = request.get('build')

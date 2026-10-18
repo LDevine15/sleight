@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ElectronBroker } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
@@ -26,8 +26,9 @@ function environment() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'eadp-')));
   const executable = python.stdout.trim();
   const registryPath = join(root, 'registry.json');
+  // userProfile: the same build on the user's own profile (the relaunch flow), with arguments that name no profile.
   writeFileSync(registryPath, JSON.stringify({ version: 1, recipes: [{ build: BUILD, executable, sha256: createHash('sha256').update(readFileSync(executable)).digest('hex'),
-    args: [fake, '--fake-host', '{profile}'] }] }));
+    args: [fake, '--fake-host', '{profile}'], userProfile: { supportDir: 'Fake', args: [fake, '--fake-host'] } }] }));
   const tempRoot = join(root, 'tmp'); mkdirSync(tempRoot);
   const stateDir = join(root, 's');
   return { root, registryPath, tempRoot, stateDir, cleanup: () => rmSync(root, { recursive: true, force: true }) };
@@ -82,6 +83,69 @@ test('handshake over host-created pipes: the app sees only descriptors 3 and 4, 
     assert.equal(existsSync(lockPath(e)), true);
     await connection.disconnect();
   } finally { await finishReal(host, e); }
+});
+
+test('a user-profile launch names no profile, has the account\'s home, logs nothing into sleight\'s record, and collect removes only that record', { skip }, async () => {
+  const e = environment(); const { host } = await realHost(e);
+  // A stand-in for the user's own profile folder: nothing may create, change or remove anything in it.
+  const own = join(e.root, 'own-profile'); mkdirSync(own); writeFileSync(join(own, 'settings.json'), '{"keep":true}');
+  try {
+    assert.equal((await host.start({ build: BUILD, profile: 'user' })).phase, 'verified');
+    const connection = await worker(host);
+    const pid = connection.identity.pid;
+    const info = await host.broker.pipe.request('Fake.argv');
+    assert.deepEqual(info.argv, [fake, '--fake-host', '--remote-debugging-pipe'], 'the recipe\'s userProfile arguments and the pipe, no profile path');
+    assert.deepEqual(Object.keys(info.env).filter(key => !key.startsWith('__CF')).sort(), ['HOME', 'LANG', 'LOGNAME', 'PATH', 'SHELL', 'USER']);
+    assert.equal(info.env.HOME, userInfo().homedir);
+    const { fds } = await host.broker.pipe.request('Fake.fds');
+    assert.equal(fds['1'], 'chr'); assert.equal(fds['2'], 'chr');
+    const [record] = tmpEntries(e).filter(name => name.startsWith('sleight-ep2-') && !name.includes('lock'));
+    assert.deepEqual(readdirSync(join(e.tempRoot, record)), ['OWNER.json'], 'sleight\'s own launch record, nothing of the app');
+    assert.equal(JSON.parse(readFileSync(join(e.tempRoot, record, 'OWNER.json'), 'utf8')).mode, 'user');
+    await connection.disconnect();
+    await host.broker.pipe.request('Fake.quit').catch(() => {});          // the app's own quit
+    await until(() => !alive(pid), 'the app exits');
+    assert.equal((await host.collect()).cleanup, 'removed');
+    assert.deepEqual(tmpEntries(e), []);
+    assert.deepEqual(readdirSync(own), ['settings.json']); assert.equal(readFileSync(join(own, 'settings.json'), 'utf8'), '{"keep":true}');
+  } finally { await finishReal(host, e); }
+});
+
+// Review F1: the adapter is the app's parent but holds none of its pipe ends after the spawn, so losing it leaves the app and
+// its pipe alone (the host parks: nothing can collect until a person quits). Losing the host is the case that closes the pipe.
+test('killing the launch adapter leaves the user-profile app running with its pipe open; the host parks', { skip }, async () => {
+  const e = environment();
+  let adapter;
+  const { host } = await realHost(e, { createAdapter: async () => (adapter = createPythonAdapter({ script: launch, registryPath: e.registryPath, tempRoot: e.tempRoot })) });
+  try {
+    await host.start({ build: BUILD, profile: 'user' });
+    const pid = host.broker.identity.pid;
+    adapter.child.kill('SIGKILL');
+    await until(() => adapter.lost, 'adapter lost');
+    await sleep(300);
+    assert.equal(alive(pid), true, 'the fake app quits on pipe EOF, so it is still alive only if its pipe is open');
+    assert.equal(host.broker.state, 'parked');
+    assert.equal(host.status().ownership.state, 'unresolved');
+  } finally { await finishReal(host, e); }
+});
+
+test('launch.py refuses a user-profile launch without a reviewed userProfile, or one whose arguments name a profile', { skip }, () => {
+  const script = `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('launch', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+out = {}
+for name, recipe in [('none', {'args': ['{profile}']}), ('dir', {'args': ['{profile}'], 'userProfile': {'args': ['--user-data-dir=/x']}}),
+                     ('sub', {'args': ['{profile}'], 'userProfile': {'args': ['{profile}']}}), ('port', {'args': ['{profile}'], 'userProfile': {'args': ['--remote-debugging-port=1']}}),
+                     ('ok', {'args': ['{profile}'], 'userProfile': {'args': ['--wait']}})]:
+    try: out[name] = m.launch_args(recipe, 'user')
+    except ValueError as error: out[name] = str(error)
+try: m.launch_args({'args': ['{profile}']}, 'other')
+except ValueError as error: out['mode'] = str(error)
+print(json.dumps(out))`;
+  const result = spawnSync('python3', ['-I', '-B', '-c', script, launch], { encoding: 'utf8', timeout: 20000, env: { PATH: process.env.PATH } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { none: 'recipe has no user profile', dir: 'a user-profile launch names no profile', sub: 'a user-profile launch names no profile',
+    port: 'forbidden launch switch', ok: ['--wait'], mode: 'unknown launch mode' });
 });
 
 async function finishReal(host, e) {

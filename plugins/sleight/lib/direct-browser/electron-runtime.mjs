@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createV3Context } from './v3-context.mjs';
 import { UNLAUNCHED, appKey } from './electron-identity.mjs';
+import { createAppProcesses, quitAndReopen, relaunchError, runningCopy } from './electron-relaunch.mjs';
 
 const fail = code => { throw Error(code); };
 const plain = value => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -16,6 +17,19 @@ const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 export const validBundleId = value => typeof value === 'string' && value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(value);
 const retained = resource => ({ resource, status: 'retained', code: 'CLEANUP_UNPROVED' });
 const hooked = new WeakSet(), released = new WeakMap();
+// The parked reasons that mean the app's process ended (broker.mjs), as electron-host-run.mjs's exit rule reads them.
+const APP_GONE = new Set(['child exited', 'pipe EOF']);
+
+// After a launch, the windows the app restores on its own can appear a moment later. Waits for one joined window, at most timeoutMs.
+async function waitForWindows(pages, timeoutMs, now = Date.now) {
+  const started = now();
+  for (;;) {
+    let rows = [];
+    try { rows = await pages.list(); } catch { /* the next pass decides */ }
+    if (rows.some(row => row.status === 'joined') || now() - started >= timeoutMs) return;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+}
 
 // Sibling modules other lanes own load at first use, so this file loads before they land.
 async function pick(dependencies, key, module) {
@@ -96,8 +110,12 @@ export async function releaseAppConnection(parts) {
 }
 
 /** The connection for one opted-in app this turn (epv3-contracts.md, EPV3-7, steps 1 to 11). `profile` is the trusted
- * profile identity ({ path, temporary }) shared by the unlaunched and launched forms, so the grant can be adopted. */
-export async function selectAppConnection({ bundleId, session, turn, apps, ui, consent, registry, admin, playwright, windows, profile, receipts, dependencies = {} } = {}) {
+ * profile identity ({ path, temporary }) shared by the unlaunched and launched forms, so the grant can be adopted.
+ * On the user's own profile (temporary false), a copy of the app the user is running without the pipe goes through the
+ * relaunch flow (electron-relaunch.mjs) after the debugger grant; a benchmark's temporary profile never looks for one.
+ * memory: this worker's { declined } Set of bundle ids whose relaunch card the user cancelled this session. */
+export async function selectAppConnection({ bundleId, session, turn, apps, ui, consent, registry, admin, playwright, windows, profile, receipts, memory,
+  quitWaitMs = 60000, restoreWaitMs = 15000, dependencies = {} } = {}) {
   if (!validBundleId(bundleId) || !SESSION.test(session ?? '') || typeof turn !== 'string' || !turn || !Array.isArray(apps) || !consent || !admin ||
       typeof windows !== 'function' || !plain(profile) || typeof profile.path !== 'string' || typeof profile.temporary !== 'boolean') fail('ELECTRON_CONNECTION_REQUIRED');
   void ui; // the debugger card goes through consent's own native channel
@@ -125,8 +143,20 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
   let status = await admin.status();
   // Another session's worker is connected: busy now, before sleight's card asks the user for anything.
   if (Array.isArray(status?.workers) && status.workers.some(other => other !== session)) fail('ELECTRON_BUSY: another session is acting in this app; nothing was sent');
+  // The app the host held has exited since (the user quit it): the host collects it first, so this turn starts afresh.
+  if (status?.broker?.state === 'parked' && APP_GONE.has(status.broker.parked?.reason)) {
+    await Promise.resolve().then(() => admin.collect()).catch(() => {});
+    status = await admin.status();
+  }
   // Nothing running and ownership not free: the launch would be refused, so no card asks for it.
   if (!running(status) && status?.ownership?.state !== 'free') fail('ELECTRON_OWNERSHIP_UNRESOLVED');
+  // The user's own copy, running without the pipe. Another user's process, two processes or another build refuse here, before any card.
+  let processes, copy;
+  if (!running(status) && !profile.temporary) {
+    if (memory?.declined?.has(bundleId)) throw relaunchError('ELECTRON_RELAUNCH_DECLINED', recipe.name);
+    processes = dependencies.processes ?? createAppProcesses();
+    copy = await runningCopy({ recipe, processes, uid: dependencies.uid ?? process.getuid() });
+  }
   let instance = running(status) ? launchedFrom(status) : d.instanceFromRecipe(recipe, { ...form, pid: 0, pidBirth: UNLAUNCHED });
   // 3. The debugger grant: an existing one for this exact process, else sleight's own card.
   let grant = consent.grantFor(instance, { session, turn });
@@ -135,15 +165,25 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
     if (answer?.status !== 'granted' || !answer.grant) fail('ELECTRON_DEBUGGER_REQUIRED');
     grant = answer.grant;
   }
-  // 4. One launch at most, only when nothing is owned; the grant then moves to the launched process once.
+  // 4. One launch at most, only when nothing is owned; the grant then moves to the launched process once. The user's running
+  // copy is reopened only through its relaunch card and its own Quit.
+  let launchedNow = false, relaunched;
   if (!running(status)) {
     if (status?.ownership?.state !== 'free') fail('ELECTRON_OWNERSHIP_UNRESOLVED');
-    await admin.start({ build: recipe.build });
-    status = await admin.status();
+    if (copy) {
+      const named = d.instanceFromRecipe(recipe, { ...form, pid: copy.pid, pidBirth: copy.birth });
+      const reopened = await quitAndReopen({ recipe, copy, instance: named, session, turn, consent, admin, processes, uid: dependencies.uid ?? process.getuid(),
+        quitWaitMs, declined: memory?.declined });
+      status = reopened.status;
+      relaunched = { quitMs: reopened.quitMs, launchMs: reopened.launchMs, wasFront: reopened.wasFront };
+    } else {
+      await admin.start({ build: recipe.build, ...(profile.temporary ? {} : { profile: 'user' }) });
+      status = await admin.status();
+    }
     if (status?.broker?.state !== 'ready' || !plain(status.broker.identity)) fail('ELECTRON_APP_UNAVAILABLE');
     const launched = launchedFrom(status);
     consent.adopt(grant, launched);
-    instance = launched;
+    instance = launched; launchedNow = true;
   } else if (status.broker.state === 'parked') {
     // A revoked once grant or a pause parked the connection; the host resumes it only for the same process.
     await admin.resume();
@@ -189,6 +229,9 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
     // 10. The app's existing renderers, seeded; nothing is created.
     parts.pages = d.createAppPageRegistry({ browser: parts.browser, filter: parts.filter, targets: parts.targets, join: parts.join, fence, owner: session });
     await parts.pages.seed();
+    if (launchedNow) await waitForWindows(parts.pages, restoreWaitMs);
+    // Whether macOS brought the reopened app forward. Recorded only: sleight never activates or hides anything to undo it.
+    if (relaunched) relaunched.activated = await processes.front().catch(() => null) === instance.pid;
     // 11. A dry run of this path on this process, unless a current receipt says it already passed. A receipt authorizes nothing.
     let receipt = receipts?.get(bundleId);
     if (!receipt || d.receiptCurrent(receipt, identity, recipe) !== true) {
@@ -196,7 +239,7 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
       receipts?.set(bundleId, receipt);
     }
     if (receipt?.qualified !== true) fail('ELECTRON_UNQUALIFIED');
-    return Object.freeze({ ...parts, grant, instance, recipe, receipt, turn });
+    return Object.freeze({ ...parts, grant, instance, recipe, receipt, turn, ...(relaunched ? { relaunch: Object.freeze(relaunched) } : {}) });
   } catch (error) {
     await releaseAppConnection(parts);
     throw error;
@@ -315,19 +358,27 @@ export async function createWorkerConsent({ ui, approvedApps, dependencies = {} 
 
 /** The registry recipe, the profile identity and an admin client to this app's own resident host (started if needed).
  * secret: the MCP server's admin secret (worker.mjs serverAppSecret), so every worker of one server reaches the same host.
- * A host started under another secret is ELECTRON_HOST_FOREIGN, carrying the registry's app name for the user's message. */
-export async function connectAppHost({ bundleId, secret, dependencies = {} } = {}) {
+ * A host started under another secret is ELECTRON_HOST_FOREIGN, carrying the registry's app name for the user's message.
+ * profile: 'user', the default, is the user's own app and profile (the relaunch flow); 'temporary' is a separate instance on
+ * a temporary profile, which LAWS keeps for benchmarks. The two never share a host. */
+export async function connectAppHost({ bundleId, secret, profile: mode = 'user', dependencies = {} } = {}) {
+  if (mode !== 'user' && mode !== 'temporary') fail('ELECTRON_CONNECTION_REQUIRED');
   const readRecipeRegistry = await pick(dependencies, 'readRecipeRegistry', 'electron-recipes');
   const recipeFor = await pick(dependencies, 'recipeFor', 'electron-recipes');
   const instanceFromRecipe = await pick(dependencies, 'instanceFromRecipe', 'electron-recipes');
+  const userProfileFor = await pick(dependencies, 'userProfileFor', 'electron-recipes');
   const ensureHost = await pick(dependencies, 'ensureHost', 'electron-admin');
   const config = dependencies.config ?? await import('./electron-config.mjs');
   const path = dependencies.registryPath ?? registryPath;
   const registry = readRecipeRegistry(path), recipe = recipeFor(registry, bundleId);
-  // Temporary profiles only on this path (LAWS): one identity per app under sleight's temporary root.
   const tempRoot = value(config.tempRoot);
-  const profile = Object.freeze({ path: join(tempRoot, bundleId), temporary: true });
-  const key = appKey(instanceFromRecipe(recipe, { profile: profile.path, temporary: true, pid: 0, pidBirth: UNLAUNCHED }));
+  let profile;
+  if (mode === 'temporary') profile = Object.freeze({ path: join(tempRoot, bundleId), temporary: true });
+  else {
+    try { profile = userProfileFor(recipe, ...(dependencies.home ? [dependencies.home] : [])); }
+    catch { throw relaunchError('ELECTRON_USER_PROFILE_UNSUPPORTED', recipe.name); }
+  }
+  const key = appKey(instanceFromRecipe(recipe, { profile: profile.path, temporary: profile.temporary, pid: 0, pidBirth: UNLAUNCHED }));
   let admin;
   try { admin = await ensureHost({ stateDir: config.hostStateDir(key), registryPath: path, tempRoot, build: recipe.build, secret }); }
   catch (error) { if (error?.message === 'ELECTRON_HOST_FOREIGN') error.appName = recipe.name; throw error; }

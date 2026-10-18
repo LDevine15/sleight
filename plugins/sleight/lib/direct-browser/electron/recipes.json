@@ -28,7 +28,8 @@
       "joinTolerance": 2,
       "focusEmulation": false,
       "zoomLevel": 0,
-      "qualified": false
+      "qualified": false,
+      "userProfile": { "supportDir": "Code", "args": [] }
     },
     {
       "build": "com.todesktop.230313mzl4w4u92@3.25.6",
@@ -57,7 +58,8 @@
       "joinTolerance": 2,
       "focusEmulation": false,
       "zoomLevel": 0,
-      "qualified": false
+      "qualified": false,
+      "userProfile": { "supportDir": "Cursor", "args": [] }
     }
   ]
 }

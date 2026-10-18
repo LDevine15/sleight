@@ -1,5 +1,6 @@
 // EPV3-8 live qualification of turbo on Electron apps (epv3-contracts.md, "EPV3-8 integration checklist").
 // sleight-arch runs it in the owner's away window: node bench/electron-qualification.mjs --owner-away [--apps vscode,cursor].
+// --dry-run --relaunch runs the relaunch cells (the owner's own app and profile, 1.3.1) against fakes; they have no live run here.
 // --dry-run runs every cell against fakes and touches nothing live. Cells drive only the five turbo tools; the live driver
 // (electron-qualification-live.mjs) launches its own instance with a temporary profile, never the owner's, sends no Apple
 // events, and never clicks a consent card or a macOS permission prompt. Importing this file starts nothing.
@@ -333,8 +334,74 @@ export const CELLS = Object.freeze([
   } },
 ].map(cell => Object.freeze(cell)));
 
+// ---- the relaunch flow (1.3.1): turbo on the owner's own app and profile. Each cell is a behaviour that depends on the app,
+// so each build qualifies it separately. They run dry here; live, only in a run the owner watches, since they quit and
+// reopen the owner's own app (no live driver yet). The harness never answers a card or the app's own prompts.
+export const RELAUNCH_CELLS = Object.freeze([
+  { id: 'relaunch-card', measures: 'the debugger card, then the relaunch card naming the running process; only the owner clicks', async run(c) {
+    const r = c.state.relaunched = await c.driver.relaunch({ consentWaitMs: c.options.consentWaitMs });
+    c.consent(r.card.debugger, 'relaunch-card'); c.consent(r.card.relaunch, 'relaunch-card');
+    if (r.card.relaunch.status !== 'granted') { c.state.noConnection = true; fail(r.card.relaunch.status === 'timeout' ? 'CONSENT_NEEDS_OWNER: no click on the relaunch card' : 'RELAUNCH_' + String(r.card.relaunch.status).toUpperCase()); }
+    if (r.before.pid === r.pid) fail('SAME_PROCESS: the app was not reopened');
+    return { number: r.ms, unit: 'ms', detail: { before: { windows: r.before.windows } } };
+  } },
+  { id: 'relaunch-quit', measures: 'how the app quits: NSRunningApplication terminate accepted, exit time, and whether macOS asked for a permission', async run(c) {
+    const q = (c.state.relaunched ?? fail('NOT_RELAUNCHED')).quit;
+    if (q.outcome !== 'exited') fail('QUIT_' + String(q.outcome).toUpperCase());
+    return { number: q.ms, unit: 'ms', detail: { outcome: q.outcome, permissionPrompt: q.prompt === true } };
+  } },
+  { id: 'relaunch-unsaved', measures: 'what the app does with unsaved work at its own Quit: asks (sleight waits), keeps it across the reopen, or loses it', async run(c) {
+    const outcome = (c.state.relaunched ?? fail('NOT_RELAUNCHED')).unsaved;
+    if (!['prompt', 'kept', 'none'].includes(outcome)) fail('UNSAVED_WORK_' + String(outcome).toUpperCase());
+    return { detail: { outcome } };
+  } },
+  { id: 'relaunch-pipe', measures: 'the reopened app takes the debugger pipe on its normal profile instead of handing off to another copy', async run(c) {
+    const r = c.state.relaunched ?? fail('NOT_RELAUNCHED'), id = c.driver.identity();
+    if (!r.pipe) fail('NO_PIPE: the app came back without the debugger connection');
+    if (r.profile?.temporary !== false) fail('NOT_THE_OWN_PROFILE');
+    if (r.tcpListeners !== 0) fail(`TCP_LISTENER: ${r.tcpListeners}`);
+    if (!id || id.pid !== r.pid || id.pidBirth !== r.pidBirth) fail('CONNECT_IDENTITY_MISMATCH');
+    return { detail: { tcpListeners: 0, profile: 'own' } };
+  } },
+  { id: 'relaunch-background', input: 'record', measures: 'whether macOS or the app activates the reopened app; recorded, never undone', async run(c) {
+    const r = c.state.relaunched ?? fail('NOT_RELAUNCHED');
+    return { number: r.activated ? 1 : 0, unit: 'activations', detail: { activated: r.activated === true, wasFront: r.wasFront === true } };
+  } },
+  { id: 'relaunch-restore', measures: 'the windows the app restores on its own, joined within restoreWaitMs', async run(c) {
+    const r = c.state.relaunched ?? fail('NOT_RELAUNCHED');
+    if (!(r.joinedAfter >= 1)) fail('NO_WINDOW_RESTORED');
+    const rows = await c.list(), joined = rows.filter(row => !row.parked);
+    if (!joined.length) fail('NO_JOINED_APP_TAB');
+    c.state.tab = joined[0].tab;
+    return { number: r.joinedAfter, unit: 'windows', detail: { before: r.before.windows, after: r.joinedAfter } };
+  } },
+  { id: 'relaunch-reuse', measures: 'the next turn reaches the same process with no card and no launch', async run(c) {
+    const before = c.driver.identity(), next = await c.driver.nextTurn();
+    c.consent(next.card, 'relaunch-reuse');
+    const after = c.driver.identity();
+    if (next.launched || next.card?.shown) fail('REUSE_ASKED_OR_LAUNCHED');
+    if (after.pid !== before.pid || after.pidBirth !== before.pidBirth) fail('RECONNECT_IDENTITY_CHANGED');
+    return { detail: { card: false, launched: false } };
+  } },
+  { id: 'relaunch-user-quit', measures: 'the owner\'s own Quit later: the app exits with the pipe attached, the host collects, the profile stays as it was', async run(c) {
+    const r = await c.driver.userQuit({ waitMs: c.options.consentWaitMs });
+    if (!r.exited) fail('APP_QUIT_UNCONFIRMED');
+    if (!r.collected || !r.recordRemoved) fail('LAUNCH_RECORD_LEFT');
+    if (!r.profileUntouched) fail('PROFILE_CHANGED');
+    return { number: r.ms, unit: 'ms', detail: { collected: true, recordRemoved: true, profileUntouched: true } };
+  } },
+  { id: 'relaunch-host-loss', measures: 'what the owner\'s app does when sleight\'s host dies and its pipe closes: quits or stays, and whether its unsaved work and prompt survive', async run(c) {
+    // Reopens the app once more (the owner clicks both cards again), then the driver kills the host. Run with nothing unsaved that matters.
+    const r = await c.driver.hostLoss({ consentWaitMs: c.options.consentWaitMs });
+    c.consent(r.card?.debugger, 'relaunch-host-loss'); c.consent(r.card?.relaunch, 'relaunch-host-loss');
+    if (typeof r.appSurvived !== 'boolean' || !['kept', 'lost', 'none'].includes(r.unsaved) || typeof r.prompt !== 'boolean') fail('HOST_LOSS_UNMEASURED');
+    return { number: r.appSurvived ? 1 : 0, unit: 'app survived', detail: { appSurvived: r.appSurvived, unsaved: r.unsaved, prompt: r.prompt } };
+  } },
+].map(cell => Object.freeze(cell)));
+
 export const cellsFor = app => CELLS.filter(cell => !cell.apps || cell.apps.includes(app.key));
-export const requiredCells = app => cellsFor(app).map(cell => cell.id);
+export const relaunchCellsFor = app => RELAUNCH_CELLS.filter(cell => !cell.apps || cell.apps.includes(app.key));
+export const requiredCells = (app, { relaunch = false } = {}) => (relaunch ? relaunchCellsFor(app) : cellsFor(app)).map(cell => cell.id);
 const appFor = bundleId => Object.values(APPS).find(app => app.bundleId === bundleId);
 
 export async function waitForHold(io, clock, intervalMs = 30000) {
@@ -406,10 +473,12 @@ async function runCell(cell, c, { driver, observer, clock }) {
   return record;
 }
 
-export async function runQualification({ app, driver, observer, io, clock, cells = cellsFor(app), options = {} }) {
-  const opts = { trials: 10, samples: 20, coldSamples: 5, aliveWaitMs: 60000, consentWaitMs: 120000, mode: 'live', ...options };
-  const receipt = { version: 1, kind: 'electron-qualification', mode: opts.mode, at: new Date(clock.now()).toISOString(),
-    app: { name: app.name, bundleId: app.bundleId }, profile: { temporary: true }, cells: [], timings: {}, heldMs: 0,
+export async function runQualification({ app, driver, observer, io, clock, cells, options = {} }) {
+  const opts = { trials: 10, samples: 20, coldSamples: 5, aliveWaitMs: 60000, consentWaitMs: 120000, mode: 'live', relaunch: false, ...options };
+  cells ??= opts.relaunch ? relaunchCellsFor(app) : cellsFor(app);
+  // A relaunch run is on the owner's own profile by design; every other run is the benchmark's temporary one (LAWS).
+  const receipt = { version: 1, kind: opts.relaunch ? 'electron-relaunch' : 'electron-qualification', mode: opts.mode, at: new Date(clock.now()).toISOString(),
+    app: { name: app.name, bundleId: app.bundleId }, profile: { temporary: !opts.relaunch }, cells: [], timings: {}, heldMs: 0,
     // LAWS: only the user's click answers sleight's debugger card. The harness waits for it and never presses it.
     consent: { harnessClicks: false, cards: [] }, sampling: { intervalMs: SAMPLE_MS }, options: { trials: opts.trials, samples: opts.samples, coldSamples: opts.coldSamples, aliveWaitMs: opts.aliveWaitMs } };
   const state = {}, c = context({ app, driver, clock, options: opts, state, timings: receipt.timings, consentLog: receipt.consent.cards });
@@ -447,7 +516,7 @@ function hasSecretKey(value) {
   if (!value || typeof value !== 'object') return false;
   return Object.entries(value).some(([key, item]) => SECRET_KEYS.has(key) || hasSecretKey(item));
 }
-export function validateReceipt(receipt, { required = requiredCells(appFor(receipt?.app?.bundleId) ?? APPS.vscode) } = {}) {
+export function validateReceipt(receipt, { required = requiredCells(appFor(receipt?.app?.bundleId) ?? APPS.vscode, { relaunch: receipt?.kind === 'electron-relaunch' }) } = {}) {
   const errors = [], unqualified = [], owners = new Map();
   const cells = Array.isArray(receipt?.cells) ? receipt.cells : (errors.push('CELLS_MISSING'), []);
   const seen = new Set();
@@ -473,7 +542,7 @@ export function validateReceipt(receipt, { required = requiredCells(appFor(recei
   if (/\/Users\/[^/\s"']+/.test(JSON.stringify(receipt ?? {})) || hasSecretKey(receipt)) errors.push('SECRET_OUTPUT');
   for (const [kind, value] of Object.entries(receipt?.timings ?? {})) if (value?.scope !== 'tool-call') errors.push('COMPONENT_TIME:' + kind);
   if (receipt?.cleanup?.confirmed !== true) errors.push('CLEANUP_UNCONFIRMED');
-  if (receipt?.profile?.temporary !== true) errors.push('ISOLATION_FAILED');
+  if (receipt?.profile?.temporary !== (receipt?.kind !== 'electron-relaunch')) errors.push('ISOLATION_FAILED');
   if (receipt?.consent?.harnessClicks !== undefined && receipt.consent.harnessClicks !== false) errors.push('HARNESS_CLICKED_CONSENT');
   if (receipt?.mode === 'dry-run') unqualified.push('DRY_RUN');
   if (receipt?.app?.fake === true) unqualified.push('FAKE_DRIVER');
@@ -497,11 +566,12 @@ export function scrubReceipt(value, { home = homedir(), user = userInfo().userna
 export function parseArgs(argv) {
   const out = { apps: ['vscode'], samples: 20, trials: 10, aliveWaitMs: 60000, consentWaitMs: 120000, out: undefined, mode: undefined };
   const numbers = { '--samples': 'samples', '--trials': 'trials', '--alive-wait-ms': 'aliveWaitMs', '--consent-wait-ms': 'consentWaitMs' };
-  let dry = false, away = false;
+  let dry = false, away = false, relaunch = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i], value = argv[i + 1];
     if (arg === '--dry-run') { dry = true; continue; }
     if (arg === '--owner-away') { away = true; continue; }
+    if (arg === '--relaunch') { relaunch = true; continue; }
     if (!(arg in numbers) && arg !== '--apps' && arg !== '--out' || value === undefined || value.startsWith('--')) throw Error('INVALID_OPTIONS');
     i++;
     if (arg === '--apps') {
@@ -511,14 +581,16 @@ export function parseArgs(argv) {
     else { const n = Number(value); if (!Number.isSafeInteger(n) || n < 0) throw Error('INVALID_OPTIONS'); out[numbers[arg]] = n; }
   }
   if (dry && away) throw Error('CONFLICTING_MODE');
+  if (relaunch && !dry) throw Error('RELAUNCH_NEEDS_OWNER: the relaunch cells quit and reopen the owner\'s own app and profile; they run with --dry-run here, and live only in a run the owner watches');
   if (!dry && !away) throw Error('OWNER_AWAY_REQUIRED: live cells show windows and may take focus; pass --owner-away in the away window, or --dry-run');
   out.mode = dry ? 'dry-run' : 'live';
+  out.relaunch = relaunch;
   return out;
 }
 
 function writeReceipt(dir, receipt, app) {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${app.key}-${receipt.mode}-${receipt.at.replace(/[:.]/g, '-')}.json`);
+  const path = join(dir, `${app.key}-${receipt.kind === 'electron-relaunch' ? 'relaunch-' : ''}${receipt.mode}-${receipt.at.replace(/[:.]/g, '-')}.json`);
   writeFileSync(path, JSON.stringify(scrubReceipt(receipt), null, 2) + '\n');
   return path;
 }
@@ -529,7 +601,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const options = parseArgs(argv), log = deps.log ?? console.log, write = deps.write ?? writeReceipt;
   const clock = deps.clock ?? { now: Date.now, sleep: ms => delay(ms) };
   const out = options.out ?? fileURLToPath(new URL(`./results/electron/${new Date(clock.now()).toISOString().slice(0, 10)}/`, import.meta.url));
-  const runOptions = { trials: options.trials, samples: options.samples, aliveWaitMs: options.aliveWaitMs, consentWaitMs: options.consentWaitMs, mode: options.mode };
+  const runOptions = { trials: options.trials, samples: options.samples, aliveWaitMs: options.aliveWaitMs, consentWaitMs: options.consentWaitMs, mode: options.mode,
+    relaunch: options.relaunch === true };
   if (options.mode === 'dry-run') {
     const { fakeDriver, fakeObserver } = await import('./electron-qualification-fakes.mjs');
     let clean = true;

@@ -23,6 +23,9 @@ electron-config). Each uses built-in Node modules and the shared v3 modules name
   reader. electron-windows.js is its JXA helper, run with /usr/bin/osascript, and reads window metadata only.
 - electron-read and electron-handoff: the app read header over snapshot.mjs, and input runners over act.mjs and fill.mjs.
 - electron-runtime: what worker.mjs calls to connect an opted-in app for a turn.
+- electron-relaunch: the relaunch flow, which reopens the user's own app with the debugger pipe after the user's click.
+  electron-apps.js is its JXA helper, run with /usr/bin/osascript. It lists the app's processes and asks one exact process
+  to quit through NSRunningApplication.
 
 host.mjs publishes both helpers only after compilation and hash verification, under a private per-user cache.
 Its exclusive build.lock refuses concurrent publication. Source and executable identity are rechecked before each launch.

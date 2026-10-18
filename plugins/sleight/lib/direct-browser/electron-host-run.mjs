@@ -39,9 +39,11 @@ export function hostDependencies({ registry, builds, run } = {}) {
   let launched;
   return Object.freeze({
     // Satisfied by an admin start that names a reviewed registry build of this host (the worker checked the debugger grant first).
+    // The user's own profile needs the recipe's reviewed userProfile; the worker checked the user's relaunch click first.
     async authorizeLaunch(spec) {
       const recipe = reviewed(spec?.build);
-      if (!recipe) return false;
+      const keys = Object.keys(spec ?? {}).sort().join();
+      if (!recipe || keys !== 'build' && !(keys === 'build,profile' && spec.profile === 'user' && recipe.userProfile)) return false;
       launched = recipe;
       return true;
     },

@@ -287,3 +287,30 @@ test('the relay\'s begin frame lists pre-approved bundle ids before the engine a
     for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
   }
 });
+
+// An app turn waits on sleight's own cards and the app's own Quit inside one call (the relaunch flow), so its begin reply
+// carries a longer call deadline. Browser turns keep the bridge's default, and a reply cannot stretch it past 10 minutes.
+test('an app turn\'s begin reply sets that turn\'s call deadline; a browser turn keeps the default', async () => {
+  for (const [waitMs, survives] of [[undefined, false], [1000, true], [600001, false]]) {
+    const child = new EventEmitter(), endpoint = new EventEmitter();
+    child.connected = endpoint.connected = true;
+    child.send = value => { queueMicrotask(() => endpoint.emit('message', structuredClone(value))); };
+    endpoint.send = value => { queueMicrotask(() => child.emit('message', structuredClone(value))); };
+    child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
+    child.unref = () => {};
+    const session = serveV3Worker({ channel: endpoint, browser: 'bfixture', async begin() {
+      return { ...(waitMs === undefined ? {} : { waitMs }),
+        async call() { await new Promise(resolve => setTimeout(resolve, 150)); return { text: 'slow result', isError: false }; },
+        delivered: () => true, async end() { return { revoked: true, cleanup: [] }; } };
+    } });
+    const bridge = await createV3Bridge({ timeoutMs: 60 }, { readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
+      forkWorker() { queueMicrotask(() => session.ready()); return child; } });
+    try {
+      assert.equal(await bridge.bind({ ...bridge.bootstrapEnvelope(), event: 'begin', turn: 'turn' + String(waitMs), text: 'edit' }), true);
+      const result = await bridge.call({ name: 'browser_tabs', arguments: { do: 'list' } });
+      assert.equal(result.text === 'slow result', survives, String(waitMs));
+      // Review F3: only the call that prepares the turn (the first) gets the long deadline; a later slow call is a hung worker.
+      if (survives) assert.notEqual((await bridge.call({ name: 'browser_tabs', arguments: { do: 'list' } })).text, 'slow result');
+    } finally { await bridge.detach(); }
+  }
+});

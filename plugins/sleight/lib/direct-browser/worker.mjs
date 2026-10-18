@@ -62,6 +62,15 @@ const validAppSecret = value => typeof value === 'string' && /^[A-Za-z0-9_-]{43,
 const printableName = value => typeof value === 'string' && /^[^\x00-\x1f\x7f]{1,64}$/.test(value);
 const foreignHost = name => { const app = printableName(name) ? name : 'The app';
   return { text: `${app} is held by an earlier sleight session's host, so turbo can't reach it. Quit the ${app} window sleight opened (the app's own Quit), then retry. Nothing was sent.`, isError: true }; };
+// The relaunch flow's fallbacks (electron-relaunch.mjs) say what happened to the user's app; the text names only the recipe's app.
+const APP_NOTICE = /^ELECTRON_(?:RELAUNCH_[A-Z_]{1,32}|APP_OTHER_USER|USER_PROFILE_UNSUPPORTED)$/;
+const appNotice = error => APP_NOTICE.test(error?.message ?? '') && typeof error.notice === 'string' && error.notice.length <= 600 &&
+  error.notice.startsWith(error.message + ': ') && /^[^\x00-\x1f\x7f]+$/.test(error.notice) ? { text: error.notice, isError: true } : undefined;
+// The call that prepares an app turn waits, per app and one app after another, on sleight's own cards (120 s each, debugger
+// and relaunch), the app's own Quit (60 s), the reopen and its windows (30 s). The begin reply carries that deadline, capped
+// at 10 minutes, so the bridge does not take the wait for a hung worker; later calls keep the default.
+const APP_PREPARE_WAIT_MS = 330000, APP_PREPARE_CAP_MS = 600000;
+const validWait = value => Number.isSafeInteger(value) && value >= 1000 && value <= APP_PREPARE_CAP_MS;
 
 export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31000 } = {}, dependencies = {}) {
   const config = (dependencies.readConfig ?? readInstalledConfig)();
@@ -79,7 +88,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   const child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui'] : [],
     { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc', ...shared ? [shared.write, shared.read] : []], serialization: 'json' });
   shared?.release();
-  let hello, active = false, lost = false, generation = 0, sequence = 0, ending;
+  let hello, active = false, lost = false, generation = 0, sequence = 0, ending, callTimeoutMs = timeoutMs;
   const pending = new Map(), turns = new Set(); let deliveries = new WeakMap(), resolveReady, rejectReady;
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   const timer = setTimeout(() => lose(), startupTimeoutMs);
@@ -105,12 +114,12 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
     const entry = pending.get(frame.id); pending.delete(frame.id); clearTimeout(entry.timer); entry.resolve(frame.result);
   });
   child.on('error', lose); child.on('exit', lose); child.on('disconnect', lose);
-  function rpc(method, params) {
+  function rpc(method, params, deadlineMs = timeoutMs) {
     if (lost || !current() || pending.size >= 32) return Promise.reject(Error('V3_WORKER_UNAVAILABLE'));
     const frame = { version: 3, id: 'q' + (++sequence), method, params };
     if (Buffer.byteLength(JSON.stringify(frame)) > 131072) return Promise.reject(Error('INVALID_ARGUMENT'));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { lose(); reject(Error('V3_WORKER_UNAVAILABLE')); }, timeoutMs);
+      const timer = setTimeout(() => { lose(); reject(Error('V3_WORKER_UNAVAILABLE')); }, deadlineMs);
       pending.set(frame.id, { resolve, reject, timer });
       try { child.send(frame, error => { if (error) lose(); }); } catch { lose(); }
     });
@@ -131,9 +140,14 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
           frame.session !== hello.session || frame.nonce !== hello.nonce || frame.event !== 'begin' || !id(frame.turn) ||
           typeof frame.text !== 'string' || Buffer.byteLength(frame.text) > 65536 || !approvedApps(apps) || turns.has(frame.turn) || lost || !current()) throw Error('TRUSTED_TURN_REQUIRED');
       turns.add(frame.turn); fence(); const epoch = generation;
+      callTimeoutMs = timeoutMs;
       const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps], appSecret: serverAppSecret() });
       if (epoch !== generation || lost || !current()) return false;
-      active = result?.available === true; return active;
+      active = result?.available === true;
+      // An app turn's first calls prepare it and may wait on the user's clicks; the worker names that deadline, within 10 minutes.
+      // It lasts until the first call returns, when preparation is over.
+      if (active && validWait(result.waitMs) && result.waitMs > timeoutMs) callTimeoutMs = result.waitMs;
+      return active;
     },
     async call(input) {
       let request;
@@ -141,7 +155,8 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
       if (!active || lost || !current()) return failure();
       const epoch = generation;
       try {
-        const reply = await rpc('call', request);
+        const reply = await rpc('call', request, callTimeoutMs);
+        if (epoch === generation) callTimeoutMs = timeoutMs;
         if (!active || lost || epoch !== generation || !current()) return failure(request.name !== 'browser_read');
         if (!exact(reply, ['resultId', 'result']) || !id(reply.resultId) || !exact(reply.result, ['text', 'isError']) ||
             typeof reply.result.text !== 'string' || typeof reply.result.isError !== 'boolean' || reply.result.text.length > 100000) throw Error();
@@ -243,7 +258,7 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
         const binding = createV3TurnBinding(message, () => !ended && epoch === generation && current());
         const prepared = await begin(message, binding, { apps, ...(secret ? { appSecret: secret } : {}) });
         if (ended || epoch !== generation || !current()) { await prepared?.end(); return { available: false }; }
-        runtime = prepared; return { available: !!runtime };
+        runtime = prepared; return { available: !!runtime, ...(runtime && validWait(runtime.waitMs) ? { waitMs: runtime.waitMs } : {}) };
       });
       work.then(respond, () => respond({ available: false })); return;
     }
@@ -287,6 +302,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   const sharedUi = dependencies.sharedUi ?? process.argv.includes('--shared-ui');
   const optedOut = () => { try { return (dependencies.readConfigFile ?? readInstalledConfigFile)()?.enabled === false; } catch { return false; } };
   const admins = new Map(), receipts = new Map();
+  // This session's relaunch answers: an app whose relaunch card the user cancelled is not asked about again.
+  const appMemory = Object.freeze({ declined: new Set() });
   // admins: bundle id -> the pending { admin, registry, profile } of that app's resident host.
   const eachAdmin = action => Promise.allSettled([...admins.values()].map(async pending => action((await pending).admin)));
   const revokeApps = () => eachAdmin(admin => appSession && admin.revoke({ session: appSession }));
@@ -452,7 +469,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
             if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
             resource.apps.push(await (dependencies.selectAppConnection ?? runtimeModule.selectAppConnection)({ bundleId, session: message.session, turn: message.turn,
               apps, ui, consent: appConsent, registry: host.registry, admin: host.admin, playwright, windows: dependencies.runWindows ?? runtimeModule.runWindowHelper,
-              profile: host.profile, receipts, dependencies: app }));
+              profile: host.profile, receipts, memory: appMemory, dependencies: app }));
           }
           if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
           const surface = await (dependencies.createAppTurn ?? runtimeModule.createAppTurn)({ connections: resource.apps, binding, consent: appConsent, ui, dependencies: app });
@@ -518,8 +535,9 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
               const runtime = await (preparing ??= prepare());
               if (!current() || turnEnded || !await verified()) throw Error('STALE_INSTANCE');
               return await runtime.call(request);
-            } catch (error) { return error?.message === 'ELECTRON_HOST_FOREIGN' ? foreignHost(error.appName) : failure(); }
+            } catch (error) { return error?.message === 'ELECTRON_HOST_FOREIGN' ? foreignHost(error.appName) : appNotice(error) ?? failure(); }
           },
+          ...(selections.length ? { waitMs: Math.min(APP_PREPARE_CAP_MS, selections.length * APP_PREPARE_WAIT_MS) } : {}),
           delivered: result => !turnEnded && resource.runtime?.delivered(result) === true,
           end() {
             turnEnded = true;
