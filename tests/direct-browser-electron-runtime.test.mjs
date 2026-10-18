@@ -342,9 +342,3 @@ test('electron-connection exposes the host fence op to the worker (provider.fenc
     await provider.disconnect();
   } finally { h.host._crashForTest(); h.state.remove(); }
 });
-test('the native consent host shows the unlaunched card (pid 0)', { todo: 'consent-host.swift refuses pid 0 (native-card test line 63); the card would expire unanswered' }, () => {
-  assert.fail('consent-host.swift appFrame accepts pid 0 only with pidBirth unlaunched');
-});
-test('the relay lists apps the pre-approved list holds before the engine asks', { todo: 'preapproved.mjs has no listing; the begin frame carries list approvals only after an engine ask this session' }, () => {
-  assert.fail('PreapprovedApps needs an apps() reader for the relay');
-});

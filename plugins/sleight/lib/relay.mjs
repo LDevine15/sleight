@@ -858,11 +858,14 @@ export function createRelay({
   const listApproved = new Set(); // apps the user's pre-approved list answered for the engine this session
   // Bundle ids of apps the engine approved this session (session cards and the pre-approved list), for turbo's begin
   // frame. Turbo still needs the operator's per-app opt-in and its own debugger card before it touches an app.
+  // The pre-approved list counts from the session's start, before the engine asks about the app. It comes last, so a
+  // long list never pushes this session's cards past the 64-id cap.
   function turboApps() {
     const ids = new Set(listApproved);
     for (const key of approved) {
       try { const parts = JSON.parse(key); if (parts.length === 2 && parts[0] !== 'sleight') ids.add(parts[0]); } catch {}
     }
+    try { for (const app of typeof preapproved?.list === 'function' ? preapproved.list() : []) ids.add(app); } catch {}
     return [...ids].filter(app => typeof app === 'string' && app.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(app)).slice(0, 64);
   }
   let asking = Promise.resolve(); // `ask` prompts, one at a time

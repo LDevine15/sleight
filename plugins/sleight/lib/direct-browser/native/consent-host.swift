@@ -30,6 +30,14 @@ func appFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, app:
         guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return false }
         return value.doubleValue >= 1 && value.doubleValue.rounded() == value.doubleValue
     }
+    // A process, or the unlaunched form (pid 0 with birth "unlaunched", as electron-identity validates it) on a
+    // debugger card only: the card names the code before sleight starts it. A relaunch card needs a running process.
+    func process(_ kind: String, _ app: [String: Any]) -> Bool {
+        guard let birth = text(app["pidBirth"], 64) else { return false }
+        if count(app["pid"]) { return birth != "unlaunched" }
+        guard let pid = app["pid"] as? NSNumber, CFGetTypeID(pid) != CFBooleanGetTypeID() else { return false }
+        return kind == "debugger" && pid.doubleValue == 0 && birth == "unlaunched"
+    }
     guard Set(data.keys) == Set(["kind", "app", "session", "turn", "epoch"]),
         let kind = data["kind"] as? String, ["debugger", "relaunch"].contains(kind),
         let app = data["app"] as? [String: Any],
@@ -37,7 +45,7 @@ func appFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, app:
         text(app["executable"], 4096)?.hasPrefix("/") == true,
         text(app["cdhash"], 64)?.range(of: "^([0-9a-f]{40}|[0-9a-f]{64})$", options: .regularExpression) != nil,
         text(app["name"], 256) != nil, text(app["signer"], 256) != nil, text(app["version"], 128) != nil, text(app["runtime"], 128) != nil,
-        text(app["pidBirth"], 64) != nil, count(app["pid"]),
+        process(kind, app),
         let bundle = text(app["bundleId"], 255), bundle.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]*$", options: .regularExpression) != nil,
         let profile = text(app["profile"], 4096), profile.hasPrefix("/"),
         let temporary = app["temporary"] as? NSNumber, CFGetTypeID(temporary) == CFBooleanGetTypeID(),
@@ -53,8 +61,9 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
     let name = card.app["name"] as? String ?? "", version = card.app["version"] as? String ?? ""
     let bundle = card.app["bundleId"] as? String ?? "", profile = card.app["profile"] as? String ?? ""
     let pid = (card.app["pid"] as? NSNumber)?.intValue ?? 0
-    let executable = card.app["executable"] as? String ?? ""
-    let identity = "\(name) \(version)\nBundle: \(bundle)\nExecutable: \(executable)\nProfile: \(profile)\nProcess: \(pid)\nSession: \(card.session)"
+    let executable = card.app["executable"] as? String ?? "", signer = card.app["signer"] as? String ?? ""
+    let process = pid == 0 ? "not running (sleight starts it only after this approval)" : "\(pid)"
+    let identity = "\(name) \(version)\nBundle: \(bundle)\nSigner: \(signer)\nExecutable: \(executable)\nProfile: \(profile)\nProcess: \(process)\nSession: \(card.session)"
     if card.kind == "relaunch" {
         return ("Quit and reopen " + name + " for sleight?",
             "sleight will ask " + name + " to quit through its own Quit command, then reopen it with the debugger connection. Unsaved work follows the app's own prompts. This approval is for this process only, once.\n\n" + identity)

@@ -106,6 +106,17 @@ test('risk ceilings reject higher, missing and unknown risk; identifiers match e
     assert.equal(list.allows(app, 'low'), false);
   }
 });
+test('list() names the listed apps read-only, with this session\'s Always allow additions', () => {
+  const list = new PreapprovedApps({ version: 1, apps: [...config.apps, { app: 'com.microsoft.VSCode', riskLevel: 'low' }] });
+  const names = list.list();
+  assert.deepEqual(names, ['com.apple.calculator', 'com.microsoft.VSCode']);
+  names.push('com.example.injected'); names.length = 0;
+  assert.deepEqual(list.list(), ['com.apple.calculator', 'com.microsoft.VSCode']);
+  assert.equal(list.allows('com.example.injected', 'low'), false);
+  list.add('com.todesktop.230313mzl4w4u92', 'high');
+  assert.deepEqual(list.list(), ['com.apple.calculator', 'com.microsoft.VSCode', 'com.todesktop.230313mzl4w4u92']);
+  assert.deepEqual(new PreapprovedApps({ version: 1, apps: [] }).list(), []);
+});
 test('rejects malformed lists, wildcards, duplicates and unrecognized fields', t => {
   for (const bad of [null, {}, { ...config, version: 2 }, { ...config, apps: ['Calculator'] },
     { ...config, path: '/tmp/elsewhere' }, { ...config, apps: [{ app: '*', riskLevel: 'high' }] },

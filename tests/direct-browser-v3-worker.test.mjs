@@ -216,3 +216,29 @@ test('the relay\'s begin frame lists the bundle ids the engine approved this ses
     for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
   }
 });
+test('the relay\'s begin frame lists pre-approved bundle ids before the engine asks about them, and never a listed name', async () => {
+  const { PreapprovedApps } = await import('../plugins/sleight/lib/preapproved.mjs');
+  const f = await fixture();
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const replies = []; clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const toServer = []; serverIn.on('data', bytes => toServer.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  let relay;
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const approval = (id, app) => ({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { message: `Allow ${app}?`, mode: 'form',
+    requestedSchema: { type: 'object', properties: {} }, _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'low', tool_params: { app } } } });
+  try {
+    const prepared = await prepareInstalledStartup(() => f.bridge);
+    relay = createRelay({ clientIn, clientOut, serverIn, serverOut, ...prepared, changeReview: false, ask: async () => 'accept',
+      preapproved: new PreapprovedApps({ version: 1, apps: [{ app: 'com.todesktop.230313mzl4w4u92', riskLevel: 'low' }, { app: 'Visual Studio Code', riskLevel: 'high' }] }) });
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { event: 'bootstrap' } } } }) + '\n');
+    await settle();
+    const envelope = JSON.parse(replies.find(row => row.id === 1).result.content[0].text).sleightTurbo;
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { ...envelope, event: 'begin', turn: 'turn1', text: 'edit' } } } }) + '\n');
+    await settle();
+    assert.equal(replies.find(row => row.id === 2).result.isError, false);
+    assert.deepEqual(f.events.find(row => row[0] === 'begin')[2].apps.toSorted(), ['com.todesktop.230313mzl4w4u92']);
+  } finally {
+    relay?.dispose(); await f.bridge.detach();
+    for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
+  }
+});

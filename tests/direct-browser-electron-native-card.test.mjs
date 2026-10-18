@@ -61,6 +61,14 @@ let samples: [Bool] = [
   appFrame(card("debugger", app: ["temporary": "no"]), full) == nil,
   appFrame(card("debugger", app: ["pid": true]), full) == nil,
   appFrame(card("debugger", app: ["pid": 0]), full) == nil,
+  // The unlaunched form: pid 0 with birth "unlaunched", on a debugger card only. A relaunch card needs a process.
+  appFrame(card("debugger", app: ["pid": 0, "pidBirth": "unlaunched"]), full) != nil,
+  appFrame(card("debugger", app: ["pid": 0, "pidBirth": "unlaunched", "temporary": true]), short) != nil,
+  appFrame(card("relaunch", app: ["pid": 0, "pidBirth": "unlaunched"]), relaunch) == nil,
+  appFrame(card("debugger", app: ["pidBirth": "unlaunched"]), full) == nil,
+  appFrame(card("relaunch", app: ["pidBirth": "unlaunched"]), relaunch) == nil,
+  appFrame(card("debugger", app: ["pid": -1, "pidBirth": "unlaunched"]), full) == nil,
+  appFrame(card("debugger", app: ["pid": 0, "pidBirth": "Unlaunched"]), full) == nil,
   appFrame(card("debugger", app: ["profile": "relative/profile"]), full) == nil,
   appFrame(card("debugger", app: ["bundleId": "x y"]), full) == nil,
   appFrame(card("debugger", app: ["name": "Bad\\u{7}Name"]), full) == nil,
@@ -72,9 +80,15 @@ let samples: [Bool] = [
 ]
 let relaunchWords = appCardText(appFrame(card("relaunch"), relaunch)!)
 let debuggerWords = appCardText(appFrame(card("debugger"), full)!)
+let unlaunchedWords = appCardText(appFrame(card("debugger", app: ["pid": 0, "pidBirth": "unlaunched"]), full)!)
 let words: [Bool] = [
   relaunchWords.title.contains("Fixture App"), relaunchWords.body.contains("its own Quit"), !relaunchWords.body.contains("Always"),
   debuggerWords.title.contains("Fixture App"), debuggerWords.body.contains("separate from the app approval"), debuggerWords.body.contains("Process: 4242"),
+  debuggerWords.body.contains("Signer: TEAM123456"),
+  // Name and code identity, no process: sleight starts the app only after this approval.
+  unlaunchedWords.title.contains("Fixture App"), unlaunchedWords.body.contains("Bundle: invalid.fixture.app"),
+  unlaunchedWords.body.contains("Signer: TEAM123456"), unlaunchedWords.body.contains("Executable: /Applications/Fixture.app/Contents/MacOS/Fixture"),
+  unlaunchedWords.body.contains("Process: not running"), !unlaunchedWords.body.contains("Process: 0"),
 ]
 print(samples.allSatisfy { $0 } && words.allSatisfy { $0 } ? "pass" : "fail \\(samples) \\(words)")
 `);

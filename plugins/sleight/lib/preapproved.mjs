@@ -29,6 +29,8 @@ export class PreapprovedApps {
   add(app, riskLevel) {
     if (RISK.has(riskLevel) && RISK.get(riskLevel) > (this.#apps.get(app) ?? -1)) this.#apps.set(app, RISK.get(riskLevel));
   }
+  // The listed apps, as a copy: reading it changes nothing.
+  list() { return [...this.#apps.keys()]; }
   allows(app, riskLevel) {
     return this.#apps.has(app) && RISK.has(riskLevel) && RISK.get(riskLevel) <= this.#apps.get(app);
   }
