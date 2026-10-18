@@ -4,6 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { listPicker } from '../plugins/sleight/lib/native-list-pick.mjs';
 import { guardedCode, readCode, sameElement, windowFromText } from '../plugins/sleight/lib/document-scope.mjs';
 
@@ -319,7 +320,7 @@ test('app.pickFromList stops when the window changes between keys', async () => 
 });
 
 test('app.pickFromList refuses to press a key without the input lease', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-list-lease-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-list-lease-')));
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   try {
     const path = join(dir, 'lease.json');
