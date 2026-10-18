@@ -698,6 +698,10 @@ export function createRelay({
   stateReview = false,
   redactReceiptTitles = true,
   receiptWriter = writeReceipt,
+  // SLEIGHT_OUTCOMES=1 (A/B, off by default): one verified line per native action in the result.
+  outcomes = false,
+  // SLEIGHT_ACTION_LOG=<path> (opt-in): an ActionLog (action-outcomes.mjs) gets one JSON line per action.
+  actionLog,
   idleTurnEndMs,
   simFocusNote = true,
   inputLease,
@@ -794,7 +798,7 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
-  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints });
+  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, outcomes });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -967,7 +971,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error(/* notice */ 'Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, outcomes }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined; lastTree = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       // Rules held for Claude's first js result go with the next engine docs instead.
@@ -1927,7 +1931,7 @@ export function createRelay({
     if (msg.method === undefined && splitCalls.has(msg.id)) {
       const next = splitCalls.get(msg.id); splitCalls.delete(msg.id); callGenerations.delete(msg.id); next(msg); return;
     }
-    if (msg.method === undefined) { menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); menuForwards.delete(msg.id); splitInputs.delete(msg.id); }
+    if (msg.method === undefined) { continuedOutcomes.delete(msg.id); menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); menuForwards.delete(msg.id); splitInputs.delete(msg.id); }
     if (msg.method === undefined && splitHeads.has(msg.id)) {
       let head = splitHeads.get(msg.id); splitHeads.delete(msg.id);
       // The call re-acquired and then showed the same window whole: its acquisition tree is a duplicate. Word runs sent
@@ -2012,6 +2016,7 @@ export function createRelay({
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
     journal?.reply(msg);
+    actionLog?.reply(msg);
     trace('to-client', msg);
     if (msg.method === undefined && msg.id !== undefined) onClientReply(msg);
     clientOut.write(JSON.stringify(msg) + '\n', afterWrite ? error => {
@@ -2472,6 +2477,7 @@ export function createRelay({
       msg.params.arguments.code.trim().match(/^((?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.getApp\([^;]*\))\s*;\s*([A-Za-z_$][\w$]*)\s*;?$/);
     if (echo && echo[2] === echo[3]) msg.params.arguments.code = echo[1];
     journal?.request(msg);
+    actionLog?.request(msg);
     const write = jsArgs && evaluateWrite(msg.params.arguments?.code);
     if (write) {
       finishedCall(msg.id);
@@ -2488,6 +2494,8 @@ export function createRelay({
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const openShots = new Map(), openReads = new Set(), textlessOpens = new Set();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Map(), menuForwards = new Map();
+  // Calls whose stop sleight continued: { head } while the head's result is processed, then { start }, the outcomes shown so far.
+  const continuedOutcomes = new Map();
   // What a continued call ran before its window changed, for the line its final result opens with.
   const continuedLeads = new Map();
   const skippedSettle = (id, reason) => saveNotes.set(id, promptNotice(`Text-write settle skipped: ${String(reason).replace(/\s+/g, ' ')}.`, prompt));
@@ -2873,6 +2881,8 @@ export function createRelay({
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
       });
+      // The rest runs the stopped action again, so the head's outcomes leave it out and the rest's number on from them.
+      continuedOutcomes.set(msg.id, { head: true });
       observeServerMessage(msg);
     });
     return true;
@@ -3325,12 +3335,14 @@ export function createRelay({
               request: { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: originalCode } } } });
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
             const typedTarget = compactor.beginAction(originalCode)?.typedTarget;
-            if (filteredCode !== swipeCode || typedTarget) filterMarks.set(msg.id, filterMark);
+            // The guard's action records come back under this call's mark, so window text can't forge one.
+            const outcomeMark = outcomes || actionLog ? filterMark : undefined;
+            if (filteredCode !== swipeCode || typedTarget || outcomeMark) filterMarks.set(msg.id, filterMark);
             const light = lightReturn && inputLease && !careful && !documentMode && !changeReview && !menuBaseline &&
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+              { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
                 focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
@@ -4316,11 +4328,17 @@ export function createRelay({
       const screenshotWindow = screenshotTarget && (!screenshotAppId || screenshotAppId === screenshotTarget.appId) ? screenshotTarget : undefined;
       const input = automatic ? undefined : dropRepeatedImages(dropRepeatedText(msg.result.content), prompt);
       if (input && compactReacquire && healthPlan?.acquisition && splitCalls.has(msg.id) && String(msg.id).startsWith('sleight-acquire-')) rawHeads.set(msg.id, input);
+      const continued = continuedOutcomes.get(msg.id);
       if (!automatic) msg.result.content = compactor.process(input,
-        { code: jsCode, screenshotWindow, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
+        { code: jsCode, screenshotWindow, outcomeStart: continued?.start ?? 0, outcomeContinuing: !!continued?.head, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
+      // Claude's code can reach the guard's state, so the record's shape is checked, not trusted.
+      const record = automatic ? undefined : compactor.takeOutcomes();
+      const kept = !Array.isArray(record?.outcomes) ? undefined : continued?.head ? { ...record, outcomes: record.outcomes.filter(rec => rec?.x !== 'refused') } : record;
+      if (continued?.head) continuedOutcomes.set(msg.id, { start: (continued.start ?? 0) + (kept?.outcomes?.length ?? 0) });
+      if (actionLog) actionLog.outcomes(msg.id, kept);
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }

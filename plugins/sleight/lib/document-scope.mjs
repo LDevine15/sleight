@@ -1,6 +1,7 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
+import { actionOutcome } from './action-outcomes.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -336,6 +337,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
   }
   if (guard.resultMark && guard.typed.length) nodeRepl.write(guard.resultMark + JSON.stringify({ typed: guard.typed }) + '\\n');
+  guard.flushOutcomes?.();
 }`;
 }
 
@@ -395,8 +397,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     const timedRead = async (raw, phase) => {
       const start = clock();
       let text;
-      try { return text = await raw.getAXState({ disableDiffing: true, emit: false }); }
-      finally {
+      try {
+        text = await raw.getAXState({ disableDiffing: true, emit: false });
+        if (phase !== 'wait') state.noteRead?.(raw, text);
+        return text;
+      } finally {
         if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase,
           ms: clock() - start, chars: typeof text === 'string' ? text.length : 0, failed: text === undefined }) + '\\n');
       }
@@ -444,6 +449,60 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     const trappingMenu = ${trappingMenu.toString()};
     const submenuHeader = ${submenuHeader.toString()};
     const focusOn = ${focusOn.toString()};
+    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES and the action log: the first read of a handle
+    // after a run of its actions settles them, and the records go out under the relay's mark for this call.
+    const actionOutcome = ${actionOutcome.toString()};
+    state.outcomeMark = update?.outcomeMark;
+    state.outcomes = []; state.outcomePending = new WeakMap();
+    state.noteRead = (raw, text) => {
+      const pending = state.outcomeMark ? state.outcomePending.get(raw) : undefined;
+      if (!pending || typeof text !== 'string' || !parse(text)) return;
+      state.outcomePending.delete(raw);
+      const last = pending.recs[pending.recs.length - 1];
+      last.f = actionOutcome(pending.recs, pending.before, text).facts;
+      for (const rec of pending.recs) if (rec !== last) rec.g = true;
+    };
+    // Typed and set text shows only as its length, and a single printable key not at all.
+    state.outcomeRec = (name, asked, args, text, before) => {
+      const rec = { a: name }, first = args[0];
+      if (typeof asked === 'string' && !['pressKey', 'typeText', 'paste'].includes(name)) rec.l = asked.slice(0, 40);
+      else if (asked && typeof asked === 'object' && !Array.isArray(asked)) rec.l = String(asked.label ?? asked.id ?? asked.line ?? '').slice(0, 40);
+      if (typeof first === 'number') rec.n = first;
+      if (name === 'pressKey' && typeof first === 'string' && (/^(?:return|enter|escape|esc|tab|space|backspace|delete|forwarddelete|left|right|up|down|home|end|pageup|pagedown|f\\d{1,2})$/i.test(first) ||
+        /(?:^|\\+)(?:super|cmd|command|ctrl|control)\\+/i.test(first))) rec.k = first;
+      const typed = name === 'setValue' ? args[1] : ['typeText', 'paste'].includes(name) ? first : undefined;
+      if (typeof typed === 'string') { rec.c = typed.length; if (name === 'setValue') rec.want = typed; }
+      if (rec.n !== undefined) rec.body = elements(text ?? '').get(rec.n);
+      else if (['typeText', 'paste'].includes(name)) {
+        const focus = /^The focused UI element is (\\d+) (.*?)\\r?$/m.exec(text ?? '');
+        if (focus) { rec.focus = Number(focus[1]); rec.body = focus[2]; }
+        else if (before?.editable && typeof before.number === 'number') { rec.focus = before.number; rec.body = before.line; }
+      }
+      return rec;
+    };
+    state.keepOutcome = (raw, rec, text) => {
+      if (!state.outcomeMark || !rec) return;
+      const pending = state.outcomePending.get(raw);
+      if (pending) pending.recs.push(rec); else state.outcomePending.set(raw, { before: text, recs: [rec] });
+      if (state.outcomes.length < 30) state.outcomes.push(rec);
+    };
+    // A guard stop's message names elements and titles, so the record carries only its kind.
+    state.refusalOf = message => /: app changed\\./.test(message) ? 'app changed'
+      : / Observed \\{|window(?: or URL)? changed/.test(message) ? 'window changed'
+      : /^Input lease/.test(message) ? 'input lease' : /^Document scope/.test(message) ? 'document scope' : /^Change review/.test(message) ? 'change review'
+      : /changed since|changed what element/.test(message) ? 'element changed' : /no element with|elements with/.test(message) ? 'element not found'
+      : /names no element/.test(message) ? 'bad locator' : /opens a submenu/.test(message) ? 'submenu' : /its menu takes the keys/.test(message) ? 'menu open'
+      : /focus/.test(message) ? 'no focus target' : /close button/.test(message) ? 'close button' : /^Native access/.test(message) ? 'native access' : 'stopped';
+    state.flushOutcomes = () => {
+      if (!state.outcomeMark || !state.outcomes.length) return;
+      const outcomes = state.outcomes.map(({ want, body, focus, ...rec }) => {
+        const t = body === undefined ? undefined : actionOutcome([{ body }]).targets[0];
+        if (t?.s) delete rec.c;
+        return t ? { ...rec, t } : rec;
+      });
+      nodeRepl.write(state.outcomeMark + JSON.stringify({ outcomes, ...(state.actions ? { planned: state.actions.length } : {}),
+        ...(state.expected?.app ? { app: state.expected.app } : {}) }) + '\\n');
+    };
     // Windows (app and URL or title) whose focus was on an element inside them in a read this session: window-root
     // focus right after opening a file is normal, but after the document had focus it means keys reach nothing.
     state.docFocus ||= new Set();
@@ -558,6 +617,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           },
           observe: text => {
             checkCurrent();
+            state.noteRead(raw, text);
             state.activeApp = proxy;
             state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
@@ -605,6 +665,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           const reads = state.reads, reading = {}, version = state.actionVersion;
           reads.set(proxy, reading);
           const text = await raw.getAXState({ ...options, disableDiffing: true, emit: false });
+          state.noteRead(raw, text);
           const emitted = options?.emit !== false;
           if (emitted) nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
           else nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
@@ -622,6 +683,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);
           const result = await value.call(raw, { ...options, disableDiffing: true });
+          state.noteRead(raw, result?.state);
           if (options?.emit === false && typeof result?.state === 'string') {
             nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + result.state + ${JSON.stringify(GUARD_END)});
           }
@@ -644,6 +706,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           if (typeof raw.getAXStateAndScreenshot === 'function') {
             const result = await raw.getAXStateAndScreenshot({ ...options, disableDiffing: true, emit: false });
             if (!result?.screenshot) throw new Error('Screenshot unavailable for this window.');
+            state.noteRead(raw, result.state);
             if (options?.emit !== false) await nodeRepl.emitImage(result.screenshot);
             else if (typeof result.state === 'string') nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + result.state + ${JSON.stringify(GUARD_END)});
             if (state.reads === reads && reads.get(proxy) === reading) {
@@ -667,6 +730,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (attempt, ...args) => {
           checkNative();
+          const asked = args[0];
+          if (state.outcomeMark) attempt.rec = state.outcomeRec(name, asked, args);
           // The action as Claude wrote it, for a stop that lists what ran.
           // Typed, pasted, set or selected text shows as its length only.
           const textAt = ['typeText', 'paste'].includes(name) ? 0 : ['setValue', 'selectText'].includes(name) ? 1 : -1;
@@ -692,10 +757,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             state.activeApp = proxy;
             state.reads = new WeakMap();
             input();
+            attempt.sent = true;
             let result;
             try { result = await value.apply(raw, args); } catch (error) { state.unknown.push(shown); throw error; }
             state.completedActions++;
             state.ran.push(shown);
+            state.keepOutcome(raw, attempt.rec);
             return result;
           }
           const cached = state.reads.get(proxy);
@@ -1018,6 +1085,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           // No Shift settle after setValue here, as drag.js does after its own text writes: the
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();
+          if (state.outcomeMark) attempt.rec = state.outcomeRec(name, asked, args, text ?? priorText, before);
+          attempt.sent = true;
           // Input went out before the engine answered, so a rejected action may have acted.
           let result;
           try { result = await value.apply(raw, args); } catch (error) {
@@ -1056,6 +1125,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           if (editable) previous.completed = true;
           state.completedActions++;
           state.ran.push(shown);
+          state.keepOutcome(raw, attempt.rec, text ?? priorText);
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }
             : name === 'pressKey' && typeof args[0] === 'string' ? { kind: 'key', value: args[0] }
@@ -1070,6 +1140,14 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           const attempt = { index: state.actionIndex++ };
           const pending = act(attempt, ...args);
           pending.catch(error => {
+            // Ahead of the stop mark: a continued call keeps only the output before it.
+            if (state.outcomeMark) {
+              const rec = attempt.rec ?? { a: name };
+              rec.x = attempt.sent ? 'failed' : 'refused';
+              if (!attempt.sent) rec.r = state.refusalOf(String(error?.message ?? error));
+              if (!state.outcomes.includes(rec) && state.outcomes.length < 30) state.outcomes.push(rec);
+              state.flushOutcomes();
+            }
             if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
               prev: state.lastAction, root: /^\\d+ .*$/m.exec(attempt.text ?? '')?.[0] ?? null,
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,

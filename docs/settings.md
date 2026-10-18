@@ -35,6 +35,23 @@ Missing reads, failed or overlapping calls, and turns over 2,000 calls report un
 An accessibility change doesn't prove that a file is saved or unsaved. See the
 [design and limits](design/review-receipts.md).
 
+## Action outcomes and the action log
+
+Set `SLEIGHT_OUTCOMES=1` to add one line per native action to each result, such as
+`1 click 12: sheet "Save" opened` or `3 pressKey "Return": no visible change`. sleight compares its
+own read before the action with its read after it. It looks only at the window, its sheets and menus,
+focus, and the acted-on control's role, name and value line. Typed text never appears, and neither
+does a text area's or secure field's value. Actions with no read between them share one line. It's
+off by default until its A/B.
+
+Set `SLEIGHT_ACTION_LOG` to an absolute path, or one starting with `~/`, to append one JSON line per
+action there. A line has the time, the call id, the tool, the app or browser origin, the action kind,
+the target's role (with the label of a button, field or menu item), and the outcome. For an action that
+sleight or you refused, it has the reason as a category, such as `window changed` or `input lease`. Typed text,
+set values, a secure field's value or length, window titles, page text and screenshots stay out.
+The file is private to your account (0600) and rotates at 5 MB, keeping two old files. The `env`
+block of `~/.claude/settings.json` works for both settings.
+
 ## Text drags
 
 `drag` tries Accessibility text edits first in every app, then background posted events,
