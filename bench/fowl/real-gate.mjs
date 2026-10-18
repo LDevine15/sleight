@@ -340,7 +340,8 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       });
       if (browser.browser === 'firefox') await census();
       const startKeys = new Set(Object.keys(start));
-      if (browser.browser === 'firefox') {
+      // Firefox and Safari launch a browser per task, so each task's prompt names that task's browser PID.
+      if (['firefox', 'safari'].includes(browser.browser)) {
         arm = realGatePlan({ args, tasks: [arm.task], repo, mcpRoot, realBrowser: identity(), dryRun: false }).arms[0];
         writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
       }

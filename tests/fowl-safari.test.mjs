@@ -339,6 +339,22 @@ test('Safari gate uses structured observation and stable AX tab IDs for retentio
   assert.equal(existsSync(lockPath), false);
 });
 
+test('each Safari task\'s prompt names the PID of the Safari launched for that task', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'br2s-pid-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let browser; const prompts = [];
+  await runRealGate({ args: { surface: 'codex', 'real-browser': 'safari', out: join(dir, 'out') }, tasks: [task, { ...task, name: 'second' }],
+    runner: { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) },
+    runtime: { lockPath: join(dir, 'lock'), admit: async () => {}, startSites: async () => ({ close: async () => {} }),
+      launchBrowser: async plan => browser = { ...plan, pid: 40, stop: async () => ({ browserClosed: true }) },
+      checkOwner: async () => ({ ok: true }),
+      resetBrowser: async () => { browser.pid += 1; return { 'safari:tab-1': { url: browser.markerUrl, title: browser.marker } }; },
+      runAgent: async arm => { mkdirSync(arm.dir); prompts.push(JSON.stringify(arm)); return { groupClean: true, exitCode: 0, result: { result: 'RESULT: fixture' } }; },
+      observeBrowser: async () => ({ observed: true, tabs: { 'safari:tab-1': { url: 'https://changed.test', title: 'Changed' } } }) } });
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /browser PID 41\b/); assert.doesNotMatch(prompts[0], /browser PID 40\b/);
+  assert.match(prompts[1], /browser PID 42\b/); assert.doesNotMatch(prompts[1], /browser PID 41\b/);
+});
+
 test('a previous Safari still shutting down delays the next launch until its services are gone', async t => {
   const f = fixture(t); let lingering = 0;
   const options = { ...f.options, settleMs: 2000, listProcesses: async () => [...await f.options.listProcesses(), ...(lingering-- > 0 ? [{ pid: 7777, ppid: 1, executable: 'Safari Web Content' }] : [])] };
