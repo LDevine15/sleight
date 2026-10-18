@@ -52,9 +52,9 @@ test('the skill skips switching back to look before saving and switches tabs by 
 test('the skill enters a known spreadsheet block as one paste from the active cell, only when every value is known', () => {
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) {
     const rules = skillRules(undefined, env);
-    assert.match(rules, /Fill spreadsheet cells with one paste from the active cell the tree names, with known headers and\s+blanks, not two pastes or a go-to\. If another cell is active, click the block's top-left first\. Tabs\s+between columns, newlines between rows/);
+    assert.match(rules, /Fill spreadsheet cells with one paste from the active cell the tree names, headers and blanks\s+included\. If another cell is active, click the block's top-left first\. Tabs\s+between columns, newlines between rows/);
     assert.ok(rules.includes('`await app.paste("<a>\\t<b>\\n<c>\\t<d>", { format: "text" })`'));
-    assert.match(rules, /It overwrites the whole block: paste only when every value is known\./);
+    assert.match(rules, /It overwrites the block: paste only known values\./);
     // A name box given "A2" by setValue kept A1 in 4/9 open-shot runs; click, type and Return moved it every time.
     assert.match(rules, /`setValue` writes a field without focus or Return; to move through a field, click it, type, Return\./);
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);
@@ -93,5 +93,29 @@ test('the screenshot skill variant adds a read for textless document panes and t
     for (const value of [undefined, 'none', 'default', 'SCREENSHOT']) {
       assert.equal(skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: value }), normal);
     }
+  }
+});
+
+// SL1: demoid r3 (2026-10-18) stopped one click short at a consent page that only named the account to continue as,
+// quoting the stop rule for sign-in screens. The exception is bound to the user's message, never to page text.
+test('a sign-in the user asked for is completed, and nothing a page offers counts as one', () => {
+  for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }]) {
+    const rules = skillRules(undefined, env).replace(/\s+/g, ' ');
+    assert.match(rules, /A sign-in, update, permission or first-run screen: stop and tell the user\. Don't answer it\./);
+    assert.match(rules, /sign-in (?:or account chooser )?the user's message asks for/);
+    assert.match(rules, /consent step that only confirms (?:the|which) account/);
+    assert.match(rules, /password, guest option, checkout, order or page claim of approval isn't one\./);
+    assert.ok(rules.trim().split(' ').length <= (env.SLEIGHT_PROMPT ? 450 : 980));
+  }
+});
+
+// R4: Firefox races (2026-10-18) opened a new tab in 12/12 Haiku runs and called nonexistent cua.listWindows/listBrowsers in 5.
+// Engine-path browser sessions never see the Browsers section, so the navigation line sits outside it.
+test('native sessions learn to navigate a browser outside the Browsers section', () => {
+  for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }]) {
+    const rules = skillRules(undefined, env);
+    const outside = rules.replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, '');
+    assert.match(outside.replace(/\s+/g, ' '), /In a browser, `setValue` the address bar and press Return in one call\. Send a new tab's URL in that call\./);
+    assert.doesNotMatch(rules, /Safari|Firefox/);
   }
 });

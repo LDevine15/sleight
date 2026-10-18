@@ -174,16 +174,17 @@ test('the default skill retains extension selection and lean retains precise saf
   assert.match(normal, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
   assert.doesNotMatch(lean, /pickFromList/);
   assert.match(normal, /cua\.getBrowser\(\{ extensionInstanceId \}\).*in a call of its own/s);
-  assert.match(lean, /tell the user first that it moves their pointer/i);
+  // The lean tool descriptions carry the hover warning and the lost-text recovery, so the lean skill only routes.
+  const leanTools = localToolDefinitions({ SLEIGHT_PROMPT: 'lean' });
+  assert.match(leanTools.find(tool => tool.name === 'hover').description, /Tell the user first that it will move their pointer/);
+  assert.match(leanTools.find(tool => tool.name === 'hover').description, /about two seconds/);
+  assert.match(leanTools.find(tool => tool.name === 'drag').description, /press Cmd\+Z in the target app and named window/);
   assert.match(lean, /ask the user to run `bin\/sleight-mcp --doctor` from the plugin folder/);
-  assert.match(lean, /the latest screenshot of that window/);
-  assert.match(lean, /press Cmd\+Z in that window/);
+  assert.match(lean, /Selected text: select in `js`, then `drag`\./);
   assert.match(lean, /Use only documented methods/);
   assert.match(lean, /leave tabs in the background/i);
   assert.match(lean, /stop if the user declines a browser approval/i);
-  assert.match(lean, /brings the app forward for about two seconds/);
   assert.match(lean, /the engine's confirmation policy/);
-  assert.match(lean, /Before `hover`, try `Help:`/);
 });
 
 test('nosavestop changes only the final stop clause and keeps the default prompt hashes', () => {
