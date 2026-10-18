@@ -23,9 +23,11 @@ function world(t) {
   return { root, home, registry, path: appOptInPath(home) };
 }
 const write = (path, data, mode = 0o600) => { writeFileSync(path, typeof data === 'string' ? data : JSON.stringify(data)); chmodSync(path, mode); };
-const run = (args, w, extra = {}) => {
+// The opt-in tests run with the benchmark's override; in a release without Electron turbo, on refuses without it.
+const BENCH = Object.freeze({ SLEIGHT_TURBO_UNQUALIFIED: '1' });
+const run = (args, w, extra = {}, env = BENCH) => {
   let text = '';
-  const code = turboCommand(args, { out: value => { text += value; }, home: w.home, appOptIns: { path: w.path, registryPath: w.registry, ...extra } });
+  const code = turboCommand(args, { out: value => { text += value; }, home: w.home, env, appOptIns: { path: w.path, registryPath: w.registry, ...extra } });
   return { code, text };
 };
 
@@ -101,6 +103,25 @@ test('turbo app on refuses an unknown, unfilled or malformed bundle id and an un
   assert.equal(unsafe.code, 1);
   assert.match(unsafe.text, /INSTALLED_CONFIG_UNSAFE/);
   assert.equal(lstatSync(w.path).mode & 0o777, 0o644, 'an unsafe file is left alone');
+});
+
+test('turbo app on refuses in this release with one line and writes nothing, unless the benchmark override is set', t => {
+  const w = world(t);
+  for (const env of [{}, { SLEIGHT_TURBO_UNQUALIFIED: '0' }, { SLEIGHT_TURBO_UNQUALIFIED: 'yes' }]) {
+    const result = run(['app', 'on', 'com.example.Editor'], w, {}, env);
+    assert.equal(result.code, 1, JSON.stringify(env));
+    assert.equal(result.text, 'turbo stays off for com.example.Editor: Electron turbo arrives in 1.3.1; the app stays on the native path.\n');
+    assert.equal(readAppOptIns(w.path), null, 'nothing written');
+  }
+  assert.equal(run(['app', 'on', 'com.example.Editor'], w, {}, BENCH).code, 0, 'the benchmark override still opts in');
+});
+
+test('turbo app off works without the override, so an earlier opt-in can always be removed', t => {
+  const w = world(t);
+  run(['app', 'on', 'com.example.Editor'], w);
+  const off = run(['app', 'off', 'com.example.Editor'], w, { revokeApp: () => 1 }, {});
+  assert.equal(off.code, 0, off.text);
+  assert.deepEqual(readAppOptIns(w.path).apps, {});
 });
 
 test('turbo app off removes the opt-in and revokes the app\'s Always records', t => {
