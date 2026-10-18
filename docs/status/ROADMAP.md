@@ -71,7 +71,9 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
 
 ## 2. After 1.3.0, in the owner's order
 
-Post-release work builds on branches now and merges after the tag (owner, 2026-10-14). On 2026-10-18 the owner had the build rows started at once in lanes on the `post-130` branch (Electron EPV3-1 to EPV3-3, the Q1 reviews, the small queued items), with a Fable design and performance pass for the ghost hand (`ledger/fable-1018-ghost-hand.md`). The ready ones (Q1-7 to Q1-17, AS-4) went into the claim build the same night, and the claim measures them (owner, 2026-10-18). Electron and the ghost hand come in 1.3.1, with their own rerun of sleight's claim arm.
+Post-release work builds on branches now and merges after the tag (owner, 2026-10-14). On 2026-10-18 the owner had the build rows started at once in lanes on the `post-130` branch (Electron EPV3-1 to EPV3-3, the Q1 reviews, the small queued items), with a Fable design and performance pass for the ghost hand (`ledger/fable-1018-ghost-hand.md`). The ready ones (Q1-7 to Q1-17, AS-4) went into the claim build the same night, and the claim measures them (owner, 2026-10-18). Later that night the owner folded Electron into 1.3.0 instead. EPV3 builds in parallel lanes against Fable's contracts
+(`ledger/epv3-contracts.md`), and the claim suite gains vscode-edit and cursor-edit. The ghost hand comes in 1.3.1. Meanwhile the
+native claim and the browser race run as Mac load allows, so that Electron's runs are the last benchmark left.
 
 1. Electron on turbo v3: EPV3-1 to EPV3-8 (`ledger/electron-v3-plan.md`), carrying over EP-2's cleanup and EP-6's build
    qualification. EPV3-1 is building on `arch/epv3-1` since 2026-10-15, and the rest follow in the plan's order.
