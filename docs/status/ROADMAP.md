@@ -108,7 +108,9 @@ native claim and the browser race run as Mac load allows, so that Electron's run
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in
    the target window, flourishes on the action and fades. It never moves the pointer, takes focus or catches clicks. It is drawn
    by the existing consent-host helper, on by default with an off switch, kept out of benchmark timing, and its CPU cost is
-   measured. LoC's art director designs the hand to match the video. About a day, after the tag.
+   measured. LoC's art director designs the hand to match the video. About a day, after the tag. Building since 2026-10-18 (H1 to
+   H4 on `claude/p130-gh-*`), a Fable art director drawing the final art, and a Ghost Hand toggle in the menu bar dropdown (owner).
+   Later, one shared host shows the glove and its toggle whenever sleight is active (today only while turbo is connected).
 8. The open items from the 2026-10-17/18 studies, listed with sources and done criteria in `ledger/LEDGER.md`, section
    "OPEN ITEMS from the 2026-10-17/18 studies" (Word branch steering, the dialog continuation's stopped remainders, typing receipts,
    preview and drag paths, harness loose ends, the ghost hand plan).

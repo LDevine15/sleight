@@ -70,6 +70,16 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   though never its document content. One exception for input (owner, 2026-10-17): a plain single click on an element in a group of
   sibling buttons or tabs that advertises AXPress may be pressed by sleight through Accessibility instead of a posted pointer click,
   in the background and after the same lease and identity checks, because Excel treated posted tab clicks as drags (6 of 8 runs).
+  A second exception (owner, 2026-10-18, WK4): when the leased app's menu stays stuck open across two calls, sleight may post one
+  Escape to that app's pid, once per stuck episode, in the background, never while the user is typing or moving the mouse, and it
+  says so in the result. `SLEIGHT_STUCK_ESCAPE=0` turns it off. Reading document text for drag endpoints stays forbidden (FM6),
+  and so does giving up on a read early (IN2).
+- Electron saves (owner, 2026-10-18): sleight reports a save as confirmed only when the window shows its file path. Otherwise the
+  edit is reported done and the save unconfirmed, with no other evidence path. The relaunch flow avoids taking focus, or the card
+  says the app comes to the front briefly.
+- The ghost hand (1.3.1, owner, 2026-10-18) is on by default, with an off switch in the menu bar dropdown, `sleight-mcp hand off`
+  and the settings file. A Fable art director designs its final art now. It shows in the user's own screenshots and recordings if
+  the capture test proves sleight's own screenshots never include it. Otherwise captures leave it out.
 - Browsers get turbo, sleight's own direct path, with no extension install. The user turns it on once through Chrome's built-in
   remote-debugging consent. Its benchmark proved it, so turbo is the default from 1.3.0 (owner, 2026-10-16).
   Turbo includes `playwright-core` 1.64.0, pinned, with its notices, and compiles two native helpers from source on the user's Mac
