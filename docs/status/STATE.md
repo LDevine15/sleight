@@ -12,17 +12,17 @@ Owner (2026-10-18 evening): all building finishes now, and validation follows. T
 **Release line.** Branch `claude/boot-sleight-arch-6d0629` = `private` `pane/auto-mode` = main checkout, at the flush commit after
 `ffddc0e6`. The full check last passed on 9463c0c4 (8073 tests). Everything since on the release line is docs (STATE, LAWS, ROADMAP,
 storyboard, known-problems), bench/fowl harness (cover record, placement, Safari per-task PID) and MB1 (menu bar glove and menu,
-CHANGELOG). The flush ran the full check (see the flush commit). Race worktree `~/Projects/sleight-wt/race-fx` is pinned at 64396fa5.
+CHANGELOG). The flush's full check passed at 23:4xZ 2026-10-18 with 0 failures in 8086 tests (368 skipped). Race worktree `~/Projects/sleight-wt/race-fx` is pinned at 64396fa5.
 No open PRs.
 
 **Branches built tonight, all pushed to `private`, none merged.** Each has a report in `ledger/p130/<id>-REPORT.md` and a Sonnet-high
 review recorded in the ledger.
 - Into 1.3.0 (race losses and security), merge first: `claude/p130-ft1` a4bf49b1 (form-travel: pickFromList first, renumbering
-  follow limited to one inserted block, `{ id }` mapping; reviewed twice), `claude/p130-fs1` (on ft1; form-settings: a user-asked
-  submit needs no more consent per the new LAWS form rule, drag tool for reorders, offscreen-row note; review fixes in flight at the
-  flush, check its report), `claude/p130-md1` 22c459f5 (mdn: partial-failure note, window line; reviewed), `claude/p130-sec130`
-  (SECURITY, since Claude could answer sleight's own menu and cards via menu_bar or getApp("consent-host"); review fixes in flight at the
-  flush), `claude/p130-es1` 59bbac27 (`turbo app on` refuses in 1.3.0; qualification disconnect cell), and the small lane branches
+  follow limited to one inserted block, `{ id }` mapping; reviewed twice), `claude/p130-fs1` d58fb4ac (on ft1; form-settings: a user-asked
+  submit needs no more consent per the new LAWS form rule, drag tool for reorders, offscreen-row note, review fixes in. Its task turns two-factor on, which the form rule
+  still asks about by design (LAWS), so form-settings may stay a loss), `claude/p130-md1` 22c459f5 (mdn: partial-failure note, window line; reviewed), `claude/p130-sec130` a1523a38
+  (SECURITY, since Claude could answer sleight's own menu and cards via menu_bar or getApp("consent-host"); review fixes in, live
+  checks in its report), `claude/p130-es1` 59bbac27 (`turbo app on` refuses in 1.3.0; qualification disconnect cell), and the small lane branches
   `codex/ff1` 6fe10b92, `codex/rg1r2` 0b60bbcf (on rg1 25c1683a), `codex/fl3` 028ec25f.
 - 1.3.1 (merge after the tag. The ghost hand branches go in as gh-c, then gh-a, then gh-b with `client: hand` passed to createRelayHand, then h8, sh1):
   `claude/p130-gh-a` 3f3a2ad1, `claude/p130-gh-b` 4ce87780, `claude/p130-gh-c` b76b2770, `claude/p130-h8` 2188a456,
@@ -34,22 +34,22 @@ review recorded in the ledger.
   `codex/tt7` 6f205c02, `codex/wk2` 8407b890, `codex/am1fr3` ea6bc127. Closed with evidence: IN1, TT6, WK5, DR2, ET1, EL2, DC1 (live).
 
 **Where the claim stands (Haiku 5.5 high, real windows).** Native 9 tasks "fastest", 8 of 9, 251 s against claude-cu's 454 s (lost
-preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari, scored
-23:0xZ before the last reruns: sleight fastest on 9 of 12 by expected time and the only arm that passed all 12 tasks; by the owner's loss
-rule (lower expected time or a faster passing run) it loses form-travel and mdn to Codex, form-settings to cua (expected time), and
-form-checkout to one 42.3 s lcu pass. Fixes for all four are on ft1, fs1 and md1. Close pairs for top-ups: form-travel, wikipedia
+preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari is complete (3 rounds an arm, all reruns done 23:35Z): sleight fastest on 9 of 12
+by expected time, total 670.1 s, the only arm that passed all 12 tasks. Codex leads form-travel and mdn, and Peekaboo leads
+wikipedia (17.6 against 18.0). By the owner's loss rule (a faster passing run also counts), lcu's one 42.3 s form-checkout pass
+makes that task a loss too. form-settings is now sleight's (167.0 against cua's 206.3), though the two-factor switch can make it
+ask (LAWS). Fixes for form-travel, mdn and form-checkout are on ft1, fs1 and md1. Close pairs for top-ups: form-travel, wikipedia
 and mdn against Codex and Peekaboo, form-settings against cua.
 
 **Running across the clear.**
-- Terminal.app job `race-1017/race-safari-r1.command` reran Peekaboo r1 from 23:12Z (reopened by `nohup race-1017/reopen-r1.sh`,
-  log `reopen-r1.log`, done). It is the last Safari round. Its log is `race-safari-r1a.log`, and `race-safari-r1.log` gets `done`.
+- The race is idle. Safari finished 23:35Z (Terminal job `race-safari-r1.command` done, `reopen-r1.sh` done).
 - `nohup` watchdog `race-1017/watchdog.sh` (pid 63290, log `watchdog.log`): ALERT and exit if the live lock is held with no round
   for 3 min, a round runs over 40 min, or Safari stays up with no round. Read it first after the clear.
 - The Firefox b6 and sleight-in-Codex smoke waiters were stopped on purpose: they would have run the old build.
 
 **Order from here.**
-1. Score Safari when Peekaboo r1 finishes (`node bench/fowl/race-score.mjs ~/Projects/sleight-wt/race-1017/safari-*-r[0-9]*`).
-2. Merge into the release line: sec130 and fs1 once their review fixes are in (read their reports), ft1, md1, es1, ff1, rg1r2, fl3.
+1. Safari is scored (`node bench/fowl/race-score.mjs ~/Projects/sleight-wt/race-1017/safari-*-r[0-9]*`).
+2. Merge into the release line: sec130 and fs1 (review fixes in, read their reports), ft1, md1, es1, ff1, rg1r2, fl3.
    Full check, lint, push, then move race-fx to that commit.
 3. Live checks the merges need first: sec130's engine card text for the consent host and a press_key probe against a frontmost
    consent-host card, and ft1's Page Down in Safari's and Firefox's long lists.
