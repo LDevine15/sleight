@@ -30,20 +30,22 @@ Peekaboo 47, Codex 65. spotify-play sleight 27, Codex 41, LCU 55, Cua 112. Total
 `~/Projects/sleight-wt/app-claim/app-score-1018.txt`, failure causes in the ledger (APP-CLAIM). Open owner question: whether "fastest"
 counts the app tasks with the 9 native ones (sleight wins 11 of 12 either way).
 
-**Browser race.** Firefox competitor rounds finished 06:38Z (3 each). sleight is fastest on 6 of 12 by expected time and loses
-form-travel, demoid, handoff, inject-order, wikipedia and mdn, plus checkout, size-guide and inject-mail on best pass (owner's loss
-rule). Ledger section FIREFOX FINAL has the numbers. Peekaboo's Firefox rounds run from 06:40Z in a Terminal window. Chrome step 1
-(sleight-turbo, FowlBrowser, Claude in Chrome x3, `race-chrome-1.log`) starts after them, then sleight's Firefox rounds rerun on
-001f6113 (`race-firefox-sleight-b2.log`). `touch ~/Projects/sleight-wt/race-1017/pause` pauses every script between rounds.
+**Browser race (09:15Z).** Firefox on the fixed build 326dde47: sleight fastest on 10 of 12 (was 6 of 12 on 28e19c99). It still
+loses mdn to Codex (19.7 against 16.0 s) and never passes form-settings-helium, which only Cua passes (437 s). Chrome step 1 (turbo on
+001f6113 against FowlBrowser): turbo 6 of 13, FowlBrowser 7. Claude in Chrome's 39 runs all stopped on its own site-permission prompt,
+so its rounds are marked as harness failures and need the owner's site allowance first. Helium (turbo, FowlBrowser) then Safari (five
+arms) run from a Terminal window (`race-helium-safari.command`). Top-ups to 5 rounds come after Safari. Numbers are in the ledger
+sections FIREFOX on 326dde47 and CHROME step 1.
 
-**Loss work.** Merged and pushed at 001f6113 (full check green): FM1 `app.pickFromList` (keyboard search in a sorted list), FM2
-(stale-element recovery for AXError.invalidUIElement), FM3 (native form batching line) and BK1 (a requested booking counts as
-confirmed). Fable studies of the losses report to `ledger/fable-1018-loss-{reads,short,preview}.md`.
-An Astra lane studies the engine-path gap against Codex (`ledger/astra-1018-engine-gap-report.md`).
+**Loss work.** Merged and pushed at 326dde47 (full check 7886, 0 fail): FM1-FM3, BK1, the tab continuation without whole-call HID idle
+(user input after the stop still refuses), Firefox tree trimming, focus and retitle fixes, open_file without the osascript probe,
+shutdown stamps, and the SL1 sign-in and R4 navigation skill lines (word caps 1040 and 505, with no measured line shortened). Each lease
+relaxation had a Sonnet-high safety review with its fixes applied. Running now: a Fable study and an Astra lane on turbo's Chrome
+losses (`ledger/fable-1018-loss-turbo.md`, `ledger/astra-1018-turbo-report.md`).
 
 Order from here:
-1. The race in the plan's order (Chrome, Helium, Safari), with sleight's Firefox rerun after Chrome step 1.
-2. Build what the loss studies rank, merge, rerun sleight on the lost tasks.
+1. Helium, then Safari, then top-ups (Firefox pairs listed in the ledger, Chrome pairs), then the Chrome and Helium competitor rounds.
+2. Build what the turbo studies rank and rerun turbo in Chrome. The native claim reruns on the final build.
 3. The release pass for 1.3.0.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
