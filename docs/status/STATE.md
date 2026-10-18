@@ -3,57 +3,63 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 02:21 UTC)
+## Banner (2026-10-18 17:40 UTC, flushed before the owner's clear)
 
-OWNER ASLEEP since 2026-10-18T06:26:31Z (/goodnight). Night Shift on.
+Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
+Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
+`~/Projects/sleight-wt/ledger/LEDGER.md` (every result, item and decision of 2026-10-18 is in the sections from APP-CLAIM on).
 
-Goal (owner): release 1.3.0, then the claim post and the video. The owner is away from the PC, reachable by phone, and OK'd live
-runs tonight. Ledger: `~/Projects/sleight-wt/ledger/LEDGER.md` (sections CLAIM-1018, EPV3, APP-CLAIM).
+**Release line.** This worktree's branch is at `9463c0c4` and pushed to `private` `pane/auto-mode`, with the main checkout fast-forwarded.
+Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree `~/Projects/sleight-wt/race-fx` is detached at the same commit. Only the untracked
+`.playwright-mcp/`, `.vale/` and `node_modules` are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 
-**Native claim on the release build: "fastest" (scorer wording), sleight fastest on 8 of 9, 251 s total against claude-cu's 454 s.**
-Build 995b4855 (Electron, MV2, FL2), sleight rerun 03:17-03:38Z with top-ups to 5 on preview-read, word-edit and excel-edit, against
-the competitors' claim files. Lost preview-read (5.1 against Peekaboo's 4.4). Score: `~/Projects/sleight-wt/app-claim/native-score-1018b.txt`.
-The earlier claim build `9c836f22` scored 230 s, 8 of 9.
+**Where the claim stands (all Haiku 5.5 high, real windows):**
+- Native 9 tasks: "fastest", 8 of 9, 251 s against claude-cu's 454 s on 995b4855 (lost preview-read 5.1 against Peekaboo's 4.4; its
+  study says the gap is model thinking every engine-tree arm shares). The build has changed since, so sleight's native arm reruns on
+  the final build before publishing.
+- App tasks (VS Code, Slack, Spotify): fastest on 3 of 3 (`~/Projects/sleight-wt/app-claim/app-score-1018.txt`).
+- Chrome turbo (b5, 0f706f6d): fastest on 12 of 13 against FowlBrowser, 39/39 passes, 247.6 against 441.8 s. Helium turbo (b5,
+  46ac78bf): 12 of 13, 241.8 against 363.3 s. Close pairs need 5-round top-ups. Claude in Chrome has no result (see owner items).
+- Firefox (sleight b3 on 326dde47, competitors 3 rounds): fastest on 10 of 12. Lost mdn (Codex 16.0 against 19.7) and
+  form-settings-helium, which only Cua passes. Fixes since (CT result trimming, EN lines, FM7, DRG drags) are unmeasured: sleight's
+  Firefox rounds rerun on the current build.
+- Safari has a fixed harness (Safari 26 profile identifier, menus, tab bar, form sheets; now a fresh Safari per task, launch outside the
+  timed span). Rounds restarted 17:31Z.
 
-**Owner decisions 2026-10-18 (in LAWS):** F3 decided: 1.3.0's app tasks run on the native path, and Electron turbo comes in 1.3.1 with
-the relaunch flow. The claim's app tasks are VS Code (vscode-edit, temporary profile), Slack (slack-post: one fixed message in
-#new-channel of the owner's throwaway workspace) and Spotify (spotify-play: search "Bohemian Rhapsody" by Queen, play, pause), all six
-arms, 3 runs each with top-ups. Cursor is out of the claim.
+**Running across the clear:**
+- Terminal.app job `~/Projects/sleight-wt/race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari x3 for sleight, lcu,
+  cua and peekaboo on race-fx. A round started earlier from this session (sleight r1, pid 99671) keeps running and frees the lock. The
+  Terminal job may redo sleight r1 after it.
+- `nohup` watchdog `race-1017/watchdog.sh` (pid 584, log `watchdog.log`): exits with an ALERT line if the live lock is held with no round
+  for 3 min, a round runs over 40 min, or Safari stays up with no round for 3 min. Nobody is woken after the clear, so read its log first.
+- `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds.
 
-**Release line.** This worktree's branch is pushed to `private` `pane/auto-mode` and the main checkout fast-forwarded. It holds epv3-int
-merged onto the claim line, with MV2 (Excel moved-tab check sees every Window block), FL2 (virtual clock in guard-light-return) and the
-Electron tests' trackTemp fix. Full check green (7739 tests, 7381 pass, 0 fail, 2026-10-18 02:1xZ).
+**Order from here:**
+1. Safari's Codex rounds x3 from sleight-arch's own shell (Terminal can't read ChatGPT's approvals file):
+   `RACE_TREE=$HOME/Projects/sleight-wt/race-fx BROWSER=safari ARMS=codex zsh ~/Projects/sleight-wt/race-1017/race-browser3.sh`.
+2. sleight's Firefox rerun on the current build (`ARMS=sleight TAG=-b6`, BROWSER=firefox, from this shell).
+3. sleight inside Codex (arms `codex-sleight` gpt-6-luna, `codex-sleight-sol` gpt-6.1-sol, bench/codex-sleight*.mjs, never run): live
+   smoke in Firefox, then 3 rounds each in Firefox and Safari. Codex in Chrome/Helium is blocked (item SF1).
+4. Claude in Chrome: first live smoke of the Allow watcher (bench/fowl/chrome-allow.*) from Terminal, then 3 Chrome rounds; then
+   reconnect GitHub (owner item).
+5. Top-ups to 5 rounds for every pair within 20% (Firefox about 16, Chrome and Helium a few, Safari once scored).
+6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call).
 
-**App tasks (3 of 3, scorer wording "fastest").** Build 995b4855, 02:39-03:20Z, all six arms. Expected s: vscode-edit sleight 17,
-LCU 32, Codex 42, Cua 45 (Peekaboo and claude-cu never pass). slack-post sleight 13.5 (5/5), LCU 14.2 (5/5), claude-cu 16 (5/5), Cua 26,
-Peekaboo 47, Codex 65. spotify-play sleight 27, Codex 41, LCU 55, Cua 112. Totals sleight 57, LCU 101, Codex 147, Cua 183. Score in
-`~/Projects/sleight-wt/app-claim/app-score-1018.txt`, failure causes in the ledger (APP-CLAIM). Open owner question: whether "fastest"
-counts the app tasks with the 9 native ones (sleight wins 11 of 12 either way).
-
-**Browser race (09:15Z).** Firefox on the fixed build 326dde47: sleight fastest on 10 of 12 (was 6 of 12 on 28e19c99). It still
-loses mdn to Codex (19.7 against 16.0 s) and never passes form-settings-helium, which only Cua passes (437 s). Chrome step 1 (turbo on
-001f6113 against FowlBrowser): turbo 6 of 13, FowlBrowser 7. Claude in Chrome's 39 runs all stopped on its own site-permission prompt,
-so its rounds are marked as harness failures and need the owner's site allowance first. Helium (turbo, FowlBrowser) then Safari (five
-arms) run from a Terminal window (`race-helium-safari.command`). Top-ups to 5 rounds come after Safari. Numbers are in the ledger
-sections FIREFOX on 326dde47 and CHROME step 1.
-
-**Loss work.** Merged and pushed at 326dde47 (full check 7886, 0 fail): FM1-FM3, BK1, the tab continuation without whole-call HID idle
-(user input after the stop still refuses), Firefox tree trimming, focus and retitle fixes, open_file without the osascript probe,
-shutdown stamps, and the SL1 sign-in and R4 navigation skill lines (word caps 1040 and 505, with no measured line shortened). Each lease
-relaxation had a Sonnet-high safety review with its fixes applied. Running now: a Fable study and an Astra lane on turbo's Chrome
-losses (`ledger/fable-1018-loss-turbo.md`, `ledger/astra-1018-turbo-report.md`).
-
-Order from here:
-1. Helium, then Safari, then top-ups (Firefox pairs listed in the ledger, Chrome pairs), then the Chrome and Helium competitor rounds.
-2. Build what the turbo studies rank and rerun turbo in Chrome. The native claim reruns on the final build.
-3. The release pass for 1.3.0.
+**Owner items:**
+- GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
+  claude.ai/customize/connectors/yours/id/integration-github (owner does a passkey if asked).
+- Changed with the owner's OK for Claude in Chrome: its panel mode in the benchmark profile is "Skip all approvals", and claude.ai's
+  Claude in Chrome site default is "Allow all sites" (also covers the desktop app's built-in browser). Neither reached the per-action
+  prompt. The watcher clicks it.
+- FM6 (ledger): a drag-endpoint fix needs sleight to read page text values (AXValue), which LAWS excludes. Owner decides.
+- The Codex arm in Chrome and Helium is blocked (SF1). Chrome's profile copy needs Terminal, the approvals file needs sleight-arch's shell.
+- The 1.3.0 tag and publishing.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
 
-**Owner items.** The F3 Electron decision (banner). One "Always allow" click on the VS Code debugger card at the live qualification.
-Publishing, once the browser race has run. The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
+**Older owner items.** One "Always allow" click on the VS Code debugger card at the Electron turbo qualification (1.3.1). The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
 Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
 
 **Gotchas from 2026-10-17.** Never send Apple events to Office from this session (Excel had no Automation grant and a macOS prompt
