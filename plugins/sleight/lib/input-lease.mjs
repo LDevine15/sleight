@@ -24,6 +24,69 @@ export const leaseKey = (window, scope = 'window') => createHash('sha256')
   .update(JSON.stringify([scope, scope === 'desktop' ? '*' : window.appId || window.app,
     scope === 'window' ? window.url || window.title : '*'])).digest('hex');
 
+// A read that filters its tree before printing it, such as
+//   const s = await ff.getAXState(); const lines = s.split("\n"); nodeRepl.write(lines.filter(l => /Kilimanjaro/.test(l)).join("\n"));
+// was refused as stale when the page had retitled since the last result (wikipedia, 2026-10-18), though it sends
+// no input. It stays an action for the lease and the guard, which filter and track its output; this only lets the
+// relay run it against the window its own acquisition just showed. It is a read-only call when its awaited calls
+// are all getAXState, getAXStateAndScreenshot or getScreenshot, and every other call is a string or array method
+// below, nodeRepl.write or nodeRepl.emitImage. Anything else, a bare call, a computed or chained call, a template
+// literal, a comment, a keyword that runs code, or an assignment into a property, is not.
+const PURE_METHODS = new Set(['split', 'slice', 'join', 'filter', 'map', 'trim', 'includes', 'indexOf', 'test', 'match',
+  'replace', 'toLowerCase', 'startsWith', 'endsWith', 'substring', 'concat', 'some']);
+const READ_METHODS = ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot'];
+export function isFilteredRead(code) {
+  if (typeof code !== 'string' || code.length > 4000 || code.includes('`')) return false;
+  // Strings and regular expression literals become placeholders, so the calls inside them aren't seen as calls.
+  let source = '', last = '';
+  for (let i = 0; i < code.length;) {
+    const c = code[i];
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < code.length && code[j] !== c) { if (code[j] === '\\') j++; if (code[j] === '\n') return false; j++; }
+      if (j >= code.length) return false;
+      source += '"s"'; last = '"'; i = j + 1;
+    } else if (c === '/') {
+      if (code[i + 1] === '/' || code[i + 1] === '*') return false;
+      // A slash after an operand divides; after punctuation it can only start a regular expression.
+      if (last === '' || '(,=:[!&|?{};><+-*%~^'.includes(last)) {
+        let j = i + 1, inClass = false;
+        while (j < code.length && (code[j] !== '/' || inClass)) {
+          if (code[j] === '\\') j++; else if (code[j] === '[') inClass = true; else if (code[j] === ']') inClass = false;
+          if (code[j] === '\n') return false;
+          j++;
+        }
+        if (j >= code.length) return false;
+        j++;
+        while (/[a-z]/i.test(code[j] ?? '')) j++;
+        source += 'R'; last = 'R'; i = j;
+      } else { source += c; last = c; i++; }
+    } else { source += c; if (!/\s/.test(c)) last = c; i++; }
+  }
+  if (/\b(?:function|class|new|import|eval|with|while|for|do|if|try|throw|delete|void|yield|async|globalThis|window|this|require|process|constructor|prototype|__proto__)\b/.test(source)) return false;
+  if (/\.\s*[\w$]+\s*(?:[-+*\/|&]|\?\?)?=(?!=)/.test(source) || /\]\s*=(?!=)/.test(source)) return false;
+  const awaited = [...source.matchAll(/\bawait\b/g)].length;
+  const handles = new Set();
+  for (const m of source.matchAll(/\bawait\s+([A-Za-z_$][\w$]*)\.(\w+)\(/g)) if (READ_METHODS.includes(m[2])) handles.add(m[1]);
+  const reads = [...source.matchAll(new RegExp(String.raw`\bawait\s+[A-Za-z_$][\w$]*\.(?:${READ_METHODS.join('|')})\(`, 'g'))].length;
+  if (!reads || reads !== awaited) return false;
+  for (const m of source.matchAll(/\(/g)) {
+    const before = source.slice(0, m.index).replace(/\s+$/, '');
+    const name = /[A-Za-z_$][\w$]*$/.exec(before)?.[0];
+    if (name === undefined) {
+      if (/[)\]"R.]$/.test(before)) return false;
+      continue;
+    }
+    const rest = before.slice(0, before.length - name.length).replace(/\s+$/, '');
+    if (!rest.endsWith('.')) { if (name === 'await' || name === 'return') continue; return false; }
+    const object = /([A-Za-z_$][\w$]*)$/.exec(rest.slice(0, -1).replace(/\s+$/, ''))?.[1];
+    if (READ_METHODS.includes(name)) continue;
+    if (name === 'write' || name === 'emitImage') { if (object !== 'nodeRepl') return false; continue; }
+    if (!PURE_METHODS.has(name) || handles.has(object)) return false;
+  }
+  return true;
+}
+
 // Only literal, standalone reads pass without a lease. Arbitrary JS is treated
 // as an action, including read/action mixtures and expressions in read options.
 export function isLeaseRead(code = '') {

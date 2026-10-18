@@ -36,6 +36,21 @@ export function windowFromText(text) {
   return windows[0];
 }
 
+// The window of the last tree in a result. A call that ends in a read, or whose acquisition shows one window
+// and its own read another, has several trees, and windowFromText gives up on differing headers. When every
+// header has a standard-window root and the apps agree, the last tree is what Claude saw most recently (all 7
+// stale-window refusals in the 2026-10-18 Firefox runs). A header without a root line is a filtered write's
+// echo, and a dialog, sheet or panel root has its own lease rules, so those leave the window unknown.
+export function lastWindowFromText(text) {
+  const whole = windowFromText(text);
+  if (whole || typeof text !== 'string') return whole;
+  const starts = [...text.matchAll(/^Window: /gm)].map(match => match.index);
+  const sections = starts.map((at, i) => text.slice(at, starts[i + 1]));
+  const windows = sections.map(section => /^0 standard window(?: |,|$)/m.test(section) ? windowFromText(section) : undefined);
+  if (!windows.length || windows.some(window => !window || window.app !== windows[0].app)) return;
+  return windows.at(-1);
+}
+
 // Element number -> line text without the number, for one tree.
 export function elementLines(text) {
   return new Map(text.split('\n').map(line => /^(\t*)(\d+) (.*)$/.exec(line)).filter(Boolean).map(m => [Number(m[2]), m[3]]));
@@ -124,10 +139,16 @@ export function disabledLabelNote(text, label) {
 // element's attributes and keep only its role and a name: "button Two" for "button Description: 2,
 // ID: Two" (5 of 5 batched calls under load, 2026-10-09). A bare line matches a fuller one when the
 // role is the same and the name is the fuller line's ID or label.
+//
+// The role's parenthetical state is not part of the label: after setValue, Firefox's "combo box (settable)
+// Search with Google or enter address" is "combo box (settable) Description: Search with Google or enter
+// address, Value: https://..." (mdn, 2026-10-18). The state is skipped on both lines when comparing, so
+// a changed label still differs.
 export function sameElement(was, now) {
   if (was === now) return true;
   if (typeof was !== 'string' || typeof now !== 'string') return false;
-  const [full, bare] = was.length > now.length ? [was, now] : [now, was];
+  const plain = line => line.replace(/^([a-z][a-z ]*?) \([^()]*\)(?= |$)/, '$1');
+  const [full, bare] = was.length > now.length ? [plain(was), plain(now)] : [plain(now), plain(was)];
   const role = /^[a-z][a-z ]*/.exec(bare)?.[0] ?? '';
   for (let at = role.indexOf(' '); at >= 0; at = role.indexOf(' ', at + 1)) {
     const name = bare.slice(at + 1);
@@ -137,9 +158,11 @@ export function sameElement(was, now) {
   return false;
 }
 
-// Only a resolved focus outside the clicked field's subtree proves a mismatch.
-// Missing rows or focus leave the existing misplaced-text observation to report it.
-function differentFocusTarget(text, before) {
+// Only a resolved focus outside the clicked field's subtree proves a mismatch. Focus on the settable
+// field that holds the clicked element counts as inside: a click on a field's inner text node focuses
+// the field itself (Firefox address bar, 3 of 9 runs, 2026-10-18). Missing rows or focus leave the
+// existing misplaced-text observation to report it.
+export function differentFocusTarget(text, before) {
   const focus = /^The focused UI element is (\d+) (.+)\r?$/m.exec(text ?? '');
   if (!focus) return;
   const rows = (text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*)\r?$/.exec(line)).filter(Boolean)
@@ -156,6 +179,22 @@ function differentFocusTarget(text, before) {
   for (let i = start; i < rows.length; i++) {
     if (i > start && rows[i].depth <= clicked.depth) break;
     if (rows[i] === focused) return;
+  }
+  // Focus on the window's own root container is the engine reporting no specific focus (Firefox's address
+  // bar after a background click, 3 of 3 mdn, wikipedia and size-guide runs); typing there lands in the
+  // field on this engine. Any other element still stops, and the misplaced-text check after typing reports a miss.
+  const root = rows[0], title = root?.line.replace(/^(?:standard )?window /, '').split(', ')[0];
+  if (root?.depth === 0 && /^(?:standard )?window(?: |,|$)/.test(root.line) &&
+      (focused === root || focused === rows[1] && focused.depth === 1 && title !== '' && focused.line === 'container ' + title)) return;
+  // The nearest ancestor that is a field: its text child is the clicked node.
+  let depth = clicked.depth;
+  for (let i = start - 1; i >= 0 && depth > 0; i--) {
+    if (rows[i].depth >= depth) continue;
+    depth = rows[i].depth;
+    if (/^(?:text field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(rows[i].line) || /^[a-z][a-z ]*\(settable\)/i.test(rows[i].line)) {
+      if (rows[i] === focused) return;
+      break;
+    }
   }
   return clicked.number;
 }
