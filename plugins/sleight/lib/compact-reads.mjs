@@ -312,6 +312,7 @@ function structuralKey(key) {
   return `${head}|${id ?? description ?? ''}`;
 }
 const attributes = line => (line.match(/\b(?:Help|Description|ID):/g) ?? []).length;
+const windowRoot = root => /^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(root);
 const panel = line => /(?:^|\t)(?:sheet|dialog)\b/.test(line);
 const saveSheet = root => /\bsave-panel\b/.test(root ?? '') && !/\bopen-panel\b/.test(root ?? '');
 function saveNameId(lines) {
@@ -1268,7 +1269,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const documents = new Map();
   function observe(tree, window, lines) {
     const root = parse(lines[1] ?? '').key;
-    const degraded = (ELEMENT.test(lines[1] ?? '') && !/^(?:(?:standard|floating|system|dialog) window|window|sheet|dialog)\b/.test(root)) ||
+    const degraded = (ELEMENT.test(lines[1] ?? '') && !windowRoot(root)) ||
       // Only the same window losing its URL: another window or a Save sheet has none of its own.
       !!(latest?.window.app === window.app && latest.window.title === window.title && latest.window.url && !window.url);
     const observation = { id: ++observationId, window, lines, root, degraded,
@@ -1427,18 +1428,24 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     return sent === tree ? text : text.slice(0, at) + sent;
   }
 
-  // Remembers the last full tree in a stretch of output Claude sees: from the
-  // last line that starts with a Window header to the end.
+  // Remembers every tree in a stretch of output Claude sees: from each line that starts with a Window
+  // header to the next (only the last when the headers name different windows). A later block that
+  // repeats only lines of an earlier one (a tree the call printed itself, cut or filtered, as in
+  // excel-edit #3) or has no window root is a degraded read: it never replaces the real tree.
   function remember(text, action) {
     const starts = [...text.matchAll(/^Window: /gm)];
     if (!starts.length) return;
-    const tree = text.slice(starts.at(-1).index).replace(/\n+$/, '');
-    const window = windowFromText(tree);
-    if (window) {
+    const ambiguous = starts.length > 1 && !windowFromText(text);
+    const shown = new Set();
+    for (const [i, { index }] of (ambiguous ? starts.slice(-1) : starts).entries()) {
+      const tree = text.slice(index, ambiguous ? undefined : starts[i + 1]?.index).replace(/\n+$/, '');
+      const window = windowFromText(tree);
+      if (!window) continue;
       const lines = tree.split('\n');
-      const ambiguous = starts.length > 1 && !windowFromText(text);
+      if (shown.size && (lines.every(line => shown.has(line)) || ELEMENT.test(lines[1] ?? '') && !windowRoot(parse(lines[1]).key))) continue;
+      for (const line of lines) shown.add(line);
       if (!ambiguous && action && observedInResult && !observedInResult.invalid &&
-          observedInResult.lines.join('\n') === tree) return;
+          observedInResult.lines.join('\n') === tree) continue;
       if (action) {
         compact(tree, '', action);
         const entry = seen.get(documentKey(window));
