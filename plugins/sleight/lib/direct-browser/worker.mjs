@@ -71,8 +71,14 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   if (![startupTimeoutMs, timeoutMs].every(n => Number.isInteger(n) && n > 0 && n <= 300000)) throw Error('TRUSTED_ROUTE_REQUIRED');
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/^(?:NODE_|DYLD_|LD_)/.test(key)) delete env[key];
-  const child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), [],
-    { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json' });
+  // The session's shared host (the ghost hand's) serves turbo's consent channel too, so one glove serves both. The worker gets
+  // the channel's ends as fds 4 and 5 and talks to the host directly; the relay closes its copies at once and never reads them.
+  // Without a shared host the worker opens its own, as before.
+  let shared;
+  try { shared = await (dependencies.shareConsent ?? (await import('../hand/client.mjs')).shareConsent)(); } catch {}
+  const child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui'] : [],
+    { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc', ...shared ? [shared.write, shared.read] : []], serialization: 'json' });
+  shared?.release();
   let hello, active = false, lost = false, generation = 0, sequence = 0, ending;
   const pending = new Map(), turns = new Set(); let deliveries = new WeakMap(), resolveReady, rejectReady;
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
@@ -277,6 +283,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
   let browserName; // the menu bar's browser line, from the operator-owned config's executable only
   let optOutFailed = false;
+  // The relay's shared host holds this session's consent channel, on fds 4 and 5.
+  const sharedUi = dependencies.sharedUi ?? process.argv.includes('--shared-ui');
   const optedOut = () => { try { return (dependencies.readConfigFile ?? readInstalledConfigFile)()?.enabled === false; } catch { return false; } };
   const admins = new Map(), receipts = new Map();
   // admins: bundle id -> the pending { admin, registry, profile } of that app's resident host.
@@ -364,14 +372,15 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     // The menu bar shows the state, the browser and the payment check beside the person's own controls. Turning turbo off
     // writes the launcher's opt-out and disconnects; only the person's click in sleight's own window sends it.
     const payments = ['always', 'never'].includes(process.env.SLEIGHT_CONFIRM_PAYMENTS) ? process.env.SLEIGHT_CONFIRM_PAYMENTS : 'ask';
-    // The Ghost Hand row shows the user's hand setting (an unsafe file keeps the hand off), and its choice flips it.
+    // The Ghost Hand row shows the user's hand setting (an unsafe file keeps the hand off), and its choice flips it. On the
+    // shared host the hand channel adds its own row, so the status frame has none.
     let hand;
     try { hand = ['off', 'unsafe'].includes((dependencies.readHand ?? readHandConfig)().state) ? 'off' : 'on'; } catch { hand = 'off'; }
-    const handChoice = hand === 'on' ? 'hand-off' : 'hand-on';
-    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments, hand,
+    const handChoices = sharedUi ? [] : [hand === 'on' ? 'hand-off' : 'hand-on'];
+    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments, ...sharedUi ? {} : { hand },
       ...(optOutFailed ? { optOut: 'failed' } : {}), ...(pluginVersion ? { version: pluginVersion } : {}) },
       // Paused has no Pause: turbo resumes when Claude next asks, through the session card.
-      state === 'cleanup-required' ? ['cleanup', handChoice] : state === 'paused' ? ['disconnect', handChoice, 'turbo-off'] : ['pause', 'disconnect', handChoice, 'turbo-off'], async event => {
+      state === 'cleanup-required' ? ['cleanup', ...handChoices] : state === 'paused' ? ['disconnect', ...handChoices, 'turbo-off'] : ['pause', 'disconnect', ...handChoices, 'turbo-off'], async event => {
       if (ui.authenticate(event) !== true) return;
       if (['hand-on', 'hand-off'].includes(event.action)) {
         // A failed write re-presents the row as it was. The relay's hand client sees the file change and hides at once.
@@ -395,7 +404,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     if (built.status !== 'ready') throw Error(built.code);
     const { createSelectedConnection } = await import('./selected-connection.mjs'); startupCurrent();
     selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt }); startupCurrent();
-    ui = (dependencies.createUi ?? host.createNativeUi)(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
+    ui = (dependencies.createUi ?? (sharedUi ? host.createSharedUi : host.createNativeUi))(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
     startupCurrent();
     const browser = selected.selectedBrowser;
     // Which opted-in apps this turn is for: enabled in the operator's opt-in file and approved by the engine this session.

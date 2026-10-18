@@ -6,29 +6,34 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
-import { createHandClient, handWireFrame } from '../plugins/sleight/lib/hand/client.mjs';
+import { createHandClient, handWireFrame, sessionHandClient, shareConsent } from '../plugins/sleight/lib/hand/client.mjs';
 import { handPid, setHandPid } from '../plugins/sleight/lib/hand/pid.mjs';
 import * as host from '../plugins/sleight/lib/direct-browser/host.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const settle = async () => { for (let i = 0; i < 5; i++) await tick(); };
-function fakeChild(pid = 4242) {
-  const child = new EventEmitter(), lines = [];
+// A fake shared host: act and hide frames land in lines, menu frames in menus, and stdout and fds 3 and 4 are streams.
+function fakeChild(pid = 4242, consent = true) {
+  const child = new EventEmitter(), lines = [], menus = [];
   child.pid = pid; child.ended = false;
   child.stdin = Object.assign(new EventEmitter(), {
     writableLength: 0,
-    write(text) { lines.push(...text.trimEnd().split('\n').map(line => JSON.parse(line))); return true; },
+    write(text) { for (const line of text.trimEnd().split('\n').map(line => JSON.parse(line))) (line.hand === 'menu' ? menus : lines).push(line); return true; },
     end() { child.ended = true; },
   });
-  child.lines = lines;
+  child.stdout = new EventEmitter();
+  child.kill = () => { child.killed = true; };
+  child.stdio = [child.stdin, child.stdout, null, ...consent ? [Object.assign(new EventEmitter(), { name: 'consent-in', destroy() { this.destroyed = true; } }),
+    Object.assign(new EventEmitter(), { name: 'consent-out', destroy() { this.destroyed = true; } })] : []];
+  child.lines = lines; child.menus = menus;
   return child;
 }
-function harness({ enabled = true, built = true, capture = 'hidden', result, now } = {}) {
+function harness({ enabled = true, built = true, capture = 'hidden', result, now, setHand, killAfterMs } = {}) {
   const children = [], traces = [], spawns = [];
   let preparing = 0, setting = { enabled, capture };
   const client = createHandClient({
-    setting: () => setting, built: () => built, now, watch: () => undefined,
-    prepare: async () => { preparing++; return result ?? { status: 'ready', spawn: options => { spawns.push(options); const c = fakeChild(4242 + children.length); children.push(c); return c; } }; },
+    setting: () => setting, built: () => built, now, watch: () => undefined, setHand, ...killAfterMs ? { killAfterMs } : {},
+    prepare: async () => { preparing++; return result ?? { status: 'ready', spawn: options => { spawns.push(options); const c = fakeChild(4242 + children.length, options?.consent); children.push(c); return c; } }; },
     trace: (direction, detail) => traces.push([direction, detail]),
   });
   return { client, children, traces, spawns, preparing: () => preparing, set: next => { setting = next; } };
@@ -51,7 +56,7 @@ test('send and hide return at once without a promise, and the host gets exact no
   assert.deepEqual(Object.keys(first), ['hand', 'nonce', 'seq', 'kind', 'pid', 'windowId', 'at', 'path', 'delayMs', 'beats']);
   assert.deepEqual([second.seq, second.kind, second.delayMs, second.beats, second.nonce], [2, 'drag', 470, 2, first.nonce]);
   assert.deepEqual(hide, { hand: 'hide', nonce: first.nonce });
-  assert.deepEqual(h.spawns, [{ capture: 'hidden' }]);
+  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: false }]);
 });
 
 test('the host pid is set while the host runs and cleared when it ends; a dead host only traces and is not respawned', async t => {
@@ -143,31 +148,31 @@ test('close ends the host\'s stdin and the session stops sending', async t => {
   assert.equal(h.children[0].lines.length, 1);
 });
 
-test('settings are read again once a minute: off stops the host, on restarts it, a new capture mode replaces it', async t => {
+test('the host starts with a menu frame, and the minute\'s reread updates it: off hides and keeps the shared host, capture changes in place', async t => {
   t.after(() => setHandPid(0));
   let clock = 0;
   const h = harness({ now: () => clock });
   h.client.send(frame()); await settle();
+  const [first] = h.children[0].menus;
+  assert.deepEqual(Object.keys(first), ['hand', 'nonce', 'enabled', 'capture', 'version']);
+  assert.deepEqual([first.enabled, first.capture, first.nonce], [true, 'hidden', h.children[0].lines[0].nonce]);
+  assert.match(first.version, /^\d{1,3}\.\d{1,3}\.\d{1,3}$/);
   h.set({ enabled: false, capture: 'hidden' });
   clock = 30000; h.client.send(frame()); await settle();
-  assert.equal(h.children[0].ended, false, 'no reread inside the minute');
+  assert.equal(h.children[0].menus.length, 1, 'no reread inside the minute');
   clock = 61000; h.client.send(frame()); await settle();
-  assert.equal(h.children[0].ended, true); assert.equal(h.client.enabled, false);
-  h.children[0].emit('exit', 0, null);
+  assert.deepEqual(h.children[0].lines.at(-1), { hand: 'hide', nonce: first.nonce });
+  assert.equal(h.children[0].menus.at(-1).enabled, false);
+  assert.equal(h.children[0].ended, false, 'turbo may still use the shared host'); assert.equal(h.client.enabled, false);
+  const sent = h.children[0].lines.length;
+  h.client.send(frame()); await settle();
+  assert.equal(h.children[0].lines.length, sent, 'no act frames while the hand is off');
   h.set({ enabled: true, capture: 'visible' });
   clock = 122000; h.client.send(frame()); await settle();
   assert.equal(h.client.enabled, true);
+  assert.deepEqual([h.children[0].menus.at(-1).enabled, h.children[0].menus.at(-1).capture], [true, 'visible']);
   h.client.send(frame()); await settle();
-  assert.equal(h.children.length, 2); assert.deepEqual(h.spawns.at(-1), { capture: 'visible' });
-  assert.equal(handPid(), 4243);
-  h.set({ enabled: true, capture: 'hidden' });
-  clock = 183000; h.client.send(frame()); await settle();
-  assert.equal(h.children[1].ended, true);
-  h.client.send(frame()); await settle();
-  // The replaced host exits after its successor started, and the successor's pid stays.
-  h.children[1].emit('exit', 0, null);
-  assert.equal(h.children.length, 3); assert.deepEqual(h.spawns.at(-1), { capture: 'hidden' }); assert.equal(handPid(), 4244);
-  assert.ok(h.traces.some(([d, detail]) => d === 'hand-restart' && detail.capture === 'hidden'));
+  assert.equal(h.children.length, 1, 'one host for the session'); assert.equal(h.children[0].lines.at(-1).hand, 'act');
 });
 
 test('a change to the settings folder (the menu row or the hand command) hides this session\'s hand at once', async t => {
@@ -181,13 +186,116 @@ test('a change to the settings folder (the menu row or the hand command) hides t
   client.send(frame()); await settle();
   setting = { enabled: false };
   fire('rename', 'hand.json'); await settle();
-  assert.equal(children[0].ended, true, 'no wait for the minute');
+  assert.equal(children[0].lines.at(-1).hand, 'hide', 'no wait for the minute');
+  assert.equal(children[0].menus.at(-1).enabled, false);
   assert.equal(client.enabled, false);
   fire('change', 'turbo.json'); await settle();
   setting = { enabled: true };
   fire('rename', 'hand.json'); await settle();
   assert.equal(client.enabled, true);
   client.close(); assert.equal(closed, 1);
+});
+
+test('the Ghost Hand toggle reaches the relay on the host\'s stdout, nonce-bound, and writes the setting', async t => {
+  t.after(() => setHandPid(0));
+  const writes = [];
+  const h = harness({ setHand: async enabled => { writes.push(enabled); } });
+  h.client.send(frame()); await settle();
+  const { nonce } = h.children[0].menus[0], stdout = h.children[0].stdout;
+  stdout.emit('data', Buffer.from(JSON.stringify({ hand: 'toggle', nonce, enabled: false }) + '\n'));
+  await settle();
+  assert.deepEqual(writes, [false]);
+  // Split across chunks, it still arrives once.
+  const text = JSON.stringify({ hand: 'toggle', nonce, enabled: true }) + '\n';
+  stdout.emit('data', Buffer.from(text.slice(0, 10))); stdout.emit('data', Buffer.from(text.slice(10)));
+  await settle();
+  assert.deepEqual(writes, [false, true]);
+  for (const bad of [{ hand: 'toggle', nonce: 'f'.repeat(64), enabled: false }, { hand: 'toggle', nonce, enabled: 'no' },
+    { hand: 'toggle', nonce, enabled: false, extra: 1 }, { id: 'x', nonce, choice: 'once' }]) {
+    stdout.emit('data', Buffer.from(JSON.stringify(bad) + '\n')); await settle();
+  }
+  stdout.emit('data', Buffer.from('not json\n')); await settle();
+  assert.deepEqual(writes, [false, true], 'only exact toggles with this session\'s nonce count');
+  assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 5);
+});
+
+test('the consent channel opens only when turbo forks: a hand-only host has none, and each fork gets a fresh host that replaces the last', async t => {
+  t.after(() => setHandPid(0));
+  const h = harness();
+  h.client.send(frame()); await settle();
+  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: false }]);
+  assert.equal(h.children[0].stdio[3], undefined, 'a session that never uses turbo holds no consent ends');
+  const pipes = await shareConsent();
+  assert.deepEqual(h.spawns.at(-1), { capture: 'hidden', consent: true });
+  assert.equal(h.children.length, 2, 'one host at a time: the hand-only one is replaced');
+  assert.equal(h.children[0].ended, true); assert.equal(handPid(), 4243);
+  assert.equal(h.children[1].menus[0].nonce, h.children[0].menus[0].nonce, 'the same hand sender');
+  assert.deepEqual([pipes.write.name, pipes.read.name], ['consent-in', 'consent-out']);
+  pipes.release();
+  assert.equal(pipes.write.destroyed && pipes.read.destroyed, true, 'the relay keeps no copy of the consent channel');
+  h.client.send(frame()); await settle();
+  assert.equal(h.children[1].lines.at(-1).hand, 'act', 'the hand carries on in the new host');
+  // A crashed worker's successor reattaches: another fresh host and channel, still one glove.
+  const again = await shareConsent();
+  assert.equal(h.children.length, 3); assert.equal(h.children[1].ended, true); assert.ok(again.write !== pipes.write);
+  again.release();
+  // The replaced hosts with consent attached are left to end with their worker, never killed.
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(h.children[1].killed, undefined);
+});
+
+test('turbo gets a host even with the hand off; a closed client shares nothing', async t => {
+  t.after(() => setHandPid(0));
+  const h = harness({ enabled: false });
+  const pipes = await shareConsent();
+  assert.equal(h.children.length, 1, 'started for turbo'); assert.equal(h.children[0].menus[0].enabled, false);
+  pipes.release();
+  h.client.close();
+  assert.equal(await shareConsent(), undefined, 'a closed client shares nothing');
+});
+
+test('closing the hand client never kills a host turbo still uses', async t => {
+  t.after(() => setHandPid(0));
+  const h = harness({ killAfterMs: 10 });
+  (await shareConsent()).release();
+  h.client.close();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(h.children[0].ended, true, 'the hand channel ends'); assert.equal(h.children[0].killed, undefined, 'the host stays for turbo');
+});
+
+test('the launcher creates the session client before turbo\'s bridge can fork', () => {
+  const launch = readFileSync(new URL('../plugins/sleight/lib/launch.mjs', import.meta.url), 'utf8');
+  const run = launch.slice(launch.indexOf('export async function run('));
+  assert.ok(run.indexOf('sessionHandClient(') > 0 && run.indexOf('sessionHandClient(') < run.indexOf('prepareInstalledStartup('), 'created first');
+  assert.match(run, /process\.once\('exit', \(\) => hand\?\.close\(\)\)/);
+});
+
+test('the session\'s hand client is the integration point: one per process, none with SLEIGHT_HAND=0, and turbo\'s bridge forks onto its host', async t => {
+  t.after(() => setHandPid(0));
+  createHandClient({ setting: () => ({ enabled: false }), watch: () => undefined }).close(); // no earlier test's client stays current
+  assert.equal(sessionHandClient({ env: { SLEIGHT_HAND: '0' } }), undefined);
+  const children = [], options = { setting: () => ({ enabled: true }), built: () => true, watch: () => undefined,
+    prepare: async () => ({ status: 'ready', spawn: spawnOptions => { const c = fakeChild(5000 + children.length, spawnOptions.consent); children.push(c); return c; } }) };
+  const first = sessionHandClient(options);
+  assert.equal(sessionHandClient(options), first, 'the relay and its hooks share one client');
+  const { createV3Bridge, serveV3Worker } = await import('../plugins/sleight/lib/direct-browser/worker.mjs');
+  const child = new EventEmitter(), endpoint = new EventEmitter();
+  child.connected = endpoint.connected = true;
+  child.send = value => { queueMicrotask(() => endpoint.emit('message', structuredClone(value))); };
+  endpoint.send = value => { queueMicrotask(() => child.emit('message', structuredClone(value))); };
+  child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
+  child.unref = () => {};
+  const session = serveV3Worker({ channel: endpoint, browser: 'bfixture', async begin() { return null; } });
+  let fork;
+  const bridge = await createV3Bridge({}, { readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
+    forkWorker(_path, args, forkOptions) { fork = { args, stdio: forkOptions.stdio }; queueMicrotask(() => session.ready()); return child; } });
+  try {
+    assert.deepEqual(fork.args, ['--shared-ui']);
+    assert.equal(fork.stdio[4], children.at(-1).stdio[3]); assert.equal(fork.stdio[5], children.at(-1).stdio[4]);
+    assert.equal(children.at(-1).stdio[3].destroyed, true, 'released after the fork');
+  } finally { await bridge.detach(); first.close(); }
+  assert.notEqual(sessionHandClient(options), first, 'a closed session client is replaced');
+  sessionHandClient(options).close();
 });
 
 test('the tools check asks xcode-select, never xcrun, and needs swiftc and clang under the developer folder', async () => {
@@ -239,13 +347,16 @@ test('prepareHandHost builds through the helper pipeline and its handle starts o
   assert.equal(ready.status, 'ready'); assert.equal(builds, 2);
   assert.deepEqual(Object.keys(ready).sort(), ['spawn', 'status'], 'no receipt leaves the hand handle');
   assert.equal(host.handHostBuilt({ cacheRoot, sourceRoot }), true);
-  for (const capture of [undefined, 'visible']) {
-    const child = ready.spawn(capture ? { capture } : undefined);
+  // A hand-only host has the menu and no consent descriptors; one opened for turbo's fork has fds 3 and 4.
+  for (const [options, args, descriptors] of [[undefined, '--hand --capture=hidden --menu', 3], [{ capture: 'visible' }, '--hand --capture=visible --menu', 3],
+    [{ consent: true }, '--hand --capture=hidden --consent', 5]]) {
+    const child = ready.spawn(options);
+    assert.equal(child.stdio.filter(Boolean).length, descriptors - 1, args);
     child.stdin.end();
     assert.equal(await new Promise(resolve => child.on('exit', resolve)), 0);
     const key = createHash('sha256').update(JSON.stringify({ protocol: 1, arch: process.arch,
       sources: Object.fromEntries(['peer-host.c', 'consent-host.swift'].map(name => [name, createHash('sha256').update('source ' + name).digest('hex')])) })).digest('hex');
-    assert.equal(readFileSync(join(cacheRoot, key, 'consent-host.args'), 'utf8'), '--hand --capture=' + (capture ?? 'hidden'));
+    assert.equal(readFileSync(join(cacheRoot, key, 'consent-host.args'), 'utf8'), args);
   }
   assert.throws(() => ready.spawn({ capture: 'readOnly' }), /HAND_CAPTURE_INVALID/);
   // The cached build is reused without asking for the tools, and a changed source is a different build.

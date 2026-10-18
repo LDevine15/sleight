@@ -32,6 +32,28 @@ test('installed off creates no child and a fork strips loader controls', async (
   try { assert.deepEqual(f.forkOptions.execArgv, []); assert.ok(f.forkOptions.stdio.includes('ipc')); assert.ok(!Object.keys(f.forkOptions.env).some(k => /^(NODE_|DYLD_|LD_)/.test(k))); }
   finally { await f.bridge.detach(); }
 });
+test('with the session\'s shared host, the worker gets its consent channel as fds 4 and 5 and the relay keeps no copy', async () => {
+  const child = new EventEmitter(), endpoint = new EventEmitter(), order = [];
+  child.connected = endpoint.connected = true;
+  child.send = value => { queueMicrotask(() => endpoint.emit('message', structuredClone(value))); };
+  endpoint.send = value => { queueMicrotask(() => child.emit('message', structuredClone(value))); };
+  child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
+  child.unref = () => {};
+  const session = serveV3Worker({ channel: endpoint, browser: 'bfixture', async begin() { return null; } });
+  const write = { name: 'consent-in' }, read = { name: 'consent-out' };
+  let forkArgs, forkOptions;
+  const bridge = await createV3Bridge({}, { readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
+    shareConsent: async () => { order.push('share'); return { write, read, release() { order.push('release'); } }; },
+    forkWorker(_path, args, options) { order.push('fork'); forkArgs = args; forkOptions = options; queueMicrotask(() => session.ready()); return child; } });
+  try {
+    assert.deepEqual(forkArgs, ['--shared-ui']);
+    assert.deepEqual(forkOptions.stdio, ['ignore', 'ignore', 'ignore', 'ipc', write, read]);
+    assert.deepEqual(order, ['share', 'fork', 'release']);
+  } finally { await bridge.detach(); }
+  // Without a shared host the worker opens its own, as before.
+  const own = await fixture();
+  try { assert.deepEqual(own.forkOptions.stdio, ['ignore', 'ignore', 'ignore', 'ipc']); } finally { await own.bridge.detach(); }
+});
 test('a private bound turn supplies authority separately from the model call', async () => {
   const f = await fixture();
   try {

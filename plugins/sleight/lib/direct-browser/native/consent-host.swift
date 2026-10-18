@@ -125,32 +125,130 @@ func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
     }
     return rows
 }
+// The shared host also shows the glove for the ghost hand: while the session's hand is on and sleight acted in the last five
+// minutes. A turn's actions come in bursts with the person reading and typing between them, and five minutes keeps the glove
+// (and its off switch) in the bar through that back-and-forth, then gives the bar back once the session goes quiet.
+let handIdleWindow = 300.0
+func menuVisible(_ status: String?, requests: Int, handEnabled: Bool, sinceAct: Double?) -> Bool {
+    statusVisible(status, requests: requests) || handEnabled && (sinceAct.map { $0 >= 0 && $0 < handIdleWindow } ?? false)
+}
+// Without turbo, the hand's own block: its toggle, Settings & Help and the version.
+func handRows(enabled: Bool, version: String?) -> [StatusRow] {
+    var rows: [StatusRow] = [.toggle("Ghost Hand", choice: "hand-toggle", on: enabled), .separator, .help]
+    if let version = version, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
+        rows += [.separator, .footer("sleight " + version)]
+    }
+    return rows
+}
+// With turbo, the hand channel's toggle joins the turbo menu before Turn Turbo Off, unless a status frame already has one.
+func withHand(_ rows: [StatusRow], enabled: Bool) -> [StatusRow] {
+    guard !rows.contains(where: { if case .toggle = $0 { return true }; return false }),
+        let at = rows.firstIndex(where: { if case .confirm = $0 { return true }; return $0 == .help }) else { return rows }
+    var merged = rows
+    merged.insert(.toggle("Ghost Hand", choice: "hand-toggle", on: enabled), at: at)
+    return merged
+}
 // END STATUS MENU
+
+// BEGIN HOOKUP
+// Fable's menu bar glove (2026-10-18, picked by the owner): an open glove whose wrist breaks into the icon's square dabs, with
+// the pointer at its fingertips. A vector template image, drawn by macOS in the bar's own colour.
+let menuGlyph = ##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 18" width="24" height="18"><g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><line x1="5"  y1="3.5" x2="5"  y2="10"/><line x1="8"  y1="2"   x2="8"  y2="10"/><line x1="11" y1="2.8" x2="11" y2="10"/><line x1="14" y1="4.5" x2="14" y2="10"/><line x1="5.5" y1="12.5" x2="1.8" y2="8.5"/></g><path fill="#000" d="M4 9 H15 V11 L14 13.5 H6 L5 11 Z"/><rect x="6"    y="14.5" width="2"   height="2"   fill="#000"/><rect x="9.5"  y="15"   width="2"   height="2"   fill="#000"/><rect x="13"   y="14.5" width="2"   height="2"   fill="#000"/><rect x="2.5"  y="16"   width="2"   height="2"   fill="#000"/><path fill="#000" d="M16.5 1 L16.5 9.75 L18.6 7.86 L20.4 11.22 L21.68 10.59 L19.95 7.44 L22.94 7.44 Z"/></svg>"##
+// Turbo's connect hookup (LAWS): when turbo connects, the glove's four dabs rise into the wrist one after another, 150 ms apart,
+// fading in on an ease-out the way the ghost hand's dabs trail it, and settle on the glyph. 10 frames 80 ms apart (0.8 s), on
+// the menu bar button only: no window, no focus.
+let hookupFrameCount = 10, hookupInterval = 0.08
+func hookupConnects(from previous: String?, to status: String) -> Bool {
+    status == "connected" && previous != "connected" && previous != "connected-idle"
+}
+func hookupFrame(_ glyph: String, _ index: Int) -> String {
+    let t = Double(index + 1) / Double(hookupFrameCount)
+    guard t < 1, let dabs = try? NSRegularExpression(pattern: #"<rect x="([\d.]+)"\s+y="([\d.]+)"[^>]*/>"#) else { return glyph }
+    var frame = "", last = glyph.startIndex, dab = 0
+    for match in dabs.matches(in: glyph, range: NSRange(glyph.startIndex..., in: glyph)) {
+        guard let whole = Range(match.range, in: glyph), let xs = Range(match.range(at: 1), in: glyph), let ys = Range(match.range(at: 2), in: glyph),
+            let x = Double(glyph[xs]), let y = Double(glyph[ys]) else { continue }
+        let progress = min(1, max(0, (t - 0.15 * Double(dab)) / 0.4)), eased = 1 - pow(1 - progress, 3)
+        frame += String(glyph[last..<whole.lowerBound]) + "<rect x=\"\(x)\" y=\"\(y + 4 * (1 - eased))\" width=\"2\" height=\"2\" fill=\"#000\" fill-opacity=\"\(eased)\"/>"
+        last = whole.upperBound; dab += 1
+    }
+    return frame + String(glyph[last...])
+}
+// END HOOKUP
+
+// BEGIN MODAL GUARD
+// The card on screen, if any. When its sender's channel ends the card is aborted, so no button stays up that answers nothing.
+final class ModalGuard {
+    private var abort: (() -> Void)?
+    var active: Bool { abort != nil }
+    func run<T>(abort: @escaping () -> Void, _ body: () -> T) -> T {
+        self.abort = abort
+        defer { self.abort = nil }
+        return body()
+    }
+    func close() { let abort = self.abort; self.abort = nil; abort?() }
+}
+// END MODAL GUARD
+
+// One nonce per channel in the shared host: the hand's sender and turbo's worker each bind their own, and neither binds the other's.
+final class NonceBook {
+    let lock = NSLock()
+    var bound: [String: String] = [:]
+    func admit(_ channel: String, _ nonce: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if let mine = bound[channel] { return mine == nonce }
+        if bound.values.contains(nonce) { return false }
+        bound[channel] = nonce
+        return true
+    }
+    func nonce(_ channel: String) -> String? { lock.lock(); defer { lock.unlock() }; return bound[channel] }
+}
+let nonceBook = NonceBook()
+// The person's click on the Ghost Hand row, the hand channel's only output, on the shared host's stdout. No hand frame is ever
+// answered; the relay writes hand.json from this.
+func writeHandToggle(_ enabled: Bool) {
+    guard let nonce = nonceBook.nonce("hand"),
+        let bytes = try? JSONSerialization.data(withJSONObject: ["hand": "toggle", "nonce": nonce, "enabled": enabled], options: [.sortedKeys]) else { return }
+    FileHandle.standardOutput.write(bytes + Data([10]))
+}
+func glyphImage(_ svg: String) -> NSImage? {
+    guard let data = svg.data(using: .utf8), let image = NSImage(data: data) else { return nil }
+    image.size = NSSize(width: 24, height: 18)
+    image.isTemplate = true
+    return image
+}
 
 final class ConsentHost: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var pending: [String: [String: Any]] = [:]
     var nonce: String?
     let outputLock = NSLock()
+    // The consent channel: stdin and stdout, or fds 3 and 4 in the shared host, where its end leaves the hand running. The
+    // hand-only host (--menu) has none. The shared host ends when both its channels have.
+    var input: FileHandle? = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
+    var consentOpen = true, handOpen = true
+    let modal = ModalGuard()
+    // The hand channel's state in the shared host: its setting, the version for its block, and when sleight last acted.
+    var hand: (enabled: Bool, version: String)?
+    var lastAct: Date?
+    var visibility: DispatchWorkItem?
+    var hookupTimer: Timer?
 
     var status: String?
-    // Fable's menu bar glove (2026-10-18, picked by the owner): an open glove whose wrist breaks into the icon's square dabs,
-    // with the pointer at its fingertips. A vector template image, drawn by macOS in the bar's own colour.
-    static let glyph = ##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 18" width="24" height="18"><g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><line x1="5"  y1="3.5" x2="5"  y2="10"/><line x1="8"  y1="2"   x2="8"  y2="10"/><line x1="11" y1="2.8" x2="11" y2="10"/><line x1="14" y1="4.5" x2="14" y2="10"/><line x1="5.5" y1="12.5" x2="1.8" y2="8.5"/></g><path fill="#000" d="M4 9 H15 V11 L14 13.5 H6 L5 11 Z"/><rect x="6"    y="14.5" width="2"   height="2"   fill="#000"/><rect x="9.5"  y="15"   width="2"   height="2"   fill="#000"/><rect x="13"   y="14.5" width="2"   height="2"   fill="#000"/><rect x="2.5"  y="16"   width="2"   height="2"   fill="#000"/><path fill="#000" d="M16.5 1 L16.5 9.75 L18.6 7.86 L20.4 11.22 L21.68 10.59 L19.95 7.44 L22.94 7.44 Z"/></svg>"##
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let data = ConsentHost.glyph.data(using: .utf8), let image = NSImage(data: data) {
-            image.size = NSSize(width: 24, height: 18)
-            image.isTemplate = true
-            item.button?.image = image
-        } else { item.button?.title = "sleight" }
+        if let image = glyphImage(menuGlyph) { item.button?.image = image } else { item.button?.title = "sleight" }
         item.isVisible = false
         item.menu = NSMenu()
+        guard let input = input else { consentOpen = false; return }
         DispatchQueue.global().async { [weak self] in
             var buffer = Data()
             while let self = self {
-                let chunk = FileHandle.standardInput.availableData
-                if chunk.isEmpty { DispatchQueue.main.async { NSApp.terminate(nil) }; return }
+                let chunk = input.availableData
+                if chunk.isEmpty {
+                    DispatchQueue.main.async { if self.shared { self.channelClosed() } else { NSApp.terminate(nil) } }
+                    return
+                }
                 buffer.append(chunk)
                 if buffer.count > 131072 { exit(65) }
                 while let end = buffer.firstIndex(of: 10) {
@@ -166,7 +264,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     func receive(_ frame: [String: Any]) {
         guard let id = frame["id"] as? String, !id.isEmpty,
             let incoming = frame["nonce"] as? String, incoming.count == 64,
-            nonce == nil || nonce == incoming,
+            nonceBook.admit("consent", incoming),
             let choices = frame["choices"] as? [String], !choices.isEmpty,
             let deadline = frame["deadline"] as? Double,
             deadline > Date().timeIntervalSince1970 * 1000,
@@ -177,7 +275,9 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         if let status = data["status"] as? String {
             // Status is broker-owned; page observations belong only in the sheet.
             guard statusRows(data, choices) != nil else { exit(65) }
+            let previous = self.status
             self.status = status
+            if hookupConnects(from: previous, to: status) { DispatchQueue.main.async { if self.item.isVisible { self.hookup() } } }
             item.button?.toolTip = "sleight turbo: " + (stateWords[status] ?? status)
             item.button?.appearsDisabled = status == "paused"
             for old in Array(pending.keys) where old != id && (pending[old]?["data"] as? [String: Any])?["status"] != nil {
@@ -193,38 +293,79 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         }
         rebuildMenu()
     }
+    func add(_ rows: [StatusRow], to menu: NSMenu, id: String) {
+        for row in rows {
+            switch row {
+            case let .status(title, dot, details):
+                let entry = NSMenuItem(); entry.view = statusView(title, dot: dot, details: details); menu.addItem(entry)
+            case let .action(title, choice), let .confirm(title, choice):
+                let entry = NSMenuItem(title: title, action: row == .confirm(title, choice: choice) ? #selector(confirmOff(_:)) : #selector(control(_:)), keyEquivalent: "")
+                entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
+            case let .toggle(title, choice, on):
+                // The hand channel's toggle answers on the hand channel; a status frame's own answers that frame.
+                let entry = NSMenuItem(title: title, action: choice == "hand-toggle" ? #selector(handToggle(_:)) : #selector(control(_:)), keyEquivalent: "")
+                entry.state = on ? .on : .off
+                entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
+            case .help:
+                let entry = NSMenuItem(title: "Settings & Help…", action: #selector(help(_:)), keyEquivalent: "")
+                entry.target = self; menu.addItem(entry)
+            case .separator: menu.addItem(NSMenuItem.separator())
+            case let .footer(text): menu.addItem(NSMenuItem(title: text, action: nil, keyEquivalent: ""))
+            }
+        }
+    }
     func rebuildMenu() {
         let menu = NSMenu()
+        var statusShown = false
         for id in pending.keys.sorted() {
             guard let frame = pending[id], let choices = frame["choices"] as? [String],
                 let data = frame["data"] as? [String: Any] else { continue }
             if data["status"] != nil {
-                for row in statusRows(data, choices) ?? [] {
-                    switch row {
-                    case let .status(title, dot, details):
-                        let entry = NSMenuItem(); entry.view = statusView(title, dot: dot, details: details); menu.addItem(entry)
-                    case let .action(title, choice), let .confirm(title, choice):
-                        let entry = NSMenuItem(title: title, action: row == .confirm(title, choice: choice) ? #selector(confirmOff(_:)) : #selector(control(_:)), keyEquivalent: "")
-                        entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
-                    case let .toggle(title, choice, on):
-                        let entry = NSMenuItem(title: title, action: #selector(control(_:)), keyEquivalent: "")
-                        entry.state = on ? .on : .off
-                        entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
-                    case .help:
-                        let entry = NSMenuItem(title: "Settings & Help…", action: #selector(help(_:)), keyEquivalent: "")
-                        entry.target = self; menu.addItem(entry)
-                    case .separator: menu.addItem(NSMenuItem.separator())
-                    case let .footer(text): menu.addItem(NSMenuItem(title: text, action: nil, keyEquivalent: ""))
-                    }
-                }
+                let rows = statusRows(data, choices) ?? []
+                add(hand.map { withHand(rows, enabled: $0.enabled) } ?? rows, to: menu, id: id)
+                statusShown = true
             } else {
                 let row = NSMenuItem(title: "Review sleight request", action: #selector(review(_:)), keyEquivalent: "")
                 row.target = self; row.representedObject = id; menu.addItem(row)
             }
         }
+        if !statusShown, let hand = hand {
+            if !menu.items.isEmpty { menu.addItem(NSMenuItem.separator()) }
+            add(handRows(enabled: hand.enabled, version: hand.version), to: menu, id: "")
+        }
         item.menu = menu
         let requests = pending.values.filter { ($0["data"] as? [String: Any])?["status"] == nil }.count
-        item.isVisible = statusVisible(status, requests: requests)
+        let since = lastAct.map { Date().timeIntervalSince($0) }
+        item.isVisible = menuVisible(status, requests: requests, handEnabled: hand?.enabled ?? false, sinceAct: since)
+        // One work item hides the glove when the hand's window ends; none is left once it has.
+        visibility?.cancel(); visibility = nil
+        if let since = since, hand?.enabled == true, since < handIdleWindow {
+            let check = DispatchWorkItem { [weak self] in self?.visibility = nil; self?.rebuildMenu() }
+            visibility = check
+            DispatchQueue.main.asyncAfter(deadline: .now() + handIdleWindow - since, execute: check)
+        }
+    }
+    // The shared host's consent channel ended (its worker exited): an open card is aborted, its requests and status go, and the
+    // hand stays.
+    func channelClosed() { modal.close(); pending.removeAll(); status = nil; consentOpen = false; rebuildMenu(); if !handOpen { NSApp.terminate(nil) } }
+    // The hand channel ended or faulted: its state goes, and turbo's channel, if open, keeps the host.
+    func handGone() { handOpen = false; hand = nil; lastAct = nil; rebuildMenu(); if !consentOpen { NSApp.terminate(nil) } }
+    func noteAct() { lastAct = Date(); rebuildMenu() }
+    func handState(enabled: Bool, version: String) { hand = (enabled, version); rebuildMenu() }
+    @objc func handToggle(_ sender: NSMenuItem) {
+        guard let hand = hand else { return }
+        writeHandToggle(!hand.enabled)
+    }
+    // Turbo's connect hookup on the menu bar button: a template image per frame, then the glyph, and the timer is gone.
+    func hookup() {
+        hookupTimer?.invalidate()
+        var index = 0
+        hookupTimer = Timer.scheduledTimer(withTimeInterval: hookupInterval, repeats: true) { [weak self] timer in
+            guard let self = self, index < hookupFrameCount else { timer.invalidate(); return }
+            if let image = glyphImage(hookupFrame(menuGlyph, index)) { self.item.button?.image = image }
+            index += 1
+            if index == hookupFrameCount { timer.invalidate(); self.hookupTimer = nil }
+        }
     }
     @objc func control(_ sender: NSMenuItem) {
         guard let event = sender.representedObject as? [String: String], let id = event["id"], let choice = event["choice"] else { return }
@@ -238,10 +379,11 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         alert.informativeText = "Turbo stops in every Claude Code session within a minute, and browsers go back to the engine's slower path. Run sleight-mcp turbo on to turn it back on."
         alert.addButton(withTitle: "Turn Off")
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn { respond(id, choice) }
+        let answer = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }
+        if answer == .alertFirstButtonReturn { respond(id, choice) }
     }
     @objc func help(_ sender: NSMenuItem) {
-        if let url = URL(string: "https://github.com/Land-o-Clusters/sleight/blob/main/docs/settings.md#turbo") { NSWorkspace.shared.open(url) }
+        if let url = URL(string: "https://github.com/Land-o-Clusters/sleight/blob/main/docs/settings.md#" + (status == nil ? "ghost-hand" : "turbo")) { NSWorkspace.shared.open(url) }
     }
     // The status block: a coloured dot and the state in bold, then quiet detail lines under it. A view, so it never highlights.
     func statusView(_ title: String, dot: String, details: [String]) -> NSView {
@@ -274,7 +416,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             alert.messageText = session.kind == "opt-in" ? "Enable sleight turbo for " + session.session : "Resume sleight turbo for " + session.session
             alert.informativeText = "This choice applies only to this session. Site permissions and action confirmations still apply."
             for choice in choices { alert.addButton(withTitle: choice.capitalized) }
-            let result = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }
@@ -285,7 +427,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             alert.informativeText = words.body
             let labels = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": "Cancel"]
             for choice in choices { alert.addButton(withTitle: labels[choice] ?? "Cancel") }
-            let result = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }
@@ -304,7 +446,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         // payment terms are visible to the person, and never emitted on stdout.
         alert.informativeText = "Page labels are observations. Review this exact operation:\n" + text
         for choice in choices { alert.addButton(withTitle: choice.capitalized) }
-        let result = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if result >= 0 && result < choices.count { respond(id, choices[result]) }
         else { respond(id, "cancel") }
     }
@@ -314,7 +456,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             deadline > Date().timeIntervalSince1970 * 1000, let nonce = nonce,
             let bytes = try? JSONSerialization.data(withJSONObject: ["id": id, "choice": choice, "nonce": nonce]) else { rebuildMenu(); return }
         outputLock.lock(); defer { outputLock.unlock() }
-        FileHandle.standardOutput.write(bytes + Data([10]))
+        output.write(bytes + Data([10]))
         rebuildMenu()
     }
 }
@@ -324,7 +466,8 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
 struct HandAct {
     let seq: Int, kind: String, pid: Int32, windowId: UInt32, at: CGPoint, path: [CGPoint], delay: Double, beats: Int
 }
-enum HandFrame { case act(String, HandAct), hide(String) }
+// menu: the hand's setting, capture mode and the plugin version, for the shared host's Ghost Hand row.
+enum HandFrame { case act(String, HandAct), hide(String), menu(String, enabled: Bool, capture: String, version: String) }
 let handKinds: Set<String> = ["click", "double", "right", "key", "type", "drag", "scroll"]
 func handFrame(_ data: [String: Any]) -> HandFrame? {
     func number(_ value: Any?) -> Double? {
@@ -342,6 +485,14 @@ func handFrame(_ data: [String: Any]) -> HandFrame? {
     }
     guard let nonce = data["nonce"] as? String, nonce.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
     if data["hand"] as? String == "hide" { return Set(data.keys) == ["hand", "nonce"] ? .hide(nonce) : nil }
+    if data["hand"] as? String == "menu" {
+        guard Set(data.keys) == ["hand", "nonce", "enabled", "capture", "version"],
+            let enabled = data["enabled"] as? NSNumber, CFGetTypeID(enabled) == CFBooleanGetTypeID(),
+            let capture = data["capture"] as? String, ["hidden", "visible"].contains(capture),
+            let version = data["version"] as? String, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil
+            else { return nil }
+        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version)
+    }
     guard data["hand"] as? String == "act",
         Set(data.keys) == ["hand", "nonce", "seq", "kind", "pid", "windowId", "at", "path", "delayMs", "beats"],
         let seq = integer(data["seq"], 0...9007199254740991), let kind = data["kind"] as? String, handKinds.contains(kind),
@@ -706,6 +857,7 @@ final class HandHost: NSObject, NSApplicationDelegate {
     var next = 0
     var demo: CGRect?
     var capture = "hidden"
+    var consent: ConsentHost?    // the shared host's consent channel and menu, with --consent
     var images: [String: CGImage] = [:]
     var idle: Bool { panel == nil && hand == nil && glove == nil && dabs == nil && pending.isEmpty && fading == nil }
 
@@ -717,30 +869,48 @@ final class HandHost: NSObject, NSApplicationDelegate {
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let demo = demo { play(demo); return }
+        consent?.applicationDidFinishLaunching(notification)
         DispatchQueue.global().async { self.read() }
     }
     // Validation, the nonce binding and the seq order run on this reader thread in frame order. Any bad frame ends the host.
     func read() {
-        var buffer = Data(), bound: String?, last = -1
+        // A bad hand frame ends the host, except while turbo's consent channel is attached: then only the hand's state goes, the
+        // rest of the hand's input is read and dropped, and turbo carries on.
+        var buffer = Data(), last = -1, faulted = false
+        func fault() {
+            faulted = true; buffer.removeAll()
+            DispatchQueue.main.async { if self.consent?.consentOpen == true { self.hide(); self.consent?.handGone() } else { exit(65) } }
+        }
         while true {
             let chunk = FileHandle.standardInput.availableData
-            if chunk.isEmpty { DispatchQueue.main.async { NSApp.terminate(nil) }; return }
+            if chunk.isEmpty {
+                DispatchQueue.main.async { if self.consent?.consentOpen == true { self.hide(); self.consent?.handGone() } else { NSApp.terminate(nil) } }
+                return
+            }
+            if faulted { continue }
             buffer.append(chunk)
-            if buffer.count > 131072 { exit(65) }
-            while let end = buffer.firstIndex(of: 10) {
+            if buffer.count > 131072 { fault(); continue }
+            lines: while !faulted, let end = buffer.firstIndex(of: 10) {
                 let line = buffer.prefix(upTo: end)
                 buffer.removeSubrange(...end)
                 guard line.count <= 8192, let data = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                    let frame = handFrame(data) else { exit(65) }
+                    let frame = handFrame(data) else { fault(); continue lines }
                 switch frame {
                 case let .hide(nonce):
-                    guard bound == nil || bound == nonce else { exit(65) }
-                    bound = nonce
+                    guard nonceBook.admit("hand", nonce) else { fault(); continue lines }
                     DispatchQueue.main.async { self.hide() }
                 case let .act(nonce, act):
-                    guard bound == nil || bound == nonce, act.seq > last else { exit(65) }
-                    bound = nonce; last = act.seq
-                    DispatchQueue.main.async { self.schedule(act) }
+                    guard nonceBook.admit("hand", nonce), act.seq > last else { fault(); continue lines }
+                    last = act.seq
+                    DispatchQueue.main.async { self.consent?.noteAct(); self.schedule(act) }
+                case let .menu(nonce, enabled, capture, version):
+                    guard nonceBook.admit("hand", nonce) else { fault(); continue lines }
+                    DispatchQueue.main.async {
+                        self.capture = capture
+                        if let panel = self.panel { panel.sharingType = handCaptureModes[capture] ?? NSWindow.SharingType.none }
+                        if !enabled { self.hide() }
+                        self.consent?.handState(enabled: enabled, version: version)
+                    }
                 }
             }
         }
@@ -941,13 +1111,19 @@ func handDump(capture: String) -> [String: Any] {
         "plans": plans, "continuing": ["total": continuing.total],
         "box": ["unclipped": rect(unclipped), "clipped": rect(clipped)],
         "capture": host.capture,
+        "hookup": ["frames": hookupFrameCount, "rendered": (0..<hookupFrameCount).compactMap { glyphImage(hookupFrame(menuGlyph, $0)) }.count,
+            "template": (0..<hookupFrameCount).allSatisfy { glyphImage(hookupFrame(menuGlyph, $0))?.isTemplate == true },
+            "seconds": (Double(hookupFrameCount) * hookupInterval * 1000).rounded() / 1000],
     ]
     host.release()
     return dump.merging(["idle": host.idle]) { $1 }
 }
 // END HAND DUMP
 
-// No arguments: the consent host. --hand [--capture=…], --hand-demo X,Y,W,H [--capture=…] and --hand-dump [--capture=…]: the hand.
+// No arguments: the consent host. --hand [--capture=…] [--menu|--consent], --hand-demo X,Y,W,H [--capture=…] and
+// --hand-dump [--capture=…]: the hand. With --consent the hand host is the session's shared host: turbo's consent channel
+// runs on fds 3 (in) and 4 (out) beside the hand's stdin, and the menu bar glove serves both. --menu is the hand-only host: the glove and its
+// hand-only menu, with no consent channel.
 let arguments = Array(CommandLine.arguments.dropFirst())
 let app = NSApplication.shared
 if arguments.isEmpty {
@@ -959,6 +1135,9 @@ if arguments.isEmpty {
     let mode = arguments[0]
     var rest = Array(arguments.dropFirst()), demo: CGRect?
     if mode == "--hand-demo" { guard let first = rest.first, let rect = handDemoRect(first) else { exit(64) }; demo = rect; rest.removeFirst() }
+    let consent = mode == "--hand" && rest.last == "--consent", menuOnly = mode == "--hand" && rest.last == "--menu"
+    if consent { rest.removeLast(); guard fcntl(3, F_GETFD) != -1, fcntl(4, F_GETFD) != -1 else { exit(64) } }
+    if menuOnly { rest.removeLast() }
     guard ["--hand", "--hand-demo", "--hand-dump"].contains(mode), let capture = handCapture(rest) else { exit(64) }
     if mode == "--hand-dump" {
         guard let bytes = try? JSONSerialization.data(withJSONObject: handDump(capture: capture), options: [.sortedKeys]) else { exit(70) }
@@ -967,6 +1146,13 @@ if arguments.isEmpty {
     }
     let hand = HandHost()
     hand.demo = demo; hand.capture = capture
+    if consent || menuOnly {
+        let host = ConsentHost()
+        host.input = consent ? FileHandle(fileDescriptor: 3, closeOnDealloc: true) : nil
+        if consent { host.output = FileHandle(fileDescriptor: 4, closeOnDealloc: true) }
+        host.shared = true
+        hand.consent = host
+    }
     app.setActivationPolicy(.accessory)
     app.delegate = hand
     app.run()

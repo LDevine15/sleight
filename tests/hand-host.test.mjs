@@ -75,8 +75,9 @@ test('hand mode: what the client writes is what the host accepts, for every kind
   const { createHandClient } = await import('../plugins/sleight/lib/hand/client.mjs');
   const { setHandPid } = await import('../plugins/sleight/lib/hand/pid.mjs');
   let text = '';
-  const child = Object.assign(new (await import('node:events')).EventEmitter(), { pid: 1,
-    stdin: Object.assign(new (await import('node:events')).EventEmitter(), { writableLength: 0, write: chunk => { text += chunk; }, end() {} }) });
+  const { EventEmitter } = await import('node:events');
+  const child = Object.assign(new EventEmitter(), { pid: 1, stdout: new EventEmitter(),
+    stdin: Object.assign(new EventEmitter(), { writableLength: 0, write: chunk => { text += chunk; }, end() {} }) });
   const client = createHandClient({ setting: () => ({ enabled: true }), built: () => true,
     prepare: async () => ({ status: 'ready', spawn: () => child }) });
   const kinds = ['click', 'double', 'right', 'key', 'type', 'drag', 'scroll'];
@@ -87,7 +88,7 @@ test('hand mode: what the client writes is what the host accepts, for every kind
     await new Promise(resolve => setImmediate(resolve));
   }
   setHandPid(0);
-  assert.equal(text.split('\n').length - 1, 303);
+  assert.equal(text.split('\n').length - 1, 304, 'a menu frame, 300 acts and 3 hides');
   const result = run(binary, ['--hand'], text);
   assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, '');
 });

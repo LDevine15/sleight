@@ -1,4 +1,6 @@
-// The relay's side of the ghost hand: one host per session, spawned on first use through host.mjs's build pipeline. send and hide
+// The relay's side of the ghost hand, and the owner of the session's host: one consent-host process at a time that draws the
+// hand and, from turbo's fork on, serves turbo's consent channel (fds 3 and 4 of a host opened for that fork, handed to the
+// worker by shareConsent, and closed in the relay right after). send and hide
 // are fire-and-forget pipe writes that never throw or wait. A dead host or a failed spawn only traces, and the session goes on
 // without a hand. When the host isn't compiled yet, first use starts the build in the background and that session has no hand.
 //
@@ -6,7 +8,7 @@
 // (kCGWindowBounds and AX frames). kind is click, double, right, key, type, drag or scroll. The hand glides along path into at
 // and flourishes there beats times; a drag grabs at at and carries along path. path defaults to [at], delayMs to 0 and beats to 1.
 import { randomBytes } from 'node:crypto';
-import { watch as fsWatch } from 'node:fs';
+import { readFileSync, watch as fsWatch } from 'node:fs';
 import { dirname } from 'node:path';
 import { handHostBuilt, prepareHandHost } from '../direct-browser/host.mjs';
 import { handConfigPath, handSetting } from './settings.mjs';
@@ -19,6 +21,13 @@ const point = value => Array.isArray(value) && value.length === 2 && value.every
 const id = (value, max) => Number.isSafeInteger(value) && value >= 1 && value <= max ? value : undefined;
 // A longer path keeps its ends and 62 evenly spaced points between them.
 const thin = path => path.length <= 64 ? path : Array.from({ length: 64 }, (_, i) => path[Math.round(i * (path.length - 1) / 63)]);
+// The version the hand's menu block shows.
+const version = (() => {
+  try {
+    const { version } = JSON.parse(readFileSync(new URL('../../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+    return /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(version) ? version : '0.0.0';
+  } catch { return '0.0.0'; }
+})();
 
 /** The host's frame for a caller frame, without nonce or seq, or a reason string when it can't be drawn. */
 export function handWireFrame(frame) {
@@ -34,21 +43,42 @@ export function handWireFrame(frame) {
   return { kind: frame.kind, pid, windowId, at, path, delayMs, beats };
 }
 
+// The process's latest open client: turbo's bridge shares its host.
+let current;
+const sharing = new WeakMap();
+/** Turbo's bridge, right before it forks its worker: a consent channel to the session's host as { write, read, release }. It
+ *  starts the host even with the hand off. undefined when there is no open client or no host. */
+export async function shareConsent() {
+  const share = current && sharing.get(current);
+  return share ? share() : undefined;
+}
+/** The ghost hand's integration point: the session's one client for the relay and its hooks, created on the first call and
+ *  the same one after (while open), and none with SLEIGHT_HAND=0. The launcher creates it at startup, so turbo's first fork
+ *  can share its host. */
+export function sessionHandClient(options = {}) {
+  if ((options.env ?? process.env).SLEIGHT_HAND === '0') return undefined;
+  return current ?? createHandClient(options);
+}
+
 /** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed. */
 export function createHandClient({ env = process.env, setting = () => handSetting({ env }), built = handHostBuilt, prepare = prepareHandHost,
   trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000,
+  setHand = async enabled => (await import('./command.mjs')).writeHandSetting({ enabled }),
   watch = (folder, listener) => process.platform === 'darwin' ? fsWatch(folder, { persistent: false }, listener) : undefined } = {}) {
   const nonce = randomBytes(32).toString('hex'), queue = [];
-  let seq = 0, child, state, checked = now(), checking = false, capture = 'hidden', running;
-  // idle (not started), starting, running, disabled (settings say off; rechecked) or dead (failed this session; final)
-  const allowed = () => {
+  // host: none, starting, running or dead (failed or closed this session; final). hand: the settings allow the hand.
+  let seq = 0, child, host = 'none', starting, hand = false, capture = 'hidden', checked = now(), checking = false, events = '';
+  // Hosts opened for turbo's fork, which serve its consent channel: never killed, they end with their worker.
+  const attached = new WeakSet();
+  let chain = Promise.resolve();
+  const read = () => {
     try {
-      const current = setting();
-      capture = current?.capture === 'visible' ? 'visible' : 'hidden';
-      return current?.enabled === true;
+      const value = setting();
+      capture = value?.capture === 'visible' ? 'visible' : 'hidden';
+      return value?.enabled === true;
     } catch { return false; }
   };
-  state = allowed() ? 'idle' : 'disabled';
+  hand = read();
   const note = (direction, detail) => { try { trace(direction, detail); } catch {} };
   const write = line => {
     try {
@@ -58,83 +88,145 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   };
   const act = (wire, delayMs = wire.delayMs) => JSON.stringify({ hand: 'act', nonce, seq: ++seq, kind: wire.kind, pid: wire.pid,
     windowId: wire.windowId, at: wire.at, path: wire.path, delayMs, beats: wire.beats }) + '\n';
+  const menu = () => JSON.stringify({ hand: 'menu', nonce, enabled: hand, capture, version }) + '\n';
+  // A host exits at the end of its hand input. A hand-only one that hasn't after killAfterMs is killed; one serving turbo's
+  // consent channel stays until that channel ends, so neither the hand's faults nor its close take turbo down.
+  const stopChild = ending => {
+    if (!attached.has(ending)) {
+      const timer = setTimeout(() => { if (ending.exitCode == null && ending.signalCode == null) try { ending.kill(); } catch {} }, killAfterMs);
+      timer.unref?.();
+      ending.once('exit', () => clearTimeout(timer));
+    }
+    try { ending.stdin.end(); } catch {}
+  };
   const stop = () => {
     queue.length = 0;
     if (!child) return;
     const ending = child; child = undefined;
-    // The host exits at the end of its input. One that hasn't after killAfterMs is killed.
-    const timer = setTimeout(() => { if (ending.exitCode == null && ending.signalCode == null) try { ending.kill(); } catch {} }, killAfterMs);
-    timer.unref?.();
-    ending.once('exit', () => clearTimeout(timer));
-    try { ending.stdin.end(); } catch {}
+    stopChild(ending);
   };
-  const die = (reason, detail) => { if (state === 'dead') return; state = 'dead'; stop(); note('hand-off', { reason, ...detail }); };
-
-  function start() {
-    if (state !== 'starting') return;
-    if (!allowed()) { state = 'disabled'; queue.length = 0; return; }
+  const die = (reason, detail) => { if (host === 'dead') return; host = 'dead'; stop(); note('hand-off', { reason, ...detail }); };
+  // The Ghost Hand row's clicks: exact { hand: 'toggle', nonce, enabled } lines with this session's nonce, on the host's stdout.
+  function onEvents(chunk) {
+    events += chunk;
+    if (events.length > 65536) { events = ''; note('hand-toggle-refused', { reason: 'size' }); return; }
+    let end;
+    while ((end = events.indexOf('\n')) >= 0) {
+      const text = events.slice(0, end); events = events.slice(end + 1);
+      let event;
+      try { event = JSON.parse(text); } catch {}
+      if (!event || typeof event !== 'object' || Object.keys(event).sort().join() !== 'enabled,hand,nonce' || event.hand !== 'toggle' ||
+          event.nonce !== nonce || typeof event.enabled !== 'boolean') { note('hand-toggle-refused', {}); continue; }
+      Promise.resolve().then(() => setHand(event.enabled)).then(() => recheck(true),
+        error => note('hand-toggle-failed', { code: /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'HAND_SETUP_FAILED' }));
+    }
+  }
+  // Spawns a host, hand-only or with turbo's consent channel, and makes it the session's: the hand's menu frame and queued
+  // frames go to it, and the host it replaces is stopped. Resolves the new host, or undefined when there is none.
+  async function launch(consent) {
     let ready;
     try { ready = built(); } catch { ready = false; }
     if (!ready) {
       die('building');
       Promise.resolve().then(prepare).then(result => note('hand-built', { status: result?.status, code: result?.code }),
         () => note('hand-built', { status: 'unavailable' }));
-      return;
+      return undefined;
     }
-    Promise.resolve().then(prepare).then(result => {
-      if (state !== 'starting') return;
-      if (result?.status !== 'ready') return die('unavailable', { code: result?.code });
-      const started = result.spawn({ capture });
-      running = capture;
-      started.on('error', error => die('spawn', { code: error?.code }));
+    try {
+      const result = await prepare();
+      if (host === 'dead') return undefined;
+      if (result?.status !== 'ready') { die('unavailable', { code: result?.code }); return undefined; }
+      const started = result.spawn({ capture, consent });
+      if (consent) attached.add(started);
+      started.on('error', error => { if (child === started) die('spawn', { code: error?.code }); });
       started.stdin.on('error', error => note('hand-dropped', { reason: error?.code ?? 'pipe' }));
-      // A host replaced for a new capture mode exits after its successor may have started, and must not clear its pid.
-      started.on('exit', (code, signal) => {
-        if (child === started) { setHandPid(0); die('exit', { code, signal }); } else if (!child) setHandPid(0);
-      });
-      child = started; state = 'running';
+      started.stdout?.on('data', onEvents);
+      started.on('exit', (code, signal) => { if (child === started) { setHandPid(0); die('exit', { code, signal }); } else if (!child) setHandPid(0); });
+      const previous = child;
+      child = started; host = 'running';
       setHandPid(started.pid);
-      note('hand-started', { pid: started.pid });
+      note('hand-started', { pid: started.pid, consent });
+      write(menu());
       for (const { wire, at } of queue.splice(0)) write(act(wire, Math.max(0, wire.delayMs - (now() - at))));
-    }).catch(error => die('spawn', { code: error?.code ?? error?.message }));
+      if (previous) stopChild(previous);
+      return started;
+    } catch (error) { die('spawn', { code: error?.code ?? error?.message }); return undefined; }
   }
-  // The settings are read again when sleight's settings folder changes (the menu's Ghost Hand row or the hand command), and at
-  // most once a minute otherwise, off the caller's path: hand off stops this session's host at once, hand on lets a disabled
-  // session start one, and a new capture mode replaces the running host at the next frame.
+  // Launches run one at a time, off the caller's path.
+  const serial = consent => {
+    const next = chain.then(() => new Promise(resolve => defer(() => resolve(launch(consent)))));
+    chain = next.catch(() => {});
+    return next;
+  };
+  // While no host runs, frames queue behind the launch in flight.
+  const begin = next => {
+    if (host !== 'running') {
+      host = 'starting';
+      const pending = next.then(Boolean).finally(() => { if (starting === pending) starting = undefined; });
+      starting = pending;
+    }
+    return next;
+  };
+  // Starts the session's hand-only host once. Resolves true while a host runs.
+  function ensure() {
+    if (host === 'running') return Promise.resolve(true);
+    if (host === 'dead') return Promise.resolve(false);
+    if (!starting) begin(serial(false));
+    return starting;
+  }
+  // The settings are read again when sleight's settings folder changes (the Ghost Hand row or the hand command), and at most
+  // once a minute otherwise, off the caller's path. Off hides the hand at once and keeps the shared host, which turbo may use;
+  // the host's menu frame carries the new setting and capture mode.
   function recheck(force = false) {
     if (checking || !force && now() - checked < recheckMs) return;
     checking = true;
     defer(() => {
       checking = false; checked = now();
-      const on = allowed();
-      if (!on && ['idle', 'starting', 'running'].includes(state)) { state = 'disabled'; stop(); note('hand-off', { reason: 'setting' }); }
-      else if (on && state === 'disabled') state = 'idle';
-      else if (on && state === 'running' && running !== capture) { stop(); state = 'idle'; note('hand-restart', { capture }); }
+      const before = [hand, capture];
+      hand = read();
+      if (!hand) queue.length = 0;
+      if (host === 'running' && (before[0] !== hand || before[1] !== capture)) {
+        if (!hand) { write(JSON.stringify({ hand: 'hide', nonce }) + '\n'); note('hand-off', { reason: 'setting' }); }
+        write(menu());
+      }
     });
   }
   let watcher;
   try { watcher = watch(dirname(handConfigPath()), (_event, name) => { if (!name || String(name) === 'hand.json') recheck(true); }); }
   catch {} // no settings folder yet: the minute's recheck covers it
 
-  return Object.freeze({
+  const client = Object.freeze({
     send(frame) {
       recheck();
-      if (state === 'disabled' || state === 'dead') return;
+      if (!hand || host === 'dead') return;
       const wire = handWireFrame(frame);
       if (typeof wire === 'string') { note('hand-dropped', { reason: wire }); return; }
-      if (state === 'running') { write(act(wire)); return; }
+      if (host === 'running') { write(act(wire)); return; }
       if (queue.length < 32) queue.push({ wire, at: now() });
-      if (state === 'idle') { state = 'starting'; defer(start); }
+      ensure();
     },
     hide() {
-      if (state === 'running') write(JSON.stringify({ hand: 'hide', nonce }) + '\n');
+      if (host === 'running') write(JSON.stringify({ hand: 'hide', nonce }) + '\n');
       else queue.length = 0;
     },
     close() {
       try { watcher?.close(); } catch {}
       watcher = undefined;
-      if (state !== 'dead') { state = 'dead'; stop(); }
+      if (current === client) current = undefined;
+      if (host !== 'dead') { host = 'dead'; stop(); }
     },
-    get enabled() { return state !== 'disabled' && state !== 'dead'; },
+    get enabled() { return hand && host !== 'dead'; },
   });
+  // The relay keeps no copy of the consent channel: release closes its ends once the worker has its own.
+  // Each fork of turbo's worker gets a fresh host with a fresh consent channel, which replaces the session's host (one glove),
+  // so a worker after a crash reattaches. The relay holds the channel's ends only until release, right after the fork.
+  sharing.set(client, async () => {
+    if (host === 'dead') return undefined;
+    const started = await begin(serial(true));
+    if (!started?.stdio?.[3] || !started.stdio[4]) return undefined;
+    const [write, read] = [started.stdio[3], started.stdio[4]];
+    return Object.freeze({ write, read, release() { for (const end of [write, read]) try { end.destroy(); } catch {} } });
+  });
+  current = client;
+  return client;
 }
