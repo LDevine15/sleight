@@ -17,7 +17,7 @@ Submit in that call only when the user asked and the engine's confirmation polic
 
 In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that call.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
-In a form, fill every independent visible field in one call. Observe again after autocomplete, a field-adding selection or async validation, then use fresh IDs for the next group. Stop at a required confirmation.
+In a form, fill every independent visible field in one call. Put autocomplete last. `setValue` fields. Observe again after autocomplete, a field-adding selection or async validation, then use fresh IDs for the next group. Stop at a required confirmation.
 
 ## Browsers
 

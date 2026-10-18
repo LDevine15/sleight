@@ -541,6 +541,23 @@ test('the saved MDN page after two earlier trees: the earlier ones go first and 
   assert.match(texts(out), /tree lines omitted/);
 });
 
+test('a checkout page behind a new-tab stop keeps its form fields and Pay now row (b3: 64 rows cut, a second read)', () => {
+  const stop = newTabLines();
+  const fields = ['Reference code', 'Full name', 'Email', 'Phone', 'Address', 'Card number', 'Expiry (MM/YY)', 'CVC', 'Promo code'];
+  const page = ['Window: "Checkout · Northbound Supply", App: Firefox.', '0 standard window Checkout · Northbound Supply, Secondary Actions: Raise',
+    '\t1 container Checkout · Northbound Supply', ...Array.from({ length: 40 }, (_, i) => `\t\t\t\t${i + 2} tab ${'Browser chrome '.repeat(6)}${i}`),
+    ...fields.map((name, i) => `\t\t\t\t\t\t${60 + i * 2} text field (settable) ${name}, Value: , Placeholder: ${'hint '.repeat(8)}`),
+    ...Array.from({ length: 100 }, (_, i) => `\t\t\t\t\t\t${90 + i} text ${'Order line '.repeat(8)}${i}`), '\t\t\t\t\t\t200 button Pay now'];
+  const content = [...stop.map(text => ({ type: 'text', text })), { type: 'text', text: focusLine },
+    { type: 'text', text: page.join('\n') + '\n\nThe focused UI element is 26 HTML Content Description: Checkout' }];
+  assert.ok(texts(content).length > RESULT_LIMIT, `${texts(content).length}`);
+  const out = texts(createResultBudget({ platform: 'darwin' }).apply(content));
+  assert.ok(out.length <= RESULT_LIMIT, `${out.length}`);
+  for (const name of fields) assert.ok(out.includes(`text field (settable) ${name}`), name);
+  assert.ok(out.includes('200 button Pay now'));
+  assert.equal(out.match(/tree lines omitted/g).length, 1, 'only the stale new-tab tree gives');
+});
+
 test('when only the last tree can give, it keeps its head with the answer line', () => {
   const big = mdnTree.replace('\t304 minimize button', Array.from({ length: 1500 }, (_, i) => `\t\t\t\t${400 + i} text ${'filler '.repeat(8)}`).join('\n') + '\n\t304 minimize button');
   assert.ok(big.length > RESULT_LIMIT);

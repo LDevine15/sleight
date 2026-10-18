@@ -18,7 +18,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - When the task specifies an app, start with `let app = await cua.getApp("<name or bundle ID>")`.
   Use `cua.getState()` only to find an app you can't name. Batch known actions. Re-acquire in a call
   switching apps. Keep the handle and `await` every action.
-- In a form, fill every independent field you already see in one call. Observe again after
+- In a form, fill every independent field you already see in one call. Put autocomplete last.
+  `setValue` fields. Observe again after
   autocomplete, a selection that adds fields or async validation, then use fresh IDs for the next
   group. Stop at a required confirmation.
 - In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that
