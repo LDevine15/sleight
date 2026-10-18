@@ -164,7 +164,9 @@ export const REAL_APPS = [...webBrowsers.flatMap(({ app, bundle }) => [app, bund
   // VS Code, Cursor, Firefox, Slack, Discord and WhatsApp (owner, 2026-10-10, chat apps open and read only).
   'Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode', 'Cursor', 'com.todesktop.230313mzl4w4u92',
   'Slack', 'com.tinyspeck.slackmacgap', 'Discord', 'com.hnc.Discord',
-  'WhatsApp', 'net.whatsapp.WhatsApp'];
+  'WhatsApp', 'net.whatsapp.WhatsApp',
+  // Spotify, for the claim's app task: search, play and pause one track (owner, 2026-10-18).
+  'Spotify', 'com.spotify.client'];
 
 // simctl from Xcode, even when xcode-select points at the Command Line Tools.
 const XCODE = '/Applications/Xcode.app/Contents/Developer';

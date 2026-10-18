@@ -1074,6 +1074,87 @@
         "chrome-devtools-mcp": false,
         "claude-in-chrome": false
       }
+    },
+    {
+      "id": "native/vscode-edit",
+      "task": "vscode-edit",
+      "title": "vscode-edit",
+      "source": "real",
+      "runner": "bench/run.mjs --suite world --tasks vscode-edit --owner-away",
+      "half": "native",
+      "prompt": "In the Visual Studio Code window showing {nonce}-edit.txt, replace the word \"beta\" with \"delta\" in {dir}/{nonce}-edit.txt and save that same file. Leave that window open. Do not open, read, modify or close other files or windows.",
+      "timeoutMs": 300000,
+      "check": "saved alpha delta gamma",
+      "fixture": "separate VS Code instance with a temporary profile, owned scratch file",
+      "requires": [
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary"
+      ],
+      "claim": true,
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "cua": true,
+        "peekaboo": true,
+        "claude-cu": true,
+        "playwright-mcp": false,
+        "chrome-devtools-mcp": false,
+        "claude-in-chrome": false
+      }
+    },
+    {
+      "id": "native/slack-post",
+      "task": "slack-post",
+      "title": "slack-post",
+      "source": "real",
+      "runner": "bench/run.mjs --suite world --tasks slack-post --owner-away",
+      "half": "native",
+      "prompt": "In Slack, post the message \"bench {nonce}\" in the channel #new-channel, exactly once. Leave #new-channel open.",
+      "timeoutMs": 300000,
+      "check": "exactly one message \"bench {nonce}\" in the #new-channel list and an empty composer, read from the accessibility tree",
+      "fixture": "owner's throwaway Slack workspace, test channel #new-channel; Slack restarted and quit by pid",
+      "requires": [
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary"
+      ],
+      "claim": true,
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "cua": true,
+        "peekaboo": true,
+        "claude-cu": true,
+        "playwright-mcp": false,
+        "chrome-devtools-mcp": false,
+        "claude-in-chrome": false
+      }
+    },
+    {
+      "id": "native/spotify-play",
+      "task": "spotify-play",
+      "title": "spotify-play",
+      "source": "real",
+      "runner": "bench/run.mjs --suite world --tasks spotify-play --owner-away",
+      "half": "native",
+      "prompt": "In Spotify, search for the song \"Bohemian Rhapsody\" by Queen, play it, then pause playback. Leave Spotify open.",
+      "timeoutMs": 300000,
+      "check": "playback notifications show a Playing event for Bohemian Rhapsody by Queen and a final Paused event for the same track",
+      "fixture": "owner's Spotify account; notification listener started before the prompt; Spotify quit by pid only if the task launched it",
+      "requires": [
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary"
+      ],
+      "claim": true,
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "cua": true,
+        "peekaboo": true,
+        "claude-cu": true,
+        "playwright-mcp": false,
+        "chrome-devtools-mcp": false,
+        "claude-in-chrome": false
+      }
     }
   ],
   "handoff": [

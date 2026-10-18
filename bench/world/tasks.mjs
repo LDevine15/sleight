@@ -11,12 +11,16 @@ import { browserKinds, serveWorldPage, checkBrowserFixture } from './browser-fix
 
 export const WORLD_APPS = ['Calculator', 'com.apple.calculator', 'TextEdit', 'com.apple.TextEdit', 'Chess', 'com.apple.Chess',
   'Finder', 'com.apple.finder', 'Preview', 'com.apple.Preview', 'Microsoft Word', 'Word', 'com.microsoft.Word',
-  'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium'];
+  'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium',
+  // The claim's app tasks (owner, 2026-10-18): VS Code, Slack's throwaway workspace and Spotify.
+  'Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode', 'Slack', 'com.tinyspeck.slackmacgap', 'Spotify', 'com.spotify.client'];
 const fixtureApps = {
   Calculator: ['Calculator', 'com.apple.calculator'], TextEdit: ['TextEdit', 'com.apple.TextEdit'], Chess: ['Chess', 'com.apple.Chess'],
   Finder: ['Finder', 'com.apple.finder'], Preview: ['Preview', 'com.apple.Preview'],
   'Microsoft Word': ['Microsoft Word', 'Word', 'com.microsoft.Word'], 'Microsoft Excel': ['Microsoft Excel', 'Excel', 'com.microsoft.Excel'],
   Helium: ['Helium', 'net.imput.helium'],
+  'Visual Studio Code': ['Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode'], Slack: ['Slack', 'com.tinyspeck.slackmacgap'],
+  Spotify: ['Spotify', 'com.spotify.client'],
 };
 const neutral = text => text.replace(/Using computer use in the background,\s*/g, '').replace(/Using computer use,?\s*/g, '');
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -226,9 +230,10 @@ export function getWorldTasks({ defaults, real, open = openFixture }) {
   });
   const retained = ['preview-pdf', 'finder-files', 'textedit-calculator', 'word-edit', 'excel-edit'].map(id =>
     id === 'textedit-calculator' ? crossCalculatorTask(open) : real.find(task => task.id === id));
+  const apps = ['vscode-edit', 'slack-post', 'spotify-play'].map(id => real.find(task => task.id === id));
   const added = ['finder-rename', 'finder-move', 'finder-create-folder'].map(id => finderTask(id, open)).concat(
     ['textedit-two-windows', 'textedit-window-drag', 'textedit-replace-save', 'textedit-replace-all', 'textedit-insert-line'].map(id => textTask(id, open)), previewTask(open));
-  return [...original, ...retained, ...added, ...browserKinds.map(id => browserTask(id, open))].map(task => ({ ...task, fixtureLifecycle: true,
+  return [...original, ...retained, ...apps, ...added, ...browserKinds.map(id => browserTask(id, open))].map(task => ({ ...task, fixtureLifecycle: true,
     allowedApps: (task.id === 'textedit-calculator' ? ['TextEdit', 'Calculator'] : [task.app]).flatMap(app => fixtureApps[app] ?? []),
     // The cross-app task copies a number: Claude Code's computer use asks for the clipboard with its apps (live 2026-10-17 15:58Z).
     // Finder's own card always carries "can read/write any file": that is the app, not an extra grant (live 15:59Z).

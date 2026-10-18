@@ -8,7 +8,7 @@ test('the world catalog retains the published browser list and adds seven local 
   assert.deepEqual(suite.browser.filter(t => t.source === 'fowlbrowser').map(t => t.task), browser.map(t => t.name));
   assert.equal(suite.browser.filter(t => t.source === 'world').length, 7);
   assert.equal(browser.length, 14); // The runner file has 14 rows, despite the ledger's 13.
-  assert.equal(suite.native.length, 20);
+  assert.equal(suite.native.length, 23);
   assert.equal(suite.handoff.length, 3);
   const ids = Object.values(suite).filter(Array.isArray).flat().map(t => t.id);
   assert.equal(new Set(ids).size, ids.length);
@@ -29,7 +29,7 @@ test('world variants retain existing file checks without changing the source tas
 
 test('the unattended claim plan excludes owner data and known-answer pages', () => {
   const rows = planSuite();
-  assert.equal(rows.length, 44);
+  assert.equal(rows.length, 47);
   for (const id of ['calendar', 'reminders', 'notes', 'system-settings-version', 'textedit-save-shortcut']) assert.equal(rows.some(t => t.task === id), false);
   assert.ok(rows.filter(t => ['wikipedia', 'mdn', 'takeover'].includes(t.task)).every(t => t.claim === false));
   assert.ok(rows.filter(t => t.claim).every(t => !t.requires.some(r => /owner present|owner participates/.test(r))));
