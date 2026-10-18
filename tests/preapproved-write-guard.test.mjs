@@ -10,7 +10,7 @@ const guard = async (...args) => {
   return preapprovedWriteDenied(...args);
 };
 const stat = async path => ({ realPath: path });
-for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json']) {
+for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key']) {
 const policy = '/Users/fixture/Library/Application Support/sleight/' + filename;
 
 test(filename + ': each file mutation denies the policy path and case and tilde spellings', async () => {
