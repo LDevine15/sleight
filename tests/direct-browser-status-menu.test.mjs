@@ -35,6 +35,7 @@ check(statusRows(["status": "connected"], ["pause", "launch"]) == nil, "unknown 
 check(statusRows(["status": "elsewhere"], ["pause"]) == nil, "unknown status refused")
 check(statusRows(["status": "paused", "browser": "Chrome<script>"], ["disconnect"])!.map { $0.0 } == ["sleight turbo: Paused", "-", "Disconnect"], "odd browser name dropped")
 check(statusRows(["status": "paused", "payments": "sometimes"], ["disconnect"])!.count == 3, "unknown payment value dropped")
+check(statusRows(["status": "connected", "optOut": "failed"], ["disconnect"])!.map { $0.0 }.contains("Turning turbo off failed. Run sleight-mcp turbo off."), "failed opt-out shown")
 print("pass")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });

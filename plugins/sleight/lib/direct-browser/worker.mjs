@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readInstalledConfig, acceptedInstalledPackage, installedConfigPath } from './installed-config.mjs';
+import { readInstalledConfig, readInstalledConfigFile, acceptedInstalledPackage, installedConfigPath } from './installed-config.mjs';
 import { browserTools, validateToolCall, createToolDispatcher } from './tools.mjs';
 import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
 import { browserApplicationName } from './browsers.mjs';
@@ -266,6 +266,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   // client per app host, qualification receipts and the latest begin frame's engine approvals.
   let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
   let browserName; // the menu bar's browser line, from the operator-owned config's executable only
+  let optOutFailed = false;
+  const optedOut = () => { try { return (dependencies.readConfigFile ?? readInstalledConfigFile)()?.enabled === false; } catch { return false; } };
   const admins = new Map(), receipts = new Map();
   // admins: bundle id -> the pending { admin, registry, profile } of that app's resident host.
   const eachAdmin = action => Promise.allSettled([...admins.values()].map(async pending => action((await pending).admin)));
@@ -352,11 +354,13 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     // The menu bar shows the state, the browser and the payment check beside the person's own controls. Turning turbo off
     // writes the launcher's opt-out and disconnects; only the person's click in sleight's own window sends it.
     const payments = ['always', 'never'].includes(process.env.SLEIGHT_CONFIRM_PAYMENTS) ? process.env.SLEIGHT_CONFIRM_PAYMENTS : 'ask';
-    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments },
+    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments,
+      ...(optOutFailed ? { optOut: 'failed' } : {}) },
       state === 'cleanup-required' ? ['cleanup'] : ['pause','disconnect','turbo-off'], async event => {
       if (ui.authenticate(event) !== true) return;
       if (event.action === 'turbo-off') {
-        await (dependencies.turboOff ?? optOut)().catch(() => {});
+        // A failed write leaves turbo connected and says so in the menu, so nobody believes turbo is off when it isn't.
+        try { await (dependencies.turboOff ?? optOut)(); optOutFailed = false; } catch { optOutFailed = true; status(); return; }
         await close();
       } else if (['disconnect','cleanup'].includes(event.action)) await close();
       else if (event.action === 'pause') { stopped = true; await protocol?.end(); await revokeApps(); status(); }
@@ -497,6 +501,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
         });
       }, close });
     timer = (dependencies.schedule ?? setInterval)(() => {
+      // An opt-out written since startup (another session's menu, or `sleight-mcp turbo off`) ends this session's turbo too.
+      if (optedOut()) { close().catch(() => {}); return; }
       try { status(); } catch { terminalLoss = true; close().catch(() => {}); }
     }, 60000);
     status(); protocol.ready();

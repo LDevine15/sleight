@@ -90,6 +90,7 @@ func statusRows(_ data: [String: Any], _ choices: [String]) -> [(String, String?
     if let browser = data["browser"] as? String, !browser.isEmpty, browser.count <= 40,
         browser.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) { rows.append(("Browser: " + browser, nil)) }
     if let payments = data["payments"] as? String, let words = paymentWords[payments] { rows.append(("Payment check: " + words, nil)) }
+    if data["optOut"] as? String == "failed" { rows.append(("Turning turbo off failed. Run sleight-mcp turbo off.", nil)) }
     rows.append(("-", nil))
     for choice in choices { rows.append((choiceWords[choice]!, choice)) }
     return rows

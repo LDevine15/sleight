@@ -23,7 +23,7 @@ function fixture() {
     close() { events.push('ui-close'); } };
   const pages = { endTurn: async () => { events.push('pages-end'); return { cleanedUp:true }; },
     list: async () => [] };
-  const dependencies = { schedule: () => undefined, readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
+  const dependencies = { schedule: () => undefined, readConfig: () => ({}), readConfigFile: () => null, acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status:'ready', receipt:{} }), selectConnection: async () => selected,
     createUi: (_receipt, onLoss) => { ui.loss = onLoss; return ui; }, loadPlaywright: () => ({ inprocess: { playwright: { chromium: { async connectOverCDP(endpoint, options) {
       assert.equal(endpoint, 'private'); assert.equal(options.noDefaults,true);
@@ -222,6 +222,24 @@ test('the menu bar status names the browser and payment check and offers Turn tu
   assert.equal(optedOut, 1);
   assert.ok(f.events.includes('disconnect'));
   assert.ok(f.events.includes('ui-close'));
+});
+test('a failed Turn turbo off keeps turbo connected and says so in the menu', async t => {
+  const f = await controls(t);
+  f.dependencies.turboOff = async () => { throw Error('TURBO_CONFIG_UNSAFE'); };
+  await f.choose(f.views[0], 'turbo-off');
+  assert.ok(!f.events.includes('disconnect'));
+  assert.equal(f.views.at(-1).data.optOut, 'failed');
+  assert.equal(f.views.at(-1).data.status, f.views[0].data.status, 'the state is unchanged');
+  assert.deepEqual(f.views.at(-1).choices, ['pause', 'disconnect', 'turbo-off'], 'the person can try again');
+});
+test('an opt-out written by another session or the launcher ends this session\'s turbo at the next refresh', async t => {
+  const f = await controls(t); let file = { version: 1, enabled: true };
+  f.dependencies.readConfigFile = () => file;
+  f.refresh(); await settle();
+  assert.ok(!f.events.includes('disconnect'));
+  file = { version: 1, enabled: false };
+  f.refresh(); await settle();
+  assert.ok(f.events.includes('disconnect'));
 });
 test('the menu bar status reads the browser from the operator config only', async t => {
   const f = fixture(), views = [];
